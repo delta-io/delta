@@ -1145,7 +1145,7 @@ private[delta] class ConflictChecker(
       // OPTIMIZE. When enabled, drop them so only genuinely new data is checked. All
       // FileActions in a commit share one `dataChange` value (see `trackConsistentDataChange`).
       val addedFilesWithoutNoDataChange =
-        if (spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_ADDS)) {
+        if (spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_FILES)) {
           addedFilesToCheckForConflicts.filter(_.dataChange)
         } else {
           addedFilesToCheckForConflicts
@@ -1170,10 +1170,34 @@ private[delta] class ConflictChecker(
    */
   protected def checkForDeletedFilesAgainstCurrentTxnReadFiles(): Unit = {
     recordTime("checked-deletes") {
+      // A RemoveFile committed with `dataChange = false` (e.g. OPTIMIZE compaction / Z-ORDER)
+      // only relocates rows that still exist in the table under a different file boundary; it
+      // deletes no logical rows. So it cannot invalidate a read done by a purely append-only
+      // current transaction — every row the loser read is still present, just in a different
+      // file. When enabled we therefore drop `dataChange = false` removes from this check, but
+      // ONLY when the current transaction is itself append-only (adds no RemoveFile and no
+      // AddFile carrying a deletion vector). A transaction that deletes/updates rows (DML) reads
+      // files precisely to rewrite them; if its read file was concurrently relocated it must
+      // still conflict, otherwise its RemoveFile / DV would target a file that no longer exists
+      // and rows could be lost or resurrected. Genuine deletes commit `dataChange = true` and
+      // are always kept, so real delete/read conflicts still fire.
+      val currentTxnIsAppendOnly = currentTransactionInfo.actions.forall {
+        case _: RemoveFile => false
+        case a: AddFile => a.deletionVector == null
+        case _ => true
+      }
+      val relevantRemovedFiles =
+        if (spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_FILES) &&
+            currentTxnIsAppendOnly) {
+          winningCommitSummary.removedFiles.filter(_.dataChange)
+        } else {
+          winningCommitSummary.removedFiles
+        }
+
       // Fail if files have been deleted that the txn read.
       val readFilePaths = currentTransactionInfo.readFiles.map(
         f => f.path -> f.partitionValues).toMap
-      val deleteReadOverlap = winningCommitSummary.removedFiles
+      val deleteReadOverlap = relevantRemovedFiles
         .find(r => readFilePaths.contains(r.path))
       if (deleteReadOverlap.nonEmpty) {
         val partitionOpt = getPrettyPartitionMessage(readFilePaths(deleteReadOverlap.get.path))
@@ -1183,7 +1207,7 @@ private[delta] class ConflictChecker(
           winningCommitVersion,
           partitionOpt)
       }
-      if (winningCommitSummary.removedFiles.nonEmpty && currentTransactionInfo.readWholeTable) {
+      if (relevantRemovedFiles.nonEmpty && currentTransactionInfo.readWholeTable) {
         throw DeltaErrors.concurrentDeleteReadException(
           winningCommitSummary.commitInfo,
           getTableNameOrPath,

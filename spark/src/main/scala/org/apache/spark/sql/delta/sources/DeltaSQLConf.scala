@@ -2240,13 +2240,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_ADDS =
-    buildConf("conflictDetection.excludeNoDataChangeAddedFiles.enabled")
-      .doc("When enabled, files added by a winning transaction with dataChange = false " +
-        "(e.g. OPTIMIZE compaction / Z-ORDER outputs) are excluded from the added-files " +
-        "conflict check. Such files only rearrange rows that already exist in the table and " +
-        "introduce no new logical rows, so a concurrent non-blind writer should not raise a " +
-        "ConcurrentAppendException against them. Off by default to preserve existing behavior.")
+  val DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_FILES =
+    buildConf("conflictDetection.excludeNoDataChangeFiles.enabled")
+      .doc("When enabled, AddFile/RemoveFile actions committed by a winning transaction with " +
+        "dataChange = false (e.g. OPTIMIZE compaction / Z-ORDER outputs) are excluded from the " +
+        "file-level conflict checks. Such files only rearrange rows that already exist in the " +
+        "table and add/delete no logical rows, so (1) a concurrent non-blind writer should not " +
+        "raise a ConcurrentAppendException against a no-data-change add, and (2) an append-only " +
+        "writer should not raise a ConcurrentDeleteReadException when a no-data-change remove " +
+        "merely relocated rows it read. Off by default to preserve existing behavior.")
       .internal()
       .booleanConf
       .createWithDefault(false)
