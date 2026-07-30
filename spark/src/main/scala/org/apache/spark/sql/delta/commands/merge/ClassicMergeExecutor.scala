@@ -134,11 +134,11 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         deltaTxn,
         dataSkippedFiles,
         columnsToDrop)
-    val targetPlanDF = DataFrameUtils.ofRows(spark, targetPlan)
-    val targetDF = targetPlanDF
+    val (targetPlanWithFileMetadata, fileMetadataCol) =
+      DeltaTableUtils.addFileMetadataColumn(targetPlan)
+    val targetDF = DataFrameUtils.ofRows(spark, targetPlanWithFileMetadata)
       .withColumn(ROW_ID_COL, monotonically_increasing_id())
-      .withColumn(
-        FILE_NAME_COL, DeltaTableUtils.getFileMetadataColumn(targetPlanDF).getField(FILE_PATH))
+      .withColumn(FILE_NAME_COL, Column(fileMetadataCol).getField(FILE_PATH))
 
     val joinToFindTouchedFiles =
       sourceDF.join(targetDF, Column(condition), joinType)

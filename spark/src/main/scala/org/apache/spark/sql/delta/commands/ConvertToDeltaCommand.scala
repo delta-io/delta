@@ -498,6 +498,9 @@ object ConvertToDeltaCommand extends DeltaLogging {
       addFiles: Seq[AddFile]): Iterator[AddFile] = {
     import org.apache.spark.sql.functions._
     val filesDF = deltaLog.createDataFrame(snapshot, addFiles)
+    // Unlike UPDATE/DELETE/MERGE, which run against the resolved target and therefore have to add
+    // the metadata column to the plan, this DataFrame is built directly from the transaction log.
+    // It can never be a view, so the metadata column is always resolvable by name here.
     val filesWithStats = filesDF
       .groupBy(DeltaTableUtils.getFileMetadataColumn(filesDF).getField(FILE_PATH))
       .agg(to_json(snapshot.statsCollector))
