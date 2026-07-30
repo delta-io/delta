@@ -125,6 +125,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     val capabilities = new util.HashSet[TableCatalogCapability](super.capabilities())
     capabilities.add(TableCatalogCapability.SUPPORT_COLUMN_DEFAULT_VALUE)
     capabilities.add(TableCatalogCapability.SUPPORTS_CREATE_TABLE_WITH_GENERATED_COLUMNS)
+    capabilities.add(TableCatalogCapability.SUPPORTS_CREATE_TABLE_WITH_IDENTITY_COLUMNS)
     capabilities
   }
 
