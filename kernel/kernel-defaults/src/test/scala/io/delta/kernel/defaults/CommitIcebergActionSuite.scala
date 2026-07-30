@@ -54,6 +54,19 @@ trait AbstractCommitIcebergActionSuite extends AnyFunSuite { self: AbstractWrite
   private val tblPropertiesIcebergWriterCompatV3Enabled = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.getKey -> "true")
 
+  /** Helper to create a transaction, generate a single action, and commit it. */
+  private def commitSingleAction(
+      engine: Engine,
+      tablePath: String,
+      actionFn: Transaction => Row): Unit = {
+    val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
+    val action = actionFn(txn)
+    commitTransaction(
+      txn,
+      engine,
+      inMemoryIterable(toCloseableIterator(Seq(action).asJava.iterator())))
+  }
+
   private def createIcebergCompatAction(
       actionType: String, // "ADD" or "REMOVE"
       version: String,
@@ -627,6 +640,64 @@ trait AbstractCommitIcebergActionSuite extends AnyFunSuite { self: AbstractWrite
         assert(addFile.getTags.isPresent)
         assert(VectorUtils.toJavaMap(addFile.getTags.get()).asScala.equals(tags))
       }
+    }
+  }
+
+  test("V3: baseRowId and defaultRowCommitVersion are forwarded in remove actions") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = tblPropertiesIcebergWriterCompatV3Enabled)
+
+      // Append 1 add so we have something to remove
+      commitSingleAction(
+        engine,
+        tablePath,
+        createIcebergCompatAction(
+          "ADD",
+          "V3",
+          _,
+          engine,
+          generateDataFileStatus(tablePath, "file1.parquet"),
+          true))
+
+      // Remove with explicit baseRowId and defaultRowCommitVersion
+      val expectedBaseRowId = 42L
+      val expectedDefaultRowCommitVersion = 7L
+      commitSingleAction(
+        engine,
+        tablePath,
+        txn =>
+          GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV3RemoveAction(
+            txn.getTransactionState(engine),
+            generateDataFileStatus(tablePath, "file1.parquet"),
+            Collections.emptyMap(),
+            true, // dataChange
+            Optional.of[java.lang.Long](expectedBaseRowId),
+            Optional.of[java.lang.Long](expectedDefaultRowCommitVersion),
+            Optional.empty(), // deletionVectorDescriptor
+            Optional.of(
+              TransactionStateRow.getPhysicalSchema(txn.getTransactionState(engine)))))
+
+      // Read back the remove action and verify the values are preserved
+      val rows = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+        .getChanges(engine, 2, 2, Set(DeltaAction.REMOVE).asJava)
+        .toSeq
+        .flatMap(_.getRows.toSeq)
+        .filterNot(row => row.isNullAt(row.getSchema.indexOf("remove")))
+
+      assert(rows.size == 1)
+      val removeFile = new RemoveFile(rows.head.getStruct(rows.head.getSchema.indexOf("remove")))
+      assert(
+        removeFile.getBaseRowId.isPresent,
+        "baseRowId should be present when caller provides it")
+      assert(removeFile.getBaseRowId.get == expectedBaseRowId)
+      assert(
+        removeFile.getDefaultRowCommitVersion.isPresent,
+        "defaultRowCommitVersion should be present when caller provides it")
+      assert(removeFile.getDefaultRowCommitVersion.get == expectedDefaultRowCommitVersion)
     }
   }
 }

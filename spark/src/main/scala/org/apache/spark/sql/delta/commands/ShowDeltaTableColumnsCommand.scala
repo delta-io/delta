@@ -47,7 +47,7 @@ case class ShowDeltaTableColumnsCommand(child: LogicalPlan)
     // Return the schema from snapshot if it is an Delta table. Or raise
     // `DeltaErrors.notADeltaTableException` if it is a non-Delta table.
     val deltaTable = getDeltaTable(child, "SHOW COLUMNS")
-    recordDeltaOperation(deltaTable.deltaLog, "delta.ddl.showColumns") {
+    recordDeltaOperation(deltaTable, "delta.ddl.showColumns") {
       deltaTable.update().schema.fieldNames.map { x => Row(x) }.toSeq
     }
   }

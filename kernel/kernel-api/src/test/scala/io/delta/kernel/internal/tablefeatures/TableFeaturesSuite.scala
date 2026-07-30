@@ -50,7 +50,9 @@ class TableFeaturesSuite extends AnyFunSuite {
     "vacuumProtocolCheck",
     "variantType",
     "variantType-preview",
-    "variantShredding-preview")
+    "variantShredding",
+    "variantShredding-preview",
+    "geospatial")
 
   val writerOnlyFeatures = Seq(
     "allowColumnDefaults",
@@ -69,7 +71,9 @@ class TableFeaturesSuite extends AnyFunSuite {
     "icebergWriterCompatV1",
     "icebergWriterCompatV3",
     "clustering",
-    "materializePartitionColumns")
+    "materializePartitionColumns",
+    "collations",
+    "collations-preview")
 
   val legacyFeatures = Seq(
     "appendOnly",
@@ -149,6 +153,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       false),
     ("timestampNtz", testMetadata(includeTimestampNtzTypeCol = true), true),
     ("timestampNtz", testMetadata(includeTimestampNtzTypeCol = false), false),
+    ("collations", testMetadata(includeCollatedStringTypeCol = true), true),
+    ("collations", testMetadata(includeCollatedStringTypeCol = false), false),
     ("v2Checkpoint", testMetadata(tblProps = Map("delta.checkpointPolicy" -> "v2")), true),
     ("v2Checkpoint", testMetadata(tblProps = Map("delta.checkpointPolicy" -> "classic")), false),
     (
@@ -190,7 +196,10 @@ class TableFeaturesSuite extends AnyFunSuite {
     (
       "icebergWriterCompatV3",
       testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "false")),
-      false)).foreach({ case (feature, metadata, expected) =>
+      false),
+    ("geospatial", testMetadata(includeGeometryTypeCol = true), true),
+    ("geospatial", testMetadata(includeGeographyTypeCol = true), true),
+    ("geospatial", testMetadata(), false)).foreach({ case (feature, metadata, expected) =>
     test(s"metadataRequiresFeatureToBeEnabled - $feature - $metadata") {
       val tableFeature = TableFeatures.getTableFeature(feature)
       assert(tableFeature.isInstanceOf[FeatureAutoEnabledByMetadata])
@@ -205,7 +214,9 @@ class TableFeaturesSuite extends AnyFunSuite {
     "vacuumProtocolCheck",
     "clustering",
     "catalogManaged",
-    "allowColumnDefaults").foreach {
+    "allowColumnDefaults",
+    "variantShredding",
+    "collations-preview").foreach {
     feature =>
       test(s"doesn't support auto enable by metadata: $feature") {
         val tableFeature = TableFeatures.getTableFeature(feature)
@@ -215,7 +226,8 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   Seq(
     ("variantType", testMetadata(includeVariantTypeCol = true)),
-    ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")))).foreach {
+    ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true"))),
+    ("collations", testMetadata(includeCollatedStringTypeCol = true))).foreach {
     case (feature, metadataEnablingFeature) =>
       test("special handling of tables containing preview features: " + feature) {
         val protocolWithPreviewFeature = new Protocol(3, 7)
@@ -230,6 +242,20 @@ class TableFeaturesSuite extends AnyFunSuite {
       }
   }
 
+  // variantShredding has the inverted relationship: only the preview feature is auto-enabled,
+  // so we verify that the preview is NOT auto-enabled when the GA feature is already in protocol.
+  test("special handling of tables containing variantShredding GA feature") {
+    val protocolWithGaFeature = new Protocol(3, 7)
+      .withFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE)
+
+    val enable = TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE
+      .asInstanceOf[FeatureAutoEnabledByMetadata]
+      .metadataRequiresFeatureToBeEnabled(
+        protocolWithGaFeature,
+        testMetadata(tblProps = Map("delta.enableVariantShredding" -> "true")))
+    assert(!enable, "shouldn't enable preview feature when GA feature is already supported")
+  }
+
   test("hasKernelReadSupport expected to be true") {
     val results = TABLE_FEATURES.stream()
       .filter(_.isReaderWriterFeature)
@@ -242,12 +268,14 @@ class TableFeaturesSuite extends AnyFunSuite {
       "v2Checkpoint",
       "variantType",
       "variantType-preview",
+      "variantShredding",
       "variantShredding-preview",
       "typeWidening",
       "typeWidening-preview",
       "deletionVectors",
       "timestampNtz",
-      "vacuumProtocolCheck")
+      "vacuumProtocolCheck",
+      "geospatial")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -287,8 +315,12 @@ class TableFeaturesSuite extends AnyFunSuite {
       "clustering",
       "variantType-preview",
       "variantType",
+      "variantShredding",
       "variantShredding-preview",
-      "materializePartitionColumns")
+      "materializePartitionColumns",
+      "collations",
+      "collations-preview",
+      "geospatial")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -331,6 +363,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "catalogManaged",
     "variantType",
     "variantType-preview",
+    "variantShredding",
     "variantShredding-preview",
     "deletionVectors",
     "typeWidening",
@@ -339,7 +372,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     "v2Checkpoint",
     "vacuumProtocolCheck",
     "allowColumnDefaults",
-    "columnMapping").foreach { feature =>
+    "columnMapping",
+    "geospatial").foreach { feature =>
     test(s"validateKernelCanReadTheTable: protocol 3 with $feature") {
       val protocol = new Protocol(3, 1, singleton(feature), Set().asJava)
       validateKernelCanReadTheTable(protocol, "/test/table")
@@ -440,7 +474,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     new Protocol(1, 4),
     testMetadata(includeGeneratedColumn = true))
 
-  checkWriteUnsupported(
+  // Supported if append-only or remove-only
+  checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 4 with changeDataFeed",
     new Protocol(1, 4),
     testMetadata(tblProps = Map("delta.enableChangeDataFeed" -> "true")))
@@ -507,7 +542,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     new Protocol(1, 7, Set().asJava, singleton("changeDataFeed")),
     testMetadata())
 
-  checkWriteUnsupported(
+  // Supported if append-only or remove-only
+  checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with changeDataFeed, " +
       "metadata contains changeDataFeed",
     new Protocol(1, 7, Set().asJava, singleton("changeDataFeed")),
@@ -581,19 +617,20 @@ class TableFeaturesSuite extends AnyFunSuite {
       testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")))
   }
 
-  Seq("variantType", "variantType-preview", "variantShredding-preview").foreach { feature =>
-    checkWriteSupported(
-      s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
-        s"metadata doesn't contains $feature",
-      new Protocol(3, 7, singleton(feature), singleton(feature)),
-      testMetadata())
+  Seq("variantType", "variantType-preview", "variantShredding", "variantShredding-preview")
+    .foreach { feature =>
+      checkWriteSupported(
+        s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
+          s"metadata doesn't contains $feature",
+        new Protocol(3, 7, singleton(feature), singleton(feature)),
+        testMetadata())
 
-    checkWriteSupported(
-      s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
-        s"metadata contains $feature",
-      new Protocol(3, 7, singleton(feature), singleton(feature)),
-      testMetadata(includeVariantTypeCol = true))
-  }
+      checkWriteSupported(
+        s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
+          s"metadata contains $feature",
+        new Protocol(3, 7, singleton(feature), singleton(feature)),
+        testMetadata(includeVariantTypeCol = true))
+    }
 
   checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with vacuumProtocolCheck, " +
@@ -651,6 +688,18 @@ class TableFeaturesSuite extends AnyFunSuite {
     "validateKernelCanWriteToTable: protocol 7 with materializePartitionColumns",
     new Protocol(3, 7, emptySet(), singleton("materializePartitionColumns")),
     testMetadata())
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with geospatial, " +
+      "metadata doesn't contain geospatial",
+    new Protocol(3, 7, singleton("geospatial"), singleton("geospatial")),
+    testMetadata())
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with geospatial, " +
+      "metadata contains geospatial",
+    new Protocol(3, 7, singleton("geospatial"), singleton("geospatial")),
+    testMetadata(includeGeometryTypeCol = true))
 
   checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with multiple features supported",
@@ -1045,7 +1094,25 @@ class TableFeaturesSuite extends AnyFunSuite {
           "deletionVectors",
           "variantShredding-preview",
           "variantType")),
-      set("variantType", "variantShredding-preview"))).foreach {
+      set("variantType", "variantShredding-preview")),
+    (
+      testMetadata(includeGeometryTypeCol = true),
+      new Protocol(1, 1),
+      new Protocol(
+        3,
+        7,
+        set("geospatial"),
+        set("geospatial")),
+      set("geospatial")),
+    (
+      testMetadata(includeGeographyTypeCol = true),
+      new Protocol(1, 2),
+      new Protocol(
+        3,
+        7,
+        set("geospatial"),
+        set("geospatial", "appendOnly", "invariants")),
+      set("geospatial"))).foreach {
     case (newMetadata, currentProtocol, expectedProtocol, expectedNewFeatures) =>
       test(s"autoUpgradeProtocolBasedOnMetadata:" +
         s"$currentProtocol -> $expectedProtocol, $expectedNewFeatures") {
@@ -1145,7 +1212,29 @@ class TableFeaturesSuite extends AnyFunSuite {
         3,
         7,
         set("columnMapping", "deletionVectors"),
-        set("columnMapping", "deletionVectors", "icebergCompatV2")))).foreach {
+        set("columnMapping", "deletionVectors", "icebergCompatV2"))),
+    (
+      // Setting delta.enableVariantShredding=true is a no-op when the preview feature is
+      // already supported (the preview feature is what auto-enable would otherwise add).
+      testMetadata(
+        tblProps = Map("delta.enableVariantShredding" -> "true"),
+        includeVariantTypeCol = true),
+      new Protocol(
+        3,
+        7,
+        set("variantType", "variantShredding-preview"),
+        set("variantType", "variantShredding-preview"))),
+    (
+      // Setting delta.enableVariantShredding=true is a no-op when the GA feature is already
+      // supported. We must not auto-add the preview feature in this case.
+      testMetadata(
+        tblProps = Map("delta.enableVariantShredding" -> "true"),
+        includeVariantTypeCol = true),
+      new Protocol(
+        3,
+        7,
+        set("variantType", "variantShredding"),
+        set("variantType", "variantShredding")))).foreach {
     case (newMetadata, currentProtocol) =>
       test(s"autoUpgradeProtocolBasedOnMetadata: no-op upgrade: $currentProtocol") {
         val newProtocolAndNewFeaturesEnabled =
@@ -1236,13 +1325,19 @@ class TableFeaturesSuite extends AnyFunSuite {
       includeVariantTypeCol: Boolean = false,
       includeGeneratedColumn: Boolean = false,
       includeIdentityColumn: Boolean = false,
+      includeGeometryTypeCol: Boolean = false,
+      includeGeographyTypeCol: Boolean = false,
+      includeCollatedStringTypeCol: Boolean = false,
       tblProps: Map[String, String] = Map.empty): Metadata = {
     val testSchema = createTestSchema(
       includeInvariant,
       includeTimestampNtzTypeCol,
       includeVariantTypeCol,
       includeGeneratedColumn,
-      includeIdentityColumn)
+      includeIdentityColumn,
+      includeGeometryTypeCol,
+      includeGeographyTypeCol,
+      includeCollatedStringTypeCol)
     new Metadata(
       "id",
       Optional.of("name"),
@@ -1270,7 +1365,10 @@ class TableFeaturesSuite extends AnyFunSuite {
       includeTimestampNtzTypeCol: Boolean = false,
       includeVariantTypeCol: Boolean = false,
       includeGeneratedColumn: Boolean = false,
-      includeIdentityColumn: Boolean = false): StructType = {
+      includeIdentityColumn: Boolean = false,
+      includeGeometryTypeCol: Boolean = false,
+      includeGeographyTypeCol: Boolean = false,
+      includeCollatedStringTypeCol: Boolean = false): StructType = {
     var structType = new StructType()
       .add("c1", IntegerType.INTEGER)
       .add("c2", StringType.STRING)
@@ -1305,6 +1403,15 @@ class TableFeaturesSuite extends AnyFunSuite {
           .putLong("delta.identity.step", 2L)
           .putBoolean("delta.identity.allowExplicitInsert", true)
           .build())
+    }
+    if (includeGeometryTypeCol) {
+      structType = structType.add("c8", GeometryType.ofDefault())
+    }
+    if (includeGeographyTypeCol) {
+      structType = structType.add("c9", GeographyType.ofDefault())
+    }
+    if (includeCollatedStringTypeCol) {
+      structType = structType.add("c8", new StringType("ICU.UNICODE.75"))
     }
 
     structType

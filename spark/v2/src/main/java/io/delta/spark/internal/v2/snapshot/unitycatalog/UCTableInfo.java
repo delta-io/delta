@@ -17,7 +17,10 @@ package io.delta.spark.internal.v2.snapshot.unitycatalog;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.unitycatalog.UCTableIdentifier;
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -30,15 +33,33 @@ public final class UCTableInfo {
 
   private final String tableId;
   private final String tablePath;
+  private final UCTableIdentifier tableIdentifier;
   private final String ucUri;
   private final Map<String, String> authConfig;
+  private final Map<String, String> optInFlags;
 
   public UCTableInfo(
-      String tableId, String tablePath, String ucUri, Map<String, String> authConfig) {
+      String tableId,
+      String tablePath,
+      UCTableIdentifier tableIdentifier,
+      String ucUri,
+      Map<String, String> authConfig) {
+    this(tableId, tablePath, tableIdentifier, ucUri, authConfig, Collections.emptyMap());
+  }
+
+  public UCTableInfo(
+      String tableId,
+      String tablePath,
+      UCTableIdentifier tableIdentifier,
+      String ucUri,
+      Map<String, String> authConfig,
+      Map<String, String> optInFlags) {
     this.tableId = requireNonNull(tableId, "tableId is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
+    this.tableIdentifier = requireNonNull(tableIdentifier, "tableIdentifier is null");
     this.ucUri = requireNonNull(ucUri, "ucUri is null");
     this.authConfig = Collections.unmodifiableMap(requireNonNull(authConfig, "authConfig is null"));
+    this.optInFlags = Collections.unmodifiableMap(requireNonNull(optInFlags, "optInFlags is null"));
   }
 
   public String getTableId() {
@@ -49,11 +70,33 @@ public final class UCTableInfo {
     return tablePath;
   }
 
+  public UCTableIdentifier getTableIdentifier() {
+    return tableIdentifier;
+  }
+
   public String getUcUri() {
     return ucUri;
   }
 
   public Map<String, String> getAuthConfig() {
     return authConfig;
+  }
+
+  public Map<String, String> getOptInFlags() {
+    return optInFlags;
+  }
+
+  /**
+   * Builds a flat config map suitable for {@code UCTokenBasedRestClientFactory.createUCClient}.
+   * Re-adds the {@code auth.} prefix to auth config keys, includes {@code uri}, and forwards any
+   * per-catalog opt-in flags ({@link UCConfigUtils#DELTA_REST_API_ENABLED_KEY} etc.) so the factory
+   * picks the correct client implementation.
+   */
+  public Map<String, String> toUcConfig() {
+    Map<String, String> ucConfig = new HashMap<>();
+    ucConfig.put(UCConfigUtils.URI_KEY, ucUri);
+    authConfig.forEach((k, v) -> ucConfig.put(UCConfigUtils.AUTH_PREFIX + k, v));
+    ucConfig.putAll(optInFlags);
+    return ucConfig;
   }
 }

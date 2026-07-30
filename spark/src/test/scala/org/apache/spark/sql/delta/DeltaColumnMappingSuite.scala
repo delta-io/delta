@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.v2.interop.AbstractMetadata
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.format.converter.ParquetMetadataConverter
 import org.apache.parquet.hadoop.ParquetFileReader
@@ -637,6 +638,57 @@ class DeltaColumnMappingSuite extends QueryTest
       // be blocked by this column mapping check.
       assert(DeltaColumnMapping.hasNoColumnMappingSchemaChanges(m5, m0))
     }
+  }
+
+  test("hasNoColumnMappingSchemaChanges accepts non-Metadata AbstractMetadata inputs") {
+    // Anonymous AbstractMetadata impls (not the V1 Metadata action) prove the API actually
+    // relies on the abstract surface. Especially exercises the NoMapping -> NameMapping upgrade
+    // branch, which synthesizes a fresh AbstractMetadata internally and reads back from it.
+    def mkAbstractMetadata(
+        sch: StructType,
+        mode: DeltaColumnMappingMode,
+        conf: Map[String, String] = Map.empty): AbstractMetadata = new AbstractMetadata {
+      override def id: String = "tid"
+      override def name: String = ""
+      override def description: String = ""
+      override def schema: StructType = sch
+      override def partitionColumns: Seq[String] = Seq.empty
+      override def configuration: Map[String, String] = conf
+      override def columnMappingMode: DeltaColumnMappingMode = mode
+    }
+
+    val baseSchema = new StructType().add("a", IntegerType).add("b", IntegerType)
+    val oldNoMapping = mkAbstractMetadata(baseSchema, NoMapping)
+
+    // Upgrade with no other change: synthesized post-upgrade schema uses logical names as
+    // physical names, matching what we pass for `new` -> read-compatible.
+    val newNameMappingSameSchema = mkAbstractMetadata(
+      DeltaColumnMapping.setPhysicalNames(
+        baseSchema, Map(Seq("a") -> "a", Seq("b") -> "b")),
+      NameMapping)
+    assert(DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
+      newNameMappingSameSchema, oldNoMapping))
+
+    // Upgrade + drop: detected as a non-additive change.
+    val newNameMappingDropped = mkAbstractMetadata(
+      DeltaColumnMapping.setPhysicalNames(
+        new StructType().add("a", IntegerType), Map(Seq("a") -> "a")),
+      NameMapping)
+    assert(!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
+      newNameMappingDropped, oldNoMapping))
+
+    // Upgrade + rename (renamed column's physical name diverges from its logical name).
+    val newNameMappingRenamed = mkAbstractMetadata(
+      DeltaColumnMapping.setPhysicalNames(
+        new StructType().add("c", IntegerType).add("b", IntegerType),
+        Map(Seq("c") -> "a", Seq("b") -> "b")),
+      NameMapping)
+    assert(!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
+      newNameMappingRenamed, oldNoMapping))
+
+    // Downgrade NameMapping -> NoMapping is prohibited.
+    assert(!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
+      oldNoMapping, newNameMappingSameSchema))
   }
 
   testColumnMapping("create table through raw schema API should " +
@@ -1413,9 +1465,14 @@ class DeltaColumnMappingSuite extends QueryTest
       // case 1: currentSchema compared with itself
       var currentMetadata = getMetadata()
       var newMetadata = getMetadata()
+      def isBothCMEnabled: Boolean =
+        newMetadata.columnMappingMode != NoMapping &&
+          currentMetadata.columnMappingMode != NoMapping
       assert(
-        !isDropColumnOperation(newMetadata, currentMetadata) &&
-          !isRenameColumnOperation(newMetadata, currentMetadata)
+        !isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          !isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
 
       // case 2: add a top-level column
@@ -1423,8 +1480,10 @@ class DeltaColumnMappingSuite extends QueryTest
       currentMetadata = newMetadata
       newMetadata = getMetadata()
       assert(
-        !isDropColumnOperation(newMetadata, currentMetadata) &&
-          !isRenameColumnOperation(newMetadata, currentMetadata)
+        !isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          !isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
 
       // case 3: add a nested column
@@ -1432,8 +1491,10 @@ class DeltaColumnMappingSuite extends QueryTest
       currentMetadata = newMetadata
       newMetadata = getMetadata()
       assert(
-        !isDropColumnOperation(newMetadata, currentMetadata) &&
-          !isRenameColumnOperation(newMetadata, currentMetadata)
+        !isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          !isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
 
       // case 4: drop a top-level column
@@ -1441,8 +1502,10 @@ class DeltaColumnMappingSuite extends QueryTest
       currentMetadata = newMetadata
       newMetadata = getMetadata()
       assert(
-        isDropColumnOperation(newMetadata, currentMetadata) &&
-          !isRenameColumnOperation(newMetadata, currentMetadata)
+        isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          !isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
 
       // case 5: drop a nested column
@@ -1450,8 +1513,10 @@ class DeltaColumnMappingSuite extends QueryTest
       currentMetadata = newMetadata
       newMetadata = getMetadata()
       assert(
-        isDropColumnOperation(newMetadata, currentMetadata) &&
-          !isRenameColumnOperation(newMetadata, currentMetadata)
+        isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          !isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
 
       // case 6: rename a top-level column
@@ -1459,8 +1524,10 @@ class DeltaColumnMappingSuite extends QueryTest
       currentMetadata = newMetadata
       newMetadata = getMetadata()
       assert(
-        !isDropColumnOperation(newMetadata, currentMetadata) &&
-          isRenameColumnOperation(newMetadata, currentMetadata)
+        !isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
 
       // case 7: rename a nested column
@@ -1468,8 +1535,10 @@ class DeltaColumnMappingSuite extends QueryTest
       currentMetadata = newMetadata
       newMetadata = getMetadata()
       assert(
-        !isDropColumnOperation(newMetadata, currentMetadata) &&
-          isRenameColumnOperation(newMetadata, currentMetadata)
+        !isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
     }
   }

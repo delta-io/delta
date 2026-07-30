@@ -20,6 +20,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -152,7 +153,7 @@ public interface DeltaTable extends Serializable, AutoCloseable {
    * implementations may return multiple actions depending on file-splitting behavior.
    *
    * @param pathSuffix a suffix appended to the table path when generating file locations. The
-   *     result path will be `<table_root>/<path_suffix>/<paquet_file>`
+   *     result path will be {@code <table_root>/<path_suffix>/<parquet_file>}
    * @param data an iterator over row batches to be written as Parquet files; this method will close
    *     it on consumption.
    * @param partitionValues a mapping of partition column names to their literal values
@@ -165,4 +166,6 @@ public interface DeltaTable extends Serializable, AutoCloseable {
       CloseableIterator<FilteredColumnarBatch> data,
       Map<String, Literal> partitionValues)
       throws IOException;
+
+  CloseableIterator<Row> scan(Predicate predicate);
 }

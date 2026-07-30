@@ -41,7 +41,7 @@ import org.apache.spark.SparkException
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -461,6 +461,25 @@ class DeletionVectorsSuite extends QueryTest
             Seq.range(0, 200).filterNot(
               Seq.range(start = 0, end = 20, step = 2).contains(_)).toDF())
         }
+      }
+    }
+  }
+
+  test("DELETE with DVs - table with a user column named 'path' does not conflict") {
+    withDeletionVectorsEnabled() {
+      withTempDir { dir =>
+        val tablePath = dir.getAbsolutePath
+        import testImplicits._
+        val data = (0 until 10).map(i => (i, s"/path/to/value/$i"))
+        data.toDF("value", "path").write.format("delta").save(tablePath)
+
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tablePath)
+        deltaTable.delete("value < 3")
+
+        checkAnswer(
+          spark.read.format("delta").load(tablePath).orderBy("value"),
+          (3 until 10).map(i => Row(i, s"/path/to/value/$i"))
+        )
       }
     }
   }
@@ -931,8 +950,11 @@ class DeletionVectorsWithPredicatePushdownSuite extends DeletionVectorsSuite {
   }
 
   override def afterAll(): Unit = {
-    super.afterAll()
-    sql(s"DROP TABLE IF EXISTS $multiRowgroupTable")
+    try {
+      sql(s"DROP TABLE IF EXISTS $multiRowgroupTable")
+    } finally {
+      super.afterAll()
+    }
   }
 
   private def testPredicatePushDown(
@@ -1091,7 +1113,7 @@ class DeletionVectorsWithPredicatePushdownSuite extends DeletionVectorsSuite {
 
   private def assertPredicatesArePushedDown(df: DataFrame): Unit = {
     val scan = df.queryExecution.executedPlan.collectFirst {
-      case scan: FileSourceScanExec => scan
+      case scan: FileSourceScanLike => scan
     }
     assert(scan.map(_.dataFilters.nonEmpty).getOrElse(true))
   }

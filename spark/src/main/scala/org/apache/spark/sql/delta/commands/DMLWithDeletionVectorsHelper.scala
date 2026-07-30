@@ -308,6 +308,7 @@ object DeletionVectorBitmapGenerator {
   final val DELETED_ROW_INDEX_BITMAP = "deletedRowIndexSet"
   final val DELETED_ROW_INDEX_COUNT = "deletedRowIndexCount"
   final val MAX_ROW_INDEX_COL = "maxRowIndexCol"
+  final val FILE_PATH_COL = "dvFilePath"
 
   private class DeletionVectorSet(
     spark: SparkSession,
@@ -427,14 +428,15 @@ object DeletionVectorBitmapGenerator {
           serializedDV)
       }
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
+        .withColumnRenamed("path", FILE_PATH_COL)
 
-      val joinExpr = filePathToDVDf("path") === matchedRowsDf(FILE_NAME_COL)
+      val joinExpr = filePathToDVDf(FILE_PATH_COL) === matchedRowsDf(FILE_NAME_COL)
       // Perform leftOuter join to make sure we do not eliminate any rows because of path
       // encoding issues. If there is such an issue we will detect it during the aggregation
       // of the bitmaps.
       val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr, "leftOuter")
         .drop(FILE_NAME_COL)
-        .withColumnRenamed("path", FILE_NAME_COL)
+        .withColumnRenamed(FILE_PATH_COL, FILE_NAME_COL)
       joinedDf
     } else {
       // When the table has no DVs, just add a column to indicate that the existing dv is null
@@ -633,6 +635,8 @@ object DeletionVectorWriter extends DeltaLogging {
     val tablePathString = DeletionVectorStore.pathToEscapedString(table)
     val packingTargetSize =
       sparkSession.conf.get(DeltaSQLConf.DELETION_VECTOR_PACKING_TARGET_SIZE)
+    val propagateCloseFailure =
+      sparkSession.conf.get(DeltaSQLConf.DELETION_VECTOR_PROPAGATE_CLOSE_FAILURE)
 
     // This is the (partition) mapper function we are returning
     (rowIterator: Iterator[InputT]) => {
@@ -649,8 +653,12 @@ object DeletionVectorWriter extends DeltaLogging {
           tablePath,
           fileId,
           prefix)
-        val result = SparkUtils.tryWithResource(writer) { writer =>
-          rows.map(r => callbackFn(ctx, r))
+        // Not tryWithResource: its closeQuietly would swallow a failed DV close(), committing a
+        // descriptor for a file that was never written. tryWithSafeFinally propagates the failure.
+        val result = if (propagateCloseFailure) {
+          SparkUtils.tryWithSafeFinally(rows.map(r => callbackFn(ctx, r)))(writer.close())
+        } else {
+          SparkUtils.tryWithResource(writer)(w => rows.map(r => callbackFn(ctx, r)))
         }
         result
       }

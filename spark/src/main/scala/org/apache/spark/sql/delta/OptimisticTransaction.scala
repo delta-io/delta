@@ -18,45 +18,57 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
-import java.util.{ConcurrentModificationException, Optional, UUID}
+import java.time.Instant
+import java.util.{ConcurrentModificationException, Optional, Set => JSet, UUID}
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit.{MINUTES, NANOSECONDS}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-import scala.collection.mutable.{ArrayBuffer, HashSet}
+import scala.collection.mutable.ArrayBuffer
+import scala.jdk.OptionConverters._
+import scala.util.Try
 import scala.util.control.NonFatal
 
+import com.databricks.spark.util.TagDefinition
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTWriteMetrics, AMTWriterManager}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
+import org.apache.spark.sql.delta.hooks.metrics.UpdateMetricsHook
+import org.apache.spark.sql.delta.util.CatalogTableUtils
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider, ThrottledEventLogger}
 import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfiguration}
-import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, TransactionHelper}
+import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, TransactionHelper}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.commons.lang3.NotImplementedException
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkException
 import org.apache.spark.internal.{MDC, MessageWithContext}
-import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties
@@ -64,6 +76,7 @@ import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.DataType
 import org.apache.spark.util.{Clock, Utils}
 
 object CoordinatedCommitType extends Enumeration {
@@ -122,7 +135,9 @@ case class CommitStats(
   addFilesHistogram: Option[FileSizeHistogram] = None,
   removeFilesHistogram: Option[FileSizeHistogram] = None,
   numOfDomainMetadatas: Long = 0,
-  txnId: Option[String] = None
+  txnId: Option[String] = None,
+  /** Metrics for the inline AMT (Adaptive Metadata Tree) write, if this commit emitted one. */
+  amtWriteMetrics: Option[AMTWriteMetrics] = None
 )
 
 /**
@@ -260,20 +275,54 @@ trait OptimisticTransactionImpl extends TransactionHelper
   with SQLMetricsReporting
   with DeltaScanGenerator
   with RecordChecksum
-  with DeltaLogging {
+  with DeltaLogging
+  with DeltaLoggingProvider {
+
+  /**
+   * Whether this transaction may be constructed without a V1 [[DeltaLog]]. Defaults to `false`:
+   * a V1 transaction must always have a real `deltaLog`. Only the Kernel-backed
+   * [[org.apache.spark.sql.delta.v2.interop.DeltaV2OptimisticTransaction]] legitimately
+   * has none and opts in by overriding this.
+   */
+  protected def allowNullDeltaLog: Boolean = false
+
+  // Invariant: a V1 OptimisticTransaction must always be constructed with a non-null deltaLog.
+  // Guards against accidentally constructing one with null deltaLog which would otherwise
+  // surface as a confusing NPE deep in the commit path rather than at construction.
+  require(
+    allowNullDeltaLog || deltaLog != null,
+    "A V1 OptimisticTransaction must be constructed with a non-null deltaLog.")
+
+  /**
+   * Recording tags for this transaction, anchored to the read snapshot's `metadata.id`. Lets
+   * `recordDeltaEvent(txn, ...)` attribute events to the table being mutated without reaching
+   * through `txn.deltaLog`.
+   */
+  override def getCommonTags: Map[TagDefinition, String] =
+    deltaLog.getCommonTags(Try(snapshot.metadata.id).getOrElse(null))
 
   import org.apache.spark.sql.delta.util.FileNames._
 
   // Intentionally cache the values of these configs to ensure stable commit code path
   // and avoid race conditions between committing and dynamic config changes.
-  protected val incrementalCommitEnabled = deltaLog.incrementalCommitEnabled
-  protected val shouldVerifyIncrementalCommit = deltaLog.shouldVerifyIncrementalCommit
+  // The cached vals are initialized from overridable compute-hooks.
+  protected def computeIncrementalCommitEnabled: Boolean = deltaLog.incrementalCommitEnabled
+  protected def computeShouldVerifyIncrementalCommit: Boolean =
+    deltaLog.shouldVerifyIncrementalCommit
+  protected val incrementalCommitEnabled = computeIncrementalCommitEnabled
+  protected val shouldVerifyIncrementalCommit = computeShouldVerifyIncrementalCommit
   protected val forcedChecksumValidationInterval =
     spark.conf.get(DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL)
   protected val forcedChecksumValidationMinTimeIntervalMinutes =
     spark.conf.get(DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_MIN_TIME_INTERVAL_MINUTES)
 
   def clock: Clock = deltaLog.clock
+
+  override def dataPath: Path = deltaLog.dataPath
+
+  override def logPath: Path = deltaLog.logPath
+
+  override def newDeltaHadoopConf(): Configuration = deltaLog.newDeltaHadoopConf()
 
   // This would be a quick operation if we already validated the checksum
   // Otherwise, we should at least perform the validation here.
@@ -326,10 +375,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
     new java.util.concurrent.ConcurrentLinkedQueue[DeltaTableReadPredicate]
 
   /** Tracks specific files that have been seen by this transaction. */
-  protected val readFiles = new HashSet[AddFile]
+  protected val readFiles: JSet[AddFile] = ConcurrentHashMap.newKeySet[AddFile]()
 
   /** Whether the whole table was read during the transaction. */
-  protected var readTheWholeTable = false
+  @volatile protected var readTheWholeTable = false
 
   /** Tracks if this transaction has already committed. */
   protected var committed: Option[CommittedTransaction] = None
@@ -371,8 +420,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected var commitInfo: CommitInfo = _
   def getCommitInfo: CommitInfo = commitInfo
 
-  /** Whether the txn should trigger a checkpoint after the commit */
-  private[delta] var needsCheckpoint = false
+  /** The log-maintenance work this txn decided after committing. */
+  private[delta] var maintenanceOperation: MaintenanceOperation = MaintenanceOperation()
 
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
@@ -448,10 +497,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
   registerPostCommitHook(ChecksumHook)
   catalogTable.foreach { ct =>
     registerPostCommitHook(UpdateCatalogFactory.getUpdateCatalogHook(ct, spark))
+    if (CatalogTableUtils.isUnityCatalogManagedTable(ct)) {
+      registerPostCommitHook(UpdateMetricsHook(Some(ct)))
+    }
   }
   // The CheckpointHook will only checkpoint if necessary, so always register it to run.
   registerPostCommitHook(CheckpointHook)
-  registerPostCommitHook(IcebergConverterHook)
   registerPostCommitHook(HudiConverterHook)
 
   /** The protocol of the snapshot that this transaction is reading at. */
@@ -537,11 +588,17 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected[delta] var isBlindAppend: Boolean = false
 
   /**
+   * The initial value of [[preCommitLogSegment]]. V1 copies the read snapshot's own
+   * [[LogSegment]].
+   */
+  protected def initialPreCommitLogSegment: LogSegment =
+    snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
+
+  /**
    * The logSegment of the snapshot prior to the commit.
    * Will be updated only when retrying due to a conflict.
    */
-  private[delta] var preCommitLogSegment: LogSegment =
-    snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
+  private[delta] var preCommitLogSegment: LogSegment = initialPreCommitLogSegment
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -618,10 +675,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
     if (!identityColumnAllowed &&
         ColumnWithDefaultExprUtils.hasIdentityColumn(newMetadataTmp.schema)) {
       throw DeltaErrors.unsupportedWriterTableFeaturesInTableException(
-        deltaLog.dataPath.toString, Seq(IdentityColumnsTableFeature.name))
+        dataPath.toString, Seq(IdentityColumnsTableFeature.name))
     }
 
     val protocolBeforeUpdate = protocol
+    newMetadataTmp = enableAdaptiveMetadataDependentFeatures(newMetadataTmp)
+
     // `readVersion == -1` indicates the current transaction is reading from a snapshot
     // where the table has not existed yet.
     // `isCreatingNewTable` will be true for commands like REPLACE and CREATE,
@@ -875,6 +934,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       CoordinatedCommitsUtils.getExplicitCCConfigurations(snapshot.metadata.configuration)
     val existingICTConfs =
       CoordinatedCommitsUtils.getExplicitICTConfigurations(snapshot.metadata.configuration)
+    val existingQoLConfs =
+      CoordinatedCommitsUtils.getExplicitQoLConfigurations(snapshot.metadata.configuration)
     val oldMappingMode = snapshot.metadata.columnMappingMode
     val newMappingMode = metadata.columnMappingMode
     val shouldReuseColumnMetadataForReplaceTable =
@@ -890,8 +951,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // to remove them and retain the Coordinated Commits configurations from the existing table.
     val newConfsWithoutCC = newMetadata.get.configuration --
       CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
-    var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs ++
-      existingUCTableIdConf
+    val existingQoLConfsToRetain = existingQoLConfs.filterNot { case (key, _) =>
+      newConfsWithoutCC.contains(key)
+    }
+    var newConfs: Map[String, String] =
+      newConfsWithoutCC ++ existingCCConfs ++ existingQoLConfsToRetain ++ existingUCTableIdConf
     // We also need to retain the existing ICT dependency configurations, but only when the
     // existing table does have Coordinated Commits configurations or Catalog-Owned enabled.
     // Otherwise, we treat the ICT configurations the same as any other configurations,
@@ -939,7 +1003,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected def assertMetadata(metadata: Metadata): Unit = {
     assert(!CharVarcharUtils.hasCharVarchar(metadata.schema),
       "The schema in Delta log should not contain char/varchar type.")
-    SchemaMergingUtils.checkColumnNameDuplication(metadata.schema, "in the metadata update")
+    SchemaMergingUtils.checkColumnNameDuplication(metadata.schema, "METADATA_UPDATE")
     if (metadata.columnMappingMode == NoMapping) {
       SchemaUtils.checkSchemaFieldNames(metadata.dataSchema, metadata.columnMappingMode)
       val partitionColCheckIsFatal =
@@ -976,6 +1040,19 @@ trait OptimisticTransactionImpl extends TransactionHelper
       }
     }
 
+    // even though we've just called SchemaUtils.findUnsupportedDataTypes, we didn't have
+    // spark config there.
+    // so we need to check again here.
+    if (!DeltaGeoSpatial.isPreviewEnabled(spark)) {
+      val geoTypeOpt = DeltaGeoSpatial.findGeoColumnsRecursively(metadata.schema)
+      geoTypeOpt.foreach { geoType =>
+        throw new AnalysisException("UNSUPPORTED_DATATYPE", Map("typeName" -> geoType.toString))
+      }
+    } else {
+      DeltaGeoSpatial.assertSridSupported(metadata.schema)
+    }
+
+
     if (spark.conf.get(DeltaSQLConf.DELTA_TABLE_PROPERTY_CONSTRAINTS_CHECK_ENABLED)) {
       Protocol.assertTablePropertyConstraintsSatisfied(spark, metadata, snapshot)
     }
@@ -1004,6 +1081,60 @@ trait OptimisticTransactionImpl extends TransactionHelper
     } else {
       metadata
     }
+  }
+
+  /**
+   * Enable the dependencies of the [[AdaptiveMetadataTableFeature]] in the metadata.
+   * [[AdaptiveMetadataTableFeature.requiredFeatures]] only guarantees these features are present
+   * in the protocol (supported); several of them additionally need a metadata flag to be truly
+   * enabled(rowTracking, deletionVectors) or a specific configuration (column mapping `id` mode).
+   */
+  private def enableAdaptiveMetadataDependentFeatures(metadata: Metadata): Metadata = {
+    val adaptiveMetadataEnabled =
+      protocol.isFeatureSupported(AdaptiveMetadataTableFeature) ||
+        TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
+          metadata.configuration, AdaptiveMetadataTableFeature)
+    if (!adaptiveMetadataEnabled) {
+      return metadata
+    }
+
+    val existingTableHasAdaptiveMetadata =
+      snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+    if (!isCreatingNewTable && !existingTableHasAdaptiveMetadata) {
+      throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(AdaptiveMetadataTableFeature.name)
+    }
+
+    // rowTracking / deletionVectors: these dependencies must be enabled via their metadata flag.
+    // If the flag is not set, auto-enable it. If it is explicitly set to `false`, the user is
+    // asking for behavior that conflicts with the feature's requirement, so fail rather than
+    // silently overriding.
+    val flagEnablements = Seq(
+      DeltaConfigs.ROW_TRACKING_ENABLED.key,
+      DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key)
+      .flatMap { key =>
+        metadata.configuration.get(key) match {
+          case None => Some(key -> "true")
+          case Some(v) if v.toBoolean => None
+          case Some(v) =>
+            throw DeltaErrors.adaptiveMetadataRequiresDependentFeatureEnabled(
+              AdaptiveMetadataTableFeature.name, key, v)
+        }
+      }
+    var updatedConfig = metadata.configuration ++ flagEnablements
+
+    // columnMapping: the feature requires `id` mode.
+    //  - New table, mode unspecified: auto-set `id`.
+    //  - Otherwise (e.g. an explicit mode was requested at CREATE) the resulting mode must be `id`,
+    //    else fail.
+    val modeExplicitlySet = metadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key)
+    if (!modeExplicitlySet && isCreatingNewTable) {
+      updatedConfig += (DeltaConfigs.COLUMN_MAPPING_MODE.key -> IdMapping.name)
+    } else if (metadata.columnMappingMode != IdMapping) {
+      throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
+        AdaptiveMetadataTableFeature.name, metadata.columnMappingMode.name)
+    }
+
+    metadata.copy(configuration = updatedConfig)
   }
 
   private def setNewProtocolWithFeaturesEnabledByMetadata(metadata: Metadata): Unit = {
@@ -1144,23 +1275,73 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Returns files within the given partitions.
-   *
-   * `partitions` is a set of the `partitionValues` stored in [[AddFile]]s. This means they refer to
-   * the physical column names, and values are stored as strings.
-   * */
-  def filterFiles(partitions: Set[Map[String, String]]): Seq[AddFile] = {
+   * Returns files within the partitions of the given [[AddFile]]s.
+   */
+  def filterFiles(newFiles: Seq[AddFile]): Seq[AddFile] = {
     import org.apache.spark.sql.functions.col
     val df = snapshot.allFiles.toDF()
-    val isFileInTouchedPartitions =
-      DeltaUDF.booleanFromMap(partitions.contains)(col("partitionValues"))
-    val filteredFiles = df
-      .filter(isFileInTouchedPartitions)
-      .withColumn("stats", DataSkippingReader.nullStringLiteral)
-      .as[AddFile]
-      .collect()
+    val parseToTypedLiterals =
+      spark.conf.get(DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_PARSE_PARTITION_VALUES)
+    val timeZone = spark.sessionState.conf.sessionLocalTimeZone
+
+    val (filteredFiles, filterPredicate) = try {
+      // Always fail on error. We log and throw it again or fall back depending on the config.
+      val newFilesNormalizedPartitionValues = newFiles.map(f =>
+        Action.normalizePartitionValues(
+          f.partitionValues,
+          metadata.physicalPartitionSchema,
+          timeZone,
+          parseToTypedLiterals,
+          failOnParsingError = true)
+      ).toSet
+
+      val existingFilesPartitionSchema = snapshot.metadata.physicalPartitionSchema
+      val pred = DeltaUDF.booleanFromMap { filePartValues =>
+        newFilesNormalizedPartitionValues.contains(Action.normalizePartitionValues(
+          filePartValues,
+          existingFilesPartitionSchema,
+          timeZone,
+          parseToTypedLiterals,
+          failOnParsingError = true))
+      }(col("partitionValues"))
+      val files = df.filter(pred)
+          .withColumn("stats", DataSkippingReader.nullStringLiteral)
+          .as[AddFile]
+          .collect()
+      (files, pred)
+    } catch {
+      case NonFatal(e) =>
+        val opTypeSuffix = PartitionUtils.classifyPartitionValueParsingError(e)
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.dynamicPartitionOverwrite.partitionValueParsingError" + opTypeSuffix,
+          data = getErrorData(e) ++ Map(
+            "readSnapshotMetadata" -> snapshot.metadata,
+            "txnMetadata" -> metadata,
+            "commitInfo" -> commitInfo,
+            "readSnapshotVersion" -> snapshot.version,
+            "timeZone" -> timeZone
+          )
+        )
+        if (spark.conf.get(DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR)) {
+          e match {
+            // UDF exceptions get wrapped in SparkException. Unwrap to throw the root cause.
+            case se: SparkException => throw Option(se.getCause).getOrElse(se)
+            case _ => throw e
+          }
+        }
+        // Partition value parsing failed, fall back to raw string comparison.
+        val rawPartitions = newFiles.map(_.partitionValues).toSet
+        val pred = DeltaUDF.booleanFromMap(rawPartitions.contains)(col("partitionValues"))
+        val files = df.filter(pred)
+            .withColumn("stats", DataSkippingReader.nullStringLiteral)
+            .as[AddFile]
+            .collect()
+        (files, pred)
+    }
+
     trackReadPredicates(
-      Seq(isFileInTouchedPartitions.expr), partitionOnly = true, shouldRewriteFilter = false)
+      Seq(filterPredicate.expr), partitionOnly = true, shouldRewriteFilter = false)
     filteredFiles
   }
 
@@ -1172,7 +1353,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /** Mark the given files as read within this transaction. */
   def trackFilesRead(files: Seq[AddFile]): Unit = {
-    readFiles ++= files
+    readFiles.addAll(files.asJava)
   }
 
   /** Mark the predicates that have been queried by this transaction. */
@@ -1298,6 +1479,38 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
+   * Per-commit usage-log throttlers for the AddFile sanity checks. A single commit can contain
+   * many invalid AddFiles; in logging-only mode that would emit one event per invalid action and
+   * flood usage logs, so we cap each check to [[maxSanityCheckEventsToLog]] events per commit.
+   * These are instance fields, so each [[OptimisticTransaction]] (i.e. each commit) gets a fresh
+   * count.
+   */
+  private val maxSanityCheckEventsToLog = 2
+  private val emptyFileCheckEventLogger = new ThrottledEventLogger(maxSanityCheckEventsToLog)
+  private val nullPartitionCheckEventLogger = new ThrottledEventLogger(maxSanityCheckEventsToLog)
+
+  /**
+   * Validates that an AddFile does not reference a zero-byte parquet file.
+   * Logs a delta event regardless of the flag; throws only when
+   * [[DeltaSQLConf.DELTA_EMPTY_FILE_CHECK_THROW_ENABLED]] is set.
+   */
+  protected def validateAddFileNotEmpty(addFile: AddFile): Unit = {
+    if (addFile.size == 0) {
+      emptyFileCheckEventLogger.recordThrottledDeltaEvent(
+        deltaLog,
+        "delta.sanityCheck.emptyParquetFile",
+        data = Map(
+          "addFile" -> addFile.json,
+          "stackTrace" -> Thread.currentThread().getStackTrace.take(20).mkString("\n")
+        ))
+      if (spark.conf.get(DeltaSQLConf.DELTA_EMPTY_FILE_CHECK_THROW_ENABLED)) {
+        throw new IllegalStateException(
+          s"AddFile ${addFile.path} references a zero-byte (empty) parquet file")
+      }
+    }
+  }
+
+  /**
    * Validates that partition columns that have NOT NULL
    * constraints are not null in the AddFile action.
    *
@@ -1310,7 +1523,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     notNullPartitionCols.foreach { col =>
       addFile.partitionValues.get(col) match {
         case None | Some(null) =>
-          recordDeltaEvent(
+          nullPartitionCheckEventLogger.recordThrottledDeltaEvent(
             deltaLog,
             "delta.constraints.nullPartitionViolation",
             data = Map(
@@ -1328,30 +1541,46 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Returns all the partition columns that have NOT NULL constraints.
+   * Returns the physical names of partition columns that have NOT NULL constraints.
+   * Physical names are used because AddFile.partitionValues keys use physical column names
+   * when column mapping is enabled.
    */
   protected def getNotNullPartitionCols(metadata: Metadata): Set[String] = {
     val notNullColumns = Invariants.getFromSchema(metadata.schema, spark)
       .collect { case Constraints.NotNull(cols) => cols.mkString(".") }
       .toSet
-    metadata.partitionColumns.filter(notNullColumns.contains).toSet
+    metadata.partitionSchema
+      .filter(f => notNullColumns.contains(f.name))
+      .map(DeltaColumnMapping.getPhysicalName)
+      .toSet
   }
 
   /**
-   * For any partition columns that have NOT NULL constraints,
-   * validate that the partition values in the AddFile actions are not null.
+   * Runs all AddFile sanity checks: empty-file detection and null-partition validation.
    */
-  protected def validateActionsForNullPartitions(
+  protected def validateAddFileInvariants(
+      addFile: AddFile,
+      notNullPartitionCols: Set[String]): Unit = {
+    validateAddFileNotEmpty(addFile)
+    validateAddFileForNullPartitions(addFile, notNullPartitionCols)
+  }
+
+  /**
+   * Iterates over all actions and validates AddFile invariants.
+   */
+  protected def validateActionsAddFileInvariants(
       actions: Seq[Action],
       metadata: Metadata): Unit = {
     val notNullPartitionCols = getNotNullPartitionCols(metadata)
-    if (notNullPartitionCols.nonEmpty) {
-      actions.foreach {
-        case a: AddFile =>
-          validateAddFileForNullPartitions(a, notNullPartitionCols)
-        case _ =>
-      }
+    actions.foreach {
+      case a: AddFile => validateAddFileInvariants(a, notNullPartitionCols)
+      case _ =>
     }
+  }
+
+  /** Ensure that actions do not contain duplicates for the same path. */
+  protected def checkNoDuplicateActions(actions: Seq[Action]): Unit = {
+    ConflictChecker.checkNoDuplicateActions(spark, actions.iterator).foreach(_ => ())
   }
 
   /**
@@ -1401,11 +1630,15 @@ trait OptimisticTransactionImpl extends TransactionHelper
         newMode = _newMetadata.columnMappingMode
       )
 
+      val isBothColumnMappingEnabled =
+        _newMetadata.columnMappingMode != NoMapping &&
+          _currentMetadata.columnMappingMode != NoMapping
+
       def dropColumnOp: Boolean = DeltaColumnMapping.isDropColumnOperation(
-        _newMetadata, _currentMetadata)
+        _newMetadata.schema, _currentMetadata.schema, isBothColumnMappingEnabled)
 
       def renameColumnOp: Boolean = DeltaColumnMapping.isRenameColumnOperation(
-        _newMetadata, _currentMetadata)
+        _newMetadata.schema, _currentMetadata.schema, isBothColumnMappingEnabled)
 
       def columnMappingChange: Boolean = isColumnMappingUpgrade || dropColumnOp || renameColumnOp
 
@@ -1413,6 +1646,55 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       if (cdcEnabled && columnMappingEnabled && columnMappingChange && existsFileActions) {
         throw DeltaErrors.blockColumnMappingAndCdcOperation(op)
+      }
+    }
+  }
+
+  /**
+   * Validates that partition column changes are only performed by operations that explicitly
+   * allow them. This check helps prevent accidental partition schema changes that could lead
+   * to data inconsistencies.
+   *
+   * The validation can be configured via [[DeltaSQLConf.DELTA_PARTITION_COLUMN_CHANGE_CHECK]].
+   *
+   * @param op The operation being performed
+   * @param newMetadata The new metadata (if any) being set in this transaction
+   */
+  private def validatePartitionColumnChanges(
+      op: DeltaOperations.Operation,
+      newMetadata: Option[Metadata]): Unit = {
+    val checkMode = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_PARTITION_COLUMN_CHANGE_CHECK)
+
+    if (checkMode != DeltaSQLConf.BooleanStringOrLogOnly.FALSE) {
+      val isNewTable = snapshot.version == -1L
+
+      // Validate that partition column changes are only performed by allowed operations.
+      newMetadata.foreach { newMeta =>
+        val oldCols = snapshot.metadata.partitionColumns
+        val newCols = newMeta.partitionColumns
+        val partitionColsChanged = oldCols != newCols
+        val illegalColChange = !isNewTable && partitionColsChanged && !op.canChangePartitionColumns
+
+        if (illegalColChange) {
+          recordDeltaEvent(
+            provider = deltaLog,
+            opType = "delta.metadataCheck.illegalPartitionColumnChange",
+            data = Map(
+              "operation" -> op.name,
+              "operationParameters" -> op.jsonEncodedValues,
+              "oldPartitionColumns" -> oldCols,
+              "newPartitionColumns" -> newCols
+            )
+          )
+          if (checkMode == DeltaSQLConf.BooleanStringOrLogOnly.TRUE) {
+            throw DeltaErrors.unsupportedPartitionColumnChange(
+              operation = op.name,
+              oldPartitionColumns = oldCols,
+              newPartitionColumns = newCols
+            )
+          }
+        }
       }
     }
   }
@@ -1478,10 +1760,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
   ): Unit = {
     // If this transaction commits to the redirect destination location, then there is no
     // need to validate the subsequent no-redirect rules.
-    val configuration = deltaLog.newDeltaHadoopConf()
-    val dataPath = snapshot.deltaLog.dataPath.toUri.getPath
+    val configuration = newDeltaHadoopConf()
+    val tableDataPath = dataPath.toUri.getPath
     val catalog = spark.sessionState.catalog
-    val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, dataPath)
+    val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, tableDataPath)
     if (isRedirectDest) return
     // Find all rules that match with the current application name.
     // If appName is not present, its no-redirect-rule are included.
@@ -1580,7 +1862,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
           prepareCommit(finalActions, op)
         }
 
-      validateActionsForNullPartitions(preparedActions, metadata)
+      validateActionsAddFileInvariants(preparedActions, metadata)
+
+      checkNoDuplicateActions(preparedActions)
+      ConflictChecker.trackConsistentDataChange(
+        spark, preparedActions.iterator, deltaLog, op, callerContext = "commit")
+        .foreach(_ => ())
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -1591,7 +1878,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(finalActions, protocol)
 
       isBlindAppend = {
-        val dependsOnFiles = !readPredicates.isEmpty || readFiles.nonEmpty
+        val dependsOnFiles = !readPredicates.isEmpty || !readFiles.isEmpty
         val onlyAddFiles =
           preparedActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
         onlyAddFiles && !dependsOnFiles
@@ -1631,10 +1918,14 @@ trait OptimisticTransactionImpl extends TransactionHelper
           case other => other
         }
       }
+      val preCommitLatestAMTCheckpointOpt = snapshot.checkpointProvider match {
+        case amt: AMTCheckpointProvider => Some(amt.checkpointAction)
+        case _ => None
+      }
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.asScala.toVector,
-        readFiles = readFiles.toSet,
+        readFiles = readFiles.asScala.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
         metadata = metadata,
@@ -1645,7 +1936,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         readRowIdHighWatermark = readRowIdHighWatermark,
         catalogTable = catalogTable,
         domainMetadata = domainMetadata,
-        op = op)
+        op = op,
+        preCommitLatestAMTCheckpointOpt = preCommitLatestAMTCheckpointOpt)
 
       // Register post-commit hooks if any
       lazy val hasFileActions = preparedActions.exists {
@@ -1666,9 +1958,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       val (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo) =
         doCommitRetryIteratively(firstAttemptVersion, currentTransactionInfo, isolationLevelToUse)
-      setCommitted(commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo.actions)
+      setCommitted(
+        commitVersion,
+        postCommitSnapshot,
+        Some(updatedCurrentTransactionInfo))
       logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, commitVersion)} to " +
-        log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}")
+        log"${MDC(DeltaLogKeys.PATH, logPath)}")
       commitVersion
     } catch {
       case e: DeltaConcurrentModificationException =>
@@ -1700,7 +1995,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val metadataWithIctInfo = commitInfo.inCommitTimestamp
       .flatMap { inCommitTimestamp =>
         InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
-          spark, inCommitTimestamp, snapshot, metadata, firstAttemptVersion)
+          spark = spark,
+          inCommitTimestamp = inCommitTimestamp,
+          currentMetadataWithVersion =
+            InCommitTimestampUtils.MetadataWithVersion(firstAttemptVersion, metadata),
+          priorMetadataWithVersion =
+            InCommitTimestampUtils.MetadataWithVersion(snapshot.version, snapshot.metadata))
       }.getOrElse { return false }
     newMetadata = Some(metadataWithIctInfo)
     true
@@ -1842,7 +2142,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         action match {
           case a: AddFile =>
             assertDeletionVectorWellFormed(a)
-            validateAddFileForNullPartitions(a, notNullPartitionCols)
+            validateAddFileInvariants(a, notNullPartitionCols)
           case p: Protocol =>
             recordProtocolChanges(
               "delta.protocol.change",
@@ -1856,6 +2156,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         }
         action
       }
+      allActions = ConflictChecker.trackConsistentDataChange(
+        spark, allActions, deltaLog, op, callerContext = "commitLarge")
       val (allActions2, acStatsCollector) = collectAutoOptimizeStats(allActions)
       allActions = allActions2
 
@@ -1867,6 +2169,22 @@ trait OptimisticTransactionImpl extends TransactionHelper
       allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions, op)
       allActions = DefaultRowCommitVersion.assignIfMissing(
         spark, protocol, snapshot, allActions, getFirstAttemptVersion)
+      val (allActions3, icebergTrackedInfo) = generateIcebergMetadataForCommitLarge(
+        allActions, catalogTable, attemptVersion, commitInfo)
+      // Capture the committed DomainMetadata (e.g. clustering columns) for ALL tables so a
+      // catalog-managed commit coordinator (e.g. Unity Catalog) is informed of it, mirroring the
+      // regular doCommit() path. The buffer fills as the commit file is streamed out and is read by
+      // the coordinator afterwards for the metadata update -- the same streaming collector pattern
+      // used by collectAutoOptimizeStats above.
+      val capturedDomainMetadata = mutable.ArrayBuffer.empty[AbstractDomainMetadata]
+      allActions = allActions3.map {
+        case dm: DomainMetadata =>
+          capturedDomainMetadata += dm
+          dm
+        case other => other
+      }
+      val catalogTrackedInfo = new CatalogTrackedInfo(
+        icebergTrackedInfo.deltaUniformIceberg(), capturedDomainMetadata.asJava)
 
       val commitStatsComputer = new CommitStatsComputer()
       allActions = commitStatsComputer.addToCommitStats(allActions)
@@ -1885,13 +2203,19 @@ trait OptimisticTransactionImpl extends TransactionHelper
           TableCommitCoordinatorClient(
             commitCoordinatorClient = new FileSystemBasedCommitCoordinatorClient(deltaLog),
             deltaLog = deltaLog,
-            coordinatedCommitsTableConf = snapshot.metadata.coordinatedCommitsTableConf)
+            coordinatedCommitsTableConf = snapshot.metadata.coordinatedCommitsTableConf
+          )
         }
       val updatedActions = new UpdatedActions(
         commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
       val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
         effectiveTableCommitCoordinatorClient.commit(
-          attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
+          attemptVersion,
+          jsonActions,
+          updatedActions,
+          catalogTable.map(_.identifier),
+          catalogTrackedInfo
+        )
       }
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
@@ -1912,7 +2236,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
         attemptVersion,
         commitResponse.getCommit,
         txnId)
-      setCommitted(attemptVersion, postCommitSnapshot, committedActions = Seq.empty)
+      setCommitted(
+        attemptVersion,
+        postCommitSnapshot,
+        committedTransactionInfoOpt = None)
       val postCommitReconstructionTime = System.nanoTime()
       commitStatsComputer.finalizeAndEmitCommitStats(
         spark,
@@ -1927,6 +2254,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
         // We manually triggered a checkpoint in `updateAndCheckpoint` above.
         computedNeedsCheckpoint = true,
         isolationLevel = Serializable,
+        // commitLarge always triggers state reconstruction, so it is safe to
+        // access postCommitSnapshot.fileSizeHistogram here as opposed to the other
+        // commit code path.
+        fileSizeHistogramOpt = postCommitSnapshot.fileSizeHistogram,
         commitInfoOpt = Some(commitInfo),
         commitSizeBytes = commitSizeBytes
       )
@@ -1945,7 +2276,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
               deltaLog.update(catalogTableOpt = catalogTable))
             val logs = deltaLog.store.readAsIterator(
               fileProvider.deltaFile(attemptVersion),
-              deltaLog.newDeltaHadoopConf())
+              newDeltaHadoopConf())
             try {
               val winningCommitActions = logs.map(Action.fromJson)
               val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
@@ -1966,6 +2297,53 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
+   * If the table has UniForm Iceberg enabled,
+   * generate Iceberg metadata atomically before Delta commits.
+   * Unfortunately this requires materializing the streaming action iterator
+   * as Iceberg keeps track of actions to append inside memory.
+   * Thus, a validation on number of actions to convert exists for reminding users.
+   */
+  def generateIcebergMetadataForCommitLarge(
+      allActions: Iterator[Action],
+      catalogTable: Option[CatalogTable],
+      attemptVersion: Long,
+      commitInfo: CommitInfo): (Iterator[Action], CatalogTrackedInfo) = {
+    val (allActionsCopy, catalogTrackedInfo) = catalogTable match {
+      case Some(table) if UniversalFormat.icebergEnabled(metadata) =>
+        val maxActions = spark.conf.get(
+          DeltaSQLConf.DELTA_UNIFORM_ICEBERG_MAX_ACTIONS_TO_CONVERT_FOR_COMMIT_LARGE
+        )
+        val bufferedActions = allActions.zipWithIndex.map { case (action, idx) =>
+          if (idx >= maxActions) {
+            throw new IllegalStateException(
+              s"There are more than $maxActions actions in this commitLarge. " +
+                "Please use a writer with large memory and increase threshold" +
+                "in DeltaSQLConf.DELTA_UNIFORM_ICEBERG_MAX_ACTIONS_TO_CONVERT_FOR_COMMIT_LARGE" +
+                "to retry.")
+          }
+          action
+        }.toSeq
+        val txnInfo = CurrentTransactionInfo.forIcebergConversion(
+          metadata = metadata,
+          protocol = protocol,
+          readSnapshot = snapshot,
+          actions = bufferedActions,
+          commitInfo = Some(commitInfo)
+        )
+        val (updatedTxnInfo, _) = generateIcebergAndUpdateCurrentTransactionInfo(
+          spark, this, attemptVersion, txnInfo
+          , table
+        )
+        (bufferedActions.iterator: Iterator[Action],
+          new CatalogTrackedInfo(updatedTxnInfo.convertedIcebergMetadata.toJava)
+        )
+      case _ =>
+        (allActions, CatalogTrackedInfo.EMPTY)
+    }
+    (allActionsCopy, catalogTrackedInfo)
+  }
+
+  /**
    * Splits a transaction into smaller child transactions that operate on disjoint sets of the files
    * read by the parent transaction. This function is typically used when you want to break a large
    * operation into one that can be committed separately / incrementally.
@@ -1981,7 +2359,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val t = new OptimisticTransaction(deltaLog, catalogTable, snapshot)
     t.executionObserver = executionObserver.createChild()
     t.readPredicates.addAll(readPredicates)
-    t.readFiles ++= readFilesSubset
+    t.readFiles.addAll(readFilesSubset.asJava)
     t.readTxn ++= readTxn
     t
   }
@@ -2012,14 +2390,14 @@ trait OptimisticTransactionImpl extends TransactionHelper
           // FS -> CC conversion
           val (commitCoordinatorName, commitCoordinatorConf) =
             CoordinatedCommitsUtils.getCoordinatedCommitsConfs(finalMetadata)
-          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} transitioning from " +
+          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, logPath)} transitioning from " +
             log"file-system based table to coordinated-commits table: " +
             log"[commit-coordinator: ${MDC(DeltaLogKeys.COORDINATOR_NAME, commitCoordinatorName)}" +
             log", conf: ${MDC(DeltaLogKeys.COORDINATOR_CONF, commitCoordinatorConf)}]")
           val tableIdentifierOpt =
             CoordinatedCommitsUtils.toCCTableIdentifier(catalogTable.map(_.identifier))
           newCoordinatedCommitsTableConf = Some(newCommitCoordinatorClient.registerTable(
-            deltaLog.logPath,
+            logPath,
             tableIdentifierOpt,
             readVersion,
             finalMetadata,
@@ -2028,7 +2406,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           // CC -> FS conversion
           val (newOwnerName, newOwnerConf) =
             CoordinatedCommitsUtils.getCoordinatedCommitsConfs(snapshot.metadata)
-          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} transitioning from " +
+          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, logPath)} transitioning from " +
             log"coordinated-commits table to file-system table: " +
             log"[commit-coordinator: ${MDC(DeltaLogKeys.COORDINATOR_NAME, newOwnerName)}, " +
             log"conf: ${MDC(DeltaLogKeys.COORDINATOR_CONF, newOwnerConf)}]")
@@ -2040,7 +2418,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           // commit-coordinator.
           val (newOwnerName, newOwnerConf) =
             CoordinatedCommitsUtils.getCoordinatedCommitsConfs(finalMetadata)
-          val message = s"Transition of table ${deltaLog.logPath} from one commit-coordinator to" +
+          val message = s"Transition of table ${logPath} from one commit-coordinator to" +
             s" another commit-coordinator is not allowed: [old commit-coordinator: $oldOwnerName," +
             s" new commit-coordinator: $newOwnerName, old commit-coordinator conf: $oldOwnerConf," +
             s" new commit-coordinator conf: $newOwnerConf]."
@@ -2073,7 +2451,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, attemptVersion)} to " +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}. Wrote " +
+      log"${MDC(DeltaLogKeys.PATH, logPath)}. Wrote " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
 
     deltaLog.checkpoint(currentSnapshot, catalogTable)
@@ -2185,6 +2563,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
     var finalActions = newMetadata.toSeq ++ newProtocol.toSeq ++ otherActions
 
+    DeltaGeoSpatial.validateCommitActions(spark, protocol, finalActions)
+
     // Block future cases of CDF + Column Mapping changes + file changes
     // This check requires having called
     // DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments which is done in the
@@ -2219,6 +2599,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
           log"Detected no metadata in initial commit but commit validation was turned off.")
       }
     }
+
+    // Validate that partition column changes are only performed by allowed operations.
+    validatePartitionColumnChanges(op, newMetadata)
 
     val partitionColumns = metadata.physicalPartitionSchema.fieldNames.toSet
     finalActions = finalActions.map {
@@ -2280,6 +2663,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // feature is not enabled.
     if (!protocol.isFeatureSupported(AllowColumnDefaultsTableFeature)) {
       checkNoColumnDefaults(op)
+    } else {
+      checkColumnDefaults(op)
     }
 
     finalActions
@@ -2318,7 +2703,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   private[delta] def isCommitLockEnabled: Boolean = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED).getOrElse(
-      deltaLog.store.isPartialWriteVisible(deltaLog.logPath, deltaLog.newDeltaHadoopConf()))
+      deltaLog.store.isPartialWriteVisible(logPath, newDeltaHadoopConf()))
   }
 
   private def lockCommitIfEnabled[T](body: => T): T = {
@@ -2349,6 +2734,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     lockCommitIfEnabled {
       var commitVersion = attemptVersion
       var updatedCurrentTransactionInfo = currentTransactionInfo
+      val amtWriterManager = new AMTWriterManager(snapshot, currentTransactionInfo.op)
       val isFsToCcCommit =
         snapshot.metadata.coordinatedCommitsCoordinatorName.isEmpty &&
           metadata.coordinatedCommitsCoordinatorName.nonEmpty
@@ -2360,14 +2746,23 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       for (attemptNumber <- 0 to maxRetryAttempts) {
         try {
-          val postCommitSnapshot = if (!shouldCheckForConflicts) {
-            doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
+          val (postCommitSnapshot, committedTransactionInfo) = if (!shouldCheckForConflicts) {
+            doCommit(
+              commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel,
+              amtWriterManager)
           } else recordDeltaOperation(deltaLog, "delta.commit.retry") {
+            // The [[CurrentTransactionInfo]] might keep on getting updated while resolving
+            // conflicts against the already committed concurrent transactions. This can happen
+            // when we resolve conflicts against no-data-change transaction - we might map our
+            // readFiles or we might rollback the no-data-change transaction and update our actions
+            // that we want to commit.
             val (newCommitVersion, newCurrentTransactionInfo) = checkForConflicts(
               commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
             commitVersion = newCommitVersion
             updatedCurrentTransactionInfo = newCurrentTransactionInfo
-            doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
+            doCommit(
+              commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel,
+              amtWriterManager)
           }
           return (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo)
         } catch {
@@ -2415,14 +2810,50 @@ trait OptimisticTransactionImpl extends TransactionHelper
    * Commit `actions` using `attemptVersion` version number. Throws a FileAlreadyExistsException
    * if any conflicts are detected.
    *
-   * @return the post-commit snapshot of the deltaLog
+   * @param amtWriterManager the AMT writer for this commit, shared across all attempts.
+   * @return the post-commit snapshot and transaction info used by the successful commit.
    */
   protected def doCommit(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
-      isolationLevel: IsolationLevel): Snapshot = {
-    val actions = currentTransactionInfo.finalActionsToCommit
+      isolationLevel: IsolationLevel,
+      amtWriterManager: AMTWriterManager): (Snapshot, CurrentTransactionInfo) = {
+    val targetCatalogTable = catalogTable
+    // If the table requires atomic Iceberg metadata generation
+    // , generate iceberg metadata and update the transaction info.
+    var icebergMetadataGenerationDurationMsOpt: Option[Long] = None
+    val updatedCurrentTransactionInfo =
+      targetCatalogTable
+      .map { table =>
+        val startNanos = System.nanoTime()
+        // Following call generates Iceberg metadata and updates CurrentTransactionInfo
+        val (updatedInfo, isConversionPerformed) =
+          generateIcebergAndUpdateCurrentTransactionInfo(
+            spark,
+            this,
+            attemptVersion,
+            currentTransactionInfo
+            , table
+          )
+        if (isConversionPerformed) {
+          icebergMetadataGenerationDurationMsOpt = Some(
+            NANOSECONDS.toMillis(System.nanoTime() - startNanos))
+        }
+        updatedInfo
+      }.getOrElse(currentTransactionInfo)
+    val baseActions = updatedCurrentTransactionInfo.finalActionsToCommit
+    val amtWriteResultOpt = amtWriterManager.writeAMT(
+      commitVersion = attemptVersion,
+      currentTransactionInfo = updatedCurrentTransactionInfo,
+      preCommitLogSegment = preCommitLogSegment)
+    val actions = amtWriteResultOpt match {
+      case Some(result) if !result.includeActionsInCommitJson =>
+        throw new UnsupportedOperationException(
+          "Omitting file actions from the commit JSON is not yet supported.")
+      case Some(result) => baseActions :+ result.checkpoint
+      case None => baseActions
+    }
     logInfo(
       log"Attempting to commit version ${MDC(DeltaLogKeys.VERSION, attemptVersion)} with " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, actions.size.toLong)} actions with " +
@@ -2430,7 +2861,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
     if (readVersion > -1 && metadata.id != snapshot.metadata.id) {
       val msg = s"Change in the table id detected in txn. Table id for txn on table at " +
-        s"${deltaLog.dataPath} was ${snapshot.metadata.id} when the txn was created and " +
+        s"${dataPath} was ${snapshot.metadata.id} when the txn was created and " +
         s"is now changed to ${metadata.id}."
       logWarning(msg)
       recordDeltaEvent(deltaLog, "delta.metadataCheck.commit", data = Map(
@@ -2444,8 +2875,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val fsWriteStartNano = System.nanoTime()
     val jsonActions = actions.map(_.json)
 
-    val (newChecksumOpt, commit) =
-      writeCommitFile(attemptVersion, jsonActions.toIterator, currentTransactionInfo)
+    val (newChecksumOpt, commit, committedTransactionInfo) =
+      writeCommitFile(attemptVersion, jsonActions.toIterator, updatedCurrentTransactionInfo)
 
     spark.sessionState.conf.setConf(
       DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
@@ -2454,19 +2885,36 @@ trait OptimisticTransactionImpl extends TransactionHelper
     commitEndNano = System.nanoTime()
 
     executionObserver.beginPostCommit()
+    val catalogTableForPostCommitSnapshot = catalogTable
     val postCommitSnapshot = deltaLog.updateAfterCommit(
       attemptVersion,
       commit,
       newChecksumOpt,
       preCommitLogSegment,
-      catalogTable)
+      catalogTableForPostCommitSnapshot,
+      amtCheckpointOpt = amtWriteResultOpt.map(_.checkpoint))
     val postCommitReconstructionTime = System.nanoTime()
-    needsCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot)
+    maintenanceOperation = if (
+        !postCommitSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+      MaintenanceOperation(
+        shouldCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot))
+    } else if (amtWriteResultOpt.isEmpty) {
+      // The AMT writer did not write inline, so schedule a follow-up OPTIMIZE CHECKPOINT commit
+      // (issued by the post-commit checkpoint hook)
+      // if needed.
+      amtWriterManager.planMaintenance(attemptVersion, postCommitSnapshot)
+    } else {
+      // The AMT was written inline with this commit (always incremental). A full rewrite is never
+      // inlined, so schedule a follow-up full OPTIMIZE CHECKPOINT commit when the full-rewrite
+      // cadence is due -- otherwise a table whose commits consistently inline would never get a
+      // full tree.
+      amtWriterManager.planMaintenanceAfterInlineWrite(attemptVersion, postCommitSnapshot)
+    }
     val commitStatsComputer = new CommitStatsComputer()
     // Add to commit stats and consume the returned iterator.
     commitStatsComputer.addToCommitStats(actions.toIterator).foreach(_ => ())
     partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
-    collectAutoOptimizeStatsAndFinalize(actions, deltaLog.tableId)
+    collectAutoOptimizeStatsAndFinalize(actions, deltaLog.unsafeVolatileTableId)
     val commitSizeBytes: Long = jsonActions.map(_.length.toLong).sum
     commitStatsComputer.finalizeAndEmitCommitStats(
       spark,
@@ -2478,13 +2926,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
       stateReconstructionDurationMs =
         NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
       postCommitSnapshot = postCommitSnapshot,
-      computedNeedsCheckpoint = needsCheckpoint,
+      computedNeedsCheckpoint = maintenanceOperation.shouldCheckpoint,
       isolationLevel = isolationLevel,
+      // We don't use postCommitSnapshot.fileSizeHistogram here
+      // because it can trigger full state reconstruction.
+      fileSizeHistogramOpt = postCommitSnapshot.checksumOpt.flatMap(_.fileSizeHistogram),
       commitInfoOpt = currentTransactionInfo.commitInfo,
-      commitSizeBytes = commitSizeBytes
+      commitSizeBytes = commitSizeBytes,
+      amtWriteMetricsOpt = Option.when(amtWriterManager.metrics.attempts.nonEmpty)(
+        amtWriterManager.metrics)
     )
 
-    postCommitSnapshot
+    (postCommitSnapshot, committedTransactionInfo)
   }
 
   class FileSystemBasedCommitCoordinatorClient(val deltaLog: DeltaLog)
@@ -2573,17 +3026,23 @@ trait OptimisticTransactionImpl extends TransactionHelper
       attemptVersion: Long,
       jsonActions: Iterator[String],
       currentTransactionInfo: CurrentTransactionInfo)
-      : (Option[VersionChecksum], Commit) = {
+      : (Option[VersionChecksum], Commit, CurrentTransactionInfo) = {
     val commitCoordinatorClient = readSnapshotTableCommitCoordinatorClientOpt.getOrElse {
       TableCommitCoordinatorClient(
         new FileSystemBasedCommitCoordinatorClient(deltaLog),
         deltaLog,
-        snapshot.metadata.coordinatedCommitsTableConf)
+        snapshot.metadata.coordinatedCommitsTableConf
+      )
     }
-    val commitFile = writeCommitFileImpl(
+    val (commitFile, committedTransactionInfo) = writeCommitFileImpl(
       attemptVersion, jsonActions, commitCoordinatorClient, currentTransactionInfo)
+    // Derive the checksum from currentTransactionInfo, not committedTransactionInfo.
+    // The checksum uses Delta log inputs.
+    // Those inputs are actions, metadata, protocol, operation name, and txn id.
+    // committedTransactionInfo may carry a refreshed CatalogTable for UC commit metadata.
+    // CatalogTable is not a checksum input.
     val newChecksumOpt = incrementallyDeriveChecksum(attemptVersion, currentTransactionInfo)
-    (newChecksumOpt, commitFile)
+    (newChecksumOpt, commitFile, committedTransactionInfo)
   }
 
   protected def writeCommitFileImpl(
@@ -2591,22 +3050,33 @@ trait OptimisticTransactionImpl extends TransactionHelper
     jsonActions: Iterator[String],
     tableCommitCoordinatorClient: TableCommitCoordinatorClient,
     currentTransactionInfo: CurrentTransactionInfo
-  ): Commit = {
+  ): (Commit, CurrentTransactionInfo) = {
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
-    val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
-      tableCommitCoordinatorClient.commit(
-        attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
+    val (commitResponse, committedTransactionInfo) =
+      TransactionExecutionObserver.withObserver(executionObserver) {
+      (
+        tableCommitCoordinatorClient.commit(
+          attemptVersion,
+          jsonActions,
+          updatedActions,
+          catalogTable.map(_.identifier),
+          new CatalogTrackedInfo(
+            currentTransactionInfo.convertedIcebergMetadata.toJava,
+            currentTransactionInfo.domainMetadata.map(dm => dm: AbstractDomainMetadata).asJava)
+        ),
+        currentTransactionInfo
+      )
     }
     if (attemptVersion == 0L) {
-      val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri
+      val expectedPathForCommitZero = unsafeDeltaFile(logPath, version = 0L).toUri
       val actualCommitPath = commitResponse.getCommit.getFileStatus.getPath.toUri
       if (actualCommitPath != expectedPathForCommitZero) {
         throw new IllegalStateException("Expected 0th commit to be written to " +
           s"$expectedPathForCommitZero but was written to $actualCommitPath")
       }
     }
-    commitResponse.getCommit
+    (commitResponse.getCommit, committedTransactionInfo)
   }
 
 
@@ -2632,6 +3102,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       operationName = currentTransactionInfo.op.name,
       txnIdOpt = Some(currentTransactionInfo.txnId),
       previousVersionState = scala.Left(snapshot),
+      mustIncludeFileSizeHistogram =
+        spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED),
       includeAddFilesInCrc = Snapshot.shouldIncludeAddFilesInCrc(spark, snapshot, metadata)
     ).toOption
   }
@@ -2741,7 +3213,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           winningCommitSummary,
           commitIsolationLevel)
 
-        updatedCurrentTransactionInfo = conflictChecker.checkConflicts()
+        updatedCurrentTransactionInfo = conflictChecker.checkConflictsAndValidateActions()
 
         logInfo(logPrefix +
           log"No conflicts in version ${MDC(DeltaLogKeys.VERSION, otherCommitVersion)}, " +
@@ -2770,21 +3242,28 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected def setCommitted(
       committedVersion: Long,
       postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit =
+      committedTransactionInfoOpt: Option[CurrentTransactionInfo]): Unit = {
+    // Normal commit paths carry CurrentTransactionInfo with refreshed catalog state and actions.
+    // commitLarge passes None because it streams the payload and records no committed actions.
+    val actionsForCommittedTransaction =
+      committedTransactionInfoOpt.map(_.finalActionsToCommit).getOrElse(Seq.empty)
+    val catalogTableForCommittedTransaction =
+      committedTransactionInfoOpt.flatMap(_.catalogTable).orElse(catalogTable)
     committed = Some(CommittedTransaction(
       txnId = txnId,
       deltaLog = deltaLog,
       catalogTable = catalogTable,
       readSnapshot = snapshot,
       committedVersion = committedVersion,
-      committedActions = committedActions,
+      committedActions = actionsForCommittedTransaction,
       postCommitSnapshot = postCommitSnapshot,
       postCommitHooks = postCommitHooks.toSeq,
       txnExecutionTimeMs = txnExecutionTimeMs.get,
-      needsCheckpoint = needsCheckpoint,
+      maintenanceOperation = maintenanceOperation,
       partitionsAddedToOpt = partitionsAddedToOpt,
       isBlindAppend = isBlindAppend
     ))
+  }
 
   /** Register a hook that will be executed once a commit is successful. */
   def registerPostCommitHook(hook: PostCommitHook): Unit = {
@@ -2879,7 +3358,93 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
   }
 
+  /**
+   * Generate Iceberg metadata and update current transaction Info accordingly
+   * return (the updated transaction info, if iceberg conversion has performed)
+   */
+  def generateIcebergAndUpdateCurrentTransactionInfo(
+      spark: SparkSession,
+      txn: TransactionHelper,
+      deltaAttemptVersion: Long,
+      txnInfo: CurrentTransactionInfo
+      , table: CatalogTable
+  ): (CurrentTransactionInfo, Boolean) = {
+   if (UniversalFormat.icebergEnabled(txnInfo.metadata)) {
+      logInfo(log"Generate Iceberg metadata for atomic Delta UniForm table pre-commit")
+      val icebergConverter = txn.deltaLog.icebergConverter
+      val (metadataLocation, baseConvertedDeltaVersion) = icebergConverter.convertUncommitedTxn(
+        txnInfo,
+        deltaAttemptVersion,
+        txn.deltaLog,
+        table
+      )
+      val newDeltaUniFormIceberg = new UniformMetadata(
+        new IcebergMetadata(
+          metadataLocation,
+          deltaAttemptVersion,
+          Instant.now.toString,
+          baseConvertedDeltaVersion.map(Long.box).toJava
+        )
+      )
+      (txnInfo.copy(convertedIcebergMetadata = Some(newDeltaUniFormIceberg)), true)
+    } else {
+      logInfo(log"No need to generate Iceberg metadata for the table pre-commit")
+      (txnInfo, false)
+    }
+  }
+
+  /**
+   * If the operation assigns or modifies column default values, this method checks that the
+   * default values are only added on types that support them and throws an error if not.
+   */
+  protected def checkColumnDefaults(op: DeltaOperations.Operation): Unit = {
+    def isDefaultUsedOnUnsupportedColumn(column: StructField): Boolean = {
+      usesDefaults(column) && !typeAllowedForDefaults(column.dataType)
+    }
+
+    def typeAllowedForDefaults(dataType: DataType): Boolean = {
+      !SchemaUtils.typeExistsRecursively(dataType) {
+        case dt if DeltaGeoSpatial.isGeoSpatialType(dt) => true
+        case _ => false
+      }
+    }
+
+    def usesDefaults(column: StructField): Boolean = {
+      column.metadata.contains(ResolveDefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY) ||
+        column.metadata.contains(ResolveDefaultColumns.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
+    }
+
+    val unsupportedColumns: Seq[StructField] = op match {
+      case change: ChangeColumn if isDefaultUsedOnUnsupportedColumn(change.newColumn) =>
+        Seq(change.newColumn)
+      case changes: ChangeColumns =>
+        changes.columns.collect {
+          case c if isDefaultUsedOnUnsupportedColumn(c.newColumn) => c.newColumn
+        }
+      case create: CreateTable =>
+        create.metadata.schema.fields.filter(c => isDefaultUsedOnUnsupportedColumn(c))
+      case replace: ReplaceColumns =>
+        replace.columns.filter(c => isDefaultUsedOnUnsupportedColumn(c))
+      case replace: ReplaceTable =>
+        replace.metadata.schema.fields.filter(c => isDefaultUsedOnUnsupportedColumn(c))
+      case update: UpdateSchema =>
+        update.newSchema.fields.filter(c => isDefaultUsedOnUnsupportedColumn(c))
+      case _ =>
+        Seq.empty
+    }
+
+    if (unsupportedColumns.nonEmpty) {
+      val unsupportedColInfos = unsupportedColumns.map(
+        c => UnsupportedDataTypeInfo(c.name, c.dataType))
+      throw DeltaErrors.operationNotSupportedForDataTypes(
+        "COLUMN DEFAULT",
+        unsupportedColInfos.head, unsupportedColInfos.tail: _*)
+    }
+  }
+
   // Backfill any unbackfilled commits if coordinated commits are disabled -- in the Optimistic
   // Transaction constructor.
-  CoordinatedCommitsUtils.backfillWhenCoordinatedCommitsDisabled(snapshot)
+  protected def maybeBackfillOnConstruction(): Unit =
+    CoordinatedCommitsUtils.backfillWhenCoordinatedCommitsDisabled(snapshot)
+  maybeBackfillOnConstruction()
 }

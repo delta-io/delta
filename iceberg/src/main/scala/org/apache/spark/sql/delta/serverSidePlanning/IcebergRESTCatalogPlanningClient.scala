@@ -23,12 +23,16 @@ import java.util.Locale
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
+import org.apache.hadoop.conf.Configuration
 import org.apache.http.client.methods.{HttpGet, HttpPost}
 import org.apache.http.entity.{ContentType, StringEntity}
 import org.apache.http.util.EntityUtils
-import org.apache.http.{HttpHeaders, HttpStatus}
-import org.apache.http.impl.client.HttpClientBuilder
+import org.apache.http.{HttpHeaders, HttpRequest, HttpRequestInterceptor, HttpResponse, HttpStatus}
+import org.apache.http.client.ServiceUnavailableRetryStrategy
+import org.apache.http.impl.client.{DefaultHttpRequestRetryHandler, HttpClientBuilder}
+import org.apache.http.protocol.HttpContext
 import org.apache.http.message.BasicHeader
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
@@ -62,12 +66,14 @@ private case class CatalogConfigResponse(
  * @param baseUriRaw Base URI of the Iceberg REST catalog up to /v1, e.g.,
  *                   "http://<catalog-URL>/iceberg/v1". Trailing slashes are handled automatically.
  * @param catalogName Name of the catalog for config endpoint query parameter.
- * @param token Authentication token for the catalog server.
+ * @param tokenSupplier Supplier of auth tokens, called per-request to support OAuth.
+ *                      Returns empty string if no auth is needed.
  */
 class IcebergRESTCatalogPlanningClient(
     baseUriRaw: String,
     catalogName: String,
-    token: String) extends ServerSidePlanningClient with AutoCloseable {
+    tokenSupplier: () => String
+) extends ServerSidePlanningClient with Logging {
 
   // Normalize baseUri to handle trailing slashes
   private val baseUri = baseUriRaw.stripSuffix("/")
@@ -77,6 +83,96 @@ class IcebergRESTCatalogPlanningClient(
 
   // Partition spec ID for unpartitioned tables
   private val UNPARTITIONED_SPEC_ID = 0
+
+  // IRC config key mappings for each credential type
+  private val S3_KEYS = Seq("s3.access-key-id", "s3.secret-access-key", "s3.session-token")
+  private val AZURE_SAS_TOKEN_KEY_PREFIX = "adls.sas-token."
+  private val GCS_TOKEN_KEY = "gcs.oauth2.token"
+  private val GCS_EXPIRY_KEY = "gcs.oauth2.token-expires-at"
+
+  private case class S3Credentials(
+      accessKeyId: String,
+      secretAccessKey: String,
+      sessionToken: String) extends ScanPlanStorageCredentials {
+    override def configure(conf: Configuration): Unit = {
+      conf.set("fs.s3a.path.style.access", "true")
+      conf.set("fs.s3.impl.disable.cache", "true")
+      conf.set("fs.s3a.impl.disable.cache", "true")
+      conf.set("fs.s3a.access.key", accessKeyId)
+      conf.set("fs.s3a.secret.key", secretAccessKey)
+      conf.set("fs.s3a.session.token", sessionToken)
+    }
+  }
+
+  private case class AzureCredentials(
+      accountName: String,
+      sasToken: String) extends ScanPlanStorageCredentials {
+    override def configure(conf: Configuration): Unit = {
+      val accountSuffix = s"$accountName.dfs.core.windows.net"
+      conf.set("fs.abfs.impl.disable.cache", "true")
+      conf.set("fs.abfss.impl.disable.cache", "true")
+      conf.set(s"fs.azure.account.auth.type.$accountSuffix", "SAS")
+      conf.set(s"fs.azure.sas.fixed.token.$accountSuffix", sasToken)
+    }
+  }
+
+  private case class GcsCredentials(
+      oauth2Token: String,
+      expirationEpochMs: Option[Long] = None) extends ScanPlanStorageCredentials {
+    override def configure(conf: Configuration): Unit = {
+      conf.set("fs.gs.impl.disable.cache", "true")
+      conf.set("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER")
+      conf.set("fs.gs.auth.access.token.provider",
+        classOf[FixedGcsAccessTokenProvider].getName)
+      conf.set("fs.gs.auth.access.token", oauth2Token)
+      expirationEpochMs.foreach { ms =>
+        conf.set("fs.gs.auth.access.token.expiration.ms", ms.toString)
+      }
+    }
+  }
+
+  private def hasAzureKeys(config: Map[String, String]): Boolean =
+    config.keys.exists(_.startsWith(AZURE_SAS_TOKEN_KEY_PREFIX))
+
+  private def buildAzureCredentials(config: Map[String, String]): AzureCredentials = {
+    val sasTokenKey = config.keys
+      .find(_.startsWith(AZURE_SAS_TOKEN_KEY_PREFIX))
+      .getOrElse(throw new IllegalStateException(
+        s"Missing Azure SAS token key starting with: $AZURE_SAS_TOKEN_KEY_PREFIX"))
+
+    val accountName = sasTokenKey
+      .stripPrefix(AZURE_SAS_TOKEN_KEY_PREFIX)
+      .stripSuffix(".dfs.core.windows.net")
+
+    val sasToken = config(sasTokenKey)
+
+    AzureCredentials(accountName = accountName, sasToken = sasToken)
+  }
+
+  private def fromConfig(config: Map[String, String]): ScanPlanStorageCredentials = {
+    def get(key: String): String =
+      config.getOrElse(key, throw new IllegalStateException(s"Missing required credential: $key"))
+
+    def hasAny(keys: Seq[String]): Boolean = keys.exists(config.contains)
+
+    if (hasAny(S3_KEYS)) {
+      S3Credentials(
+        get("s3.access-key-id"),
+        get("s3.secret-access-key"),
+        get("s3.session-token"))
+    } else if (hasAzureKeys(config)) {
+      buildAzureCredentials(config)
+    } else if (config.contains(GCS_TOKEN_KEY)) {
+      val token = get(GCS_TOKEN_KEY)
+      val expirationEpochMs = config.get(GCS_EXPIRY_KEY)
+        .flatMap(s => scala.util.Try(s.toLong).toOption)
+      GcsCredentials(token, expirationEpochMs)
+    } else {
+      throw new IllegalStateException(
+        "Unrecognized credential keys. " +
+          "Expected S3 (s3.*), Azure (adls.*), or GCS (gcs.*) properties.")
+    }
+  }
 
   /**
    * Lazily fetch the catalog configuration and construct the endpoint URI root.
@@ -95,8 +191,8 @@ class IcebergRESTCatalogPlanningClient(
    * Returns None on any error or if no prefix is defined in the config.
    */
   private def fetchCatalogPrefix(): Option[String] = {
+    val configUri = s"$baseUri/config?warehouse=$catalogName"
     try {
-      val configUri = s"$baseUri/config?warehouse=$catalogName"
       val httpGet = new HttpGet(configUri)
       val response = httpClient.execute(httpGet)
       try {
@@ -112,23 +208,20 @@ class IcebergRESTCatalogPlanningClient(
         response.close()
       }
     } catch {
-      case _: Exception => None
+      case e: Exception =>
+        logWarning(s"Failed to fetch catalog prefix from $configUri. " +
+          s"Falling back to base URI. Error: ${e.getMessage}")
+        None
     }
   }
 
+  // Default headers without auth -- auth is injected per-request via HttpRequestInterceptor
   private val httpHeaders = {
-    val baseHeaders = Map(
+    Map(
       HttpHeaders.ACCEPT -> ContentType.APPLICATION_JSON.getMimeType,
       HttpHeaders.CONTENT_TYPE -> ContentType.APPLICATION_JSON.getMimeType,
       HttpHeaders.USER_AGENT -> buildUserAgent()
-    )
-    // Add Bearer token authentication if token is provided
-    val headersWithAuth = if (token.nonEmpty) {
-      baseHeaders + (HttpHeaders.AUTHORIZATION -> s"Bearer $token")
-    } else {
-      baseHeaders
-    }
-    headersWithAuth.map { case (k, v) => new BasicHeader(k, v) }.toSeq.asJava
+    ).map { case (k, v) => new BasicHeader(k, v) }.toSeq.asJava
   }
 
   /**
@@ -218,10 +311,31 @@ class IcebergRESTCatalogPlanningClient(
     scala.util.Properties.versionNumberString
   }
 
-  private lazy val httpClient = HttpClientBuilder.create()
-    .setDefaultHeaders(httpHeaders)
-    .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
-    .build()
+  // Maximum number of retries for transient HTTP failures (IOException, 5xx server errors)
+  private val HTTP_MAX_RETRIES = 3
+
+  private lazy val httpClient = {
+    val builder = HttpClientBuilder.create()
+      .setDefaultHeaders(httpHeaders)
+      .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
+      // requestSentRetryEnabled=true: safe to retry already-sent requests because
+      // planScan is a read-only operation (idempotent POST to /plan endpoint)
+      .setRetryHandler(new DefaultHttpRequestRetryHandler(HTTP_MAX_RETRIES, true))
+      .setServiceUnavailableRetryStrategy(new ServerErrorRetryStrategy(HTTP_MAX_RETRIES))
+
+    // Per-request interceptor: calls tokenSupplier() to get the current token.
+    // The token provider implementation handles caching as needed.
+    builder.addInterceptorFirst(new HttpRequestInterceptor {
+      override def process(request: HttpRequest, context: HttpContext): Unit = {
+        val token = tokenSupplier()
+        if (token != null && token.nonEmpty) {
+          request.setHeader(HttpHeaders.AUTHORIZATION, s"Bearer $token")
+        }
+      }
+    })
+
+    builder.build()
+  }
 
   override def canConvertFilters(filters: Array[Filter]): Boolean = {
     // Check if all filters can be converted to Iceberg expressions
@@ -278,7 +392,6 @@ class IcebergRESTCatalogPlanningClient(
     }
     val httpPost = new HttpPost(planTableScanUri)
     httpPost.setEntity(new StringEntity(requestJson, ContentType.APPLICATION_JSON))
-    // TODO: Add retry logic for transient HTTP failures (e.g., connection timeouts, 5xx errors)
     val httpResponse = httpClient.execute(httpPost)
 
     // Only unpartitioned tables are supported. This map is used when parsing the response
@@ -397,7 +510,7 @@ class IcebergRESTCatalogPlanningClient(
     }
 
     // If config exists and is non-empty, use factory (throws on incomplete credentials)
-    config.filter(_.nonEmpty).map(ScanPlanStorageCredentials.fromConfig)
+    config.filter(_.nonEmpty).map(fromConfig)
   }
 
   /**
@@ -410,6 +523,39 @@ class IcebergRESTCatalogPlanningClient(
     if (httpClient != null) {
       httpClient.close()
     }
+  }
+
+  /**
+   * Retry strategy for server errors (5xx status codes) with exponential backoff.
+   * Retries up to maxRetries times with doubling intervals (1s, 2s, 4s, ...).
+   * Does NOT retry on client errors (4xx) since those indicate request-level issues.
+   *
+   * The ServiceUnavailableRetryStrategy interface calls retryRequest() first, then
+   * getRetryInterval(), so we capture the execution count in retryRequest() and
+   * use it to compute the backoff in getRetryInterval().
+   */
+  private class ServerErrorRetryStrategy(maxRetries: Int)
+      extends ServiceUnavailableRetryStrategy {
+
+    // ThreadLocal so concurrent planScan calls each track their own retry attempt.
+    // The HTTP client is shared and thread-safe (see class doc), so multiple threads
+    // can be retrying independently through the same strategy instance.
+    private val lastExecutionCount = new ThreadLocal[Int] {
+      override def initialValue(): Int = 1
+    }
+
+    override def retryRequest(
+        response: HttpResponse,
+        executionCount: Int,
+        context: HttpContext): Boolean = {
+      lastExecutionCount.set(executionCount)
+      val statusCode = response.getStatusLine.getStatusCode
+      statusCode >= 500 && executionCount <= maxRetries
+    }
+
+    // Exponential backoff: 1s, 2s, 4s, ...
+    override def getRetryInterval: Long =
+      java.util.concurrent.TimeUnit.SECONDS.toMillis(1L << (lastExecutionCount.get() - 1))
   }
 
   private def parsePlanTableScanResponse(

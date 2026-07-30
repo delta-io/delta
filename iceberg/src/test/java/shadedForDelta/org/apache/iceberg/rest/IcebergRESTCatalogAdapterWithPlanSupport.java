@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import shadedForDelta.org.apache.iceberg.BaseFileScanTask;
@@ -41,8 +42,6 @@ import shadedForDelta.org.apache.iceberg.rest.PlanStatus;
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse;
 import shadedForDelta.org.apache.iceberg.expressions.Expression;
 import shadedForDelta.org.apache.iceberg.expressions.ResidualEvaluator;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -80,6 +79,14 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   // Static field to capture the request path of /plan requests for test verification
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile String capturedPlanRequestPath = null;
+
+  // Failure injection fields for testing HTTP retry logic.
+  // planRequestFailCount: number of remaining /plan requests to fail before allowing success.
+  // planRequestFailStatusCode: HTTP status code to return for injected failures.
+  // planRequestCount: total number of /plan requests received (for verifying retry behavior).
+  private static final AtomicInteger planRequestFailCount = new AtomicInteger(0);
+  private static volatile int planRequestFailStatusCode = 503;
+  private static final AtomicInteger planRequestCount = new AtomicInteger(0);
 
   IcebergRESTCatalogAdapterWithPlanSupport(Catalog catalog) {
     super(catalog);
@@ -189,6 +196,54 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     testCredentials = null;
     testResidual = null;
     capturedPlanRequestPath = null;
+    planRequestFailCount.set(0);
+    planRequestCount.set(0);
+  }
+
+  /**
+   * Configure the server to fail the next N /plan requests with the specified HTTP status code.
+   * After N failures, subsequent requests proceed normally.
+   * Used for testing HTTP retry logic in the client.
+   *
+   * @param count Number of /plan requests to fail
+   * @param statusCode HTTP status code to return for injected failures (e.g., 503, 404)
+   */
+  static void setFailNextPlanRequests(int count, int statusCode) {
+    planRequestFailCount.set(count);
+    planRequestFailStatusCode = statusCode;
+  }
+
+  /**
+   * Atomically get and decrement the remaining failure count.
+   * Returns the value before decrement. If > 0, the request should be failed.
+   * Package-private for servlet access.
+   */
+  static int getAndDecrementFailCount() {
+    return planRequestFailCount.getAndDecrement();
+  }
+
+  /**
+   * Get the HTTP status code to use for injected failures.
+   * Package-private for servlet access.
+   */
+  static int getPlanRequestFailStatusCode() {
+    return planRequestFailStatusCode;
+  }
+
+  /**
+   * Increment and return the total /plan request count.
+   * Package-private for servlet access.
+   */
+  static void incrementPlanRequestCount() {
+    planRequestCount.incrementAndGet();
+  }
+
+  /**
+   * Get the total number of /plan requests received.
+   * Package-private for test access.
+   */
+  static int getPlanRequestCount() {
+    return planRequestCount.get();
   }
 
   @Override
@@ -250,25 +305,6 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     return TableIdentifier.of(namespace, tableName);
   }
 
-  /**
-   * Extract min-rows-requested from JSON string using Jackson.
-   * Iceberg 1.11 added this field, but we're on 1.10.0, so we parse it from JSON.
-   */
-  private Long extractMinRowsRequested(String jsonBody) {
-    if (jsonBody == null || jsonBody.trim().isEmpty()) {
-      return null;
-    }
-    try {
-      ObjectMapper mapper = new ObjectMapper();
-      JsonNode root = mapper.readTree(jsonBody);
-      JsonNode minRowsNode = root.get("min-rows-requested");
-      return minRowsNode != null ? minRowsNode.asLong() : null;
-    } catch (Exception e) {
-      LOG.warn("Failed to extract min-rows-requested from JSON: {}", e.getMessage());
-      return null;
-    }
-  }
-
   private PlanTableScanRequest parsePlanRequest(HTTPRequest request) {
     // The request body should be a JSON string
     Object body = request.body();
@@ -289,20 +325,11 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     TableIdentifier tableIdent = extractTableIdentifier(request.path());
     LOG.debug("Table identifier: {}", tableIdent);
 
-    // Extract JSON body for parsing both the request and min-rows-requested
-    Object body = request.body();
-    if (body == null) {
-      throw new IllegalArgumentException("Request body is null");
-    }
-    String jsonBody = body.toString();
-
-    // Extract min-rows-requested (not supported in Iceberg 1.10, so parse from JSON)
-    Long minRowsRequested = extractMinRowsRequested(jsonBody);
-    LOG.debug("Extracted min-rows-requested: {}", minRowsRequested);
-
-    // Parse request
-    PlanTableScanRequest planRequest = PlanTableScanRequestParser.fromJson(jsonBody);
-    LOG.debug("Plan request parsed: snapshotId={}", planRequest.snapshotId());
+    // Parse request (min-rows-requested is natively supported in Iceberg 1.11.0)
+    PlanTableScanRequest planRequest = parsePlanRequest(request);
+    Long minRowsRequested = planRequest.minRowsRequested();
+    LOG.debug("Plan request parsed: snapshotId={}, minRowsRequested={}",
+        planRequest.snapshotId(), minRowsRequested);
 
     // Load table from catalog
     Table table = catalog.loadTable(tableIdent);

@@ -38,7 +38,7 @@ import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.metrics.MetricsReport
 import io.delta.kernel.test.{ActionUtils, TestFixtures}
 import io.delta.kernel.utils.CloseableIterator
-import io.delta.storage.commit.{Commit, GetCommitsResponse}
+import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier}
 
 import InMemoryUCClient.TableData
 import org.apache.hadoop.conf.Configuration
@@ -91,12 +91,14 @@ trait UCCatalogManagedTestUtils
       engine: Engine = defaultEngine,
       ucTableId: String = "testUcTableId",
       tablePath: String = "testUcTablePath",
+      ucTableIdentifier: UCTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl"),
       versionToLoad: Optional[java.lang.Long] = emptyLongOpt,
       timestampToLoad: Optional[java.lang.Long] = emptyLongOpt): SnapshotImpl = {
     ucCatalogManagedClient.loadSnapshot(
       engine,
       ucTableId,
       tablePath,
+      ucTableIdentifier,
       versionToLoad,
       timestampToLoad).asInstanceOf[SnapshotImpl]
   }
@@ -204,16 +206,21 @@ trait UCCatalogManagedTestUtils
   /** Wrapper class around InMemoryUCClient that tracks number of getCommit calls made */
   class InMemoryUCClientWithMetrics(ucMetastoreId: String) extends InMemoryUCClient(ucMetastoreId) {
     private var numGetCommitsCalls: Long = 0
+    private var lastGetCommitsTableIdentifier: TableIdentifier = _
 
     override def getCommits(
         tableId: String,
         tableUri: URI,
+        tableIdentifier: TableIdentifier,
         startVersion: Optional[JLong],
         endVersion: Optional[JLong]): GetCommitsResponse = {
       numGetCommitsCalls += 1
-      super.getCommits(tableId, tableUri, startVersion, endVersion)
+      lastGetCommitsTableIdentifier = tableIdentifier
+      super.getCommits(tableId, tableUri, tableIdentifier, startVersion, endVersion)
     }
 
     def getNumGetCommitCalls: Long = numGetCommitsCalls
+
+    def getLastGetCommitsTableIdentifier: TableIdentifier = lastGetCommitsTableIdentifier
   }
 }

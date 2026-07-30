@@ -326,4 +326,144 @@ class FieldMetadataSuite extends AnyFunSuite {
     }
     assert(e.getMessage == "keys must not be null")
   }
+
+  test("equals validates all keys and values") {
+    val meta1 = FieldMetadata.builder()
+      .putString("collation", "UTF8_BINARY")
+      .putString("otherKey", "same")
+      .putLongArray("arr", Seq[java.lang.Long](1L, 2L).toArray)
+      .build()
+
+    val meta2 = FieldMetadata.builder()
+      .putString("collation", "UTF8_BINARY")
+      .putString("otherKey", "same")
+      .putLongArray("arr", Seq[java.lang.Long](1L, 2L).toArray)
+      .build()
+
+    val meta3 = FieldMetadata.builder()
+      .putString("collation", "EN_CI") // different -> should not be equal
+      .putString("otherKey", "same")
+      .putLongArray("arr", Seq[java.lang.Long](1L, 2L).toArray)
+      .build()
+
+    assertThat(meta1.equals(meta2)).isTrue
+    assertThat(meta1.equals(meta3)).isFalse
+  }
+
+  test("equals handles arrays properly") {
+    val longs: Seq[java.lang.Long] = Seq(1L, 2L, 3L)
+    val doubles: Seq[java.lang.Double] = Seq(1.0, 2.0, 3.0)
+    val booleans: Seq[java.lang.Boolean] = Seq(true, false, true)
+    val strings: Seq[java.lang.String] = Seq("x", "y", "z")
+    val stringsWithNulls: Seq[java.lang.String] = Seq("a", null, "b")
+    val inner1 = FieldMetadata.builder().putBoolean("k", true).build()
+    val inner2 = FieldMetadata.builder().putBoolean("k", true).build()
+
+    val meta1 = FieldMetadata.builder()
+      .putLongArray("longArrayKey", longs.toArray)
+      .putDoubleArray("doubleArrayKey", doubles.toArray)
+      .putBooleanArray("booleanArrayKey", booleans.toArray)
+      .putStringArray("stringArrayKey", strings.toArray)
+      .putStringArray("stringArrayWithNulls", stringsWithNulls.toArray)
+      .putFieldMetadataArray("fieldMetadataArrayKey", Array(inner1))
+      .build()
+
+    val meta2 = FieldMetadata.builder()
+      .putLongArray("longArrayKey", longs.toArray)
+      .putDoubleArray("doubleArrayKey", doubles.toArray)
+      .putBooleanArray("booleanArrayKey", booleans.toArray)
+      .putStringArray("stringArrayKey", strings.toArray)
+      .putStringArray("stringArrayWithNulls", stringsWithNulls.toArray)
+      .putFieldMetadataArray("fieldMetadataArrayKey", Array(inner2))
+      .build()
+
+    assertThat(meta1.equals(meta2)).isTrue
+
+    // Change one array element to ensure inequality is detected
+    val meta3 = FieldMetadata.builder()
+      .putLongArray("longArrayKey", Seq[java.lang.Long](1L, 2L, 99L).toArray)
+      .putDoubleArray("doubleArrayKey", doubles.toArray)
+      .putBooleanArray("booleanArrayKey", booleans.toArray)
+      .putStringArray("stringArrayKey", strings.toArray)
+      .putStringArray("stringArrayWithNulls", stringsWithNulls.toArray)
+      .putFieldMetadataArray("fieldMetadataArrayKey", Array(inner2))
+      .build()
+
+    assertThat(meta1.equals(meta3)).isFalse
+  }
+
+  test("equals handles case where only one side has the key") {
+    val meta1 = FieldMetadata.builder()
+      .putString("collation", "EN_CI")
+      .putString("common", "v")
+      .build()
+    val meta2 = FieldMetadata.builder()
+      .putString("common", "v")
+      .build()
+
+    assertThat(meta1.equals(meta2)).isFalse
+    assertThat(meta2.equals(meta1)).isFalse
+  }
+
+  test("equals handles entries with null value") {
+    val meta1 = FieldMetadata.builder()
+      .putString("nullableKey", null)
+      .putString("same", "x")
+      .build()
+    val meta2 = FieldMetadata.builder()
+      .putString("nullableKey", null)
+      .putString("same", "x")
+      .build()
+    val meta3 = FieldMetadata.builder()
+      .putString("nullableKey", "value")
+      .putString("same", "x")
+      .build()
+
+    assertThat(meta1.equals(meta2)).isTrue
+    assertThat(meta1.equals(meta3)).isFalse
+  }
+
+  test("equals handles entries with null key") {
+    val meta1 = FieldMetadata.builder()
+      .putString(null, "A")
+      .putString("same", "x")
+      .build()
+    val meta2 = FieldMetadata.builder()
+      .putString(null, "A")
+      .putString("same", "x")
+      .build()
+    val meta3 = FieldMetadata.builder()
+      .putString(null, "B")
+      .putString("same", "x")
+      .build()
+    val meta4 = FieldMetadata.builder()
+      .putString("same", "x")
+      .build()
+
+    // same key/value pairs -> equal
+    assertThat(meta1.equals(meta2)).isTrue
+    // different values under null key -> unequal
+    assertThat(meta1.equals(meta3)).isFalse
+    // one side missing the null key -> unequal
+    assertThat(meta1.equals(meta4)).isFalse
+  }
+
+  test("equals handles entry with null key and null value") {
+    val meta1 = FieldMetadata.builder()
+      .putString(null, null)
+      .putString("same", "x")
+      .build()
+    val meta2 = FieldMetadata.builder()
+      .putString(null, null)
+      .putString("same", "x")
+      .build()
+
+    assertThat(meta1.equals(meta2)).isTrue
+  }
+
+  test("equals returns false for null or different class") {
+    val meta = FieldMetadata.builder().putString("k", "v").build()
+    assertThat(meta.equals(null)).isFalse
+    assertThat(meta.equals("not-metadata")).isFalse
+  }
 }

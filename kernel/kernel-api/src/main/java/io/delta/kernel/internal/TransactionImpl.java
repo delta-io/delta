@@ -68,6 +68,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -359,11 +360,11 @@ public class TransactionImpl implements Transaction {
     return maxRetries + 1; // +1 because the first attempt is a try, not a retry.
   }
 
-  private boolean isBlindAppend() {
+  private Optional<Boolean> isBlindAppend() {
     // TODO: for now we hard code this to false to avoid erroneously setting this to true for a
     //  non-blind-append operation. We should revisit how to safely set this to true for actual
     //  blind appends.
-    return false;
+    return Optional.of(false);
   }
 
   private void updateMetadata(Metadata metadata) {
@@ -542,6 +543,13 @@ public class TransactionImpl implements Transaction {
       }
 
       boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
+      boolean isCdfEnabled = TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(metadata);
+
+      // Track CDF validation state: whether we've seen adds and removes
+      // with enableChangeDataFeed=true
+      // This is wrapped in an AtomicBoolean to allow modification from within the lambda
+      final AtomicBoolean hasAddWithDataChange = new AtomicBoolean(false);
+      final AtomicBoolean hasRemoveWithDataChange = new AtomicBoolean(false);
 
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
@@ -555,6 +563,21 @@ public class TransactionImpl implements Transaction {
                       RemoveFile removeFile = new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
                       if (isAppendOnlyTable && removeFile.getDataChange()) {
                         throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
+                      }
+                      if (isCdfEnabled && removeFile.getDataChange()) {
+                        hasRemoveWithDataChange.set(true);
+                        if (hasAddWithDataChange.get()) {
+                          throw DeltaErrors.cdfMixedAddRemoveNotSupported(dataPath.toString());
+                        }
+                      }
+                    }
+                    if (!action.isNullAt(ADD_FILE_ORDINAL)) {
+                      AddFile addFile = new AddFile(action.getStruct(ADD_FILE_ORDINAL));
+                      if (isCdfEnabled && addFile.getDataChange()) {
+                        hasAddWithDataChange.set(true);
+                        if (hasRemoveWithDataChange.get()) {
+                          throw DeltaErrors.cdfMixedAddRemoveNotSupported(dataPath.toString());
+                        }
                       }
                     }
                     return action;
@@ -595,11 +618,11 @@ public class TransactionImpl implements Transaction {
     return new CommitInfo(
         generateInCommitTimestampForFirstCommitAttempt(engine, commitAttemptStartTime),
         commitAttemptStartTime, /* timestamp */
-        "Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo, /* engineInfo */
-        operation.getDescription(), /* description */
+        Optional.of("Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo), /* engineInfo */
+        Optional.of(operation.getDescription()), /* description */
         getOperationParameters(), /* operationParameters */
         isBlindAppend(), /* isBlindAppend */
-        txnId.toString(), /* txnId */
+        Optional.of(txnId.toString()), /* txnId */
         emptyMap() /* operationMetrics */);
   }
 

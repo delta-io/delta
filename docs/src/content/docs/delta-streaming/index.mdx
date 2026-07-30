@@ -53,43 +53,10 @@ If you use `maxBytesPerTrigger` in conjunction with `maxFilesPerTrigger`, the mi
 Structured Streaming does not handle input that is not an append and throws an exception if any modifications occur on the table being used as a source. There are two main strategies for dealing with changes that cannot be automatically propagated downstream:
 
 - You can delete the output and checkpoint and restart the stream from the beginning.
-- You can set either of these two options:
-  - `ignoreDeletes`: ignore transactions that delete data at partition boundaries.
-  - `ignoreChanges`: re-process updates if files had to be rewritten in the source table due to a data changing operation such as `UPDATE`, `MERGE INTO`, `DELETE` (within partitions), or `OVERWRITE`. Unchanged rows may still be emitted, therefore your downstream consumers should be able to handle duplicates. Deletes are not propagated downstream. `ignoreChanges` subsumes `ignoreDeletes`. Therefore if you use `ignoreChanges`, your stream will not be disrupted by either deletions or updates to the source table.
-
-#### Example
-
-For example, suppose you have a table `user_events` with `date`, `user_email`, and `action` columns that is partitioned by `date`. You stream out of the `user_events` table and you need to delete data from it due to GDPR.
-
-When you delete at partition boundaries (that is, the `WHERE` is on a partition column), the files are already segmented by value so the delete just drops those files from the metadata. Thus, if you just want to delete data from some partitions, you can use:
-
-<Tabs>
-  <TabItem label="Scala">
-  
-    ```scala
-    spark.readStream.format("delta")
-      .option("ignoreDeletes", "true")
-      .load("/tmp/delta/user_events")
-    ```
-  
-  </TabItem>
-</Tabs>
-
-However, if you have to delete data based on `user_email`, then you will need to use:
-
-<Tabs>
-  <TabItem label="Scala">
-  
-    ```scala
-    spark.readStream.format("delta")
-      .option("ignoreChanges", "true")
-      .load("/tmp/delta/user_events")
-    ```
-  
-  </TabItem>
-</Tabs>
-
-If you update a `user_email` with the `UPDATE` statement, the file containing the `user_email` in question is rewritten. When you use `ignoreChanges`, the new record is propagated downstream with all other unchanged records that were in the same file. Your logic should be able to handle these incoming duplicate records.
+- You can set one of the following options:
+  - `skipChangeCommits` (recommended): skip commits that contain data-changing operations such as `UPDATE`, `MERGE INTO`, `DELETE`, or `OVERWRITE`. Skipped commits are not processed, so downstream does not see rows from those commits.
+  - `ignoreDeletes` (legacy): ignore transactions that delete data at partition boundaries.
+  - `ignoreChanges` (deprecated in favor of `skipChangeCommits`): re-process updates if files had to be rewritten in the source table due to a data changing operation such as `UPDATE`, `MERGE INTO`, `DELETE` (within partitions), or `OVERWRITE`. Unchanged rows may still be emitted, therefore your downstream consumers should be able to handle duplicates. Deletes are not propagated downstream. `ignoreChanges` subsumes `ignoreDeletes`. Therefore if you use `ignoreChanges`, your stream will not be disrupted by either deletions or updates to the source table.
 
 ### Specify initial position
 

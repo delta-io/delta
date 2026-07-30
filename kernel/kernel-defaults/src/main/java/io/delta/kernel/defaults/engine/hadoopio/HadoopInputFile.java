@@ -18,7 +18,12 @@ package io.delta.kernel.defaults.engine.hadoopio;
 import io.delta.kernel.defaults.engine.fileio.InputFile;
 import io.delta.kernel.defaults.engine.fileio.SeekableInputStream;
 import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.util.concurrent.ExecutionException;
+import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FutureDataInputStreamBuilder;
+import org.apache.hadoop.fs.Options.OpenFileOptions;
 import org.apache.hadoop.fs.Path;
 
 public class HadoopInputFile implements InputFile {
@@ -44,6 +49,24 @@ public class HadoopInputFile implements InputFile {
 
   @Override
   public SeekableInputStream newStream() throws IOException {
-    return new HadoopSeekableInputStream(fs.open(path));
+    // Pass the known length so the file system can skip the HEAD call to fetch the file size;
+    // omit it when unknown.
+    FutureDataInputStreamBuilder builder = fs.openFile(path);
+    if (fileSize > 0) {
+      builder.opt(OpenFileOptions.FS_OPTION_OPENFILE_LENGTH, Long.toString(fileSize));
+    }
+    try {
+      FSDataInputStream in = builder.build().get();
+      return new HadoopSeekableInputStream(in);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new InterruptedIOException("Interrupted while opening " + path);
+    } catch (ExecutionException e) {
+      Throwable cause = e.getCause();
+      if (cause instanceof IOException) {
+        throw (IOException) cause;
+      }
+      throw new IOException("Failed to open " + path, cause);
+    }
   }
 }

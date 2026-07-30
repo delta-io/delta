@@ -35,8 +35,10 @@ import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
+import io.delta.kernel.types.VariantType;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
@@ -113,10 +115,73 @@ public class SchemaUtils {
           kernelMap.isValueContainsNull());
     } else if (kernelDataType instanceof StructType) {
       return convertKernelSchemaToSparkSchema((StructType) kernelDataType);
+    } else if (kernelDataType instanceof VariantType) {
+      return DataTypes.VariantType;
     } else {
-      // TODO: add variant type, this requires upgrading spark version dependency to 4.0
       throw new IllegalArgumentException("unsupported data type " + kernelDataType);
     }
+  }
+
+  /**
+   * Projects the union of {@code readDataSchema} and {@code partitionSchema} into DDL order. Fields
+   * not present in {@code rawSchema} (e.g. {@code _metadata}) are appended at the tail in insertion
+   * order.
+   *
+   * @throws NullPointerException if any argument is null
+   */
+  public static org.apache.spark.sql.types.StructType ddlOrderedOutputSchema(
+      org.apache.spark.sql.types.StructType rawSchema,
+      org.apache.spark.sql.types.StructType readDataSchema,
+      org.apache.spark.sql.types.StructType partitionSchema) {
+    requireNonNull(rawSchema, "rawSchema is null");
+    requireNonNull(readDataSchema, "readDataSchema is null");
+    requireNonNull(partitionSchema, "partitionSchema is null");
+    if (partitionSchema.fields().length == 0) {
+      return readDataSchema;
+    }
+    LinkedHashMap<String, org.apache.spark.sql.types.StructField> fieldsByName =
+        new LinkedHashMap<>(readDataSchema.fields().length + partitionSchema.fields().length);
+    for (org.apache.spark.sql.types.StructField f : readDataSchema.fields()) {
+      fieldsByName.put(f.name(), f);
+    }
+    for (org.apache.spark.sql.types.StructField f : partitionSchema.fields()) {
+      fieldsByName.put(f.name(), f);
+    }
+    List<org.apache.spark.sql.types.StructField> ordered = new ArrayList<>(fieldsByName.size());
+    for (org.apache.spark.sql.types.StructField f : rawSchema.fields()) {
+      org.apache.spark.sql.types.StructField projected = fieldsByName.remove(f.name());
+      if (projected != null) {
+        ordered.add(projected);
+      }
+    }
+    // Append Spark-synthetic fields not in the persisted schema (e.g. _metadata).
+    ordered.addAll(fieldsByName.values());
+    return new org.apache.spark.sql.types.StructType(
+        ordered.toArray(new org.apache.spark.sql.types.StructField[0]));
+  }
+
+  /**
+   * Whether data written under {@code existingSchema} can be read using {@code endSchema}. Backed
+   * by Delta's read-compatibility check, which accepts additive changes (new columns, relaxed
+   * nullability) and ignores internal field metadata, unlike strict equality. Nullability
+   * tightening is rejected because older data may contain nulls.
+   */
+  public static boolean isReadCompatible(
+      org.apache.spark.sql.types.StructType existingSchema,
+      org.apache.spark.sql.types.StructType endSchema) {
+    requireNonNull(existingSchema, "existingSchema is null");
+    requireNonNull(endSchema, "endSchema is null");
+    org.apache.spark.sql.delta.schema.SchemaUtils$ delta =
+        org.apache.spark.sql.delta.schema.SchemaUtils$.MODULE$;
+    return delta.isReadCompatible(
+        existingSchema,
+        endSchema,
+        /* forbidTightenNullability */ true,
+        delta.isReadCompatible$default$4(),
+        delta.isReadCompatible$default$5(),
+        delta.isReadCompatible$default$6(),
+        delta.isReadCompatible$default$7(),
+        delta.isReadCompatible$default$8());
   }
 
   //////////////////////
@@ -189,6 +254,8 @@ public class SchemaUtils {
     } else if (sparkDataType instanceof org.apache.spark.sql.types.StructType) {
       return convertSparkSchemaToKernelSchema(
           (org.apache.spark.sql.types.StructType) sparkDataType);
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.VariantType) {
+      return VariantType.VARIANT;
     } else {
       throw new IllegalArgumentException("unsupported data type " + sparkDataType);
     }

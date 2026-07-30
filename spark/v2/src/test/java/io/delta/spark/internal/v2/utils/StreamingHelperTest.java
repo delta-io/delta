@@ -22,11 +22,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.internal.DeltaHistoryManager;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructType;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.sql.Timestamp;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
@@ -370,5 +378,149 @@ public class StreamingHelperTest extends DeltaV2TestBase {
           .history()
           .checkVersionExists(versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // collectMetadataActionsFromRangeUnsafe
+  //
+  // Fixture for parameterized cases below: v0 CREATE, v1 INSERT, v2 ALTER ADD COLUMNS.
+  // Versions with a Metadata action: {v0, v2}. v1 has none.
+  // ---------------------------------------------------------------------------
+
+  private void setupTableWithMetadataChangeAtV2(String testTablePath, String testTableName) {
+    createEmptyTestTable(testTablePath, testTableName); // v0
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", testTableName)); // v1
+    spark.sql(String.format("ALTER TABLE %s ADD COLUMNS (c3 INT)", testTableName)); // v2
+  }
+
+  private static Stream<Arguments> collectMetadataTestCases() {
+    return Stream.of(
+        // scenario, startVersion, endVersionOpt, expectedVersions
+        Arguments.of("fullRange_endInclusive", 0L, Optional.of(2L), Set.of(0L, 2L)),
+        Arguments.of("nonTrivialStartExcludesV0", 1L, Optional.of(2L), Set.of(2L)),
+        Arguments.of("emptyEndReachesLatest", 0L, Optional.empty(), Set.of(0L, 2L)),
+        Arguments.of("rangeWithoutMetadataChange", 1L, Optional.of(1L), Set.of()),
+        Arguments.of("endBeforeChange", 0L, Optional.of(1L), Set.of(0L)),
+        Arguments.of("emptyEndWithNonTrivialStart", 1L, Optional.empty(), Set.of(2L)),
+        Arguments.of("singleVersionAtChange", 2L, Optional.of(2L), Set.of(2L)));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("collectMetadataTestCases")
+  public void testCollectMetadataActionsFromRangeUnsafe(
+      String scenario,
+      long startVersion,
+      Optional<Long> endVersionOpt,
+      Set<Long> expectedVersions,
+      @TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_collect_metadata_" + scenario;
+    setupTableWithMetadataChangeAtV2(testTablePath, testTableName);
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+
+    Map<Long, Metadata> result =
+        StreamingHelper.collectMetadataActionsFromRangeUnsafe(
+            startVersion, endVersionOpt, snapshotManager, defaultEngine, testTablePath);
+
+    assertEquals(expectedVersions, result.keySet());
+  }
+
+  /** Verifies that the version → Metadata mapping returns the correct Metadata content. */
+  @Test
+  public void testCollectMetadataActionsFromRangeUnsafe_returnsCorrectMetadataPerVersion(
+      @TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_collect_metadata_content";
+    setupTableWithMetadataChangeAtV2(testTablePath, testTableName);
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+
+    Map<Long, Metadata> result =
+        StreamingHelper.collectMetadataActionsFromRangeUnsafe(
+            0L, Optional.of(2L), snapshotManager, defaultEngine, testTablePath);
+
+    StructType expectedV0Schema =
+        new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
+    StructType expectedV2Schema =
+        new StructType()
+            .add("id", IntegerType.INTEGER)
+            .add("name", StringType.STRING)
+            .add("c3", IntegerType.INTEGER);
+    assertEquals(expectedV0Schema, result.get(0L).getSchema());
+    assertEquals(expectedV2Schema, result.get(2L).getSchema());
+  }
+
+  // ---------------------------------------------------------------------------
+  // collectProtocolActionsFromRangeUnsafe
+  //
+  // Fixture for parameterized cases below: v0 CREATE, v1 INSERT, v2 SET TBLPROPERTIES (upgrade).
+  // Versions with a Protocol action: {v0, v2}. v1 has none.
+  // ---------------------------------------------------------------------------
+
+  private void setupTableWithProtocolUpgradeAtV2(String testTablePath, String testTableName) {
+    createEmptyTestTable(testTablePath, testTableName); // v0
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", testTableName)); // v1
+    // Adding a table feature forces a real protocol upgrade; setting only minReader/minWriter to
+    // (3, 7) is normalized back to (1, 2) by Protocol.merge when no features are introduced and
+    // produces no Protocol action.
+    spark.sql(
+        String.format(
+            "ALTER TABLE %s SET TBLPROPERTIES " + "('delta.feature.deletionVectors' = 'supported')",
+            testTableName)); // v2
+  }
+
+  private static Stream<Arguments> collectProtocolTestCases() {
+    return Stream.of(
+        // scenario, startVersion, endVersionOpt, expectedVersions
+        Arguments.of("fullRange_endInclusive", 0L, Optional.of(2L), Set.of(0L, 2L)),
+        Arguments.of("nonTrivialStartExcludesV0", 1L, Optional.of(2L), Set.of(2L)),
+        Arguments.of("emptyEndReachesLatest", 0L, Optional.empty(), Set.of(0L, 2L)),
+        Arguments.of("rangeWithoutProtocolChange", 1L, Optional.of(1L), Set.of()),
+        Arguments.of("endBeforeChange", 0L, Optional.of(1L), Set.of(0L)),
+        Arguments.of("emptyEndWithNonTrivialStart", 1L, Optional.empty(), Set.of(2L)),
+        Arguments.of("singleVersionAtChange", 2L, Optional.of(2L), Set.of(2L)));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("collectProtocolTestCases")
+  public void testCollectProtocolActionsFromRangeUnsafe(
+      String scenario,
+      long startVersion,
+      Optional<Long> endVersionOpt,
+      Set<Long> expectedVersions,
+      @TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_collect_protocol_" + scenario;
+    setupTableWithProtocolUpgradeAtV2(testTablePath, testTableName);
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+
+    Map<Long, Protocol> result =
+        StreamingHelper.collectProtocolActionsFromRangeUnsafe(
+            startVersion, endVersionOpt, snapshotManager, defaultEngine, testTablePath);
+
+    assertEquals(expectedVersions, result.keySet());
+  }
+
+  /** Verifies that the version → Protocol mapping returns the correct Protocol content. */
+  @Test
+  public void testCollectProtocolActionsFromRangeUnsafe_returnsCorrectProtocolPerVersion(
+      @TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_collect_protocol_content";
+    setupTableWithProtocolUpgradeAtV2(testTablePath, testTableName);
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+
+    Map<Long, Protocol> result =
+        StreamingHelper.collectProtocolActionsFromRangeUnsafe(
+            0L, Optional.of(2L), snapshotManager, defaultEngine, testTablePath);
+
+    // v0 default: reader=1, writer=2; v2 upgraded: reader=3, writer=7
+    assertEquals(1, result.get(0L).getMinReaderVersion());
+    assertEquals(2, result.get(0L).getMinWriterVersion());
+    assertEquals(3, result.get(2L).getMinReaderVersion());
+    assertEquals(7, result.get(2L).getMinWriterVersion());
   }
 }

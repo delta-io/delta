@@ -21,6 +21,7 @@ import java.util.TimeZone
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils._
+import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -81,7 +82,9 @@ class ChecksumSuite
     for (incrementalCommitEnabled <- BOOLEAN_DOMAIN) {
       withSQLConf(
         DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
-        DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString
+        DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString,
+        DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED.key ->
+          "false"
       ) {
         withTempTable(createTable = false) { tableName =>
           // Set the timezone to UTC to avoid triggering force verification of all files in CRC
@@ -247,7 +250,10 @@ class ChecksumSuite
         val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val txn = log.startTransaction()
         val expected =
-          s"""Table size (bytes) - Expected: ${2*numAddFiles} Computed: $numAddFiles
+          s"""
+             |FileSizeHistogram mismatch in file sizes
+             |FileSizeHistogram mismatch in file counts
+             |Table size (bytes) - Expected: ${2*numAddFiles} Computed: $numAddFiles
              |Number of files - Expected: ${2*numAddFiles} Computed: $numAddFiles
           """.stripMargin.trim
 
@@ -357,6 +363,36 @@ class ChecksumSuite
         }
       }
     }
+  }
+
+  test("VersionChecksum round-trips lastManifestCommit and omits it when None") {
+    val lmc = LastManifestCommit(contentRootVersion = 41, version = 43)
+    val base = VersionChecksum(
+      txnId = None,
+      tableSizeBytes = 100,
+      numFiles = 1,
+      numDeletedRecordsOpt = None,
+      numDeletionVectorsOpt = None,
+      numMetadata = 1,
+      numProtocol = 1,
+      inCommitTimestampOpt = None,
+      setTransactions = None,
+      domainMetadata = None,
+      metadata = Metadata(),
+      protocol = Protocol(),
+      fileSizeHistogram = None,
+      deletedRecordCountsHistogramOpt = None,
+      allFiles = None,
+      lastManifestCommit = Some(lmc))
+
+    val json = JsonUtils.toJson(base)
+    assert(JsonUtils.fromJson[VersionChecksum](json).lastManifestCommit.contains(lmc))
+
+    // None serializes as absent (mapper uses Include.NON_ABSENT), so existing CRCs stay unchanged.
+    val jsonWithoutLmc = JsonUtils.toJson(base.copy(lastManifestCommit = None))
+    assert(!jsonWithoutLmc.contains("lastManifestCommit"))
+    // A CRC written before this field existed deserializes to None.
+    assert(JsonUtils.fromJson[VersionChecksum](jsonWithoutLmc).lastManifestCommit.isEmpty)
   }
 }
 

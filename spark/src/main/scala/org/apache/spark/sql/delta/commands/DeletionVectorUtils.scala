@@ -103,7 +103,7 @@ trait DeletionVectorUtils extends DeltaLogging {
     } catch {
       case e: Exception =>
         recordDeltaEvent(
-          deltaLog = null,
+          provider = null,
           opType = "delta.assertions.deletionVectorSerializationError",
           data = debugInfo ++ Map(
             "serializationFormat" -> serializationFormat,
@@ -128,7 +128,7 @@ trait DeletionVectorUtils extends DeltaLogging {
     } catch {
       case e: Exception =>
         recordDeltaEvent(
-          deltaLog = null,
+          provider = null,
           "delta.assertions.deletionVectorDeserializationError",
           data = debugInfo ++ Map(
             "errorMsg" -> e.getMessage,

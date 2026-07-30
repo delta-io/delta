@@ -227,6 +227,45 @@ trait MergeCDCTests extends QueryTest
     confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") :: Nil
   )
 
+  if (DeltaTestUtilsBase.nullTypeColumnsSupported) {
+    testMergeCdc("schema evolution from void")(
+      target = ((0, 0, null) :: (1, 10, null) :: (3, 30, null) :: Nil).toDF("key", "n", "text"),
+      source = ((1, 1, "a") :: (2, 2, "b") :: (3, -1, "c") :: Nil).toDF("key", "n", "text"),
+      insert = "*",
+      update = "*",
+      deleteWhen = "s.key = 3",
+      expectedTableData = ((0, 0, null) :: (1, 1, "a") :: (2, 2, "b") :: Nil)
+        .asInstanceOf[Seq[(Int, Int, String)]].toDF(),
+      expectedCdcDataWithoutVersion = (
+          (1, 10, null, "update_preimage") ::
+          (1, 1, "a", "update_postimage") ::
+          (2, 2, "b", "insert") ::
+          (3, 30, null, "delete") :: Nil)
+        .asInstanceOf[List[(Integer, Integer, String, String)]]
+        .toDF("key", "targetVal", "srcVal", "_change_type"),
+      confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") ::
+        (DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key, "false") :: Nil
+    )
+
+    testMergeCdc("schema evolution from void to struct with void")(
+      target = ((0, 0, null) :: (1, 10, null) :: (3, 30, null) :: Nil).toDF("key", "n", "s"),
+      source = ((1, 1, (1, null)) :: (2, 2, (2, null)) :: (3, -1, (3, null)) :: Nil)
+        .toDF("key", "n", "s"),
+      insert = "*",
+      update = "*",
+      deleteWhen = "s.key = 3",
+      expectedTableData = ((0, 0, null) :: (1, 1, (1, null)) :: (2, 2, (2, null)) :: Nil).toDF(),
+      expectedCdcDataWithoutVersion = (
+          (1, 10, null, "update_preimage") ::
+          (1, 1, (1, null), "update_postimage") ::
+          (2, 2, (2, null), "insert") ::
+          (3, 30, null, "delete") :: Nil)
+        .toDF("key", "targetVal", "srcVal", "_change_type"),
+      confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") ::
+        (DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key, "false") :: Nil
+    )
+  }
+
   testMergeCdcUnlimitedClauses("schema evolution with non-nullable schema")(
     target = ((0, 0) :: (1, 10) :: (3, 30) :: Nil).toDF("key", "n"),
     source = ((1, 1, "a") :: (2, 2, "b") :: (3, -1, "c") :: Nil).toDF("key", "n", "text"),

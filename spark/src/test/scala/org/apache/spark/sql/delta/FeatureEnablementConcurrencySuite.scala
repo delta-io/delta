@@ -17,11 +17,12 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.actions.{AddFile, Format, Metadata}
+import org.apache.spark.sql.delta.actions.{AddFile, Format, Metadata, Protocol}
 import org.apache.spark.sql.delta.fuzzer.{OptimisticTransactionPhases, PhaseLockingTransactionExecutionObserver => TransactionObserver}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.parquet.hadoop.ParquetFileReader
 import org.apache.parquet.hadoop.metadata.ParquetMetadata
@@ -261,6 +262,143 @@ class FeatureEnablementConcurrencySuite
       added = Map("prop2" -> "newValue2"))
     assert(result4 === expected4)
 
+    // Tests 5-6: V2Checkpoint per-key validator.
+    // In the real conflict resolution flow, checkProtocolCompatibility() runs first and updates
+    // currentTransactionInfo.protocol to the winning protocol (which includes V2Checkpoint).
+    // We simulate that here by constructing a conflict checker with the upgraded protocol.
+    val v2CkptProtocol = Protocol.forTableFeature(V2CheckpointTableFeature)
+    val conflictCheckerWithV2Ckpt = new ConflictChecker(
+      spark,
+      initialCurrentTransactionInfo = dummyTransactionInfo.copy(protocol = v2CkptProtocol),
+      winningCommitSummary = dummySummary,
+      isolationLevel = WriteSerializable)
+
+    // Test 5: delta.checkpointPolicy=v2 is valid when the protocol supports V2Checkpoint.
+    val result5 = conflictCheckerWithV2Ckpt.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration =
+        Map(DeltaConfigs.CHECKPOINT_POLICY.key -> CheckpointPolicy.V2.name)),
+      allowList = Set(DeltaConfigs.CHECKPOINT_POLICY.key))
+    assert(result5.areValid)
+
+    // Test 6: An unknown checkpointPolicy value is rejected by the per-key validator.
+    val result6 = conflictCheckerWithV2Ckpt.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration =
+        Map(DeltaConfigs.CHECKPOINT_POLICY.key -> "unknown-policy")),
+      allowList = Set(DeltaConfigs.CHECKPOINT_POLICY.key))
+    assert(!result6.areValid)
+
+    // Tests 7-13: ICT per-key validators.
+    val ictProtocol = Protocol.forTableFeature(InCommitTimestampTableFeature)
+    val conflictCheckerWithICT = new ConflictChecker(
+      spark,
+      initialCurrentTransactionInfo = dummyTransactionInfo.copy(protocol = ictProtocol),
+      winningCommitSummary = dummySummary,
+      isolationLevel = WriteSerializable)
+    val ictAllowList = InCommitTimestampUtils.TABLE_PROPERTY_KEYS.toSet
+
+    // Test 7: Enabling ICT is valid when the protocol supports InCommitTimestampTableFeature.
+    val result7 = conflictCheckerWithICT.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration =
+        Map(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")),
+      allowList = ictAllowList)
+    assert(result7.areValid)
+
+    // Test 8: Enabling ICT is invalid when the protocol does not support
+    // InCommitTimestampTableFeature.
+    val result8 = conflictChecker.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration =
+        Map(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")),
+      allowList = ictAllowList)
+    assert(!result8.areValid)
+
+    // Test 9: Disabling ICT (value = false) is invalid -- validator only permits enablement.
+    val result9 = conflictCheckerWithICT.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration =
+        Map(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "false")),
+      allowList = ictAllowList)
+    assert(!result9.areValid)
+
+    // Test 10: Adding enablementVersion is valid (isNew = true).
+    val result10 = conflictCheckerWithICT.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration =
+        Map(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key -> "5")),
+      allowList = ictAllowList)
+    assert(result10.areValid)
+
+    // Test 11: Changing enablementVersion is invalid -- the add-only validator rejects overwrites.
+    val result11 = conflictCheckerWithICT.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration =
+        Map(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key -> "3")),
+      winningMetadata = Metadata(configuration =
+        Map(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key -> "5")),
+      allowList = ictAllowList)
+    assert(!result11.areValid)
+
+    // Test 12: Adding enablementTimestamp is valid (isNew = true).
+    val result12 = conflictCheckerWithICT.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration =
+        Map(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key -> "1000")),
+      allowList = ictAllowList)
+    assert(result12.areValid)
+
+    // Test 13: Changing enablementTimestamp is invalid -- the add-only validator rejects
+    // overwrites.
+    val result13 = conflictCheckerWithICT.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration =
+        Map(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key -> "500")),
+      winningMetadata = Metadata(configuration =
+        Map(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key -> "1000")),
+      allowList = ictAllowList)
+    assert(!result13.areValid)
+
+    // Tests 14-16: UC_TABLE_ID_KEY per-key validator. Mirroring the rebase path,
+    // currentTransactionInfo.protocol reflects the winning commit's enabled
+    // CatalogOwnedTableFeature, so we construct a conflict checker with CO in protocol.
+    val coProtocol = Protocol.forTableFeature(CatalogOwnedTableFeature)
+    val conflictCheckerWithCO = new ConflictChecker(
+      spark,
+      initialCurrentTransactionInfo = dummyTransactionInfo.copy(protocol = coProtocol),
+      winningCommitSummary = dummySummary,
+      isolationLevel = WriteSerializable)
+
+    // Test 14: Adding UC_TABLE_ID_KEY is valid (the key injected during catalogManaged
+    // enablement).
+    val tableId = "f0cfe1ee-1b65-448c-9136-ebcbfd3b7593"
+    val result14 = conflictCheckerWithCO.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration =
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableId)))
+    assert(result14.areValid)
+    assert(result14.added == Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableId))
+
+    // Test 15: Changing UC_TABLE_ID_KEY is invalid (add-only per-key validator).
+    val result15 = conflictCheckerWithCO.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration =
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> "old-uuid")),
+      winningMetadata = Metadata(configuration =
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> "new-uuid")))
+    assert(!result15.areValid)
+
+    // Test 16: UC_TABLE_ID_KEY added alongside a non-allowlisted key is invalid.
+    // The allowlist only covers UC_TABLE_ID_KEY; the extra key must block resolution.
+    val result16 = conflictCheckerWithCO.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration = Map(
+        UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableId,
+        DeltaConfigs.CHECKPOINT_INTERVAL.key -> "20")))
+    assert(!result16.areValid)
+  }
+
+  test("CatalogOwned and VacuumProtocolCheck features allow concurrent txns at upgrade") {
+    assert(!CatalogOwnedTableFeature.failConcurrentTransactionsAtUpgrade)
+    assert(!VacuumProtocolCheckTableFeature.failConcurrentTransactionsAtUpgrade)
   }
 
   def testFeatureDisablement(property: String, withUnset: Boolean): Unit = {
@@ -414,6 +552,121 @@ class FeatureEnablementConcurrencySuite
     }
   }
 
+  private def assertCheckpointFormat(
+      deltaLog: DeltaLog, version: Long, isV2: Boolean): Unit = {
+    val files = deltaLog.listFrom(version)
+      .filter(FileNames.isCheckpointFile)
+      .filter(f => CheckpointInstance(f.getPath).version == version)
+      .toList
+    assert(files.nonEmpty)
+    if (isV2) {
+      assert(files.forall(f =>
+        CheckpointInstance(f.getPath).format == CheckpointInstance.Format.V2))
+    } else {
+      assert(files.forall { f =>
+        val fmt = CheckpointInstance(f.getPath).format
+        fmt == CheckpointInstance.Format.SINGLE || fmt == CheckpointInstance.Format.WITH_PARTS
+      })
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////
+  // V2CheckpointTableFeature enablement: conflict resolution tests.//
+  ///////////////////////////////////////////////////////////////////
+  test("V2CheckpointTableFeature allows concurrent txns at upgrade") {
+    assert(!V2CheckpointTableFeature.failConcurrentTransactionsAtUpgrade)
+  }
+
+  test("v2Checkpoint enablement win: concurrent DML rebases successfully " +
+       "and writes V2 checkpoint") {
+    val (deltaLog, _) = createTestTable(
+      properties = Seq(s"'${DeltaConfigs.CHECKPOINT_INTERVAL.key}' = '1'"))
+    val ctx = new TestContext(deltaLog)
+    val v2CkptEnablementTxn = AlterTableProperty(
+      property = DeltaConfigs.CHECKPOINT_POLICY.key, value = CheckpointPolicy.V2.name)
+    val businessTxn = Delete(rows = Seq(90L))
+    businessTxn.interleave(ctx) { v2CkptEnablementTxn.execute(ctx) }
+
+    val snapshot = deltaLog.update()
+    assert(snapshot.version === 3)
+    checkAnswer(
+      spark.table(testTableName).select("idCol"),
+      (0L until 100L).filter(_ != 90L).map(Row(_)))
+    assert(DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(snapshot.metadata).needsV2CheckpointSupport)
+    assertCheckpointFormat(deltaLog, snapshot.version, isV2 = true)
+  }
+
+  test("Checkpoint format invariant (a): all paths write V1 before v2Checkpoint enablement") {
+    val (deltaLog, _) = createTestTable(
+      properties = Seq(s"'${DeltaConfigs.CHECKPOINT_INTERVAL.key}' = '1'"))
+    sql(s"DELETE FROM $testTableName WHERE idCol = 90")
+    val preEnablementVersion = deltaLog.update().version
+    assert(preEnablementVersion === 2)
+    checkAnswer(
+      spark.table(testTableName).select("idCol"),
+      (0L until 100L).filter(_ != 90L).map(Row(_)))
+    deltaLog.createCheckpointAtVersion(preEnablementVersion)
+    deltaLog.checkpoint(deltaLog.update())
+    assertCheckpointFormat(deltaLog, preEnablementVersion, isV2 = false)
+  }
+
+  test("Checkpoint format invariant (b): all paths write V2 at v2Checkpoint enablement version") {
+    val (deltaLog, _) = createTestTable(
+      properties = Seq(s"'${DeltaConfigs.CHECKPOINT_INTERVAL.key}' = '1'"))
+    sql(s"ALTER TABLE $testTableName SET TBLPROPERTIES " +
+      s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = '${CheckpointPolicy.V2.name}')")
+    val enablementVersion = deltaLog.update().version
+    assert(enablementVersion === 2)
+    deltaLog.createCheckpointAtVersion(enablementVersion)
+    deltaLog.checkpoint(deltaLog.update())
+    assertCheckpointFormat(deltaLog, enablementVersion, isV2 = true)
+  }
+
+  test("Checkpoint format invariant (c): all paths write V2 after v2Checkpoint enablement " +
+      "(including rebased concurrent DML)") {
+    val (deltaLog, _) = createTestTable(
+      properties = Seq(s"'${DeltaConfigs.CHECKPOINT_INTERVAL.key}' = '1'"))
+    val ctx = new TestContext(deltaLog)
+    val v2CkptEnablementTxn = AlterTableProperty(
+      property = DeltaConfigs.CHECKPOINT_POLICY.key, value = CheckpointPolicy.V2.name)
+    val businessTxn = Delete(rows = Seq(90L))
+    // v2Checkpoint enablement commits first; DML rebases and commits at enablementVersion+1.
+    businessTxn.interleave(ctx) { v2CkptEnablementTxn.execute(ctx) }
+    val dmlVersion = deltaLog.update().version
+    assert(dmlVersion === 3)
+    checkAnswer(
+      spark.table(testTableName).select("idCol"),
+      (0L until 100L).filter(_ != 90L).map(Row(_)))
+    deltaLog.createCheckpointAtVersion(dmlVersion)
+    deltaLog.checkpoint(deltaLog.update())
+    assertCheckpointFormat(deltaLog, dmlVersion, isV2 = true)
+  }
+
+  for (withUnset <- BOOLEAN_DOMAIN)
+  test(s"Disable v2Checkpoint feature - withUnset: $withUnset") {
+    val (deltaLog, _) = createTestTable()
+    val ctx = new TestContext(deltaLog)
+    AlterTableProperty(
+      property = DeltaConfigs.CHECKPOINT_POLICY.key,
+      value = CheckpointPolicy.V2.name).execute(ctx)
+
+    val businessTxn = Delete(rows = Seq(90L))
+    val disableTxn = if (withUnset) {
+      UnsetTableProperty(DeltaConfigs.CHECKPOINT_POLICY.key)
+    } else {
+      AlterTableProperty(
+        property = DeltaConfigs.CHECKPOINT_POLICY.key,
+        value = CheckpointPolicy.Classic.name)
+    }
+
+    businessTxn.start(ctx)
+    disableTxn.execute(ctx)
+    val e = intercept[org.apache.spark.SparkException] {
+      businessTxn.commit(ctx)
+    }
+    assert(e.getCause.asInstanceOf[DeltaThrowable].getErrorClass() === "DELTA_METADATA_CHANGED")
+  }
+
   for (startMode <- Seq(NameMapping, IdMapping, NoMapping))
   test(s"Verify invalid column mapping transitions - startMode: ${startMode.name}") {
     val (deltaLog, _) = createTestTable(
@@ -496,4 +749,298 @@ class FeatureEnablementConcurrencySuite
   test(s"Disable Deletion Vectors feature - withUnset: $withUnset") {
     testFeatureDisablement(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, withUnset)
   }
+  ///////////////////////////////////////////////////////////////////
+  // ICT enablement: end-to-end conflict resolution. Positive cases//
+  // verify DML rebases over ICT enablement; negative cases        //
+  // verify unresolvable conflicts still fail.                     //
+  ///////////////////////////////////////////////////////////////////
+  test("Enable ICT feature - DML succeeds when interleaved with ICT enablement") {
+    withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      val (deltaLog, _) = createTestTable()
+      val ctx = new TestContext(deltaLog)
+
+      val ictEnablementTxn = AlterTableProperty(
+        property = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, value = "true")
+      val businessTxn = Delete(rows = Seq(90L))
+
+        businessTxn.interleave(ctx) {
+          ictEnablementTxn.execute(ctx)
+        }
+
+      val snapshot = deltaLog.update()
+      assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
+      // The DML must have conflicted and retried.
+      val dmlVersion = snapshot.version
+      val enablementVersion = dmlVersion - 1
+      // ICT timestamps must be strictly monotone across the enablement boundary (Fix 2 + Fix 3).
+      assert(InCommitTimestampTestUtils.getInCommitTimestamp(deltaLog, dmlVersion) >
+          InCommitTimestampTestUtils.getInCommitTimestamp(deltaLog, enablementVersion))
+      // Provenance written by the enablement commit must not be overwritten by the rebased
+      // DML commit (Fix 4).
+      val observedEnablementVersion =
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetaData(snapshot.metadata)
+      val observedEnablementTimestamp =
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetaData(snapshot.metadata)
+      assert(observedEnablementVersion.contains(enablementVersion))
+      assert(observedEnablementTimestamp.contains(
+        InCommitTimestampTestUtils.getInCommitTimestamp(deltaLog, enablementVersion)))
+    }
+  }
+
+
+  for (withUnset <- BOOLEAN_DOMAIN)
+  test(s"Disable ICT feature - withUnset: $withUnset") {
+    withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      val (deltaLog, _) = createTestTable()
+      val ctx = new TestContext(deltaLog)
+      AlterTableProperty(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, value = "true")
+        .execute(ctx)
+
+      val businessTxn = Delete(rows = Seq(90L))
+      val disableTxn = if (withUnset) {
+        UnsetTableProperty(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key)
+      } else {
+        AlterTableProperty(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, value = "false")
+      }
+
+      businessTxn.start(ctx)
+      disableTxn.execute(ctx)
+      val e = intercept[org.apache.spark.SparkException] {
+        businessTxn.commit(ctx)
+      }
+      assert(e.getCause.asInstanceOf[DeltaThrowable].getErrorClass() === "DELTA_METADATA_CHANGED")
+    }
+  }
+
+  // Unit test for the ICT-enablement detection predicate.
+  test("didCurrentTransactionEnableICT - MetadataWithVersion consecutive-version pairs") {
+    val ictOn = Metadata(configuration =
+      Map(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
+    val ictOff = Metadata(configuration = Map.empty)
+
+    // Core of Fix 4: ICT enabled at both N and N+1 -> false.
+    // This is the shape ConflictChecker passes after copying the winning commit's metadata:
+    // both positions carry the same ICT-enabled metadata, so the DML did not enable ICT.
+    assert(!InCommitTimestampUtils.didCurrentTransactionEnableICT(
+      InCommitTimestampUtils.MetadataWithVersion(5, ictOn),
+      InCommitTimestampUtils.MetadataWithVersion(4, ictOn)))
+
+    // Normal enablement: ICT enabled at N+1, disabled at N -> true.
+    assert(InCommitTimestampUtils.didCurrentTransactionEnableICT(
+      InCommitTimestampUtils.MetadataWithVersion(5, ictOn),
+      InCommitTimestampUtils.MetadataWithVersion(4, ictOff)))
+
+    // ICT not enabled at either version -> false.
+    assert(!InCommitTimestampUtils.didCurrentTransactionEnableICT(
+      InCommitTimestampUtils.MetadataWithVersion(5, ictOff),
+      InCommitTimestampUtils.MetadataWithVersion(4, ictOff)))
+
+    // version = -1 (InitialSnapshot sentinel): treated as not previously enabled regardless
+    // of metadata content, so a first-commit enablement returns true.
+    assert(InCommitTimestampUtils.didCurrentTransactionEnableICT(
+      InCommitTimestampUtils.MetadataWithVersion(0, ictOn),
+      InCommitTimestampUtils.MetadataWithVersion(-1, ictOn)))
+  }
+
+  // A blind-append Insert started before ICT is enabled must receive a valid ICT after
+  // rebasing over the enablement commit, even though it has no metadata conflict.
+  test("Enable ICT feature - Insert (blind append) interleaved with ICT enablement") {
+    withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      val (deltaLog, _) = createTestTable()
+      val ctx = new TestContext(deltaLog)
+
+      val ictEnablementTxn = AlterTableProperty(
+        property = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, value = "true")
+      val insertTxn = Insert(rows = Seq.range(100, 110), partitionColumn = None)
+
+      insertTxn.interleave(ctx) {
+        ictEnablementTxn.execute(ctx)
+      }
+
+      val snapshot = deltaLog.update()
+      assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
+      val insertVersion = snapshot.version
+      val enablementVersion = insertVersion - 1
+      assert(InCommitTimestampTestUtils.getInCommitTimestamp(deltaLog, insertVersion) >
+          InCommitTimestampTestUtils.getInCommitTimestamp(deltaLog, enablementVersion))
+    }
+  }
+
+  // Same as the Delete variant ("Enable ICT feature - DML succeeds when interleaved with ICT
+  // enablement") but exercises the Update code path.
+  test("Enable ICT feature - Update DML interleaved with ICT enablement") {
+    withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      val (deltaLog, _) = createTestTable()
+      val ctx = new TestContext(deltaLog)
+
+      val ictEnablementTxn = AlterTableProperty(
+        property = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, value = "true")
+      val businessTxn = Update(rows = Seq(90L), setValue = -1L)
+
+        businessTxn.interleave(ctx) {
+          ictEnablementTxn.execute(ctx)
+        }
+
+      val snapshot = deltaLog.update()
+      assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
+      val dmlVersion = snapshot.version
+      val enablementVersion = dmlVersion - 1
+      assert(InCommitTimestampTestUtils.getInCommitTimestamp(deltaLog, dmlVersion) >
+          InCommitTimestampTestUtils.getInCommitTimestamp(deltaLog, enablementVersion))
+      val observedEnablementVersion =
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetaData(snapshot.metadata)
+      val observedEnablementTimestamp =
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetaData(snapshot.metadata)
+      assert(observedEnablementVersion.contains(enablementVersion))
+      assert(observedEnablementTimestamp.contains(
+        InCommitTimestampTestUtils.getInCommitTimestamp(deltaLog, enablementVersion)))
+    }
+  }
+
+  // Both ICT and DV enablement carry a Protocol change. Whichever loses gets
+  // ProtocolChangedException; the ICT enablement does not override protocol-conflict abort.
+  test("ICT enablement aborted by concurrent DV enablement: ProtocolChangedException") {
+    withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      val (deltaLog, _) = createTestTable()
+      val ctx = new TestContext(deltaLog)
+
+      val ictEnablementTxn = AlterTableProperty(
+        property = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, value = "true")
+      val dvEnablementTxn = AlterTableProperty(
+        property = DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, value = "true")
+
+      ictEnablementTxn.start(ctx)
+      dvEnablementTxn.execute(ctx)
+      val e = intercept[org.apache.spark.SparkException] {
+        ictEnablementTxn.commit(ctx)
+      }
+      assert(e.getCause.isInstanceOf[io.delta.exceptions.ProtocolChangedException])
+    }
+  }
+
+  // The ICT enablement conflict resolver only allows rebasing over ICT-only metadata changes.
+  // When the winning commit also changes a non-allowlisted config key, the DML must still
+  // fail with DELTA_METADATA_CHANGED.
+  test("Enable ICT feature - DML fails when ICT enablement also modifies non-allowlisted config") {
+    withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      val (deltaLog, _) = createTestTable()
+      val ctx = new TestContext(deltaLog)
+      val businessTxn = Delete(rows = Seq(90L))
+
+      businessTxn.start(ctx)
+      // The winning commit enables ICT together with a non-ICT config change.
+      sql(s"""ALTER TABLE $testTableName SET TBLPROPERTIES (
+             |  '${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true',
+             |  '${DeltaConfigs.CHECKPOINT_INTERVAL.key}' = '20'
+             |)""".stripMargin)
+      val e = intercept[org.apache.spark.SparkException] {
+        businessTxn.commit(ctx)
+      }
+      assert(e.getCause.asInstanceOf[DeltaThrowable].getErrorClass() === "DELTA_METADATA_CHANGED")
+    }
+  }
+
+  // After the DML retries and commits over the ICT enablement, the data change must be
+  // correctly applied: no rows double-deleted or silently dropped.
+  test("Enable ICT feature - data integrity preserved after DML retries over ICT enablement") {
+    withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      val (deltaLog, _) = createTestTable()
+      val ctx = new TestContext(deltaLog)
+
+      val ictEnablementTxn = AlterTableProperty(
+        property = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, value = "true")
+      val deleteTxn = Delete(rows = Seq(42L))
+
+        deleteTxn.interleave(ctx) {
+          ictEnablementTxn.execute(ctx)
+        }
+
+      val remaining = spark.table(testTableName).collect().map(_.getLong(0)).toSet
+      assert(!remaining.contains(42L), "deleted row 42 must not appear after retry")
+      assert((0L until 100L).filterNot(_ == 42L).forall(remaining.contains),
+        "all other rows 0-99 (except 42) must still be present")
+    }
+  }
+
+  // Both the loser and winner have metadata updates, so attemptToResolveMetadataConflicts
+  // rejects the loser immediately before the ICT allowlist check runs.
+  test("Enable ICT feature - metadata-changing loser fails with DELTA_METADATA_CHANGED") {
+    withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      val (deltaLog, _) = createTestTable()
+      val ctx = new TestContext(deltaLog)
+
+      val ictEnablementTxn = AlterTableProperty(
+        property = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, value = "true")
+      val metadataLoserTxn = AlterTableProperty(
+        property = DeltaConfigs.CHECKPOINT_INTERVAL.key, value = "20")
+
+      metadataLoserTxn.start(ctx)
+      ictEnablementTxn.execute(ctx)
+      val e = intercept[org.apache.spark.SparkException] {
+        metadataLoserTxn.commit(ctx)
+      }
+      assert(e.getCause.asInstanceOf[DeltaThrowable].getErrorClass() === "DELTA_METADATA_CHANGED")
+    }
+  }
+
+  // Both the loser and winner carry Protocol actions; ProtocolChangedException fires before
+  // the ICT metadata allowlist is consulted.
+  test("Enable ICT feature - protocol-changing loser fails with ProtocolChangedException") {
+    withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      val (deltaLog, _) = createTestTable()
+      val ctx = new TestContext(deltaLog)
+
+      val ictEnablementTxn = AlterTableProperty(
+        property = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, value = "true")
+      val dvEnablementTxn = AlterTableProperty(
+        property = DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, value = "true")
+
+      dvEnablementTxn.start(ctx)
+      ictEnablementTxn.execute(ctx)
+      val e = intercept[org.apache.spark.SparkException] {
+        dvEnablementTxn.commit(ctx)
+      }
+      assert(e.getCause.isInstanceOf[io.delta.exceptions.ProtocolChangedException])
+    }
+  }
+
+  test("Enable ICT feature - concurrent enablements: loser fails with ProtocolChangedException") {
+    withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      val (deltaLog, _) = createTestTable()
+      val ctx = new TestContext(deltaLog)
+
+      val userEnablementTxn = AlterTableProperty(
+        property = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, value = "true")
+      val afeEnablementTxn = AlterTableProperty(
+        property = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, value = "true")
+
+      userEnablementTxn.start(ctx)
+      afeEnablementTxn.execute(ctx) // enablement wins at N+1
+      val e = intercept[org.apache.spark.SparkException] {
+        userEnablementTxn.commit(ctx)
+      }
+      // Both loser and winner carry a Protocol action -> checkProtocolCompatibility throws
+      // before failConcurrentTransactionsAtUpgrade or the ICT allowlist is consulted.
+      assert(e.getCause.isInstanceOf[io.delta.exceptions.ProtocolChangedException])
+
+      // Winner's commit stands: ICT is correctly enabled with provenance intact.
+      val snapshot = deltaLog.update()
+      assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
+      assert(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION
+        .fromMetaData(snapshot.metadata).isDefined)
+      assert(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
+        .fromMetaData(snapshot.metadata).isDefined)
+    }
+  }
+
 }

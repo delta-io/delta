@@ -73,6 +73,33 @@ public class TableConfig<T> {
           "needs to be a string and one of 'classic' or 'v2'.",
           true);
 
+  /**
+   * Whether to write per-file statistics as a struct column in checkpoint files. Recognized so
+   * connectors can set it (e.g. {@code v2Checkpoint} tables require it), but Kernel does not yet
+   * act on it when writing checkpoints.
+   */
+  public static final TableConfig<Boolean> CHECKPOINT_WRITE_STATS_AS_STRUCT =
+      new TableConfig<>(
+          "delta.checkpoint.writeStatsAsStruct",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Whether to write per-file statistics as JSON in checkpoint files. Recognized so connectors can
+   * set it, but Kernel does not yet act on it when writing checkpoints.
+   */
+  public static final TableConfig<Boolean> CHECKPOINT_WRITE_STATS_AS_JSON =
+      new TableConfig<>(
+          "delta.checkpoint.writeStatsAsJson",
+          "true",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
   /** Whether commands modifying this Delta table are allowed to create new deletion vectors. */
   public static final TableConfig<Boolean> DELETION_VECTORS_CREATION_ENABLED =
       new TableConfig<>(
@@ -156,6 +183,29 @@ public class TableConfig<T> {
           "delta.logRetentionDuration",
           "interval 30 days",
           IntervalParserUtils::safeParseIntervalAsMillis,
+          value -> true,
+          "needs to be provided as a calendar interval such as '2 weeks'. Months "
+              + "and years are not accepted. You may specify '365 days' for a year instead.",
+          true /* editable */);
+
+  /**
+   * This table property is used to track the retention duration for {@link
+   * io.delta.kernel.internal.actions.SetTransaction} actions (transaction identifiers). When set,
+   * the checksum's {@code setTransactions} drop entries whose {@code lastUpdated} is older than the
+   * current time minus this duration (entries without a {@code lastUpdated} are also dropped).
+   *
+   * <p>This is currently read-only from Kernel's perspective: it is intentionally not registered in
+   * {@link #VALID_PROPERTIES}, so a Kernel writer attempting to set it is rejected. Kernel only
+   * honors it while computing a checksum ({@code ChecksumUtils.computeChecksum}). Unlike
+   * Delta-Spark it does not expire transactions during general snapshot/state reconstruction, so we
+   * do not yet expose it as a settable property. Reading the value from metadata written by another
+   * engine (e.g. Delta-Spark) does not depend on that registration.
+   */
+  public static final TableConfig<Optional<Long>> SET_TRANSACTION_RETENTION =
+      new TableConfig<>(
+          "delta.setTransactionRetentionDuration",
+          null, // no default: absence means retention is unbounded (opt-in).
+          v -> Optional.ofNullable(v).map(IntervalParserUtils::safeParseIntervalAsMillis),
           value -> true,
           "needs to be provided as a calendar interval such as '2 weeks'. Months "
               + "and years are not accepted. You may specify '365 days' for a year instead.",
@@ -351,6 +401,16 @@ public class TableConfig<T> {
     public static final String FORMAT_HUDI = "hudi";
   }
 
+  /**
+   * The set of compression codecs that Kernel currently recognizes and enforces. This is
+   * intentionally strict for now. In the future we may add new codecs or relax validation to allow
+   * any codec string.
+   */
+  private static final Set<String> VALID_COMPRESSION_CODECS =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList("uncompressed", "none", "snappy", "gzip", "lz4", "lz4_raw", "zstd")));
+
   private static final Collection<String> ALLOWED_UNIFORM_FORMATS =
       Collections.unmodifiableList(
           Arrays.asList(UniversalFormats.FORMAT_HUDI, UniversalFormats.FORMAT_ICEBERG));
@@ -367,7 +427,7 @@ public class TableConfig<T> {
 
   /**
    * Table property that enables modifying the table in accordance with the Delta-Variant Shredding
-   * Preview protocol.
+   * protocol.
    *
    * @see <a
    *     href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-shredding.md">
@@ -381,6 +441,23 @@ public class TableConfig<T> {
           value -> true,
           "needs to be a boolean.",
           true);
+
+  /**
+   * Compression codec writers should use for new Parquet data and checkpoint files. Changing this
+   * property does not affect existing files; a table may contain files written with different
+   * codecs.
+   *
+   * <p>Valid values (case-insensitive): uncompressed, none, snappy, gzip, lz4, lz4_raw, zstd.
+   */
+  public static final TableConfig<String> PARQUET_COMPRESSION_CODEC =
+      new TableConfig<>(
+          "delta.parquet.compression.codec",
+          "snappy",
+          v -> v.toLowerCase(Locale.ROOT),
+          VALID_COMPRESSION_CODECS::contains,
+          "needs to be one of: 'uncompressed', 'none', 'snappy', 'gzip',"
+              + " 'lz4', 'lz4_raw', 'zstd'.",
+          true /* editable */);
 
   public static final TableConfig<String> MATERIALIZED_ROW_ID_COLUMN_NAME =
       new TableConfig<>(
@@ -429,9 +506,12 @@ public class TableConfig<T> {
               addConfig(this, MATERIALIZED_ROW_ID_COLUMN_NAME);
               addConfig(this, MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME);
               addConfig(this, VARIANT_SHREDDING_ENABLED);
+              addConfig(this, PARQUET_COMPRESSION_CODEC);
 
               // The below configs do not yet have their behavior correctly implemented in Kernel.
               addConfig(this, DATA_SKIPPING_STATS_COLUMNS);
+              addConfig(this, CHECKPOINT_WRITE_STATS_AS_STRUCT);
+              addConfig(this, CHECKPOINT_WRITE_STATS_AS_JSON);
             }
           });
 

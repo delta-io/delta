@@ -57,10 +57,7 @@ class ManualListingFileManifest(
       }.toMap
       val footerSeq = DeltaFileOperations.readParquetFootersInParallel(
         conf.value.value, fileStatuses.map(_.toFileStatus), fetchConfig.ignoreCorruptFiles)
-      val schemaConverter = new ParquetToSparkSchemaConverter(
-        assumeBinaryIsString = fetchConfig.assumeBinaryIsString,
-        assumeInt96IsTimestamp = fetchConfig.assumeInt96IsTimestamp
-      )
+      val schemaConverter = new ParquetToSparkSchemaConverter(conf.value.value)
       footerSeq.map { footer =>
         val fileStatus = pathToStatusMapping(footer.getFile.toString)
         val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)
@@ -138,10 +135,7 @@ class CatalogFileManifest(
           conf.value.value,
           fileStatuses.map(_.toFileStatus),
           fetchConfig.ignoreCorruptFiles)
-        val schemaConverter = new ParquetToSparkSchemaConverter(
-          assumeBinaryIsString = fetchConfig.assumeBinaryIsString,
-          assumeInt96IsTimestamp = fetchConfig.assumeInt96IsTimestamp
-        )
+        val schemaConverter = new ParquetToSparkSchemaConverter(conf.value.value)
         footerSeq.map { footer =>
           val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)
           val fileStatus = pathToFile(footer.getFile.toString)
@@ -211,10 +205,7 @@ class MetadataLogFileManifest(
       }.toMap
       val footerSeq = DeltaFileOperations.readParquetFootersInParallel(
         conf.value.value, fileStatuses.map(_.toFileStatus), fetchConfig.ignoreCorruptFiles)
-      val schemaConverter = new ParquetToSparkSchemaConverter(
-        assumeBinaryIsString = fetchConfig.assumeBinaryIsString,
-        assumeInt96IsTimestamp = fetchConfig.assumeInt96IsTimestamp
-      )
+      val schemaConverter = new ParquetToSparkSchemaConverter(conf.value.value)
       footerSeq.map { footer =>
         val fileStatus = pathToStatusMapping(footer.getFile.toString)
         val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)

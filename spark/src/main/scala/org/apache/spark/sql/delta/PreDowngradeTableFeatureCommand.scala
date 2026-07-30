@@ -81,7 +81,7 @@ case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     }
 
     if (DeltaUtils.isTesting) {
-      recordDeltaEvent(table.deltaLog, "delta.test.TestWriterFeaturePreDowngradeCommand")
+      recordDeltaEvent(table, "delta.test.TestWriterFeaturePreDowngradeCommand")
     }
 
     val properties = Seq(TestRemovableWriterFeature.TABLE_PROP_KEY)
@@ -132,7 +132,7 @@ case class TestReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     }
 
     if (DeltaUtils.isTesting) {
-      recordDeltaEvent(table.deltaLog, "delta.test.TestReaderWriterFeaturePreDowngradeCommand")
+      recordDeltaEvent(table, "delta.test.TestReaderWriterFeaturePreDowngradeCommand")
     }
 
     val properties = Seq(TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
@@ -332,7 +332,7 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
       TimeUnit.NANOSECONDS.toMillis(table.deltaLog.clock.nanoTime() - startTimeNs)
 
     recordDeltaEvent(
-      table.deltaLog,
+      table,
       opType = "delta.deletionVectorsFeatureRemovalMetrics",
       data = metrics)
     PreDowngradeStatus(performedChanges = tracesFound)
@@ -360,7 +360,7 @@ case class V2CheckpointPreDowngradeCommand(table: DeltaTableV2)
     AlterTableSetPropertiesDeltaCommand(table, properties).run(spark)
 
     recordDeltaEvent(
-      table.deltaLog,
+      table,
       opType = "delta.v2CheckpointFeatureRemovalMetrics",
       data =
         Map(("downgradeTimeMs", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)))
@@ -414,7 +414,7 @@ case class InCommitTimestampsPreDowngradeCommand(table: DeltaTableV2)
       prop -> currentTableProperties.contains(prop).toString
     }
     recordDeltaEvent(
-      table.deltaLog,
+      table,
       opType = "delta.inCommitTimestampFeatureRemovalMetrics",
       data = Map(
           "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
@@ -492,7 +492,7 @@ case class CoordinatedCommitsPreDowngradeCommand(table: DeltaTableV2)
       }
     }
     recordDeltaEvent(
-      table.deltaLog,
+      table,
       opType = "delta.coordinatedCommitsFeatureRemovalMetrics",
       data = Map(
           "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
@@ -534,7 +534,7 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
     val metadataRemoved = removeMetadataIfNeeded()
 
     recordDeltaEvent(
-      table.deltaLog,
+      table,
       opType = "delta.typeWidening.featureRemoval",
       data = Map(
         "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
@@ -590,6 +590,27 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
     true
   }
 }
+
+case class GeospatialPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * Throws an exception if the table has geospatial types, and returns false otherwise.
+   * We currently do not remove the geospatial statistics in the current table version so no
+   * action is required.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    if (GeoSpatialPreviewTableFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
+    val geospatialCols = table.initialSnapshot.schema.fields
+      .filter(field => DeltaGeoSpatial.containsGeoColumns(field.dataType))
+    // We ask the user to explicitly drop the geospatial columns before the table feature
+    // can be dropped.
+    throw DeltaErrors.cannotDropGeospatialFeature(geospatialCols)
+  }
+}
+
 case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
     with DeltaLogging {
@@ -612,7 +633,7 @@ case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
     }
 
     recordDeltaOperation(
-      table.deltaLog,
+      table,
       opType = "delta.columnMappingFeatureRemoval") {
       RemoveColumnMappingCommand(table.deltaLog, table.catalogTable)
         .run(spark, removeColumnMappingTableProperty = true)

@@ -31,10 +31,10 @@ import org.apache.spark.sql.types.{ArrayType, IntegerType, StructType}
 trait MergeIntoStructEvolutionNullnessTestUtils extends MergeHelpers {
 
   /** Whether to preserve null source structs for struct evolution tests. */
-  protected def preserveNullSourceStructs: Boolean
+  protected def preserveNullSourceStructs: Boolean = true
 
   /** Whether to preserve null source structs for UPDATE * specifically. */
-  protected def preserveNullSourceStructsUpdateStar: Boolean
+  protected def preserveNullSourceStructsUpdateStar: Boolean = true
 
   /** Configurations for preserving null source structs. */
   protected val preserveNullStructsConfs: Seq[(String, String)] = Seq(
@@ -2238,22 +2238,4 @@ trait MergeIntoStructEvolutionNullnessMultiClauseTests
     resultSchema = fullyEvolvedTargetSchema,
     expectErrorWithoutEvolutionContains = "Cannot cast",
     confs = preserveNullStructsConfs)
-}
-
-trait StructEvolutionPreserveNullSourceEnabled extends MergeIntoStructEvolutionNullnessTestUtils {
-  override protected def preserveNullSourceStructs: Boolean = true
-}
-
-trait StructEvolutionPreserveNullSourceDisabled extends MergeIntoStructEvolutionNullnessTestUtils {
-  override protected def preserveNullSourceStructs: Boolean = false
-}
-
-trait StructEvolutionPreserveNullSourceUpdateStarEnabled
-    extends MergeIntoStructEvolutionNullnessTestUtils {
-  override protected def preserveNullSourceStructsUpdateStar: Boolean = true
-}
-
-trait StructEvolutionPreserveNullSourceUpdateStarDisabled
-    extends MergeIntoStructEvolutionNullnessTestUtils {
-  override protected def preserveNullSourceStructsUpdateStar: Boolean = false
 }

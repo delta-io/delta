@@ -248,9 +248,11 @@ public final class DeltaHistoryManager {
         searchResult = new Commit(placeholderEarliestCommit.getVersion(), ict);
       } else {
         // We know the table was not catalogManaged here since ICT was not enabled ==> we don't
-        // need to worry about catalogCommits
-        // start non-ICT linear search over [earliestVersion, )
-        List<Commit> commits = getCommits(engine, logPath, earliestVersion);
+        // need to worry about catalogCommits.
+        // The requested timestamp is before ICT enablement, so the file modification-time
+        // search must be bounded to the pre-ICT commits.
+        List<Commit> commits =
+            getCommits(engine, logPath, earliestVersion, ictEnablementCommit.version);
         searchResult =
             lastCommitBeforeOrAtTimestamp(commits, timestamp)
                 .orElse(
@@ -513,16 +515,18 @@ public final class DeltaHistoryManager {
   }
 
   /**
-   * Returns the commit version and timestamps of all commits starting from version {@code start}.
-   * Guarantees that the commits returned have both monotonically increasing versions and
-   * timestamps.
+   * Returns the versions and modification timestamps of commits in the range {@code [start,
+   * endExclusive)}.
+   *
+   * <p>Guarantees that returned commits have monotonically increasing versions and timestamps.
    */
-  private static List<Commit> getCommits(Engine engine, Path logPath, long start)
+  private static List<Commit> getCommits(Engine engine, Path logPath, long start, long endExclusive)
       throws TableNotFoundException {
     CloseableIterator<Commit> commits =
         listFrom(engine, logPath, start)
             .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
-            .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()));
+            .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()))
+            .takeWhile(commit -> commit.version < endExclusive);
     return monotonizeCommitTimestamps(commits);
   }
 

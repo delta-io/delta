@@ -17,6 +17,7 @@
 package io.delta.spark.internal.v2.utils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -38,6 +39,7 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
+import io.delta.kernel.types.VariantType;
 import java.util.stream.Stream;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
@@ -66,6 +68,7 @@ public class SchemaUtilsTest {
     checkConversion(DataTypes.ShortType, ShortType.SHORT);
     checkConversion(DataTypes.TimestampType, TimestampType.TIMESTAMP);
     checkConversion(DataTypes.TimestampNTZType, TimestampNTZType.TIMESTAMP_NTZ);
+    checkConversion(DataTypes.VariantType, VariantType.VARIANT);
   }
 
   @Test
@@ -367,5 +370,49 @@ public class SchemaUtilsTest {
         kernelMetadata, SchemaUtils.convertSparkMetadataToKernelFieldMetadata(sparkMetadata));
     assertEquals(
         sparkMetadata, SchemaUtils.convertKernelFieldMetadataToSparkMetadata(kernelMetadata));
+  }
+
+  @Test
+  public void isReadCompatibleAcceptsAdditiveColumn() {
+    org.apache.spark.sql.types.StructType existing =
+        new org.apache.spark.sql.types.StructType().add("id", DataTypes.LongType);
+    org.apache.spark.sql.types.StructType end =
+        new org.apache.spark.sql.types.StructType()
+            .add("id", DataTypes.LongType)
+            .add("name", DataTypes.StringType);
+    assertTrue(SchemaUtils.isReadCompatible(existing, end));
+  }
+
+  @Test
+  public void isReadCompatibleRejectsDroppedColumn() {
+    org.apache.spark.sql.types.StructType existing =
+        new org.apache.spark.sql.types.StructType()
+            .add("id", DataTypes.LongType)
+            .add("name", DataTypes.StringType);
+    org.apache.spark.sql.types.StructType end =
+        new org.apache.spark.sql.types.StructType().add("id", DataTypes.LongType);
+    assertFalse(SchemaUtils.isReadCompatible(existing, end));
+  }
+
+  @Test
+  public void isReadCompatibleRejectsTightenedNullability() {
+    org.apache.spark.sql.types.StructType existing =
+        new org.apache.spark.sql.types.StructType()
+            .add("id", DataTypes.LongType, /* nullable */ true);
+    org.apache.spark.sql.types.StructType end =
+        new org.apache.spark.sql.types.StructType()
+            .add("id", DataTypes.LongType, /* nullable */ false);
+    assertFalse(SchemaUtils.isReadCompatible(existing, end));
+  }
+
+  @Test
+  public void isReadCompatibleAcceptsRelaxedNullability() {
+    org.apache.spark.sql.types.StructType existing =
+        new org.apache.spark.sql.types.StructType()
+            .add("id", DataTypes.LongType, /* nullable */ false);
+    org.apache.spark.sql.types.StructType end =
+        new org.apache.spark.sql.types.StructType()
+            .add("id", DataTypes.LongType, /* nullable */ true);
+    assertTrue(SchemaUtils.isReadCompatible(existing, end));
   }
 }

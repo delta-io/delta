@@ -1,0 +1,39 @@
+services:
+  jobmanager:
+    image: flink:2.0.1
+    command: /opt/flink/usrlib/init.sh jobmanager
+    ports: ["8081:8081"]
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        parallelism.default: 1
+    volumes:
+      - ./usrlib:/opt/flink/usrlib
+      - ./data:/opt/flink/data
+
+  taskmanager:
+    image: flink:2.0.1
+    command: /opt/flink/usrlib/init.sh taskmanager
+    depends_on: [jobmanager]
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 2
+    volumes:
+      - ./usrlib:/opt/flink/usrlib
+      - ./data:/opt/flink/data
+
+  taskmanager2:
+    image: flink:2.0.1
+    command: /opt/flink/usrlib/init.sh taskmanager
+    depends_on: [ jobmanager ]
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 2
+    volumes:
+      - ./usrlib:/opt/flink/usrlib
+      - ./data:/opt/flink/data

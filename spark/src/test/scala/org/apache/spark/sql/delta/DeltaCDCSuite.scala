@@ -277,7 +277,7 @@ abstract class DeltaCDCSuiteBase
       // version 0
       val currentTime = System.currentTimeMillis() - 5.days.toMillis
       modifyCommitTimestamp(deltaLog, 0, currentTime + 0)
-      val tsAfterV0 = dateFormat.format(new Date(currentTime + 1))
+      val tsV0 = dateFormat.format(new Date(currentTime))
 
       // version 1
       modifyCommitTimestamp(deltaLog, 1, currentTime + 1000)
@@ -286,7 +286,8 @@ abstract class DeltaCDCSuiteBase
       modifyCommitTimestamp(deltaLog, 2, currentTime + 3000)
 
       val readDf = cdcRead(
-        new TableName(tableName), StartingTimestamp(tsAfterV0), EndingTimestamp(tsAfterV1))
+        new TableName(tableName), StartingTimestamp(tsV0), EndingTimestamp(tsAfterV1))
+      // Answer should include version 0 and version 1, but not version 2.
       checkCDCAnswer(
         DeltaLog.forTable(spark, TableIdentifier(tableName)),
         readDf,

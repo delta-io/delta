@@ -16,11 +16,40 @@
 
 package io.delta.flink.table;
 
+import dev.failsafe.function.CheckedConsumer;
+import io.delta.kernel.exceptions.ConcurrentTransactionException;
+import io.delta.kernel.exceptions.ConcurrentWriteException;
+import io.delta.kernel.exceptions.TableAlreadyExistsException;
+import io.delta.kernel.exceptions.TableNotFoundException;
+import java.util.ConcurrentModificationException;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /** Utility methods and common exception types for exception inspection and handling. */
 public class ExceptionUtils {
 
+  public static Predicate<Throwable> isTableNotFound =
+      ExceptionUtils.recursiveCheck(ex -> ex instanceof TableNotFoundException);
+
+  public static Predicate<Throwable> isSnapshotUpdated =
+      ExceptionUtils.recursiveCheck(
+          ex ->
+              ex instanceof ConcurrentModificationException
+                  || ex instanceof ConcurrentWriteException
+                  || ex instanceof TableAlreadyExistsException);
+
+  public static Predicate<Throwable> isSwallowable =
+      ExceptionUtils.recursiveCheck(ex -> ex instanceof ConcurrentTransactionException);
+
+  /**
+   * Check if an exception is retryable.
+   *
+   * @param e exception
+   * @return true if the exception is Authentication or Concurrency related.
+   */
+  public static boolean isRetryableException(Throwable e) {
+    return CredentialManager.isCredentialsExpired.test(e) || isSnapshotUpdated.test(e);
+  }
   /**
    * Creates a predicate that applies the given predicate recursively to an exception and its causal
    * chain.
@@ -65,5 +94,15 @@ public class ExceptionUtils {
       return (RuntimeException) t;
     }
     return new RuntimeException(t);
+  }
+
+  public static <T> Consumer<T> wrap(CheckedConsumer<T> body) {
+    return t -> {
+      try {
+        body.accept(t);
+      } catch (Throwable e) {
+        throw new RuntimeException(e);
+      }
+    };
   }
 }

@@ -25,9 +25,17 @@ import org.apache.spark.sql.types._
 
 class TypeWideningInsertSchemaEvolutionExtendedSuite
   extends QueryTest
-  with DeltaDMLTestUtils
   with TypeWideningTestMixin
+  with DeltaDMLTestUtilsNameBased
+  with TypeWideningInsertSchemaEvolutionExtendedTests
+
+/** Runs the extended type widening INSERT schema evolution tests against DSv2. */
+class TypeWideningInsertSchemaEvolutionExtendedDSv2Suite
+  extends QueryTest
+  with TypeWideningDSv2TestMixin
   with TypeWideningInsertSchemaEvolutionExtendedTests {
+  // Schema evolution isn't supported yet for streaming writes in DSv2.
+  protected override def allInsertTypes: Set[Insert] = super.allInsertTypes - StreamingInsert
 }
 
 trait TypeWideningInsertSchemaEvolutionExtendedTests

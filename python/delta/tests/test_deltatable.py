@@ -1619,6 +1619,34 @@ class DeltaTableTestsMixin:
         with self.assertRaises(TypeError):
             builder.clusterBy([1])  # type: ignore[list-item]
 
+    def test_create_table_geo_types(self) -> None:
+        try:
+            from pyspark.sql.types import GeometryType, GeographyType  # type: ignore[attr-defined]
+        except ImportError:
+            self.skipTest("Geo types are not supported in this version of PySpark.")
+
+        # Geo types are gated by both Spark (encoders, expressions) and Delta (table feature).
+        self.spark.conf.set("spark.sql.geospatial.enabled", "true")
+        self.spark.conf.set("spark.databricks.delta.geo.preview.enabled", "true")
+        try:
+            with self.tempTable() as tableName:
+                deltaTable = DeltaTable.create().tableName(tableName) \
+                    .addColumn("geom", dataType="geometry(4326)") \
+                    .addColumn("geog", dataType="geography(4326)") \
+                    .execute()
+                self.__verify_table_schema(tableName,
+                                           deltaTable.toDF().schema,
+                                           ["geom", "geog"],
+                                           [GeometryType(4326), GeographyType(4326)],
+                                           nullables={"geom", "geog"})
+                self.assertEqual(
+                    DeltaTable.forName(self.spark, tableName).toDF().count(),
+                    0
+                )
+        finally:
+            self.spark.conf.unset("spark.databricks.delta.geo.preview.enabled")
+            self.spark.conf.unset("spark.sql.geospatial.enabled")
+
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
                       schema: Union[StructType, List[str]] = ["key", "value"]) -> None:

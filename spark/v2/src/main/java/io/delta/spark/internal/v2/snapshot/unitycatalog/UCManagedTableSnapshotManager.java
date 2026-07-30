@@ -24,6 +24,7 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
+import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.util.List;
@@ -40,6 +41,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   private final UCCatalogManagedClient ucCatalogManagedClient;
   private final String tableId;
   private final String tablePath;
+  private final UCTableIdentifier tableIdentifier;
   private final Engine engine;
 
   /**
@@ -56,6 +58,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
     requireNonNull(tableInfo, "tableInfo is null");
     this.tableId = tableInfo.getTableId();
     this.tablePath = tableInfo.getTablePath();
+    this.tableIdentifier = tableInfo.getTableIdentifier();
     this.engine = requireNonNull(engine, "engine is null");
   }
 
@@ -66,18 +69,22 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    */
   @Override
   public Snapshot loadLatestSnapshot() {
-    return ucCatalogManagedClient.loadSnapshot(
-        engine,
-        tableId,
-        tablePath,
-        Optional.empty() /* versionOpt */,
-        Optional.empty() /* timestampOpt */);
+    return loadSnapshot(Optional.empty() /* versionOpt */);
   }
 
   @Override
   public Snapshot loadSnapshotAt(long version) {
+    return loadSnapshot(Optional.of(version));
+  }
+
+  private Snapshot loadSnapshot(Optional<Long> versionOpt) {
     return ucCatalogManagedClient.loadSnapshot(
-        engine, tableId, tablePath, Optional.of(version), Optional.empty() /* timestampOpt */);
+        engine,
+        tableId,
+        tablePath,
+        tableIdentifier,
+        versionOpt,
+        Optional.empty() /* timestampOpt */);
   }
 
   /**
@@ -172,6 +179,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
         engine,
         tableId,
         tablePath,
+        tableIdentifier,
         Optional.of(startVersion) /* startVersionOpt */,
         Optional.empty() /* startTimestampOpt */,
         endVersion /* endVersionOpt */,

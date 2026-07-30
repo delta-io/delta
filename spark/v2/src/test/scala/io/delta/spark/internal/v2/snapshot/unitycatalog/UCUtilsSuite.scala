@@ -163,6 +163,9 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       assert(
         info.getTablePath == TABLE_PATH_ALPHA,
         s"Table path mismatch: got ${info.getTablePath}")
+      assert(info.getTableIdentifier.getCatalogName == CATALOG_ALPHA)
+      assert(info.getTableIdentifier.getSchemaName == "default")
+      assert(info.getTableIdentifier.getTableName == "tbl")
       assert(info.getUcUri == UC_URI_ALPHA, s"UC URI mismatch: got ${info.getUcUri}")
       val configMap = info.getAuthConfig
       assert(
@@ -223,6 +226,9 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       assert(
         info.getTablePath == tablePathBeta,
         s"Should extract tablePathBeta, got: ${info.getTablePath}")
+      assert(info.getTableIdentifier.getCatalogName == catalogBeta)
+      assert(info.getTableIdentifier.getSchemaName == "default")
+      assert(info.getTableIdentifier.getTableName == "tbl")
     } finally {
       configs.foreach { case (key, _) =>
         originalValues.get(key).flatten match {

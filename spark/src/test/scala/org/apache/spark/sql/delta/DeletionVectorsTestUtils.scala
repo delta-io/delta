@@ -464,4 +464,67 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
         offset = Some(range.offset))
     }
   }
+
+  val addedDvsFilePrefix = "test-copy-of"
+
+  /**
+   * Adds DVs to a Delta table by copying each Parquet file and adding DVs that shard the rows
+   * between the two files. When `toAllFiles` is false, DV will be added to only one random file.
+   */
+  def addDeletionVectorsToTableLog(log: DeltaLog, toAllFiles: Boolean = true): Unit = {
+    import java.nio.file.{Files, Paths}
+
+    val txn = log.startTransaction()
+
+    val dataPath = log.dataPath.toUri.getPath
+    var actions = Seq.empty[Action]
+    val filesToBeAdded =
+      if (toAllFiles) txn.snapshot.allFiles.collect()
+      else txn.snapshot.allFiles.take(1)
+    for (origFile <- filesToBeAdded if origFile.deletionVector == null) {
+      assert(origFile.numLogicalRecords.isDefined)
+
+      val oldRelPath = origFile.toPath
+      val newFileName = s"$addedDvsFilePrefix-${oldRelPath.getName}"
+      val newFileRelPath = new Path(oldRelPath.getParent, newFileName)
+
+      val oldFileAbsPath = Paths.get(dataPath, oldRelPath.toString)
+      val newFileAbsPath = Paths.get(dataPath, newFileRelPath.toString)
+      Files.copy(oldFileAbsPath, newFileAbsPath)
+
+      val newFileDv = new RoaringBitmapArray()
+      val oldFileDv = new RoaringBitmapArray()
+      for (i <- 0 until origFile.numLogicalRecords.get.toInt) {
+        if (i % 2 == 0) {
+          oldFileDv.add(i)
+        } else {
+          newFileDv.add(i)
+        }
+      }
+
+      actions ++= writeFileWithDV(log, origFile, oldFileDv)
+
+      val modTime = new File(newFileAbsPath.toString).lastModified()
+      val newFile = origFile.copy(
+        modificationTime = modTime,
+        path = newFileRelPath.toUri.toString)
+      val newFileWithDV :: _ = writeFileWithDV(log, newFile, newFileDv)
+      actions = actions :+ newFileWithDV
+    }
+
+    val dummyOp = DeltaOperations.Truncate()
+    txn.commit(actions, dummyOp)
+  }
+
+  /** Add DVs to all files, or to only one random file when `toAllFiles` is false. */
+  def addDeletionVectorsToTable(tableName: String, toAllFiles: Boolean = true): Unit = {
+    val deltaLog =
+      if (tableName.startsWith("delta.`")) {
+        DeltaLog.forTable(spark, tableName.stripPrefix("delta.`").stripSuffix("`"))
+      } else {
+        DeltaLog.forTable(spark, TableIdentifier(tableName))
+      }
+
+    addDeletionVectorsToTableLog(deltaLog, toAllFiles)
+  }
 }

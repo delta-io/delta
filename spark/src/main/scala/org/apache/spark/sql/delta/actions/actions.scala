@@ -30,10 +30,11 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.{DeltaEncoder, DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.PartitionUtils
 import com.fasterxml.jackson.annotation._
@@ -44,6 +45,7 @@ import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize
 import com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.storage.commit.actions.{
   AbstractCommitInfo => StorageAbstractCommitInfo,
+  AbstractDomainMetadata => StorageAbstractDomainMetadata,
   AbstractMetadata => StorageAbstractMetadata,
   AbstractProtocol => StorageAbstractProtocol
 }
@@ -76,12 +78,12 @@ object Action extends DeltaLogging {
   // We can't extend the [[Action]] class itself since it affects serialization.
   // Instead, we add a wrapper here as a helper method for logging.
   override def recordDeltaEvent(
-      deltaLog: DeltaLog,
+      provider: DeltaLoggingProvider,
       opType: String,
       tags: Map[TagDefinition, String] = Map.empty,
       data: AnyRef = null,
       path: Option[Path] = None): Unit = {
-    super.recordDeltaEvent(deltaLog, opType, tags, data, path)
+    super.recordDeltaEvent(provider, opType, tags, data, path)
   }
 
   /**
@@ -96,6 +98,45 @@ object Action extends DeltaLogging {
       protocolVersion.withFeatures(featuresToAdd)
     } else {
       protocolVersion
+    }
+  }
+
+  /**
+   * Normalizes partition values to typed Literals. This method is serializable and does not
+   * require SparkSession, so it can be used inside UDFs for parallel processing.
+   *
+   * @param rawPartitionValues Map of partition column names to their string values.
+   * @param partitionSchema Schema defining the data types for each partition column.
+   * @param timeZoneId The Spark session time zone ID. This should ALWAYS be the session timezone
+   *                   to ensure consistent parsing between read and write paths.
+   * @param parseToTypedLiterals Whether to parse partition values to their actual types.
+   *                             When false, verbatim value from the log action is returned in a
+   *                             String Literal.
+   * @param failOnParsingError If true, throw the exception if parsing fails.
+   *                           If false, return the raw partition values as string Literals.
+   * @return Map of partition column names to their literal values.
+   */
+  def normalizePartitionValues(
+      rawPartitionValues: Map[String, String],
+      partitionSchema: StructType,
+      timeZoneId: String,
+      parseToTypedLiterals: Boolean,
+      failOnParsingError: Boolean): Map[String, Literal] = {
+    def parseToStringLiterals = rawPartitionValues.map { case (k, v) => (k, Literal(v)) }
+    if (parseToTypedLiterals) {
+      try {
+        PartitionUtils.parsePartitionValues(
+          rawPartitionValues, partitionSchema, timeZoneId, validatePartitionColumns = true)
+      } catch {
+        case NonFatal(e) =>
+          if (failOnParsingError) {
+            throw e
+          } else {
+            parseToStringLiterals
+          }
+      }
+    } else {
+      parseToStringLiterals
     }
   }
 
@@ -140,6 +181,29 @@ object Action extends DeltaLogging {
       if (f.name == "add") f.copy(dataType = logAddSchema.add(statsParsed)) else f
     }
     StructType(fields)
+  }
+
+  /**
+   * Returns the tag value corresponding to a given `key`.
+   * This method throws [[DeltaErrors.tagCouldNotBeParsedException]] exception
+   * if the value is not a valid json or if it cannot be parsed to type `T`.
+   *
+   * @param key key for which we want the extra attribute value
+   * @tparam T value type
+   * @return None if the given key is not present, else returns the corresponding value of type `T`
+   *         from the stored json version of the value for the given key.
+   */
+  def getDeserializedValueForTag[T: Manifest](
+      tags: Map[String, String],
+      key: String): Option[T] = {
+    Option(tags).flatMap(_.get(key)).map { serializedValue =>
+      try {
+        JsonUtils.fromJson[T](serializedValue)
+      } catch {
+        case NonFatal(e) =>
+          throw DeltaErrors.tagCouldNotBeParsedException(key, tags, e)
+      }
+    }
   }
 }
 
@@ -629,8 +693,11 @@ case class SetTransaction(
 case class DomainMetadata(
     domain: String,
     configuration: String,
-    removed: Boolean) extends Action {
+    removed: Boolean) extends Action with StorageAbstractDomainMetadata {
   override def wrap: SingleAction = SingleAction(domainMetadata = this)
+  override def getDomain: String = domain
+  override def getConfiguration: String = configuration
+  override def isRemoved: Boolean = removed
 }
 
 /** Actions pertaining to the addition and removal of files. */
@@ -673,11 +740,81 @@ sealed trait FileAction extends Action {
   def getTag(tagName: String): Option[String] = Option(tags).flatMap(_.get(tagName))
 
 
+  /**
+   * Return partition values as literals, optionally parsed to their actual data types.
+   * When `parseToTypedLiterals` is true, partition values are parsed to their actual
+   * types for comparison purposes. When false, they are returned as string literals,
+   * using verbatim value written in the action.
+   *
+   * @param deltaLog The DeltaLog for logging events. May be null if unavailable.
+   * @param errorOpType Prefix for logging event opTypes.
+   * @param errorData Extra fields to include in logging events.
+   * @return Map of partition column names to literals.
+   */
+  private[delta] def normalizedPartitionValues(
+      spark: SparkSession,
+      partitionSchema: StructType,
+      parseToTypedLiterals: Boolean,
+      deltaLog: DeltaLog,
+      errorOpType: String,
+      errorData: Map[String, Any]): Map[String, Literal] = {
+    val timeZone = spark.sessionState.conf.sessionLocalTimeZone
+
+    try {
+      val partitionValueLiterals = Action.normalizePartitionValues(
+        partitionValues,
+        partitionSchema,
+        timeZone,
+        parseToTypedLiterals && partitionSchema.nonEmpty,
+        failOnParsingError = true)
+
+      if (parseToTypedLiterals && partitionSchema.nonEmpty) {
+        val stringNormalizedPartitionValues = partitionValueLiterals.map {
+          case (k, v) => (k, PartitionUtils.literalToNormalizedString(
+            v,
+            Some(timeZone),
+            useUtcNormalizedTimestamp = true))
+        }
+        if (stringNormalizedPartitionValues != partitionValues) {
+          Action.recordDeltaEvent(
+            deltaLog,
+            opType = errorOpType + ".unnormalizedValuesExist",
+            data = errorData
+          )
+        }
+      }
+      partitionValueLiterals
+    } catch {
+      case NonFatal(e) =>
+        val opTypeSuffix = PartitionUtils.classifyPartitionValueParsingError(e)
+        Action.recordDeltaEvent(
+          deltaLog,
+          opType = errorOpType + ".partitionValueParsingError" + opTypeSuffix,
+          data = errorData ++ Map(
+            "exceptionMessage" -> e.getMessage,
+            "timeZone" -> timeZone
+          )
+        )
+        if (spark.conf.get(DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR)) {
+          throw e
+        }
+        partitionValues.map { case (k, v) => (k, Literal(v)) }
+    }
+  }
+
   /** Returns the [[SparkPath]] for this file action. */
   def sparkPath: SparkPath = SparkPath.fromUrlString(path)
 
   /** Returns the [[Path]] for this file action (not URL-encoded). */
   def toPath: Path = sparkPath.toPath
+
+  /** Returns the absolute [[Path]] for this file action (not URL-encoded). */
+  def absolutePath(snapshot: SnapshotDescriptor): Path = {
+    // dataPath is not URL-encoded.
+    val dataPath: Path = snapshot.dataPath
+    // this.path is a URL-encoded String, that is either the relative or absolute path.
+    DeltaFileOperations.absolutePath(dataPath.toString, path)
+  }
 
   /** Returns the absolute [[Path]] for this file action (not URL-encoded). */
   def absolutePath(deltaLog: DeltaLog): Path = {
@@ -779,7 +916,8 @@ case class AddFile(
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
-    clusteringProvider: Option[String] = None
+    clusteringProvider: Option[String] = None,
+    backReference: Option[BackReference] = None
 ) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 
@@ -799,7 +937,8 @@ case class AddFile(
       deletionVector = deletionVector,
       baseRowId = baseRowId,
       defaultRowCommitVersion = defaultRowCommitVersion,
-      stats = stats
+      stats = stats,
+      backReference = backReference
     )
     // scalastyle:on
   }
@@ -889,63 +1028,19 @@ case class AddFile(
       spark: SparkSession,
       partitionSchema: StructType,
       deltaTxn: Option[OptimisticTransaction] = None): Map[String, Literal] = {
-
-    def partitionValuesAsStringLiterals: Map[String, Literal] = {
-      // Convert all partition values to string literals
-      partitionValues.map { case (k, v) => (k, Literal(v)) }
-    }
-
-    val normalizePartitionValuesOnRead =
-      spark.conf.get(DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ)
-    if (normalizePartitionValuesOnRead) {
-      val timeZone = spark.sessionState.conf.sessionLocalTimeZone
-
-      try {
-        val typedPartitionValueLiterals = PartitionUtils.parsePartitionValues(
-          partitionValues,
-          partitionSchema,
-          java.util.TimeZone.getDefault.getID,
-          validatePartitionColumns = true)
-
-        val stringNormalizedPartitionValues = typedPartitionValueLiterals.map {
-          case (k, v) => (k, PartitionUtils.literalToNormalizedString(
-            v,
-            Some(timeZone),
-            useUtcNormalizedTimestamp = true))
-        }
-
-        if (stringNormalizedPartitionValues != partitionValues) {
-          Action.recordDeltaEvent(
-            deltaTxn.map(_.deltaLog).orNull,
-            opType = "delta.normalizedPartitionValues.unnormalizedValuesExist",
-            data = Map(
-              "readSnapshotMetadata" -> deltaTxn.map(_.snapshot.metadata).orNull,
-              "txnMetadata" -> deltaTxn.map(_.metadata).orNull,
-              "commitInfo" -> deltaTxn.map(_.getCommitInfo).orNull
-            )
-          )
-        }
-        typedPartitionValueLiterals
-      } catch {
-        case NonFatal(e) =>
-          val opTypeSuffix = PartitionUtils.classifyPartitionValueParsingError(e)
-          Action.recordDeltaEvent(
-            deltaTxn.map(_.deltaLog).orNull,
-            opType = "delta.normalizedPartitionValues.partitionValueParsingError" + opTypeSuffix,
-            data = Map(
-              "exceptionMessage" -> e.getMessage,
-              "readSnapshotMetadata" -> deltaTxn.map(_.snapshot.metadata).orNull,
-              "txnMetadata" -> deltaTxn.map(_.metadata).orNull,
-              "commitInfo" -> deltaTxn.map(_.getCommitInfo).orNull,
-              "readSnapshotVersion" -> deltaTxn.map(_.snapshot.version).getOrElse(-1L),
-              "timeZone" -> timeZone
-            )
-          )
-          partitionValuesAsStringLiterals
-      }
-    } else {
-        partitionValuesAsStringLiterals
-    }
+    normalizedPartitionValues(
+      spark,
+      partitionSchema,
+      parseToTypedLiterals =
+        spark.conf.get(DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ),
+      deltaLog = deltaTxn.map(_.deltaLog).orNull,
+      errorOpType = "delta.normalizedPartitionValues",
+      errorData = Map(
+        "readSnapshotMetadata" -> deltaTxn.map(_.snapshot.metadata).orNull,
+        "txnMetadata" -> deltaTxn.map(_.metadata).orNull,
+        "commitInfo" -> deltaTxn.map(_.getCommitInfo).orNull,
+        "readSnapshotVersion" -> deltaTxn.map(_.snapshot.version).getOrElse(-1L))
+    )
   }
 
   // Don't use lazy val because we want to save memory.
@@ -1034,6 +1129,30 @@ object AddFile {
 }
 
 /**
+ * A back reference points a file action at the exact location of its source entry inside an
+ * Adaptive Metadata Tree (AMT) leaf manifest.
+ *
+ * @param manifest The AMT leaf manifest that held the source entry, stored exactly like the leaf's
+ *                 tree `location`: a raw (non-URL-encoded) path relative to the table root. This
+ *                 differs from [[AddFile.path]], which is URL-encoded.
+ * @param pos      The 0-based position of the entry within that leaf. This equals the parquet
+ *                 `_metadata.row_index` of the leaf row, which is the same ordinal the MDV bitmap
+ *                 indexes.
+ */
+case class BackReference(
+    manifest: String,
+    pos: Long)
+
+object BackReference {
+
+  final lazy val STRUCT_TYPE: StructType =
+    Action.addFileSchema("backReference").dataType.asInstanceOf[StructType]
+
+  private lazy val _encoder = new DeltaEncoder[BackReference]
+  implicit def encoder: Encoder[BackReference] = _encoder.get
+}
+
+/**
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is
  * deleted permanently.
  *
@@ -1063,7 +1182,8 @@ case class RemoveFile(
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
-    override val stats: String = null
+    override val stats: String = null,
+    backReference: Option[BackReference] = None
 ) extends FileAction with HasNumRecords {
   override def wrap: SingleAction = SingleAction(remove = this)
 
@@ -1196,8 +1316,7 @@ case class Metadata(
 
   /** Returns the partitionSchema as a [[StructType]] */
   @JsonIgnore
-  lazy val partitionSchema: StructType =
-    new StructType(partitionColumns.map(c => schema(c)).toArray)
+  override lazy val partitionSchema: StructType = super.partitionSchema
 
   /** Partition value keys in the AddFile map. */
   @JsonIgnore
@@ -1290,6 +1409,7 @@ trait CommitMarker {
  * @param engineInfo The information for the engine that makes the commit.
  *                   If a commit is made by Delta Lake 1.1.0 or above, it will be
  *                   `Apache-Spark/x.y.z Delta-Lake/x.y.z`.
+ * @param lastManifestCommit Info of the last AMT manifest commit up to this version.
  */
 case class CommitInfo(
     // The commit version should be left unfilled during commit(). When reading a delta file, we can
@@ -1316,7 +1436,8 @@ case class CommitInfo(
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
     engineInfo: Option[String],
-    txnId: Option[String])
+    txnId: Option[String],
+    lastManifestCommit: Option[LastManifestCommit])
   extends Action with CommitMarker with SparkAbstractCommitInfo with StorageAbstractCommitInfo {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
@@ -1373,7 +1494,7 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, None, null, None, None, null, null, None, None,
-      None, None, None, None, None, None, None, None, None)
+      None, None, None, None, None, None, None, None, None, None)
   }
 
   // scalastyle:off argcount
@@ -1433,7 +1554,8 @@ object CommitInfo {
       userMetadata,
       tags,
       getEngineInfo,
-      txnId)
+      txnId,
+      lastManifestCommit = None)
   }
   // scalastyle:on argcount
 
@@ -1477,6 +1599,141 @@ object CommitInfo {
 sealed trait CheckpointOnlyAction extends Action
 
 /**
+ * Pointer to an Iceberg v4 root manifest produced by an AMT commit.
+ *
+ * @param path        root manifest path, relative to the table root.
+ * @param sizeInBytes size of the root manifest file in bytes.
+ * @param tags        additional metadata about the AMT. See [[ContentRoot.Tags]] for known keys.
+ */
+case class ContentRoot(
+    path: String,
+    sizeInBytes: Long,
+    tags: Map[String, String] = null) {
+
+  private def tag(key: ContentRoot.Tags.KeyType): Option[String] =
+    Option(tags).flatMap(_.get(key.name))
+
+  /** Whether this manifest tree was built incrementally, if recorded. */
+  def isIncremental: Option[Boolean] = tag(ContentRoot.Tags.IS_INCREMENTAL).map(_.toBoolean)
+
+  /** The version of the most recent full (non-incremental) manifest rewrite, if recorded. */
+  def lastManifestCommitWithFullRewrite: Option[Long] =
+    tag(ContentRoot.Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE).map(_.toLong)
+
+  /** Absolute [[Path]] to the root manifest, resolving `path` against `tableRoot`. */
+  @JsonIgnore
+  def getAbsolutePath(tableRoot: Path): Path =
+    AMTUtils.absolutePathForManifestFile(tableRoot, path)
+}
+
+object ContentRoot {
+
+  def apply(
+      path: String,
+      sizeInBytes: Long,
+      isIncremental: Boolean,
+      lastManifestCommitWithFullRewrite: Long): ContentRoot = {
+    ContentRoot(
+      path = path,
+      sizeInBytes = sizeInBytes,
+      tags = Map(
+        Tags.IS_INCREMENTAL.name -> isIncremental.toString,
+        Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE.name ->
+          lastManifestCommitWithFullRewrite.toString
+      )
+    )
+  }
+
+  object Tags {
+    sealed abstract class KeyType(val name: String)
+
+    /** Whether the tree was built incrementally (`"true"`/`"false"`). */
+    object IS_INCREMENTAL extends KeyType("isIncremental")
+    /** The version of the most recent full (non-incremental) manifest rewrite. */
+    object LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE
+      extends KeyType("lastManifestCommitWithFullRewrite")
+  }
+}
+
+/**
+ * Closed set of values for [[SidecarFile.sidecarType]] under the `adaptiveMetadata-preview`
+ * feature. Tells a reader which slice of the checkpoint's non-content metadata a sidecar
+ * carries.
+ *
+ * Implemented as String constants because the value flows through Spark's case-class encoder
+ * (via [[SingleAction]] -> [[SidecarFile]]), and Spark cannot derive an encoder for a sealed
+ * Scala ADT. Validation belongs to whichever code paths consume the field.
+ */
+object SidecarType {
+  object Type {
+    val DomainMetadata: String = "domainMetadata"
+    val Txn: String = "txn"
+  }
+
+  /** All valid [[SidecarType]] values. */
+  val all: Set[String] = Set(Type.DomainMetadata, Type.Txn)
+
+  /** Returns the given name iff it is a known [[SidecarType]] value; throws otherwise. */
+  def validate(name: String): String = {
+    require(all.contains(name), s"Unknown sidecar type: $name")
+    name
+  }
+}
+
+/**
+ * Top-level Delta action emitted by a commit which also writes AMT.
+ * Embeds the full checkpoint state -- `contentRoot` plus the non-content metadata snapshot
+ * (protocol, metadata, domain metadata, txns, sidecars) -- that a reader needs to
+ * reconstruct the table at the recorded version without replaying earlier commits. Distinct
+ * from [[CheckpointMetadata]], which describes V2 checkpoint sidecars.
+ *
+ * For domain metadata and transaction identifiers, the data can be carried inline, in
+ * sidecars, or split across both (e.g., small changes inline with the bulk in a sidecar).
+ * A given entry must not be duplicated across inline and sidecar.
+ *
+ * @param version        version at which this checkpoint is valid. May belong to a previous
+ *                       commit (the checkpoint can lag the enclosing commit).
+ * @param contentRoot    pointer to the Iceberg v4 root manifest.
+ * @param protocol       protocol snapshot at `version`. Must be non null.
+ * @param metaData       metadata snapshot at `version`. Must be non null.
+ * @param domainMetadata all [[DomainMetadata]] entries carried inline. An empty list means
+ *                       there are no domain metadata entries inline (they may still be
+ *                       carried via sidecars).
+ * @param txns           transaction identifiers carried inline. An empty list means there are
+ *                       no transaction identifiers inline (they may still be carried via
+ *                       sidecars).
+ * @param sidecars       sidecars that carry the long tail of non-content metadata (transaction
+ *                       ids, domain metadata, ...). Empty when all non-content metadata is
+ *                       inline.
+ */
+case class Checkpoint(
+    version: Long,
+    contentRoot: ContentRoot,
+    protocol: Protocol,
+    metaData: Metadata,
+    domainMetadata: Seq[DomainMetadata],
+    txns: Seq[SetTransaction],
+    sidecars: Seq[SidecarFile]) extends Action {
+
+  // AMT checkpoint sidecars must always declare their type.
+  require(sidecars.forall(_.sidecarType.isDefined),
+    "All sidecars in a Checkpoint must have a sidecarType.")
+
+  override def wrap: SingleAction = SingleAction(checkpoint = this)
+}
+
+/**
+ * Info of last AMT manifest commit. Persisted in every [[CommitInfo]] and [[VersionChecksum]]
+ * as the source-of-truth of the last manifest commit up to the current commit version.
+ *
+ * @param version version of the manifest commit
+ * @param contentRootVersion version of the content root recorded in the manifest commit
+ */
+case class LastManifestCommit(
+    version: Long,
+    contentRootVersion: Long)
+
+/**
  * An [[Action]] containing the information about a sidecar file.
  *
  * @param path - sidecar path relative to `_delta_log/_sidecar` directory
@@ -1490,8 +1747,16 @@ case class SidecarFile(
     path: String,
     sizeInBytes: Long,
     modificationTime: Long,
-    tags: Map[String, String] = null)
+    tags: Map[String, String] = null,
+    // Applicable only for AMT checkpoint sidecars.
+    // Sidecars corresponding to V2Checkpoints do not have concept of sidecarType.
+    @JsonProperty("type")
+    @JsonInclude(Include.NON_ABSENT)
+    sidecarType: Option[String] = None)
   extends CheckpointOnlyAction {
+
+  // Either no sidecarType is supplied, or it must be one of the known [[SidecarType]] values.
+  sidecarType.foreach(SidecarType.validate)
 
   override def wrap: SingleAction = SingleAction(sidecar = this)
 
@@ -1525,8 +1790,61 @@ case class CheckpointMetadata(
   extends CheckpointOnlyAction {
 
   override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
+
+  import CheckpointMetadata.Tags
+
+  /** Number of actions in the [[SidecarFile]]s */
+  @JsonIgnore
+  def sidecarNumActions: Option[Long] =
+    Action.getDeserializedValueForTag[Long](tags, Tags.SIDECAR_NUM_ACTIONS.name)
+
+  /** Size in bytes across all part files */
+  @JsonIgnore
+  def sidecarSizeInBytes: Option[Long] =
+    Action.getDeserializedValueForTag[Long](tags, Tags.SIDECAR_SIZE_IN_BYTES.name)
+
+  /** Number of add file actions in the underlying checkpoint */
+  @JsonIgnore
+  def numOfAddFiles: Option[Long] =
+    Action.getDeserializedValueForTag[Long](tags, Tags.NUM_OF_ADD_FILES.name)
+
+  /** Schema of the [[SidecarFile]]s stored in the checkpoint */
+  @JsonIgnore
+  def sidecarFileSchema: Option[StructType] = {
+    Option(tags)
+      .flatMap(_.get(Tags.SIDECAR_FILE_SCHEMA.name))
+      .map(DataType.fromJson(_).asInstanceOf[StructType])
+  }
 }
 
+object CheckpointMetadata {
+
+  def apply(
+      version: Long,
+      sidecarNumActions: Long,
+      sidecarSizeInBytes: Long,
+      numOfAddFiles: Long,
+      sidecarFileSchemaOpt: Option[StructType]): CheckpointMetadata = {
+    val tagMapWithSchema = sidecarFileSchemaOpt.map(Tags.SIDECAR_FILE_SCHEMA.name -> _.json)
+    CheckpointMetadata(
+      version = version,
+      tags = Map(
+        Tags.SIDECAR_NUM_ACTIONS.name -> sidecarNumActions.toString,
+        Tags.SIDECAR_SIZE_IN_BYTES.name -> sidecarSizeInBytes.toString,
+        Tags.NUM_OF_ADD_FILES.name -> numOfAddFiles.toString
+      ) ++ tagMapWithSchema
+    )
+  }
+
+  object Tags {
+    sealed abstract class KeyType(val name: String)
+
+    object SIDECAR_NUM_ACTIONS extends KeyType("sidecarNumActions")
+    object SIDECAR_SIZE_IN_BYTES extends KeyType("sidecarSizeInBytes")
+    object NUM_OF_ADD_FILES extends KeyType("numOfAddFiles")
+    object SIDECAR_FILE_SCHEMA extends KeyType("sidecarFileSchema")
+  }
+}
 
 /** A serialization helper to create a common action envelope. */
 case class SingleAction(
@@ -1539,7 +1857,8 @@ case class SingleAction(
     checkpointMetadata: CheckpointMetadata = null,
     sidecar: SidecarFile = null,
     domainMetadata: DomainMetadata = null,
-    commitInfo: CommitInfo = null) {
+    commitInfo: CommitInfo = null,
+    checkpoint: Checkpoint = null) {
 
   def unwrap: Action = {
     if (add != null) {
@@ -1562,6 +1881,8 @@ case class SingleAction(
       domainMetadata
     } else if (commitInfo != null) {
       commitInfo
+    } else if (checkpoint != null) {
+      checkpoint
     } else {
       null
     }

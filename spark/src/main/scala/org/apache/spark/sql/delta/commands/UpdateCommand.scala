@@ -16,11 +16,11 @@
 
 package org.apache.spark.sql.delta.commands
 
-// scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
 
 import scala.util.control.NonFatal
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
@@ -611,7 +611,7 @@ object UpdateCommand {
    */
   def preserveRowTrackingColumns(
       targetDfWithoutRowTrackingColumns: DataFrame,
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       targetOutput: Seq[Attribute] = Seq.empty,
       updateExpressions: Seq[Expression] = Seq.empty):
     (DataFrame, Seq[Attribute], Seq[Expression]) = {

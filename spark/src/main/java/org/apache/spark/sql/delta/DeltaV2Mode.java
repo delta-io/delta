@@ -73,7 +73,7 @@ public class DeltaV2Mode {
   }
 
   /**
-   * Determines if catalog should return sparkV2 (SparkTable) or sparkV1 (DeltaTableV2) tables.
+   * Determines if catalog should return sparkV2 (DeltaV2Table) or sparkV1 (DeltaTableV2) tables.
    *
    * @return true if catalog should return sparkV2 tables
    */
@@ -86,6 +86,22 @@ public class DeltaV2Mode {
         // NONE (default) or AUTO: return sparkV1 tables
         // Note: AUTO mode uses sparkV2 connector only for streaming via ApplyV2Streaming rule,
         // not at catalog level
+        return false;
+    }
+  }
+
+  /**
+   * Determines if catalog-driven Auto-CDF (CHANGES) reads should route to the sparkV2 connector.
+   *
+   * @return true if CHANGES reads should use the sparkV2 connector
+   */
+  public boolean shouldRouteChangelogToV2() {
+    switch (mode()) {
+      case STRICT:
+      case AUTO:
+        return true;
+      default:
+        // NONE or unknown: the V2 Auto-CDF path is not available.
         return false;
     }
   }

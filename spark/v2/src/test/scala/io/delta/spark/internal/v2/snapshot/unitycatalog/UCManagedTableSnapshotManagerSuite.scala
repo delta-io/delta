@@ -20,7 +20,7 @@ import java.util.Optional
 import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils}
+import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils, UCTableIdentifier}
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
@@ -32,6 +32,7 @@ class UCManagedTableSnapshotManagerSuite
     with UCCatalogManagedTestUtils {
 
   private val testUcTableId = "testUcTableId"
+  private val testTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
   private val testUcUri = "https://test-uc.example.com"
   private val testUcToken = "test-token"
   private val testUcAuthConfig = Map("token" -> testUcToken).asJava
@@ -40,7 +41,8 @@ class UCManagedTableSnapshotManagerSuite
       ucClient: InMemoryUCClient,
       tablePath: String) = {
     val client = new UCCatalogManagedClient(ucClient)
-    val tableInfo = new UCTableInfo(testUcTableId, tablePath, testUcUri, testUcAuthConfig)
+    val tableInfo =
+      new UCTableInfo(testUcTableId, tablePath, testTableIdentifier, testUcUri, testUcAuthConfig)
     new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
   }
 
@@ -49,7 +51,13 @@ class UCManagedTableSnapshotManagerSuite
   test("constructor rejects null arguments") {
     val ucClient = new InMemoryUCClient("testMetastore")
     val client = new UCCatalogManagedClient(ucClient)
-    val tableInfo = new UCTableInfo(testUcTableId, "/test/path", testUcUri, testUcAuthConfig)
+    val tableInfo =
+      new UCTableInfo(
+        testUcTableId,
+        "/test/path",
+        testTableIdentifier,
+        testUcUri,
+        testUcAuthConfig)
 
     val ex1 = intercept[NullPointerException] {
       new UCManagedTableSnapshotManager(null, tableInfo, defaultEngine)
@@ -76,12 +84,19 @@ class UCManagedTableSnapshotManagerSuite
       val snapshot = manager.loadLatestSnapshot()
 
       assert(snapshot.getVersion == maxRatifiedVersion)
+      assert(ucClient.getLastGetCommitsTableIdentifier.getNamespace.toSeq == Seq("cat", "sch"))
+      assert(ucClient.getLastGetCommitsTableIdentifier.getName == "tbl")
     }
   }
 
   test("loadLatestSnapshot: throws when table does not exist in catalog") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val tableInfo = new UCTableInfo("nonExistentTableId", "/fake/path", testUcUri, testUcAuthConfig)
+    val tableInfo = new UCTableInfo(
+      "nonExistentTableId",
+      "/fake/path",
+      testTableIdentifier,
+      testUcUri,
+      testUcAuthConfig)
     val client = new UCCatalogManagedClient(ucClient)
     val manager = new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
 
@@ -112,21 +127,33 @@ class UCManagedTableSnapshotManagerSuite
       val manager = createManager(ucClient, tablePath)
 
       // Valid versions including v0 do not throw
-      manager.checkVersionExists(0L, true /* mustBeRecreatable */, false /* allowOutOfRange */ )
+      manager.checkVersionExists(
+        0L,
+        /* mustBeRecreatable= */ true,
+        /* allowOutOfRange= */ false)
       manager.checkVersionExists(
         maxRatifiedVersion,
-        true /* mustBeRecreatable */,
-        false /* allowOutOfRange */ )
+        /* mustBeRecreatable= */ true,
+        /* allowOutOfRange= */ false)
       manager.checkVersionExists(
         maxRatifiedVersion - 1,
-        true /* mustBeRecreatable */,
-        false /* allowOutOfRange */ )
-      manager.checkVersionExists(1L, true /* mustBeRecreatable */, false /* allowOutOfRange */ )
-      manager.checkVersionExists(1L, false /* mustBeRecreatable */, false /* allowOutOfRange */ )
+        /* mustBeRecreatable= */ true,
+        /* allowOutOfRange= */ false)
+      manager.checkVersionExists(
+        1L,
+        /* mustBeRecreatable= */ true,
+        /* allowOutOfRange= */ false)
+      manager.checkVersionExists(
+        1L,
+        /* mustBeRecreatable= */ false,
+        /* allowOutOfRange= */ false)
 
       // Out-of-bounds versions throw
       val belowLowerBound = intercept[VersionNotFoundException] {
-        manager.checkVersionExists(-1L, true /* mustBeRecreatable */, false /* allowOutOfRange */ )
+        manager.checkVersionExists(
+          -1L,
+          /* mustBeRecreatable= */ true,
+          /* allowOutOfRange= */ false)
       }
       assert(belowLowerBound.getUserVersion == -1L)
       assert(belowLowerBound.getEarliest == 0L)
@@ -135,8 +162,8 @@ class UCManagedTableSnapshotManagerSuite
       val aboveUpperBound = intercept[VersionNotFoundException] {
         manager.checkVersionExists(
           maxRatifiedVersion + 10,
-          true /* mustBeRecreatable */,
-          false /* allowOutOfRange */ )
+          /* mustBeRecreatable= */ true,
+          /* allowOutOfRange= */ false)
       }
       assert(aboveUpperBound.getUserVersion == maxRatifiedVersion + 10)
       assert(aboveUpperBound.getEarliest == 0L)
@@ -145,8 +172,8 @@ class UCManagedTableSnapshotManagerSuite
       // allowOutOfRange=true bypasses upper bound check
       manager.checkVersionExists(
         maxRatifiedVersion + 10,
-        true /* mustBeRecreatable */,
-        true /* allowOutOfRange */ )
+        /* mustBeRecreatable= */ true,
+        /* allowOutOfRange= */ true)
     }
   }
 
@@ -160,23 +187,23 @@ class UCManagedTableSnapshotManagerSuite
       intercept[KernelException] {
         manager.getActiveCommitAtTime(
           v0Ts - 1,
-          false /* canReturnLastCommit */,
-          true /* mustBeRecreatable */,
-          false /* canReturnEarliestCommit */ )
+          /* canReturnLastCommit= */ false,
+          /* mustBeRecreatable= */ true,
+          /* canReturnEarliestCommit= */ false)
       }
       intercept[KernelException] {
         manager.getActiveCommitAtTime(
           -100L,
-          false /* canReturnLastCommit */,
-          true /* mustBeRecreatable */,
-          false /* canReturnEarliestCommit */ )
+          /* canReturnLastCommit= */ false,
+          /* mustBeRecreatable= */ true,
+          /* canReturnEarliestCommit= */ false)
       }
       // With canReturnEarliestCommit, returns v0
       val earliestCommit = manager.getActiveCommitAtTime(
         v0Ts - 1,
-        false /* canReturnLastCommit */,
-        true /* mustBeRecreatable */,
-        true /* canReturnEarliestCommit */ )
+        /* canReturnLastCommit= */ false,
+        /* mustBeRecreatable= */ true,
+        /* canReturnEarliestCommit= */ true)
       assert(earliestCommit.getVersion == 0L)
 
       // Exact and between-commit timestamps
@@ -184,9 +211,9 @@ class UCManagedTableSnapshotManagerSuite
         manager
           .getActiveCommitAtTime(
             ts,
-            false /* canReturnLastCommit */,
-            true /* mustBeRecreatable */,
-            false /* canReturnEarliestCommit */ )
+            /* canReturnLastCommit= */ false,
+            /* mustBeRecreatable= */ true,
+            /* canReturnEarliestCommit= */ false)
           .getVersion
 
       assert(activeVersion(v0Ts) == 0L)
@@ -199,23 +226,23 @@ class UCManagedTableSnapshotManagerSuite
       intercept[KernelException] {
         manager.getActiveCommitAtTime(
           v2Ts + 1,
-          false /* canReturnLastCommit */,
-          true /* mustBeRecreatable */,
-          false /* canReturnEarliestCommit */ )
+          /* canReturnLastCommit= */ false,
+          /* mustBeRecreatable= */ true,
+          /* canReturnEarliestCommit= */ false)
       }
       intercept[KernelException] {
         manager.getActiveCommitAtTime(
           Long.MaxValue,
-          false /* canReturnLastCommit */,
-          true /* mustBeRecreatable */,
-          false /* canReturnEarliestCommit */ )
+          /* canReturnLastCommit= */ false,
+          /* mustBeRecreatable= */ true,
+          /* canReturnEarliestCommit= */ false)
       }
       // With canReturnLastCommit, returns v2
       val lastCommit = manager.getActiveCommitAtTime(
         v2Ts + 1,
-        true /* canReturnLastCommit */,
-        true /* mustBeRecreatable */,
-        false /* canReturnEarliestCommit */ )
+        /* canReturnLastCommit= */ true,
+        /* mustBeRecreatable= */ true,
+        /* canReturnEarliestCommit= */ false)
       assert(lastCommit.getVersion == 2L)
     }
   }
@@ -226,9 +253,9 @@ class UCManagedTableSnapshotManagerSuite
 
       val active = manager.getActiveCommitAtTime(
         v0Ts - 1,
-        false /* canReturnLastCommit */,
-        false /* mustBeRecreatable */,
-        true /* canReturnEarliestCommit */ )
+        /* canReturnLastCommit= */ false,
+        /* mustBeRecreatable= */ false,
+        /* canReturnEarliestCommit= */ true)
 
       assert(active.getVersion == 0L)
     }
@@ -244,6 +271,8 @@ class UCManagedTableSnapshotManagerSuite
       val fullRange = manager.getTableChanges(defaultEngine, 0L, Optional.of(maxRatifiedVersion))
       assert(fullRange.getStartVersion == 0L)
       assert(fullRange.getEndVersion == maxRatifiedVersion)
+      assert(ucClient.getLastGetCommitsTableIdentifier.getNamespace.toSeq == Seq("cat", "sch"))
+      assert(ucClient.getLastGetCommitsTableIdentifier.getName == "tbl")
 
       val toLatest = manager.getTableChanges(defaultEngine, 1L, Optional.empty())
       assert(toLatest.getStartVersion == 1L)
@@ -282,7 +311,12 @@ class UCManagedTableSnapshotManagerSuite
 
   test("operations propagate InvalidTargetTableException from client") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val tableInfo = new UCTableInfo("nonExistentTableId", "/fake/path", testUcUri, testUcAuthConfig)
+    val tableInfo = new UCTableInfo(
+      "nonExistentTableId",
+      "/fake/path",
+      testTableIdentifier,
+      testUcUri,
+      testUcAuthConfig)
     val client = new UCCatalogManagedClient(ucClient)
     val manager = new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
 
