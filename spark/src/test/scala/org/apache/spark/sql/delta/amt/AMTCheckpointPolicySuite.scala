@@ -50,7 +50,11 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
   }
 
   /** The trigger name recorded in the AMT write metrics of the commit `f` produces at `version`. */
-  private def amtTriggerNameAt(f: => Unit, version: Long): String = {
+  private def amtTriggerNameAt(f: => Unit, version: Long): String =
+    amtWriteMetricsAt(f, version).trigger
+
+  /** The AMT write metrics logged for the commit `f` produces at `version`. */
+  private def amtWriteMetricsAt(f: => Unit, version: Long): SingleAMTWriteMetrics = {
     Log4jUsageLogger.track(f)
       .filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
         e.tags.get("opType").contains("delta.commit.stats"))
@@ -58,7 +62,6 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
       .find(_.commitVersion == version)
       .flatMap(_.amtWriteMetrics)
       .flatMap(_.attempts.headOption)
-      .map(_.trigger)
       .getOrElse(fail(s"No AMT write metrics logged for version $version."))
   }
 
@@ -234,6 +237,74 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
         ExpectedCheckpoint(12, 13, incremental = true, lastFullRewrite = 8),
         ExpectedCheckpoint(14, 15, incremental = false, lastFullRewrite = 14),
         ExpectedCheckpoint(16, 17, incremental = true, lastFullRewrite = 14)))
+    }
+  }
+
+  test("a large commit does not write AMT inline until a full AMT already exists") {
+    withTable("amt_inline_needs_full") {
+      val name = "amt_inline_needs_full"
+      // Threshold 1 so every commit is "large" enough to inline. Interval 2.
+      createAMTTable(name, checkpointInterval = 2)
+      withSQLConf(
+          DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+            -> "1") {
+        // v1 is the first commit: no prior AMT, so it must NOT inline even though it is "large".
+        sql(s"INSERT INTO $name VALUES (1)")
+        val deltaLog = deltaLogForName(name)
+        assert(checkpointsAt(deltaLog, 1).isEmpty,
+          "The first large commit must not write an AMT inline (no full AMT exists yet).")
+
+        // v2 is the interval boundary: the first (full) AMT is emitted via the deferred follow-up
+        // OPTIMIZE CHECKPOINT commit at v3, not inline in v2.
+        sql(s"INSERT INTO $name VALUES (2)")
+        assert(checkpointsAt(deltaLog, 2).isEmpty, "v2 must not write an AMT inline.")
+        assert(deltaLog.update().version == 3, "The first full AMT lands as a follow-up at v3.")
+        assert(checkpointAt(deltaLog, 3).contentRoot.isIncremental.contains(false),
+          "The first AMT is a full rewrite.")
+
+        // Now a full AMT exists. The next large commit (v4) writes its AMT inline (incrementally).
+        val v4Metrics = amtWriteMetricsAt(sql(s"INSERT INTO $name VALUES (3)"), version = 4)
+        assert(v4Metrics.trigger == AMTTriggerMode.InlineWithLargeCommitIncremental.name,
+          s"Once a full AMT exists, a large commit inlines its AMT; got ${v4Metrics.trigger}")
+        assert(v4Metrics.incremental == "true",
+          "The usage log must report incremental=true for the inline AMT write.")
+        assert(checkpointAt(deltaLog, 4).contentRoot.isIncremental.contains(true),
+          "The inline AMT is incremental.")
+      }
+    }
+  }
+
+  test("a full rewrite follows up when inline writes cross the full-rewrite span") {
+    withTable("amt_inline_full_followup") {
+      val name = "amt_inline_full_followup"
+      // Interval 2, multiplier 2 -> fullRewriteSpan = 4. Threshold 1 so every large commit inlines
+      // once a full AMT exists. The first full AMT is the deferred follow-up; subsequent large
+      // commits inline incrementally, and when an inline commit lands a full span past the last
+      // full rewrite a follow-up full OPTIMIZE CHECKPOINT commit is scheduled.
+      createAMTTable(name, checkpointInterval = 2)
+      val deltaLog = deltaLogForName(name)
+      withSQLConf(
+          DeltaSQLConf.AMT_FULL_REWRITE_CHECKPOINT_INTERVAL_MULTIPLIER.key -> "2",
+          DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+            -> "1") {
+        (1 to 8).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+      }
+      // At least one full rewrite lands after the first, driven by the inline-triggered follow-up,
+      // and it correctly advances the last-full-rewrite marker.
+      val checkpoints = allCheckpoints(deltaLog)
+      val fulls = checkpoints.filter(_.contentRoot.isIncremental.contains(false))
+      assert(fulls.size >= 2,
+        s"Expected a follow-up full rewrite after inline writes crossed the span; got " +
+          s"${checkpoints.map(cp => (cp.version, cp.contentRoot.isIncremental))}.")
+      // Every full rewrite is at least a span past the previous one (anchored, not per-commit).
+      val fullRewriteSpan = 2 * 2
+      fulls.map(_.version).sliding(2).foreach {
+        case Seq(prev, next) =>
+          assert(next - prev >= fullRewriteSpan,
+            s"Full rewrite at v$next is only ${next - prev} versions after v$prev (span " +
+              s"$fullRewriteSpan).")
+        case _ => ()
+      }
     }
   }
 
