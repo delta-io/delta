@@ -247,9 +247,11 @@ class OptimisticTransactionSuite
       t => t.metadata
     ),
     concurrentWrites = Seq(
-      Action.supportedProtocolVersion(featuresToExclude = Seq(CatalogOwnedTableFeature))),
+      Action.supportedProtocolVersion(
+        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))),
     actions = Seq(
-      Action.supportedProtocolVersion(featuresToExclude = Seq(CatalogOwnedTableFeature))))
+      Action.supportedProtocolVersion(
+        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))))
 
   check(
     "taint whole table",
@@ -313,6 +315,32 @@ class OptimisticTransactionSuite
         txn.commit(Seq(Metadata(), Metadata()), ManualUpdate)
       }
       assert(e.getMessage.contains("Cannot change the metadata more than once in a transaction."))
+    }
+  }
+
+  test("dataPath resolves to deltaLog.dataPath") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val txn = log.startTransaction()
+      assert(txn.dataPath === log.dataPath)
+    }
+  }
+
+  test("logPath resolves to deltaLog.logPath") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val txn = log.startTransaction()
+      assert(txn.logPath === log.logPath)
+    }
+  }
+
+  test("newDeltaHadoopConf resolves to deltaLog.newDeltaHadoopConf") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val txn = log.startTransaction()
+      def asMap(conf: org.apache.hadoop.conf.Configuration): Map[String, String] =
+        conf.iterator().asScala.map(e => e.getKey -> e.getValue).toMap
+      assert(asMap(txn.newDeltaHadoopConf()) === asMap(log.newDeltaHadoopConf()))
     }
   }
 
@@ -1211,7 +1239,7 @@ class OptimisticTransactionSuite
         .add("part", "string")
       deltaLog.withNewTransaction { txn =>
         val protocol = Action.supportedProtocolVersion(
-          featuresToExclude = Seq(CatalogOwnedTableFeature))
+          featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))
         val metadata = Metadata(
           schemaString = schema.json,
           partitionColumns = partitionColumns)

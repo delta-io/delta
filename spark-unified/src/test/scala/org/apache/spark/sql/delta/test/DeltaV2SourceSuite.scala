@@ -63,8 +63,8 @@ object DeltaV2SourceSuite {
   val PassingTests: Set[String] = Set(
     // ========== Core streaming tests ==========
     "basic",
-    "initial snapshot ends at base index of next version",
     "new commits arrive after stream initialization - with explicit startingVersion",
+    "initial snapshot ends at base index of next version",
     "can consume new data without update",
     "Delta sources don't write offsets with null json",
     "reading from partitioned table succeeds during restart",

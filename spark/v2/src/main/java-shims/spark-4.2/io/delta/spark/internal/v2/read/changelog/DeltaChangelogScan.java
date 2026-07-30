@@ -55,7 +55,7 @@ public class DeltaChangelogScan implements Scan {
 
   // TODO: implement toMicroBatchStream() so spark.readStream...loadChangelog(...) can drive a
   // streaming CDC read through this Changelog. The existing streaming-CDC entrypoint
-  // (SparkMicroBatchStream + readChangeFeed=true) provides the wire format today, but it bypasses
+  // (DeltaV2MicroBatchStream + readChangeFeed=true) provides the wire format today, but it bypasses
   // the catalog-driven Changelog API that SPARK-56687 (PR apache/spark#55637) builds on for
   // streaming netChanges post-processing.
 }

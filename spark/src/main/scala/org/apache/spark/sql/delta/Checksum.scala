@@ -65,6 +65,7 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
  *                          that CRC files written by either Kernel or Delta-Spark are compatible.
  * @param deletedRecordCountsHistogramOpt A histogram of the deleted records count distribution
  *                                        for all the files in the snapshot.
+ * @param lastManifestCommit Info of the last AMT manifest commit up to this version.
  */
 case class VersionChecksum(
     txnId: Option[String],
@@ -87,7 +88,8 @@ case class VersionChecksum(
     @JsonAlias(Array("histogramOpt"))
     fileSizeHistogram: Option[FileSizeHistogram],
     deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram],
-    allFiles: Option[Seq[AddFile]]) {
+    allFiles: Option[Seq[AddFile]],
+    lastManifestCommit: Option[LastManifestCommit]) {
 
   /**
    * Converts to the legacy representation that serializes the histogram field as
@@ -108,7 +110,8 @@ case class VersionChecksum(
     protocol = protocol,
     histogramOpt = fileSizeHistogram,
     deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramOpt,
-    allFiles = allFiles
+    allFiles = allFiles,
+    lastManifestCommit = lastManifestCommit
   )
 }
 
@@ -135,7 +138,8 @@ case class VersionChecksumLegacy(
     protocol: Protocol,
     histogramOpt: Option[FileSizeHistogram],
     deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram],
-    allFiles: Option[Seq[AddFile]])
+    allFiles: Option[Seq[AddFile]],
+    lastManifestCommit: Option[LastManifestCommit])
 
 /**
  * Record the state of the table as a checksum file along with a commit.
@@ -544,7 +548,8 @@ trait RecordChecksum extends DeltaLogging {
       domainMetadata = domainMetadata,
       allFiles = allFiles,
       deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramOpt,
-      fileSizeHistogram = fileSizeHistogram
+      fileSizeHistogram = fileSizeHistogram,
+      lastManifestCommit = None
     ))
   }
 
@@ -830,7 +835,7 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
         "v2CheckpointEnabled" ->
           CheckpointProvider.isV2CheckpointEnabled(this),
         "checkpointProviderCheckpointPolicy" ->
-          checkpointProvider.checkpointPolicy.map(_.name).getOrElse("")
+          checkpointProvider.checkpointPolicyForLogging.map(_.name).getOrElse("")
       ) ++ contextInfo)
 
     val spark = sparkOpt.getOrElse {

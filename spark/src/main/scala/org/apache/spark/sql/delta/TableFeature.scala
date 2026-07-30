@@ -922,9 +922,20 @@ object DeletionVectorsTableFeature
 object AdaptiveMetadataTableFeature
   extends ReaderWriterFeature(name = "adaptiveMetadata-preview") {
 
-  // Iceberg v4 manifests reference columns by field ID, so column mapping must be supported on
-  // any table that enables this feature.
-  override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
+  // The [[AdaptiveMetadataTableFeature]] relies on the following features:
+  //  - catalogManaged: adaptive metadata tables are catalog managed (CCv2) only.
+  //  - rowTracking: stable row identity is required by the adaptive metadata layout.
+  //  - domainMetadata: listed explicitly even though rowTracking already requires it.
+  //  - deletionVectors: deletes are expressed as DVs rather than file rewrites.
+  //  - columnMapping: Iceberg v4 manifests reference columns by field ID, so column mapping
+  //    must be present. Note that presence alone is not enough; `id` mode is enforced separately
+  //    in [[OptimisticTransaction.scala]].
+  override def requiredFeatures: Set[TableFeature] = Set(
+    CatalogOwnedTableFeature,
+    RowTrackingFeature,
+    DomainMetadataTableFeature,
+    DeletionVectorsTableFeature,
+    ColumnMappingTableFeature)
 }
 
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")
@@ -1475,13 +1486,11 @@ object CheckpointProtectionTableFeature
       catalogTableOpt: Option[CatalogTable],
       toVersion: Long): Boolean = {
     deltaLog
-      .getChangeLogFiles(
+      .getChangesIterator(
         startVersion = 0,
         endVersion = toVersion,
         catalogTableOpt = catalogTableOpt,
         failOnDataLoss = false)
-      .map { case (_, file) => file }
-      .filter(FileNames.isDeltaFile)
       .take(1).isEmpty
   }
 

@@ -80,6 +80,25 @@ class AdaptiveMetadataActionsSerializerSuite extends SparkFunSuite {
     assert(roundTripped === root)
   }
 
+  test("ContentRoot: tags round-trip and expose typed accessors") {
+    val root = ContentRoot(
+      path = "metadata/root-abc.parquet",
+      sizeInBytes = 4096L,
+      isIncremental = true,
+      lastManifestCommitWithFullRewrite = 7L)
+    assert(root.isIncremental === Some(true))
+    assert(root.lastManifestCommitWithFullRewrite === Some(7L))
+    val roundTripped = JsonUtils.fromJson[ContentRoot](JsonUtils.toJson(root))
+    assert(roundTripped === root)
+    assert(roundTripped.isIncremental === Some(true))
+    assert(roundTripped.lastManifestCommitWithFullRewrite === Some(7L))
+  }
+
+  test("ContentRoot: accessors are None when tags are absent") {
+    assert(sampleRoot.isIncremental.isEmpty)
+    assert(sampleRoot.lastManifestCommitWithFullRewrite.isEmpty)
+  }
+
   // ============================================================================================
   // SidecarType enum
   // ============================================================================================

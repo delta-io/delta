@@ -31,7 +31,7 @@ import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
+import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.expressions.Column;
@@ -39,7 +39,6 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
-import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
@@ -208,6 +207,16 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return schema;
   }
 
+  /**
+   * Returns the physical schema of the table, i.e. the logical schema with each field renamed to
+   * its physical name according to the table's column mapping mode. The schema is produced by
+   * Kernel from the transaction state, so it honors the actual column mapping mode (including id
+   * mode metadata) instead of re-deriving the mapping in the connector.
+   */
+  public StructType getPhysicalSchema() {
+    return TransactionStateRow.getPhysicalSchema(tableState);
+  }
+
   @Override
   public List<String> getPartitionColumns() {
     return partitionColumns;
@@ -234,7 +243,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
           });
     }
     if (tableState == null) {
-      tableState = DefaultJsonRow.fromJsonString(serializedTableState, TransactionStateRow.SCHEMA);
+      tableState = JsonUtils.rowFromJson(serializedTableState, TransactionStateRow.SCHEMA);
     }
     if (schema == null) {
       schema = TransactionStateRow.getLogicalSchema(tableState);

@@ -18,13 +18,22 @@ package io.delta.sharing.spark
 
 import scala.reflect.ClassTag
 
-import org.apache.spark.sql.delta.GeoSpatialTableFeature
+import org.apache.spark.sql.delta.{
+  AppendOnlyTableFeature,
+  DeletionVectorsTableFeature,
+  GeoSpatialTableFeature
+}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.util.FileNames
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table, TemporaryCredentials}
 import io.delta.sharing.spark.DeltaSharingUtils._
+import io.delta.sharing.spark.model.{DeltaSharingMetadata, DeltaSharingProtocol}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SharedSparkContext, SparkEnv, SparkFunSuite}
 import org.apache.spark.delta.sharing.TableRefreshResult
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.storage.BlockId
 
 class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
@@ -150,7 +159,8 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
       table: Table,
       startingVersion: Long,
       endingVersion: Option[Long],
-      fileIdHash: Option[String]
+      fileIdHash: Option[String],
+      includeHistoricalProtocol: Boolean = false
     ): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
@@ -165,7 +175,8 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
       table: Table,
       cdfOptions: Map[String, String],
       includeHistoricalMetadata: Boolean,
-      fileIdHash: Option[String]): DeltaTableFiles = {
+      fileIdHash: Option[String],
+      includeHistoricalProtocol: Boolean = false): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
       val cdc = getCdcStr()
@@ -347,5 +358,88 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     funcWithoutRefreshToken(testRefreshToken)
     assert(client.lastRefreshToken == None,
       "When useRefreshToken=false, the refresh token should be ignored and None should be used")
+  }
+
+  // Reads back the json lines of a locally-constructed delta log file (as stored in the block
+  // manager by DeltaSharingLogFileSystem) for the given version.
+  private def readLocalDeltaLogVersion(customTablePath: String, version: Long): Seq[String] = {
+    val deltaLogPath = s"${DeltaSharingLogFileSystem.encode(customTablePath).toString}/_delta_log"
+    val jsonFilePath = FileNames.unsafeDeltaFile(new Path(deltaLogPath), version).toString
+    getSeqFromBlockManager[String](
+      DeltaSharingLogFileSystem.getDeltaSharingLogBlockId(jsonFilePath)
+    ).flatMap(_.split("\n")).filter(_.nonEmpty)
+  }
+
+  test("constructLocalDeltaLogAcrossVersions writes historical protocols to their own versions") {
+    val customTablePath = "constructHistoricalProtocol/table"
+    // A version range [1, 3] where the protocol is upgraded at v2 by enabling a reader/writer table
+    // feature (deletionVectors): the head protocol is stamped with the starting version (1), and
+    // the upgrade at v2 is streamed as its own versioned protocol, mirroring how historical
+    // metadata is streamed. Both protocols carry reader/writer feature lists (table-features
+    // protocol, minReaderVersion 3 / minWriterVersion 7) so the test exercises a realistic
+    // feature-list change, not just a version-number bump.
+    val headProtocol = Protocol(minReaderVersion = 1, minWriterVersion = 2)
+      .merge(Protocol.forTableFeature(AppendOnlyTableFeature))
+    val upgradedProtocol = headProtocol
+      .merge(Protocol.forTableFeature(DeletionVectorsTableFeature))
+    val metadata = Metadata(schemaString = new StructType().add("c1", "long").json)
+
+    val lines = Seq(
+      DeltaSharingProtocol(deltaProtocol = headProtocol, version = 1L).json,
+      DeltaSharingMetadata(deltaMetadata = metadata, version = 1L).json,
+      DeltaSharingProtocol(deltaProtocol = upgradedProtocol, version = 2L).json
+    )
+
+    DeltaSharingLogFileSystem.constructLocalDeltaLogAcrossVersions(
+      lines = lines,
+      customTablePath = customTablePath,
+      startingVersionOpt = Some(1L),
+      endingVersionOpt = Some(3L)
+    )
+
+    // The head protocol (and metadata) seed the starting version's json file.
+    val v1Lines = readLocalDeltaLogVersion(customTablePath, 1L)
+    assert(v1Lines.contains(headProtocol.json),
+      s"v1 log should contain the head protocol, got: $v1Lines")
+    assert(v1Lines.contains(metadata.json),
+      s"v1 log should contain the head metadata, got: $v1Lines")
+    assert(!v1Lines.contains(upgradedProtocol.json),
+      s"v1 log should not contain the v2 protocol upgrade, got: $v1Lines")
+
+    // The protocol upgrade is written to v2's own json file (not left on the stale head protocol).
+    val v2Lines = readLocalDeltaLogVersion(customTablePath, 2L)
+    assert(v2Lines.contains(upgradedProtocol.json),
+      s"v2 log should contain the protocol upgrade, got: $v2Lines")
+    assert(!v2Lines.contains(headProtocol.json),
+      s"v2 log should not repeat the head protocol, got: $v2Lines")
+
+    // A version with no protocol change carries no protocol action at all.
+    val v3Lines = readLocalDeltaLogVersion(customTablePath, 3L)
+    assert(!v3Lines.contains(headProtocol.json) && !v3Lines.contains(upgradedProtocol.json),
+      s"v3 log should carry no protocol action, got: $v3Lines")
+  }
+
+  test("constructLocalDeltaLogAcrossVersions keeps a single head protocol when unversioned") {
+    val customTablePath = "constructUnversionedProtocol/table"
+    // A server that doesn't emit historical protocols (or the flag/opt-in is off) returns a single
+    // protocol with no version. It must still seed the starting version's json file unchanged.
+    val headProtocol = Protocol(minReaderVersion = 1, minWriterVersion = 2)
+    val metadata = Metadata(schemaString = new StructType().add("c1", "long").json)
+
+    val lines = Seq(
+      DeltaSharingProtocol(deltaProtocol = headProtocol).json,
+      DeltaSharingMetadata(deltaMetadata = metadata, version = 1L).json
+    )
+
+    DeltaSharingLogFileSystem.constructLocalDeltaLogAcrossVersions(
+      lines = lines,
+      customTablePath = customTablePath,
+      startingVersionOpt = Some(1L),
+      endingVersionOpt = Some(2L)
+    )
+
+    val v1Lines = readLocalDeltaLogVersion(customTablePath, 1L)
+    assert(v1Lines.contains(headProtocol.json),
+      s"v1 log should contain the unversioned head protocol, got: $v1Lines")
   }
 }

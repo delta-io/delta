@@ -390,6 +390,7 @@ trait DeltaCheckpointTestUtils
     val fileActionsFileIndex = ci.format match {
       case CheckpointInstance.Format.V2 =>
         val incompleteCheckpointProvider = ci.getCheckpointProvider(log, allCheckpointFiles)
+          .asInstanceOf[FileBasedUninitializedCheckpointProvider]
         val df = log.loadIndex(incompleteCheckpointProvider.topLevelFileIndex.get, Action.logSchema)
         val sidecarFileStatuses = df.as[SingleAction].collect().map(_.unwrap).collect {
           case sf: SidecarFile => sf
@@ -1026,5 +1027,9 @@ trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
   override protected def dropTable(): Unit = {
     spark.sql(s"DROP TABLE IF EXISTS $tableSQLIdentifier")
     DeltaLog.clearCache()
+    // Delete any leftover files so each test starts from a clean slate. `defaultTablePath` does
+    // not require the table to still exist.
+    val leftoverPath = spark.sessionState.catalog.defaultTablePath(tableIdentifier).getPath
+    Utils.deleteRecursively(new File(leftoverPath))
   }
 }

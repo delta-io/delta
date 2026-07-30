@@ -611,6 +611,46 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
       "0",
       "Could not parse the following JSON as a valid Delta data type")
   }
+
+  // serializeStructField must emit the full per-field object ({name, type, nullable, metadata}).
+  // Assert the object shape and a round-trip through deserializeStructType.
+  Seq(
+    ("primitive", IntegerType.INTEGER),
+    ("decimal", new DecimalType(10, 2)),
+    ("array", new ArrayType(IntegerType.INTEGER, true)),
+    ("map", new MapType(StringType.STRING, IntegerType.INTEGER, true)),
+    ("struct", new StructType().add("x", IntegerType.INTEGER, true))).foreach {
+    case (name, dataType) =>
+      test(s"serializeStructField: emits per-field object for $name type") {
+        val field = new StructField("c", dataType, false)
+        val node = objectMapper.readTree(DataTypeJsonSerDe.serializeStructField(field))
+
+        assert(node.has("name") && node.get("name").asText === "c")
+        assert(node.has("nullable") && !node.get("nullable").asBoolean)
+        assert(node.has("metadata"))
+        assert(node.has("type") && parse(node.get("type").toString) === dataType)
+
+        val roundTripped =
+          DataTypeJsonSerDe.deserializeStructType(
+            structTypeJson(Seq(DataTypeJsonSerDe.serializeStructField(field))))
+        assert(roundTripped === new StructType().add(field))
+      }
+  }
+
+  test("serializeStructField: preserves field metadata") {
+    val field = new StructField(
+      "c",
+      IntegerType.INTEGER,
+      true,
+      FieldMetadata.builder().putLong("int", 0).build())
+    val node = objectMapper.readTree(DataTypeJsonSerDe.serializeStructField(field))
+
+    assert(node.get("metadata").get("int").asLong === 0L)
+    assert(
+      DataTypeJsonSerDe.deserializeStructType(
+        structTypeJson(Seq(DataTypeJsonSerDe.serializeStructField(field))))
+        === new StructType().add(field))
+  }
 }
 
 object DataTypeJsonSerDeSuite {

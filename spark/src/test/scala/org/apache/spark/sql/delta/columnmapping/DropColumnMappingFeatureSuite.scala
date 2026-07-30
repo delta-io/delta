@@ -73,10 +73,12 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
   }
 
   test("invalid column names") {
-    val invalidColName1 = colName("col1")
-    val invalidColName2 = colName("col2")
+    val invalidColName1 = "col1()"
+    val invalidColName2 = "col2{}"
+    val validColName = "col3"
     sql(
-      s"""CREATE TABLE $testTableName (a INT, `$invalidColName1` INT, `$invalidColName2` INT)
+      s"""CREATE TABLE $testTableName (a INT, `$invalidColName1` INT, `$invalidColName2` INT,
+         |`$validColName` INT)
          |USING delta
          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
          |""".stripMargin)
@@ -86,8 +88,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
     }
     checkError(e,
       "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
-      parameters = Map("invalidColumnNames" ->
-        "col1 with special chars ,;{}()\n\t=, col2 with special chars ,;{}()\n\t="))
+      parameters = Map("invalidColumnNames" -> s"$invalidColName1, $invalidColName2"))
   }
 
   test("drop column mapping from a table without table feature") {

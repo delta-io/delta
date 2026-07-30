@@ -15,9 +15,7 @@
  */
 package io.delta.kernel.defaults.internal.data;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.delta.kernel.data.ArrayValue;
@@ -39,8 +37,6 @@ import java.util.List;
 import java.util.Map;
 
 public class DefaultJsonRow implements Row {
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
   private final Object[] parsedValues;
   private final StructType readSchema;
 
@@ -52,23 +48,6 @@ public class DefaultJsonRow implements Row {
       final StructField field = readSchema.at(i);
       final Object parsedValue = decodeField(rootNode, field);
       parsedValues[i] = parsedValue;
-    }
-  }
-
-  /**
-   * Parses a single-line JSON string into a {@link Row} backed by this class, using the given
-   * schema. Only the data types supported by {@link DefaultJsonRow} may appear in the JSON.
-   *
-   * @param json JSON string to parse
-   * @param schema schema to read the JSON according to
-   * @return a {@link Row} instance with the given schema
-   */
-  public static Row fromJsonString(String json, StructType schema) {
-    try {
-      JsonNode jsonNode = OBJECT_MAPPER.readTree(json);
-      return new DefaultJsonRow((ObjectNode) jsonNode, schema);
-    } catch (JsonProcessingException ex) {
-      throw new RuntimeException(String.format("Could not parse JSON: %s", json), ex);
     }
   }
 

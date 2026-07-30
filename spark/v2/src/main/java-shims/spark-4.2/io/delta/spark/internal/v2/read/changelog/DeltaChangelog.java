@@ -2,8 +2,8 @@ package io.delta.spark.internal.v2.read.changelog;
 
 import io.delta.kernel.Snapshot;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
+import io.delta.spark.internal.v2.shims.CatalogV2UtilShims;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
-import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Changelog;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.expressions.FieldReference;
@@ -67,7 +67,7 @@ public class DeltaChangelog implements Changelog {
             .add("_commit_version", DataTypes.LongType, false)
             .add("_commit_timestamp", DataTypes.TimestampType, false);
 
-    return CatalogV2Util.structTypeToV2Columns(cdcSchema);
+    return CatalogV2UtilShims.structTypeToV2Columns(cdcSchema);
   }
 
   // TODO: optimise to false when deletion vectors are guaranteed enabled across the entire
