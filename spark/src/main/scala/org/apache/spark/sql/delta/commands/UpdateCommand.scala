@@ -191,12 +191,15 @@ case class UpdateCommand(
         val incrUpdatedCountExpr = IncrementMetric(TrueLiteral, metrics("numUpdatedRows"))
         val pathsToRewrite =
           withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
-            data.filter(Column(updateCondition))
-              .select(Column(fileMetadataCol).getField(FILE_PATH))
-              .filter(Column(incrUpdatedCountExpr))
-              .distinct()
-              .as[String]
-              .collect()
+            DeltaTableUtils.withNestedSchemaPruningDisabledForVariant(
+                sparkSession, txn.metadata.schema) {
+              data.filter(Column(updateCondition))
+                .select(Column(fileMetadataCol).getField(FILE_PATH))
+                .filter(Column(incrUpdatedCountExpr))
+                .distinct()
+                .as[String]
+                .collect()
+            }
           }
 
         // Wrap AddFile into TouchedFileWithDV that has empty DV.

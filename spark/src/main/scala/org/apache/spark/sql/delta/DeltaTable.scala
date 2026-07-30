@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.{DeltaLogging, LogThrottler}
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -465,6 +466,37 @@ object DeltaTableUtils extends PredicateHelper
         "Could not find a file source relation to add the file metadata column to.")
     }
     (newTarget, fileMetadataCol)
+  }
+
+  /**
+   * Runs `thunk` with nested schema pruning disabled when `schema` contains a variant column.
+   *
+   * Spark's "Early Filter and Projection Push-Down" batch is not idempotent when a scan requests
+   * the file source metadata column while a shredded variant column is only referenced by a
+   * filter that gets pushed below the variant reconstruction projection. That leaves the
+   * projection unused, and nested schema pruning only removes it on a second application of the
+   * batch.
+   *
+   * Finding the files to rewrite is exactly that shape: it reads `_metadata.file_path` and
+   * outputs nothing else.
+   *
+   * Note that `RuleExecutor` only checks idempotence when `Utils.isTesting`, so this surfaces as a
+   * test failure rather than as a user visible one: the batch runs once outside tests and the plan
+   * it produces is correct. Disabling nested pruning here avoids depending on an optimizer result
+   * that Spark itself reports as invalid, at the cost of not pruning nested fields for this one
+   * query. It is limited to variant tables, and should be removed once Spark makes nested schema
+   * pruning idempotent for this plan shape, tracked in
+   * https://github.com/apache/spark/issues/57659.
+   */
+  def withNestedSchemaPruningDisabledForVariant[T](
+      spark: SparkSession,
+      schema: StructType)(thunk: => T): T = {
+    if (!SchemaUtils.checkForVariantTypeColumnsRecursively(schema)) {
+      thunk
+    } else {
+      val newConf = spark.sessionState.conf.copy(SQLConf.NESTED_SCHEMA_PRUNING_ENABLED -> false)
+      SQLConf.withExistingConf(newConf)(thunk)
+    }
   }
 
   /**
