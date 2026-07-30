@@ -566,6 +566,52 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         "selected files should be pruned with runtime partition filters");
   }
 
+  /**
+   * With the temporary small-table cache enabled, a cache-hit scan must populate
+   * {@code selectedFiles} (and {@code perFileRowCounts}) parallel to {@code partitionedFiles},
+   * and a runtime partition filter must prune both lists together.
+   */
+  @Test
+  public void testSelectedFilesWithRuntimeFilterOnCacheHit() throws Exception {
+    withSQLConf(
+        "spark.databricks.delta.v2.temporarySmallTableCacheForPerfTest.enabled",
+        "true",
+        () -> {
+          TemporarySmallTableCacheV2.invalidateAll();
+          try {
+            // First scan populates the cache; runtime filter applies against the cached file list.
+            checkSupportsRuntimeFilters(
+                table, options, new Predicate[] {cityPredicate}, Arrays.asList("city=hz"));
+
+            // Second scan is served from the cache; selectedFiles stays parallel to
+            // partitionedFiles before and after a runtime filter.
+            DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+            DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+            assertTrue(TemporarySmallTableCacheV2.size() > 0, "cache should be populated");
+
+            List<DeltaScanFile> selectedFiles = scan.getSelectedFiles();
+            assertEquals(
+                getPartitionedFiles(scan).size(),
+                selectedFiles.size(),
+                "cache-hit scan should keep selectedFiles parallel to partitionedFiles");
+            assertEquals(5, selectedFiles.size(), "cache-hit scan should see all files");
+
+            scan.filter(new Predicate[] {cityPredicate});
+            List<DeltaScanFile> filtered = scan.getSelectedFiles();
+            assertEquals(
+                getPartitionedFiles(scan).size(),
+                filtered.size(),
+                "runtime filter on a cache hit should keep selectedFiles parallel");
+            assertEquals(2, filtered.size(), "city=hz runtime filter should keep two files");
+            assertTrue(
+                filtered.stream().allMatch(file -> file.getPath().contains("city=hz")),
+                "selected files should be pruned with runtime partition filters on a cache hit");
+          } finally {
+            TemporarySmallTableCacheV2.invalidateAll();
+          }
+        });
+  }
+
   private static long getTotalBytes(DeltaV2Scan scan) throws Exception {
     scan.estimateStatistics(); // ensurePlanned
     Field field = DeltaV2Scan.class.getDeclaredField("totalBytes");
