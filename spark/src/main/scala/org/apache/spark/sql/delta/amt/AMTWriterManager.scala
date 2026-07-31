@@ -214,15 +214,7 @@ class AMTWriterManager(
       return MaintenanceOperation()
     }
     val checkpointInterval = deltaLog.checkpointInterval(postCommitSnapshot.metadata)
-    val fullRewriteSpan = checkpointInterval.toLong * fullRewriteCheckpointIntervalMultiplier
-    val scheduleFull = AMTWriteHelper.previousAMTContentRoot(postCommitSnapshot)
-      .flatMap(_.lastManifestCommitWithFullRewrite)
-      .exists { lastFull =>
-        val versionsSinceFull = commitVersion - lastFull
-        versionsSinceFull > 0 && versionsSinceFull % checkpointInterval == 0 &&
-          versionsSinceFull >= fullRewriteSpan
-      }
-    if (scheduleFull) {
+    if (isFullCheckpointOverdue(commitVersion, postCommitSnapshot, checkpointInterval)) {
       MaintenanceOperation(
         shouldCheckpoint = true,
         amtTriggerModeOpt = Some(AMTTriggerMode.CheckpointIntervalFull))
@@ -262,8 +254,43 @@ class AMTWriterManager(
         })
     }
 
+    // -- case-1b --
+    // Backstop for an overdue full rewrite off the interval boundary. case-1 only fires at an
+    // interval boundary relative to the last AMT, and interval-boundary commits can be inlined.
+    // The inline path i.e. [[planMaintenanceAfterInlineWrite]] only schedules a full when it lands
+    // exactly on the full-rewrite cadence i.e. if checkpoint interval=10 and multiplier = 5 and
+    // last full is at 14 and then we say always have inline AMTs except 64/114/164/214 etc.). Such
+    // a table would never take case-1 and never get a follow-up full rewrite. Anchor this check to
+    // the last full rewrite (not the last AMT) and gate it on fullRewriteSpan: it fires the first
+    // version a full span has elapsed, and a racing follow-up that has not landed yet does not
+    // re-trigger on the very next commit (only once per interval), matching case-1's racing
+    // behavior.
+    if (isFullCheckpointOverdue(commitVersion, postCommitSnapshot, checkpointInterval)) {
+      return Some(AMTTriggerMode.CheckpointIntervalFull)
+    }
+
 
     None
+  }
+
+  /**
+   * Whether a full rewrite is overdue at `commitVersion`: a full span has elapsed since the last
+   * full rewrite AND `commitVersion` sits on an interval boundary relative to that anchor. The
+   * boundary gate keeps this racing-safe -- while a scheduled follow-up is in flight it re-triggers
+   * at most once per interval, not on every commit -- matching `followUpTriggerMode`'s case-1.
+   */
+  private def isFullCheckpointOverdue(
+      commitVersion: Long,
+      postCommitSnapshot: Snapshot,
+      checkpointInterval: Long): Boolean = {
+    val fullRewriteSpan = checkpointInterval * fullRewriteCheckpointIntervalMultiplier
+    AMTWriteHelper.previousAMTContentRoot(postCommitSnapshot)
+      .flatMap(_.lastManifestCommitWithFullRewrite)
+      .exists { lastFull =>
+        val versionsSinceFull = commitVersion - lastFull
+        versionsSinceFull > 0 && versionsSinceFull % checkpointInterval == 0 &&
+          versionsSinceFull >= fullRewriteSpan
+      }
   }
 
   /**
