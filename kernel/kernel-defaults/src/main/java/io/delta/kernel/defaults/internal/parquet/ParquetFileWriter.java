@@ -445,9 +445,9 @@ public class ParquetFileWriter {
   }
 
   /**
-   * Construct the {@link DataFileStatus} for the given file path. It reads the file status and
-   * uses the in-memory Parquet footer from {@code writer} to compute statistics when available,
-   * falling back to reopening the file if {@code writer} is null.
+   * Construct the {@link DataFileStatus} for the given file path. It reads the file status and uses
+   * the in-memory Parquet footer from {@code writer} to compute statistics when available, falling
+   * back to reopening the file if {@code writer} is null.
    *
    * @param path the path of the file
    * @param dataSchema the schema of the data in the file
