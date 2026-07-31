@@ -85,6 +85,35 @@ trait AMTCheckpointTestBase
   }
 
   /**
+   * Appends `n` rows to `tableName` as `n` separate data files in a single commit.
+   */
+  protected def appendRowsAsSeparateFiles(tableName: String, n: Int): Unit = {
+    withSQLConf(
+        "spark.sql.files.maxRecordsPerFile" -> "1",
+        DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false") {
+      sql(s"INSERT INTO $tableName SELECT CAST(id AS INT) FROM range($n)")
+    }
+  }
+
+  /**
+   * Emits an AMT by driving the incremental materialization directly, so the live files
+   * pack into leaves deterministically in input order, `AMT_ENTRIES_PER_LEAF` entries per leaf.
+   */
+  protected def emitIncrementalAMT(tableName: String): AMTCheckpointProvider = {
+    val snapshot = deltaLogForName(tableName).update()
+    val (result, _) = AMTWriteHelper.writeIncrementalMaterialization(
+      spark = spark,
+      readSnapshot = snapshot,
+      commitVersion = snapshot.version + 1,
+      actionsToCommit = Seq.empty,
+      postCommitProtocol = snapshot.protocol,
+      postCommitMetadata = snapshot.metadata,
+      trigger = AMTTriggerMode.CheckpointIntervalIncremental.name,
+      incremental = true)
+    new AMTCheckpointProvider(result.checkpoint, result.leaves, snapshot.deltaLog.dataPath)
+  }
+
+  /**
    * How an AMT is emitted for a triggering commit. In [[AMTWriteMode.Inline]] the manifest tree
    * rides in the business commit itself; in [[AMTWriteMode.Deferred]] a follow-up OPTIMIZE
    * CHECKPOINT commit (issued by the post-commit hook) lands it one version later.
