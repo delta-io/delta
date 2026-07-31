@@ -264,8 +264,8 @@ public interface Transaction {
    * @param partitionValues The partition values for the data, keyed by logical partition column
    *     name. If the table is un-partitioned, the map should be empty.
    * @return {@link DataWriteContext} containing metadata about where and how the data for partition
-   *     should be written. For a column-mapped table, the target directory and the returned
-   *     partition-value keys use the physical partition column names.
+   *     should be written. The target directory and the returned partition-value keys use the
+   *     physical partition column names.
    */
   static DataWriteContext getWriteContext(
       Engine engine, Row transactionState, Map<String, Literal> partitionValues) {
@@ -276,12 +276,11 @@ public interface Transaction {
     StructType tableSchema = getLogicalSchema(transactionState);
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
 
-    // Validate/sanitize against the logical partition columns.
     partitionValues =
         validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
 
-    // For column-mapped tables the on-disk partition directory and AddFile partition-value keys
-    // use physical names, so translate the column-name list and the value-map keys to physical.
+    // The on-disk partition directory and AddFile partition-value keys use physical names, so
+    // translate the column-name list and the value-map keys to physical.
     ColumnMapping.ColumnMappingMode mode = getColumnMappingMode(transactionState);
     partitionColNames =
         PartitionUtils.toPhysicalPartitionColNames(tableSchema, partitionColNames, mode);
