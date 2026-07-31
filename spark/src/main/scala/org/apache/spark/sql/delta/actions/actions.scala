@@ -1624,6 +1624,19 @@ case class ContentRoot(
   @JsonIgnore
   def getAbsolutePath(tableRoot: Path): Path =
     AMTUtils.absolutePathForManifestFile(tableRoot, path)
+
+  /** The root manifest as a Hadoop [[FileStatus]] carrying its path and size. */
+  @JsonIgnore
+  def toFileStatus(tableRoot: Path): FileStatus = {
+    new FileStatus(
+      /* length = */ sizeInBytes,
+      /* isdir = */ false,
+      /* block_replication = */ 0,
+      /* blocksize = */ 1L,
+      // modificationTime is not tracked on the ContentRoot, so report 0.
+      /* modification_time = */ 0L,
+      getAbsolutePath(tableRoot))
+  }
 }
 
 object ContentRoot {
