@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.hadoop.fs.Path
@@ -66,20 +66,26 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
   /**
    * Creates an AMT table and inserts two single-row files, the second insert landing on a
    * checkpoint boundary so both files are captured in the leaves and stamped with back references.
-   * Returns the post-emit `path -> back reference` map (the source of truth every command's
-   * tombstone / superseding AddFile must inherit).
+   * Returns the two reconstructed leaf-derived `AddFile`s (each carrying a back reference).
    */
-  private def emitTwoStampedFiles(name: String): Map[String, Option[BackReference]] = {
+  private def emitTwoStampedAddFiles(name: String): Seq[AddFile] = {
     createAMTTable(name, checkpointInterval = 2)
     sql(s"INSERT INTO $name VALUES (1)")
     sql(s"INSERT INTO $name VALUES (2)") // Lands on a checkpoint boundary -> emit.
     val snapshot = deltaLogForName(name).update()
     assert(amtProvider(snapshot).isDefined, "table must be AMT-backed after the emit.")
-    val byPath = liveAddFiles(snapshot).map(add => add.path -> add.backReference).toMap
-    assert(byPath.size == 2 && byPath.values.forall(_.isDefined),
+    val adds = liveAddFiles(snapshot)
+    assert(adds.size == 2 && adds.forall(_.backReference.isDefined),
       "both emitted files must be reconstructed from the leaves with a back reference.")
-    byPath
+    adds
   }
+
+  /**
+   * As [[emitTwoStampedAddFiles]], but returns the post-emit `path -> back reference` map (the
+   * source of truth every command's tombstone / superseding AddFile must inherit).
+   */
+  private def emitTwoStampedFiles(name: String): Map[String, Option[BackReference]] =
+    emitTwoStampedAddFiles(name).map(add => add.path -> add.backReference).toMap
 
   /**
    * Asserts that every file action committed after `afterVersion` that reuses a pre-command
@@ -332,6 +338,67 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
         assert(r.backReference.isEmpty,
           s"Non-AMT RemoveFile ${r.path} must not carry a back reference.")
       }
+    }
+  }
+
+  /** Commits `actions` through a real transaction so the OptimisticTransaction back-reference
+   *  check runs. */
+  private def commitActions(name: String, actions: Seq[Action]): Unit = {
+    val log = deltaLogForName(name)
+    log.startTransaction().commit(actions, DeltaOperations.ManualUpdate)
+  }
+
+  test("commit accepts a RemoveFile carrying the correct back reference") {
+    withTable("amt_commit_ok") {
+      val adds = emitTwoStampedAddFiles("amt_commit_ok")
+      // Tombstoning a leaf-derived file keeps its (correct) back reference: the commit must pass.
+      commitActions("amt_commit_ok", Seq(adds.head.removeWithTimestamp()))
+    }
+  }
+
+  test("commit accepts a fresh file that carries no back reference") {
+    withTable("amt_commit_fresh") {
+      val adds = emitTwoStampedAddFiles("amt_commit_fresh")
+      // A brand-new file not present in the tree legitimately carries no back reference.
+      val fresh = adds.head.copy(path = "brand-new-file.parquet", backReference = None)
+      commitActions("amt_commit_fresh", Seq(fresh))
+    }
+  }
+
+  test("commit fails when a leaf-derived file's tombstone is missing its back reference") {
+    withTable("amt_commit_missing") {
+      val adds = emitTwoStampedAddFiles("amt_commit_missing")
+      // Strip the back reference off a tombstone for a file the tree says should carry one.
+      val stripped = adds.head.removeWithTimestamp().copy(backReference = None)
+      val ex = intercept[IllegalStateException] {
+        commitActions("amt_commit_missing", Seq(stripped))
+      }
+      assert(ex.getMessage.contains("does not match the AMT"))
+      assert(ex.getMessage.contains(stripped.path))
+    }
+  }
+
+  test("commit fails when a fresh file carries a spurious back reference") {
+    withTable("amt_commit_spurious") {
+      val adds = emitTwoStampedAddFiles("amt_commit_spurious")
+      // A file not in the tree must not carry a back reference
+      val spurious = adds.head.copy(path = "brand-new-file.parquet")
+      val ex = intercept[IllegalStateException] {
+        commitActions("amt_commit_spurious", Seq(spurious))
+      }
+      assert(ex.getMessage.contains("not present in the AMT"))
+    }
+  }
+
+  test("commit fails when a present file's tombstone carries the wrong back reference") {
+    withTable("amt_commit_wrong") {
+      val adds = emitTwoStampedAddFiles("amt_commit_wrong")
+      val wrongBr = adds.head.backReference.get.copy(pos = adds.head.backReference.get.pos + 1000L)
+      val wrong = adds.head.removeWithTimestamp().copy(backReference = Some(wrongBr))
+      val ex = intercept[IllegalStateException] {
+        commitActions("amt_commit_wrong", Seq(wrong))
+      }
+      assert(ex.getMessage.contains("does not match the AMT"))
     }
   }
 
