@@ -20,6 +20,7 @@ import static scala.jdk.javaapi.CollectionConverters.asJava;
 
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -110,9 +111,9 @@ public final class UCUtils {
     Map<String, String> flags = new HashMap<>();
     for (String key :
         new String[] {
-          UCTableInfo.DELTA_REST_API_ENABLED_KEY,
-          UCTableInfo.RENEW_CREDENTIAL_ENABLED_KEY,
-          UCTableInfo.CRED_SCOPED_FS_ENABLED_KEY
+          UCConfigUtils.DELTA_REST_API_ENABLED_KEY,
+          UCConfigUtils.RENEW_CREDENTIAL_ENABLED_KEY,
+          UCConfigUtils.CRED_SCOPED_FS_ENABLED_KEY
         }) {
       String value = ucConfig.get(key);
       if (value != null) {

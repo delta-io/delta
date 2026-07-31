@@ -927,7 +927,13 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
 
     // Verify basic table properties
-    assertThat(describeResult.get("Name")).isEqualTo(fullTableName);
+    // Spark 4.2 reports the table name as Catalog/Database/Table instead of one Name row.
+    if (!fullTableName.equals(describeResult.get("Name"))) {
+      assertThat(describeResult.get("Catalog")).isEqualTo(catalogName);
+      assertThat(describeResult.getOrDefault("Database", describeResult.get("Namespace")))
+          .isEqualTo(schemaName);
+      assertThat(describeResult.get("Table")).isEqualTo(parseTableName(fullTableName));
+    }
     assertThat(describeResult.get("Type")).isEqualTo(tableType.name());
     assertThat(describeResult.get("Provider")).isEqualToIgnoringCase("delta");
     assertThat(describeResult.get("Is_managed_location"))

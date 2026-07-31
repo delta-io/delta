@@ -534,7 +534,8 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
           val info = IdentityColumn.getIdentityInfo(f)
           if (info.highWaterMark != gen.highWaterMarkOpt) {
             IdentityColumn.logTransactionAbort(deltaTxn.deltaLog)
-            throw DeltaErrors.metadataChangedException(conflictingCommit = None)
+            throw DeltaErrors.metadataChangedException(
+              table = deltaTxn.tableNameOrPath, conflictingCommit = None)
           }
 
         case (f, _) if ColumnWithDefaultExprUtils.isIdentityColumn(f) &&

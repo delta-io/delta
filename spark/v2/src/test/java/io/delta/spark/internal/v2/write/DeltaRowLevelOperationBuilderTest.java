@@ -88,7 +88,7 @@ public class DeltaRowLevelOperationBuilderTest extends DeltaV2TestBase {
     Scan scan = scanBuilder.build();
 
     assertNotNull(scan);
-    assertTrue(scan instanceof io.delta.spark.internal.v2.read.SparkScan);
+    assertEquals("DeltaV2Scan", scan.getClass().getSimpleName());
   }
 
   @Test

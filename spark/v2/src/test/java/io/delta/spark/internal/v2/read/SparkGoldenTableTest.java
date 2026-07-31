@@ -145,8 +145,8 @@ public class SparkGoldenTableTest {
               }
             });
     ScanBuilder builder = table.newScanBuilder(scanOptions);
-    assertTrue((builder instanceof SparkScanBuilder));
-    SparkScanBuilder scanBuilder = (SparkScanBuilder) builder;
+    assertTrue((builder instanceof DeltaV2ScanBuilder));
+    DeltaV2ScanBuilder scanBuilder = (DeltaV2ScanBuilder) builder;
     assertEquals(expectedDataSchema, scanBuilder.getDataSchema());
     assertEquals(expectedPartitionSchema, scanBuilder.getPartitionSchema());
     CaseInsensitiveStringMap combinedOptions =
@@ -161,8 +161,8 @@ public class SparkGoldenTableTest {
     assertEquals(combinedOptions, scanBuilder.getOptions());
 
     Scan scan1 = scanBuilder.build();
-    assertTrue(scan1 instanceof SparkScan);
-    SparkScan sparkScan1 = (SparkScan) scan1;
+    assertTrue(scan1 instanceof DeltaV2Scan);
+    DeltaV2Scan sparkScan1 = (DeltaV2Scan) scan1;
     assertEquals(expectedDataSchema, sparkScan1.getDataSchema());
     assertEquals(expectedDataSchema, sparkScan1.getReadDataSchema());
     assertEquals(expectedPartitionSchema, sparkScan1.getPartitionSchema());
@@ -177,8 +177,8 @@ public class SparkGoldenTableTest {
             });
     scanBuilder.pruneColumns(prunedSchema);
     Scan scan2 = scanBuilder.build();
-    assertTrue(scan2 instanceof SparkScan);
-    SparkScan sparkScan2 = (SparkScan) scan2;
+    assertTrue(scan2 instanceof DeltaV2Scan);
+    DeltaV2Scan sparkScan2 = (DeltaV2Scan) scan2;
     assertEquals(expectedDataSchema, sparkScan2.getDataSchema());
     StructType expectedReadDataSchemaAfterPrune =
         DataTypes.createStructType(new StructField[] {expectedDataSchema.fields()[0]});
@@ -322,8 +322,8 @@ public class SparkGoldenTableTest {
     // city = 'hz' AND date = '20180520'
     org.apache.spark.sql.connector.expressions.filter.Predicate andPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
-            "AND", new Expression[] {SparkScanTest.cityPredicate, SparkScanTest.datePredicate});
-    SparkScanTest.checkSupportsRuntimeFilters(
+            "AND", new Expression[] {DeltaV2ScanTest.cityPredicate, DeltaV2ScanTest.datePredicate});
+    DeltaV2ScanTest.checkSupportsRuntimeFilters(
         table,
         options,
         new org.apache.spark.sql.connector.expressions.filter.Predicate[] {andPredicate},
@@ -332,49 +332,49 @@ public class SparkGoldenTableTest {
     // city = 'hz' OR date = '20180520'
     org.apache.spark.sql.connector.expressions.filter.Predicate orPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
-            "OR", new Expression[] {SparkScanTest.cityPredicate, SparkScanTest.datePredicate});
-    SparkScanTest.checkSupportsRuntimeFilters(
+            "OR", new Expression[] {DeltaV2ScanTest.cityPredicate, DeltaV2ScanTest.datePredicate});
+    DeltaV2ScanTest.checkSupportsRuntimeFilters(
         table,
         scanOptions,
         new org.apache.spark.sql.connector.expressions.filter.Predicate[] {orPredicate},
         Arrays.asList("city=hz", "date=20180520"));
 
     //  city = 'hz', cnt > 10
-    SparkScanTest.checkSupportsRuntimeFilters(
+    DeltaV2ScanTest.checkSupportsRuntimeFilters(
         table,
         options,
         new org.apache.spark.sql.connector.expressions.filter.Predicate[] {
-          SparkScanTest.cityPredicate, SparkScanTest.dataPredicate
+          DeltaV2ScanTest.cityPredicate, DeltaV2ScanTest.dataPredicate
         },
         Arrays.asList("city=hz"));
 
     //  city = 'hz' OR cnt > 10
     org.apache.spark.sql.connector.expressions.filter.Predicate orDataPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
-            "OR", new Expression[] {SparkScanTest.cityPredicate, SparkScanTest.dataPredicate});
-    SparkScanTest.checkSupportsRuntimeFilters(
+            "OR", new Expression[] {DeltaV2ScanTest.cityPredicate, DeltaV2ScanTest.dataPredicate});
+    DeltaV2ScanTest.checkSupportsRuntimeFilters(
         table,
         options,
         new org.apache.spark.sql.connector.expressions.filter.Predicate[] {orDataPredicate},
-        SparkScanTest.allCities);
+        DeltaV2ScanTest.allCities);
 
     // city = date
-    SparkScanTest.checkSupportsRuntimeFilters(
+    DeltaV2ScanTest.checkSupportsRuntimeFilters(
         table,
         options,
         new org.apache.spark.sql.connector.expressions.filter.Predicate[] {
-          SparkScanTest.negativeInterColPredicate
+          DeltaV2ScanTest.negativeInterColPredicate
         },
         Arrays.asList());
 
     // city <> date
-    SparkScanTest.checkSupportsRuntimeFilters(
+    DeltaV2ScanTest.checkSupportsRuntimeFilters(
         table,
         options,
         new org.apache.spark.sql.connector.expressions.filter.Predicate[] {
-          SparkScanTest.interColPredicate
+          DeltaV2ScanTest.interColPredicate
         },
-        SparkScanTest.allCities);
+        DeltaV2ScanTest.allCities);
   }
 
   private void checkSupportsPushDownFilters(
@@ -388,7 +388,7 @@ public class SparkGoldenTableTest {
       Optional<Predicate> expectedKernelScanBuilderPredicate)
       throws Exception {
     ScanBuilder newBuilder = table.newScanBuilder(scanOptions);
-    SparkScanBuilder builder = (SparkScanBuilder) newBuilder;
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) newBuilder;
 
     Filter[] postScanFilters = builder.pushFilters(inputFilters);
 
@@ -414,21 +414,21 @@ public class SparkGoldenTableTest {
     assertEquals(expectedKernelScanBuilderPredicate, predicateOpt);
   }
 
-  private Predicate[] getPushedKernelPredicates(SparkScanBuilder builder) throws Exception {
-    Field field = SparkScanBuilder.class.getDeclaredField("pushedKernelPredicates");
+  private Predicate[] getPushedKernelPredicates(DeltaV2ScanBuilder builder) throws Exception {
+    Field field = DeltaV2ScanBuilder.class.getDeclaredField("pushedKernelPredicates");
     field.setAccessible(true);
     return (Predicate[]) field.get(builder);
   }
 
-  private Filter[] getDataFilters(SparkScanBuilder builder) throws Exception {
-    Field field = SparkScanBuilder.class.getDeclaredField("dataFilters");
+  private Filter[] getDataFilters(DeltaV2ScanBuilder builder) throws Exception {
+    Field field = DeltaV2ScanBuilder.class.getDeclaredField("dataFilters");
     field.setAccessible(true);
     return (Filter[]) field.get(builder);
   }
 
-  private Optional<Predicate> getKernelScanBuilderPredicate(SparkScanBuilder builder)
+  private Optional<Predicate> getKernelScanBuilderPredicate(DeltaV2ScanBuilder builder)
       throws Exception {
-    Field field = SparkScanBuilder.class.getDeclaredField("kernelScanBuilder");
+    Field field = DeltaV2ScanBuilder.class.getDeclaredField("kernelScanBuilder");
     field.setAccessible(true);
     Object kernelScanBuilder = field.get(builder);
     Field predicateField = kernelScanBuilder.getClass().getDeclaredField("predicate");
@@ -461,8 +461,8 @@ public class SparkGoldenTableTest {
         new CaseInsensitiveStringMap(
             java.util.Collections.singletonMap("another_option_key", "another_option_value"));
     ScanBuilder builder = table.newScanBuilder(options);
-    assertTrue((builder instanceof SparkScanBuilder));
-    SparkScanBuilder scanBuilder = (SparkScanBuilder) builder;
+    assertTrue((builder instanceof DeltaV2ScanBuilder));
+    DeltaV2ScanBuilder scanBuilder = (DeltaV2ScanBuilder) builder;
 
     assertEquals(expectedSchema, scanBuilder.getDataSchema());
     assertTrue(scanBuilder.getPartitionSchema().isEmpty());
@@ -470,8 +470,8 @@ public class SparkGoldenTableTest {
 
     // Initial scan (no pruning)
     Scan scan1 = scanBuilder.build();
-    assertTrue(scan1 instanceof SparkScan);
-    SparkScan sparkScan1 = (SparkScan) scan1;
+    assertTrue(scan1 instanceof DeltaV2Scan);
+    DeltaV2Scan sparkScan1 = (DeltaV2Scan) scan1;
     assertEquals(expectedSchema, sparkScan1.getDataSchema());
     assertEquals(expectedSchema, sparkScan1.getReadDataSchema());
     assertTrue(sparkScan1.getPartitionSchema().isEmpty());
@@ -481,8 +481,8 @@ public class SparkGoldenTableTest {
     scanBuilder.pruneColumns(prunedSchema);
 
     Scan scan2 = scanBuilder.build();
-    assertTrue(scan2 instanceof SparkScan);
-    SparkScan sparkScan2 = (SparkScan) scan2;
+    assertTrue(scan2 instanceof DeltaV2Scan);
+    DeltaV2Scan sparkScan2 = (DeltaV2Scan) scan2;
     assertEquals(expectedSchema, sparkScan2.getDataSchema());
     assertEquals(prunedSchema, sparkScan2.getReadDataSchema());
     assertTrue(sparkScan2.getPartitionSchema().isEmpty());
