@@ -1460,14 +1460,17 @@ trait SnapshotManagement { self: DeltaLog =>
    *                      tables. When present, it is installed in the underlying post-commit
    *                      snapshot as it must be the latest checkpoint in the commit range
    *                      [0, committedVersion]. None otherwise.
+   * @param isIdempotentRetry when true, this is an idempotent retry of a commit that already
+   *                          landed
    */
   def updateAfterCommit(
       committedVersion: Long,
-      commit: Commit,
+      commitOpt: Option[Commit],
       newChecksumOpt: Option[VersionChecksum],
       preCommitLogSegment: LogSegment,
       catalogTableOpt: Option[CatalogTable],
-      amtCheckpointOpt: Option[Checkpoint] = None): Snapshot = {
+      amtCheckpointOpt: Option[Checkpoint] = None,
+      isIdempotentRetry: Boolean = false): Snapshot = {
     var previousSnapshot: Snapshot = null
     recordDeltaOperation(this, "delta.log.updateAfterCommit") {
       val updatedSnapshot = withSnapshotLockInterruptibly {
@@ -1480,15 +1483,26 @@ trait SnapshotManagement { self: DeltaLog =>
         )
         val amtCheckpointProviderOpt =
           amtCheckpointOpt.map(cp => AMTCheckpointProvider.fromCheckpoint(spark, this, cp))
-        val segment = getLogSegmentAfterCommit(
-          committedVersion,
-          newChecksumOpt,
-          preCommitLogSegment,
-          commit,
-          commitCoordinatorOpt,
-          catalogTableOpt,
-          previousSnapshot.checkpointProvider,
-          amtCheckpointProviderOpt = amtCheckpointProviderOpt)
+        val segment = if (isIdempotentRetry) {
+          // The commit already landed and the preCommitLogSegment has been advanced to a
+          // segment at  >= committedVersion by conflict checking, so it is already the
+          // post-commit segment.
+          preCommitLogSegment
+        } else {
+          val commit = commitOpt.getOrElse {
+            throw new IllegalStateException(
+              "A Commit is required to build the post-commit log segment.")
+          }
+          getLogSegmentAfterCommit(
+            committedVersion,
+            newChecksumOpt,
+            preCommitLogSegment,
+            commit,
+            commitCoordinatorOpt,
+            catalogTableOpt,
+            previousSnapshot.checkpointProvider,
+            amtCheckpointProviderOpt = amtCheckpointProviderOpt)
+        }
 
         // This likely implies a list-after-write inconsistency
         if (segment.version < committedVersion) {
