@@ -28,7 +28,6 @@ import java.util.UUID;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.catalyst.analysis.CannotReplaceMissingTableException;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationBaseTest {
@@ -650,36 +649,12 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
         .orElse(null);
   }
 
-  /**
-   * TODO(uc-identity-replace): Re-enable once the unitycatalog-spark connector overrides {@code
-   * stageReplace(Column[])} and {@code stageCreateOrReplace(Column[])}.
-   *
-   * <p>Root cause: {@code UCSingleCatalog} only overrides the deprecated {@code StructType}
-   * variants of {@code stageReplace}/{@code stageCreateOrReplace}. Spark's {@code ReplaceTableExec}
-   * calls the {@code Column[]} variants, which fall through to the default impl in {@code
-   * StagingTableCatalog}. The default runs {@code CatalogV2Util.v2ColumnsToStructType(columns)} —
-   * which drops {@code Column#identityColumnSpec()} — and then forwards the stripped {@code
-   * StructType} to UC's {@code StructType} override, which delegates to Delta. Delta's {@code
-   * stageReplace(Column[])} override in {@code AbstractDeltaCatalog} is therefore never reached on
-   * the UC path, and the post-REPLACE schema commits with no {@code delta.identity.*} metadata.
-   *
-   * <p>Symptom this test catches: REPLACE on a UC-managed table that declares {@code GENERATED
-   * ALWAYS AS IDENTITY} succeeds, but the next INSERT generates {@code NULL} for the identity
-   * column instead of the new {@code START WITH} value.
-   *
-   * <p>Verified on the spark_catalog path (V1 DDL) where the existing {@code IdentityColumnSuite
-   * "create or replace on a table resets high watermark"} test passes. CREATE on UC-managed works
-   * (see {@code UCDeltaTableDDLTest#testCreateWithIdentityColumn}) because {@code
-   * UCSingleCatalog.createTable(Column[])} IS overridden and preserves the spec.
-   */
   @Test
-  @Disabled(
-      "Blocked on unitycatalog-spark: stageReplace(Column[]) / stageCreateOrReplace(Column[])"
-          + " not overridden, so identityColumnSpec() is stripped by the default"
-          + " StagingTableCatalog impl before Delta sees the call. Re-enable after the UC"
-          + " connector adds Column[] overrides for the stage* methods.")
   public void testReplaceManagedTableResetsIdentityHighWaterMark() throws Exception {
-    for (ReplaceOperation operation : ReplaceOperation.values()) {
+    // RTAS cannot declare identity columns because Spark disallows an explicit schema with
+    // AS SELECT. Exercise the two schema-bearing replacement operations.
+    for (ReplaceOperation operation :
+        List.of(ReplaceOperation.REPLACE, ReplaceOperation.CREATE_OR_REPLACE)) {
       String tableName = uniqueTableName("identity_hwm_reset", operation);
       String fullTableName = fullTableName(tableName);
       try {
@@ -694,22 +669,12 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
             .containsExactly(row("100"), row("101"), row("102"));
 
         String ucTableIdBefore = currentUcTableId(fullTableName);
-        if (operation.isAsSelect()) {
-          sql(
-              "%s TABLE %s USING delta"
-                  + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported')"
-                  + " AS SELECT CAST(NULL AS BIGINT) AS id, CAST('seed' AS STRING) AS val",
-              operation.name().contains("CREATE_OR_REPLACE") ? "CREATE OR REPLACE" : "REPLACE",
-              fullTableName);
-        } else {
-          sql(
-              "%s TABLE %s ("
-                  + "id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 50000 INCREMENT BY 1),"
-                  + "val STRING) USING delta"
-                  + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
-              operation.name().contains("CREATE_OR_REPLACE") ? "CREATE OR REPLACE" : "REPLACE",
-              fullTableName);
-        }
+        sql(
+            "%s %s ("
+                + "id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 50000 INCREMENT BY 1),"
+                + "val STRING) USING delta"
+                + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+            operation.sqlPrefix, fullTableName);
         assertThat(currentUcTableId(fullTableName))
             .as("UC table id preserved across %s", operation)
             .isEqualTo(ucTableIdBefore);
