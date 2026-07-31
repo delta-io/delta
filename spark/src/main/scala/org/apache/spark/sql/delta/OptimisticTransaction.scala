@@ -57,6 +57,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
 import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, TransactionHelper}
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
@@ -2667,7 +2668,32 @@ trait OptimisticTransactionImpl extends TransactionHelper
       checkColumnDefaults(op)
     }
 
+    verifyAmtBackReferences(finalActions)
     finalActions
+  }
+
+  /**
+   * Test-only invariant check for AMT back references, run on every commit to an AMT-backed table.
+   */
+  private def verifyAmtBackReferences(finalActions: Seq[Action]): Unit = {
+    if (!DeltaUtils.isTesting) return
+    snapshot.checkpointProvider match {
+      case amt: AMTCheckpointProvider =>
+        amt.verifyCommitBackReferences(spark, deltaLog, finalActions)
+      case _ =>
+        // Not an AMT-backed table: no file action may carry a back reference.
+        finalActions.foreach {
+          case a: AddFile if a.backReference.isDefined =>
+            throw new IllegalStateException(
+              s"AddFile '${a.path}' carries a back reference ${a.backReference} on a " +
+              "non-AMT table, which must not happen.")
+          case r: RemoveFile if r.backReference.isDefined =>
+            throw new IllegalStateException(
+              s"RemoveFile '${r.path}' carries a back reference ${r.backReference} on a " +
+              "non-AMT table, which must not happen.")
+          case _ => // File action without a back reference, or a non-file action: nothing to check.
+        }
+    }
   }
 
   // Returns the isolation level to use for committing the transaction
@@ -2907,7 +2933,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // The AMT was written inline with this commit (always incremental). A full rewrite is never
       // inlined, so schedule a follow-up full OPTIMIZE CHECKPOINT commit when the full-rewrite
       // cadence is due -- otherwise a table whose commits consistently inline would never get a
-      // full tree.
+      // full tree. When the inline write itself lands on the full-rewrite cadence, the tree is
+      // materialized twice (incrementally inline at this version, then fully at the follow-up
+      // version). We deliberately do not suppress the inline write in that case: the inline write
+      // exists to pack a large writer's file actions into the manifest tree instead of
+      // the commit JSON, and skipping it would push those actions back inline and bloat the commit
+      // JSON -- exactly what the inline path avoids. The rare double materialization is the
+      // accepted cost of never writing a very large commit JSON.
       amtWriterManager.planMaintenanceAfterInlineWrite(attemptVersion, postCommitSnapshot)
     }
     val commitStatsComputer = new CommitStatsComputer()
