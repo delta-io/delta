@@ -34,8 +34,8 @@ public abstract class PositionOutputStream extends OutputStream {
 
   /**
    * Record that this stream should discard, rather than publish, its output. abort() does not
-   * release resources on its own; the subsequent {@link #close()} does, and must honor this flag
-   * so that no file - partial or complete - becomes visible at the destination path.
+   * release resources on its own; the subsequent {@link #close()} does, and must honor this flag so
+   * that no file - partial or complete - becomes visible at the destination path.
    */
   public void abort() {
     this.aborted = true;
