@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.amt
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{Checkpoints, DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{Checkpoints, DeltaLog, DeltaParquetWriteSupport, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, DomainMetadata, InMemoryLogReplay, Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.mapreduce.Job
+import org.apache.parquet.hadoop.ParquetOutputFormat
 
 import org.apache.spark.TaskContext
 import org.apache.spark.paths.SparkPath
@@ -177,6 +178,7 @@ object AMTWriteHelper extends DeltaLogging {
       includeActionsInCommitJson = true)
     val singleMetric = SingleAMTWriteMetrics(
       trigger = trigger,
+      incremental = contentRoot.isIncremental.map(_.toString).getOrElse("UNKNOWN"),
       materializeDurationMs = NANOSECONDS.toMillis(System.nanoTime() - startNanos))
     (result, singleMetric)
   }
@@ -295,12 +297,15 @@ object AMTWriteHelper extends DeltaLogging {
     val amtDs = addFilesDs.map { add =>
       DataEntry.fromAddFile(add, tracking, tableRootSparkPath.toPath).wrap
     }
-    val schema = amtDs.schema.asNullable
+    val schema = AMTSingleAction.schemaWithFieldId
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
-      (format.prepareWrite(spark, job, Map.empty, schema),
-        new SerializableConfiguration(job.getConfiguration))
+      val f = format.prepareWrite(spark, job, Map.empty, schema)
+      // Emit nested (list-element / map key-value) field ids, which the stock ParquetWriteSupport
+      // does not. Set after prepareWrite (before snapshotting the conf) so it flows to executors.
+      ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
+      (f, new SerializableConfiguration(job.getConfiguration))
     }
 
     val qe = amtDs.queryExecution
@@ -427,7 +432,7 @@ object AMTWriteHelper extends DeltaLogging {
   }
 
   /**
-   * Writes a batch of AMTSingleAction rows to `finalPath` as a single parquet file.
+   * Writes a sequence of AMTSingleActions to a Parquet file.
    */
   private def writeAMTParquet(
       spark: SparkSession,
@@ -436,14 +441,13 @@ object AMTWriteHelper extends DeltaLogging {
       rows: Seq[AMTSingleAction]): Unit = {
     import org.apache.spark.sql.delta.implicits._
     val df = spark.createDataset(rows).toDF()
-    // AMT manifest tree files are UUID-named, so we write straight to the final path
-    // (useRename = false): a retried or zombie task never collides with a file already
-    // reported to a Manifest commit.
     Checkpoints.writeAtomicCheckpointParquetFile(
       spark = spark,
       df = df,
       finalPath = finalPath,
       hadoopConf = hadoopConf,
-      useRename = false)
+      useRename = false,
+      outputSchema = Some(AMTSingleAction.schemaWithFieldId),
+      useDeltaParquetWriteSupport = true)
   }
 }

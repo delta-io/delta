@@ -2904,8 +2904,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // if needed.
       amtWriterManager.planMaintenance(attemptVersion, postCommitSnapshot)
     } else {
-      // The AMT was written inline with this commit; no follow-up maintenance is needed.
-      MaintenanceOperation()
+      // The AMT was written inline with this commit (always incremental). A full rewrite is never
+      // inlined, so schedule a follow-up full OPTIMIZE CHECKPOINT commit when the full-rewrite
+      // cadence is due -- otherwise a table whose commits consistently inline would never get a
+      // full tree.
+      amtWriterManager.planMaintenanceAfterInlineWrite(attemptVersion, postCommitSnapshot)
     }
     val commitStatsComputer = new CommitStatsComputer()
     // Add to commit stats and consume the returned iterator.
