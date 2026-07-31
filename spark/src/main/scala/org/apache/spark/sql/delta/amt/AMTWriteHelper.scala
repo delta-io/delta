@@ -178,6 +178,7 @@ object AMTWriteHelper extends DeltaLogging {
       includeActionsInCommitJson = true)
     val singleMetric = SingleAMTWriteMetrics(
       trigger = trigger,
+      incremental = contentRoot.isIncremental.map(_.toString).getOrElse("UNKNOWN"),
       materializeDurationMs = NANOSECONDS.toMillis(System.nanoTime() - startNanos))
     (result, singleMetric)
   }

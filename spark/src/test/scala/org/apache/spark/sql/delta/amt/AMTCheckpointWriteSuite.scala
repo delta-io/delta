@@ -277,20 +277,31 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
   test("leaf cardinality respects AMT_ENTRIES_PER_LEAF") {
     withTable("amt_entries_per_leaf") {
       val name = "amt_entries_per_leaf"
-      // Interval far away so no automatic checkpoint fires; we drive the incremental rewrite
-      // directly. The exact-leaf-count guarantee is a property of the incremental path, which
-      // packs the live files into leaves in input order (grouped by AMT_ENTRIES_PER_LEAF). The
-      // clustered full-rewrite path repartitions by hash and does not guarantee a leaf per group.
+      // Interval far away so no automatic checkpoint fires; we drive the rewrite directly. With no
+      // prior AMT tree, the rewrite clusters the live files across ceil(numFiles / entriesPerLeaf)
+      // leaves, distributing them by hash. The clustered path does not guarantee a leaf per
+      // contiguous group, but it targets exactly that many leaves and drops empty partitions -- so
+      // with enough files per leaf that no hash bucket comes out empty, the leaf count lands on the
+      // target. 21 files at 7 per leaf targets 3 leaves, and 21 paths spread across 3 buckets leave
+      // none empty.
       createAMTTable(name, checkpointInterval = 100)
-      sql(s"INSERT INTO $name VALUES (1)") // v1: one data file.
-      sql(s"INSERT INTO $name VALUES (2)") // v2: one more data file -> 2 live files.
+      // One commit of 21 rows, one row per file (maxRecordsPerFile = 1), so a single INSERT lands
+      // 21 live data files. optimizeWrite is disabled so it does not coalesce them back.
+      withSQLConf(
+          "spark.sql.files.maxRecordsPerFile" -> "1",
+          DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false") {
+        sql(s"INSERT INTO $name SELECT * FROM range(21)")
+      }
+      val deltaLog = deltaLogForName(name)
+      assert(deltaLog.update().allFiles.count() == 21,
+        s"Expected 21 live files, got ${deltaLog.update().allFiles.count()}.")
 
-      withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "1") {
+      withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "7") {
         runIncrementalRewrite(name)
       }
       val path = tablePath(name)
-      // Two live AddFiles, one per leaf -> two leaves, one root.
-      assert(leafFiles(path).size == 2, s"Expected 2 leaves, got ${leafFiles(path).size}.")
+      // 21 live AddFiles, ceil(21 / 7) = 3 leaves (none empty), one root.
+      assert(leafFiles(path).size == 3, s"Expected 3 leaves, got ${leafFiles(path).size}.")
       assert(rootFiles(path).size == 1)
     }
   }
