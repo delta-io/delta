@@ -7,6 +7,8 @@ This protocol change documents support for interval types (as defined [here](htt
 
 Like [`void`](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#void-type), interval types are documented here post-facto: interval columns already exist in tables written by earlier clients before this behavior was specified. Because such columns predate any table feature, interval types are **not** gated by a table feature and apply to all tables.
 
+Adopting this behavior in OSS Delta Spark is expected to be small, since the Parquet encoding, statistics handling, and partition-value serialization specified here already match what Spark produces for these types, leaving essentially only the schema-level type check to relax.
+
 --------
 
 > ***Add a new section in front of the [Primitive Types](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types) section.***
