@@ -18,6 +18,8 @@ import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.io.Serializable;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -233,6 +235,27 @@ public class DeltaChangelogBatch implements Batch {
         deletionVector);
   }
 
+  /**
+   * Resolves a Delta-log file path against the table root. The two parts carry different encodings:
+   * {@code tablePath} (kernel snapshot path) is not URL-encoded, so a reserved character (a space,
+   * a {@code %}) appears literally, while {@code filePath} (the AddFile/RemoveFile path) is
+   * URL-encoded per the Delta protocol. Wrapping only the encoded filePath in a {@link URI},
+   * joining it onto the raw tablePath with {@link Path}, and using {@link SparkPath#fromPath}
+   * matches the encoding each part carries (the contract V1 TahoeFileIndex uses). Kept local to the
+   * changelog reader rather than shared, since the general scan/streaming path uses
+   * {@link SparkPath#fromUrlString} unchanged.
+   */
+  private static SparkPath sparkPathFromRawPath(String tablePath, String filePath) {
+    try {
+      Path child = new Path(new URI(filePath));
+      Path resolved = child.isAbsolute() ? child : new Path(new Path(tablePath), child);
+      return SparkPath.fromPath(resolved);
+    } catch (URISyntaxException e) {
+      throw new IllegalArgumentException(
+          "Could not parse Delta-log file path as URI: " + filePath, e);
+    }
+  }
+
   @Override
   public PartitionReaderFactory createReaderFactory() {
     StructType partitionSchema = new StructType();
@@ -346,8 +369,10 @@ public class DeltaChangelogBatch implements Batch {
     public PartitionReader<InternalRow> createReader(InputPartition partition) {
       CDCInputPartition cdcPartition = (CDCInputPartition) partition;
       InternalRow partitionValues = new GenericInternalRow(0);
-      SparkPath sparkPath =
-          SparkPath.fromUrlString(new Path(tablePath, cdcPartition.getFilePath()).toString());
+      // Join the raw table root and the URL-encoded file path (see sparkPathFromRawPath); the naive
+      // SparkPath.fromUrlString(new Path(tablePath, filePath).toString()) throws on a reserved
+      // character (space, '%') in the table path.
+      SparkPath sparkPath = sparkPathFromRawPath(tablePath, cdcPartition.getFilePath());
       scala.collection.immutable.Map<String, Object> constantMetadata =
           (scala.collection.immutable.Map<String, Object>)
               (scala.collection.immutable.Map<?, ?>)

@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.stats.DeltaStatistics
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import com.fasterxml.jackson.annotation.JsonIgnore
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
@@ -552,6 +552,36 @@ case class DataManifestEntry(
   @JsonIgnore
   def getAbsolutePath(tableRoot: Path): Path =
     AMTUtils.absolutePathForManifestFile(tableRoot, location)
+
+  /** The leaf manifest as a Hadoop [[FileStatus]] carrying its path and size. */
+  @JsonIgnore
+  def toFileStatus(tableRoot: Path): FileStatus = {
+    new FileStatus(
+      /* length = */ file_size_in_bytes,
+      /* isdir = */ false,
+      /* block_replication = */ 0,
+      /* blocksize = */ 1L,
+      // modificationTime is not tracked on the manifest entry, so report 0.
+      /* modification_time = */ 0L,
+      getAbsolutePath(tableRoot))
+  }
+
+  /**
+   * The inline manifest deletion vector on this leaf, if any, as (bitmap bytes, cardinality).
+   * Per the V4 spec, `dv` and `dv_cardinality` must both be set or both unset; a partially
+   * populated pair is malformed and rejected.
+   */
+  @JsonIgnore
+  def manifestDV: Option[(Array[Byte], Long)] =
+    (manifest_info.dv, manifest_info.dv_cardinality) match {
+      case (Some(dvBytes), Some(cardinality)) => Some((dvBytes, cardinality))
+      case (None, None) => None
+      case _ =>
+        throw new IllegalStateException(
+          s"Malformed manifest DV on leaf $location: dv and dv_cardinality must both be set or " +
+            s"both unset (dv.isDefined=${manifest_info.dv.isDefined}, " +
+            s"dv_cardinality=${manifest_info.dv_cardinality}).")
+    }
 }
 
 /**
