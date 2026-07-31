@@ -87,7 +87,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       "content_type", "format_version", "location", "file_format", "tracking",
       "deletion_vector", "spec_id", "partition", "sort_order_id", "record_count",
       "file_size_in_bytes", "content_stats", "manifest_info", "key_metadata",
-      "split_offsets", "column_files"))
+      "split_offsets"))
   }
 
   test("closed constant sets match Iceberg V4 integer codes") {
@@ -126,7 +126,6 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(entry.manifest_info.contains(info))
     assert(entry.deletion_vector.isEmpty)
     assert(entry.sort_order_id.isEmpty)
-    assert(entry.column_files.isEmpty)
   }
 
   /** Builds a DATA entry, overriding individual fields to probe invariants. */
@@ -150,8 +149,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     content_stats = None,
     manifest_info = manifest_info,
     key_metadata = None,
-    split_offsets = None,
-    column_files = None)
+    split_offsets = None)
 
   private def assertRejected(substring: String)(build: => AMTSingleAction): Unit = {
     val ex = intercept[IllegalArgumentException](build)
@@ -270,8 +268,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       record_count = 10L,
       file_size_in_bytes = 100L,
       deletion_vector = Some(DeletionVector("dv", 0L, 8L, 3L)),
-      sort_order_id = Some(2),
-      column_files = Some(Seq(ColumnFile(Some("c0.parquet"))))),
+      sort_order_id = Some(2)),
     DataManifestEntry(
       location = "dm.parquet",
       file_format = AMTSingleAction.FileFormatParquet,
