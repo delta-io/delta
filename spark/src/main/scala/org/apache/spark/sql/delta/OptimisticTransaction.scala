@@ -57,6 +57,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
 import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, TransactionHelper}
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
@@ -2667,7 +2668,32 @@ trait OptimisticTransactionImpl extends TransactionHelper
       checkColumnDefaults(op)
     }
 
+    verifyAmtBackReferences(finalActions)
     finalActions
+  }
+
+  /**
+   * Test-only invariant check for AMT back references, run on every commit to an AMT-backed table.
+   */
+  private def verifyAmtBackReferences(finalActions: Seq[Action]): Unit = {
+    if (!DeltaUtils.isTesting) return
+    snapshot.checkpointProvider match {
+      case amt: AMTCheckpointProvider =>
+        amt.verifyCommitBackReferences(spark, deltaLog, finalActions)
+      case _ =>
+        // Not an AMT-backed table: no file action may carry a back reference.
+        finalActions.foreach {
+          case a: AddFile if a.backReference.isDefined =>
+            throw new IllegalStateException(
+              s"AddFile '${a.path}' carries a back reference ${a.backReference} on a " +
+              "non-AMT table, which must not happen.")
+          case r: RemoveFile if r.backReference.isDefined =>
+            throw new IllegalStateException(
+              s"RemoveFile '${r.path}' carries a back reference ${r.backReference} on a " +
+              "non-AMT table, which must not happen.")
+          case _ => // File action without a back reference, or a non-file action: nothing to check.
+        }
+    }
   }
 
   // Returns the isolation level to use for committing the transaction

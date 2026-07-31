@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
-import org.apache.spark.sql.delta.actions.{BackReference, Checkpoint, ContentRoot, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.util.DeltaEncoder
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -183,6 +183,40 @@ final class AMTCheckpointProvider(
           }
         }
       }
+  }
+
+  /**
+   * Test-only invariant check for AMT back references.
+   */
+  private[delta] def verifyCommitBackReferences(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      committedActions: Seq[Action]): Unit = {
+    val committedFiles: Seq[(String, Option[BackReference])] = committedActions.collect {
+      case a: AddFile => a.path -> a.backReference
+      case r: RemoveFile => r.path -> r.backReference
+    }
+    if (committedFiles.isEmpty) return
+
+    val expectedPathToBackreferenceMap: Map[String, Option[BackReference]] =
+      liveAddSingleActions(spark, deltaLog)
+        .collect()
+        .map(sa => sa.add.path -> sa.add.backReference)
+        .toMap
+
+    committedFiles.foreach { case (path, actual) =>
+      expectedPathToBackreferenceMap.get(path) match {
+        case Some(expected) if actual != expected =>
+          throw new IllegalStateException(
+            s"AMT back reference for file '$path' does not match the AMT. " +
+            s"Expected $expected but the committed action carried $actual.")
+        case None if actual.isDefined =>
+          throw new IllegalStateException(
+            s"File '$path' carries a back reference $actual but is not present in the AMT " +
+            "tree, so it must not carry one.")
+        case _ => // Present and matching, or absent and empty: as expected.
+      }
+    }
   }
 }
 
