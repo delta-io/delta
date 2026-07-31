@@ -2907,7 +2907,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // The AMT was written inline with this commit (always incremental). A full rewrite is never
       // inlined, so schedule a follow-up full OPTIMIZE CHECKPOINT commit when the full-rewrite
       // cadence is due -- otherwise a table whose commits consistently inline would never get a
-      // full tree.
+      // full tree. When the inline write itself lands on the full-rewrite cadence, the tree is
+      // materialized twice (incrementally inline at this version, then fully at the follow-up
+      // version). We deliberately do not suppress the inline write in that case: the inline write
+      // exists to pack a large writer's file actions into the manifest tree instead of
+      // the commit JSON, and skipping it would push those actions back inline and bloat the commit
+      // JSON -- exactly what the inline path avoids. The rare double materialization is the
+      // accepted cost of never writing a very large commit JSON.
       amtWriterManager.planMaintenanceAfterInlineWrite(attemptVersion, postCommitSnapshot)
     }
     val commitStatsComputer = new CommitStatsComputer()
