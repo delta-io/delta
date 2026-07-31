@@ -181,10 +181,10 @@ public class MetadataCleanup {
    * safe to delete. Safety is enforced by two invariants:
    *
    * <ol>
-   *   <li><b>Checkpoint gate:</b> commit and checksum files accumulate in a staging buffer
-   *       ({@code maybeDeleteFiles}). They are only promoted to the output queue ({@code
-   *       filesToDelete}) when a complete checkpoint that supersedes them is encountered. A file is
-   *       never deleted unless a checkpoint has confirmed it is no longer needed.
+   *   <li><b>Checkpoint gate:</b> commit and checksum files accumulate in a staging buffer ({@code
+   *       maybeDeleteFiles}). They are only promoted to the output queue ({@code filesToDelete})
+   *       when a complete checkpoint that supersedes them is encountered. A file is never deleted
+   *       unless a checkpoint has confirmed it is no longer needed.
    *   <li><b>Timestamp monotonicity:</b> because filesystem clocks can skew, a file's modification
    *       time may not be strictly greater than the previous file's even though its version is
    *       higher. When this is detected, the file's effective timestamp is adjusted to {@code
