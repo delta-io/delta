@@ -2950,6 +2950,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELETION_VECTOR_PROPAGATE_CLOSE_FAILURE =
+    buildConf("deletionVectors.propagateCloseFailure")
+      .internal()
+      .doc("When true, a failed close() of a deletion vector writer propagates and aborts the " +
+        "write, instead of being swallowed. Swallowing it can commit a descriptor for a file " +
+        "that was never durably written, corrupting the table. Kill-switch for the fix; leave on.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELETION_VECTOR_PACKING_TARGET_SIZE =
     buildConf("deletionVectors.packing.targetSize")
       .internal()

@@ -59,6 +59,7 @@ case class AMTWriteMetrics(
 /** Metrics for a single AMT write attempt (one per commit attempt that materializes a tree). */
 case class SingleAMTWriteMetrics(
     trigger: String,
+    incremental: String,
     materializeDurationMs: Long)
 
 /**
@@ -110,9 +111,13 @@ class AMTWriterManager(
       case optimize: DeltaOperations.OptimizeCheckpoint =>
         assert(actionsToCommit.isEmpty,
           s"OPTIMIZE checkpoint commit must carry no actions, got ${actionsToCommit.size}.")
+        // An incremental rewrite must extend an existing tree, so the first AMT is always a full
+        // rewrite even when the trigger requested incremental (e.g. the JSON-size threshold).
+        val incremental =
+          optimize.incremental && AMTWriteHelper.previousAMTContentRoot(readSnapshot).isDefined
         Some(materialize(
           commitVersion, currentTransactionInfo,
-          incremental = optimize.incremental, trigger = optimize.triggerName))
+          incremental = incremental, trigger = optimize.triggerName))
       case _ if shouldDoInlineIncrementalCheckpoint(actionsToCommit) =>
         // A large business commit rebuilds its manifest tree inline (incrementally).
         val mode = AMTTriggerMode.InlineWithLargeCommitIncremental
@@ -127,11 +132,13 @@ class AMTWriterManager(
   }
 
   /**
-   * Whether this business commit is large enough (by action count) to write its
-   * changed actions as part of new AMT.
+   * Whether this Writer should write its changed actions inline as part of a new AMT.
+   * True only when the commit is large enough (by action count) AND the table already has a full
+   * AMT to build on.
    */
   private def shouldDoInlineIncrementalCheckpoint(actionsToCommit: Seq[Action]): Boolean =
-    actionsToCommit.size.toLong >= largeCommitActionsCountThresholdForInlineManifestCommit
+    actionsToCommit.size.toLong >= largeCommitActionsCountThresholdForInlineManifestCommit &&
+      AMTWriteHelper.previousAMTContentRoot(readSnapshot).isDefined
 
   // Materializes the manifest tree for this commit and records its metrics. An incremental rewrite
   // packs the post-commit live files into leaves in input order on the driver; a full rewrite
@@ -191,6 +198,31 @@ class AMTWriterManager(
       amtTriggerModeOpt = amtTriggerModeOpt)
   }
 
+  /**
+   * The maintenance work to schedule after a large commit wrote its AMT inline.
+   *
+   * An inline write is always incremental. If a table keeps getting inline AMTs, we still want it
+   * to get a full AMT once in a while when the last full AMT was older than
+   * checkpointInterval * fullRewriteCheckpointIntervalMultiplier.
+   */
+  def planMaintenanceAfterInlineWrite(
+      commitVersion: Long,
+      postCommitSnapshot: Snapshot): MaintenanceOperation = {
+    // The follow-up OPTIMIZE CHECKPOINT commit itself must never schedule more maintenance.
+    if (!amtEnabled(commitVersion)
+        || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
+      return MaintenanceOperation()
+    }
+    val checkpointInterval = deltaLog.checkpointInterval(postCommitSnapshot.metadata)
+    if (isFullCheckpointOverdue(commitVersion, postCommitSnapshot, checkpointInterval)) {
+      MaintenanceOperation(
+        shouldCheckpoint = true,
+        amtTriggerModeOpt = Some(AMTTriggerMode.CheckpointIntervalFull))
+    } else {
+      MaintenanceOperation()
+    }
+  }
+
   /** [[AMTTriggerMode]] for a followup AMT Checkpoint commit if any. */
   private def followUpTriggerMode(
       commitVersion: Long,
@@ -222,8 +254,43 @@ class AMTWriterManager(
         })
     }
 
+    // -- case-1b --
+    // Backstop for an overdue full rewrite off the interval boundary. case-1 only fires at an
+    // interval boundary relative to the last AMT, and interval-boundary commits can be inlined.
+    // The inline path i.e. [[planMaintenanceAfterInlineWrite]] only schedules a full when it lands
+    // exactly on the full-rewrite cadence i.e. if checkpoint interval=10 and multiplier = 5 and
+    // last full is at 14 and then we say always have inline AMTs except 64/114/164/214 etc.). Such
+    // a table would never take case-1 and never get a follow-up full rewrite. Anchor this check to
+    // the last full rewrite (not the last AMT) and gate it on fullRewriteSpan: it fires the first
+    // version a full span has elapsed, and a racing follow-up that has not landed yet does not
+    // re-trigger on the very next commit (only once per interval), matching case-1's racing
+    // behavior.
+    if (isFullCheckpointOverdue(commitVersion, postCommitSnapshot, checkpointInterval)) {
+      return Some(AMTTriggerMode.CheckpointIntervalFull)
+    }
+
 
     None
+  }
+
+  /**
+   * Whether a full rewrite is overdue at `commitVersion`: a full span has elapsed since the last
+   * full rewrite AND `commitVersion` sits on an interval boundary relative to that anchor. The
+   * boundary gate keeps this racing-safe -- while a scheduled follow-up is in flight it re-triggers
+   * at most once per interval, not on every commit -- matching `followUpTriggerMode`'s case-1.
+   */
+  private def isFullCheckpointOverdue(
+      commitVersion: Long,
+      postCommitSnapshot: Snapshot,
+      checkpointInterval: Long): Boolean = {
+    val fullRewriteSpan = checkpointInterval * fullRewriteCheckpointIntervalMultiplier
+    AMTWriteHelper.previousAMTContentRoot(postCommitSnapshot)
+      .flatMap(_.lastManifestCommitWithFullRewrite)
+      .exists { lastFull =>
+        val versionsSinceFull = commitVersion - lastFull
+        versionsSinceFull > 0 && versionsSinceFull % checkpointInterval == 0 &&
+          versionsSinceFull >= fullRewriteSpan
+      }
   }
 
   /**
