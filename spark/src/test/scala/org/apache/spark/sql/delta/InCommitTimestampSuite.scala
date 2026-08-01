@@ -963,8 +963,8 @@ class InCommitTimestampSuite
     }
   }
 
-  test("postCommitSnapshot.timestamp should be populated by protocolMetadataAndICTReconstruction " +
-     "when the table has no checkpoints") {
+  test("postCommitSnapshot.timestamp should be populated by " +
+      "protocolMetadataICTAndLMCReconstruction when the table has no checkpoints") {
     // Make sure that we don't retrieve the time from the CRC.
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
       withTempTable(createTable = false) { tableName =>
@@ -983,7 +983,7 @@ class InCommitTimestampSuite
     }
   }
 
-  test("snapshot.timestamp should be populated by protocolMetadataAndICTReconstruction " +
+  test("snapshot.timestamp should be populated by protocolMetadataICTAndLMCReconstruction " +
      "during cold reads of checkpoints + deltas") {
     // Make sure that we don't retrieve the time from the CRC.
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
@@ -1009,7 +1009,7 @@ class InCommitTimestampSuite
     }
   }
 
-  test("snapshot.timestamp cannot be populated by protocolMetadataAndICTReconstruction " +
+  test("snapshot.timestamp cannot be populated by protocolMetadataICTAndLMCReconstruction " +
      "during cold reads of checkpoints") {
     // Make sure that we don't retrieve the time from the CRC.
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {

@@ -20,11 +20,15 @@ import java.util.UUID
 
 import scala.util.Try
 
+import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.stats.DeltaStatistics
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import com.fasterxml.jackson.annotation.JsonIgnore
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
+
+import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
+import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
 /**
  * One entry in any AMT manifest file (leaf or root).
@@ -48,7 +52,6 @@ import org.apache.hadoop.fs.Path
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
  *                      for tables written by both Delta and Iceberg.
- * @param column_files Per-column file entries; only content_type in {0,3}.
  */
 case class AMTSingleAction(
     content_type: Int,                          // ID: 134, required.
@@ -65,8 +68,7 @@ case class AMTSingleAction(
     content_stats: Option[ContentStats],        // ID: 146, optional.
     manifest_info: Option[ManifestInfo],        // ID: 150, required for DATA_MANIFEST.
     key_metadata: Option[Array[Byte]],          // ID: 131, optional.
-    split_offsets: Option[Seq[Long]],           // ID: 132, optional.
-    column_files: Option[Seq[ColumnFile]] // ID: TBD (content_type in {0,3}).
+    split_offsets: Option[Seq[Long]]            // ID: 132, optional.
 ) {
   AMTSingleAction.validate(this)
 
@@ -90,7 +92,6 @@ case class AMTSingleAction(
         content_stats = content_stats,
         key_metadata = key_metadata,
         split_offsets = split_offsets,
-        column_files = column_files,
         format_version = format_version)
     case AMTSingleAction.ContentType.Type.DataManifest =>
       DataManifestEntry(
@@ -105,7 +106,6 @@ case class AMTSingleAction(
         content_stats = content_stats,
         key_metadata = key_metadata,
         split_offsets = split_offsets,
-        column_files = column_files,
         format_version = format_version)
     case other =>
       throw new IllegalStateException(s"Unsupported content_type: $other.")
@@ -178,6 +178,211 @@ object AMTSingleAction {
   /** Creates [[AMTSingleAction]] from AddFile. */
   def fromAddFile(add: AddFile, tracking: Tracking, tableRoot: Path): AMTSingleAction =
     DataEntry.fromAddFile(add, tracking, tableRoot).wrap
+
+  /**
+   * The Iceberg V4 spec metadata for one field of an AMT manifest struct: its field id and whether
+   * the spec marks it required. Construct via the [[required]] / [[optional]] factories.
+   */
+  case class AMTFieldSpec private (name: String, id: Long, required: Boolean)
+
+  /** Declares a spec-required field (Parquet `REQUIRED`). */
+  private def required(id: Long, name: String): AMTFieldSpec =
+    AMTFieldSpec(name, id, required = true)
+
+  /** Declares an optional field (Parquet `OPTIONAL`). */
+  private def optional(id: Long, name: String): AMTFieldSpec =
+    AMTFieldSpec(name, id, required = false)
+
+  /** Iceberg V4 field specs for the top-level [[AMTSingleAction]] fields. */
+  private val topLevelFields: Seq[AMTFieldSpec] = Seq(
+    required(134L, "content_type"),
+    required(157L, "format_version"),
+    required(100L, "location"),
+    required(101L, "file_format"),
+    required(147L, "tracking"),
+    optional(148L, "deletion_vector"),
+    optional(141L, "spec_id"),
+    optional(102L, "partition"),
+    optional(140L, "sort_order_id"),
+    required(103L, "record_count"),
+    required(104L, "file_size_in_bytes"),
+    optional(146L, "content_stats"),
+    optional(150L, "manifest_info"),
+    optional(131L, "key_metadata"),
+    optional(132L, "split_offsets"))
+
+  /** Iceberg V4 field specs for the scalar fields of the nested [[Tracking]] struct. */
+  private val trackingFields: Seq[AMTFieldSpec] = Seq(
+    required(0L, "status"),
+    optional(1L, "snapshot_id"),
+    optional(3L, "sequence_number"),
+    optional(4L, "file_sequence_number"),
+    optional(5L, "dv_snapshot_id"),
+    optional(142L, "first_row_id"),
+    optional(6L, "deleted_positions"),
+    optional(7L, "replaced_positions"))
+
+  /** Iceberg V4 field specs for the scalar fields of the nested [[DeletionVector]] struct. */
+  private val deletionVectorFields: Seq[AMTFieldSpec] = Seq(
+    required(155L, "location"),
+    required(144L, "offset"),
+    required(145L, "size_in_bytes"),
+    required(156L, "cardinality"))
+
+  /** Iceberg V4 field specs for the scalar fields of the nested [[ManifestInfo]] struct. */
+  private val manifestInfoFields: Seq[AMTFieldSpec] = Seq(
+    required(504L, "added_files_count"),
+    required(505L, "existing_files_count"),
+    required(506L, "deleted_files_count"),
+    required(520L, "replaced_files_count"),
+    required(512L, "added_rows_count"),
+    required(513L, "existing_rows_count"),
+    required(514L, "deleted_rows_count"),
+    required(521L, "replaced_rows_count"),
+    required(516L, "min_sequence_number"),
+    optional(522L, "dv"),
+    optional(523L, "dv_cardinality"))
+
+  /** Nested-struct field specs, keyed by the top-level field name that carries the struct. */
+  private val nestedStructFields: Map[String, Seq[AMTFieldSpec]] = Map(
+    "tracking" -> trackingFields,
+    "deletion_vector" -> deletionVectorFields,
+    "manifest_info" -> manifestInfoFields)
+
+  /** Iceberg V4 field id for the `split_offsets` list element. */
+  private val SPLIT_OFFSETS_ELEMENT_FIELD_ID: Long = 133L
+  private val PARTITION_VALUES_KEY_PLACEHOLDER_ID: Long = 100002L
+  private val PARTITION_VALUES_VALUE_PLACEHOLDER_ID: Long = 100003L
+
+  /** Top-level specs by name, for lookup during stamping. */
+  private val topLevelFieldByName: Map[String, AMTFieldSpec] =
+    topLevelFields.map(f => f.name -> f).toMap
+
+  /**
+   * Test-only Parquet field-id map for an AMT checkpoint schema, keyed by dotted path. Keys are the
+   * top-level field name (`content_type`), a nested-struct scalar (`tracking.status`), a list
+   * element (`split_offsets.element`), or a map key/value (`partition.values.key`,
+   * `partition.values.value`).
+   */
+  private[amt] val allFieldIdByName: Map[String, Int] = {
+    val topLevel = topLevelFields.map(f => f.name -> f.id.toInt)
+    val nested = nestedStructFields.flatMap { case (parent, children) =>
+      children.map(f => s"$parent.${f.name}" -> f.id.toInt)
+    }
+    val nestedContainers = Map(
+      "split_offsets.element" -> SPLIT_OFFSETS_ELEMENT_FIELD_ID.toInt,
+      "partition.values.key" -> PARTITION_VALUES_KEY_PLACEHOLDER_ID.toInt,
+      "partition.values.value" -> PARTITION_VALUES_VALUE_PLACEHOLDER_ID.toInt)
+    (topLevel ++ nested ++ nestedContainers).toMap
+  }
+
+  /**
+   * The persisted [[AMTSingleAction]] schema with Iceberg field ids stamped onto its Parquet
+   * schema. Everything here is static, so it is computed once.
+   */
+  lazy val schemaWithFieldId: StructType = {
+    import org.apache.spark.sql.delta.implicits._
+    val base = amtSingleActionEncoder.schema
+    StructType(base.map(stampFieldSpec))
+  }
+
+  /**
+   * Applies the Iceberg [[AMTFieldSpec]] to a single top-level [[AMTSingleAction]] field:
+   * stamps the field id (and any nested element/map ids) and sets nullability from
+   * `spec.required`.
+   */
+  private def stampFieldSpec(field: StructField): StructField = {
+    val spec = topLevelFieldByName.getOrElse(field.name,
+      throw new IllegalStateException(
+        s"No Iceberg field spec defined for top-level AMTSingleAction field '${field.name}'."))
+    val builder = new MetadataBuilder()
+      .withMetadata(field.metadata)
+      .putLong(ParquetUtils.FIELD_ID_METADATA_KEY, spec.id)
+    // Attach nested (element) ids for list-bearing fields.
+    // DeltaParquetWriteSupport reads these off the list field itself, keyed `<field>.element`.
+    listElementFieldId(field.name).foreach { elementId =>
+      builder.putMetadata(
+        DeltaColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY,
+        new MetadataBuilder()
+          .putLong(
+            Seq(field.name, DeltaColumnMapping.PARQUET_LIST_ELEMENT_FIELD_NAME).mkString("."),
+            elementId)
+          .build())
+    }
+    // Rewrite the field's data type: apply nested-struct field specs (id + nullability).
+    val stampedDataType = field.dataType match {
+      case struct: StructType =>
+        nestedStructFields.get(field.name) match {
+          case Some(specs) => stampNestedStructFieldSpecs(field.name, struct, specs)
+          case None =>
+            assert(field.name == "partition" || field.name == "content_stats",
+              s"Unexpected struct-typed AMTSingleAction field '${field.name}': expected a " +
+                "nested-id struct, partition, or content_stats.")
+            if (field.name == "partition") stampPartitionValuesNestedIds(struct) else struct
+        }
+      case other =>
+        assert(!nestedStructFields.contains(field.name),
+          s"Field '${field.name}' has a nested-id spec but is not struct-typed " +
+            s"(${other.typeName}).")
+        other
+    }
+    // Stamp the field id and set nullability from the spec (even when it matches the encoder),
+    // so every id-stamped field's required/optional is driven by the spec.
+    field.copy(
+      dataType = stampedDataType,
+      nullable = !spec.required,
+      metadata = builder.build())
+  }
+
+  /** List-element field id for a top-level list field, or None if not a list field. */
+  private def listElementFieldId(fieldName: String): Option[Long] = fieldName match {
+    case "split_offsets" => Some(SPLIT_OFFSETS_ELEMENT_FIELD_ID)
+    case _ => None
+  }
+
+  /**
+   * Applies each [[AMTFieldSpec]] to the matching direct child of `struct` by name: stamps
+   * `parquet.field.id` and sets nullability from `spec.required`. Non-recursive. Fails if the
+   * encoder exposes a child with no matching spec (same contract as top-level [[stampFieldSpec]]).
+   */
+  private def stampNestedStructFieldSpecs(
+      parentName: String, struct: StructType, specs: Seq[AMTFieldSpec]): StructType = {
+    val specByName = specs.map(f => f.name -> f).toMap
+    StructType(struct.map { f =>
+      val spec = specByName.getOrElse(f.name,
+        throw new IllegalStateException(
+          s"No Iceberg field spec defined for nested AMT field '$parentName.${f.name}'."))
+      // Stamp the field id and set nullability from the spec (even when it matches the
+      // encoder), so every id-stamped field's required/optional is driven by the spec.
+      f.copy(
+        nullable = !spec.required,
+        metadata = new MetadataBuilder()
+          .withMetadata(f.metadata)
+          .putLong(ParquetUtils.FIELD_ID_METADATA_KEY, spec.id)
+          .build())
+    })
+  }
+
+  /** Stamps placeholder map key/value ids onto the interim `partition.values` field. */
+  private def stampPartitionValuesNestedIds(struct: StructType): StructType =
+    StructType(struct.map { field =>
+      if (field.name == "values") {
+        val nestedIds = new MetadataBuilder()
+          .putLong(
+            Seq("values", DeltaColumnMapping.PARQUET_MAP_KEY_FIELD_NAME).mkString("."),
+            PARTITION_VALUES_KEY_PLACEHOLDER_ID)
+          .putLong(
+            Seq("values", DeltaColumnMapping.PARQUET_MAP_VALUE_FIELD_NAME).mkString("."),
+            PARTITION_VALUES_VALUE_PLACEHOLDER_ID)
+          .build()
+        field.copy(metadata = new MetadataBuilder()
+          .withMetadata(field.metadata)
+          .putMetadata(DeltaColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY, nestedIds)
+          .build())
+      } else {
+        field
+      }
+    })
 }
 
 /**
@@ -213,7 +418,6 @@ sealed trait AMTAction {
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
  *                      for tables written by both Delta and Iceberg.
- * @param column_files Per-column file entries.
  * @param format_version Iceberg writer format version; 4 for V4.
  */
 case class DataEntry(
@@ -229,7 +433,6 @@ case class DataEntry(
     content_stats: Option[ContentStats] = None,
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
-    column_files: Option[Seq[ColumnFile]] = None,
     format_version: Int = AMTSingleAction.FormatVersionV4)
   extends AMTAction {
 
@@ -250,8 +453,7 @@ case class DataEntry(
     content_stats = content_stats,
     manifest_info = None,
     key_metadata = key_metadata,
-    split_offsets = split_offsets,
-    column_files = column_files)
+    split_offsets = split_offsets)
 
   def toAddFile(tableRoot: Path): AddFile = {
     val dv = deletion_vector.map(DeletionVector.toDescriptor(_, tableRoot)).orNull
@@ -310,7 +512,6 @@ object DataEntry {
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
  *                      for tables written by both Delta and Iceberg.
- * @param column_files Per-column file entries.
  * @param format_version Iceberg writer format version; 4 for V4.
  */
 case class DataManifestEntry(
@@ -325,7 +526,6 @@ case class DataManifestEntry(
     content_stats: Option[ContentStats] = None,
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
-    column_files: Option[Seq[ColumnFile]] = None,
     format_version: Int = AMTSingleAction.FormatVersionV4)
   extends AMTAction {
 
@@ -346,13 +546,42 @@ case class DataManifestEntry(
     content_stats = content_stats,
     manifest_info = Some(manifest_info),
     key_metadata = key_metadata,
-    split_offsets = split_offsets,
-    column_files = column_files)
+    split_offsets = split_offsets)
 
   /** Absolute [[Path]] to the referenced leaf manifest, resolving `location` against the root. */
   @JsonIgnore
   def getAbsolutePath(tableRoot: Path): Path =
     AMTUtils.absolutePathForManifestFile(tableRoot, location)
+
+  /** The leaf manifest as a Hadoop [[FileStatus]] carrying its path and size. */
+  @JsonIgnore
+  def toFileStatus(tableRoot: Path): FileStatus = {
+    new FileStatus(
+      /* length = */ file_size_in_bytes,
+      /* isdir = */ false,
+      /* block_replication = */ 0,
+      /* blocksize = */ 1L,
+      // modificationTime is not tracked on the manifest entry, so report 0.
+      /* modification_time = */ 0L,
+      getAbsolutePath(tableRoot))
+  }
+
+  /**
+   * The inline manifest deletion vector on this leaf, if any, as (bitmap bytes, cardinality).
+   * Per the V4 spec, `dv` and `dv_cardinality` must both be set or both unset; a partially
+   * populated pair is malformed and rejected.
+   */
+  @JsonIgnore
+  def manifestDV: Option[(Array[Byte], Long)] =
+    (manifest_info.dv, manifest_info.dv_cardinality) match {
+      case (Some(dvBytes), Some(cardinality)) => Some((dvBytes, cardinality))
+      case (None, None) => None
+      case _ =>
+        throw new IllegalStateException(
+          s"Malformed manifest DV on leaf $location: dv and dv_cardinality must both be set or " +
+            s"both unset (dv.isDefined=${manifest_info.dv.isDefined}, " +
+            s"dv_cardinality=${manifest_info.dv_cardinality}).")
+    }
 }
 
 /**
@@ -542,16 +771,3 @@ case class ManifestInfo(
  */
 case class ContentStats(raw_stats: Option[Array[Byte]] = None)
 
-/**
- * Per-column file entries; shape TBD per the spec.
- *
- * The single nullable `location` field is deliberate: an empty case class encodes to an
- * empty Parquet group, which the Parquet data source rejects
- * (`EMPTY_SCHEMA_NOT_SUPPORTED_FOR_DATASOURCE`). One nullable column keeps
- * `AMTSingleAction` Parquet-writable without committing to the final per-column-file
- * shape; M1 writers leave `column_files` `None`.
- *
- *
- * @param location Per-column file path; M1 writers leave it None.
- */
-case class ColumnFile(location: Option[String] = None)

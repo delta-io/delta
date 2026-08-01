@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
-import org.apache.spark.sql.delta.actions.{BackReference, Checkpoint, ContentRoot, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.util.DeltaEncoder
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -28,6 +29,7 @@ import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADAT
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, lit, struct}
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.SerializableConfiguration
 
 /**
  * A [[CheckpointProvider]] backed by an AMT (Adaptive Metadata Tree) manifest tree.
@@ -59,6 +61,12 @@ final class AMTCheckpointProvider(
 
   /** Absolute [[Path]]s to the leaf manifest parquet files, resolved against the table root. */
   lazy val leafManifestAbsolutePaths: Seq[Path] = leaves.map(_.getAbsolutePath(tableRoot))
+
+  /** The root manifest as a [[FileStatus]]. */
+  private lazy val rootStatus: FileStatus = contentRoot.toFileStatus(tableRoot)
+
+  /** The leaf manifests as [[FileStatus]]es. */
+  private lazy val leafStatuses: Seq[FileStatus] = leaves.map(_.toFileStatus(tableRoot))
 
   override def version: Long = checkpointAction.version
 
@@ -129,27 +137,86 @@ final class AMTCheckpointProvider(
   private def liveAddSingleActions(
       spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
     import org.apache.spark.sql.delta.implicits._
-    // Bind to a local so the `map` closure captures it, not the (non-serializable) provider.
-    val localTableRoot = deltaLog.dataPath
-    val paths = rootManifestAbsolutePath +: leafManifestAbsolutePaths
+    // Bind to a local so the `mapPartitions` closure captures it, not the (non-serializable)
+    // provider.
+    val localTableRoot = tableRoot
     val encodedRootPath = SparkPath.fromPath(rootManifestAbsolutePath).urlEncoded
-    AMTCheckpointProvider.loadEntriesWithLocation(spark, deltaLog, paths)
+    val serializableConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
+
+    val files = rootStatus +: leafStatuses
+    val fmt = DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET
+    // Read every leaf row, then drop the MDV-marked (leaf, rowIndex) entries with a filter on
+    // top, using a broadcast of each leaf's manifest DV bitmap bytes keyed by its `_metadata`
+    // file path.
+    val index = DeltaLogFileIndex(fmt, files.toArray)
+    val mdvByLeaf: Map[String, Array[Byte]] = leaves.flatMap { leaf =>
+      leaf.manifestDV.map { case (dvBytes, _) =>
+        SparkPath.fromPath(leaf.getAbsolutePath(localTableRoot)).urlEncoded -> dvBytes
+      }
+    }.toMap
+    val mdvBroadcast = spark.sparkContext.broadcast(mdvByLeaf)
+    val dataEntries = AMTCheckpointProvider.loadEntriesWithLocation(spark, deltaLog, index)
       .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
-      .map { entryWithLoc =>
-        entryWithLoc.entry.unwrap match {
-          case data: DataEntry =>
-            val backReference = if (entryWithLoc.leafPath == encodedRootPath) {
-              None
-            } else {
-              Some(BackReference(
-                SparkPath.fromUrlString(entryWithLoc.leafPath).toPath.toString, entryWithLoc.pos))
-            }
-            val add = data.toAddFile(localTableRoot).copy(backReference = backReference)
-            SingleAction(add = add)
-          case other => throw new IllegalStateException(
-            s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
+      .filter { entryWithLoc =>
+        mdvBroadcast.value.get(entryWithLoc.leafPath)
+          .forall(bytes => !RoaringBitmapArray.readFrom(bytes).contains(entryWithLoc.pos))
+      }
+
+    dataEntries
+      .mapPartitions { entries =>
+        val fs = localTableRoot.getFileSystem(serializableConf.value)
+        entries.map { entryWithLoc =>
+          entryWithLoc.entry.unwrap match {
+            case data: DataEntry =>
+              val backReference = if (entryWithLoc.leafPath == encodedRootPath) {
+                None
+              } else {
+                val absLeaf = SparkPath.fromUrlString(entryWithLoc.leafPath).toPath
+                val relManifest =
+                  AMTUtils.relativizeManifestPathToTableRoot(fs, localTableRoot, absLeaf)
+                Some(BackReference(relManifest, entryWithLoc.pos))
+              }
+              val add = data.toAddFile(localTableRoot).copy(backReference = backReference)
+              SingleAction(add = add)
+            case other => throw new IllegalStateException(
+              s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
+          }
         }
       }
+  }
+
+  /**
+   * Test-only invariant check for AMT back references.
+   */
+  private[delta] def verifyCommitBackReferences(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      committedActions: Seq[Action]): Unit = {
+    val committedFiles: Seq[(String, Option[BackReference])] = committedActions.collect {
+      case a: AddFile => a.path -> a.backReference
+      case r: RemoveFile => r.path -> r.backReference
+    }
+    if (committedFiles.isEmpty) return
+
+    val expectedPathToBackreferenceMap: Map[String, Option[BackReference]] =
+      liveAddSingleActions(spark, deltaLog)
+        .collect()
+        .map(sa => sa.add.path -> sa.add.backReference)
+        .toMap
+
+    committedFiles.foreach { case (path, actual) =>
+      expectedPathToBackreferenceMap.get(path) match {
+        case Some(expected) if actual != expected =>
+          throw new IllegalStateException(
+            s"AMT back reference for file '$path' does not match the AMT. " +
+            s"Expected $expected but the committed action carried $actual.")
+        case None if actual.isDefined =>
+          throw new IllegalStateException(
+            s"File '$path' carries a back reference $actual but is not present in the AMT " +
+            "tree, so it must not carry one.")
+        case _ => // Present and matching, or absent and empty: as expected.
+      }
+    }
   }
 }
 
@@ -184,10 +251,12 @@ object AMTCheckpointProvider {
       deltaLog: DeltaLog,
       checkpoint: Checkpoint): AMTCheckpointProvider = {
     val tableRoot = deltaLog.dataPath
-    val rootPath = checkpoint.contentRoot.getAbsolutePath(tableRoot)
+    val rootStatus = checkpoint.contentRoot.toFileStatus(tableRoot)
+    val index =
+      DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootStatus))
     // The root manifest is small (one row per leaf), so collect it to the driver to enumerate the
     // leaf pointers.
-    val leaves = loadEntries(spark, deltaLog, Seq(rootPath)).collect().toSeq
+    val leaves = loadEntries(spark, deltaLog, index).collect().toSeq
       .filter(_.content_type == AMTSingleAction.ContentType.Type.DataManifest)
       .map(_.unwrap.asInstanceOf[DataManifestEntry])
     new AMTCheckpointProvider(checkpointAction = checkpoint, leaves = leaves, tableRoot = tableRoot)
@@ -198,12 +267,11 @@ object AMTCheckpointProvider {
    * [[AMTSingleAction]].
    */
   private def loadEntries(
-      spark: SparkSession, deltaLog: DeltaLog, paths: Seq[Path]): Dataset[AMTSingleAction] = {
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      index: DeltaLogFileIndex): Dataset[AMTSingleAction] = {
     import org.apache.spark.sql.delta.implicits._
-    val fs = paths.head.getFileSystem(deltaLog.newDeltaHadoopConf())
-    val index = DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, fs, paths)
-    deltaLog.loadIndex(index, spark.emptyDataset[AMTSingleAction].schema)
-      .as[AMTSingleAction]
+    deltaLog.loadIndex(index, spark.emptyDataset[AMTSingleAction].schema).as[AMTSingleAction]
   }
 
   /**
@@ -212,12 +280,10 @@ object AMTCheckpointProvider {
   private def loadEntriesWithLocation(
       spark: SparkSession,
       deltaLog: DeltaLog,
-      paths: Seq[Path]): Dataset[AMTDataEntryWithLocation] = {
+      index: DeltaLogFileIndex): Dataset[AMTDataEntryWithLocation] = {
     import org.apache.spark.sql.delta.implicits._
     implicit val entryLocEncoder: Encoder[AMTDataEntryWithLocation] =
       amtDataEntryWithLocationEncoder
-    val fs = paths.head.getFileSystem(deltaLog.newDeltaHadoopConf())
-    val index = DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, fs, paths)
     val amtSchema = spark.emptyDataset[AMTSingleAction].schema
     deltaLog.loadIndex(index, amtSchema)
       .select(
