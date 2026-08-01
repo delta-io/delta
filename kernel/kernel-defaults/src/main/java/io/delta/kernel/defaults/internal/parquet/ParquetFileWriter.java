@@ -209,8 +209,15 @@ public class ParquetFileWriter {
           if (writer != null) {
             try {
               writer.close();
+            } catch (IOException closeEx) {
+              if (committed) {
+                throw new UncheckedIOException(
+                    "Failed to close the Parquet file: " + parquetOutputFile.getPath(), closeEx);
+              }
             } catch (Throwable suppressed) {
-              // Preserve the original failure; the write has already been marked aborted.
+              if (committed) {
+                throw suppressed;
+              }
             }
           }
         }
