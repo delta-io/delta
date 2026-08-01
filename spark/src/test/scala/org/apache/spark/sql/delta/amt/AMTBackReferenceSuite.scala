@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.functions.col
@@ -448,11 +449,15 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
       val restoreTarget = deltaLog.update().version
 
       // The overwrite drops A, B and writes C; a second insert then adds D and lands on a
-      // checkpoint boundary, so the current live files C, D get stamped with this table's own
-      // back references. (Exact commit versions are not asserted: an AMT checkpoint commits as a
+      // checkpoint boundary. entriesPerLeaf=1 forces the incremental write to spill every net-new
+      // file into its own leaf (rather than holding it root-resident, which would leave it
+      // unstamped), so the current live files C, D get stamped with this table's own back
+      // references. (Exact commit versions are not asserted: an AMT checkpoint commits as a
       // separate follow-up commit, so it shifts version numbers; the checks scan via actionsAfter.)
-      sql(s"INSERT OVERWRITE $name VALUES (99)")
-      sql(s"INSERT INTO $name VALUES (100)") // Lands on a checkpoint boundary -> C, D stamped.
+      withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "1") {
+        sql(s"INSERT OVERWRITE $name VALUES (99)")
+        sql(s"INSERT INTO $name VALUES (100)") // Lands on a checkpoint boundary -> C, D stamped.
+      }
 
       val currentByPath =
         liveAddFiles(deltaLog.update()).map(a => a.path -> a.backReference).toMap
