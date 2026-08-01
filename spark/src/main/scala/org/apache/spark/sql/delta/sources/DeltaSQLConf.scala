@@ -529,6 +529,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_COMMIT_IDEMPOTENCY_CHECK_ENABLED =
+    buildConf("commit.idempotencyCheck.enabled")
+      .internal()
+      .doc("When enabled, during commit conflict retries, if the winning commit at the exact " +
+        "version this transaction attempted to commit has the same txnId as this transaction, " +
+        "treat the commit as already succeeded (the write landed but the response was lost). " +
+        "Prevents duplicating data on retry after a transient commit-response loss.")
+      .booleanConf
+      .createWithDefault(false)
+
   val FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED =
     buildConf("featureEnablement.conflictResolution.enabled")
       .internal()
