@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
+import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -48,4 +49,12 @@ object AMTUtils {
     if (child.toUri.getScheme != null || child.isAbsolute) child
     else new Path(tableRoot, child)
   }
+
+  // Serializes a Manifest Deletion Vector to the on-disk byte form carried in `manifest_info.dv`.
+  private[amt] def serializeMdv(mdv: RoaringBitmapArray): Array[Byte] =
+    mdv.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
+
+  // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
+  private[amt] def deserializeMdv(bytes: Array[Byte]): RoaringBitmapArray =
+    RoaringBitmapArray.readFrom(bytes)
 }
