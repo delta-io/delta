@@ -19,6 +19,8 @@ package io.delta.flink.table;
 import io.delta.kernel.types.StructType;
 import java.io.Serializable;
 import java.net.URI;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -89,17 +91,16 @@ public interface DeltaCatalog extends Serializable {
       Consumer<TableDescriptor> callback);
 
   /**
-   * Returns the credentials or configuration properties required to access the table identified by
-   * the given UUID.
+   * Returns the credentials or configuration properties required to access the identified table.
    *
    * <p>The returned map may contain authentication information, endpoint configuration, or other
    * filesystem- or catalog-specific properties. The exact contents and semantics are defined by the
    * catalog implementation.
    *
-   * @param uuid the unique identifier of the table
+   * @param tableId the catalog-specific table identifier
    * @return a map of credential or configuration properties; may be empty but never {@code null}
    */
-  Map<String, String> getCredentials(String uuid);
+  Map<String, String> getCredentials(String tableId);
 
   /**
    * A container for table metadata resolved by a {@link DeltaCatalog}.
@@ -118,12 +119,21 @@ public interface DeltaCatalog extends Serializable {
     /** The normalized physical location of the table. */
     URI tablePath;
 
+    /** Storage properties returned while resolving the table, when available. */
+    Map<String, String> storageProperties = Map.of();
+
     public TableDescriptor() {}
 
     public TableDescriptor(String tableId, String uuid, URI tablePath) {
+      this(tableId, uuid, tablePath, Map.of());
+    }
+
+    public TableDescriptor(
+        String tableId, String uuid, URI tablePath, Map<String, String> storageProperties) {
       this.tableId = tableId;
       this.uuid = uuid;
       this.tablePath = tablePath;
+      this.storageProperties = Collections.unmodifiableMap(new HashMap<>(storageProperties));
     }
 
     public String getTableId() {
@@ -136,6 +146,10 @@ public interface DeltaCatalog extends Serializable {
 
     public URI getTablePath() {
       return tablePath;
+    }
+
+    public Map<String, String> getStorageProperties() {
+      return storageProperties;
     }
   }
 }
