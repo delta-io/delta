@@ -20,7 +20,8 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{Checkpoints, DeltaLog, DeltaParquetWriteSupport, Snapshot}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, DomainMetadata, InMemoryLogReplay, Metadata, Protocol, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, DomainMetadata, Metadata, Protocol, SetTransaction}
+import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
@@ -39,49 +40,6 @@ import org.apache.spark.util.SerializableConfiguration
 
 /** Helpers for emitting an inline AMT checkpoint during a commit. */
 object AMTWriteHelper extends DeltaLogging {
-
-  /**
-   * Incremental materialization (interval / size triggers): the post-commit live files are packed
-   * into leaves in input order on the driver. `actionsToCommit` are replayed onto the read snapshot
-   * via [[computePostCommitState]] to derive both the live file set and the non-file state. Returns
-   * the write result plus its metrics.
-   */
-  def writeIncrementalMaterialization(
-      spark: SparkSession,
-      readSnapshot: Snapshot,
-      commitVersion: Long,
-      actionsToCommit: Seq[Action],
-      postCommitProtocol: Protocol,
-      postCommitMetadata: Metadata,
-      trigger: String,
-      incremental: Boolean): (AMTWriteResult, SingleAMTWriteMetrics) = {
-    val deltaLog = readSnapshot.deltaLog
-    val startNanos = System.nanoTime()
-    val hadoopConf = deltaLog.newDeltaHadoopConf()
-    val entriesPerLeaf = spark.sessionState.conf.getConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF)
-
-    val postCommitState = computePostCommitState(readSnapshot, actionsToCommit)
-    val (contentRootBase, leaves) = writeManifestTree(
-      spark = spark,
-      hadoopConf = hadoopConf,
-      tableRoot = deltaLog.dataPath,
-      liveAddFiles = postCommitState.allFiles,
-      entriesPerLeaf = entriesPerLeaf)
-    val contentStateVersion =
-      if (actionsToCommit.isEmpty) readSnapshot.version else commitVersion
-    val contentRoot = policyTaggedContentRoot(
-      readSnapshot, contentRootBase, incremental, contentStateVersion)
-    buildResult(
-      contentStateVersion = contentStateVersion,
-      contentRoot = contentRoot,
-      leaves = leaves,
-      postCommitProtocol = postCommitProtocol,
-      postCommitMetadata = postCommitMetadata,
-      domainMetadata = postCommitState.getDomainMetadatas.toSeq,
-      txns = postCommitState.getTransactions.toSeq,
-      trigger = trigger,
-      startNanos = startNanos)
-  }
 
   /**
    * Writes a new AMT from scratch representing the readSnapshot content metadata. Unlike the
@@ -191,58 +149,6 @@ object AMTWriteHelper extends DeltaLogging {
       case _ => None
     }
 
-  // Post-commit table state = the read snapshot's state with this commit's actions applied,
-  // computed via InMemoryLogReplay (the same machinery snapshot state reconstruction uses).
-  private def computePostCommitState(
-      readSnapshot: Snapshot, commitActions: Seq[Action]): InMemoryLogReplay = {
-    val logReplay = new InMemoryLogReplay(
-      minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
-    val baseline = readSnapshot.allFiles.collect().iterator ++
-      readSnapshot.domainMetadata.iterator ++
-      readSnapshot.setTransactions.iterator
-    logReplay.append(readSnapshot.version, baseline)
-    logReplay.append(readSnapshot.version + 1, commitActions.iterator)
-    logReplay
-  }
-
-  /**
-   * Writes a two-level AMT (Adaptive Metadata Tree) manifest tree under `<tableRoot>/metadata/`:
-   * `liveAddFiles` is packed into leaf parquet files (up to `entriesPerLeaf` entries each, in input
-   * order), and a single root parquet file lists one pointer per leaf. Returns the [[ContentRoot]]
-   * pointing at the written root file, for embedding in the inline `Checkpoint` action.
-   */
-  private def writeManifestTree(
-      spark: SparkSession,
-      hadoopConf: Configuration,
-      tableRoot: Path,
-      liveAddFiles: Seq[AddFile],
-      entriesPerLeaf: Int): (ContentRoot, Seq[DataManifestEntry]) = {
-    require(entriesPerLeaf > 0, "entriesPerLeaf must be positive.")
-
-    val fs = tableRoot.getFileSystem(hadoopConf)
-    val metadataDir = FileNames.amtMetadataDirPath(tableRoot)
-    if (!fs.exists(metadataDir)) {
-      // mkdirs is idempotent and safe under concurrent writers.
-      fs.mkdirs(metadataDir)
-    }
-
-    val leafBatches = if (liveAddFiles.isEmpty) {
-      // A checkpoint with no live files still gets a single empty leaf so the root always
-      // points at something. Keeps readers from special-casing zero-leaf trees.
-      Seq(Seq.empty[AddFile])
-    } else {
-      liveAddFiles.grouped(entriesPerLeaf).toSeq
-    }
-
-    val leafEntries = leafBatches.map { batch =>
-      writeLeaf(spark, fs, hadoopConf, tableRoot, metadataDir, batch)
-    }
-
-    val contentRoot = writeRoot(spark, fs, hadoopConf, tableRoot, metadataDir, leafEntries)
-    (contentRoot, leafEntries)
-  }
-
   /**
    * Writes a clustered AMT manifest tree for a full checkpoint of `readSnapshot`'s live files.
    * All files are clustered and flushed into leaf manifests -- one leaf per Spark partition,
@@ -273,7 +179,8 @@ object AMTWriteHelper extends DeltaLogging {
       metadataDir = metadataDir,
       addFilesDf = addFilesDf,
       desiredNumLeaves = desiredNumLeaves)
-    val contentRoot = writeRoot(spark, fs, hadoopConf, tableRoot, metadataDir, leafEntries)
+    val contentRoot =
+      writeRoot(spark, fs, hadoopConf, tableRoot, metadataDir, leafEntries.map(_.wrap))
     (contentRoot, leafEntries)
   }
 
@@ -345,8 +252,7 @@ object AMTWriteHelper extends DeltaLogging {
     }
   }
 
-  // Tracking envelope for a freshly written entry with the given status, no lineage/sequence
-  // numbers yet.
+  // Tracking envelope for a freshly written entry with the given status.
   private def trackingWithStatus(status: Int): Tracking = Tracking(
     status = status,
     snapshot_id = None,
@@ -357,11 +263,20 @@ object AMTWriteHelper extends DeltaLogging {
     deleted_positions = None,
     replaced_positions = None)
 
+  // Tracking envelope for a freshly written entry: ADDED.
+  private[amt] def addedTracking: Tracking = trackingWithStatus(Tracking.Status.Added)
+
+  // Tracking envelope for a root-resident tombstone: REMOVED.
+  // `deletedPositions`, when present, is the within-file bitmap of rows this commit deleted
+  // (carried for CDF); it is left None for a whole-file removal.
+  private[amt] def removedTracking(deletedPositions: Option[Array[Byte]] = None): Tracking =
+    trackingWithStatus(Tracking.Status.Deleted).copy(deleted_positions = deletedPositions)
+
   /**
    * Writes a single leaf parquet file (DATA entries) and returns the DataManifestEntry
    * corresponding to it.
    */
-  private def writeLeaf(
+  private[amt] def writeLeaf(
       spark: SparkSession,
       fs: FileSystem,
       hadoopConf: Configuration,
@@ -393,23 +308,35 @@ object AMTWriteHelper extends DeltaLogging {
   }
 
   /**
-   * Writes the root parquet file (DATA_MANIFEST pointers only) and returns the ContentRoot. The
-   * root pointer follows the same table-root-relative (raw) convention as the leaf pointers.
+   * Writes the root parquet file from a pre-built row set and returns the ContentRoot. The rows may
+   * be `DATA_MANIFEST` leaf pointers, root-resident `DATA` entries, or both.
    */
-  private def writeRoot(
+  private[amt] def writeRoot(
       spark: SparkSession,
       fs: FileSystem,
       hadoopConf: Configuration,
       tableRoot: Path,
       metadataDir: Path,
-      leafEntries: Seq[DataManifestEntry]): ContentRoot = {
+      rows: Seq[AMTSingleAction]): ContentRoot = {
     val rootFile = FileNames.newAMTRootManifestFile(metadataDir)
-    val rows: Seq[AMTSingleAction] = leafEntries.map(_.wrap)
     writeAMTParquet(spark, hadoopConf, rootFile, rows)
     val status = fs.getFileStatus(rootFile)
     ContentRoot(
       path = AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, rootFile),
       sizeInBytes = status.getLen)
+  }
+
+  // Returns a copy of a carried-forward leaf's ManifestInfo with `mdv` recorded as its Manifest
+  // Deletion Vector.
+  private[amt] def withUpdatedMdv(base: ManifestInfo, mdv: RoaringBitmapArray): ManifestInfo = {
+    if (mdv.isEmpty) {
+      base.copy(dv = None, dv_cardinality = None, deleted_files_count = 0)
+    } else {
+      base.copy(
+        dv = Some(AMTUtils.serializeMdv(mdv)),
+        dv_cardinality = Some(mdv.cardinality),
+        deleted_files_count = mdv.cardinality.toInt)
+    }
   }
 
   /**

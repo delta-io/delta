@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTestUtils, DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DeletionVectorDescriptor}
-import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
+import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
@@ -55,10 +55,12 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         "The post-DELETE snapshot must be AMT-backed.")
       // allFiles must reflect the DELETE: the removed file is gone from the post-commit live set.
       checkAnswer(spark.read.table(name), Seq(Row(2), Row(3)))
-      // The manifest tree written at the checkpoint captures exactly the post-DELETE live files
-      // (computePostCommitState applied the RemoveFile), i.e. it matches snapshot.allFiles.
-      assert(currentLeafDataEntries(snapshot) == snapshot.allFiles.count(),
-        "Leaf DATA entries must equal the post-commit live file count.")
+      // The manifest tree captures exactly the post-DELETE live files: a full rewrite drops the
+      // removed entry outright, while an incremental rewrite masks it (MDV on a carried leaf, or a
+      // root tombstone). Either way, the tree's live entry count -- across root and leaves -- must
+      // match snapshot.allFiles.
+      assert(currentLiveDataEntries(snapshot) == snapshot.allFiles.count(),
+        "Live tree DATA entries must equal the post-commit live file count.")
     }
   }
 
@@ -77,8 +79,8 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       assert(amtProvider(snapshot).isDefined)
       checkAnswer(spark.read.table(name), Seq(Row(20)))
       assert(snapshot.allFiles.count() == 1, "Only the surviving overwrite file should be live.")
-      assert(currentLeafDataEntries(snapshot) == 1,
-        "Leaves must capture exactly the surviving live file after overwrite + delete.")
+      assert(currentLiveDataEntries(snapshot) == 1,
+        "The tree must capture exactly the surviving live file after overwrite + delete.")
     }
   }
 
@@ -181,18 +183,19 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   test("distributed reconstruction reads across multiple leaves via a file scan") {
     withTable("amt_dist_multileaf") {
       val name = "amt_dist_multileaf"
-      createAMTTable(name, checkpointInterval = 100)
-      appendRowsAsSeparateFiles(name, 5)
-      // 5 files with entriesPerLeaf=2 yield 3 leaves.
-      val provider = withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "2") {
-        emitIncrementalAMT(name)
+      val provider = withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10") {
+        createAMTTable(name, checkpointInterval = 2)
+        appendRowsAsSeparateFiles(name, 30) // v1: ids 0..29.
+        appendRowsAsSeparateFiles(name, 30, startId = 30) // v2: ids 30..59; emits full tree at v3.
+        amtProvider(deltaLogForName(name).update())
+          .getOrElse(fail("The interval-boundary append must trigger an AMT-backed snapshot."))
       }
-      assert(provider.leaves.size == 3,
-        "entriesPerLeaf=2 with 5 files must pack into exactly 3 leaves.")
+      assert(provider.leaves.size == 6,
+        s"entriesPerLeaf=10 with 60 files must pack into 6 leaves; got ${provider.leaves.size}.")
       val snapshot = deltaLogForName(name).update()
-      checkAnswer(spark.read.table(name), (0 until 5).map(Row(_)))
+      checkAnswer(spark.read.table(name), (0 until 60).map(Row(_)))
       val committedPaths = snapshot.allFiles.select("path").as[String].collect().toSet
-      assert(committedPaths.size == 5)
+      assert(committedPaths.size == 60)
       val df = provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
         .getOrElse(fail("AMT provider must contribute leaf-derived actions."))
 
@@ -297,42 +300,60 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   test("manifest deletion vectors apply per leaf across a multi-leaf tree") {
     withTable("amt_mdv_multi") {
       val name = "amt_mdv_multi"
-      createAMTTable(name, checkpointInterval = 100)
-      // 35 files with entriesPerLeaf=5 deterministically pack into exactly 7 leaves of 5 entries.
-      appendRowsAsSeparateFiles(name, 35)
-      val base = withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "5") {
-        emitIncrementalAMT(name)
+      val base = withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10") {
+        createAMTTable(name, checkpointInterval = 2)
+        appendRowsAsSeparateFiles(name, 30) // v1: ids 0..29.
+        appendRowsAsSeparateFiles(name, 30, startId = 30) // v2: ids 30..59; emits full tree at v3.
+        amtProvider(deltaLogForName(name).update())
+          .getOrElse(fail("The interval-boundary append must trigger an AMT-backed snapshot."))
       }
-      assert(base.leaves.size == 7,
-        "35 files with entriesPerLeaf=5 must pack into exactly 7 leaves.")
+      assert(base.leaves.size == 6,
+        s"60 files with entriesPerLeaf=10 must pack into 6 leaves; got ${base.leaves.size}.")
       val deltaLog = deltaLogForName(name)
       val full = reconstructedPaths(base, deltaLog)
-      assert(full.size == 35)
+      assert(full.size == 60)
 
-      // Exercise every MDV shape in one tree (positions are leaf-local row indices):
-      //   leaf 0: drop pos 0             leaf 3: drop pos 1 and pos 3
-      //   leaf 1: drop all 5 positions   leaf 4: empty MDV (no-op)
-      //   leaves 2, 5, 6: no MDV
+      // The leaf-local row-index -> entry-location map for each observed leaf.
       val locs = base.leaves.map(leafPosToLoc(_, base.tableRoot))
       def withMdv(idx: Int, positions: Seq[Long]): DataManifestEntry = {
         val leaf = base.leaves(idx)
         leaf.copy(manifest_info = leaf.manifest_info.copy(
           dv = Some(mdvBytesFor(positions: _*)), dv_cardinality = Some(positions.size.toLong)))
       }
+      // Exercise every MDV shape in one tree (positions are leaf-local row indices):
+      //   - one leaf: drop a single position (pos 0),
+      //   - one leaf: drop all its positions (whole leaf),
+      //   - one leaf: drop two positions (its 2nd and 4th, i.e. sorted indices 1 and 3),
+      //   - one leaf: an empty MDV (no-op),
+      //   - the remaining leaves: no MDV.
+      // The clustered rewrite does not guarantee a fixed leaf order/size, so the shapes are bound
+      // to leaves chosen by observed size (largest first); the two-position shape needs >= 4
+      // entries.
+      val bySizeDesc = locs.indices.sortBy(i => -locs(i).size)
+      val twoLeaf = bySizeDesc(0)
+      val wholeLeaf = bySizeDesc(1)
+      val singleLeaf = bySizeDesc(2)
+      val emptyLeaf = bySizeDesc(3)
+      def sortedPos(idx: Int): Seq[Long] = locs(idx).keys.toSeq.sorted
+      assert(sortedPos(twoLeaf).size >= 4,
+        s"the largest leaf must hold >= 4 entries for the two-position MDV; " +
+          s"got ${sortedPos(twoLeaf).size}.")
+      val twoPositions = Seq(sortedPos(twoLeaf)(1), sortedPos(twoLeaf)(3))
       val patched = base.leaves.zipWithIndex.map { case (leaf, idx) =>
         idx match {
-          case 0 => withMdv(0, Seq(0L))
-          case 1 => withMdv(1, locs(1).keys.toSeq) // whole leaf
-          case 3 => withMdv(3, Seq(1L, 3L))
-          case 4 => withMdv(4, Seq.empty)          // empty MDV
-          case _ => leaf                           // leaves 2, 5, 6 untouched
+          case `twoLeaf` => withMdv(idx, twoPositions)
+          case `wholeLeaf` => withMdv(idx, sortedPos(idx))
+          case `singleLeaf` => withMdv(idx, Seq(sortedPos(idx).head))
+          case `emptyLeaf` => withMdv(idx, Seq.empty)
+          case _ => leaf
         }
       }
       val provider = new AMTCheckpointProvider(base.checkpointAction, patched, base.tableRoot)
 
       val dropped =
-        Set(locs(0)(0L)) ++ locs(1).values.toSet ++ Set(locs(3)(1L), locs(3)(3L))
-      assert(dropped.size == 1 + 5 + 2)
+        twoPositions.map(locs(twoLeaf)).toSet ++
+          locs(wholeLeaf).values.toSet +
+          locs(singleLeaf)(sortedPos(singleLeaf).head)
       val reconstructed = reconstructedPaths(provider, deltaLog)
       assert(reconstructed == full -- dropped,
         "Each MDV must drop exactly its marked positions from its own leaf, and nothing else.")
@@ -447,7 +468,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
 
   /** Serializes a manifest DV bitmap over the given leaf entry positions. */
   private def mdvBytesFor(positions: Long*): Array[Byte] =
-    RoaringBitmapArray(positions: _*).serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
+    AMTUtils.serializeMdv(RoaringBitmapArray(positions: _*))
 
   /** An ADDED tracking envelope with no lineage/sequence numbers, matching the AMT writer. */
   private def addedTracking: Tracking = Tracking(

@@ -71,6 +71,7 @@ private[delta] case class CurrentTransactionInfo(
     val op: DeltaOperations.Operation,
     val preCommitLatestAMTCheckpointOpt: Option[Checkpoint] = None
     , val convertedIcebergMetadata: Option[UniformMetadata] = None
+    , idempotentCommitAlreadyLandedAt: Option[Long] = None
  ) {
 
   /**

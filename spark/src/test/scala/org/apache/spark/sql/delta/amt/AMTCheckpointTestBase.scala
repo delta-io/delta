@@ -85,32 +85,18 @@ trait AMTCheckpointTestBase
   }
 
   /**
-   * Appends `n` rows to `tableName` as `n` separate data files in a single commit.
+   * Appends `numRows` rows (ids `startId` until `startId + numRows`) to `tableName` as `numRows`
+   * separate data files in a single commit. `startId` lets successive calls append disjoint id
+   * ranges.
    */
-  protected def appendRowsAsSeparateFiles(tableName: String, n: Int): Unit = {
+  protected def appendRowsAsSeparateFiles(
+      tableName: String, numRows: Int, startId: Int = 0): Unit = {
     withSQLConf(
         "spark.sql.files.maxRecordsPerFile" -> "1",
         DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false") {
-      sql(s"INSERT INTO $tableName SELECT CAST(id AS INT) FROM range($n)")
+      sql(
+        s"INSERT INTO $tableName SELECT CAST(id AS INT) FROM range($startId, ${startId + numRows})")
     }
-  }
-
-  /**
-   * Emits an AMT by driving the incremental materialization directly, so the live files
-   * pack into leaves deterministically in input order, `AMT_ENTRIES_PER_LEAF` entries per leaf.
-   */
-  protected def emitIncrementalAMT(tableName: String): AMTCheckpointProvider = {
-    val snapshot = deltaLogForName(tableName).update()
-    val (result, _) = AMTWriteHelper.writeIncrementalMaterialization(
-      spark = spark,
-      readSnapshot = snapshot,
-      commitVersion = snapshot.version + 1,
-      actionsToCommit = Seq.empty,
-      postCommitProtocol = snapshot.protocol,
-      postCommitMetadata = snapshot.metadata,
-      trigger = AMTTriggerMode.CheckpointIntervalIncremental.name,
-      incremental = true)
-    new AMTCheckpointProvider(result.checkpoint, result.leaves, snapshot.deltaLog.dataPath)
   }
 
   /**
@@ -179,6 +165,12 @@ trait AMTCheckpointTestBase
    * Total DATA (content_type=0) entry rows across the leaves reachable from the CURRENT snapshot's
    * manifest tree. Reads only the provider's leaves (not every file under `metadata/`, which
    * accumulates superseded leaves from earlier checkpoints).
+   *
+   * Note: this counts *physical* leaf entries and does NOT subtract Manifest Deletion Vectors, nor
+   * does it count live files stored directly in the root. On an incremental tree a deleted file's
+   * entry stays physically present in its carried-forward leaf (tombstoned via the leaf MDV), so
+   * this can exceed the live file count. Use [[currentLiveDataEntries]] to compare against
+   * `snapshot.allFiles`.
    */
   protected def currentLeafDataEntries(snapshot: Snapshot): Long = {
     val provider = amtProvider(snapshot)
@@ -188,5 +180,22 @@ trait AMTCheckpointTestBase
           .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
           .count()
       }.sum
+  }
+
+  /**
+   * The number of live files the CURRENT snapshot's AMT reconstructs across the WHOLE tree -- root
+   * and leaves. Goes through the provider's own reconstruction, which drops MDV-masked leaf entries
+   * and `tracking=removed` root tombstones, so it equals `snapshot.allFiles.count()` on both full
+   * and incremental trees. This is the count to assert the tree captures exactly the live file set;
+   * unlike [[currentLeafDataEntries]], it counts live files stored directly in the root too (as an
+   * incremental commit does below the spill threshold).
+   */
+  protected def currentLiveDataEntries(snapshot: Snapshot): Long = {
+    val provider = amtProvider(snapshot)
+      .getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
+    provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
+      .getOrElse(fail("AMT provider must contribute leaf-derived file actions."))
+      .where("add is not null")
+      .count()
   }
 }

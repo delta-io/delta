@@ -378,7 +378,8 @@ trait TransactionHelper extends DeltaLogging {
         fileSizeHistogramOpt: Option[FileSizeHistogram],
         commitInfoOpt: Option[CommitInfo],
         commitSizeBytes: Long,
-        amtWriteMetricsOpt: Option[AMTWriteMetrics] = None): Unit = {
+        amtWriteMetricsOpt: Option[AMTWriteMetrics] = None,
+        isIdempotentRetry: Boolean = false): Unit = {
       assertStateBeforeFinalization()
 
       val doCollectCommitStats =
