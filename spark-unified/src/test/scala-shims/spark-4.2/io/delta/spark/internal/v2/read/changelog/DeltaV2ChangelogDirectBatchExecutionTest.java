@@ -346,8 +346,8 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
-          DeltaChangelog changelog =
-              new DeltaChangelog(
+          DeltaV2Changelog changelog =
+              new DeltaV2Changelog(
                   tableName,
                   new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
                   0L,
@@ -411,8 +411,8 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
-          DeltaChangelog changelog =
-              new DeltaChangelog(
+          DeltaV2Changelog changelog =
+              new DeltaV2Changelog(
                   tableName,
                   new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
                   0L,
