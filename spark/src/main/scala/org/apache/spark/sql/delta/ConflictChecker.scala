@@ -1000,10 +1000,15 @@ private[delta] class ConflictChecker(
     // on every added file below. Data predicates are applied *per read predicate* and the survivors
     // unioned (OR across reads), because independent reads have OR, not AND, semantics: a file is a
     // candidate if it could match ANY read; it is dropped only if its stats prove it fails EVERY
-    // read. Skipping is not applied for a whole-table read, where every added file must conflict.
+    // read. Skipping is not applied for a whole-table read, nor when there are no read predicates
+    // at all: a transaction can be a non-blind-append (e.g. it removed files) yet have no read
+    // predicates, and in that case every added file must remain a conflict candidate, exactly as
+    // when the feature is disabled. Guarding on non-empty read predicates avoids an empty survivor
+    // set silently suppressing a real conflict.
     val candidateFiles =
       if (spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_ENABLED) &&
-          !currentTransactionInfo.readWholeTable) {
+          !currentTransactionInfo.readWholeTable &&
+          currentTransactionInfo.readPredicates.nonEmpty) {
         val readSnapshot = currentTransactionInfo.readSnapshot
         val survivingPaths = currentTransactionInfo.readPredicates.iterator.flatMap { rp =>
           readSnapshot.filterFilesByDataSkipping(files, rp.dataPredicates)

@@ -20,15 +20,18 @@ import java.io.File
 
 import scala.concurrent.duration.Duration
 
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.concurrency.PhaseLockingTestMixin
 import org.apache.spark.sql.delta.concurrency.TransactionExecutionTestMixin
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkException
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.{QueryTest, Row, SaveMode}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, GreaterThanOrEqual, LessThan, Literal}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.LongType
 import org.apache.spark.util.ThreadUtils
 
 /**
@@ -166,6 +169,84 @@ class ConflictDataSkippingSuite extends QueryTest
 
       checkAnswer(
         spark.read.format("delta").load(dir.getAbsolutePath).select("id"), disjointExpected)
+    }
+  }
+
+  private def manufacturedAdd(name: String): AddFile =
+    AddFile(name, Map.empty[String, String], size = 1L, modificationTime = 1L, dataChange = true)
+
+  test("empty read predicates on a non-blind-append txn: added file still conflicts") {
+    // Soundness of the Serializable blind-append case. A transaction can be a NON-blind append
+    // (it removes a file, so onlyAddFiles = false) and yet record no read predicates. With data
+    // skipping enabled such a txn must still conflict-check every concurrently added file, exactly
+    // as it does with the feature disabled. Before the guard on non-empty read predicates, the
+    // empty read set produced an empty survivor set and the conflict was silently suppressed.
+    withTempDir { dir =>
+      createTable(dir)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      // An existing file to remove, which makes the loser a non-blind append with no reads.
+      val existingRemove = log.update().allFiles.collect().head.remove
+      withSQLConf(
+          DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_ENABLED.key -> "true") {
+        val loser = log.startTransaction()
+        // Winner: a blind append committed while the loser is still open.
+        log.startTransaction().commit(
+          Seq(manufacturedAdd("winner.parquet")), DeltaOperations.Write(SaveMode.Append))
+        // Loser adds AND removes without reading -> not a blind append, no read predicates.
+        intercept[io.delta.exceptions.ConcurrentAppendException] {
+          loser.commit(
+            Seq(manufacturedAdd("loser.parquet"), existingRemove),
+            DeltaOperations.Write(SaveMode.Append))
+        }
+      }
+    }
+  }
+
+  test("whole-table read is never skipped: conflicts with a concurrent append") {
+    // A whole-table read must treat every concurrently added file as a conflict, even with data
+    // skipping enabled -- the feature is deliberately bypassed for readWholeTable.
+    withTempDir { dir =>
+      createTable(dir)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      withSQLConf(
+          DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_ENABLED.key -> "true") {
+        val loser = log.startTransaction()
+        loser.readWholeTable()
+        log.startTransaction().commit(
+          Seq(manufacturedAdd("winner.parquet")), DeltaOperations.Write(SaveMode.Append))
+        intercept[io.delta.exceptions.ConcurrentAppendException] {
+          loser.commit(
+            Seq(manufacturedAdd("loser.parquet")), DeltaOperations.Write(SaveMode.Append))
+        }
+      }
+    }
+  }
+
+  test("filterFilesByDataSkipping AND-combines predicates within one read") {
+    // Predicates from a SINGLE read have AND semantics (OR is only across independent reads, which
+    // ConflictChecker unions by construction). This exercises that AND directly.
+    withTempDir { dir =>
+      createTable(dir)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val snapshot = log.update()
+      val allFiles = snapshot.allFiles.collect().toSeq
+      assert(allFiles.size == 10)
+
+      // Resolved catalyst predicates on the `id` column; built directly so the literal stays a
+      // bare Long (a parsed `id >= 200` would wrap it in a Cast, which is not skipping-eligible).
+      val id = AttributeReference("id", LongType)()
+      val ge200 = GreaterThanOrEqual(id, Literal(200L))
+      val lt300 = LessThan(id, Literal(300L))
+
+      // Only the [200, 300) file can match `id >= 200 AND id < 300`. OR semantics would keep every
+      // file with id >= 200 or id < 300, i.e. all 10.
+      val survivors = snapshot.filterFilesByDataSkipping(allFiles, Seq(ge200, lt300))
+      assert(survivors.size == 1,
+        s"expected exactly the [200,300) file, got ${survivors.map(_.path).sorted}")
+
+      // Sanity: a single predicate keeps its whole matching range (files with max id >= 200).
+      val geOnly = snapshot.filterFilesByDataSkipping(allFiles, Seq(ge200))
+      assert(geOnly.size == 8, s"expected 8 files with id >= 200, got ${geOnly.size}")
     }
   }
 }
