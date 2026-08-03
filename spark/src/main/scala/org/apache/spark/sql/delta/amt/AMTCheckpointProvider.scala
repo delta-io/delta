@@ -157,6 +157,8 @@ final class AMTCheckpointProvider(
     val mdvBroadcast = spark.sparkContext.broadcast(mdvByLeaf)
     val dataEntries = AMTCheckpointProvider.loadEntriesWithLocation(spark, deltaLog, index)
       .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
+      .where(col("entry.tracking.status").isin(
+        AMTCheckpointProvider.liveTrackingStatuses.toSeq: _*))
       .filter { entryWithLoc =>
         mdvBroadcast.value.get(entryWithLoc.leafPath)
           .forall(bytes => !RoaringBitmapArray.readFrom(bytes).contains(entryWithLoc.pos))
@@ -260,6 +262,26 @@ object AMTCheckpointProvider {
       .filter(_.content_type == AMTSingleAction.ContentType.Type.DataManifest)
       .map(_.unwrap.asInstanceOf[DataManifestEntry])
     new AMTCheckpointProvider(checkpointAction = checkpoint, leaves = leaves, tableRoot = tableRoot)
+  }
+
+  /** Tracking Status representing the live [[DataEntry]] in an AMT. */
+  private[amt] val liveTrackingStatuses: Set[Int] =
+    Set(Tracking.Status.Existing, Tracking.Status.Added)
+
+  /** Reads the AMT root and returns the live [[DataEntry]]s tracked by root. */
+  private[amt] def readLiveRootDataEntries(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      checkpoint: Checkpoint): Seq[AddFile] = {
+    val tableRoot = deltaLog.dataPath
+    val rootStatus = checkpoint.contentRoot.toFileStatus(tableRoot)
+    val index =
+      DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootStatus))
+    loadEntries(spark, deltaLog, index).collect().toSeq
+      .filter(_.content_type == AMTSingleAction.ContentType.Type.Data)
+      .map(_.unwrap.asInstanceOf[DataEntry])
+      .filter(e => liveTrackingStatuses.contains(e.tracking.status))
+      .map(_.toAddFile(tableRoot))
   }
 
   /**
