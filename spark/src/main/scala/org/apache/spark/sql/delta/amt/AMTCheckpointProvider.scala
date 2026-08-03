@@ -145,45 +145,43 @@ final class AMTCheckpointProvider(
 
     val files = rootStatus +: leafStatuses
     val fmt = DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET
-    // Read every leaf row, then drop the MDV-marked (leaf, rowIndex) entries with a filter on
-    // top, using a broadcast of each leaf's manifest DV bitmap bytes keyed by its `_metadata`
-    // file path.
+    // Read every leaf row, then drop MDV-masked (leaf, rowIndex) entries while reconstructing
+    // AddFiles. Each leaf's inline manifest DV bytes are keyed by the leaf's `_metadata.file_path`
+    // (the same URL-encoded path Spark uses in [[AMTDataEntryWithLocation.leafPath]]). This avoids
+    // a Spark broadcast by capturing the per-leaf map in the `mapPartitions` closure instead.
     val index = DeltaLogFileIndex(fmt, files.toArray)
-    val mdvByLeaf: Map[String, Array[Byte]] = leaves.flatMap { leaf =>
+    val mdvByLeafPath: Map[String, Array[Byte]] = leaves.flatMap { leaf =>
       leaf.manifestDV.map { case (dvBytes, _) =>
         SparkPath.fromPath(leaf.getAbsolutePath(localTableRoot)).urlEncoded -> dvBytes
       }
     }.toMap
-    val mdvBroadcast = spark.sparkContext.broadcast(mdvByLeaf)
-    val dataEntries = AMTCheckpointProvider.loadEntriesWithLocation(spark, deltaLog, index)
+    AMTCheckpointProvider.loadEntriesWithLocation(spark, deltaLog, index)
       .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
       .where(col("entry.tracking.status").isin(
         AMTCheckpointProvider.liveTrackingStatuses.toSeq: _*))
-      .filter { entryWithLoc =>
-        mdvBroadcast.value.get(entryWithLoc.leafPath)
-          .forall(bytes => !RoaringBitmapArray.readFrom(bytes).contains(entryWithLoc.pos))
-      }
-
-    dataEntries
       .mapPartitions { entries =>
         val fs = localTableRoot.getFileSystem(serializableConf.value)
-        entries.map { entryWithLoc =>
-          entryWithLoc.entry.unwrap match {
-            case data: DataEntry =>
-              val backReference = if (entryWithLoc.leafPath == encodedRootPath) {
-                None
-              } else {
-                val absLeaf = SparkPath.fromUrlString(entryWithLoc.leafPath).toPath
-                val relManifest =
-                  AMTUtils.relativizeManifestPathToTableRoot(fs, localTableRoot, absLeaf)
-                Some(BackReference(relManifest, entryWithLoc.pos))
-              }
-              val add = data.toAddFile(localTableRoot).copy(backReference = backReference)
-              SingleAction(add = add)
-            case other => throw new IllegalStateException(
-              s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
+        entries
+          .filter(entryWithLoc =>
+            !AMTCheckpointProvider.isEntryMaskedByManifestDv(
+              mdvByLeafPath, entryWithLoc.leafPath, entryWithLoc.pos))
+          .map { entryWithLoc =>
+            entryWithLoc.entry.unwrap match {
+              case data: DataEntry =>
+                val backReference = if (entryWithLoc.leafPath == encodedRootPath) {
+                  None
+                } else {
+                  val absLeaf = SparkPath.fromUrlString(entryWithLoc.leafPath).toPath
+                  val relManifest =
+                    AMTUtils.relativizeManifestPathToTableRoot(fs, localTableRoot, absLeaf)
+                  Some(BackReference(relManifest, entryWithLoc.pos))
+                }
+                val add = data.toAddFile(localTableRoot).copy(backReference = backReference)
+                SingleAction(add = add)
+              case other => throw new IllegalStateException(
+                s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
+            }
           }
-        }
       }
   }
 
@@ -282,6 +280,20 @@ object AMTCheckpointProvider {
       .map(_.unwrap.asInstanceOf[DataEntry])
       .filter(e => liveTrackingStatuses.contains(e.tracking.status))
       .map(_.toAddFile(tableRoot))
+  }
+
+  /**
+   * Returns true when `pos` in the manifest file at `leafPath` is masked by that leaf's inline
+   * manifest deletion vector (`manifest_info.dv`).
+   *
+   * The lookup map is keyed by URL-encoded absolute leaf paths, matching
+   * [[AMTDataEntryWithLocation.leafPath]] from Spark's `_metadata.file_path`.
+   */
+  private[amt] def isEntryMaskedByManifestDv(
+      mdvByLeafPath: Map[String, Array[Byte]],
+      leafPath: String,
+      pos: Long): Boolean = {
+    mdvByLeafPath.get(leafPath).exists(RoaringBitmapArray.readFrom(_).contains(pos))
   }
 
   /**
