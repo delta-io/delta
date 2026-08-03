@@ -258,6 +258,15 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     }
   }
 
+  test("isEntryMaskedByManifestDv respects per-leaf inline manifest DV bytes") {
+    val mdvBytes = mdvBytesFor(1L, 3L)
+    assert(AMTCheckpointProvider.isEntryMaskedByManifestDv(Some(mdvBytes), pos = 1L))
+    assert(AMTCheckpointProvider.isEntryMaskedByManifestDv(Some(mdvBytes), pos = 3L))
+    assert(!AMTCheckpointProvider.isEntryMaskedByManifestDv(Some(mdvBytes), pos = 0L))
+    assert(!AMTCheckpointProvider.isEntryMaskedByManifestDv(Some(mdvBytes), pos = 2L))
+    assert(!AMTCheckpointProvider.isEntryMaskedByManifestDv(None, pos = 1L))
+  }
+
   test("manifest deletion vector drops superseded leaf entries during reconstruction") {
     withTable("amt_mdv_drop") {
       val name = "amt_mdv_drop"

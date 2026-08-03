@@ -23,7 +23,7 @@ import org.apache.hadoop.fs._
 import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, PartitionDirectory}
+import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, FileStatusWithMetadata, PartitionDirectory}
 import org.apache.spark.sql.execution.datasources.json.JsonFileFormat
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.types.{LongType, StructField, StructType}
@@ -38,7 +38,7 @@ import org.apache.spark.sql.types.{LongType, StructField, StructType}
  */
 class DeltaLogFileIndex private[delta] (
     val format: FileFormat,
-    val files: Array[FileStatus]
+    val files: Array[FileStatusWithMetadata]
     )
   extends FileIndex
   with Logging {
@@ -97,15 +97,19 @@ object DeltaLogFileIndex {
   lazy val CHECKSUM_FILE_FORMAT = new JsonFileFormat
 
   def apply(format: FileFormat, fs: FileSystem, paths: Seq[Path]): DeltaLogFileIndex = {
-    new DeltaLogFileIndex(format, paths.map(fs.getFileStatus).toArray)
+    apply(format, paths.map(p => FileStatusWithMetadata(fs.getFileStatus(p))).toArray)
   }
 
   def apply(format: FileFormat, files: Array[FileStatus]): DeltaLogFileIndex = {
+    apply(format, files.map(FileStatusWithMetadata(_)))
+  }
+
+  def apply(format: FileFormat, files: Array[FileStatusWithMetadata]): DeltaLogFileIndex = {
     new DeltaLogFileIndex(format, files)
   }
 
   def apply(format: FileFormat, files: Seq[FileStatus]): Option[DeltaLogFileIndex] = {
-    if (files.isEmpty) None else Some(new DeltaLogFileIndex(format, files.toArray))
+    if (files.isEmpty) None else Some(apply(format, files.map(FileStatusWithMetadata(_)).toArray))
   }
 
   def apply(format: FileFormat, filesOpt: Option[Seq[FileStatus]]): Option[DeltaLogFileIndex] = {
