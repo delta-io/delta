@@ -42,7 +42,7 @@ import org.apache.spark.util.ThreadUtils
  * image* files (an UPDATE emits updated row values to a fresh path) is NOT reconciled here. Those
  * image files are ordinary non-blind changed-data files that can carry a genuine conflict (a
  * value-flip write-skew), so they fall back to today's abort. Reconciling them on proven
- * non-overlap is conflict-time data skipping, owned by Case 1 (fork issue #4).
+ * non-overlap is conflict-time reader-side data skipping (a separate change).
  */
 class RowLevelConcurrencySuite extends QueryTest
   with SharedSparkSession
@@ -56,10 +56,17 @@ class RowLevelConcurrencySuite extends QueryTest
 
   private def tableRef(dir: File): String = s"delta.`${dir.getCanonicalPath}`"
 
-  /** Creates a single-file Delta table with `id` in [0, numRows) and deletion vectors enabled. */
-  private def createSingleFileTableWithDVs(dir: File, numRows: Int = 100): DeltaLog = {
+  /**
+   * Creates a single-file Delta table with `id` in [0, numRows) and deletion vectors enabled.
+   * `extraProperties` are applied as `delta.*` table properties at creation (e.g. row tracking or
+   * change data feed).
+   */
+  private def createSingleFileTableWithDVs(
+      dir: File,
+      numRows: Int = 100,
+      extraProperties: Map[String, String] = Map.empty): DeltaLog = {
     spark.range(start = 0, end = numRows, step = 1, numPartitions = 1)
-      .write.format("delta").mode("append").save(dir.getAbsolutePath)
+      .write.format("delta").options(extraProperties).mode("append").save(dir.getAbsolutePath)
     val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
     val snapshot = log.update()
     assert(
@@ -118,6 +125,48 @@ class RowLevelConcurrencySuite extends QueryTest
     }
   }
 
+  test("disjoint concurrent DELETEs reconcile on a file that already carries a base DV") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      // Establish a non-empty base DV: delete id=5 and commit (the file now carries a DV of
+      // cardinality 1). Both concurrent txns below read this DV as their common base, so the
+      // overlap test must subtract it (`(dv_win INTERSECT dv_cur) MINUS base`); without that
+      // subtraction the shared row 5 would look like a false conflict and abort the merge.
+      sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 5")
+      assert(deletionVectorCardinalities(log) === Seq(1L))
+
+      val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+
+      assert(ids(dir) === (0L to 99L).filterNot(id => Set(5L, 10L, 20L).contains(id)))
+      // Base row 5 plus the two disjoint new deletes -> merged deletion vector cardinality 3.
+      assert(deletionVectorCardinalities(log) === Seq(3L))
+    }
+  }
+
+  test("disjoint concurrent DELETEs reconcile under Serializable isolation") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
+      // The `current ; winner` schedule of two disjoint-row deletes is a valid serialization even
+      // under Serializable (neither read a row the other wrote), so the DV union still commits.
+      val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+
+      assert(ids(dir) === (0L to 99L).filterNot(id => id == 10 || id == 20))
+      assert(deletionVectorCardinalities(log) === Seq(2L))
+    }
+  }
+
   test("overlapping concurrent DELETEs still conflict") {
     withTempDir { dir =>
       val log = createSingleFileTableWithDVs(dir)
@@ -171,9 +220,9 @@ class RowLevelConcurrencySuite extends QueryTest
   }
 
   // ---------------------------------------------------------------------------
-  // UPDATE image files: rewrite-only DML writes new data files that Layer-1 (DV union) does not
-  // reconcile. They conservatively conflict here; conflict-time data skipping (Case 1 / #4)
-  // reconciles the provably-disjoint case.
+  // UPDATE image files: rewrite-only DML writes new data files that same-file DV union does not
+  // reconcile. They conservatively conflict here; conflict-time reader-side data skipping (a
+  // separate change) reconciles the provably-disjoint case.
   // ---------------------------------------------------------------------------
 
   test("DELETE (loser) vs UPDATE (winner): winner image file conservatively conflicts") {
@@ -188,9 +237,10 @@ class RowLevelConcurrencySuite extends QueryTest
       ThreadUtils.awaitResult(futureB, Duration.Inf)
       // The shared file's DVs are disjoint and would merge, but the winner's UPDATE also writes an
       // *image* file (new path) that the append check cannot prove disjoint from the loser's read
-      // without conflict-time data skipping (Case 1 / #4). It conservatively conflicts, so the
-      // loser aborts. This is one-way safe: it never reconciles a genuine value-flip write-skew
-      // (e.g. winner `SET x = 15`, loser `DELETE WHERE x > 10`), which the DV union cannot detect.
+      // without conflict-time reader-side data skipping (a separate change). It conservatively
+      // conflicts, so the loser aborts. This is one-way safe: it never reconciles a genuine
+      // value-flip write-skew (e.g. winner `SET x = 15`, loser `DELETE WHERE x > 10`), which the
+      // DV union cannot detect.
       val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
       assertConcurrentModificationException(e)
       // Loser aborted cleanly: only the winner's update is applied (row 20 masked, 1020 appended).
@@ -264,6 +314,30 @@ class RowLevelConcurrencySuite extends QueryTest
     }
   }
 
+  test("three concurrent DELETEs: two disjoint commit, the overlapping last one aborts") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      // B (id=20) and C (id=10) touch disjoint rows and both commit. A also deletes id=10 and,
+      // committing last, reconciles cleanly against B (disjoint) but then discovers its overlap
+      // with C on row 10, so it aborts.
+      val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
+      val txnC = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
+
+      // A starts; B commits; C commits (reading B's state); A commits last.
+      val (futureA, futureB, futureC) =
+        runTxnsWithOrder__A_Start__B__C__A_End(txnA, txnB, txnC)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      ThreadUtils.awaitResult(futureC, Duration.Inf)
+      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      assertConcurrentModificationException(e)
+
+      // Only B (id=20) and C (id=10) applied; A aborted cleanly on the id=10 overlap.
+      assert(ids(dir) === (0L to 99L).filterNot(id => id == 10 || id == 20))
+      assert(deletionVectorCardinalities(log) === Seq(2L))
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Partitioned table (DV merge is partition-agnostic)
   // ---------------------------------------------------------------------------
@@ -286,6 +360,80 @@ class RowLevelConcurrencySuite extends QueryTest
 
       assert(ids(dir) === (0L to 99L).filterNot(id => id == 10 || id == 20))
       assert(deletionVectorCardinalities(log) === Seq(2L))
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Row tracking: the merge keeps the same physical file, so stable row IDs are preserved
+  // ---------------------------------------------------------------------------
+
+  test("row tracking: reconciled disjoint DELETEs preserve surviving rows' stable row IDs") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir,
+        extraProperties = Map(DeltaConfigs.ROW_TRACKING_ENABLED.key -> "true"))
+      // Snapshot each row's stable row id before the concurrent deletes.
+      val before = spark.read.format("delta").load(dir.getAbsolutePath)
+        .select("id", "_metadata.row_id")
+        .collect().map(r => r.getLong(0) -> r.getLong(1)).toMap
+
+      val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+
+      assert(ids(dir) === (0L to 99L).filterNot(id => id == 10 || id == 20))
+      assert(deletionVectorCardinalities(log) === Seq(2L))
+
+      val after = spark.read.format("delta").load(dir.getAbsolutePath)
+        .select("id", "_metadata.row_id")
+        .collect().map(r => r.getLong(0) -> r.getLong(1)).toMap
+      // Merging DVs on the same physical file leaves base row IDs untouched, so every surviving
+      // row keeps the exact stable row id it had before the concurrent deletes.
+      assert(after === (before -- Seq(10L, 20L)))
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Change Data Feed: each deleted row is emitted once, at the version that deleted it
+  // ---------------------------------------------------------------------------
+
+  test("change data feed: reconciled disjoint DELETEs each emit one delete at their own version") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir,
+        extraProperties = Map(DeltaConfigs.CHANGE_DATA_FEED.key -> "true"))
+      // Table creation is version 0; the winner commits at version 1 and the reconciled current
+      // txn at version 2.
+      val firstDeleteVersion = log.update().version + 1
+
+      // A starts first but commits last, so B (id=20) is the winner at version 1 and A (id=10) is
+      // the reconciled current txn at version 2.
+      val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+
+      assert(ids(dir) === (0L to 99L).filterNot(id => id == 10 || id == 20))
+      assert(deletionVectorCardinalities(log) === Seq(2L))
+
+      val changes = spark.read.format("delta")
+        .option("readChangeFeed", "true")
+        .option("startingVersion", firstDeleteVersion)
+        .load(dir.getAbsolutePath)
+        .select("id", "_change_type", "_commit_version")
+        .where("_change_type = 'delete'")
+        .collect()
+        .map(r => (r.getLong(0), r.getString(1), r.getLong(2)))
+        .sortBy(_._1)
+        .toSeq
+      // Each deleted row appears exactly once, attributed to the version that deleted it: the
+      // winner's id=20 at version 1 and the reconciled txn's id=10 at version 2.
+      assert(changes === Seq(
+        (10L, "delete", firstDeleteVersion + 1),
+        (20L, "delete", firstDeleteVersion)))
     }
   }
 }
