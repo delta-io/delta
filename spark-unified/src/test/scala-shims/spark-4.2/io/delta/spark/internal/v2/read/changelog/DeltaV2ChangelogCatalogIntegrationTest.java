@@ -33,10 +33,10 @@ import org.junit.jupiter.api.Test;
 /**
  * Integration tests for catalog-routed CDC entrypoint (TableCatalog.loadChangelog).
  *
- * <p>These tests intentionally exercise SQL/DataFrame paths (not direct DeltaV2ChangeLog
+ * <p>These tests intentionally exercise SQL/DataFrame paths (not direct DeltaV2Changelog
  * construction) so they validate analyzer -> catalog -> changelog wiring.
  */
-class DeltaV2ChangeLogCatalogIntegrationTest extends DeltaV2ChangeLogTestBase {
+class DeltaV2ChangelogCatalogIntegrationTest extends DeltaV2ChangelogTestBase {
 
   // ===========================================================================================
   // Fixtures and helpers
@@ -944,7 +944,7 @@ class DeltaV2ChangeLogCatalogIntegrationTest extends DeltaV2ChangeLogTestBase {
   /**
    * A CHANGES read on a table that does not have row tracking enabled at the end version must be
    * rejected with the {@code DELTA_CHANGELOG_REQUIRES_ROW_TRACKING} error class. The check happens
-   * eagerly in {@code DeltaV2ChangeLogScanBuilder.build} against the end-version snapshot.
+   * eagerly in {@code DeltaV2ChangelogScanBuilder.build} against the end-version snapshot.
    */
   @Test
   public void testChangelogRejectsTableWithoutRowTracking() throws Exception {
@@ -984,7 +984,7 @@ class DeltaV2ChangeLogCatalogIntegrationTest extends DeltaV2ChangeLogTestBase {
 
   /**
    * Range ends in an RT-disabled state. The eager end-snapshot check in {@code
-   * DeltaV2ChangeLogScanBuilder.build} must reject with {@code
+   * DeltaV2ChangelogScanBuilder.build} must reject with {@code
    * DELTA_CHANGELOG_REQUIRES_ROW_TRACKING}
    * before the per-commit loop runs.
    */
@@ -1035,7 +1035,7 @@ class DeltaV2ChangeLogCatalogIntegrationTest extends DeltaV2ChangeLogTestBase {
   /**
    * Range starts and ends with row tracking enabled, but a mid-range commit carries a Metadata
    * action that disables row tracking. The per-commit Metadata loop in {@code
-   * DeltaV2ChangeLogBatch.planInputPartitions} must reject with {@code
+   * DeltaV2ChangelogBatch.planInputPartitions} must reject with {@code
    * DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE}, because the eager boundary checks see only
    * RT-enabled endpoints.
    */

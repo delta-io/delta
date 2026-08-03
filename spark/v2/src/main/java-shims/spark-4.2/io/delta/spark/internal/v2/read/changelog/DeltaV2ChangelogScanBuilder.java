@@ -25,14 +25,14 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  *
  * <p>Package privacy prevents callers from coupling to Delta's internal V2 implementation.
  */
-class DeltaV2ChangeLogScanBuilder implements ScanBuilder {
+class DeltaV2ChangelogScanBuilder implements ScanBuilder {
 
   private final DeltaV2Table deltaV2Table;
   private final long startVersion;
   private final long endVersion;
   private final CaseInsensitiveStringMap options;
 
-  DeltaV2ChangeLogScanBuilder(
+  DeltaV2ChangelogScanBuilder(
       DeltaV2Table deltaV2Table,
       long startVersion,
       long endVersion,
@@ -53,7 +53,7 @@ class DeltaV2ChangeLogScanBuilder implements ScanBuilder {
     CommitRange commitRange =
         snapshotManager.getTableChanges(engine, startVersion, Optional.of(endVersion));
     // Boundary checks: both endpoints must already carry the schema + RT state that
-    // DeltaV2ChangeLogBatch will validate each in-range Metadata action against. Without these,
+    // DeltaV2ChangelogBatch will validate each in-range Metadata action against. Without these,
     // an RT-disabled boundary with no in-range toggle commit would surface as a raw
     // IllegalStateException "missing baseRowId" downstream.
     //
@@ -76,11 +76,11 @@ class DeltaV2ChangeLogScanBuilder implements ScanBuilder {
 
     StructType cdcSchema =
         endSchema
-            .add(DeltaV2ChangeLog.METADATA_COLUMN, DeltaV2ChangeLog.METADATA_STRUCT, false)
+            .add(DeltaV2Changelog.METADATA_COLUMN, DeltaV2Changelog.METADATA_STRUCT, false)
             .add("_change_type", DataTypes.StringType, false)
             .add("_commit_version", DataTypes.LongType, false)
             .add("_commit_timestamp", DataTypes.TimestampType, false);
-    return new DeltaV2ChangeLogScan(
+    return new DeltaV2ChangelogScan(
         cdcSchema,
         commitRange,
         engine,

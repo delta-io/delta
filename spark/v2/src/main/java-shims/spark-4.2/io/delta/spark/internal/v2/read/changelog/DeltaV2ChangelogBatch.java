@@ -59,7 +59,7 @@ import scala.Tuple2;
  *
  * <p>Package privacy prevents callers from coupling to Delta's internal V2 implementation.
  */
-class DeltaV2ChangeLogBatch implements Batch {
+class DeltaV2ChangelogBatch implements Batch {
   private static final Set<DeltaLogActionUtils.DeltaAction> CHANGELOG_ACTION_SET =
       Set.of(
           DeltaLogActionUtils.DeltaAction.ADD,
@@ -74,7 +74,7 @@ class DeltaV2ChangeLogBatch implements Batch {
   private final Snapshot snapshot;
   private final Configuration hadoopConf;
 
-  DeltaV2ChangeLogBatch(
+  DeltaV2ChangelogBatch(
       CommitRange commitRange,
       Engine engine,
       StructType endDataSchema,
@@ -242,7 +242,7 @@ class DeltaV2ChangeLogBatch implements Batch {
                 totalBytes += remove.getSize().orElse(0L);
               }
               // Validate Metadata actions: schema and row-tracking config must match the
-              // end-version baseline established by DeltaV2ChangeLogScanBuilder. Mid-range
+              // end-version baseline established by DeltaV2ChangelogScanBuilder. Mid-range
               // schema evolution or row-tracking-toggle would silently corrupt downstream
               // CDC post-processing (row identity / column mapping drift).
               Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
@@ -302,7 +302,7 @@ class DeltaV2ChangeLogBatch implements Batch {
     StructType partitionSchema = new StructType();
     StructType readDataSchema =
         endDataSchema.add(
-            DeltaV2ChangeLog.METADATA_COLUMN, DeltaV2ChangeLog.METADATA_STRUCT, false);
+            DeltaV2Changelog.METADATA_COLUMN, DeltaV2Changelog.METADATA_STRUCT, false);
     Filter[] dataFilters = new Filter[0];
     scala.collection.immutable.Map<String, String> scalaOptions =
         Map$.MODULE$.empty();

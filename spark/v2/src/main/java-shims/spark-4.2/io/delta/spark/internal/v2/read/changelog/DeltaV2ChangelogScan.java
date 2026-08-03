@@ -13,7 +13,7 @@ import org.apache.spark.sql.types.StructType;
  *
  * <p>Package privacy prevents callers from coupling to Delta's internal V2 implementation.
  */
-class DeltaV2ChangeLogScan implements Scan {
+class DeltaV2ChangelogScan implements Scan {
   private final Engine engine;
   private final StructType readSchema;
   private final CommitRange commitRange;
@@ -23,7 +23,7 @@ class DeltaV2ChangeLogScan implements Scan {
   private final long endVersion;
   private final Configuration hadoopConf;
 
-  DeltaV2ChangeLogScan(
+  DeltaV2ChangelogScan(
       StructType readSchema,
       CommitRange commitRange,
       Engine engine,
@@ -50,12 +50,12 @@ class DeltaV2ChangeLogScan implements Scan {
   @Override
   public String description() {
     return String.format(
-        "DeltaV2ChangeLogScan [startVersion=%d, endVersion=%d]", startVersion, endVersion);
+        "DeltaV2ChangelogScan [startVersion=%d, endVersion=%d]", startVersion, endVersion);
   }
 
   @Override
   public Batch toBatch() {
-    return new DeltaV2ChangeLogBatch(commitRange, engine, dataSchema, snapshot, hadoopConf);
+    return new DeltaV2ChangelogBatch(commitRange, engine, dataSchema, snapshot, hadoopConf);
   }
 
   // TODO: implement toMicroBatchStream() so spark.readStream...loadChangelog(...) can drive a

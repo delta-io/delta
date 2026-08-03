@@ -38,7 +38,7 @@ import org.junit.jupiter.api.BeforeAll;
  * continue to exercise the V1-only catalog and the gated-off catalog default that production users
  * hit.
  */
-abstract class DeltaV2ChangeLogTestBase extends DeltaV2TestBase {
+abstract class DeltaV2ChangelogTestBase extends DeltaV2TestBase {
 
   @BeforeAll
   public static void setUpChangelogSparkAndEngine() {

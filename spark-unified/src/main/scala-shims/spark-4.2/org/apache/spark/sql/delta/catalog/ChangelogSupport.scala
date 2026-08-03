@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.catalog
 
 import io.delta.spark.internal.v2.catalog.DeltaV2Table
-import io.delta.spark.internal.v2.read.changelog.DeltaV2ChangeLog
+import io.delta.spark.internal.v2.read.changelog.DeltaV2Changelog
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogContext, Identifier, TableCatalog}
@@ -38,9 +38,9 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * `loadTable`. Read-time CDF only flows through the V2 connector, so in `AUTO`/`STRICT` mode (see
  * [[DeltaV2Mode.shouldRouteChangelogToV2]]) the table is re-resolved to a [[DeltaV2Table]] for the
  * CHANGES read; in `NONE` mode it is rejected. It then resolves the requested [[ChangelogRange]]
- * against the table's snapshot manager, and wraps everything into a [[DeltaV2ChangeLog]].
+ * against the table's snapshot manager, and wraps everything into a [[DeltaV2Changelog]].
  * All connector-level work (loading snapshots, validating row tracking, inspecting metadata
- * actions) is deferred to the read path inside [[DeltaV2ChangeLog]].
+ * actions) is deferred to the read path inside [[DeltaV2Changelog]].
  *
  * <p>The whole entry point is gated by [[DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED]] (default
  * `false`). When the flag is off the trait follows the parent `loadChangelog` contract and throws
@@ -71,7 +71,7 @@ trait ChangelogSupport extends TableCatalog {
         DeltaErrors.throwChangelogRequiresV2Table(ident.toString, other.getClass.getName)
     }
     val (startVersion, endVersion) = resolveRange(deltaV2Table, context.range())
-    new DeltaV2ChangeLog(ident.name(), deltaV2Table, startVersion, endVersion)
+    new DeltaV2Changelog(ident.name(), deltaV2Table, startVersion, endVersion)
   }
 
   /**

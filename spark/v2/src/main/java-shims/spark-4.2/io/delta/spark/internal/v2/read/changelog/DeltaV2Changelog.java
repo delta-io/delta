@@ -18,7 +18,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  *
  * <p>Wraps the {@link DeltaV2Table} resolved by {@code TableCatalog.loadTable(ident)}. The
  * connector-level work (snapshot loads, row tracking validation, metadata-action inspection
- * across the range) is deferred to the read path inside {@link DeltaV2ChangeLogBatch}. The schema
+ * across the range) is deferred to the read path inside {@link DeltaV2ChangelogBatch}. The schema
  * exposed by {@link #columns()} is the end-version schema. It matches the {@code dataSchema} the
  * scan builds against, so analysis-time column resolution agrees with the per-commit Metadata
  * validation performed at scan planning.
@@ -30,7 +30,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  * The scan builder, scan, and batch implementations stay package-private so callers cannot couple
  * to Delta's internal V2 read path.
  */
-public class DeltaV2ChangeLog implements Changelog {
+public class DeltaV2Changelog implements Changelog {
 
   private final String tableName;
   private final DeltaV2Table deltaV2Table;
@@ -45,7 +45,7 @@ public class DeltaV2ChangeLog implements Changelog {
           .add(ROW_ID_FIELD, DataTypes.LongType, false)
           .add(ROW_COMMIT_VERSION_FIELD, DataTypes.LongType, false);
 
-  public DeltaV2ChangeLog(
+  public DeltaV2Changelog(
       String tableName, DeltaV2Table deltaV2Table, long startVersion, long endVersion) {
     this.tableName = tableName;
     this.deltaV2Table = deltaV2Table;
@@ -98,7 +98,7 @@ public class DeltaV2ChangeLog implements Changelog {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new DeltaV2ChangeLogScanBuilder(deltaV2Table, startVersion, endVersion, options);
+    return new DeltaV2ChangelogScanBuilder(deltaV2Table, startVersion, endVersion, options);
   }
 
   @Override

@@ -53,7 +53,7 @@ import org.junit.jupiter.params.provider.ValueSource;
  * <p>This is intentionally strict with explicit expected rows to validate end-to-end behavior
  * through ScanBuilder -> Scan -> Batch -> PartitionReader.
  */
-class DeltaV2ChangeLogDirectBatchExecutionTest extends DeltaV2ChangeLogTestBase {
+class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase {
 
   @Disabled("DV-off changelog read over-counts (returns 5 rows instead of 3). "
       + "Pre-existing, independent of the path-encoding fix.")
@@ -82,8 +82,8 @@ class DeltaV2ChangeLogDirectBatchExecutionTest extends DeltaV2ChangeLogTestBase 
           long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
-          DeltaV2ChangeLog changeLog =
-              new DeltaV2ChangeLog(
+          DeltaV2Changelog changeLog =
+              new DeltaV2Changelog(
                   tableName,
                   new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
                   0L,
@@ -126,7 +126,7 @@ class DeltaV2ChangeLogDirectBatchExecutionTest extends DeltaV2ChangeLogTestBase 
   }
 
   /**
-   * Asserts that {@link DeltaV2ChangeLog#rowId()} and {@link DeltaV2ChangeLog#rowVersion()} expose
+   * Asserts that {@link DeltaV2Changelog#rowId()} and {@link DeltaV2Changelog#rowVersion()} expose
    * the per-row tracking metadata fields (not the per-commit columns). Spark's batch CDC
    * post-processor reads these references to perform carry-over removal and update detection. If
    * {@code rowVersion()} ever pointed at {@code _commit_version} instead of {@code
@@ -153,8 +153,8 @@ class DeltaV2ChangeLogDirectBatchExecutionTest extends DeltaV2ChangeLogTestBase 
           StructType dataSchema = spark.table(tableName).schema();
           long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
 
-          DeltaV2ChangeLog changeLog =
-              new DeltaV2ChangeLog(
+          DeltaV2Changelog changeLog =
+              new DeltaV2Changelog(
                   tableName,
                   new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
                   0L,
@@ -205,8 +205,8 @@ class DeltaV2ChangeLogDirectBatchExecutionTest extends DeltaV2ChangeLogTestBase 
           long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
-          DeltaV2ChangeLog changeLog =
-              new DeltaV2ChangeLog(
+          DeltaV2Changelog changeLog =
+              new DeltaV2Changelog(
                   tableName,
                   new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
                   0L,
@@ -278,8 +278,8 @@ class DeltaV2ChangeLogDirectBatchExecutionTest extends DeltaV2ChangeLogTestBase 
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
           // Range = [v2, v3]. v0 (CREATE) and v1 (Alice) must be excluded from the output.
-          DeltaV2ChangeLog changeLog =
-              new DeltaV2ChangeLog(
+          DeltaV2Changelog changeLog =
+              new DeltaV2Changelog(
                   tableName,
                   new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
                   2L,
