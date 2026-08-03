@@ -1601,13 +1601,9 @@ def normalizeColumnNamesInDataType(
     case ByteType =>
     case ShortType =>
     case IntegerType =>
-    case dt: YearMonthIntervalType =>
-      assert(columnPath.nonEmpty, "'columnPath' must not be empty")
-      unsupportedDataTypes += UnsupportedDataTypeInfo(prettyFieldName(columnPath), dt)
+    case _: YearMonthIntervalType =>
     case LongType =>
-    case dt: DayTimeIntervalType =>
-      assert(columnPath.nonEmpty, "'columnPath' must not be empty")
-      unsupportedDataTypes += UnsupportedDataTypeInfo(prettyFieldName(columnPath), dt)
+    case _: DayTimeIntervalType =>
     case FloatType =>
     case DoubleType =>
     case StringType =>
