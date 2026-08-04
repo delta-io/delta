@@ -200,7 +200,7 @@ class SnapshotLastManifestCommitWithoutCRCSuite extends SnapshotLastManifestComm
 
       // Build the AMT provider from v4's emitted inline checkpoint action and stub it into a fresh
       // snapshot's log segment, trimming the version's delta as cold discovery eventually will.
-      val checkpoint = checkpointsAt(deltaLog, 4).headOption.getOrElse {
+      val checkpoint = checkpointAt(deltaLog, 4).getOrElse {
         fail("v4 must emit an inline AMT checkpoint action.")
       }
       val provider = AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint)

@@ -503,7 +503,7 @@ object SuiteGeneratorConfig {
 
     // Column-mapping expansion for the V1 data-skipping suites. The referenced mixins live in
     // DataSkippingDeltaTests.scala.
-    if (base == "DataSkippingDeltaV1Tests") {
+    if (base.contains("DataSkippingDeltaV1Tests")) {
       if (mixins.contains(Dims.COLUMN_MAPPING.traitNames.head)) {
         finalMixins += "DataSkippingDeltaTestV1ColumnMappingMode"
       }

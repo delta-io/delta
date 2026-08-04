@@ -22,14 +22,17 @@ import dev.failsafe.function.CheckedSupplier;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.types.*;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
+import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaClient;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient;
+import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.SchemasApi;
 import io.unitycatalog.client.api.TablesApi;
-import io.unitycatalog.client.api.TemporaryCredentialsApi;
 import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.model.*;
 import io.unitycatalog.client.retry.JitterDelayRetryPolicy;
@@ -39,6 +42,7 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.apache.flink.util.Preconditions;
+import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -184,12 +188,16 @@ public class UnityCatalog implements DeltaCatalog {
   private URI oauthUri;
   private String oauthClientId;
   private String oauthClientSecret;
+  private final boolean credentialVendingEnabled;
 
   /**
    * Lazily initialized API client used to communicate with the catalog service. This field is
    * marked transient to avoid serialization issues in distributed environments.
    */
   protected transient ApiClient apiClient;
+
+  /** Client for table operations backed by the UC Delta-Tables API. */
+  protected transient UCDeltaClient deltaClient;
 
   /**
    * Creates a {@code RESTCatalog} with the given endpoint and authentication token.
@@ -199,10 +207,15 @@ public class UnityCatalog implements DeltaCatalog {
    * @param token a bearer token used to authenticate REST requests
    */
   public UnityCatalog(String name, URI endpoint, String token) {
+    this(name, endpoint, token, true);
+  }
+
+  public UnityCatalog(String name, URI endpoint, String token, boolean credentialVendingEnabled) {
     this.name = name;
     this.endpoint = endpoint;
     this.token = token;
     this.authMode = AuthMode.token;
+    this.credentialVendingEnabled = credentialVendingEnabled;
   }
 
   /**
@@ -216,12 +229,23 @@ public class UnityCatalog implements DeltaCatalog {
    */
   public UnityCatalog(
       String name, URI endpoint, URI oauthUri, String clientId, String clientSecret) {
+    this(name, endpoint, oauthUri, clientId, clientSecret, true);
+  }
+
+  public UnityCatalog(
+      String name,
+      URI endpoint,
+      URI oauthUri,
+      String clientId,
+      String clientSecret,
+      boolean credentialVendingEnabled) {
     this.name = name;
     this.endpoint = endpoint;
     this.authMode = AuthMode.oauth;
     this.oauthUri = oauthUri;
     this.oauthClientId = clientId;
     this.oauthClientSecret = clientSecret;
+    this.credentialVendingEnabled = credentialVendingEnabled;
   }
 
   /**
@@ -297,6 +321,14 @@ public class UnityCatalog implements DeltaCatalog {
       appVersions.forEach(builder::addAppVersion);
       apiClient = builder.build();
     }
+    if (deltaClient == null) {
+      Map<String, String> ucConfig =
+          buildUcConfig(endpoint, authMode, token, oauthUri, oauthClientId, oauthClientSecret);
+      ucConfig.put(
+          UCConfigUtils.CREDENTIAL_VENDING_ENABLED_KEY, Boolean.toString(credentialVendingEnabled));
+      deltaClient =
+          new UCDeltaTokenBasedRestClient(ucConfig, /* hadoopConfSupplier = */ Configuration::new);
+    }
   }
 
   protected <RET> RET withErrorHandling(CheckedSupplier<RET> body) {
@@ -324,6 +356,13 @@ public class UnityCatalog implements DeltaCatalog {
     }
   }
 
+  /** Converts a {@code schema.table} or {@code catalog.schema.table} name to the storage id. */
+  private TableIdentifier toStorageTableIdentifier(String qualifiedTableName) {
+    UCTableIdentifier id = toUcTableIdentifier(qualifiedTableName);
+    return new TableIdentifier(
+        new String[] {id.getCatalogName(), id.getSchemaName()}, id.getTableName());
+  }
+
   /**
    * Loads table metadata from the remote catalog.
    *
@@ -339,18 +378,19 @@ public class UnityCatalog implements DeltaCatalog {
     Objects.requireNonNull(tableName);
     return withErrorHandling(
         () -> {
-          TablesApi tablesApi = new TablesApi(apiClient);
-          TableInfo tableInfo = tablesApi.getTable(tableName, null, null);
+          UCDeltaModels.TableInfo tableInfo;
+          try {
+            tableInfo = deltaClient.loadTable(toStorageTableIdentifier(tableName));
+          } catch (NoSuchTableException e) {
+            throw new ExceptionUtils.ResourceNotFoundException(e.getMessage());
+          }
           TableDescriptor brief =
               new TableDescriptor(
-                  String.join(
-                      ".",
-                      tableInfo.getCatalogName(),
-                      tableInfo.getSchemaName(),
-                      tableInfo.getName()),
-                  tableInfo.getTableId(),
+                  tableName,
+                  tableInfo.getTableId().toString(),
                   AbstractKernelTable.normalize(
-                      URI.create(Objects.requireNonNull(tableInfo.getStorageLocation()))));
+                      URI.create(Objects.requireNonNull(tableInfo.getLocation()))),
+                  tableInfo.getStorageProperties());
           LOG.debug("Loaded table with UUID {} at {}", brief.uuid, brief.tablePath);
           return brief;
         });
@@ -438,68 +478,28 @@ public class UnityCatalog implements DeltaCatalog {
         });
   }
 
-  static final String GCP_OAUTH_TOKEN_KEY = "fs.gs.auth.access.token";
-  static final String AZURE_SAS_TOKEN_KEY = "fs.azure.sas.fixed.token";
-
   /**
    * Retrieves temporary credentials required to access the underlying storage for the given table.
    *
    * <p>This implementation requests short-lived credentials from the catalog service that are
    * scoped to the specified table and operation type (read/write).
    *
-   * <p>The returned configuration map contains Hadoop-compatible credential keys for whichever
-   * cloud provider the table resides on (AWS S3, Azure ABFS, or GCS).
+   * <p>The returned Hadoop configuration uses the renewable credential providers supplied by {@code
+   * unitycatalog-hadoop}.
    *
-   * <p>For Azure, the SAS token is returned under a generic key ({@link #AZURE_SAS_TOKEN_KEY}). The
-   * consumer must remap it to an account-scoped key using the table's storage path.
+   * <p>These providers use filesystem-specific expiration settings, so {@link CredentialManager}
+   * does not schedule another refresh for UC credentials. Credential renewal is handled by {@code
+   * unitycatalog-hadoop}; {@code renewCredential.enabled} defaults to {@code true}.
    *
-   * @param tableId the table identifier for which credentials are requested
+   * @param tableName the three-part table name for which credentials are requested
    * @return a map of filesystem configuration properties containing temporary credentials
    * @throws RuntimeException if credential generation fails due to API or network errors
    */
   @Override
-  public Map<String, String> getCredentials(String tableId) {
+  public Map<String, String> getCredentials(String tableName) {
+    Objects.requireNonNull(tableName);
     return withErrorHandling(
-        () -> {
-          TemporaryCredentialsApi credentialsApi = new TemporaryCredentialsApi(apiClient);
-          TemporaryCredentials credentials =
-              credentialsApi.generateTemporaryTableCredentials(
-                  new GenerateTemporaryTableCredential()
-                      .tableId(tableId)
-                      .operation(TableOperation.READ_WRITE));
-
-          Map<String, String> result = new HashMap<>();
-
-          if (credentials.getAwsTempCredentials() != null) {
-            result.put("fs.s3a.access.key", credentials.getAwsTempCredentials().getAccessKeyId());
-            result.put(
-                "fs.s3a.secret.key", credentials.getAwsTempCredentials().getSecretAccessKey());
-            result.put(
-                "fs.s3a.session.token", credentials.getAwsTempCredentials().getSessionToken());
-          } else if (credentials.getGcpOauthToken() != null) {
-            result.put("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER");
-            result.put(
-                "fs.gs.auth.access.token.provider",
-                "io.delta.flink.table.FixedGcsAccessTokenProvider");
-            result.put(GCP_OAUTH_TOKEN_KEY, credentials.getGcpOauthToken().getOauthToken());
-          } else if (credentials.getAzureUserDelegationSas() != null) {
-            result.put("fs.abfs.impl.disable.cache", "true");
-            result.put("fs.abfss.impl.disable.cache", "true");
-            result.put(AZURE_SAS_TOKEN_KEY, credentials.getAzureUserDelegationSas().getSasToken());
-          }
-
-          if (credentials.getExpirationTime() != null) {
-            result.put(
-                CredentialManager.CREDENTIAL_EXPIRATION_KEY,
-                credentials.getExpirationTime().toString());
-            if (credentials.getGcpOauthToken() != null) {
-              result.put(
-                  "fs.gs.auth.access.token.expiration.ms",
-                  credentials.getExpirationTime().toString());
-            }
-          }
-          return result;
-        });
+        () -> deltaClient.loadTable(toStorageTableIdentifier(tableName)).getStorageProperties());
   }
 
   /* ===================================
