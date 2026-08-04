@@ -469,7 +469,7 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
-   * Runs `thunk` with nested schema pruning disabled when `schema` contains a variant column.
+   * Runs `thunk` with nested schema pruning disabled when `condition` references a variant column.
    *
    * Spark's "Early Filter and Projection Push-Down" batch is not idempotent when a scan requests
    * the file source metadata column while a shredded variant column is only referenced by a
@@ -484,14 +484,17 @@ object DeltaTableUtils extends PredicateHelper
    * test failure rather than as a user visible one: the batch runs once outside tests and the plan
    * it produces is correct. Disabling nested pruning here avoids depending on an optimizer result
    * that Spark itself reports as invalid, at the cost of not pruning nested fields for this one
-   * query. It is limited to variant tables, and should be removed once Spark makes nested schema
-   * pruning idempotent for this plan shape, tracked in
+   * query. It is limited to conditions that reference a variant column, and should be removed once
+   * Spark makes nested schema pruning idempotent for this plan shape, tracked in
    * https://github.com/apache/spark/issues/57659.
    */
   def withNestedSchemaPruningDisabledForVariant[T](
       spark: SparkSession,
-      schema: StructType)(thunk: => T): T = {
-    if (!SchemaUtils.checkForVariantTypeColumnsRecursively(schema)) {
+      condition: Expression)(thunk: => T): T = {
+    val referencesVariant = condition.references.exists { attr =>
+      SchemaUtils.typeExistsRecursively(attr.dataType)(_.isInstanceOf[VariantType])
+    }
+    if (!referencesVariant) {
       thunk
     } else {
       val newConf = spark.sessionState.conf.copy(SQLConf.NESTED_SCHEMA_PRUNING_ENABLED -> false)

@@ -325,7 +325,7 @@ case class DeleteCommand(
                   Array.empty[String]
                 } else {
                   DeltaTableUtils.withNestedSchemaPruningDisabledForVariant(
-                      sparkSession, txn.metadata.schema) {
+                      sparkSession, cond) {
                     data.filter(Column(cond))
                       .select(Column(fileMetadataCol).getField(FILE_PATH))
                       .filter(Column(incrDeletedCountExpr))
