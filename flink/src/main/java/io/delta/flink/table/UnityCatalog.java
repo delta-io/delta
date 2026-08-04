@@ -19,10 +19,10 @@ package io.delta.flink.table;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.failsafe.function.CheckedSupplier;
-import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.types.*;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaClient;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels;
@@ -40,7 +40,6 @@ import java.net.URI;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 import org.apache.flink.util.Preconditions;
 import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
@@ -68,69 +67,6 @@ import org.slf4j.LoggerFactory;
 public class UnityCatalog implements DeltaCatalog {
 
   private static final Logger LOG = LoggerFactory.getLogger(UnityCatalog.class);
-
-  private static ColumnTypeName columnTypeName(DataType dataType) {
-    if (dataType instanceof IntegerType) {
-      return ColumnTypeName.INT;
-    } else if (dataType instanceof LongType) {
-      return ColumnTypeName.LONG;
-    } else if (dataType instanceof ShortType) {
-      return ColumnTypeName.SHORT;
-    } else if (dataType instanceof ByteType) {
-      return ColumnTypeName.BYTE;
-    } else if (dataType instanceof BooleanType) {
-      return ColumnTypeName.BOOLEAN;
-    } else if (dataType instanceof FloatType) {
-      return ColumnTypeName.FLOAT;
-    } else if (dataType instanceof DoubleType) {
-      return ColumnTypeName.DOUBLE;
-    } else if (dataType instanceof StringType) {
-      return ColumnTypeName.STRING;
-    } else if (dataType instanceof BinaryType) {
-      return ColumnTypeName.BINARY;
-    } else if (dataType instanceof DecimalType) {
-      return ColumnTypeName.DECIMAL;
-    } else if (dataType instanceof DateType) {
-      return ColumnTypeName.DATE;
-    } else if (dataType instanceof TimestampType) {
-      return ColumnTypeName.TIMESTAMP;
-    } else if (dataType instanceof TimestampNTZType) {
-      return ColumnTypeName.TIMESTAMP_NTZ;
-    } else if (dataType instanceof ArrayType) {
-      return ColumnTypeName.ARRAY;
-    } else if (dataType instanceof MapType) {
-      return ColumnTypeName.MAP;
-    } else if (dataType instanceof StructType) {
-      return ColumnTypeName.STRUCT;
-    } else {
-      throw new UnsupportedOperationException("Unsupported data type: " + dataType);
-    }
-  }
-
-  private static String typeText(DataType dataType) {
-    if (dataType instanceof DecimalType) {
-      DecimalType decimalType = (DecimalType) dataType;
-      return String.format("DECIMAL(%d,%d)", decimalType.getPrecision(), decimalType.getScale());
-    } else if (dataType instanceof BasePrimitiveType) {
-      return dataType.toString().toUpperCase(Locale.ROOT);
-    } else if (dataType instanceof ArrayType) {
-      ArrayType arrayType = (ArrayType) dataType;
-      return String.format("ARRAY<%s>", typeText(arrayType.getElementType()));
-    } else if (dataType instanceof MapType) {
-      MapType mapType = (MapType) dataType;
-      return String.format(
-          "MAP<%s,%s>", typeText(mapType.getKeyType()), typeText(mapType.getValueType()));
-    } else if (dataType instanceof StructType) {
-      StructType structType = (StructType) dataType;
-      return String.format(
-          "STRUCT<%s>",
-          structType.fields().stream()
-              .map(field -> String.format("%s:%s", field.getName(), typeText(field.getDataType())))
-              .collect(Collectors.joining(",")));
-    } else {
-      throw new UnsupportedOperationException("Unsupported data type: " + dataType);
-    }
-  }
 
   enum AuthMode {
     token,
@@ -179,6 +115,56 @@ public class UnityCatalog implements DeltaCatalog {
         .forEach(
             (name, version) -> ucConfig.put(UCConfigUtils.APP_VERSIONS_PREFIX + name, version));
     return ucConfig;
+  }
+
+  private static Map<String, String> requiredCreateProperties(
+      String tableId,
+      Map<String, String> requestedProperties,
+      UCDeltaModels.StagingTableInfo stagingTableInfo) {
+    Map<String, String> requiredProperties = new HashMap<>();
+    AbstractProtocol requiredProtocol = stagingTableInfo.getRequiredProtocol();
+    if (requiredProtocol != null) {
+      Set<String> requiredFeatures = new HashSet<>();
+      if (requiredProtocol.getReaderFeatures() != null) {
+        requiredFeatures.addAll(requiredProtocol.getReaderFeatures());
+      }
+      if (requiredProtocol.getWriterFeatures() != null) {
+        requiredFeatures.addAll(requiredProtocol.getWriterFeatures());
+      }
+      requiredFeatures.forEach(
+          feature ->
+              putRequiredProperty(
+                  tableId,
+                  requestedProperties,
+                  requiredProperties,
+                  "delta.feature." + feature,
+                  "supported"));
+    }
+    stagingTableInfo
+        .getRequiredProperties()
+        .forEach(
+            (key, value) -> {
+              if (value != null) {
+                putRequiredProperty(tableId, requestedProperties, requiredProperties, key, value);
+              }
+            });
+    return requiredProperties;
+  }
+
+  private static void putRequiredProperty(
+      String tableId,
+      Map<String, String> requestedProperties,
+      Map<String, String> requiredProperties,
+      String key,
+      String requiredValue) {
+    String requestedValue = requestedProperties.get(key);
+    if (requestedValue != null && !requestedValue.equals(requiredValue)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Cannot create table %s: catalog requires %s=%s, but the requested value is %s",
+              tableId, key, requiredValue, requestedValue));
+    }
+    requiredProperties.put(key, requiredValue);
   }
 
   private final String name;
@@ -397,14 +383,14 @@ public class UnityCatalog implements DeltaCatalog {
   }
 
   /**
-   * Creates a new table in the backed UnityCatalog
+   * Reserves a staging table in Unity Catalog and hands its allocated storage location to {@code
+   * callback} so the caller can initialize the Delta table there.
    *
-   * <p>The {@code tableId} identifies the table within UC. This operation registers the table
-   * metadata with the remote catalog, including schema, partition specification, and table
-   * properties.
+   * <p>The staging table is promoted to a real managed table by the Kernel UC committer when the
+   * initial (version 0) commit is written, so this method does not register the table itself.
    *
-   * <p>This call will create a staging table, init the snapshot, then upgrade the staging table to
-   * real table.
+   * @param tableId the {@code catalog.schema.table} identifier of the table to create
+   * @param callback invoked with the reserved table id and storage location
    */
   @Override
   public void createTable(
@@ -419,61 +405,18 @@ public class UnityCatalog implements DeltaCatalog {
     Objects.requireNonNull(properties);
     withErrorHandling(
         () -> {
-          TablesApi tablesApi = new TablesApi(apiClient);
-          // Obtain names
-          UCTableIdentifier tableIdentifier = toUcTableIdentifier(tableId);
-          String schemaName = tableIdentifier.getSchemaName();
-          String tableName = tableIdentifier.getTableName();
-          // Column Info
-          List<ColumnInfo> columnInfos =
-              IntStream.range(0, schema.fields().size())
-                  .mapToObj(
-                      index -> {
-                        StructField field = schema.fields().get(index);
-                        ColumnInfo colInfo =
-                            new ColumnInfo()
-                                .name(field.getName())
-                                .typeName(columnTypeName(field.getDataType()))
-                                .typeText(typeText(field.getDataType()))
-                                .typeJson(DataTypeJsonSerDe.serializeDataType(field.getDataType()))
-                                .position(index)
-                                .nullable(field.isNullable());
-                        if (field.getDataType() instanceof DecimalType) {
-                          DecimalType decimalType = (DecimalType) field.getDataType();
-                          colInfo
-                              .typePrecision(decimalType.getPrecision())
-                              .typeScale(decimalType.getScale());
-                        }
-                        return colInfo;
-                      })
-                  .collect(Collectors.toList());
-
-          // Create a staging table and init the storage
-          StagingTableInfo stagingTableInfo =
-              tablesApi.createStagingTable(
-                  new CreateStagingTable()
-                      .catalogName(getName())
-                      .schemaName(schemaName)
-                      .name(tableName));
-
-          // Init Delta snapshot
-          String storageLocation = stagingTableInfo.getStagingLocation();
-          Objects.requireNonNull(storageLocation);
-
-          TableDescriptor desc =
-              new TableDescriptor(tableId, stagingTableInfo.getId(), URI.create(storageLocation));
-          callback.accept(desc);
-
-          tablesApi.createTable(
-              new CreateTable()
-                  .catalogName(getName())
-                  .schemaName(schemaName)
-                  .name(tableName)
-                  .storageLocation(stagingTableInfo.getStagingLocation())
-                  .tableType(TableType.MANAGED)
-                  .dataSourceFormat(DataSourceFormat.DELTA)
-                  .columns(columnInfos)
-                  .properties(properties));
+          UCDeltaModels.StagingTableInfo stagingTableInfo =
+              deltaClient.createStagingTable(toStorageTableIdentifier(tableId));
+          String storageLocation = Objects.requireNonNull(stagingTableInfo.getLocation());
+          Map<String, String> requiredProperties =
+              requiredCreateProperties(tableId, properties, stagingTableInfo);
+          callback.accept(
+              new TableDescriptor(
+                  tableId,
+                  stagingTableInfo.getTableId().toString(),
+                  URI.create(storageLocation),
+                  stagingTableInfo.getStorageProperties(),
+                  requiredProperties));
           return null;
         });
   }
