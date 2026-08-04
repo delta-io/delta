@@ -18,8 +18,9 @@ package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.DeltaTableUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.execution.datasources.FileFormat.FILE_PATH
 import org.apache.spark.sql.sources.Filter
 
 /**
@@ -51,8 +52,9 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
     try {
       // Use the `_metadata.file_path` column to get the list of files
       // Query: SELECT DISTINCT _metadata.file_path FROM table
-      val filesDF = spark.table(fullTableName)
-        .select(col("_metadata.file_path").as("file_path"))
+      val tableDF = spark.table(fullTableName)
+      val filesDF = tableDF
+        .select(DeltaTableUtils.getFileMetadataColumn(tableDF).getField(FILE_PATH).as("file_path"))
         .distinct()
 
       // Collect file paths

@@ -192,7 +192,7 @@ case class UpdateCommand(
         val pathsToRewrite =
           withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
             DeltaTableUtils.withNestedSchemaPruningDisabledForVariant(
-                sparkSession, txn.metadata.schema) {
+                sparkSession, updateCondition) {
               data.filter(Column(updateCondition))
                 .select(Column(fileMetadataCol).getField(FILE_PATH))
                 .filter(Column(incrUpdatedCountExpr))
