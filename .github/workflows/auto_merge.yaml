@@ -1,0 +1,123 @@
+name: "Auto Merge"
+
+on:
+  # Trigger when label is added to PR
+  pull_request:
+    types: [labeled]
+  # Trigger when check suites complete (fires for any workflow)
+  check_suite:
+    types: [completed]
+  # Trigger when commit status changes (covers external CI systems too)
+  status: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: "Auto Merge PR"
+    runs-on: ubuntu-24.04
+    # Only run if this is related to a PR
+    if: |
+      (github.event_name == 'pull_request' && github.event.label.name == 'auto-merge') ||
+      github.event_name == 'check_suite' ||
+      github.event_name == 'status'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Auto merge PR with auto-merge label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the PR number based on the event type
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+          elif [ "${{ github.event_name }}" == "check_suite" ]; then
+            # Get PRs associated with this check suite
+            PR_NUMBER=$(gh api repos/${{ github.repository }}/commits/${{ github.event.check_suite.head_sha }}/pulls --jq '.[0].number // empty')
+          elif [ "${{ github.event_name }}" == "status" ]; then
+            # Get PRs associated with this commit status
+            PR_NUMBER=$(gh api repos/${{ github.repository }}/commits/${{ github.event.commit.sha }}/pulls --jq '.[0].number // empty')
+          fi
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No PR found for this event, skipping..."
+            exit 0
+          fi
+
+          echo "Processing PR #$PR_NUMBER"
+
+          # For label events, verify the user who added the label has write access
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            SENDER="${{ github.event.sender.login }}"
+            PERMISSION=$(gh api repos/${{ github.repository }}/collaborators/$SENDER/permission --jq '.permission' 2>/dev/null || echo "none")
+            
+            if [[ "$PERMISSION" != "admin" && "$PERMISSION" != "write" && "$PERMISSION" != "maintain" ]]; then
+              echo "User $SENDER does not have write access (permission: $PERMISSION), skipping..."
+              exit 0
+            fi
+            echo "User $SENDER has $PERMISSION permission"
+          fi
+
+          # Check if PR has the auto-merge label
+          HAS_LABEL=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' | grep -c "^auto-merge$" || true)
+
+          if [ "$HAS_LABEL" -eq 0 ]; then
+            echo "PR #$PR_NUMBER does not have the 'auto-merge' label, skipping..."
+            exit 0
+          fi
+
+          echo "PR #$PR_NUMBER has the 'auto-merge' label"
+
+          # Check if PR is mergeable
+          PR_STATE=$(gh pr view "$PR_NUMBER" --json mergeable,state --jq '{mergeable: .mergeable, state: .state}')
+          MERGEABLE=$(echo "$PR_STATE" | jq -r '.mergeable')
+          STATE=$(echo "$PR_STATE" | jq -r '.state')
+
+          if [ "$STATE" != "OPEN" ]; then
+            echo "PR #$PR_NUMBER is not open (state: $STATE), skipping..."
+            exit 0
+          fi
+
+          if [ "$MERGEABLE" != "MERGEABLE" ]; then
+            echo "PR #$PR_NUMBER is not mergeable (status: $MERGEABLE), skipping..."
+            exit 0
+          fi
+
+          echo "PR #$PR_NUMBER is mergeable"
+
+          # Check if all checks have passed
+          # Get the status of all checks
+          CHECKS_STATUS=$(gh pr checks "$PR_NUMBER" --json name,state,conclusion 2>/dev/null || echo "[]")
+
+          # Count pending, failing, and passing checks
+          PENDING=$(echo "$CHECKS_STATUS" | jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED")] | length')
+          FAILING=$(echo "$CHECKS_STATUS" | jq '[.[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT")] | length')
+
+          # Exclude the current auto-merge workflow from the check count
+          PENDING_EXCLUDING_SELF=$(echo "$CHECKS_STATUS" | jq '[.[] | select((.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED") and .name != "Auto Merge PR")] | length')
+
+          if [ "$PENDING_EXCLUDING_SELF" -gt 0 ]; then
+            echo "PR #$PR_NUMBER has $PENDING_EXCLUDING_SELF pending checks (excluding this workflow), waiting..."
+            echo "Pending checks:"
+            echo "$CHECKS_STATUS" | jq -r '.[] | select((.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED") and .name != "Auto Merge PR") | "  - \(.name): \(.state)"'
+            exit 0
+          fi
+
+          if [ "$FAILING" -gt 0 ]; then
+            echo "PR #$PR_NUMBER has $FAILING failing checks, cannot auto-merge"
+            echo "Failing checks:"
+            echo "$CHECKS_STATUS" | jq -r '.[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT") | "  - \(.name): \(.conclusion)"'
+            exit 0
+          fi
+
+          echo "All checks passed for PR #$PR_NUMBER"
+
+          # Merge the PR
+          echo "Merging PR #$PR_NUMBER..."
+          gh pr merge "$PR_NUMBER" --merge --delete-branch
+
+          echo "Successfully merged PR #$PR_NUMBER"
+
