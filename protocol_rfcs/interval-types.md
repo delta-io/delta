@@ -96,7 +96,7 @@ Interval values are stored using a raw Parquet physical type with no logical-typ
 
 Because no Parquet logical type is written, an interval column is physically indistinguishable from a Parquet `int32`/`int64` (i.e. a Delta `integer`/`long`); the interval semantics are carried solely by the Delta schema in `Metadata.schemaString`. This representation supports signed intervals and microsecond precision. 
 
-Since interval types are not gated by a table feature, a connector that does not recognize the `interval year to month` or `interval day to second` type name will not detect the incompatibility through a protocol feature check. Instead, it must fail while parsing `Metadata.schemaString`, rejecting the table schema before reading the Parquet.
+Because interval types are not gated by a table feature, clients that do not recognize them may fail or otherwise behave unexpectedly when reading a table with intervals in its `Metadata.schemaString`.
 
 ## Schema Evolution and Type Changes
 
