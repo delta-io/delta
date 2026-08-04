@@ -174,7 +174,8 @@ public class ConflictChecker {
     CloseableIterable<Row> updatedDataActions = attemptDataActions;
     List<DomainMetadata> updatedDomainMetadatas = attemptDomainMetadatas;
 
-    if (TableFeatures.isRowTrackingSupported(transaction.getProtocol())) {
+    if (TableFeatures.isRowTrackingSupported(transaction.getProtocol())
+        && !RowTracking.isSuspended(transaction.getMetadata())) {
       updatedDomainMetadatas =
           RowTracking.updateRowIdHighWatermarkIfNeeded(
               snapshotOpt,
