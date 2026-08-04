@@ -255,6 +255,10 @@ When an `add` supersedes an existing manifest entry (e.g., `OPTIMIZE` backfillin
 }
 ```
 
+### Removing a Superseding Add
+
+When a `remove` cancels a matching `add` that is itself a superseding re-add (the `add` carries a non-null `backReference`), the `remove` must copy that `add`'s `backReference`. The re-add points to a leaf-manifest entry that has not yet been materialized as deleted in the tree; the pending re-add and its cancelling remove net out to a deletion of that leaf entry, so the remove must carry the same backreference for the next manifest commit to mark it deleted. Dropping the backreference here would leave the superseded leaf entry live.
+
 ### Backreference Fields
 
 | Field | Type | Description |
