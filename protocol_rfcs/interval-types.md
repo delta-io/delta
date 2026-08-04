@@ -7,7 +7,7 @@ This protocol change documents support for interval types (as defined [here](htt
 
 Like [`void`](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#void-type), interval types are documented here post-facto: interval columns already exist in tables written by earlier clients before this behavior was specified. Because such columns predate any table feature, interval types are **not** gated by a table feature and apply to all tables.
 
-Adopting this behavior in Delta-Spark is expected to be small, since the Parquet encoding, statistics handling, and partition-value serialization specified here already match what Spark produces for these types, leaving essentially only the schema-level type check to relax.
+Adopting this behavior in Delta-Spark is expected to be straightforward, since the Parquet encoding, statistics handling, and partition-value serialization specified here already match what Spark produces for these types, leaving essentially only the schema-level type check to relax.
 
 --------
 
@@ -24,7 +24,7 @@ These are separate logical types with different units and physical encodings, ra
 
 ## Type Definitions
 
-Interval type names in `Metadata.schemaString` are case-sensitive. The canonical type-name strings are:
+Interval type names in `metaData.schemaString` are case-sensitive. The canonical type-name strings are:
 
 - `interval year to month`
 - `interval day to second`
@@ -33,7 +33,7 @@ Intervals have two families: year-month (made up of the fields `year` and `month
 
 ANSI SQL also permits narrowed spellings that denote the same two families: for year-month, `interval year` and `interval month`; for day-second, `interval day`, `interval hour`, `interval minute`, `interval second`, and any `<start> to <end>` range over the ordered fields `day`, `hour`, `minute`, `second` (e.g. `interval day to minute`, `interval hour to second`). A spelling is not valid if it is multi-family — that is, it combines fields from both families (for example, `interval month to second`). A spelling is also not valid if its fields are in the wrong order, going from a shorter unit to a longer one (for example, `interval second to day` or `interval month to year`).
 
-Both the canonical names and all valid narrowed spellings listed above are permitted in `Metadata.schemaString`. Readers must accept every permitted spelling, while writers must always serialize the corresponding canonical name.
+Both the canonical names and all valid narrowed spellings listed above are permitted in `metaData.schemaString`. Readers must accept every permitted spelling, while writers must always serialize the corresponding canonical name.
 
 Regardless of which spelling is used, the stored value is the same: every year-month spelling stores a signed count of months, and every day-second spelling stores a signed count of microseconds. The spelling affects only how a value is displayed, not how it is stored.
 
@@ -66,7 +66,7 @@ To support interval types, readers must:
 
 To support interval types, writers must:
 
-- Serialize an interval field's type in `Metadata.schemaString` using the canonical `interval year to month` or `interval day to second` form.
+- Serialize an interval field's type in `metaData.schemaString` using the canonical `interval year to month` or `interval day to second` form.
 
 ## Partition Value Serialization
 
@@ -94,9 +94,9 @@ Interval values are stored using a raw Parquet physical type with no logical-typ
 - `interval year to month` is stored as a Parquet `int32` holding the signed count of months.
 - `interval day to second` is stored as a Parquet `int64` holding the signed count of microseconds.
 
-Because no Parquet logical type is written, an interval column is physically indistinguishable from a Parquet `int32`/`int64` (i.e. a Delta `integer`/`long`); the interval semantics are carried solely by the Delta schema in `Metadata.schemaString`. This representation supports signed intervals and microsecond precision. 
+Because no Parquet logical type is written, an interval column is physically indistinguishable from a Parquet `int32`/`int64` (i.e. a Delta `integer`/`long`); the interval semantics are carried solely by the Delta schema in `metaData.schemaString`. This representation supports signed intervals and microsecond precision. 
 
-Because interval types are not gated by a table feature, clients that do not recognize them may fail or otherwise behave unexpectedly when reading a table with intervals in its `Metadata.schemaString`.
+Because interval types are not gated by a table feature, clients that do not recognize them may fail or otherwise behave unexpectedly when reading a table with intervals in its `metaData.schemaString`.
 
 ## Schema Evolution and Type Changes
 
