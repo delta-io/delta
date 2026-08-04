@@ -18,6 +18,7 @@ package io.delta.flink.table;
 
 import io.delta.flink.Conf;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -132,6 +133,15 @@ public class CredentialManager {
       return newCredentials;
     }
     return cachedCredentials.get();
+  }
+
+  /** Uses credentials returned while resolving the table for the first storage access. */
+  void initializeCredentials(Map<String, String> credentials) {
+    Map<String, String> initialCredentials =
+        Collections.unmodifiableMap(new HashMap<>(credentials));
+    if (cachedCredentials.compareAndSet(null, initialCredentials)) {
+      scheduleNextRefresh(initialCredentials);
+    }
   }
 
   protected void scheduleNextRefresh(Map<String, String> newCredentials) {

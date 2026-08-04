@@ -18,6 +18,7 @@ package io.delta.flink.sink.sql;
 
 import io.delta.flink.table.ExceptionUtils;
 import io.delta.flink.table.UnityCatalog;
+import io.delta.storage.commit.uccommitcoordinator.exceptions.UnsupportedTableFormatException;
 import io.unitycatalog.client.model.SchemaInfo;
 import java.net.URI;
 import java.util.List;
@@ -38,7 +39,9 @@ public class FlinkUnityCatalog extends AbstractCatalog {
 
   public FlinkUnityCatalog(String name, String defaultDatabase, String endpoint, String token) {
     super(name, defaultDatabase);
-    this.deltaCatalog = new UnityCatalog(getName(), URI.create(endpoint), token);
+    this.deltaCatalog =
+        new UnityCatalog(
+            getName(), URI.create(endpoint), token, /* credentialVendingEnabled = */ false);
   }
 
   @Override
@@ -138,10 +141,13 @@ public class FlinkUnityCatalog extends AbstractCatalog {
   @Override
   public boolean tableExists(ObjectPath tablePath) throws CatalogException {
     try {
-      deltaCatalog.getTableDetail(String.format("%s.%s", getName(), tablePath.getFullName()));
+      deltaCatalog.getTable(String.format("%s.%s", getName(), tablePath.getFullName()));
       return true;
     } catch (ExceptionUtils.ResourceNotFoundException e) {
       return false;
+    } catch (UnsupportedTableFormatException e) {
+      // The Delta API found the catalog entry but cannot load it as a Delta table.
+      return true;
     }
   }
 
