@@ -147,6 +147,22 @@ public class TableConf implements Serializable {
     return cfg.get(CREDENTIALS_SOURCE);
   }
 
+  /** Returns whether Unity Catalog should vend temporary storage credentials. */
+  public boolean shouldFetchCredentialsFromCatalog() {
+    String source = getCredentialSource();
+    if (source.equalsIgnoreCase("uc")) {
+      return true;
+    } else if (source.equalsIgnoreCase("ambient")) {
+      return false;
+    }
+    throw new IllegalArgumentException(
+        "Unsupported "
+            + CREDENTIALS_SOURCE.key()
+            + " '"
+            + source
+            + "'. Supported values: 'uc' (default), 'ambient'.");
+  }
+
   /**
    * Returns the checkpoint creation frequency as a probability.
    *
