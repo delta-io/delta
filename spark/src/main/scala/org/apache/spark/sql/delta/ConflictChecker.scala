@@ -1144,8 +1144,12 @@ private[delta] class ConflictChecker(
           Seq.empty
       }
 
+      // Only re-scan the added files when row-level resolution actually reconciled something: a
+      // file is skippable only if its path is in `rowLevelResolvedPaths`, so an empty set means the
+      // filter is a no-op. Skips the traversal (and its allocation) on the common no-conflict path.
       val addedFilesAfterRowLevelResolution =
-        addedFilesToCheckForConflicts.filterNot(canSkipAddedFileForRowLevelConcurrency)
+        if (rowLevelResolvedPaths.isEmpty) addedFilesToCheckForConflicts
+        else addedFilesToCheckForConflicts.filterNot(canSkipAddedFileForRowLevelConcurrency)
 
       val fileMatchingPartitionReadPredicates =
         getFirstFileMatchingPartitionPredicates(addedFilesAfterRowLevelResolution)
