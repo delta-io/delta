@@ -289,6 +289,7 @@ object SparkVersionSpec {
     targetJvm = "17",
     additionalSourceDirs = Seq("scala-shims/spark-4.0", "scala-shims/spark-4.0-4.1"),
     supportIceberg = true,
+    supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
