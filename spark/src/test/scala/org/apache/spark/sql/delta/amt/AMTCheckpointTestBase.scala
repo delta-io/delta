@@ -19,8 +19,8 @@ package org.apache.spark.sql.delta.amt
 import java.io.File
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.{Action, Checkpoint}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, DeltaLog, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, RemoveFile}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -99,38 +99,231 @@ trait AMTCheckpointTestBase
     }
   }
 
-  /**
-   * How an AMT is emitted for a triggering commit. In [[AMTWriteMode.Inline]] the manifest tree
-   * rides in the business commit itself; in [[AMTWriteMode.Deferred]] a follow-up OPTIMIZE
-   * CHECKPOINT commit (issued by the post-commit hook) lands it one version later.
-   */
-  protected sealed trait AMTWriteMode {
-    /** Number of extra commits the AMT emission adds after a triggering business commit. */
-    def followUpCommits: Int
-  }
-  protected object AMTWriteMode {
-    case object Inline extends AMTWriteMode { val followUpCommits = 0 }
-    case object Deferred extends AMTWriteMode { val followUpCommits = 1 }
+  /** A production-supported combination of AMT placement and materialization strategy. */
+  protected sealed abstract class AMTCheckpointScenario(
+      val name: String,
+      val isInline: Boolean,
+      val isIncremental: Boolean)
+
+  protected object AMTCheckpointScenario {
+    case object InlineIncremental extends AMTCheckpointScenario(
+      "inline incremental", isInline = true, isIncremental = true)
+    case object DeferredIncremental extends AMTCheckpointScenario(
+      "deferred incremental", isInline = false, isIncremental = true)
+    case object DeferredFull extends AMTCheckpointScenario(
+      "deferred full", isInline = false, isIncremental = false)
   }
 
   /**
-   * Registers a test in both AMT write modes. The body runs once with inline writes forced (a low
-   * action-count threshold) and once with the default deferred follow-up-commit path, so behavior
-   * is covered in both. The body receives the active [[AMTWriteMode]] for any version-relative
-   * assertions.
+   * The business commit a test uses to trigger a checkpoint, as a function of the table name:
+   * either actions to commit through a transaction, or a SQL statement to run.
    */
-  protected def testInlineAndDeferred(testName: String)(body: AMTWriteMode => Unit): Unit = {
-    test(s"$testName (inline)") {
-      withSQLConf(
-          DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
-            -> "1") {
-        body(AMTWriteMode.Inline)
+  protected type AMTCheckpointTrigger =
+    String => Either[(Seq[Action], DeltaOperations.Operation), String]
+
+  /**
+   * Normalized result of producing one checkpoint through a supported production path.
+   *
+   * @param scenario the placement and materialization strategy used by the test
+   * @param tableName the catalog-managed table created by the harness
+   * @param preCheckpointSnapshot the snapshot after `setup` and before the tested checkpoint
+   * @param manifestCommitVersion the commit carrying `checkpoint`; this equals
+   *                              `checkpoint.version` for inline checkpoints and
+   *                              `checkpoint.version + 1` for deferred checkpoints
+   * @param checkpoint the Checkpoint action produced by the scenario
+   * @param provider the AMT provider installed from `checkpoint`
+   * @param postCheckpointSnapshot the snapshot after the checkpoint commit
+   */
+  protected case class AMTCheckpointScenarioContext(
+      scenario: AMTCheckpointScenario,
+      tableName: String,
+      preCheckpointSnapshot: Snapshot,
+      manifestCommitVersion: Long,
+      checkpoint: Checkpoint,
+      provider: AMTCheckpointProvider,
+      postCheckpointSnapshot: Snapshot)
+
+  /**
+   * Registers one test for each requested production-supported checkpoint scenario.
+   *
+   * For each scenario, the harness creates an AMT table and a full bootstrap checkpoint, then runs
+   * `setup`.
+   *
+   *  - When `inlineCheckpointTriggerActionsOrSQL` is defined, every scenario executes that
+   *    table-name-aware business commit and the harness registers an
+   *    [[AMTCheckpointScenario.InlineIncremental]] test, which sets the inline action threshold
+   *    to one for the commit.
+   *  - For [[AMTCheckpointScenario.DeferredIncremental]] and
+   *    [[AMTCheckpointScenario.DeferredFull]], the harness commits an explicit incremental or full
+   *    OPTIMIZE CHECKPOINT after the business commit, respectively.
+   *
+   * Finally, the harness calls `body` with an [[AMTCheckpointScenarioContext]] that normalizes
+   * inline and deferred version placement. Tests can assert on the checkpointed business commit,
+   * the manifest commit, the resulting Checkpoint action and provider, and the final snapshot
+   * without duplicating scenario-specific version arithmetic.
+   */
+  protected def testAcrossAMTCheckpointScenarios(
+      testName: String,
+      tableName: String,
+      deferredScenarios: Seq[AMTCheckpointScenario] = Seq(
+        AMTCheckpointScenario.DeferredIncremental,
+        AMTCheckpointScenario.DeferredFull),
+      sqlConfs: Seq[(String, String)] = Seq.empty)(
+      setup: String => Unit = _ => (),
+      inlineCheckpointTriggerActionsOrSQL: Option[AMTCheckpointTrigger] = None)(
+      body: AMTCheckpointScenarioContext => Unit): Unit = {
+    require(!deferredScenarios.contains(AMTCheckpointScenario.InlineIncremental),
+      "deferredScenarios must contain only deferred checkpoint scenarios")
+    val scenarios = inlineCheckpointTriggerActionsOrSQL
+      .map(_ => AMTCheckpointScenario.InlineIncremental).toSeq ++ deferredScenarios
+    scenarios.foreach { scenario =>
+      test(s"$testName (${scenario.name})") {
+        // Each scenario gets its own table, so it never inherits the previous scenario's storage.
+        // `withTable` only drops the catalog entry; for these catalog-managed tables the files can
+        // still be settling (commit backfill runs on a background pool), so a shared name lets one
+        // scenario's leftovers fail the next one's CREATE with
+        // DELTA_CREATE_TABLE_WITH_NON_EMPTY_LOCATION.
+        val scenarioTable = s"${tableName}_${scenario.name.replace(' ', '_')}"
+        withSQLConf(sqlConfs: _*) {
+          withTable(scenarioTable) {
+            createAMTTable(scenarioTable, checkpointInterval = Int.MaxValue)
+            // Incremental checkpoints require an existing full checkpoint.
+            commitCheckpoint(deltaLogForName(scenarioTable), incremental = false)
+            setup(scenarioTable)
+            val context = initScenarioAndBuildContext(
+              scenarioTable, scenario, inlineCheckpointTriggerActionsOrSQL)
+            assertAMTCheckpointScenarioInvariants(context)
+            body(context)
+          }
+        }
       }
     }
-    test(s"$testName (deferred)") {
-      // Default threshold (Long.MaxValue) keeps business commits from writing inline.
-      body(AMTWriteMode.Deferred)
+  }
+
+  private def initScenarioAndBuildContext(
+      tableName: String,
+      scenario: AMTCheckpointScenario,
+      inlineCheckpointTriggerActionsOrSQL: Option[AMTCheckpointTrigger])
+      : AMTCheckpointScenarioContext = {
+    import AMTCheckpointScenario._
+
+    val deltaLog = deltaLogForName(tableName)
+    val preCheckpointSnapshot = deltaLog.update()
+
+    def runCheckpointTrigger(): Unit = {
+      inlineCheckpointTriggerActionsOrSQL.map(_(tableName)).foreach {
+        case Left((actions, operation)) =>
+          val txn = deltaLog.startTransaction()
+          txn.commit(actions, operation)
+        case Right(sqlText) => spark.sql(sqlText)
+      }
     }
+
+    scenario match {
+      case InlineIncremental =>
+        withSQLConf(
+            DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+              -> "1") {
+          runCheckpointTrigger()
+        }
+      case _ =>
+        runCheckpointTrigger()
+        commitCheckpoint(deltaLog, incremental = scenario.isIncremental)
+    }
+
+    val checkpointedVersion = preCheckpointSnapshot.version +
+      (if (inlineCheckpointTriggerActionsOrSQL.isDefined) 1L else 0L)
+    val manifestCommitVersion = checkpointedVersion + (if (scenario.isInline) 0L else 1L)
+    val postCheckpointSnapshot = deltaLog.update()
+    val checkpoint = checkpointAt(deltaLog, manifestCommitVersion).getOrElse(
+      fail(s"${scenario.name}: expected a Checkpoint at v$manifestCommitVersion"))
+    val provider = amtProvider(postCheckpointSnapshot).getOrElse(
+      fail(s"${scenario.name}: post-checkpoint snapshot has no AMTCheckpointProvider"))
+    AMTCheckpointScenarioContext(
+      scenario = scenario,
+      tableName = tableName,
+      preCheckpointSnapshot = preCheckpointSnapshot,
+      manifestCommitVersion = manifestCommitVersion,
+      checkpoint = checkpoint,
+      provider = provider,
+      postCheckpointSnapshot = postCheckpointSnapshot)
+  }
+
+  protected def commitCheckpoint(deltaLog: DeltaLog, incremental: Boolean): Unit = {
+    val triggerName = if (incremental) {
+      AMTTriggerMode.CheckpointIntervalIncremental.name
+    } else {
+      AMTTriggerMode.CheckpointIntervalFull.name
+    }
+    deltaLog.startTransaction().commit(
+      Seq.empty,
+      DeltaOperations.OptimizeCheckpoint(
+        incremental = incremental,
+        triggerName = triggerName))
+  }
+
+  private def assertAMTCheckpointScenarioInvariants(
+      context: AMTCheckpointScenarioContext): Unit = {
+    val scenario = context.scenario
+    val checkpoint = context.checkpoint
+    assert(checkpoint.contentRoot.isIncremental.contains(scenario.isIncremental),
+      s"${scenario.name}: wrong incremental tag ${checkpoint.contentRoot.isIncremental}")
+    val expectedLastFull = scenario match {
+      case AMTCheckpointScenario.InlineIncremental |
+          AMTCheckpointScenario.DeferredIncremental =>
+        val bootstrap = amtProvider(context.preCheckpointSnapshot).getOrElse(
+          fail("incremental scenario must bootstrap a full checkpoint"))
+        bootstrap.checkpointAction.contentRoot.lastManifestCommitWithFullRewrite.get
+      case AMTCheckpointScenario.DeferredFull => checkpoint.version
+    }
+    assert(checkpoint.contentRoot.lastManifestCommitWithFullRewrite.contains(expectedLastFull),
+      s"${scenario.name}: wrong last-full marker " +
+        checkpoint.contentRoot.lastManifestCommitWithFullRewrite)
+    assert(context.provider.checkpointVersion == checkpoint.version)
+    assert(context.provider.checkpointAction == checkpoint)
+    assert(context.postCheckpointSnapshot.version == context.manifestCommitVersion)
+    val actionsFromCheckpointedCommit =
+      actionsAt(context.postCheckpointSnapshot.deltaLog, checkpoint.version)
+    if (scenario.isInline) {
+      assert(actionsFromCheckpointedCommit.count(_.isInstanceOf[Checkpoint]) == 1,
+        "inline checkpoint must be carried by the business commit")
+    } else {
+      assert(!actionsFromCheckpointedCommit.exists(_.isInstanceOf[Checkpoint]),
+        "deferred business commit must not carry a Checkpoint")
+      val actionsFromManifestCommit =
+        actionsAt(context.postCheckpointSnapshot.deltaLog, context.manifestCommitVersion)
+      assert(!actionsFromManifestCommit.exists {
+        case _: AddFile | _: RemoveFile => true
+        case _ => false
+      }, "deferred manifest commit must not carry business file actions")
+    }
+  }
+
+  /**
+   * Asserts the manifest tree round-trips the live file set exactly: reconstructing from the
+   * checkpoint (root + leaves, minus MDV-masked entries and root tombstones) must yield precisely
+   * `snapshot.allFiles`, with no entry dropped or duplicated.
+   *
+   * Call this from tests that are about the tree capturing table state. It is deliberately NOT run
+   * for every scenario: it costs a full reconstruction scan per call, which is wasted on tests that
+   * assert something else (field ids, log-segment trimming, back references).
+   */
+  protected def assertReconstructsLiveFileSet(context: AMTCheckpointScenarioContext): Unit = {
+    val snapshot = context.postCheckpointSnapshot
+    val committed = snapshot.allFiles.collect().map(_.path).toSet
+      val reconstructed = context.provider
+        .loadActionsForStateReconstruction(spark, snapshot.deltaLog)
+        .getOrElse(fail(s"${context.scenario.name}: provider must contribute file actions."))
+        .where(col("add").isNotNull)
+        .select("add.path")
+        .collect()
+        .map(_.getString(0))
+      assert(reconstructed.length == reconstructed.toSet.size,
+        s"${context.scenario.name}: reconstruction must not duplicate entries; got " +
+          s"${reconstructed.toSeq.diff(reconstructed.distinct.toSeq)}")
+      assert(reconstructed.toSet == committed,
+        s"${context.scenario.name}: file set changed: committed=$committed " +
+          s"reconstructed=${reconstructed.toSet}")
   }
 
   /** True iff `name` looks like an AMT leaf parquet file. */
@@ -158,8 +351,13 @@ trait AMTCheckpointTestBase
   protected def actionsAt(deltaLog: DeltaLog, version: Long): Seq[Action] =
     deltaLog.getChanges(version).find(_._1 == version).map(_._2).getOrElse(Seq.empty)
 
-  protected def checkpointsAt(deltaLog: DeltaLog, version: Long): Seq[Checkpoint] =
-    actionsAt(deltaLog, version).collect { case c: Checkpoint => c }
+  /** The [[Checkpoint]] committed at exactly `version`, if any. */
+  protected def checkpointAt(deltaLog: DeltaLog, version: Long): Option[Checkpoint] = {
+    val checkpoints = actionsAt(deltaLog, version).collect { case c: Checkpoint => c }
+    assert(checkpoints.size <= 1,
+      s"A commit may carry at most one Checkpoint; v$version has ${checkpoints.size}: $checkpoints")
+    checkpoints.headOption
+  }
 
   /**
    * Total DATA (content_type=0) entry rows across the leaves reachable from the CURRENT snapshot's
@@ -169,8 +367,8 @@ trait AMTCheckpointTestBase
    * Note: this counts *physical* leaf entries and does NOT subtract Manifest Deletion Vectors, nor
    * does it count live files stored directly in the root. On an incremental tree a deleted file's
    * entry stays physically present in its carried-forward leaf (tombstoned via the leaf MDV), so
-   * this can exceed the live file count. Use [[currentLiveDataEntries]] to compare against
-   * `snapshot.allFiles`.
+   * this can exceed the live file count. To assert the tree captures exactly the live file set,
+   * call [[assertReconstructsLiveFileSet]] instead.
    */
   protected def currentLeafDataEntries(snapshot: Snapshot): Long = {
     val provider = amtProvider(snapshot)
@@ -182,20 +380,4 @@ trait AMTCheckpointTestBase
       }.sum
   }
 
-  /**
-   * The number of live files the CURRENT snapshot's AMT reconstructs across the WHOLE tree -- root
-   * and leaves. Goes through the provider's own reconstruction, which drops MDV-masked leaf entries
-   * and `tracking=removed` root tombstones, so it equals `snapshot.allFiles.count()` on both full
-   * and incremental trees. This is the count to assert the tree captures exactly the live file set;
-   * unlike [[currentLeafDataEntries]], it counts live files stored directly in the root too (as an
-   * incremental commit does below the spill threshold).
-   */
-  protected def currentLiveDataEntries(snapshot: Snapshot): Long = {
-    val provider = amtProvider(snapshot)
-      .getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
-    provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
-      .getOrElse(fail("AMT provider must contribute leaf-derived file actions."))
-      .where("add is not null")
-      .count()
-  }
 }
