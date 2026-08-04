@@ -207,8 +207,8 @@ public class PartitionUtils {
    * columns of {@code row}, as required by {@code Transaction.getWriteContext}. Insertion order
    * follows {@code partitionSchema}.
    *
-   * <p>TODO(#7140): key by physical name to support column mapping (safe today as build() rejects
-   * column-mapped tables).
+   * <p>Keys are the logical partition column names. For a column-mapped table they are translated
+   * to the physical names and for a non-column-mapped table they are left unchanged.
    *
    * @param row the full write row Spark hands the writer
    * @param partitionSchema the partition columns (in partition order)
