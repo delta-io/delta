@@ -18,41 +18,212 @@ package org.apache.spark.sql.delta.amt
 
 import java.io.File
 
+// scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.CommitStats
-import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint}
+import org.apache.spark.sql.delta.{Checkpoints, CommitStats, CurrentTransactionInfo, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.functions.col
 
 class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
-  test("inline emission embeds a Checkpoint action in the same commit at the interval boundary") {
-    withTable("amt_inline_emit") {
-      val name = "amt_inline_emit"
+  import testImplicits._
+
+  testAcrossAMTCheckpointScenarios(
+      "checkpoint emission writes a manifest tree and carries the user action once",
+      "amt_emit")(
+      setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+      inlineCheckpointTriggerActionsOrSQL = Some(_ => Left((
+        Seq(AddFile("missing-file.parquet", Map.empty, 0L, 0L, dataChange = true)
+          .removeWithTimestamp(1L)),
+        DeltaOperations.ManualUpdate)))) { context =>
+    val path = tablePath(context.tableName)
+    val actionsFromCheckpointedCommit =
+      actionsAt(context.postCheckpointSnapshot.deltaLog, context.checkpoint.version)
+    assert(actionsFromCheckpointedCommit.exists {
+      case _: AddFile | _: RemoveFile => true
+      case _ => false
+    }, "The described business commit must carry the user file action.")
+
+    val rootName = new File(context.checkpoint.contentRoot.path).getName
+    assert(isRootFileName(rootName),
+      s"contentRoot must point at a root manifest file; got " +
+        context.checkpoint.contentRoot.path)
+    assert(rootFiles(path).exists(_.getName == rootName))
+
+    // The emitted tree must reconstruct exactly the table's live files.
+    assertReconstructsLiveFileSet(context)
+  }
+
+  test("manifest pointers are stored relative to the table root") {
+    withTable("amt_relative_pointers") {
+      val name = "amt_relative_pointers"
       createAMTTable(name, checkpointInterval = 2)
-      sql(s"INSERT INTO $name VALUES (1)") // v1: not an interval boundary.
-      sql(s"INSERT INTO $name VALUES (2)") // v2: interval boundary -> emit.
+      withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "1") {
+        sql(s"INSERT INTO $name VALUES (1)") // v1: one data file.
+        sql(s"INSERT INTO $name VALUES (2)") // v2: interval boundary -> triggers AMT emission.
+      }
 
       val deltaLog = deltaLogForName(name)
-      val path = tablePath(name)
       val snapshot = deltaLog.update()
-      assert(snapshot.version == 2, "No follow-up commit: emission rides in the v2 commit itself.")
+      val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
 
-      // Manifest tree exists on disk: exactly one root, at least one leaf.
-      assert(rootFiles(path).size == 1, "Exactly one root manifest must be written.")
-      assert(leafFiles(path).nonEmpty, "At least one leaf manifest must be written.")
+      // The Checkpoint's contentRoot pointer is stored relative to the table root, i.e.
+      // `metadata/root-<uuid>.parquet`, not an absolute URI.
+      val rootPointer = provider.checkpointAction.contentRoot.path
+      assert(rootPointer == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(rootPointer).getName}",
+        s"contentRoot.path must be table-root-relative; got $rootPointer")
+      assert(!new Path(rootPointer).isAbsolute,
+        s"contentRoot.path must not be absolute; got $rootPointer")
+      assert(isRootFileName(new File(rootPointer).getName))
 
-      // The v2 commit JSON carries BOTH the user's AddFile and a single Checkpoint action.
-      val v2Actions = actionsAt(deltaLog, 2)
-      val checkpoints = v2Actions.collect { case c: Checkpoint => c }
-      assert(checkpoints.size == 1, s"Expected one Checkpoint action at v2, got: $v2Actions")
-      assert(v2Actions.exists(_.isInstanceOf[AddFile]), "User AddFile must be in the same commit.")
+      // Every leaf pointer stored in the root manifest is likewise table-root-relative.
+      val leafLocations = {
+        spark.read.parquet(new File(new File(tablePath(name),
+          FileNames.AMT_METADATA_DIR_NAME), new File(rootPointer).getName).toString)
+          .where(col("content_type") === AMTSingleAction.ContentType.Type.DataManifest)
+          .select("location").as[String].collect().toSeq
+      }
+      // The clustered writer decides leaf count by partitioning, so assert at least one leaf
+      // pointer rather than an exact count; every pointer must be table-root-relative.
+      assert(leafLocations.nonEmpty, s"Expected at least one leaf pointer, got $leafLocations")
+      leafLocations.foreach { loc =>
+        assert(loc == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(loc).getName}",
+          s"leaf pointer must be table-root-relative; got $loc")
+        assert(isLeafFileName(new File(loc).getName))
+      }
 
-      // The Checkpoint's contentRoot points at the on-disk root file.
-      val rootName = new File(checkpoints.head.contentRoot.path).getName
-      assert(isRootFileName(rootName),
-        s"contentRoot must point at a root manifest file; got ${checkpoints.head.contentRoot.path}")
-      assert(rootFiles(path).exists(_.getName == rootName))
+      // The pointers are stored relative on disk; the provider re-absolutizes them via
+      // `leafManifestAbsolutePaths`, and reconstruction driven off the manifest tree (root +
+      // leaves, both stored relative) surfaces exactly the two committed data files.
+      val leafLocs = provider.leaves.map(_.location)
+      assert(leafLocs.forall(loc =>
+        loc == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(loc).getName}"),
+        s"leaf pointer locations must be table-root-relative; got $leafLocs")
+      assert(provider.leafManifestAbsolutePaths.forall(_.isAbsolute),
+        s"resolved leaf manifest paths must be absolute; got ${provider.leafManifestAbsolutePaths}")
+      val reconstructed = provider.loadActionsForStateReconstruction(spark, deltaLog)
+        .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+      assert(reconstructed.where("add is not null").count() == 2,
+        "Reconstruction from the relative-pointer manifest tree must surface both committed files.")
+      checkAnswer(spark.table(name), Seq(Row(1), Row(2)))
+    }
+  }
+
+  test("manifest tree round-trips when the table root contains spaces") {
+    withTempDir { baseDir =>
+      // A table location with a space exercises raw (non-URL-encoded) manifest path handling: the
+      // stored relative pointers (`metadata/leaf-<uuid>.parquet`) must resolve back by literal join
+      // onto the spaced root, not URI parsing (which would turn the space into %20 or fail).
+      val tableRoot = new File(baseDir, "amt table with spaces")
+      withTable("amt_spaced_root") {
+        val name = "amt_spaced_root"
+        createAMTTable(name, checkpointInterval = 2, location = Some(tableRoot.toString))
+        withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "1") {
+          sql(s"INSERT INTO $name VALUES (1)") // v1: one data file.
+          sql(s"INSERT INTO $name VALUES (2)") // v2: interval boundary -> triggers AMT emission.
+        }
+
+        val deltaLog = deltaLogForName(name)
+        val snapshot = deltaLog.update()
+        val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
+
+        // The table root really does contain a space, and it is not percent-encoded on disk.
+        assert(deltaLog.dataPath.toString.contains("amt table with spaces"),
+          s"table root must contain a space; got ${deltaLog.dataPath}")
+        assert(!deltaLog.dataPath.toString.contains("%20"),
+          s"table root must not be URL-encoded; got ${deltaLog.dataPath}")
+
+        // The root pointer is stored table-root-relative (raw).
+        val rootPointer = provider.checkpointAction.contentRoot.path
+        assert(
+          rootPointer == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(rootPointer).getName}",
+          s"contentRoot.path must be table-root-relative; got $rootPointer")
+        // The provider re-absolutizes leaf pointers to paths that live under the spaced root and
+        // are not percent-encoded.
+        provider.leafManifestAbsolutePaths.foreach { leafPath =>
+          assert(leafPath.isAbsolute && leafPath.toString.contains("amt table with spaces"),
+            s"resolved leaf path must live under the spaced table root; got $leafPath")
+          assert(!leafPath.toString.contains("%20"),
+            s"resolved leaf path must stay raw, not URL-encoded; got $leafPath")
+        }
+
+        // The tree reconstructs end-to-end through the spaced paths.
+        val reconstructed = provider.loadActionsForStateReconstruction(spark, deltaLog)
+          .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+        assert(reconstructed.where("add is not null").count() == 2,
+          "Reconstruction from the spaced-path manifest tree must surface both committed files.")
+        checkAnswer(spark.table(name), Seq(Row(1), Row(2)))
+      }
+    }
+  }
+
+  test("manifest tree round-trips when the manifest file names contain spaces") {
+    withTable("amt_spaced_manifest") {
+      val name = "amt_spaced_manifest"
+      createAMTTable(name, checkpointInterval = 2)
+      sql(s"INSERT INTO $name VALUES (1)") // v1.
+      sql(s"INSERT INTO $name VALUES (2)") // v2: triggers a real AMT emission we then override.
+
+      val deltaLog = deltaLogForName(name)
+      val base = amtProvider(deltaLog.update())
+        .getOrElse(fail("expected AMTCheckpointProvider")).checkpointAction
+      val dataPath = deltaLog.dataPath
+      val hadoopConf = deltaLog.newDeltaHadoopConf()
+      val metadataDir = FileNames.amtMetadataDirPath(dataPath)
+      val enc = org.apache.spark.sql.delta.implicits.amtSingleActionEncoder
+
+      // The production writer names manifests `leaf-<uuid>`/`root-<uuid>`, so a normal write never
+      // yields a spaced manifest file name. Synthesize a tree whose leaf and root file names
+      // contain spaces, storing raw table-root-relative pointers, to prove the pointer round-trips.
+      def writeManifest(fileName: String, rows: Seq[AMTSingleAction]): (String, Long) = {
+        val file = new Path(metadataDir, fileName)
+        val df = spark.createDataset(rows)(enc).toDF()
+        Checkpoints.writeAtomicCheckpointParquetFile(spark, df, file, hadoopConf, useRename = false)
+        val relative = AMTUtils.relativizeManifestPathToTableRoot(
+          file.getFileSystem(hadoopConf), dataPath, file)
+        assert(relative == s"${FileNames.AMT_METADATA_DIR_NAME}/$fileName" &&
+          !relative.contains("%20"),
+          s"stored pointer must be raw and table-root-relative; got $relative")
+        (relative, file.getFileSystem(hadoopConf).getFileStatus(file).getLen)
+      }
+
+      val dataAdd = AddFile(path = "part-0.parquet", partitionValues = Map.empty, size = 128L,
+        modificationTime = 0L, dataChange = false, stats = s"""{"numRecords":3}""")
+      val (leafLoc, leafSize) = writeManifest(
+        "leaf with space.parquet",
+        Seq(AMTSingleAction.fromAddFile(dataAdd, addedTracking, dataPath)))
+      val leafPointer = DataManifestEntry(
+        location = leafLoc,
+        file_format = AMTSingleAction.FileFormatParquet,
+        tracking = addedTracking,
+        record_count = 1L,
+        file_size_in_bytes = leafSize,
+        manifest_info = emptyManifestInfo.copy(added_files_count = 1))
+      val (rootLoc, rootSize) = writeManifest("root with space.parquet", Seq(leafPointer.wrap))
+      val checkpoint = base.copy(contentRoot = ContentRoot(path = rootLoc, sizeInBytes = rootSize))
+
+      // The synthesized pointers really do carry spaces and are not URL-encoded.
+      assert(rootLoc.contains("root with space.parquet") && !rootLoc.contains("%20"))
+      assert(leafLoc.contains("leaf with space.parquet") && !leafLoc.contains("%20"))
+
+      val provider = AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint)
+      // The provider resolves the spaced pointers to absolute, raw paths under the table root.
+      assert(provider.leafManifestAbsolutePaths.forall(p =>
+        p.isAbsolute && p.toString.contains("leaf with space.parquet") &&
+          !p.toString.contains("%20")),
+        s"resolved leaf paths must stay raw; got ${provider.leafManifestAbsolutePaths}")
+
+      // Reconstruction reads the DATA entry back through the spaced leaf path.
+      val reconstructed = provider.loadActionsForStateReconstruction(spark, deltaLog)
+        .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+      val addPaths = reconstructed.where("add is not null").select("add.path").as[String].collect()
+      assert(addPaths.toSeq == Seq("part-0.parquet"),
+        s"reconstruction from the spaced-manifest tree must surface the DATA entry; got $addPaths")
     }
   }
 
@@ -69,7 +240,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       val path = tablePath(name)
       assert(rootFiles(path).isEmpty && leafFiles(path).isEmpty,
         "No AMT artifacts on a vanilla table.")
-      assert(checkpointsAt(deltaLog, 2).isEmpty, "No Checkpoint action on a vanilla table.")
+      assert(checkpointAt(deltaLog, 2).isEmpty, "No Checkpoint action on a vanilla table.")
       assert(amtProvider(deltaLog.update()).isEmpty)
     }
   }
@@ -81,26 +252,26 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       sql(s"INSERT INTO $name VALUES (1)") // v1: 1 % 10 != 0.
 
       val deltaLog = deltaLogForName(name)
-      assert(checkpointsAt(deltaLog, 1).isEmpty, "v1 is not an interval boundary; no emission.")
+      assert(checkpointAt(deltaLog, 1).isEmpty, "v1 is not an interval boundary; no emission.")
       assert(rootFiles(tablePath(name)).isEmpty,
         "No manifest tree written off an interval boundary.")
       assert(amtProvider(deltaLog.update()).isEmpty)
     }
   }
 
-  test("leaf cardinality respects AMT_ENTRIES_PER_LEAF") {
-    withTable("amt_entries_per_leaf") {
-      val name = "amt_entries_per_leaf"
-      createAMTTable(name, checkpointInterval = 2)
-      withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "1") {
-        sql(s"INSERT INTO $name VALUES (1)") // v1: one data file.
-        sql(s"INSERT INTO $name VALUES (2)") // v2: one more data file -> 2 live files.
-      }
-      val path = tablePath(name)
-      // Two live AddFiles, one per leaf -> two leaves, one root.
-      assert(leafFiles(path).size == 2, s"Expected 2 leaves, got ${leafFiles(path).size}.")
-      assert(rootFiles(path).size == 1)
-    }
+  testAcrossAMTCheckpointScenarios(
+      "leaf cardinality respects AMT_ENTRIES_PER_LEAF",
+      "amt_entries_per_leaf",
+      sqlConfs = Seq(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "7"))(
+      setup = name => appendRowsAsSeparateFiles(name, 20),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (20)"))) { context =>
+    assert(context.postCheckpointSnapshot.allFiles.count() == 21,
+      s"Expected 21 live files, got ${context.postCheckpointSnapshot.allFiles.count()}.")
+    assert(context.provider.leaves.size == 3,
+      s"21 files at entriesPerLeaf=7 must pack into 3 leaves; got ${context.provider.leaves.size}.")
+    assert(context.provider.leaves.forall(_.record_count <= 7),
+      s"Every leaf must respect entriesPerLeaf=7: ${context.provider.leaves}")
   }
 
   /** Parses the `delta.commit.stats` [[CommitStats]] logged for `version`, or fails. */
@@ -113,19 +284,29 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       .getOrElse(fail(s"No commit stats logged for version $version."))
   }
 
-  test("commit stats carry AMT write metrics when an AMT is emitted") {
+  test("the follow-up OPTIMIZE CHECKPOINT commit stats carry AMT write metrics") {
     withTable("amt_commit_stats") {
       val name = "amt_commit_stats"
       createAMTTable(name, checkpointInterval = 2)
-      sql(s"INSERT INTO $name VALUES (1)") // v1: below the interval, no AMT.
+      sql(s"INSERT INTO $name VALUES (1)") // v1: below the interval, no maintenance.
 
-      // v2 hits the interval boundary and emits an AMT; capture that commit's stats.
-      val commitStats = commitStatsAt(sql(s"INSERT INTO $name VALUES (2)"), version = 2)
+      // v2 hits the interval boundary; the AMT is written by the follow-up commit at v3, so the
+      // AMT write metrics are recorded on v3's stats, not v2's.
+      val allStats = Log4jUsageLogger.track {
+        sql(s"INSERT INTO $name VALUES (2)")
+      }.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+          e.tags.get("opType").contains("delta.commit.stats"))
+        .map(e => JsonUtils.fromJson[CommitStats](e.blob))
 
-      val metrics = commitStats.amtWriteMetrics
-        .getOrElse(fail("Commit stats should carry AMT write metrics when an AMT is emitted."))
+      val v2Stats = allStats.find(_.commitVersion == 2).getOrElse(fail("No stats for v2."))
+      assert(v2Stats.amtWriteMetrics.isEmpty, "v2 defers the AMT; its stats carry no AMT metrics.")
+
+      val v3Stats = allStats.find(_.commitVersion == 3).getOrElse(fail("No stats for v3."))
+      val metrics = v3Stats.amtWriteMetrics
+        .getOrElse(fail("The follow-up commit's stats should carry AMT write metrics."))
       assert(metrics.attempts.size == 1, s"Expected one AMT write attempt, got ${metrics.attempts}")
-      assert(metrics.attempts.head.trigger == AmtTrigger.CheckpointInterval.toString)
+      // The first AMT has no prior tree to build on, so it is always a full rewrite.
+      assert(metrics.attempts.head.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
       assert(metrics.attempts.head.materializeDurationMs >= 0L)
     }
   }
@@ -141,4 +322,29 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
         "Commit stats must not carry AMT write metrics when no AMT is emitted.")
     }
   }
+
+  /** An ADDED tracking envelope with no lineage/sequence numbers, matching the AMT writer. */
+  private def addedTracking: Tracking = Tracking(
+    status = Tracking.Status.Added,
+    snapshot_id = None,
+    dv_snapshot_id = None,
+    sequence_number = None,
+    file_sequence_number = None,
+    first_row_id = None,
+    deleted_positions = None,
+    replaced_positions = None)
+
+  /** A zeroed [[ManifestInfo]]; tests set only the counts they assert on via `copy`. */
+  private def emptyManifestInfo: ManifestInfo = ManifestInfo(
+    added_files_count = 0,
+    existing_files_count = 0,
+    deleted_files_count = 0,
+    replaced_files_count = 0,
+    added_rows_count = 0L,
+    existing_rows_count = 0L,
+    deleted_rows_count = 0L,
+    replaced_rows_count = 0L,
+    min_sequence_number = 0L,
+    dv = None,
+    dv_cardinality = None)
 }

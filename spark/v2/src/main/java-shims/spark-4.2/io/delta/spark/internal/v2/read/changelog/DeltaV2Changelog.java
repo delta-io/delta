@@ -2,8 +2,8 @@ package io.delta.spark.internal.v2.read.changelog;
 
 import io.delta.kernel.Snapshot;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
+import io.delta.spark.internal.v2.shims.CatalogV2UtilShims;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
-import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Changelog;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.expressions.FieldReference;
@@ -18,18 +18,22 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  *
  * <p>Wraps the {@link DeltaV2Table} resolved by {@code TableCatalog.loadTable(ident)}. The
  * connector-level work (snapshot loads, row tracking validation, metadata-action inspection
- * across the range) is deferred to the read path inside {@link DeltaChangelogBatch}. The schema
+ * across the range) is deferred to the read path inside {@link DeltaV2ChangelogBatch}. The schema
  * exposed by {@link #columns()} is the end-version schema. It matches the {@code dataSchema} the
  * scan builds against, so analysis-time column resolution agrees with the per-commit Metadata
  * validation performed at scan planning.
  *
  * <p>Row tracking is required at the table protocol. Without it the SPIP analyzer rule cannot
  * partition by {@code rowId / rowVersion}. Validation is performed by the read path, not here.
+ *
+ * <p>This class remains public because catalog integration in a sibling package constructs it.
+ * The scan builder, scan, and batch implementations stay package-private so callers cannot couple
+ * to Delta's internal V2 read path.
  */
-public class DeltaChangelog implements Changelog {
+public class DeltaV2Changelog implements Changelog {
 
   private final String tableName;
-  private final DeltaV2Table sparkTable;
+  private final DeltaV2Table deltaV2Table;
   private final long startVersion;
   private final long endVersion;
 
@@ -41,10 +45,10 @@ public class DeltaChangelog implements Changelog {
           .add(ROW_ID_FIELD, DataTypes.LongType, false)
           .add(ROW_COMMIT_VERSION_FIELD, DataTypes.LongType, false);
 
-  public DeltaChangelog(
-      String tableName, DeltaV2Table sparkTable, long startVersion, long endVersion) {
+  public DeltaV2Changelog(
+      String tableName, DeltaV2Table deltaV2Table, long startVersion, long endVersion) {
     this.tableName = tableName;
-    this.sparkTable = sparkTable;
+    this.deltaV2Table = deltaV2Table;
     this.startVersion = startVersion;
     this.endVersion = endVersion;
   }
@@ -58,7 +62,7 @@ public class DeltaChangelog implements Changelog {
   public Column[] columns() {
     // Resolve lazily so catalog construction stays side-effect free. The scan path validates
     // each per-commit Metadata against this same end-version schema.
-    Snapshot endSnapshot = sparkTable.getSnapshotManager().loadSnapshotAt(endVersion);
+    Snapshot endSnapshot = deltaV2Table.getSnapshotManager().loadSnapshotAt(endVersion);
     StructType endSchema = SchemaUtils.convertKernelSchemaToSparkSchema(endSnapshot.getSchema());
     StructType cdcSchema =
         endSchema
@@ -67,7 +71,7 @@ public class DeltaChangelog implements Changelog {
             .add("_commit_version", DataTypes.LongType, false)
             .add("_commit_timestamp", DataTypes.TimestampType, false);
 
-    return CatalogV2Util.structTypeToV2Columns(cdcSchema);
+    return CatalogV2UtilShims.structTypeToV2Columns(cdcSchema);
   }
 
   // TODO: optimise to false when deletion vectors are guaranteed enabled across the entire
@@ -94,7 +98,7 @@ public class DeltaChangelog implements Changelog {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new DeltaChangelogScanBuilder(sparkTable, startVersion, endVersion, options);
+    return new DeltaV2ChangelogScanBuilder(deltaV2Table, startVersion, endVersion, options);
   }
 
   @Override

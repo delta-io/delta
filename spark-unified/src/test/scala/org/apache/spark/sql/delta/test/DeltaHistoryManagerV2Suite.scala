@@ -21,7 +21,7 @@ import java.sql.Timestamp
 
 import scala.concurrent.duration._
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTimeTravelTestHelpers, VersionNotFoundException}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaFileNotFoundException, DeltaLog, DeltaTimeTravelTestHelpers, InCommitTimestampTestUtils, VersionNotFoundException}
 import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
@@ -34,6 +34,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
+import org.apache.spark.sql.functions
 
 /**
  * DSv2 parity tests for time travel queries exercising the STRICT-mode Kernel-backed connector
@@ -288,6 +289,52 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
         },
         "expected a missing-data-file read failure, got:\n" +
           causes.map(c => s"  [${c.getClass.getName}] ${c.getMessage}").mkString("\n"))
+    }
+  }
+
+  test("SQL catalog multi-version self-join reads two distinct pinned snapshots") {
+    val tbl = "delta_tt_v2_cat_multiversion"
+    withTable(tbl) {
+      inV1 {
+        // v0 empty, v1 keys 0-4, v2 keys 0-9.
+        sql(s"CREATE TABLE $tbl (key LONG, value LONG) USING delta")
+        sql(s"INSERT INTO $tbl SELECT id AS key, id * 10 AS value FROM range(0, 5)")
+        sql(s"INSERT INTO $tbl SELECT id AS key, id * 10 AS value FROM range(5, 10)")
+      }
+      checkAnswer(
+        sql(s"SELECT b.key FROM $tbl VERSION AS OF 1 a FULL OUTER JOIN $tbl VERSION AS OF 2 b " +
+          "ON a.key = b.key WHERE a.key IS NULL"),
+        (5 until 10).map(Row(_)))
+    }
+  }
+
+  test("SQL catalog versionAsOf on a partitioned table prunes at the pinned version") {
+    val tbl = "delta_tt_v2_cat_partition"
+    withTable(tbl) {
+      inV1 {
+        // v0 empty, v1 ids 0-9, v2 ids 0-19.
+        sql(s"CREATE TABLE $tbl (id LONG, part LONG) USING delta PARTITIONED BY (part)")
+        sql(s"INSERT INTO $tbl SELECT id, id % 2 AS part FROM range(0, 10)")
+        sql(s"INSERT INTO $tbl SELECT id, id % 2 AS part FROM range(10, 20)")
+      }
+      checkAnswer(
+        sql(s"SELECT id FROM $tbl VERSION AS OF 1 WHERE part = 0"),
+        (0 until 10 by 2).map(Row(_)))
+    }
+  }
+
+  test("SQL catalog versionAsOf reflects the historical schema before a column was added") {
+    val tbl = "delta_tt_v2_cat_schema_scan"
+    withTable(tbl) {
+      inV1 {
+        sql(s"CREATE TABLE $tbl (id INT) USING delta")
+        sql(s"INSERT INTO $tbl VALUES (1)")
+        sql(s"ALTER TABLE $tbl ADD COLUMNS (name STRING)")
+        sql(s"INSERT INTO $tbl VALUES (2, 'b')")
+      }
+      val atV1 = sql(s"SELECT * FROM $tbl VERSION AS OF 1")
+      assert(atV1.schema.fieldNames.toSeq === Seq("id"))
+      checkAnswer(atV1, Row(1))
     }
   }
 
@@ -810,6 +857,39 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
     }
   }
 
+  test("SQL path versionAsOf on deletion-vector table ignores DVs added later") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_dv"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        inV1 {
+          sql(s"CREATE TABLE $tbl (id LONG) USING delta LOCATION '$path' " +
+            "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')")
+          sql(s"INSERT INTO $tbl SELECT id FROM range(0, 10)")
+          sql(s"DELETE FROM delta.`$path` WHERE id < 5")
+        }
+        checkAnswer(sql(s"SELECT * FROM delta.`$path` VERSION AS OF 1"), (0 until 10).map(Row(_)))
+        checkAnswer(sql(s"SELECT * FROM delta.`$path` VERSION AS OF 2"), (5 until 10).map(Row(_)))
+      }
+    }
+  }
+
+  test("SQL path versionAsOf at an exact checkpoint version reads the pinned version") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_checkpoint"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = System.currentTimeMillis() - 5.days.toMillis
+        inV1 {
+          generateCommitsAtPath(tbl, path, start, start + 20.minutes, start + 40.minutes)
+          val deltaLog = DeltaLog.forTable(spark, path)
+          deltaLog.checkpoint(deltaLog.update())
+        }
+        checkAnswer(sql(s"SELECT * FROM delta.`$path` VERSION AS OF 2"), (0 until 30).map(Row(_)))
+      }
+    }
+  }
+
   test("SQL path @-syntax VERSION returns the historical snapshot") {
     withTempDir { dir =>
       val tbl = "delta_tt_v2_at_ver"
@@ -901,4 +981,5 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
       }
     }
   }
+
 }

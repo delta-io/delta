@@ -623,6 +623,10 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     AdaptedTableMetadata adapted = new AdaptedTableMetadata(name, m);
     Optional<UniformMetadata> uniformMetadata =
         toStorageUniformMetadata(response.getUniform());
+    if (!credentialVendingEnabled) {
+      return new TableInfo(
+          ucTableId, tableType, location, adapted, Collections.emptyMap(), uniformMetadata);
+    }
     Map<String, String> storageProps;
     try {
       storageProps = fetchTableCredentials(catalog, schema, name, location);
@@ -683,7 +687,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     String location = r.getLocation();
     UCDeltaModels.TableType tableType =
         UCDeltaModels.TableType.valueOf(r.getTableType().getValue());
-    Map<String, String> storageProps = fetchStagingCredentials(location, tableId.toString());
+    Map<String, String> storageProps = credentialVendingEnabled
+        ? fetchStagingCredentials(location, tableId.toString())
+        : Collections.emptyMap();
     return new UCDeltaModels.StagingTableInfo(
         tableId,
         tableType,

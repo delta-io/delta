@@ -27,6 +27,7 @@ public final class DeltaScanFile {
   private final String path;
   private final MapValue partitionValues;
   private final long size;
+  private final long modificationTime;
   private final Optional<Long> baseRowId;
   private final Optional<Long> defaultRowCommitVersion;
   private final Optional<DeletionVectorDescriptor> deletionVector;
@@ -35,6 +36,7 @@ public final class DeltaScanFile {
     this.path = Objects.requireNonNull(addFile, "addFile is null").getPath();
     this.partitionValues = addFile.getPartitionValues();
     this.size = addFile.getSize();
+    this.modificationTime = addFile.getModificationTime();
     this.baseRowId = addFile.getBaseRowId();
     this.defaultRowCommitVersion = addFile.getDefaultRowCommitVersion();
     this.deletionVector = addFile.getDeletionVector();
@@ -50,6 +52,10 @@ public final class DeltaScanFile {
 
   public long getSize() {
     return size;
+  }
+
+  public long getModificationTime() {
+    return modificationTime;
   }
 
   public Optional<Long> getBaseRowId() {

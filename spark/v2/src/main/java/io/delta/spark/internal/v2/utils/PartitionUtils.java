@@ -296,8 +296,7 @@ public class PartitionUtils {
     } else if (type instanceof LongType) {
       return Literal.ofLong(row.getLong(ordinal));
     } else if (type instanceof TimestampType) {
-      // TODO(#7140): Kernel logs timestamp partition values in plain session-tz form, not V1's
-      // UTC-normalized ISO-8601, so the two engines diverge for timestamp-partitioned tables.
+      // Kernel serializes TIMESTAMP partition values as UTC ISO-8601, matching V1.
       return Literal.ofTimestamp(row.getLong(ordinal));
     } else if (type instanceof TimestampNTZType) {
       return Literal.ofTimestampNtz(row.getLong(ordinal));
@@ -503,9 +502,8 @@ public class PartitionUtils {
 
     // For write-time CDF reads (streaming with readChangeFeed=true), build the schema context
     // and augment readDataSchema with CDC tail columns before DV wrapping so that DV column
-    // indices account for them. Read-time CDF (via DeltaChangelogBatch) does not go
-    // through this path: DeltaChangelogBatch's outer CDCPartitionReaderFactory injects the
-    // tail columns as per-partition constants instead.
+    // indices account for them. Read-time CDF (Auto-CDF) does not go through this path: its
+    // partition reader factory injects the tail columns as per-partition constants instead.
     Optional<CDCSchemaContext> cdcSchemaContext =
         isWriteTimeCDCRead
             ? Optional.of(new CDCSchemaContext(readDataSchema, partitionSchema))
