@@ -25,7 +25,9 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
@@ -133,7 +135,6 @@ public interface Snapshot {
    * @return the {@link Protocol} for this snapshot
    * @since 4.4.0
    */
-  // TODO: expose a public protocol type; Protocol is currently an internal type.
   default Protocol getProtocol() {
     throw new UnsupportedOperationException("getProtocol() is not implemented for this Snapshot");
   }
@@ -147,7 +148,6 @@ public interface Snapshot {
    * @return the {@link Metadata} for this snapshot
    * @since 4.4.0
    */
-  // TODO: expose a public metadata type; Metadata is currently an internal type.
   default Metadata getMetadata() {
     throw new UnsupportedOperationException("getMetadata() is not implemented for this Snapshot");
   }
@@ -175,7 +175,6 @@ public interface Snapshot {
    * @return the table data path
    * @since 4.4.0
    */
-  // TODO: expose a public path type; Path is currently an internal type.
   default Path getDataPath() {
     return new Path(getPath());
   }
@@ -190,7 +189,6 @@ public interface Snapshot {
    * @return the {@code _delta_log} path
    * @since 4.4.0
    */
-  // TODO: expose a public path type; Path is currently an internal type.
   default Path getLogPath() {
     return new Path(getDataPath(), "_delta_log");
   }
@@ -211,6 +209,33 @@ public interface Snapshot {
    */
   default Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
     return Optional.empty();
+  }
+
+  /**
+   * Returns the checksum ({@code CRC}) information for this snapshot if it was loaded from a
+   * checksum file, otherwise empty.
+   *
+   * <p>The default implementation returns {@link Optional#empty()}; {@link
+   * io.delta.kernel.internal.SnapshotImpl} overrides it to return the loaded {@link CRCInfo}.
+   *
+   * @return the {@link CRCInfo} for this snapshot, or empty if no checksum was loaded
+   * @since 4.4.0
+   */
+  default Optional<CRCInfo> getCurrentCrcInfo() {
+    return Optional.empty();
+  }
+
+  /**
+   * Returns the log segment that backs this snapshot.
+   *
+   * <p>The default implementation throws {@link UnsupportedOperationException}; {@link
+   * io.delta.kernel.internal.SnapshotImpl} overrides it.
+   *
+   * @return the {@link LogSegment} for this snapshot
+   * @since 4.4.0
+   */
+  default LogSegment getLogSegment() {
+    throw new UnsupportedOperationException("getLogSegment() is not implemented for this Snapshot");
   }
 
   /**
