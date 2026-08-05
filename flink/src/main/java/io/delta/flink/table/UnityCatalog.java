@@ -445,6 +445,21 @@ public class UnityCatalog implements DeltaCatalog {
         () -> deltaClient.loadTable(toStorageTableIdentifier(tableName)).getStorageProperties());
   }
 
+  /**
+   * Reports post-commit metrics for the given table to Unity Catalog via the Delta-Tables API.
+   *
+   * @param tableName the {@code catalog.schema.table} identifier
+   * @param tableId the table's UC UUID
+   * @param report the per-commit metrics payload
+   */
+  public void reportMetrics(String tableName, String tableId, UCDeltaModels.CommitReport report) {
+    withErrorHandling(
+        () -> {
+          deltaClient.reportMetrics(tableId, toStorageTableIdentifier(tableName), report);
+          return null;
+        });
+  }
+
   /* ===================================
    *     Extra UnityCatalog Operations
    * ==================================*/
