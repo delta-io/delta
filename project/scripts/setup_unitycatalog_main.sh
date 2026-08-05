@@ -75,7 +75,6 @@
 # Release pipeline examples:
 #   UC_REF=v0.5.0 UC_VERSION=0.5.0-rc1 DELTA_RELEASE_MODE=1 SPARK_VERSION=4.0 bash setup_unitycatalog_main.sh
 #   UC_REF=v0.5.0 UC_VERSION=0.5.0-rc1 DELTA_RELEASE_MODE=1 SPARK_VERSION=4.1 bash setup_unitycatalog_main.sh
-#   UC_REF=v0.5.0 UC_VERSION=0.5.0-rc1 DELTA_RELEASE_MODE=1 SPARK_VERSION=4.2 bash setup_unitycatalog_main.sh
 #   UC_VERSION=0.5.0-rc1 bash setup_unitycatalog_main.sh --print-version  # => 0.5.0-rc1
 
 set -euo pipefail
