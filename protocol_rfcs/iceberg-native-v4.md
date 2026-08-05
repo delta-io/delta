@@ -29,8 +29,7 @@ root pointer or catalog handoff, is out of scope.
 <ins>When the `icebergNativeV4` table feature is enabled, `add` and `remove` actions must not be
 written to the Delta log; the Iceberg V4 metadata tree carries all content metadata instead (see
 [Iceberg Native V4](#iceberg-native-v4)). The actions themselves are unchanged from
-[Adaptive Metadata](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md):
-the `backReference` field is still computed at commit time, but is never serialized.</ins>
+[Adaptive Metadata](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md).
 
 ### Add CDC File
 
@@ -62,8 +61,6 @@ stored in an Apache Iceberg™ V4 adaptive metadata tree, so that the table can 
 Iceberg V4 engine. This table feature does not implement or specify that read path.
 
 To support this feature:
-- Since this table feature depends on Column Mapping, the table must be on Reader Version = 2, or it must be on Reader Version >= 3 and the feature `columnMapping` must exist in the `protocol`'s `readerFeatures`.
-- The table must be on Writer Version 7.
 - The feature `icebergNativeV4` must exist in the table protocol's `writerFeatures`.
 - The feature `adaptiveMetadata` must exist in the table protocol's `readerFeatures` and `writerFeatures`. Its required features are transitively required here; this feature adds no dependencies of its own.
 
@@ -88,10 +85,9 @@ absent from the protocol or its table property (`delta.enableIcebergCompatV1`,
 Since IcebergCompatV3 must be inactive, its rules are instead **incorporated by reference**: every
 requirement in
 [Writer Requirements for IcebergCompatV3](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-compat-v3.md#writer-requirements-for-icebergcompatv3)
-applies as though restated here, with two modifications:
+applies as though restated here, with modifications:
 
 - The requirement that IcebergCompatV1 and IcebergCompatV2 be inactive is broadened to include IcebergCompatV3, as stated above.
-- The `numRecords` requirement on new `AddFile`s applies instead to the tree: since `add` actions never reach the log, every content entry must populate `record_count`.
 
 The type allow-list carries over as written, since Iceberg V4 supports every type Iceberg V3 does.
 Types that Iceberg V4 adds are not permitted until a future revision of this feature adds them.
