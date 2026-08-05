@@ -123,14 +123,7 @@ public interface Scan {
    *     includeStats} is {@code true}).
    * @since 4.4.0
    */
-  default CloseableIterator<FilteredColumnarBatch> getScanFiles(
-      Engine engine, boolean includeStats) {
-    if (includeStats) {
-      throw new UnsupportedOperationException(
-          "getScanFiles(Engine, boolean) with includeStats=true is not implemented for this Scan");
-    }
-    return getScanFiles(engine);
-  }
+  CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine, boolean includeStats);
 
   /**
    * Get the remaining filter that is not guaranteed to be satisfied for the data Delta Kernel

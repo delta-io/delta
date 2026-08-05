@@ -27,6 +27,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
@@ -129,48 +130,33 @@ public interface Snapshot {
   /**
    * Returns the table protocol at this snapshot.
    *
-   * <p>The default implementation throws {@link UnsupportedOperationException}; {@link
-   * io.delta.kernel.internal.SnapshotImpl} overrides it.
-   *
    * @return the {@link Protocol} for this snapshot
    * @since 4.4.0
    */
-  default Protocol getProtocol() {
-    throw new UnsupportedOperationException("getProtocol() is not implemented for this Snapshot");
-  }
+  Protocol getProtocol();
 
   /**
    * Returns the table metadata at this snapshot.
    *
-   * <p>The default implementation throws {@link UnsupportedOperationException}; {@link
-   * io.delta.kernel.internal.SnapshotImpl} overrides it.
-   *
    * @return the {@link Metadata} for this snapshot
    * @since 4.4.0
    */
-  default Metadata getMetadata() {
-    throw new UnsupportedOperationException("getMetadata() is not implemented for this Snapshot");
-  }
+  Metadata getMetadata();
 
   /**
    * Returns the {@link Committer} used to commit transactions against this snapshot's table.
    *
-   * <p>The default implementation throws {@link UnsupportedOperationException}; {@link
-   * io.delta.kernel.internal.SnapshotImpl} overrides it.
-   *
    * @return the committer for this snapshot
    * @since 4.4.0
    */
-  default Committer getCommitter() {
-    throw new UnsupportedOperationException("getCommitter() is not implemented for this Snapshot");
-  }
+  Committer getCommitter();
 
   /**
-   * Returns the table data path as a {@link Path}.
+   * Returns the table data path, i.e. the same location as {@link #getPath()} in {@link Path} form.
    *
-   * <p>The default implementation wraps {@link #getPath()} in a {@link Path}. {@link
-   * io.delta.kernel.internal.SnapshotImpl} overrides it to return the path used to load the
-   * snapshot (the same value {@link #getPath()} stringifies).
+   * <p>When turning the result back into a string for file paths, use {@link Path#toString()}
+   * rather than {@code toUri().toString()}: the latter percent-encodes special characters, which
+   * breaks resolution for table roots containing e.g. spaces.
    *
    * @return the table data path
    * @since 4.4.0
@@ -182,10 +168,6 @@ public interface Snapshot {
   /**
    * Returns the path to this table's {@code _delta_log} directory.
    *
-   * <p>The default implementation returns {@code new Path(getDataPath(), "_delta_log")}; {@link
-   * io.delta.kernel.internal.SnapshotImpl} overrides it to return the path used to load the
-   * snapshot.
-   *
    * @return the {@code _delta_log} path
    * @since 4.4.0
    */
@@ -196,10 +178,6 @@ public interface Snapshot {
   /**
    * Returns the latest transaction version recorded in the Delta log for the given application id,
    * or empty if none exists.
-   *
-   * <p>The default implementation returns {@link Optional#empty()}; {@link
-   * io.delta.kernel.internal.SnapshotImpl} overrides it to read transaction identifiers from the
-   * log.
    *
    * @param engine the engine to use for IO operations
    * @param applicationId identifier of the application that wrote transaction identifiers into the
@@ -215,8 +193,7 @@ public interface Snapshot {
    * Returns the checksum ({@code CRC}) information for this snapshot if it was loaded from a
    * checksum file, otherwise empty.
    *
-   * <p>The default implementation returns {@link Optional#empty()}; {@link
-   * io.delta.kernel.internal.SnapshotImpl} overrides it to return the loaded {@link CRCInfo}.
+   * <p>An empty result means no checksum was read, not that the table has no checksum file.
    *
    * @return the {@link CRCInfo} for this snapshot, or empty if no checksum was loaded
    * @since 4.4.0
@@ -228,15 +205,20 @@ public interface Snapshot {
   /**
    * Returns the log segment that backs this snapshot.
    *
-   * <p>The default implementation throws {@link UnsupportedOperationException}; {@link
-   * io.delta.kernel.internal.SnapshotImpl} overrides it.
-   *
    * @return the {@link LogSegment} for this snapshot
    * @since 4.4.0
    */
-  default LogSegment getLogSegment() {
-    throw new UnsupportedOperationException("getLogSegment() is not implemented for this Snapshot");
-  }
+  LogSegment getLogSegment();
+
+  /**
+   * Returns an iterator over the actions that should be written into a checkpoint for this
+   * snapshot.
+   *
+   * @param engine the engine to use for IO operations
+   * @return iterator of filtered columnar batches for checkpoint writing
+   * @since 4.4.0
+   */
+  CreateCheckpointIterator getCreateCheckpointIterator(Engine engine);
 
   /**
    * Get per-clustering-column descriptors with the physical column reference (as stored in the

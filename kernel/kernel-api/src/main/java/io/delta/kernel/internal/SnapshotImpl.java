@@ -443,6 +443,7 @@ public class SnapshotImpl implements Snapshot {
     return lazyLogSegment;
   }
 
+  @Override
   public CreateCheckpointIterator getCreateCheckpointIterator(Engine engine) {
     long minFileRetentionTimestampMillis =
         System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
