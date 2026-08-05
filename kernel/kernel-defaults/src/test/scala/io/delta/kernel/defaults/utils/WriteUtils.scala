@@ -592,7 +592,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   def collectStatsFromAddFiles(engine: Engine, path: String): Seq[String] = {
     val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, path)
     val scan = snapshot.getScanBuilder.build()
-    val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true)
+    val scanFiles = scan.getScanFiles(engine, true)
 
     scanFiles.asScala.toList.flatMap { scanFile =>
       scanFile.getRows.asScala.toList.flatMap { row =>

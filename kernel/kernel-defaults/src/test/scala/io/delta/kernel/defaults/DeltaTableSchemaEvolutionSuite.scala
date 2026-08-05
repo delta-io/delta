@@ -492,7 +492,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       updateTableMetadata(engine, tablePath, newSchema)
 
-      val latestSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val latestSnapshot = table.getLatestSnapshot(engine)
       val structType = latestSnapshot.getSchema
       assertColumnMapping(structType.get("a"), 1)
       assertColumnMapping(structType.get("map"), 4, "map")
@@ -644,7 +644,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       updateTableMetadata(engine, tablePath, expectedSchema)
 
-      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val snapshot = table.getLatestSnapshot(engine)
       val actualSchema = snapshot.getSchema
 
       assert(expectedSchema == actualSchema)
@@ -676,7 +676,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       updateTableMetadata(engine, tablePath, expectedSchema)
 
-      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val snapshot = table.getLatestSnapshot(engine)
       val actualSchema = snapshot.getSchema
 
       assert(expectedSchema == actualSchema)
@@ -1984,7 +1984,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
             initialSchema,
             tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"))
 
-          val before = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+          val before = table.getLatestSnapshot(engine)
           val featuresBefore = before.getProtocol.getImplicitlyAndExplicitlySupportedFeatures
           assert(
             !featuresBefore.contains(GEOSPATIAL_RW_FEATURE),
@@ -1998,7 +1998,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
           updateTableMetadata(engine, tablePath, newSchema)
 
-          val after = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+          val after = table.getLatestSnapshot(engine)
           assert(after.getSchema.get("geo").getDataType == geoType)
 
           val featuresAfter = after.getProtocol.getImplicitlyAndExplicitlySupportedFeatures
@@ -2027,7 +2027,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
         initialSchema,
         tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"))
 
-      val before = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val before = table.getLatestSnapshot(engine)
       val currentSchema = before.getSchema
       val currentInner = currentSchema.get("info").getDataType.asInstanceOf[StructType]
       val maxIdBefore = getMaxFieldId(engine, tablePath)
@@ -2048,7 +2048,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       updateTableMetadata(engine, tablePath, newSchema)
 
-      val after = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val after = table.getLatestSnapshot(engine)
       val features = after.getProtocol.getImplicitlyAndExplicitlySupportedFeatures
       assert(
         features.contains(GEOSPATIAL_RW_FEATURE),

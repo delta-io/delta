@@ -73,7 +73,7 @@ public class SnapshotFactory {
   public static long resolveTimestampToSnapshotVersion(
       Engine engine,
       SnapshotQueryContext snapshotQueryCtx,
-      SnapshotImpl latestSnapshot,
+      Snapshot latestSnapshot,
       long millisSinceEpochUTC,
       List<ParsedLogData> logDatas) {
     List<ParsedCatalogCommitData> parsedCatalogCommits =

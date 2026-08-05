@@ -23,7 +23,6 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.ScanImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.ScanStateRow;
@@ -240,7 +239,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog =
         MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
             spark,
-            (io.delta.kernel.internal.SnapshotImpl) latestSnapshot,
+            latestSnapshot,
             options,
             snapshotManager,
             DefaultEngine.create(hadoopConf),
@@ -462,20 +461,14 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
     final String tablePath = getTablePath();
 
-    // TODO: Promote getScanFiles(Engine, boolean includeStats) to the public Scan interface to
-    // avoid coupling to the kernel-internal ScanImpl class. Until that API is available, this
-    // instanceof check is the only way to request per-file statistics from the kernel.
-    //
     // Read per-file stats JSON when either:
     //  - the optimizer will use numRows (CBO or planStats enabled), matching V1's behavior
     //    (LogicalRelation.computeStats()), or
     //  - a limit is pushed, in which case we need numRecords to decide when to stop planning.
-    // Both require the kernel scan to be a ScanImpl (the only path that supports includeStats).
-    final boolean scanIsStatsCapable = kernelScan instanceof ScanImpl;
-    final boolean includeStats = scanIsStatsCapable && (arePlanStatsEnabled() || isLimitPushed());
+    final boolean includeStats = arePlanStatsEnabled() || isLimitPushed();
     final CloseableIterator<FilteredColumnarBatch> scanFileBatches;
     if (includeStats) {
-      scanFileBatches = ((ScanImpl) kernelScan).getScanFiles(tableEngine, true /* includeStats */);
+      scanFileBatches = kernelScan.getScanFiles(tableEngine, true /* includeStats */);
       // Only participate in CBO numRows reporting when the optimizer actually consumes it, matching
       // V1's LogicalRelation.computeStats() gate. A limit alone forces stats to be read (for
       // termination via logicalRowCount) but must not start surfacing numRows when CBO is off.

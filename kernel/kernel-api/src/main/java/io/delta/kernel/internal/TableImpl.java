@@ -231,7 +231,7 @@ public class TableImpl implements Table {
    * @throws TableNotFoundException if no delta table is found
    */
   public long getVersionBeforeOrAtTimestamp(Engine engine, long millisSinceEpochUTC) {
-    SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
+    SnapshotImpl latestSnapshot = getLatestSnapshot(engine);
     return DeltaHistoryManager.getVersionBeforeOrAtTimestamp(
         engine,
         getLogPath(),
@@ -262,7 +262,7 @@ public class TableImpl implements Table {
    * @throws TableNotFoundException if no delta table is found
    */
   public long getVersionAtOrAfterTimestamp(Engine engine, long millisSinceEpochUTC) {
-    SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
+    SnapshotImpl latestSnapshot = getLatestSnapshot(engine);
     return DeltaHistoryManager.getVersionAtOrAfterTimestamp(
         engine,
         getLogPath(),

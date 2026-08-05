@@ -36,7 +36,7 @@ import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl, TableConfig}
+import io.delta.kernel.internal.{InternalScanFileUtils, TableConfig}
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.types._
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -1555,15 +1555,15 @@ class ScanSuite extends AnyFunSuite with TestUtils
   }
 
   //////////////////////////////////////////////////////////////////////////////////////////
-  // Check the includeStats parameter on ScanImpl.getScanFiles(engine, includeStats)
+  // Check the includeStats parameter on Scan.getScanFiles(engine, includeStats)
   //////////////////////////////////////////////////////////////////////////////////////////
 
-  test("check ScanImpl.getScanFiles for includeStats=true") {
+  test("check Scan.getScanFiles for includeStats=true") {
     // When includeStats=true the JSON statistic should always be returned in the scan files
     withTempDir { tempDir =>
       spark.range(10).write.format("delta").save(tempDir.getCanonicalPath)
       def checkStatsPresent(scan: Scan): Unit = {
-        val scanFileBatches = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
+        val scanFileBatches = scan.getScanFiles(defaultEngine, true)
         scanFileBatches.forEach { batch =>
           assert(batch.getData().getSchema() == InternalScanFileUtils.SCAN_FILE_SCHEMA_WITH_STATS)
         }
@@ -2739,7 +2739,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
             case Some(pred) => scanBuilder.withFilter(pred).build()
             case None => scanBuilder.build()
           }
-          val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
+          val scanFiles = scan.getScanFiles(defaultEngine, true)
           var numFiles: Int = 0
           scanFiles.forEach { s =>
             numFiles += s.getRows().toSeq.length

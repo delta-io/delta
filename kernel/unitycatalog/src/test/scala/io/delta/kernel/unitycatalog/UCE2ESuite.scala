@@ -153,7 +153,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       // Step 4a: PUBLISH v1.json and v2.json -- Note that this does NOT update UC
       val postPublishSnapshot = postCommitSnapshot2.publish(engine).asInstanceOf[SnapshotImpl]
       assert(postCommitSnapshot2.getVersion == 2)
-      assert(postCommitSnapshot2.asInstanceOf[SnapshotImpl]
+      assert(postCommitSnapshot2
         .getLogSegment.getMaxPublishedDeltaVersion == Optional.of(0L))
 
       // All versions will be published in the post publish snapshot
@@ -275,7 +275,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       // Capture expected values from the post-commit snapshot
       // Assert CRC is present in post-commit snapshot
       assert(currentSnapshot.getStatistics.getChecksumWriteMode.get == ChecksumWriteMode.SIMPLE)
-      val postCommitCrc = currentSnapshot.asInstanceOf[SnapshotImpl].getCurrentCrcInfo()
+      val postCommitCrc = currentSnapshot.getCurrentCrcInfo()
       assert(postCommitCrc.isPresent)
       val expectedNumFiles = postCommitCrc.get().getNumFiles
       val expectedTableSizeBytes = postCommitCrc.get().getTableSizeBytes

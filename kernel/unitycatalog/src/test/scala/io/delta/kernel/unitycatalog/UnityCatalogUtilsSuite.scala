@@ -21,7 +21,6 @@ import java.io.{File, PrintWriter}
 import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.expressions.Column
-import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.fs.Path
@@ -85,7 +84,6 @@ class UnityCatalogUtilsSuite
         .commit(engine, CloseableIterable.emptyIterable())
         .getPostCommitSnapshot
         .get()
-        .asInstanceOf[SnapshotImpl]
 
       val snapshotTimestamp = snapshot.getTimestamp(engine)
 
@@ -160,7 +158,6 @@ class UnityCatalogUtilsSuite
         .commit(engine, CloseableIterable.emptyIterable())
         .getPostCommitSnapshot
         .get()
-        .asInstanceOf[SnapshotImpl]
 
       // The CommitMetadata-based overload was called by finalizeTableInCatalog during commit.
       // Verify its output (captured in FinalizeCreateRecord) matches the snapshot-based overload.
@@ -201,10 +198,33 @@ class UnityCatalogUtilsSuite
         .commit(engine, CloseableIterable.emptyIterable())
         .getPostCommitSnapshot
         .get()
-        .asInstanceOf[SnapshotImpl]
 
       val props = UnityCatalogUtils.getPropertiesForCreate(engine, snapshot).asScala
       assert(props("clusteringColumns") == "[]")
+    }
+  }
+
+  test("getPropertiesForCreate: unclustered table omits the clusteringColumns property") {
+    withTempDirAndEngine { case (tablePathUnresolved, engine) =>
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+      val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
+
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
+      val snapshot = ucCatalogManagedClient
+        .buildCreateTableTransaction(
+          testUcTableId,
+          tablePath,
+          testSchema,
+          "test-engine",
+          ucTableIdentifier)
+        .build(engine)
+        .commit(engine, CloseableIterable.emptyIterable())
+        .getPostCommitSnapshot
+        .get()
+
+      val props = UnityCatalogUtils.getPropertiesForCreate(engine, snapshot).asScala
+      assert(!props.contains("clusteringColumns"))
     }
   }
 

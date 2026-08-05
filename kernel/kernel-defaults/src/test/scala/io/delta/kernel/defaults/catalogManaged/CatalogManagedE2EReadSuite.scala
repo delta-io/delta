@@ -24,7 +24,6 @@ import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.DeltaHistoryManager
-import io.delta.kernel.internal.commitrange.CommitRangeImpl
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
@@ -304,7 +303,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         // scalastyle:on line.size.limit
       ).map(path => defaultEngine.getFileSystemClient.resolvePath(path))
 
-      assert(commitRange.asInstanceOf[CommitRangeImpl].getDeltaFiles().asScala.map(_.getPath) ==
+      assert(commitRange.getDeltaFiles().asScala.map(_.getPath) ==
         expectedFileList)
     }
   }

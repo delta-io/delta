@@ -47,8 +47,8 @@ class PostCommitSnapshotSuite
 
   private def assertAddFilesMatch(
       engine: Engine,
-      actual: SnapshotImpl,
-      expected: SnapshotImpl): Unit = {
+      actual: Snapshot,
+      expected: Snapshot): Unit = {
     val actualFiles = collectScanFileRows(actual.getScanBuilder.build(), engine)
       .map(x => InternalScanFileUtils.getAddFileStatus(x).getPath)
     val expectedFiles = collectScanFileRows(expected.getScanBuilder.build(), engine)
@@ -173,7 +173,7 @@ class PostCommitSnapshotSuite
         tableProperties = Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
       val result = appendData(engine, tablePath, data = seqOfUnpartitionedDataBatch1)
-      val postCommitSnapshot = result.getPostCommitSnapshot.get().asInstanceOf[SnapshotImpl]
+      val postCommitSnapshot = result.getPostCommitSnapshot.get()
 
       val failingEngine = mockEngine()
 
@@ -304,7 +304,7 @@ class PostCommitSnapshotSuite
         schema = testSchema,
         data = seqOfUnpartitionedDataBatch1)
 
-      val postCommitSnapshot = result.getPostCommitSnapshot.get().asInstanceOf[SnapshotImpl]
+      val postCommitSnapshot = result.getPostCommitSnapshot.get()
 
       assert(!TableFeatures.isCatalogManagedSupported(postCommitSnapshot.getProtocol))
 
@@ -321,7 +321,7 @@ class PostCommitSnapshotSuite
         schema = testSchema,
         data = seqOfUnpartitionedDataBatch1)
 
-      var postCommitSnapshot = result.getPostCommitSnapshot.get().asInstanceOf[SnapshotImpl]
+      var postCommitSnapshot = result.getPostCommitSnapshot.get()
       var postPublishSnapshot = postCommitSnapshot.publish(engine)
       assert(postPublishSnapshot == postCommitSnapshot)
 
@@ -331,7 +331,7 @@ class PostCommitSnapshotSuite
         isNewTable = false,
         data = seqOfUnpartitionedDataBatch1)
 
-      postCommitSnapshot = result.getPostCommitSnapshot.get().asInstanceOf[SnapshotImpl]
+      postCommitSnapshot = result.getPostCommitSnapshot.get()
       postPublishSnapshot = postCommitSnapshot.publish(engine)
       assert(postPublishSnapshot == postCommitSnapshot)
     }

@@ -4293,7 +4293,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
   private DeltaV2MicroBatchStream createTestStreamWithDefaults(
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
     io.delta.kernel.Snapshot snapshot = snapshotManager.loadLatestSnapshot();
-    String tablePath = ((io.delta.kernel.internal.SnapshotImpl) snapshot).getPath();
+    String tablePath = snapshot.getPath();
     StructType tableSchema =
         io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
             snapshot.getSchema());
@@ -4349,8 +4349,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       String schemaTrackingLocation,
       String checkpointLocation,
       java.util.Map<String, String> optionMap) {
-    io.delta.kernel.internal.SnapshotImpl snapshot =
-        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    io.delta.kernel.Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return DeltaSourceMetadataTrackingLog.create(
         spark,
         schemaTrackingLocation,

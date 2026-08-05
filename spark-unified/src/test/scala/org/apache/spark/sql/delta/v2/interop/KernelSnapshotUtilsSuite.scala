@@ -20,10 +20,9 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import io.delta.kernel.TableManager
+import io.delta.kernel.{Snapshot, TableManager}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.SnapshotImpl
 
 class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
 
@@ -31,8 +30,8 @@ class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
   private def engine: Engine = DefaultEngine.create(spark.sessionState.newHadoopConf())
   // scalastyle:on deltahadoopconfiguration
 
-  private def kernelSnapshotFor(path: String, engine: Engine): SnapshotImpl =
-    TableManager.loadSnapshot(path).build(engine).asInstanceOf[SnapshotImpl]
+  private def kernelSnapshotFor(path: String, engine: Engine): Snapshot =
+    TableManager.loadSnapshot(path).build(engine)
 
   private def allFilesFor(path: String): (Array[AddFile], Array[AddFile]) = {
     val kernelEngine = engine

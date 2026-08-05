@@ -21,7 +21,6 @@ import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
@@ -108,7 +107,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit) {
-    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    Snapshot snapshot = loadLatestSnapshot();
     List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
         engine,
@@ -138,7 +137,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
       throws VersionNotFoundException {
     // Load latest to get the current version bounds
-    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    Snapshot snapshot = loadLatestSnapshot();
     // Latest version visible in this UC-managed snapshot.
     long latestSnapshotVersion = snapshot.getVersion();
 

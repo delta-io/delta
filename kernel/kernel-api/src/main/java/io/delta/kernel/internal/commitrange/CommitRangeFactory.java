@@ -24,7 +24,6 @@ import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.LogDataUtils;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedDeltaData;
@@ -102,7 +101,7 @@ class CommitRangeFactory {
           engine,
           logPath,
           ctx.startBoundary.getTimestamp(),
-          (SnapshotImpl) ctx.startBoundary.getLatestSnapshot(),
+          ctx.startBoundary.getLatestSnapshot(),
           catalogCommits);
     }
   }
@@ -134,7 +133,7 @@ class CommitRangeFactory {
               engine,
               logPath,
               endBoundary.getTimestamp(),
-              (SnapshotImpl) endBoundary.getLatestSnapshot(),
+              endBoundary.getLatestSnapshot(),
               catalogCommits);
       return Optional.of(resolvedVersion);
     }

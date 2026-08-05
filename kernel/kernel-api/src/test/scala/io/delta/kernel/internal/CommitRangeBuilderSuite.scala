@@ -23,7 +23,6 @@ import io.delta.kernel.{CommitRange, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException}
-import io.delta.kernel.internal.commitrange.{CommitRangeBuilderImpl, CommitRangeImpl}
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedDeltaData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
@@ -129,7 +128,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
         version >= expectedStartVersion && version <= expectedEndVersion
       }).filter(fs => FileNames.isCommitFile(fs.getPath))
     assert(expectedFileList.toSet ==
-      commitRange.asInstanceOf[CommitRangeImpl].getDeltaFiles.asScala.toSet)
+      commitRange.getDeltaFiles.asScala.toSet)
   }
 
   /**
@@ -420,7 +419,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       startBound,
       endBound)
     assert(expectedFileList.toSet ==
-      commitRange.asInstanceOf[CommitRangeImpl].getDeltaFiles.asScala.toSet)
+      commitRange.getDeltaFiles.asScala.toSet)
   }
 
   /**

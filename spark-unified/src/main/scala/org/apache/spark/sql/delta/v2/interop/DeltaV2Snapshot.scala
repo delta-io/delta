@@ -33,9 +33,9 @@ import org.apache.spark.sql.delta.actions.{
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, StatisticsCollection}
 import org.apache.hadoop.fs.Path
+import io.delta.kernel.{Snapshot => KernelSnapshot}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 
@@ -49,10 +49,7 @@ import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
  * reconstruction (`stateDF` etc.) is not wired to Kernel yet and throws.
  */
 private[v2] class DeltaV2Snapshot(
-    // Typed as the internal SnapshotImpl (aliased KernelSnapshot), not the public Kernel
-    // `Snapshot` interface: the decoded data path is only exposed on SnapshotImpl in the
-    // OSS-published Kernel. The public io.delta.kernel.Snapshot has no `getDataPath`, and its
-    // `getPath` is URL-encoded, which breaks Hadoop `Path` for table roots containing spaces.
+    // Typed as the public Kernel `Snapshot` interface (aliased KernelSnapshot).
     kernelSnapshot: KernelSnapshot,
     sparkSession: SparkSession,
     // Kernel engine for reading scan files and the commit timestamp -- owned and passed by the
@@ -64,8 +61,8 @@ private[v2] class DeltaV2Snapshot(
     kernelEngine: Engine
   )
   extends Snapshot(
-    // toString keeps this compiling across Kernel versions: getDataPath returns String in the
-    // currently pinned Kernel and io.delta.kernel.internal.fs.Path in newer Kernels.
+    // Path.toString, not toUri.toString: the latter percent-encodes special characters and breaks
+    // Hadoop Path resolution for table roots containing spaces.
     path = new Path(kernelSnapshot.getDataPath.toString),
     version = kernelSnapshot.getVersion,
     // A DeltaV2Snapshot must not depend on the V1 LogSegment or DeltaLog. Both are null; the

@@ -23,7 +23,6 @@ import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentTransactionException;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
@@ -88,7 +87,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     this.queryId = requireNonNull(queryId, "queryId is null");
     requireNonNull(dataWriterFactoryBuilder, "dataWriterFactoryBuilder is null");
     this.writeSchema = initialSnapshot.getSchema();
-    this.writeProtocol = ((SnapshotImpl) initialSnapshot).getProtocol();
+    this.writeProtocol = initialSnapshot.getProtocol();
     // We only need this transaction's serialized write context for the factory, not the commit
     // (commit() builds its own per epoch).
     Transaction stateTxn =
@@ -121,8 +120,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     //  as a blind append, skipping the conflict check V1 gets via readWholeTable().
 
     // Skip an already-committed epoch. Its executor-written files are then orphaned (VACUUM'd).
-    long committedEpoch =
-        ((SnapshotImpl) latestSnapshot).getLatestTransactionVersion(engine, queryId).orElse(-1L);
+    long committedEpoch = latestSnapshot.getLatestTransactionVersion(engine, queryId).orElse(-1L);
     if (committedEpoch >= epochId) {
       logger.info("Skipping already committed epoch {} for query {}", epochId, queryId);
       return;
@@ -156,7 +154,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
               + " cannot continue: the table schema changed after the stream started. Restart the "
               + "query to pick up the new schema.");
     }
-    if (!writeProtocol.equals(((SnapshotImpl) latestSnapshot).getProtocol())) {
+    if (!writeProtocol.equals(latestSnapshot.getProtocol())) {
       throw new IllegalStateException(
           "DSv2 streaming write to query "
               + queryId

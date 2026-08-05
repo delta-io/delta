@@ -48,7 +48,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   public static class Context {
     public final String unresolvedPath;
     public Optional<Long> versionOpt = Optional.empty();
-    public Optional<Tuple2<SnapshotImpl, Long>> timestampQueryContextOpt = Optional.empty();
+    public Optional<Tuple2<Snapshot, Long>> timestampQueryContextOpt = Optional.empty();
     public Optional<Committer> committerOpt = Optional.empty();
     public List<ParsedLogData> logDatas = Collections.emptyList();
     public Optional<Tuple2<Protocol, Metadata>> protocolAndMetadataOpt = Optional.empty();
@@ -79,9 +79,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   @Override
   public SnapshotBuilderImpl atTimestamp(long millisSinceEpochUTC, Snapshot latestSnapshot) {
     requireNonNull(latestSnapshot, "latestSnapshot is null");
-    checkArgument(latestSnapshot instanceof SnapshotImpl, "latestSnapshot must be a SnapshotImpl");
-    ctx.timestampQueryContextOpt =
-        Optional.of(new Tuple2<>((SnapshotImpl) latestSnapshot, millisSinceEpochUTC));
+    ctx.timestampQueryContextOpt = Optional.of(new Tuple2<>(latestSnapshot, millisSinceEpochUTC));
     return this;
   }
 

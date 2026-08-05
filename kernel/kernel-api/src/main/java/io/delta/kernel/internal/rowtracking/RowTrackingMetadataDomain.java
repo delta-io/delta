@@ -17,7 +17,7 @@ package io.delta.kernel.internal.rowtracking;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.internal.metadatadomain.JsonMetadataDomain;
 import java.util.Optional;
 
@@ -39,12 +39,12 @@ public final class RowTrackingMetadataDomain extends JsonMetadataDomain {
   }
 
   /**
-   * Creates an instance of {@link RowTrackingMetadataDomain} from a {@link SnapshotImpl}.
+   * Creates an instance of {@link RowTrackingMetadataDomain} from a {@link Snapshot}.
    *
    * @param snapshot the snapshot instance
    * @return an {@link Optional} containing the {@link RowTrackingMetadataDomain} if present
    */
-  public static Optional<RowTrackingMetadataDomain> fromSnapshot(SnapshotImpl snapshot) {
+  public static Optional<RowTrackingMetadataDomain> fromSnapshot(Snapshot snapshot) {
     return JsonMetadataDomain.fromSnapshot(snapshot, RowTrackingMetadataDomain.class, DOMAIN_NAME);
   }
 

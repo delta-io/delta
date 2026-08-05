@@ -11,7 +11,6 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
-import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
@@ -89,7 +88,7 @@ public class DeltaChangelogBatch implements Batch {
     // Pre-check catches schema drift between start and end. The per-commit loop below catches
     // in-range Metadata commits.
     StructType startSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
-    requireReadCompatible(startSchema, ((CommitRangeImpl) commitRange).getStartVersion());
+    requireReadCompatible(startSchema, commitRange.getStartVersion());
 
     // TODO: Remove StreamingHelper usage. The helper is generic, only the class name is
     // streaming-flavored.
@@ -98,7 +97,7 @@ public class DeltaChangelogBatch implements Batch {
     // declares it. Unchecked exceptions pass through unchanged.
     try (CloseableIterator<CommitActions> commitsIter =
         StreamingHelper.getCommitActionsFromRangeUnsafe(
-            engine, (CommitRangeImpl) commitRange, snapshot.getPath(), CHANGELOG_ACTION_SET)) {
+            engine, commitRange, snapshot.getPath(), CHANGELOG_ACTION_SET)) {
       while (commitsIter.hasNext()) {
         // Emit RemoveFiles before AddFiles per commit. The Spark analyzer re-sorts anyway, but
         // direct-batch tests iterate in emission order and rely on the preimage-then-postimage

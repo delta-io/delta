@@ -24,7 +24,6 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Literal}
-import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.checksum.ChecksumUtils
 import io.delta.kernel.internal.util.ManualClock
 import io.delta.kernel.types.{StringType, StructType}
@@ -56,13 +55,13 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
 
       val snapshot0 = Table.forPath(
         engine,
-        tablePath).getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
+        tablePath).getSnapshotAsOfVersion(engine, 0)
       ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot0.getLogSegment)
       verifyChecksumForSnapshot(snapshot0)
 
       val snapshot1 = Table.forPath(
         engine,
-        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+        tablePath).getSnapshotAsOfVersion(engine, 1)
       ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot1.getLogSegment)
       verifyChecksumForSnapshot(snapshot1)
     }
@@ -74,7 +73,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
 
       val snapshot1 = Table.forPath(
         engine,
-        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+        tablePath).getSnapshotAsOfVersion(engine, 1)
 
       // Same computation as computeStateAndWriteChecksum
       val crcInfo = ChecksumUtils.computeChecksum(engine, snapshot1.getLogSegment)
@@ -83,7 +82,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       // No checksum file was written: a freshly loaded log segment still sees no checksum.
       val reloaded = Table.forPath(
         engine,
-        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+        tablePath).getSnapshotAsOfVersion(engine, 1)
       assert(!reloaded.getLogSegment.getLastSeenChecksum.isPresent)
 
       // The writing counterpart still persists an equivalent, valid checksum.
@@ -98,7 +97,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
 
       val snapshot1 = Table.forPath(
         engine,
-        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+        tablePath).getSnapshotAsOfVersion(engine, 1)
 
       // computeChecksum derives from file actions, so ICT is absent (not derivable from replay).
       val crcInfo = ChecksumUtils.computeChecksum(engine, snapshot1.getLogSegment)
@@ -124,13 +123,13 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
 
       val snapshot1 = Table.forPath(
         engine,
-        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+        tablePath).getSnapshotAsOfVersion(engine, 1)
 
       // Persist a checksum for v1, then reload so the log segment sees it as lastSeenChecksum.
       ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot1.getLogSegment)
       val reloaded = Table.forPath(
         engine,
-        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+        tablePath).getSnapshotAsOfVersion(engine, 1)
       assert(reloaded.getLogSegment.getLastSeenChecksum.isPresent)
 
       // A checksum already exists for exactly this version => returned as-is (no full replay).
@@ -145,7 +144,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
 
       val snapshot = Table.forPath(
         engine,
-        tablePath).getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
+        tablePath).getSnapshotAsOfVersion(engine, 0)
 
       // First call should create the checksum file
       ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot.getLogSegment)

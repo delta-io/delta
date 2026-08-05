@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.flink.MockHttp;
 import io.delta.flink.TestHelper;
-import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StructType;
@@ -60,7 +60,7 @@ class CatalogManagedTableTest extends TestHelper {
                       (key, value) -> assertEquals(value, table.conf.catalogConf().get(key)));
                   assertEquals(uuid, table.conf.catalogConf().get("io.unitycatalog.tableId"));
 
-                  SnapshotImpl snapshot = (SnapshotImpl) table.snapshot().get();
+                  Snapshot snapshot = table.snapshot().get();
                   assertEquals(uuid, snapshot.getTableProperties().get("io.unitycatalog.tableId"));
 
                   assertTrue(

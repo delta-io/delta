@@ -26,7 +26,7 @@ import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.hook.PostCommitHook
-import io.delta.kernel.internal.{DeltaLogActionUtils, SnapshotImpl}
+import io.delta.kernel.internal.DeltaLogActionUtils
 import io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION
 import io.delta.kernel.internal.actions._
 import io.delta.kernel.internal.compaction.LogCompactionWriter
@@ -262,7 +262,7 @@ class LogCompactionWriterSuite extends CheckpointBase {
       val logPath = new Path(s"file:${tablePath}", "_delta_log")
       createEmptyTable(engine, tablePath, schema, clock = clock)
       val table = Table.forPath(engine, tablePath)
-      val metadata = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl].getMetadata()
+      val metadata = table.getLatestSnapshot(engine).getMetadata()
       val tombstoneRetention = TOMBSTONE_RETENTION.fromMetadata(metadata)
       clock.setTime(tombstoneRetention) // set to the retention time so (time - retention) == 0
       val compactionInterval = 3

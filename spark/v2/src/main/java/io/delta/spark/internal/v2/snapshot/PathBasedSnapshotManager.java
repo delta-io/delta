@@ -24,7 +24,6 @@ import io.delta.kernel.TableManager;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import java.util.ArrayList;
 import java.util.Optional;
@@ -89,7 +88,7 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit) {
-    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    Snapshot snapshot = loadLatestSnapshot();
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
         kernelEngine,
         snapshot,
@@ -114,7 +113,7 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
   @Override
   public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
       throws VersionNotFoundException {
-    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    Snapshot snapshot = loadLatestSnapshot();
     long earliest =
         mustBeRecreatable
             ? DeltaHistoryManager.getEarliestRecreatableCommit(

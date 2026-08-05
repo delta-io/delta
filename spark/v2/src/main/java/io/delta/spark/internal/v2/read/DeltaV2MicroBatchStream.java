@@ -32,7 +32,6 @@ import io.delta.kernel.exceptions.UnsupportedProtocolVersionException;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
@@ -149,9 +148,9 @@ class DeltaV2MicroBatchStream
   private final DeltaOptions options;
   private final boolean ignoreFileDeletion;
   private final boolean skipChangeCommits;
-  private final SnapshotImpl snapshotAtSourceInit;
+  private final Snapshot snapshotAtSourceInit;
   private final String tableId;
-  private final SnapshotImpl readSnapshotAtSourceInit;
+  private final Snapshot readSnapshotAtSourceInit;
   private final StructType readSchemaAtSourceInit;
   private final boolean shouldValidateOffsets;
   private final Optional<Regex> excludeRegex;
@@ -273,7 +272,7 @@ class DeltaV2MicroBatchStream
     this.sqlConf = SQLConf.get();
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
 
-    this.snapshotAtSourceInit = (SnapshotImpl) snapshotAtSourceInit;
+    this.snapshotAtSourceInit = snapshotAtSourceInit;
     this.tableId = this.snapshotAtSourceInit.getMetadata().getId();
 
     // The effective snapshot for reading, mirroring v1's readSnapshotDescriptor. When schema
@@ -1125,12 +1124,12 @@ class DeltaV2MicroBatchStream
     if (cdfEnabledOnStreamStartValidated) {
       return;
     }
-    SnapshotImpl startSnapshot;
+    Snapshot startSnapshot;
     if (startVersion == snapshotAtSourceInit.getVersion()) {
       startSnapshot = snapshotAtSourceInit;
     } else {
       try {
-        startSnapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(startVersion);
+        startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
       } catch (io.delta.kernel.exceptions.KernelException e) {
         // startVersion may not yet exist (e.g. startingVersion=latest resolves to latest+1).
         // TODO(#6745): narrow this catch once kernel exposes a specific exception subclass
@@ -1248,10 +1247,7 @@ class DeltaV2MicroBatchStream
     // 2. This matches DSv1 behavior which uses snapshotAtSourceInit's P&M to interpret all
     //    AddFile actions and performs per-commit protocol validation.
     return StreamingHelper.getCommitActionsFromRangeUnsafe(
-        engine,
-        (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
-        snapshotAtSourceInit.getPath(),
-        actionSet);
+        engine, commitRange, snapshotAtSourceInit.getPath(), actionSet);
   }
 
   /**
@@ -1695,10 +1691,10 @@ class DeltaV2MicroBatchStream
 
     if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) return;
 
-    SnapshotImpl startVersionSnapshot = null;
+    Snapshot startVersionSnapshot = null;
     Exception err = null;
     try {
-      startVersionSnapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(batchStartVersion);
+      startVersionSnapshot = snapshotManager.loadSnapshotAt(batchStartVersion);
     } catch (Exception e) {
       err = e;
     }
@@ -1870,7 +1866,7 @@ class DeltaV2MicroBatchStream
   private DataFrameSnapshotCache buildDataFrameSnapshotCache(long version) {
     // May differ from snapshotAtSourceInit on checkpoint restart. loadSnapshotAt is
     // metadata-only on driver; log replay runs on executors via ScanFileRDD.
-    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
+    Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
     SerializableReadOnlySnapshot serSnapshot =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
 
@@ -1951,7 +1947,7 @@ class DeltaV2MicroBatchStream
 
   /** Loads snapshot files at the specified version. */
   private InitialSnapshotCache loadAndValidateSnapshot(long version) {
-    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
+    Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
     // If schema tracking is already active and the initial snapshot has advanced since the tracked
     // read snapshot, replace the tracked metadata/protocol before reading snapshot files.
     if (metadataEvolutionHandler.shouldTrackMetadataChange()

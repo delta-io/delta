@@ -23,7 +23,6 @@ import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaErrorsInternal;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.LogDataUtils;
 import io.delta.kernel.internal.files.ParsedLogData;
 import java.util.Collections;
@@ -124,8 +123,7 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
                 "startVersion (%d) must be <= maxCatalogVersion (%d)",
                 ctx.startBoundary.getVersion(), maxVersion));
       } else if (ctx.startBoundary.isTimestamp()) {
-        long latestSnapshotVersion =
-            ((SnapshotImpl) ctx.startBoundary.getLatestSnapshot()).getVersion();
+        long latestSnapshotVersion = ctx.startBoundary.getLatestSnapshot().getVersion();
         if (latestSnapshotVersion != maxVersion) {
           throw DeltaErrorsInternal.invalidLatestSnapshotForMaxCatalogVersion(
               latestSnapshotVersion, maxVersion);
@@ -142,8 +140,7 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
                   "endVersion (%d) must be <= maxCatalogVersion (%d)",
                   endBoundary.getVersion(), maxVersion));
         } else if (endBoundary.isTimestamp()) {
-          long latestSnapshotVersion =
-              ((SnapshotImpl) endBoundary.getLatestSnapshot()).getVersion();
+          long latestSnapshotVersion = endBoundary.getLatestSnapshot().getVersion();
           if (latestSnapshotVersion != maxVersion) {
             throw DeltaErrorsInternal.invalidLatestSnapshotForMaxCatalogVersion(
                 latestSnapshotVersion, maxVersion);

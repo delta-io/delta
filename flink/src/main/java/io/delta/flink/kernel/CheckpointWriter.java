@@ -34,7 +34,6 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.FileReadResult;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.SetTransaction;
@@ -118,7 +117,7 @@ public class CheckpointWriter {
   }
 
   private final Engine engine;
-  private final SnapshotImpl snapshot;
+  private final Snapshot snapshot;
   private final Path lastCheckpointFilePath;
   private final int sidecarMergeThreshold;
 
@@ -142,7 +141,7 @@ public class CheckpointWriter {
    */
   public CheckpointWriter(Engine engine, Snapshot snapshot, int sidecarMergeThreshold) {
     this.engine = engine;
-    this.snapshot = (SnapshotImpl) snapshot;
+    this.snapshot = snapshot;
 
     Preconditions.checkArgument(
         this.snapshot.getProtocol().supportsFeature(TableFeatures.CHECKPOINT_V2_RW_FEATURE));

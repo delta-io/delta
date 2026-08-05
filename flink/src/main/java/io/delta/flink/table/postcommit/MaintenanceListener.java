@@ -22,7 +22,6 @@ import io.delta.flink.table.AbstractKernelTable;
 import io.delta.flink.table.TableEventListener;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.metrics.TransactionReport;
 import org.slf4j.Logger;
@@ -58,11 +57,10 @@ public class MaintenanceListener implements TableEventListener {
         table.getCacheManager().put(table.getTablePath().toString(), published);
         // Checkpoint can be done only on published snapshots
         if (table.getConf().shouldCreateCheckpoint()) {
-          if (published instanceof SnapshotImpl
-              && ((SnapshotImpl) published)
-                  .getProtocol()
-                  .getWriterFeatures()
-                  .contains(TableFeatures.CHECKPOINT_V2_RW_FEATURE.featureName())) {
+          if (published
+              .getProtocol()
+              .getWriterFeatures()
+              .contains(TableFeatures.CHECKPOINT_V2_RW_FEATURE.featureName())) {
             // Use v2 incremental checkpoint when possible
             table.withTiming(
                 "postcommit.maintenance.checkpoint",

@@ -16,10 +16,10 @@
 package io.delta.spark.internal.v2.utils;
 
 import io.delta.kernel.Scan;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.ScanImpl;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checksum.CRCInfo;
@@ -37,8 +37,8 @@ import org.apache.spark.util.SerializableConfiguration;
 
 /**
  * Serializable carrier for a Delta snapshot's state. Created on the driver from an existing {@link
- * SnapshotImpl} (zero I/O), and reconstructed on the executor as a read-only {@link Scan} via
- * {@link #toScan(Configuration)}. The returned {@code Scan} interface exposes only read operations,
+ * Snapshot} (zero I/O), and reconstructed on the executor as a read-only {@link Scan} via {@link
+ * #toScan(Configuration)}. The returned {@code Scan} interface exposes only read operations,
  * preventing accidental misuse of write-path APIs (e.g. {@code Committer}).
  *
  * <p>TODO: This class relies on 10 {@code io.delta.kernel.internal.*} packages which have no
@@ -93,11 +93,11 @@ public class SerializableReadOnlySnapshot implements Serializable {
   }
 
   /**
-   * Driver-side: extract the snapshot state from an existing Kernel {@link SnapshotImpl}. This
-   * performs zero I/O — all data is already in memory on the driver.
+   * Driver-side: extract the snapshot state from an existing Kernel {@link Snapshot}. This performs
+   * zero I/O — all data is already in memory on the driver.
    */
   public static SerializableReadOnlySnapshot fromSnapshot(
-      SnapshotImpl snapshot, Configuration hadoopConf) {
+      Snapshot snapshot, Configuration hadoopConf) {
     LogSegment logSegment = snapshot.getLogSegment();
     return new SerializableReadOnlySnapshot(
         snapshot.getDataPath().toString(),

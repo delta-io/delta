@@ -22,8 +22,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.exceptions.KernelException;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import java.util.Optional;
@@ -99,7 +99,7 @@ public abstract class JsonMetadataDomain {
    *     otherwise an empty Optional
    */
   protected static <T> Optional<T> fromSnapshot(
-      SnapshotImpl snapshot, Class<T> clazz, String domainName) {
+      Snapshot snapshot, Class<T> clazz, String domainName) {
     return snapshot
         .getDomainMetadata(domainName)
         .map(config -> fromJsonConfiguration(config, clazz));

@@ -25,7 +25,6 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.internal.ScanImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.data.GenericRow;
@@ -325,8 +324,7 @@ public abstract class TestHelper {
   protected void verifyTableContent(String tablePath, TableContentChecker checker) {
     Engine engine = DefaultEngine.create(new Configuration());
     Snapshot snapshot = TableManager.loadSnapshot(tablePath).build(engine);
-    var filesList =
-        ((ScanImpl) snapshot.getScanBuilder().build()).getScanFiles(engine, true).toInMemoryList();
+    var filesList = snapshot.getScanBuilder().build().getScanFiles(engine, true).toInMemoryList();
 
     List<AddFile> actions =
         StreamSupport.stream(filesList.spliterator(), false)

@@ -440,7 +440,6 @@ class CreateCheckpointSuite extends CheckpointBase with GeoTestUtils {
       val snapshot = TableManager.loadSnapshot(tablePath)
         .atVersion(2)
         .build(engine)
-        .asInstanceOf[SnapshotImpl]
       snapshot.writeCheckpoint(engine)
 
       // Verify no log cleanup happened

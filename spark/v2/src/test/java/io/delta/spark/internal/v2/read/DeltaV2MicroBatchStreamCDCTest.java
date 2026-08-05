@@ -25,7 +25,6 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
@@ -1035,10 +1034,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         ScalaUtils.toScalaMap(javaOptions);
     DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, spark.sessionState().conf());
 
-    io.delta.kernel.internal.SnapshotImpl latestSnapshot =
-        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadLatestSnapshot();
-    io.delta.kernel.internal.SnapshotImpl seededSnapshot =
-        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadSnapshotAt(seededVersion);
+    io.delta.kernel.Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
+    io.delta.kernel.Snapshot seededSnapshot = snapshotManager.loadSnapshotAt(seededVersion);
 
     org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog trackingLog =
         MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
@@ -1219,7 +1216,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     try (CloseableIterator<CommitActions> iter =
         StreamingHelper.getCommitActionsFromRangeUnsafe(
-            engine, (CommitRangeImpl) commitRange, tablePath, CDC_ACTION_SET)) {
+            engine, commitRange, tablePath, CDC_ACTION_SET)) {
       assertTrue(iter.hasNext(), "Expected at least one commit at version " + version);
       return iter.next();
     } catch (Exception e) {

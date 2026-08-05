@@ -23,12 +23,13 @@ import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.clustering.ClusteringColumnInfo;
 import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
@@ -36,7 +37,6 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -164,7 +164,7 @@ public class UnityCatalogUtils {
    * @throws IllegalArgumentException if the snapshot is not version 0
    */
   public static Map<String, String> getPropertiesForCreate(
-      Engine engine, SnapshotImpl postCreateSnapshot) {
+      Engine engine, Snapshot postCreateSnapshot) {
     if (postCreateSnapshot.getVersion() != 0) {
       throw new IllegalArgumentException(
           String.format(
@@ -196,10 +196,15 @@ public class UnityCatalogUtils {
    *
    * @return clustering properties if present, otherwise empty map
    */
-  private static Map<String, String> extractClusteringProperties(SnapshotImpl snapshot) {
+  private static Map<String, String> extractClusteringProperties(Snapshot snapshot) {
     return snapshot
-        .getPhysicalClusteringColumns()
-        .map(cols -> serializeClusteringColumns(cols, snapshot.getSchema()))
+        .getClusteringColumnInfos()
+        .map(
+            infos ->
+                serializeLogicalClusteringColumns(
+                    infos.stream()
+                        .map(ClusteringColumnInfo::getLogicalColumn)
+                        .collect(Collectors.toList())))
         .orElse(Collections.emptyMap());
   }
 
@@ -229,23 +234,29 @@ public class UnityCatalogUtils {
   }
 
   /**
-   * Converts physical clustering columns to logical column names and serializes them as a JSON
-   * property map. Shared by both the SnapshotImpl and DomainMetadata extraction paths.
+   * Resolves physical clustering columns against {@code schema} and serializes them as a JSON
+   * property map. Used by the DomainMetadata extraction path, which holds physical references; the
+   * snapshot path reads already-resolved logical references off {@link ClusteringColumnInfo}.
    */
   private static Map<String, String> serializeClusteringColumns(
       List<Column> physicalClusteringCols, StructType schema) {
-    final List<List<String>> logicalClusteringCols =
+    return serializeLogicalClusteringColumns(
         physicalClusteringCols.stream()
             .map(
-                physicalCol -> {
-                  final Tuple2<Column, DataType> logicalColumnAndType =
-                      ColumnMapping.getLogicalColumnNameAndDataType(schema, physicalCol);
-                  return Arrays.asList(logicalColumnAndType._1.getNames());
-                })
+                physicalCol ->
+                    ColumnMapping.getLogicalColumnNameAndDataType(schema, physicalCol)._1)
+            .collect(Collectors.toList()));
+  }
+
+  /** Serializes logical clustering column references as the UC clustering-columns property. */
+  private static Map<String, String> serializeLogicalClusteringColumns(
+      List<Column> logicalClusteringCols) {
+    final List<List<String>> nameParts =
+        logicalClusteringCols.stream()
+            .map(logicalCol -> Arrays.asList(logicalCol.getNames()))
             .collect(Collectors.toList());
     try {
-      return Map.of(
-          UC_PROP_CLUSTERING_COLUMNS, OBJECT_MAPPER.writeValueAsString(logicalClusteringCols));
+      return Map.of(UC_PROP_CLUSTERING_COLUMNS, OBJECT_MAPPER.writeValueAsString(nameParts));
     } catch (JsonProcessingException ex) {
       throw new RuntimeException("Failed to serialize clustering columns to JSON", ex);
     }
@@ -256,9 +267,7 @@ public class UnityCatalogUtils {
   // which has no post-commit snapshot)
   // ---------------------------------------------------------------------------
 
-  /**
-   * Same as {@link #getPropertiesForCreate(Engine, SnapshotImpl)} but reads from CommitMetadata.
-   */
+  /** Same as {@link #getPropertiesForCreate(Engine, Snapshot)} but reads from CommitMetadata. */
   public static Map<String, String> getPropertiesForCreate(CommitMetadata commitMetadata) {
     if (commitMetadata.getVersion() != 0) {
       throw new IllegalArgumentException(

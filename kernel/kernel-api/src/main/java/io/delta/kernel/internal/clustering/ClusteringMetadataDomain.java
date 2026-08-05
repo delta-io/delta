@@ -18,9 +18,9 @@ package io.delta.kernel.internal.clustering;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.metadatadomain.JsonMetadataDomain;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -53,13 +53,13 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
   }
 
   /**
-   * Creates an optional instance of {@link ClusteringMetadataDomain} from a {@link SnapshotImpl} if
+   * Creates an optional instance of {@link ClusteringMetadataDomain} from a {@link Snapshot} if
    * present.
    *
    * @param snapshot the snapshot instance
    */
   // TODO: Add the test coverage for this function in the integration test.
-  public static Optional<ClusteringMetadataDomain> fromSnapshot(SnapshotImpl snapshot) {
+  public static Optional<ClusteringMetadataDomain> fromSnapshot(Snapshot snapshot) {
     return JsonMetadataDomain.fromSnapshot(snapshot, ClusteringMetadataDomain.class, DOMAIN_NAME);
   }
 

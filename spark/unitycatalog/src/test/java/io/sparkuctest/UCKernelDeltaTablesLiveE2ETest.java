@@ -23,6 +23,7 @@ import io.delta.kernel.Operation;
 import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.Transaction;
+import io.delta.kernel.clustering.ClusteringColumnInfo;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
@@ -33,7 +34,6 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.InternalScanFileUtils;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.util.Utils;
@@ -174,7 +174,7 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
     assertThat(snapshot.getSchema().fieldNames())
         .containsExactlyElementsOf(TEST_SCHEMA.fieldNames());
 
-    Protocol protocol = ((SnapshotImpl) snapshot).getProtocol();
+    Protocol protocol = snapshot.getProtocol();
     assertThat(protocol.getMinReaderVersion()).isGreaterThanOrEqualTo(3);
     assertThat(protocol.getMinWriterVersion()).isGreaterThanOrEqualTo(7);
     assertThat(protocol.getWriterFeatures()).contains("catalogManaged");
@@ -207,8 +207,7 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
     assertThat(serverProps).containsKey("clusteringColumns");
 
     Snapshot snapshot = loadAtVersion(catalogClient, table, 0L);
-    Optional<List<Column>> clusteringColumns =
-        ((SnapshotImpl) snapshot).getPhysicalClusteringColumns();
+    Optional<List<ClusteringColumnInfo>> clusteringColumns = snapshot.getClusteringColumnInfos();
     assertThat(clusteringColumns).isPresent();
     assertThat(clusteringColumns.get()).hasSize(1);
   }

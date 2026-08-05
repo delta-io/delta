@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.Snapshot;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.SerializableReadOnlySnapshot;
@@ -42,7 +42,7 @@ public class ScanFileRDDTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SnapshotImpl snapshot = (SnapshotImpl) mgr.loadLatestSnapshot();
+    Snapshot snapshot = mgr.loadLatestSnapshot();
 
     SerializableReadOnlySnapshot serializable =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
@@ -67,7 +67,7 @@ public class ScanFileRDDTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SnapshotImpl snapshot = (SnapshotImpl) mgr.loadLatestSnapshot();
+    Snapshot snapshot = mgr.loadLatestSnapshot();
 
     SerializableReadOnlySnapshot serializable =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);

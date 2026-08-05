@@ -35,7 +35,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
@@ -815,7 +815,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         // Read stats JSON
         val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
         val scan = snapshot.getScanBuilder().build()
-        val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
+        val scanFiles = scan.getScanFiles(engine, true).toSeq
           .flatMap(_.getRows.toSeq)
         val statsJson = scanFiles.headOption.flatMap { row =>
           val add = row.getStruct(row.getSchema.indexOf("add"))
@@ -897,7 +897,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         // Read stats JSON
         val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
         val scan = snapshot.getScanBuilder.build()
-        val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
+        val scanFiles = scan.getScanFiles(engine, true).toSeq
           .flatMap(_.getRows.toSeq)
 
         val mapper = JsonUtils.mapper()
@@ -965,7 +965,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       // Read stats JSON
       val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
       val scan = snapshot.getScanBuilder().build()
-      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
+      val scanFiles = scan.getScanFiles(engine, true).toSeq
         .flatMap(_.getRows.toSeq)
       val statsJson = scanFiles.headOption.flatMap { row =>
         val add = row.getStruct(row.getSchema.indexOf("add"))
@@ -1030,7 +1030,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       // Read stats JSON
       val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
       val scan = snapshot.getScanBuilder().build()
-      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
+      val scanFiles = scan.getScanFiles(engine, true).toSeq
         .flatMap(_.getRows.toSeq)
       val statsJson = scanFiles.headOption.flatMap { row =>
         val add = row.getStruct(row.getSchema.indexOf("add"))
@@ -1817,7 +1817,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       // Retrieve the stats JSON from the file.
       val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
       val scan = snapshot.getScanBuilder().build()
-      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true)
+      val scanFiles = scan.getScanFiles(engine, true)
         .toSeq.flatMap(_.getRows.toSeq)
       val statsJson = scanFiles.headOption.flatMap { row =>
         val addFile = row.getStruct(row.getSchema.indexOf("add"))

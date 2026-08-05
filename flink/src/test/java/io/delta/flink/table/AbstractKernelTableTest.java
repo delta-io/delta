@@ -30,7 +30,6 @@ import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.util.Utils;
@@ -158,8 +157,7 @@ class AbstractKernelTableTest extends TestHelper {
           assertEquals("true", snapshot.getTableProperties().get("delta.enableDeletionVectors"));
           assertFalse(snapshot.getTableProperties().containsKey("showme"));
           assertFalse(snapshot.getTableProperties().containsKey("something"));
-          assertTrue(
-              ((SnapshotImpl) snapshot).getProtocol().getWriterFeatures().contains("v2Checkpoint"));
+          assertTrue(snapshot.getProtocol().getWriterFeatures().contains("v2Checkpoint"));
         });
   }
 

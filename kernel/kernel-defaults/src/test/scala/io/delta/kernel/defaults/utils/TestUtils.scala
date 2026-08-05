@@ -926,7 +926,7 @@ trait AbstractTestUtils
   protected def verifyChecksumForSnapshot(
       snapshot: Snapshot,
       expectEmptyTable: Boolean = false): Unit = {
-    val logPath = snapshot.asInstanceOf[SnapshotImpl].getLogPath
+    val logPath = snapshot.getLogPath
     val crcInfoOpt = ChecksumReader.tryReadChecksumFile(
       defaultEngine,
       FileStatus.of(checksumFile(
@@ -937,7 +937,7 @@ trait AbstractTestUtils
       s"CRC information should be present for version ${snapshot.getVersion}")
     crcInfoOpt.toScala.foreach { crcInfo =>
       // TODO: check file size.
-      assert(crcInfo.getProtocol === snapshot.asInstanceOf[SnapshotImpl].getProtocol)
+      assert(crcInfo.getProtocol === snapshot.getProtocol)
       assert(crcInfo.getMetadata.getSchema === snapshot.getSchema)
       assert(
         crcInfo.getNumFiles === collectScanFileRows(snapshot.getScanBuilder.build()).size,

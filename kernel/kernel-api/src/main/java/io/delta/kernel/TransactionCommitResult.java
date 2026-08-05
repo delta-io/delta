@@ -20,7 +20,6 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.hook.PostCommitHook;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.utils.CloseableIterable;
 import java.util.List;
@@ -37,17 +36,17 @@ public class TransactionCommitResult {
   private final long version;
   private final List<PostCommitHook> postCommitHooks;
   private final TransactionReport transactionReport;
-  private final Optional<SnapshotImpl> postCommitSnapshotOpt;
+  private final Optional<Snapshot> postCommitSnapshotOpt;
 
   public TransactionCommitResult(
       long version,
       List<PostCommitHook> postCommitHooks,
       TransactionReport transactionReport,
-      Optional<SnapshotImpl> postCommitSnapshotOpt) {
+      Optional<? extends Snapshot> postCommitSnapshotOpt) {
     this.version = version;
     this.postCommitHooks = requireNonNull(postCommitHooks);
     this.transactionReport = requireNonNull(transactionReport);
-    this.postCommitSnapshotOpt = requireNonNull(postCommitSnapshotOpt);
+    this.postCommitSnapshotOpt = requireNonNull(postCommitSnapshotOpt).map(s -> s);
   }
 
   /**
@@ -88,6 +87,6 @@ public class TransactionCommitResult {
    * experienced conflicts.
    */
   public Optional<Snapshot> getPostCommitSnapshot() {
-    return postCommitSnapshotOpt.map(s -> s); // Map needed to upcast to Optional<Snapshot>
+    return postCommitSnapshotOpt;
   }
 }
