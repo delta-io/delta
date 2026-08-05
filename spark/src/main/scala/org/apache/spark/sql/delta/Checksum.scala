@@ -368,6 +368,7 @@ trait RecordChecksum extends DeltaLogging {
     var numFiles = oldVersionChecksum.numFiles
     var protocol = oldVersionChecksum.protocol
     var metadata = oldVersionChecksum.metadata
+    var lastManifestCommit: Option[LastManifestCommit] = oldVersionChecksum.lastManifestCommit
     val fileSizeHistogram = if (spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)) {
       oldVersionChecksum.fileSizeHistogram.map { h =>
         FileSizeHistogram(h.sortedBinBoundaries, h.fileCounts.clone(), h.totalBytes.clone())
@@ -454,6 +455,7 @@ trait RecordChecksum extends DeltaLogging {
         metadata = m
       case ci: CommitInfo =>
         inCommitTimestamp = ci.inCommitTimestamp
+        lastManifestCommit = ci.lastManifestCommit
       case _ =>
     }
 
@@ -549,7 +551,7 @@ trait RecordChecksum extends DeltaLogging {
       allFiles = allFiles,
       deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramOpt,
       fileSizeHistogram = fileSizeHistogram,
-      lastManifestCommit = None
+      lastManifestCommit = lastManifestCommit
     ))
   }
 

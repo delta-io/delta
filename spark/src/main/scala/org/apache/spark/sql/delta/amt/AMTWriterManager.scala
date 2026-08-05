@@ -109,6 +109,7 @@ class AMTWriterManager(
    * @param commitVersion       the version this attempt targets
    * @param currentTransactionInfo the in-flight transaction (its actions, protocol, metadata)
    * @param preCommitLogSegment the log segment prior to this commit
+   * @return the AMT write result; `None` if no AMT write is triggered or it's a non-AMT table.
    */
   def writeAMT(
       commitVersion: Long,
