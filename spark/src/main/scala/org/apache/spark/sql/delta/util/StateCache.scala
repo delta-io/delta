@@ -54,6 +54,15 @@ trait StateCache extends DeltaLogging {
     // reused by the session that created it to avoid session pollution. So we use `DatasetRefCache`
     // to re-create a new `Dataset` when the active session is changed. This is an optimization for
     // single-session scenarios to avoid the overhead of `Dataset` creation which can take 100ms.
+
+    // Extract everything `getDF`/`getDS` need at construction time so the `ds`
+    // constructor parameter is not promoted to a class field. Retaining `ds`
+    // would pin `ds.queryExecution.sparkSession` for the lifetime of the
+    // (shared, long-lived) Snapshot -- a retention chain parallel to the
+    // `DatasetRefCache.creator` closure.
+    private val dsEncoder = ds.encoder
+    private val dsLogical = ds.queryExecution.logical
+
     private val cachedDs = cached.synchronized {
       if (isCached) {
         val qe = ds.queryExecution
@@ -66,10 +75,16 @@ trait StateCache extends DeltaLogging {
           rdd.persist(storageLevel)
         }
         cached += rdd
-        val dsCache = datasetRefCache { () =>
-          val logicalRdd = LogicalRDD(qe.analyzed.output, rdd)(spark)
-          DataFrameUtils.ofRows(spark, logicalRdd)
-        }
+        // Capture only `outputAttrs` and `rdd`; resolve the session via
+        // `SparkSession.active` so the closure does not pin `qe`/`spark` (see
+        // DatasetRefCache.scala contract).
+        val outputAttrs = qe.analyzed.output
+        val dsCache =
+          datasetRefCache { () =>
+            val activeSpark = SparkSession.active
+            val logicalRdd = LogicalRDD(outputAttrs, rdd)(activeSpark)
+            DataFrameUtils.ofRows(activeSpark, logicalRdd)
+          }
         Some(dsCache)
       } else {
         None
@@ -94,14 +109,14 @@ trait StateCache extends DeltaLogging {
       if (cached.synchronized(isCached) && cachedDs.isDefined) {
         cachedDs.get.get
       } else {
-        DataFrameUtils.ofRows(spark, ds.queryExecution.logical)
+        DataFrameUtils.ofRows(spark, dsLogical)
       }
     }
 
     /**
      * Retrieves the cached RDD as a strongly-typed Dataset.
      */
-    def getDS: Dataset[A] = getDF.as(ds.encoder)
+    def getDS: Dataset[A] = getDF.as(dsEncoder)
   }
 
   /**

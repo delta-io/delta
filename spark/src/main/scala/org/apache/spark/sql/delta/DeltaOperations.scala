@@ -880,6 +880,22 @@ object DeltaOperations {
     override def canChangePartitionColumns: Boolean = false
   }
 
+  /**
+   * Recorded for manifest commits made just for AMT maintenance.
+   */
+  case class OptimizeCheckpoint(incremental: Boolean, triggerName: String)
+    extends Operation("OPTIMIZE CHECKPOINT") {
+    override val parameters: Map[String, Any] =
+      Map("incremental" -> incremental, "triggerName" -> triggerName)
+
+    // This operation only rewrites the manifest tree; it commits no new AddFile actions.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = false
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def canChangePartitionColumns: Boolean = false
+  }
+
   /** Recorded when cloning a Delta table into a new location. */
   val OP_CLONE = "CLONE"
   case class Clone(

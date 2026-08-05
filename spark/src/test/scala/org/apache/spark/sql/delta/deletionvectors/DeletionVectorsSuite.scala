@@ -41,7 +41,7 @@ import org.apache.spark.SparkException
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -1113,7 +1113,7 @@ class DeletionVectorsWithPredicatePushdownSuite extends DeletionVectorsSuite {
 
   private def assertPredicatesArePushedDown(df: DataFrame): Unit = {
     val scan = df.queryExecution.executedPlan.collectFirst {
-      case scan: FileSourceScanExec => scan
+      case scan: FileSourceScanLike => scan
     }
     assert(scan.map(_.dataFilters.nonEmpty).getOrElse(true))
   }

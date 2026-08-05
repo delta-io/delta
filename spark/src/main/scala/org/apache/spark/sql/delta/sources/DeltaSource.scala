@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
 import org.apache.spark.sql.util.ScalaExtensions._
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -153,7 +153,7 @@ trait DeltaSourceBase extends Source
       // Construct a snapshot descriptor with custom schema inline
       new SnapshotDescriptor {
         val deltaLog: DeltaLog = snapshotAtSourceInit.deltaLog
-        val dataPath: Path = snapshotAtSourceInit.dataPath
+        override val dataPath: Path = snapshotAtSourceInit.dataPath
         val logPath: Path = snapshotAtSourceInit.logPath
         val metadata: Metadata =
           snapshotAtSourceInit.metadata.copy(
@@ -298,13 +298,37 @@ trait DeltaSourceBase extends Source
         endOffset = Some(endOffset)
       )
       try {
+        // Versions before startVersion have already been processed, so we treat
+        // startVersion - 1 as already "seen".
+        var maxVersionSeen = startVersion - 1
+        // The last commit version we expect the iterator to cover.
+        // If endOffset.index < 0, we don't need to read any file from
+        // endOffset.reservoirVersion, so the last version we must see is one before it.
+        // Similarly if start >= end (no data to read from that version), subtract 1.
+        val lastExpectedVersion = if (endOffset.index >= 0 &&
+          (startVersion < endOffset.reservoirVersion || startIndex < endOffset.index)) {
+          endOffset.reservoirVersion
+        } else {
+          endOffset.reservoirVersion - 1
+        }
+        // iterator will be materialized during createDataFrame
         val filteredIndexedFiles = fileActionsIter.filter { indexedFile =>
+          maxVersionSeen = indexedFile.version
           indexedFile.getFileAction != null &&
             excludeRegex.forall(_.findFirstIn(indexedFile.getFileAction.path).isEmpty)
         }
 
         val (result, duration) = Utils.timeTakenMs {
           createDataFrame(filteredIndexedFiles)
+        }
+
+        if (spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION) &&
+            maxVersionSeen < lastExpectedVersion) {
+          recordTrailingCommitMissingEvent(
+            startVersion, startIndex, isInitialSnapshot, endOffset,
+            lastExpectedVersion, maxVersionSeen, isStreamingCDC = false)
+          throw DeltaErrors.streamingTrailingCommitMissing(
+            lastExpectedVersion, maxVersionSeen)
         }
         logInfo(log"Getting dataFrame for delta_log_path=" +
           log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
@@ -318,6 +342,32 @@ trait DeltaSourceBase extends Source
         fileActionsIter.close()
       }
     }
+  }
+
+  /** Records a Delta event when a trailing commit goes missing, for fleet visibility before we
+   * throw, mirroring [[DeltaFileProviderUtils.getCommitsInVersionRange]]'s contiguity check. */
+  protected def recordTrailingCommitMissingEvent(
+      startVersion: Long,
+      startIndex: Long,
+      isInitialSnapshot: Boolean,
+      endOffset: DeltaSourceOffset,
+      lastExpectedVersion: Long,
+      maxVersionSeen: Long,
+      isStreamingCDC: Boolean): Unit = {
+    recordDeltaEvent(
+      deltaLog,
+      opType = "delta.exceptions.streamingTrailingCommitMissing",
+      data = Map(
+        "stackTrace" -> Thread.currentThread().getStackTrace.tail.mkString("\n\t"),
+        "startVersion" -> startVersion,
+        "startIndex" -> startIndex,
+        "isInitialSnapshot" -> isInitialSnapshot,
+        "endOffsetReservoirVersion" -> endOffset.reservoirVersion,
+        "endOffsetIndex" -> endOffset.index,
+        "lastExpectedVersion" -> lastExpectedVersion,
+        "maxVersionSeen" -> maxVersionSeen,
+        "isStreamingCDC" -> isStreamingCDC
+      ))
   }
 
   /**
@@ -759,11 +809,12 @@ case class DeltaSource(
       //    in that case, we need to recompute the start snapshot and evolve the schema if needed
       require(options.failOnDataLoss || !trackingMetadataChange,
         "Using schema from schema tracking log cannot tolerate missing commit files.")
-      deltaLog.getChangeLogFiles(
+      deltaLog.getChangesIterator(
         startVersion, catalogTableOpt, options.failOnDataLoss).flatMapWithClose {
-        case (version, filestatus) =>
+        commit =>
+          val version = commit.version
           // First pass reads the whole commit and closes the iterator.
-          val iter = DeltaSource.createRewindableActionIterator(spark, deltaLog, filestatus)
+          val iter = DeltaSource.createRewindableActionIterator(spark, commit)
           val (shouldSkipCommit, metadataOpt, protocolOpt) = iter
             .processAndClose { actionsIter =>
               validateCommitAndDecideSkipping(
@@ -1470,35 +1521,13 @@ object DeltaSource extends DeltaLogging {
   }
 
   /**
-   * Read an [[ClosableIterator]] of Delta actions from file status, considering memory constraints
+   * Read an [[ClosableIterator]] of Delta actions from a commit, considering memory constraints.
    */
   def createRewindableActionIterator(
       spark: SparkSession,
-      deltaLog: DeltaLog,
-      fileStatus: FileStatus): ClosableIterator[Action] with SupportsRewinding[Action] = {
+      commit: SingleCommit): ClosableIterator[Action] with SupportsRewinding[Action] = {
     val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD)
-    lazy val actions =
-      deltaLog.store.read(fileStatus, deltaLog.newDeltaHadoopConf()).map(Action.fromJson)
-    // Return a new [[CloseableIterator]] over the commit. If the commit is smaller than the
-    // threshold, we will read it into memory once and iterate over that every time.
-    // Otherwise, we read it again every time.
-    val shouldLoadIntoMemory = fileStatus.getLen < threshold
-    def createClosableIterator(): ClosableIterator[Action] = if (shouldLoadIntoMemory) {
-      // Reuse in the memory actions
-      actions.toIterator.toClosable
-    } else {
-      deltaLog.store.readAsIterator(fileStatus, deltaLog.newDeltaHadoopConf())
-        .withClose {
-          _.map(Action.fromJson)
-        }
-    }
-    new ClosableIterator[Action] with SupportsRewinding[Action] {
-      var delegatedIterator: ClosableIterator[Action] = createClosableIterator()
-      override def hasNext: Boolean = delegatedIterator.hasNext
-      override def next(): Action = delegatedIterator.next()
-      override def close(): Unit = delegatedIterator.close()
-      override def rewind(): Unit = delegatedIterator = createClosableIterator()
-    }
+    commit.getActionsIterator(threshold)
   }
 
   /**
@@ -1519,7 +1548,7 @@ object DeltaSource extends DeltaLogging {
   /**
    * Build the latest offset based on the last indexedFile. The function also checks if latest
    * version is valid by comparing with previous version.
-   * Public for use by SparkMicroBatchStream.
+   * Public for use by DeltaV2MicroBatchStream.
    * @param tableId The table ID
    * @param fileVersion The version of the last indexed file.
    * @param fileIndex The index of the last indexed file.

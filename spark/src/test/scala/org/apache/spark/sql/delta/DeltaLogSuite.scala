@@ -251,7 +251,8 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
-            featuresToExclude = Seq(CatalogOwnedTableFeature)), Metadata(), add)
+            featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+            Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -281,7 +282,8 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
-            featuresToExclude = Seq(CatalogOwnedTableFeature)), Metadata(), add)
+            featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+            Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -772,7 +774,7 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  test("DeltaFileProviderUtils.getDeltaFilesInVersionRange") {
+  test("getCommitsInVersionRange returns the requested contiguous version range") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
@@ -780,25 +782,36 @@ class DeltaLogSuite extends QueryTest
       spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
       spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
       val log = DeltaLog.forTable(spark, new Path(path))
-      val result = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
+      val commits = DeltaFileProviderUtils.getCommitsInVersionRange(
         spark, log, startVersion = 1, endVersion = 3, catalogTableOpt = None)
-      assert(result.map(FileNames.getFileVersion) === Seq(1, 2, 3))
-      val filesAreUnbackfilledArray = result.map(FileNames.isUnbackfilledDeltaFile)
+      // The range read returns exactly the requested contiguous versions, in ascending order, and
+      // every commit in the range yields a non-empty action list.
+      assert(commits.map(_.version) === Seq(1, 2, 3))
+      assert(commits.forall(_.getActionsIterator().processAndClose(_.nonEmpty)))
+    }
+  }
 
-      val (fileV1, fileV2, fileV3) = (result(0), result(1), result(2))
-      assert(FileNames.getFileVersion(fileV1) === 1)
-      assert(FileNames.getFileVersion(fileV2) === 2)
-      assert(FileNames.getFileVersion(fileV3) === 3)
-
-      val backfillInterval =
-        catalogOwnedCoordinatorBackfillBatchSize.getOrElse(0L)
-      if (backfillInterval == 0 || backfillInterval == 1) {
-        assert(filesAreUnbackfilledArray === Seq(false, false, false))
-      } else if (backfillInterval == 2) {
-        assert(filesAreUnbackfilledArray === Seq(false, false, true))
-      } else {
-        assert(filesAreUnbackfilledArray === Seq(true, true, true))
-      }
+  test("parallelReadAndParseDeltaFilesAsIterator reads the same commits as" +
+      "getCommitsInVersionRange") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      val log = DeltaLog.forTable(spark, new Path(path))
+      val commits = DeltaFileProviderUtils.getCommitsInVersionRange(
+        spark, log, startVersion = 1, endVersion = 3, catalogTableOpt = None)
+      assert(commits.map(_.version) === Seq(1, 2, 3))
+      // Reading the commits serially and in parallel must yield identical actions per version, and
+      // parallelReadAndParseDeltaFilesAsIterator must preserve the input order.
+      val expected =
+        commits.map(c => c.version -> c.getActionsIterator().processAndClose(_.toList))
+      val parallelActions =
+        DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(spark, log, commits)
+          .map(_.processAndClose(_.toList))
+      val actual = commits.map(_.version).zip(parallelActions)
+      assert(actual === expected)
     }
   }
 
@@ -994,6 +1007,106 @@ class DeltaLogSuite extends QueryTest
         assert(gapEvents.isEmpty,
           s"expected no gap events when both switches are off, got: $gapEvents")
       }
+    }
+  }
+
+  private def createDeltaTableWithCommits(tableDir: File, numVersions: Int): DeltaLog = {
+    val log = DeltaLog.forTable(spark, tableDir.getCanonicalPath)
+    spark.sql(s"CREATE TABLE delta.`${tableDir.getCanonicalPath}` (id INT) USING delta")
+    (1 to numVersions).foreach { i =>
+      spark.sql(s"INSERT INTO delta.`${tableDir.getCanonicalPath}` VALUES ($i)")
+    }
+    log
+  }
+
+  test("getChangesIterator yields one SingleCommit per commit with the right version") {
+    withTempDir { tableDir =>
+      val log = createDeltaTableWithCommits(tableDir, numVersions = 3)
+      // CREATE is version 0, the three INSERTs are versions 1..3.
+      val commits = log.getChangesIterator(startVersion = 0).toList
+      assert(commits.map(_.version) === (0L to 3L).toList)
+
+      // The handle exposes the commit file's modification time (not the in-commit timestamp), so it
+      // matches what getChangeLogFiles reports for the same commit.
+      val fileModTimes =
+        log.getChangeLogFiles(startVersion = 0).map(_._2.getModificationTime).toList
+      assert(commits.map(_.fileModificationTimestamp) === fileModTimes)
+    }
+  }
+
+  test("getChangesIterator endVersion override bounds the range (both inclusive)") {
+    withTempDir { tableDir =>
+      val log = createDeltaTableWithCommits(tableDir, numVersions = 5)
+      val commits = log.getChangesIterator(
+        startVersion = 1, endVersion = 3, catalogTableOpt = None, failOnDataLoss = true).toList
+      assert(commits.map(_.version) === List(1L, 2L, 3L))
+    }
+  }
+
+  test("SingleCommit.getActionsIterator returns the commit's actions and matches getChanges") {
+    withTempDir { tableDir =>
+      val log = createDeltaTableWithCommits(tableDir, numVersions = 3)
+      val viaHandle = log.getChangesIterator(startVersion = 0).map { commit =>
+        (commit.version, commit.getActionsIterator().processAndClose(_.toList))
+      }.toList
+      val viaGetChanges = log.getChanges(startVersion = 0).map {
+        case (version, actions) => (version, actions.toList)
+      }.toList
+      assert(viaHandle === viaGetChanges)
+    }
+  }
+
+  test("SingleCommit.getActionsIterator is rewindable and replays the same actions") {
+    withTempDir { tableDir =>
+      val log = createDeltaTableWithCommits(tableDir, numVersions = 1)
+      // Version 1 is the single INSERT; open its actions and read twice via rewind().
+      val commit = log.getChangesIterator(startVersion = 1).next()
+      val iter = commit.getActionsIterator()
+      try {
+        val firstPass = iter.toList
+        assert(firstPass.nonEmpty)
+        iter.rewind()
+        val secondPass = iter.toList
+        assert(secondPass === firstPass)
+      } finally {
+        iter.close()
+      }
+    }
+  }
+
+  test("SingleCommit.getActionsIterator returns all actions of a multi-action commit") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath))
+      // Commit 0 creates the table and adds "old". Commit 1 packs several data actions -- three new
+      // AddFiles and a RemoveFile of "old" -- into one commit so the commit has more than one
+      // action.
+      log.startTransaction().commitManually(
+        Metadata(configuration = Map(DeltaConfigs.CHECKPOINT_INTERVAL.key -> "10")),
+        createTestAddFile(encodedPath = "old"))
+      val dataActions: Seq[Action] = Seq(
+        createTestAddFile(encodedPath = "a"),
+        createTestAddFile(encodedPath = "b"),
+        createTestAddFile(encodedPath = "c"),
+        RemoveFile("old", Some(System.currentTimeMillis()), dataChange = true))
+      log.startTransaction().commitManually(dataActions: _*)
+
+      // Read commit 1 (the multi-action one) back through the new API.
+      val commit = log.getChangesIterator(startVersion = 1).next()
+      assert(commit.version === 1L)
+      val actions = commit.getActionsIterator().processAndClose(_.toList)
+
+      // It contains more than one action, and every data action we committed is present (order and
+      // exact identity of synthesized CommitInfo/Protocol are not asserted -- commit() adds those).
+      assert(actions.size > 1, s"expected a multi-action commit, got: $actions")
+      val addedPaths = actions.collect { case a: AddFile => a.path }.toSet
+      assert(addedPaths === Set("a", "b", "c"), s"missing AddFiles, got: $addedPaths")
+      val removedPaths = actions.collect { case r: RemoveFile => r.path }.toSet
+      assert(removedPaths === Set("old"), s"missing RemoveFile, got: $removedPaths")
+
+      // The authoritative invariant: getActionsIterator returns exactly what getChanges returns for
+      // this same multi-action commit.
+      val viaGetChanges = log.getChanges(startVersion = 1).next()._2.toList
+      assert(actions === viaGetChanges)
     }
   }
 }

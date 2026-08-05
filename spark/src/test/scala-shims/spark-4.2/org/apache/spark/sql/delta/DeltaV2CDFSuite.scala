@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
@@ -157,17 +157,13 @@ class DeltaV2CDFSuite
     }
   }
 
-  // TODO: Re-enable when Spark 4.2 is out. 4.2.0-preview5 doesn't yet contain post-processing
-  // for CDC in Spark that labels update pre/post images.
-  ignore("UPDATE: preimage/postimage pair emitted") {
+  test("UPDATE: preimage/postimage pair emitted") {
     val tbl = "rt_cdf_update"
     withTable(tbl) {
       createRowTrackingTable(tbl)
       sql(s"UPDATE $tbl SET name = 'Robert' WHERE id = 2") // v4
       withStrictV2 {
-        val res = sql(
-          s"SELECT id, name, _change_type FROM table_changes('$tbl', 4, 4)")
-          .orderBy("id", "_change_type")
+        val res = sql(s"SELECT id, name, _change_type FROM table_changes('$tbl', 4, 4)")
         checkAnswer(
           res,
           Row(2L, "Bob", "update_preimage") ::
@@ -208,9 +204,7 @@ class DeltaV2CDFSuite
     }
   }
 
-  // TODO: Re-enable when Spark 4.2 is out. 4.2.0-preview5 doesn't yet contain post-processing
-  // for CDC in Spark that labels update pre/post images.
-  ignore("MERGE: insert/update/delete in one commit each surface with the right change_type") {
+  test("MERGE: insert/update/delete in one commit each surface with the right change_type") {
     val src = "rt_cdf_merge_src"
     val tgt = "rt_cdf_merge_tgt"
     withTable(src, tgt) {
@@ -225,9 +219,7 @@ class DeltaV2CDFSuite
            |WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)""".stripMargin) // v4
 
       withStrictV2 {
-        val res = sql(
-          s"SELECT id, name, _change_type FROM table_changes('$tgt', 4, 4)")
-          .orderBy("id", "_change_type")
+        val res = sql(s"SELECT id, name, _change_type FROM table_changes('$tgt', 4, 4)")
         checkAnswer(
           res,
           Row(2L, "Bob", "update_preimage") ::
@@ -238,10 +230,7 @@ class DeltaV2CDFSuite
     }
   }
 
-  // TODO: Re-enable when Spark 4.2 is out. 4.2.0-preview5 doesn't yet contain post-processing
-  // for CDC in Spark that drops carry-over rows / labels update pre/post images, both of which
-  // a multi-row base file rewritten by repeated DMLs relies on.
-  ignore("repeated DMLs touching the same base file diff to per-row changes") {
+  test("repeated DMLs touching the same base file diff to per-row changes") {
     val tbl = "rt_cdf_repeated_dml"
     withTable(tbl) {
       sql(
@@ -266,12 +255,7 @@ class DeltaV2CDFSuite
     }
   }
 
-  // TODO: Re-enable once the V2 read-time CDF path applies deletion vectors. Today
-  // DeltaChangelogBatch reads whole data files and ignores DVs, and DeltaChangelog always
-  // reports containsCarryoverRows=true, so a DV-based DELETE (which references the same file
-  // with a DV rather than rewriting it) cancels out as a carry-over and the deleted row is
-  // never surfaced. Labeling also depends on the post-processing missing from 4.2.0-preview5.
-  ignore("deletion vectors: a DV-based DELETE surfaces the deleted row") {
+  test("deletion vectors: a DV-based DELETE surfaces the deleted row") {
     val tbl = "rt_cdf_dv_delete"
     withTable(tbl) {
       sql(
@@ -290,9 +274,7 @@ class DeltaV2CDFSuite
     }
   }
 
-  // TODO: Re-enable when Spark 4.2 is out. 4.2.0-preview5 doesn't yet contain post-processing
-  // for CDC in Spark that labels update pre/post images.
-  ignore("V2 mode with delta.enableChangeDataFeed=true also routes through the V2 reader") {
+  test("V2 mode with delta.enableChangeDataFeed=true also routes through the V2 reader") {
     val tbl = "rt_cdf_v2_cdf_on"
     withTable(tbl) {
       sql(
@@ -305,7 +287,6 @@ class DeltaV2CDFSuite
       sql(s"UPDATE $tbl SET name = 'b' WHERE id = 2")    // v2
       withStrictV2 {
         val res = sql(s"SELECT id, name, _change_type FROM table_changes('$tbl', 2, 2)")
-          .orderBy("id", "_change_type")
         checkAnswer(
           res,
           Row(2L, "B", "update_preimage") ::
@@ -430,14 +411,8 @@ class DeltaV2CDFSuite
     withTable(tbl) {
       createRowTrackingTable(tbl)
       withStrictV2 {
-        // In V2 mode, the catalog returns DeltaV2Table from `loadTable(ident)`. The
-        // time-travel overload `loadTable(ident, version)` falls through to the parent
-        // `TableCatalog` default after `AbstractDeltaCatalog.loadTableWithTimeTravel` sees the
-        // non-DeltaTableV2 case, which throws Spark's `UNSUPPORTED_FEATURE.TIME_TRAVEL`. This
-        // also blocks `readChangeFeed` + `versionAsOf` -- the combination never reaches our
-        // V2 CDC rule.
         checkError(
-          intercept[AnalysisException] {
+          intercept[DeltaAnalysisException] {
             spark.read.format("delta")
               .option("readChangeFeed", "true")
               .option("startingVersion", "1")
@@ -446,8 +421,7 @@ class DeltaV2CDFSuite
               .table(tbl)
               .collect()
           },
-          "UNSUPPORTED_FEATURE.TIME_TRAVEL",
-          parameters = Map("relationId" -> s"`spark_catalog`.`default`.`$tbl`"))
+          "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS")
       }
     }
   }

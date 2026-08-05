@@ -34,7 +34,7 @@ import org.apache.parquet.hadoop.ParquetOutputFormat
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.execution.{FileSourceScanExec, SparkPlan}
+import org.apache.spark.sql.execution.{FileSourceScanLike, SparkPlan}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
@@ -926,7 +926,7 @@ class RowIdSuite extends QueryTest
   protected def checkScanMetrics(plan: SparkPlan, expectedNumOfRows: Long): Unit = {
     var numOutputRows = 0L
     plan.foreach {
-      case f: FileSourceScanExec =>
+      case f: FileSourceScanLike =>
         numOutputRows += f.metrics("numOutputRows").value
       case _ => // Not a scan node, do nothing.
     }

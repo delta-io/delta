@@ -111,6 +111,9 @@ public interface CommitCoordinatorClient {
    * The returned latestTableVersion is the maximum commit version ratified by the commit
    * coordinator. Note that returning latestTableVersion as -1 is acceptable only if the commit
    * coordinator never ratified any version, i.e. it never accepted any unbackfilled commit.
+   * UC/catalog-managed implementations may return 0 for a newly-created table with no
+   * unbackfilled commits, because catalog-managed snapshot loading requires a non-negative max
+   * catalog version.
    *
    * @param tableDescriptor The descriptor for the table.
    * @param startVersion    The minimum version of the commit that should be returned. Can be null.
