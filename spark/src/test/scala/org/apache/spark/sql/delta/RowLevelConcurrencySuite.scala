@@ -268,6 +268,90 @@ class RowLevelConcurrencySuite extends QueryTest
   }
 
   // ---------------------------------------------------------------------------
+  // MERGE (matched clauses only): a matched-DELETE writes an in-place deletion vector, exactly like
+  // a standalone DELETE, so disjoint matched-deletes reconcile through the same DV union. A
+  // matched-UPDATE additionally writes an *image* file (like a standalone UPDATE), so it
+  // conservatively conflicts. MERGE inserts / WHEN NOT MATCHED BY SOURCE are out of scope here
+  // (they need per-file row-tracking classification) and are not exercised.
+  // ---------------------------------------------------------------------------
+
+  /** `MERGE INTO t USING (single-row source) ... ON t.id = s.id` for the given matched action. */
+  private def mergeMatched(dir: File, matchId: Long, action: String): String =
+    s"""MERGE INTO ${tableRef(dir)} t USING (SELECT id FROM range($matchId, ${matchId + 1})) s
+       |ON t.id = s.id WHEN MATCHED THEN $action""".stripMargin
+
+  test("disjoint concurrent MERGE matched-deletes on the same file both commit by merging DVs") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      val txnA = sqlTxn(mergeMatched(dir, 10, "DELETE"), rowLevelConcurrency = true)
+      val txnB = sqlTxn(mergeMatched(dir, 20, "DELETE"), rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+
+      assert(ids(dir) === (0L to 99L).filterNot(id => id == 10 || id == 20))
+      // A matched-DELETE MERGE writes only a DV (no image file), so the two disjoint deletes merge
+      // into a single surviving file's deletion vector of cardinality 2 -- identical to DELETE.
+      assert(deletionVectorCardinalities(log) === Seq(2L))
+    }
+  }
+
+  test("MERGE matched-delete reconciles against a concurrent DELETE on the same file") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      // The DV union is op-agnostic: a MERGE matched-delete and a plain DELETE on disjoint rows
+      // reconcile just like two DELETEs.
+      val txnA = sqlTxn(mergeMatched(dir, 10, "DELETE"), rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+
+      assert(ids(dir) === (0L to 99L).filterNot(id => id == 10 || id == 20))
+      assert(deletionVectorCardinalities(log) === Seq(2L))
+    }
+  }
+
+  test("overlapping concurrent MERGE matched-deletes still conflict") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      val txnA = sqlTxn(mergeMatched(dir, 10, "DELETE"), rowLevelConcurrency = true)
+      val txnB = sqlTxn(mergeMatched(dir, 10, "DELETE"), rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      assertConcurrentModificationException(e)
+      // Clean abort: only the winner's matched-delete (id=10) is applied; its DV has cardinality 1.
+      assert(ids(dir) === (0L to 99L).filterNot(_ == 10))
+      assert(deletionVectorCardinalities(log) === Seq(1L))
+    }
+  }
+
+  test("DELETE (loser) vs MERGE matched-update (winner): winner image file conservatively " +
+      "conflicts") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      // A (loser) deletes id=10; B (winner) matched-updates id=20 -> 1020, which masks row 20 with a
+      // DV and appends an image file for 1020. Like the standalone-UPDATE case above, that image
+      // file is a non-blind changed-data add the append check cannot prove disjoint, so the loser
+      // conservatively aborts rather than reconciling.
+      val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
+      val txnB = sqlTxn(mergeMatched(dir, 20, "UPDATE SET id = 1020"), rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      assertConcurrentModificationException(e)
+      // Loser aborted cleanly: only the winner's update is applied (row 20 masked, 1020 appended).
+      assert(ids(dir) === ((0L to 99L).filterNot(_ == 20) :+ 1020L).sorted)
+      assert(deletionVectorCardinalities(log) === Seq(1L))
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Winner fully removes the file -> not reconcilable -> conflict
   // ---------------------------------------------------------------------------
 
