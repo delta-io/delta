@@ -461,6 +461,12 @@ def run_s3_log_store_integration_tests():
             "S3_LOG_STORE_TEST_ACCESS_KEY must be set with S3_LOG_STORE_TEST_ENDPOINT"
         assert os.environ.get("S3_LOG_STORE_TEST_SECRET_KEY"), \
             "S3_LOG_STORE_TEST_SECRET_KEY must be set with S3_LOG_STORE_TEST_ENDPOINT"
+    if os.environ.get("S3_LOG_STORE_TEST_FAULT_PROXY_UPSTREAM") is None:
+        print(
+            "S3_LOG_STORE_TEST_FAULT_PROXY_UPSTREAM is not set; "
+            "lost-response and injected-409 tests will be reported as canceled."
+        )
+
     try:
         cmd = ["build/sbt", "project storage",
                "testOnly io.delta.storage.integration.S3LogStoreIntegrationTest -- -n IntegrationTest"]
@@ -775,7 +781,8 @@ if __name__ == "__main__":
             "Run only S3LogStore tests. Requires S3_LOG_STORE_TEST_BUCKET and "
             "S3_LOG_STORE_TEST_RUN_UID. Custom endpoints also require "
             "S3_LOG_STORE_TEST_ENDPOINT, S3_LOG_STORE_TEST_ACCESS_KEY, and "
-            "S3_LOG_STORE_TEST_SECRET_KEY."
+            "S3_LOG_STORE_TEST_SECRET_KEY. S3_LOG_STORE_TEST_FAULT_PROXY_UPSTREAM enables "
+            "lost-response and injected-409 tests."
         ))
     parser.add_argument(
         "--flink-only",

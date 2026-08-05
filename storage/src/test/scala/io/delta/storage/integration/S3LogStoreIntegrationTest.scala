@@ -27,23 +27,33 @@ import scala.jdk.CollectionConverters._
 import io.delta.storage.S3LogStore
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.fs.s3a.S3AFileSystem
+import org.scalatest.BeforeAndAfterAll
 import org.scalatest.Tag
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
- * S3 integration tests for the conditional-write LogStore.
+ * Real-S3 tests for the conditional-write LogStore.
  *
  * <p>Run these tests with {@code python run-integration-tests.py --s3-log-store-only} after
  * setting {@code S3_LOG_STORE_TEST_BUCKET} and {@code S3_LOG_STORE_TEST_RUN_UID}. A custom
  * endpoint also requires {@code S3_LOG_STORE_TEST_ENDPOINT}, {@code
- * S3_LOG_STORE_TEST_ACCESS_KEY}, and {@code S3_LOG_STORE_TEST_SECRET_KEY}.</p>
+ * S3_LOG_STORE_TEST_ACCESS_KEY}, and {@code S3_LOG_STORE_TEST_SECRET_KEY}. Set {@code
+ * S3_LOG_STORE_TEST_FAULT_PROXY_UPSTREAM} to the upstream HTTP endpoint to exercise lost-response
+ * and injected-409 recovery through the local fault proxy.</p>
  */
-class S3LogStoreIntegrationTest extends AnyFunSuite {
+class S3LogStoreIntegrationTest extends AnyFunSuite with BeforeAndAfterAll {
   private val runIntegrationTests: Boolean =
     Option(System.getenv("S3_LOG_STORE_TEST_ENABLED")).exists(_.toBoolean)
   private val bucket = System.getenv("S3_LOG_STORE_TEST_BUCKET")
   private val testRunUID = System.getenv("S3_LOG_STORE_TEST_RUN_UID")
-  private val configuration = S3IntegrationTestUtils.configuration()
+  private val faultProxy = if (runIntegrationTests) {
+    Option(System.getenv("S3_LOG_STORE_TEST_FAULT_PROXY_UPSTREAM"))
+      .filter(_.nonEmpty)
+      .map(endpoint => new S3FaultProxy(new URI(endpoint)))
+  } else {
+    None
+  }
+  private val configuration = S3IntegrationTestUtils.configuration(faultProxy.map(_.endpoint))
   private lazy val fs: S3AFileSystem = {
     val fileSystem = new S3AFileSystem()
     fileSystem.initialize(new URI(s"s3a://$bucket"), configuration)
@@ -54,6 +64,16 @@ class S3LogStoreIntegrationTest extends AnyFunSuite {
 
   private def integrationTest(name: String)(testFun: => Any): Unit =
     if (runIntegrationTests) test(name, integrationTestTag)(testFun)
+
+  private def faultInjectionTest(name: String)(testFun: => Any): Unit =
+    if (runIntegrationTests) {
+      test(name, integrationTestTag) {
+        if (faultProxy.isEmpty) {
+          cancel("S3_LOG_STORE_TEST_FAULT_PROXY_UPSTREAM is required for this fault test.")
+        }
+        testFun
+      }
+    }
 
   private def path(testName: String): Path =
     new Path(s"s3a://$bucket/$testRunUID/$testName/_delta_log/00000000000000000001.json")
@@ -95,6 +115,57 @@ class S3LogStoreIntegrationTest extends AnyFunSuite {
     assertThrows[FileAlreadyExistsException] {
       logStore.write(commit, Iterator(action).asJava, false, configuration)
     }
+  }
+
+  faultInjectionTest("lost single PUT response is reconciled as a successful write") {
+    val commit = path("s3-log-store-lost-put-response")
+
+    logStore.write(commit, Iterator("one", "two").asJava, false, configuration)
+
+    assert(faultProxy.get.lostPutReconciliationHeadCount === 1)
+    assert(read(commit) === Seq("one", "two"))
+    assertWriteId(commit)
+    assert(faultProxy.get.droppedPutResponseCount === 1)
+  }
+
+  faultInjectionTest("lost multipart completion response is reconciled without a live upload") {
+    val commit = path("s3-log-store-lost-multipart-complete-response")
+    val action = "x" * (6 * 1024 * 1024)
+
+    logStore.write(commit, Iterator(action).asJava, false, configuration)
+
+    assert(faultProxy.get.lostMultipartCompleteReconciliationHeadCount === 1)
+    assert(read(commit) === Seq(action))
+    assertWriteId(commit)
+    assert(fs.listMultipartUploads(fs.pathToKey(commit)).isEmpty)
+    assert(faultProxy.get.droppedMultipartCompleteResponseCount === 1)
+  }
+
+  faultInjectionTest("409 with no destination replays the complete single PUT") {
+    val commit = path("s3-log-store-409-put-retry")
+
+    logStore.write(commit, Iterator("one", "two").asJava, false, configuration)
+
+    assert(faultProxy.get.injectedPutConflictCount === 1)
+    assert(faultProxy.get.putConflictReconciliationHeadCount === 1)
+    assert(faultProxy.get.putConflictRequestCount === 2)
+    assert(read(commit) === Seq("one", "two"))
+    assertWriteId(commit)
+  }
+
+  faultInjectionTest("409 during multipart completion replays every part with a new upload") {
+    val commit = path("s3-log-store-409-multipart-complete-retry")
+    val action = "x" * (6 * 1024 * 1024)
+
+    logStore.write(commit, Iterator(action).asJava, false, configuration)
+
+    assert(faultProxy.get.injectedMultipartCompleteConflictCount === 1)
+    assert(faultProxy.get.multipartConflictReconciliationHeadCount === 1)
+    assert(faultProxy.get.multipartConflictInitiateRequestCount === 2)
+    assert(faultProxy.get.multipartConflictCompleteRequestCount === 2)
+    assert(fs.listMultipartUploads(fs.pathToKey(commit)).isEmpty)
+    assert(read(commit) === Seq(action))
+    assertWriteId(commit)
   }
 
   integrationTest("concurrent LogStore instances create exactly one commit object") {
@@ -195,6 +266,14 @@ class S3LogStoreIntegrationTest extends AnyFunSuite {
         process.destroyForcibly()
         process.waitFor(5, TimeUnit.SECONDS)
       }
+    }
+  }
+
+  override protected def afterAll(): Unit = {
+    try {
+      faultProxy.foreach(_.close())
+    } finally {
+      super.afterAll()
     }
   }
 }
