@@ -363,6 +363,20 @@ trait AMTCheckpointTestBase
           s"reconstructed=${reconstructed.toSet}")
   }
 
+  /**
+   * Runs the test with inline writes forced (a low action-count threshold).
+   * AMT checkpoints will be emitted in every commit after the first full OPTIMIZE CHECKPOINT.
+   */
+  protected def testInline(testName: String)(body: => Unit): Unit = {
+    test(s"$testName (inline)") {
+      withSQLConf(
+        DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+          -> "1") {
+        body
+      }
+    }
+  }
+
   /** True iff `name` looks like an AMT leaf parquet file. */
   protected def isLeafFileName(name: String): Boolean =
     name.startsWith("leaf-") && name.endsWith(".parquet")
