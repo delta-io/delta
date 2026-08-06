@@ -151,7 +151,10 @@ object TypeWidening {
    * happen unless a non-compliant writer applied a type change that is not part of the feature
    * specification.
    */
-  def assertTableReadable(conf: SQLConf, protocol: Protocol, metadata: Metadata): Unit = {
+  def assertTableReadable(
+      conf: SQLConf,
+      protocol: AbstractProtocol,
+      metadata: AbstractMetadata): Unit = {
     if (conf.getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK) ||
       !isSupported(protocol) ||
       !TypeWideningMetadata.containsTypeWideningMetadata(metadata.schema)) {
