@@ -18,6 +18,7 @@ package io.delta.spark.internal.v2.read;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.util.VectorUtils;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -33,13 +34,69 @@ public final class DeltaScanFile {
   private final Optional<DeletionVectorDescriptor> deletionVector;
 
   DeltaScanFile(AddFile addFile) {
-    this.path = Objects.requireNonNull(addFile, "addFile is null").getPath();
-    this.partitionValues = addFile.getPartitionValues();
-    this.size = addFile.getSize();
-    this.modificationTime = addFile.getModificationTime();
-    this.baseRowId = addFile.getBaseRowId();
-    this.defaultRowCommitVersion = addFile.getDefaultRowCommitVersion();
-    this.deletionVector = addFile.getDeletionVector();
+    this(
+        Objects.requireNonNull(addFile, "addFile is null").getPath(),
+        addFile.getPartitionValues(),
+        addFile.getSize(),
+        addFile.getModificationTime(),
+        addFile.getBaseRowId(),
+        addFile.getDefaultRowCommitVersion(),
+        addFile.getDeletionVector());
+  }
+
+  private DeltaScanFile(
+      String path,
+      MapValue partitionValues,
+      long size,
+      long modificationTime,
+      Optional<Long> baseRowId,
+      Optional<Long> defaultRowCommitVersion,
+      Optional<DeletionVectorDescriptor> deletionVector) {
+    this.path = path;
+    this.partitionValues = partitionValues;
+    this.size = size;
+    this.modificationTime = modificationTime;
+    this.baseRowId = baseRowId;
+    this.defaultRowCommitVersion = defaultRowCommitVersion;
+    this.deletionVector = deletionVector;
+  }
+
+  /**
+   * Builds a descriptor from a V1 AddFile selected by V1 data skipping rather than Kernel's {@code
+   * getScanFiles}. The V1 fields are converted to the Kernel-typed representation this descriptor
+   * exposes, so its public getters stay stable for the row-level ReplaceData write path.
+   */
+  static DeltaScanFile fromV1AddFile(org.apache.spark.sql.delta.actions.AddFile v1AddFile) {
+    Objects.requireNonNull(v1AddFile, "v1AddFile is null");
+    MapValue partitionValues =
+        VectorUtils.stringStringMapValue(
+            scala.jdk.javaapi.CollectionConverters.asJava(v1AddFile.partitionValues()));
+    Optional<DeletionVectorDescriptor> dv =
+        Optional.ofNullable(v1AddFile.deletionVector())
+            .map(
+                v1Dv ->
+                    new DeletionVectorDescriptor(
+                        v1Dv.storageType(),
+                        v1Dv.pathOrInlineDv(),
+                        toJavaInt(v1Dv.offset()),
+                        v1Dv.sizeInBytes(),
+                        v1Dv.cardinality()));
+    return new DeltaScanFile(
+        v1AddFile.path(),
+        partitionValues,
+        v1AddFile.size(),
+        v1AddFile.modificationTime(),
+        toJavaLong(v1AddFile.baseRowId()),
+        toJavaLong(v1AddFile.defaultRowCommitVersion()),
+        dv);
+  }
+
+  private static Optional<Long> toJavaLong(scala.Option<Object> opt) {
+    return opt.isDefined() ? Optional.of(((Number) opt.get()).longValue()) : Optional.empty();
+  }
+
+  private static Optional<Integer> toJavaInt(scala.Option<Object> opt) {
+    return opt.isDefined() ? Optional.of(((Number) opt.get()).intValue()) : Optional.empty();
   }
 
   public String getPath() {

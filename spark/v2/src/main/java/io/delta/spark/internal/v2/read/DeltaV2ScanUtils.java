@@ -16,9 +16,11 @@
 package io.delta.spark.internal.v2.read;
 
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.util.Optional;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
@@ -41,6 +43,8 @@ public final class DeltaV2ScanUtils {
   public static ScanBuilder newScanBuilder(
       String tableName,
       Snapshot initialSnapshot,
+      Engine kernelEngine,
+      Optional<CatalogTable> catalogTable,
       DeltaSnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
@@ -50,6 +54,8 @@ public final class DeltaV2ScanUtils {
     return DeltaV2ScanBuilder.create(
         tableName,
         initialSnapshot,
+        kernelEngine,
+        catalogTable,
         snapshotManager,
         dataSchema,
         partitionSchema,
