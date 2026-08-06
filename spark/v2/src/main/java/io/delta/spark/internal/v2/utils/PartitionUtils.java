@@ -352,6 +352,79 @@ public class PartitionUtils {
   }
 
   /**
+   * Build a PartitionedFile from a V1 AddFile produced by {@code DeltaV2Snapshot.filesForScan}. The
+   * V1 file selection reuses the same file records the Kernel path stores (see {@code
+   * KernelSnapshotUtils.toV1AddFile}), so this mirrors the Kernel {@link #buildPartitionedFile}
+   * overload field-for-field: same path resolution, same DV / row-tracking metadata keys, same
+   * partition-row construction. Unlike the Kernel overload it does not assert the partition-value
+   * count, because V1 AddFile may omit unset partition keys.
+   */
+  public static PartitionedFile buildPartitionedFile(
+      org.apache.spark.sql.delta.actions.AddFile v1AddFile,
+      StructType partitionSchema,
+      String tablePath,
+      ZoneId zoneId) {
+    final org.apache.spark.sql.delta.actions.DeletionVectorDescriptor dv =
+        v1AddFile.deletionVector();
+    final scala.collection.immutable.Map<String, Object> dvMetadata =
+        dv == null
+            ? emptyScalaMap()
+            : buildDvMetadata(dv.serializeToBase64(), RowIndexFilterType.IF_CONTAINED);
+    final scala.collection.immutable.Map<String, Object> metadata =
+        mergeIntoScalaMap(
+            dvMetadata,
+            buildRowTrackingMetadata(
+                toJavaLong(v1AddFile.baseRowId()),
+                toJavaLong(v1AddFile.defaultRowCommitVersion())));
+    return makePartitionedFile(
+        new Path(tablePath, v1AddFile.path()).toString(),
+        v1AddFile.size(),
+        v1AddFile.modificationTime(),
+        getPartitionRow(v1AddFile.partitionValues(), partitionSchema, zoneId),
+        metadata);
+  }
+
+  /** Converts a Scala {@code Option[Long]} to a Java {@code Optional<Long>}. */
+  private static Optional<Long> toJavaLong(scala.Option<Object> opt) {
+    return opt.isDefined() ? Optional.of((Long) opt.get()) : Optional.empty();
+  }
+
+  /** Returns an empty typed Scala map, matching the shape the metadata builders return. */
+  @SuppressWarnings("unchecked")
+  private static scala.collection.immutable.Map<String, Object> emptyScalaMap() {
+    return (scala.collection.immutable.Map<String, Object>)
+        (scala.collection.immutable.Map<?, ?>) scala.collection.immutable.Map$.MODULE$.empty();
+  }
+
+  /**
+   * Builds the partition {@link InternalRow} from a V1 AddFile's partition-value map. Mirrors the
+   * {@link MapValue} overload (physical-name keying, timezone-aware casting) but reads a Scala
+   * {@code Map[String, String]} and tolerates missing keys (leaving those columns null) rather than
+   * asserting the value count, because V1 AddFile may omit unset partition keys.
+   */
+  public static InternalRow getPartitionRow(
+      scala.collection.immutable.Map<String, String> partitionValues,
+      StructType partitionSchema,
+      ZoneId zoneId) {
+    final int numPartCols = partitionSchema.fields().length;
+    final Object[] values = new Object[numPartCols];
+    final Map<String, String> javaPartitionValues = CollectionConverters.asJava(partitionValues);
+    for (int i = 0; i < numPartCols; i++) {
+      final StructField field = partitionSchema.fields()[i];
+      final String physicalName = DeltaColumnMapping.getPhysicalName(field);
+      final String strVal = javaPartitionValues.get(physicalName);
+      if (strVal == null) {
+        values[i] = null;
+      } else if (field.dataType() instanceof StringType) {
+        values[i] = UTF8String.fromString(strVal);
+      } else {
+        values[i] = PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
+      }
+    }
+    return new GenericInternalRow(values);
+  }
+
+  /**
    * Build a PartitionedFile from a CDCDataFile with CDC constants in
    * otherConstantMetadataColumnValues for the {@link CDCReadFunction} to null-coalesce.
    *
