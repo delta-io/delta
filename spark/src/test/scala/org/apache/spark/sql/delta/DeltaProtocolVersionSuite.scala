@@ -194,6 +194,48 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("reject unsupported protocol version numbers via ALTER TABLE TBLPROPERTIES") {
+    withTempDir { path =>
+      val log = createTableWithProtocol(Protocol(1, 1), path)
+      val tablePath = path.getCanonicalPath
+
+      // A completely invalid writer version should be rejected
+      val e1 = intercept[DeltaIllegalArgumentException] {
+        sql(s"ALTER TABLE delta.`$tablePath` " +
+          "SET TBLPROPERTIES ('delta.minWriterVersion' = '101')")
+      }
+      assert(e1.getMessage.contains("101"),
+        "Error should mention the invalid version number")
+      assert(log.update().protocol === Protocol(1, 1))
+
+      // A completely invalid reader version should also be rejected
+      val e2 = intercept[DeltaIllegalArgumentException] {
+        sql(s"ALTER TABLE delta.`$tablePath` " +
+          "SET TBLPROPERTIES ('delta.minReaderVersion' = '999')")
+      }
+      assert(e2.getMessage.contains("999"),
+        "Error should mention the invalid version number")
+      assert(log.update().protocol === Protocol(1, 1))
+
+      // Valid upgrade should still work
+      sql(s"ALTER TABLE delta.`$tablePath` " +
+        "SET TBLPROPERTIES ('delta.minWriterVersion' = '2')")
+      assert(log.update().protocol.minWriterVersion === 2)
+    }
+  }
+
+  test("reject unsupported protocol version numbers via upgradeTableProtocol API") {
+    withTempDir { path =>
+      createTableWithProtocol(Protocol(1, 1), path)
+      val table = io.delta.tables.DeltaTable.forPath(spark, path.getCanonicalPath)
+
+      val e = intercept[DeltaIllegalArgumentException] {
+        table.upgradeTableProtocol(1, 101)
+      }
+      assert(e.getMessage.contains("101"))
+    }
+  }
+
   test("upgrade to support table features - no feature") {
     // Setting a table feature versions to a protocol without table features is a noop.
     withTempDir { path =>
