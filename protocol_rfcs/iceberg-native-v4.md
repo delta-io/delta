@@ -90,7 +90,6 @@ applies as though restated here, with modifications:
 - The requirement that IcebergCompatV1 and IcebergCompatV2 be inactive is broadened to include IcebergCompatV3, as stated above.
 
 The type allow-list carries over as written, since Iceberg V4 supports every type Iceberg V3 does.
-Types that Iceberg V4 adds are not permitted until a future revision of this feature adds them.
 
 All other IcebergCompatV3 requirements apply unchanged: Column Mapping in `name` or `id` mode, Row
 Tracking with the reserved materialized column field IDs, nested field identifiers for `ArrayType`
@@ -105,11 +104,7 @@ When this feature is supported and enabled, writers must additionally:
 - Keep the tree complete as of `checkpointMetadata.version`. `adaptiveMetadata` allows `contentRoot.version` to lag and covers the gap with inline file actions; with no file actions in the log there is nothing to cover a gap with, so every version in the gap must have changed no files. A commit that adds or removes files must therefore set `contentRoot.version` equal to `checkpointMetadata.version`.
 - Continue to write non-file actions (`metaData`, `protocol`, `txn`, `domainMetadata`, `commitInfo`) to the Delta log, as `adaptiveMetadata` already requires. The tree does not store them.
 - Reject inline deletion vectors (storage type `i`) on every commit. `adaptiveMetadata` already forbids them; it is restated here as a write-side check.
-- Continue to compute `backReference`s for removes and re-adds and use them to build Manifest Deletion Vectors, per [Backreferences](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md#backreferences). They are still needed at commit time to locate leaf-manifest entries without scanning the leaves, but are never serialized.
 
-A commit that changes no files (for example a table property or schema change) need not write a new
-root manifest. Such a commit may carry the existing `contentRoot` forward, leaving
-`contentRoot.version` behind `checkpointMetadata.version`.
 
 ### Enablement
 
@@ -130,15 +125,6 @@ This feature constrains only versions committed while it is active. Earlier comm
 pre-enablement version, or a change-data-feed read spanning one, may still consume file actions from
 the log. The native Iceberg read path applies from the enablement version onward.
 
-### Concurrency
-
-Per the `adaptiveMetadata`
-[conflict resolution rules](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md#conflict-resolution),
-the loser of a manifest/manifest conflict fails entirely and retries against the winner's new tree.
-Because every file-changing commit here is a manifest commit, two concurrent writers that both touch
-files can never both succeed by rebasing their file actions; the loser always rebuilds. Tables with
-high write concurrency will see more retries than the same workload on `adaptiveMetadata` alone.
-Batching changes into fewer, larger commits reduces contention.
 
 ## Feature Removal
 
