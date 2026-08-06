@@ -742,7 +742,7 @@ class Snapshot(
       checksumOpt.flatMap(_.fileSizeHistogram)
         .orElse(Option.when(_computedStateTriggered)(fileSizeHistogram).flatten)
     }.flatten,
-    lastManifestCommit = None
+    lastManifestCommit = lastManifestCommitOpt
   )
 
   /** Returns the data schema of the table, used for reading stats */

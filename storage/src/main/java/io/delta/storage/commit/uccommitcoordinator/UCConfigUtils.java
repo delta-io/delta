@@ -32,6 +32,7 @@ public final class UCConfigUtils {
   public static final String AUTH_PREFIX = "auth.";
   public static final String APP_VERSIONS_PREFIX = "appVersions.";
   public static final String DELTA_REST_API_ENABLED_KEY = "deltaRestApi.enabled";
+  public static final String CREDENTIAL_VENDING_ENABLED_KEY = "credentialVending.enabled";
   public static final String RENEW_CREDENTIAL_ENABLED_KEY = "renewCredential.enabled";
   public static final String CRED_SCOPED_FS_ENABLED_KEY = "credScopedFs.enabled";
 
@@ -119,6 +120,14 @@ public final class UCConfigUtils {
    */
   public static boolean isDeltaRestApiEnabled(Map<String, String> ucConfig) {
     return parseBoolean(ucConfig, DELTA_REST_API_ENABLED_KEY, true);
+  }
+
+  /**
+   * Returns whether table operations should vend temporary storage credentials. Defaults to {@code
+   * true} when the key is absent.
+   */
+  public static boolean isCredentialVendingEnabled(Map<String, String> ucConfig) {
+    return parseBoolean(ucConfig, CREDENTIAL_VENDING_ENABLED_KEY, true);
   }
 
   /**

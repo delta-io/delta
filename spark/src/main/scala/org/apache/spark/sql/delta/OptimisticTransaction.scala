@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTWriteMetrics, AMTWriterManager}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUtils, AMTWriteMetrics, AMTWriteResult, AMTWriterManager}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -57,6 +57,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
 import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, TransactionHelper}
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
@@ -134,6 +135,7 @@ case class CommitStats(
   fileSizeHistogram: Option[FileSizeHistogram] = None,
   addFilesHistogram: Option[FileSizeHistogram] = None,
   removeFilesHistogram: Option[FileSizeHistogram] = None,
+  isIdempotentRetry: Boolean = false,
   numOfDomainMetadatas: Long = 0,
   txnId: Option[String] = None,
   /** Metrics for the inline AMT (Adaptive Metadata Tree) write, if this commit emitted one. */
@@ -1907,7 +1909,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
         operationMetrics = getOperationMetrics(op),
         userMetadata = getUserMetadata(op),
         tags = if (allTags.nonEmpty) Some(allTags) else None,
-        txnId = Some(txnId))
+        txnId = Some(txnId),
+        // We initialize lastManifestCommit by carrying forward the previous one. If this commit
+        // writes a new AMT checkpoint, the commitInfo will be updated afterwards.
+        lastManifestCommit = snapshot.lastManifestCommitOpt)
 
       val firstAttemptVersion = getFirstAttemptVersion
       val metadataUpdatedWithCoordinatedCommitsInfo = updateMetadataWithCoordinatedCommitsConfs()
@@ -2126,7 +2131,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
         Some(metrics),
         userMetadata = getUserMetadata(op),
         tags = if (tags.nonEmpty) Some(tags) else None,
-        txnId = Some(txnId))
+        txnId = Some(txnId),
+        // `commitLarge` never emits an inline AMT checkpoint, so it only carries the read
+        // snapshot's lastManifestCommitOpt forward.
+        lastManifestCommit = snapshot.lastManifestCommitOpt)
 
       val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
       updateMetadataWithCoordinatedCommitsConfs()
@@ -2442,7 +2450,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
     val currentSnapshot = deltaLog.updateAfterCommit(
       attemptVersion,
-      commit,
+      Some(commit),
       newChecksumOpt = None,
       preCommitLogSegment = preCommitLogSegment,
       catalogTable)
@@ -2667,7 +2675,32 @@ trait OptimisticTransactionImpl extends TransactionHelper
       checkColumnDefaults(op)
     }
 
+    verifyAmtBackReferences(finalActions)
     finalActions
+  }
+
+  /**
+   * Test-only invariant check for AMT back references, run on every commit to an AMT-backed table.
+   */
+  private def verifyAmtBackReferences(finalActions: Seq[Action]): Unit = {
+    if (!DeltaUtils.isTesting) return
+    snapshot.checkpointProvider match {
+      case amt: AMTCheckpointProvider =>
+        amt.verifyCommitBackReferences(spark, deltaLog, finalActions)
+      case _ =>
+        // Not an AMT-backed table: no file action may carry a back reference.
+        finalActions.foreach {
+          case a: AddFile if a.backReference.isDefined =>
+            throw new IllegalStateException(
+              s"AddFile '${a.path}' carries a back reference ${a.backReference} on a " +
+              "non-AMT table, which must not happen.")
+          case r: RemoveFile if r.backReference.isDefined =>
+            throw new IllegalStateException(
+              s"RemoveFile '${r.path}' carries a back reference ${r.backReference} on a " +
+              "non-AMT table, which must not happen.")
+          case _ => // File action without a back reference, or a non-file action: nothing to check.
+        }
+    }
   }
 
   // Returns the isolation level to use for committing the transaction
@@ -2758,6 +2791,39 @@ trait OptimisticTransactionImpl extends TransactionHelper
             // that we want to commit.
             val (newCommitVersion, newCurrentTransactionInfo) = checkForConflicts(
               commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
+            // Check if we may have already committed this version but retried due to
+            // a transient error. If that's the case, just return success.
+            newCurrentTransactionInfo.idempotentCommitAlreadyLandedAt match {
+              case Some(committedVersion) =>
+                // The idempotent self-commit is expected to land at exactly the version we were
+                // attempting. If it landed at a different version, surface it.
+                if (committedVersion != commitVersion) {
+                  throw new IllegalStateException(
+                    s"Idempotent self-commit landed at version $committedVersion but the " +
+                      s"transaction was attempting version $commitVersion.")
+                }
+                // newCurrentTransactionInfo carries the actions read back from the commit file
+                // that actually landed (adopted in resolveConflicts on the idempotent path), so
+                // post-commit stats and the resulting CommittedTransaction reflect exactly what
+                // was committed rather than the pre-doCommit action set
+                val actions = newCurrentTransactionInfo.finalActionsToCommit
+                val jsonActions = actions.map(_.json)
+                val (postCommitSnapshot, txnInfo) = performPostCommitActions(
+                  committedVersion,
+                  actions,
+                  jsonActions,
+                  newCurrentTransactionInfo,
+                  isolationLevel,
+                  fsWriteStartNanoOpt = None,
+                  amtWriterManager = amtWriterManager,
+                  newChecksumOpt = None,
+                  amtWriteResultOpt = None,
+                  commitOpt = None,
+                  isIdempotentRetry = true
+                )
+                return (committedVersion, postCommitSnapshot, txnInfo)
+              case None => // fall through to the normal retry commit below
+            }
             commitVersion = newCommitVersion
             updatedCurrentTransactionInfo = newCurrentTransactionInfo
             doCommit(
@@ -2823,7 +2889,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // If the table requires atomic Iceberg metadata generation
     // , generate iceberg metadata and update the transaction info.
     var icebergMetadataGenerationDurationMsOpt: Option[Long] = None
-    val updatedCurrentTransactionInfo =
+    var updatedCurrentTransactionInfo =
       targetCatalogTable
       .map { table =>
         val startNanos = System.nanoTime()
@@ -2851,7 +2917,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
       case Some(result) if !result.includeActionsInCommitJson =>
         throw new UnsupportedOperationException(
           "Omitting file actions from the commit JSON is not yet supported.")
-      case Some(result) => baseActions :+ result.checkpoint
+      case Some(result) =>
+        // When we have become a manifest commit, update the reference in the current commitInfo so
+        // the persisted commit (and its derived CRC) records where the AMT checkpoint lives.
+        updatedCurrentTransactionInfo = AMTUtils.updateCurrentTransactionInfo(
+          updatedCurrentTransactionInfo,
+          newLastManifestCommit = LastManifestCommit(
+            version = attemptVersion,
+            contentRootVersion = result.contentRootVersion)
+        )
+        // Recompute the actions from the patched txn info so the committed CommitInfo carries the
+        // reference, then append the inline checkpoint action.
+        updatedCurrentTransactionInfo.finalActionsToCommit :+ result.checkpoint
       case None => baseActions
     }
     logInfo(
@@ -2878,6 +2955,33 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val (newChecksumOpt, commit, committedTransactionInfo) =
       writeCommitFile(attemptVersion, jsonActions.toIterator, updatedCurrentTransactionInfo)
 
+    performPostCommitActions(
+      attemptVersion,
+      actions,
+      jsonActions,
+      committedTransactionInfo,
+      isolationLevel,
+      Some(fsWriteStartNano),
+      amtWriterManager,
+      newChecksumOpt,
+      amtWriteResultOpt,
+      commitOpt = Some(commit)
+    )
+  }
+
+  // scalastyle:off argcount
+  private def performPostCommitActions(
+      attemptVersion: Long,
+      actions: Seq[Action],
+      jsonActions: Seq[String],
+      committedTransactionInfo: CurrentTransactionInfo,
+      isolationLevel: IsolationLevel,
+      fsWriteStartNanoOpt: Option[Long],
+      amtWriterManager: AMTWriterManager,
+      newChecksumOpt: Option[VersionChecksum],
+      amtWriteResultOpt: Option[AMTWriteResult],
+      commitOpt: Option[Commit],
+      isIdempotentRetry: Boolean = false): (Snapshot, CurrentTransactionInfo) = {
     spark.sessionState.conf.setConf(
       DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
       Some(attemptVersion))
@@ -2888,11 +2992,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val catalogTableForPostCommitSnapshot = catalogTable
     val postCommitSnapshot = deltaLog.updateAfterCommit(
       attemptVersion,
-      commit,
+      commitOpt,
       newChecksumOpt,
       preCommitLogSegment,
       catalogTableForPostCommitSnapshot,
-      amtCheckpointOpt = amtWriteResultOpt.map(_.checkpoint))
+      amtCheckpointOpt = amtWriteResultOpt.map(_.checkpoint),
+      isIdempotentRetry = isIdempotentRetry)
     val postCommitReconstructionTime = System.nanoTime()
     maintenanceOperation = if (
         !postCommitSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
@@ -2907,7 +3012,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // The AMT was written inline with this commit (always incremental). A full rewrite is never
       // inlined, so schedule a follow-up full OPTIMIZE CHECKPOINT commit when the full-rewrite
       // cadence is due -- otherwise a table whose commits consistently inline would never get a
-      // full tree.
+      // full tree. When the inline write itself lands on the full-rewrite cadence, the tree is
+      // materialized twice (incrementally inline at this version, then fully at the follow-up
+      // version). We deliberately do not suppress the inline write in that case: the inline write
+      // exists to pack a large writer's file actions into the manifest tree instead of
+      // the commit JSON, and skipping it would push those actions back inline and bloat the commit
+      // JSON -- exactly what the inline path avoids. The rare double materialization is the
+      // accepted cost of never writing a very large commit JSON.
       amtWriterManager.planMaintenanceAfterInlineWrite(attemptVersion, postCommitSnapshot)
     }
     val commitStatsComputer = new CommitStatsComputer()
@@ -2921,7 +3032,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       attemptVersion,
       startVersion = snapshot.version,
       commitDurationMs = NANOSECONDS.toMillis(commitEndNano - commitStartNano),
-      fsWriteDurationMs = NANOSECONDS.toMillis(commitEndNano - fsWriteStartNano),
+      fsWriteDurationMs = fsWriteStartNanoOpt.map { fsWriteStartNano =>
+        NANOSECONDS.toMillis(commitEndNano - fsWriteStartNano)}.getOrElse(-1),
       txnExecutionTimeMs = NANOSECONDS.toMillis(commitEndNano - txnStartNano),
       stateReconstructionDurationMs =
         NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
@@ -2931,14 +3043,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // We don't use postCommitSnapshot.fileSizeHistogram here
       // because it can trigger full state reconstruction.
       fileSizeHistogramOpt = postCommitSnapshot.checksumOpt.flatMap(_.fileSizeHistogram),
-      commitInfoOpt = currentTransactionInfo.commitInfo,
+      commitInfoOpt = committedTransactionInfo.commitInfo,
       commitSizeBytes = commitSizeBytes,
       amtWriteMetricsOpt = Option.when(amtWriterManager.metrics.attempts.nonEmpty)(
-        amtWriterManager.metrics)
+        amtWriterManager.metrics),
+      isIdempotentRetry = isIdempotentRetry
     )
 
     (postCommitSnapshot, committedTransactionInfo)
   }
+  // scalastyle:on argcount
 
   class FileSystemBasedCommitCoordinatorClient(val deltaLog: DeltaLog)
     extends CommitCoordinatorClient {
@@ -3213,7 +3327,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
           winningCommitSummary,
           commitIsolationLevel)
 
-        updatedCurrentTransactionInfo = conflictChecker.checkConflictsAndValidateActions()
+        updatedCurrentTransactionInfo = resolveAgainstWinningCommit(
+            winningCommitSummary, firstWinningVersion, updatedCurrentTransactionInfo).getOrElse {
+          conflictChecker.checkConflictsAndValidateActions()
+        }
 
         logInfo(logPrefix +
           log"No conflicts in version ${MDC(DeltaLogKeys.VERSION, otherCommitVersion)}, " +
@@ -3221,6 +3338,53 @@ trait OptimisticTransactionImpl extends TransactionHelper
             clock.getTimeMillis() - commitAttemptStartTimeMillis)} ms since start")
       }
     updatedCurrentTransactionInfo
+  }
+
+  /**
+   * Resolve conflicts against a single winning commit. If a winning commit turns out
+   * to be this txn's own already-landed commit (a lost-response retry, only possible at
+   * firstWinningVersion), we record the landed version instead in the
+   * updatedCurrentTransactionInfo.
+   */
+  protected def resolveAgainstWinningCommit(
+      summary: WinningCommitSummary,
+      firstWinningVersion: Long,
+      currentTransactionInfo: CurrentTransactionInfo): Option[CurrentTransactionInfo] =
+    detectIdempotentSelfCommit(summary, firstWinningVersion).map { version =>
+      // If this is an idempotent retry, reuse the winning commit file's actions
+      // in the current transaction info because these are the ones that were already
+      // committed by this attempt.
+      currentTransactionInfo.copy(
+        commitInfo = summary.commitInfo,
+        actions = summary.actions.filterNot(_.isInstanceOf[CommitInfo]),
+        idempotentCommitAlreadyLandedAt = Some(version))
+    }
+
+  /**
+   * Detects whether the winning transaction is this transaction's own commit
+   * by comparing the transaction IDs of the winning and losing transactions.
+   * The only version for which this can happen is the first conflicting version.
+   */
+  protected def detectIdempotentSelfCommit(
+      winningCommitSummary: WinningCommitSummary,
+      firstWinningVersion: Long): Option[Long] = {
+    if (winningCommitSummary.commitVersion == firstWinningVersion &&
+      spark.conf.get(DeltaSQLConf.DELTA_COMMIT_IDEMPOTENCY_CHECK_ENABLED) &&
+      winningCommitSummary.commitInfo.flatMap(_.txnId).contains(txnId)) {
+      recordDeltaEvent(
+        deltaLog,
+        "delta.commit.idempotentSelfCommitDetected",
+        data = Map(
+          "txnId" -> txnId,
+          "attemptedVersion" -> winningCommitSummary.commitVersion,
+          "winningCommitTimestamp" -> winningCommitSummary.commitFileTimestamp))
+      logInfo(log"Detected idempotent self-commit at version " +
+        log"${MDC(DeltaLogKeys.VERSION, winningCommitSummary.commitVersion)}; " +
+        log"treating as already committed.")
+      Some(winningCommitSummary.commitVersion)
+    } else {
+      None
+    }
   }
 
   /** Returns the version that the first attempt will try to commit at. */

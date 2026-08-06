@@ -19,6 +19,7 @@ package io.delta.storage.commit.uccommitcoordinator
 import java.net.{InetSocketAddress, URI}
 import java.nio.charset.StandardCharsets
 import java.util.{Collections, Optional, Set => JSet, UUID}
+import java.util.concurrent.atomic.AtomicInteger
 
 import scala.jdk.CollectionConverters._
 
@@ -228,6 +229,50 @@ class UCDeltaTokenBasedRestClientSuite
       assert(parsed.get("fields").get(0).get("name").asText() === "date")
       assert(parsed.get("fields").get(1).get("type").asText() === "integer")
     }
+  }
+
+  test("credentialVending.enabled controls table and staging credential requests") {
+    val credentialRequests = new AtomicInteger()
+    deltaHandler = (exchange, _) => {
+      val path = exchange.getRequestURI.getPath
+      if (path.endsWith("/credentials")) {
+        credentialRequests.incrementAndGet()
+        val prefix =
+          if (path.contains("/staging-tables/")) "s3://bucket/staging"
+          else "s3://bucket/table"
+        sendJson(
+          exchange,
+          HttpStatus.SC_OK,
+          s"""{"storage-credentials":[{"prefix":"$prefix","operation":"READ_WRITE",""" +
+            """"expiration-time-ms":4102444800000,"config":{"s3.access-key-id":"ak",""" +
+            """"s3.secret-access-key":"sk","s3.session-token":"st"}}]}""")
+      } else if (path.endsWith("/staging-tables")) {
+        sendJson(
+          exchange,
+          HttpStatus.SC_OK,
+          s"""{"table-id":"$testTableId","table-type":"MANAGED",""" +
+            """"location":"s3://bucket/staging"}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+
+    val config = clientConfig
+    config.put("credentialVending.enabled", "false")
+    val client = new UCDeltaTokenBasedRestClient(config, null)
+    try {
+      assert(client.loadTable(testIdentifier).getStorageProperties.isEmpty)
+      assert(client.createStagingTable(testIdentifier).getStorageProperties.isEmpty)
+    } finally {
+      client.close()
+    }
+    assert(credentialRequests.get() === 0)
+
+    withClient { c =>
+      assert(!c.loadTable(testIdentifier).getStorageProperties.isEmpty)
+      assert(!c.createStagingTable(testIdentifier).getStorageProperties.isEmpty)
+    }
+    assert(credentialRequests.get() === 2)
   }
 
   test("loadTable schema emits Delta camelCase wire format for array and map") {

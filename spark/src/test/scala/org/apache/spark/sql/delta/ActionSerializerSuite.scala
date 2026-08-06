@@ -193,14 +193,17 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = None,
-      txnId = None).copy(engineInfo = None)
+      txnId = None,
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
+    ).copy(engineInfo = None)
 
     // json of commit info actions without tag or engineInfo field
     val json1 =
       """{"commitInfo":{"inCommitTimestamp":123,"timestamp":123,"operation":"CONVERT",""" +
         """"operationParameters":{},"readVersion":23,""" +
         """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
-        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
+        """"lastManifestCommit":{"version":43,"contentRootVersion":41}}}""".stripMargin
     assert(Action.fromJson(json1) === expectedCommitInfo)
   }
 
@@ -216,14 +219,17 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = None,
-      txnId = None).copy(engineInfo = None)
+      txnId = None,
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
+    ).copy(engineInfo = None)
 
     // json of commit info actions without tag or engineInfo field
     val json1 =
       """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
         """"operationParameters":{},"readVersion":23,""" +
         """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
-        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
+        """"lastManifestCommit":{"version":43,"contentRootVersion":41}}}""".stripMargin
     assert(Action.fromJson(json1) === expectedCommitInfo)
   }
 
@@ -747,7 +753,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = Some(Map("k1" -> "v1")),
-      txnId = Some("123")
+      txnId = Some("123"),
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
     ).copy(engineInfo = None)
 
     testActionSerDe(
@@ -758,7 +765,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
           """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
           """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
           """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-          """"tags":{"k1":"v1"},"txnId":"123"}}""".stripMargin)
+          """"tags":{"k1":"v1"},"txnId":"123",""" +
+          """"lastManifestCommit":{"version":43,"contentRootVersion":41}}}""".stripMargin)
 
     test("CommitInfo (with operationParameters) - json serialization/deserialization") {
       val operation = DeltaOperations.Convert(
@@ -776,7 +784,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
             """"sourceFormat":"parquet","collectStats":false},"clusterId":"23","readVersion"""" +
             """:23,"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
             """"operationMetrics":{"m1":"v1","m2":"v2"},""" +
-            """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123"}}"""
+            """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123",""" +
+            """"lastManifestCommit":{"version":43,"contentRootVersion":41}}}"""
         } else {
           """{"commitInfo":{"inCommitTimestamp":123,""" +
             """"timestamp":123,"operation":"CONVERT","operationParameters"""" +
@@ -784,7 +793,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
             """"sourceFormat":"parquet","collectStats":false},"clusterId":"23","readVersion""" +
             """":23,"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
             """"operationMetrics":{"m1":"v1","m2":"v2"},""" +
-            """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123"}}"""
+            """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123",""" +
+            """"lastManifestCommit":{"version":43,"contentRootVersion":41}}}"""
         }
       assert(commitInfo1.json == expectedCommitInfoJson1)
       val newCommitInfo1 = Action.fromJson(expectedCommitInfoJson1).asInstanceOf[CommitInfo]
@@ -800,7 +810,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
           """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
           """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
           """"tags":{"k1":"v1"},"engineInfo":"Apache-Spark/3.1.1 Delta-Lake/10.1.0",""" +
-          """"txnId":"123"}}""".stripMargin)
+          """"txnId":"123",""" +
+          """"lastManifestCommit":{"version":43,"contentRootVersion":41}}}""".stripMargin)
   }
 
   test("CommitInfo operationParameters deserialization with primitive types") {
@@ -826,7 +837,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       operationMetrics = Some(Map("numFiles" -> "10")),
       userMetadata = Some("test metadata"),
       tags = Some(Map("source" -> "test")),
-      txnId = Some("txn-123")
+      txnId = Some("txn-123"),
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
     )
 
     // Serialize and deserialize to test the JsonMapDeserializer
@@ -865,7 +877,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       operationMetrics = Some(Map("numFiles" -> "25", "numOutputRows" -> "1000")),
       userMetadata = operation.userMetadata,
       tags = Some(Map("environment" -> "production", "team" -> "data-eng")),
-      txnId = Some("txn-write-456")
+      txnId = Some("txn-write-456"),
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
     )
 
     // Test round-trip serialization/deserialization

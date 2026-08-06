@@ -56,9 +56,8 @@ public class DeltaV2BatchTest extends DeltaV2TestBase {
           Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath, options);
 
   // Cases where two batches built from the same table must be equal. city/date are partition
-  // columns (exercise pushedToKernelFiltersSet); name/cnt are data columns and per
-  // ExpressionUtils.classifyFilter have isDataFilter=true, so they flow into
-  // DeltaV2Batch.dataFilters and exercise the dataFiltersSet branch of equals/hashCode.
+  // columns; name/cnt are data columns. Both kinds flow into DeltaV2Batch.pushedFiltersSet for
+  // equals/hashCode, but only data-column filters are passed to the Parquet reader.
   static Stream<Arguments> equalBatchCasesProvider() {
     Filter cityEq = new EqualTo("city", "hz");
     Filter dateEq = new EqualTo("date", "20180520");
@@ -82,13 +81,13 @@ public class DeltaV2BatchTest extends DeltaV2TestBase {
   public void testEqualsAndHashCode(String description, Filter[] filters1, Filter[] filters2) {
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     if (filters1.length > 0) {
-      builder1.pushFilters(filters1);
+      pushFilters(builder1, filters1);
     }
     Batch batch1 = ((DeltaV2Scan) builder1.build()).toBatch();
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     if (filters2.length > 0) {
-      builder2.pushFilters(filters2);
+      pushFilters(builder2, filters2);
     }
     Batch batch2 = ((DeltaV2Scan) builder2.build()).toBatch();
 
@@ -102,7 +101,7 @@ public class DeltaV2BatchTest extends DeltaV2TestBase {
     Batch batch1 = ((DeltaV2Scan) builder1.build()).toBatch();
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder2.pushFilters(new Filter[] {new EqualTo("city", "hz")});
+    pushFilters(builder2, new EqualTo("city", "hz"));
     Batch batch2 = ((DeltaV2Scan) builder2.build()).toBatch();
 
     assertNotEquals(batch1, batch2);

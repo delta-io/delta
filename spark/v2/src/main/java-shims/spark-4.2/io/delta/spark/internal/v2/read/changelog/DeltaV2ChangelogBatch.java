@@ -1,5 +1,8 @@
 package io.delta.spark.internal.v2.read.changelog;
 
+import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
+import org.apache.spark.sql.SparkSession;
+import scala.collection.immutable.Map$;
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
@@ -20,10 +23,8 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -50,13 +51,15 @@ import scala.Tuple2;
 
 /**
  * Batch implementation for read-time CDF that turns a commit range into CDC input partitions. It
- * iterates the AddFile, RemoveFile and Metadata actions of each commit in the range, emitting one
- * partition per data-changing file (RemoveFiles before AddFiles per commit), and rejects ranges
- * whose schema or row-tracking state is not stable. {@link #createReaderFactory()} wraps the Parquet
- * reader with {@link CDCPartitionReaderFactory} to append the CDC tail columns ({@code _change_type},
+ * iterates the AddFile, RemoveFile and Metadata actions of each commit in the range, emitting
+ * partitions packing multiple files, and rejects ranges whose schema or row-tracking state is not
+ * stable. {@link #createReaderFactory()} wraps the Parquet reader with
+ * {@link CDCPartitionReaderFactory} to append the CDC tail columns ({@code _change_type},
  * {@code _commit_version}, {@code _commit_timestamp}).
+ *
+ * <p>Package privacy prevents callers from coupling to Delta's internal V2 implementation.
  */
-public class DeltaChangelogBatch implements Batch {
+class DeltaV2ChangelogBatch implements Batch {
   private static final Set<DeltaLogActionUtils.DeltaAction> CHANGELOG_ACTION_SET =
       Set.of(
           DeltaLogActionUtils.DeltaAction.ADD,
@@ -71,7 +74,7 @@ public class DeltaChangelogBatch implements Batch {
   private final Snapshot snapshot;
   private final Configuration hadoopConf;
 
-  public DeltaChangelogBatch(
+  DeltaV2ChangelogBatch(
       CommitRange commitRange,
       Engine engine,
       StructType endDataSchema,
@@ -84,9 +87,91 @@ public class DeltaChangelogBatch implements Batch {
     this.hadoopConf = hadoopConf;
   }
 
+
+  /**
+   * All per-file constants are packed into the file's {@code otherConstantMetadataColumnValues}
+   * map so the bin-packing reader can recover them per file: the row-tracking pair
+   * ({@code baseRowId}, {@code defaultRowCommitVersion}), the deletion-vector descriptor,
+   * and the CDC tail ({@code _change_type}, {@code _commit_version}, {@code _commit_timestamp}).
+   */
+  private static PartitionedFile buildPartition(
+      String path,
+      long size,
+      String changeType,
+      long commitVersion,
+      long commitTimestampMillis,
+      Supplier<Optional<Long>> baseRowIdAccessor,
+      Supplier<Optional<Long>> defaultRowCommitVersionAccessor,
+      String actionDescription,
+      String deletionVector,
+      String tablePath) {
+    long baseRowId =
+        baseRowIdAccessor
+            .get()
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        actionDescription + " " + path + " missing baseRowId"));
+    long defaultRcv =
+        defaultRowCommitVersionAccessor
+            .get()
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        actionDescription + " " + path + " missing defaultRowCommitVersion"));
+
+    scala.collection.immutable.Map<String, Object> constantMetadata =
+        (scala.collection.immutable.Map<String, Object>)
+          (scala.collection.immutable.Map<?, ?>)
+            Map$.MODULE$.empty();
+    constantMetadata =
+        constantMetadata.$plus(
+            new Tuple2<>(RowId$.MODULE$.BASE_ROW_ID(), baseRowId));
+    constantMetadata =
+        constantMetadata.$plus(
+            new Tuple2<>(
+                DefaultRowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME(),
+                defaultRcv));
+
+    for (Map.Entry<String, Object> entry :
+        PartitionUtils.buildDvMetadata(deletionVector).entrySet()) {
+      constantMetadata =
+          constantMetadata.$plus(new Tuple2<>(entry.getKey(), entry.getValue()));
+    }
+    constantMetadata = constantMetadata.$plus(new Tuple2<>(
+        CDCSchemaContext.CDC_COMMIT_VERSION, commitVersion));
+    constantMetadata = constantMetadata.$plus(new Tuple2<>(
+        CDCSchemaContext.CDC_COMMIT_TIMESTAMP,
+        TimeUnit.MILLISECONDS.toMicros(commitTimestampMillis)));
+    constantMetadata = constantMetadata.$plus(new Tuple2<>(
+        CDCSchemaContext.CDC_TYPE_COLUMN, changeType));
+
+    PartitionedFile file =
+        new PartitionedFile(
+            new GenericInternalRow(0),
+            sparkPathFromRawPath(tablePath, path),
+            /* start */ 0L,
+            /* length */ size,
+            /* locations */ new String[0],
+            /* modificationTime */ commitTimestampMillis,
+            /* fileSize */ size,
+            constantMetadata);
+    return file;
+  }
+
+  /**
+   * Rejects a schema at {@code version} that the end schema cannot read. Used for both the
+   * start/end pre-check and each in-range Metadata action.
+   */
+  private void requireReadCompatible(StructType schema, long version) {
+    if (!SchemaUtils.isReadCompatible(schema, endDataSchema)) {
+      DeltaErrors.throwChangelogSchemaChangeInRange(version);
+    }
+  }
+
   @Override
   public InputPartition[] planInputPartitions() {
-    List<InputPartition> partitions = new ArrayList<>();
+    List<PartitionedFile> partitions = new ArrayList<>();
 
     // Pre-check catches schema drift between start and end. The per-commit loop below catches
     // in-range Metadata commits.
@@ -98,6 +183,7 @@ public class DeltaChangelogBatch implements Batch {
     //
     // try-with-resources forces a catch (Exception) below because CommitActions.close()
     // declares it. Unchecked exceptions pass through unchanged.
+    long totalBytes = 0L;
     try (CloseableIterator<CommitActions> commitsIter =
         StreamingHelper.getCommitActionsFromRangeUnsafe(
             engine, (CommitRangeImpl) commitRange, snapshot.getPath(), CHANGELOG_ACTION_SET)) {
@@ -105,8 +191,8 @@ public class DeltaChangelogBatch implements Batch {
         // Emit RemoveFiles before AddFiles per commit. The Spark analyzer re-sorts anyway, but
         // direct-batch tests iterate in emission order and rely on the preimage-then-postimage
         // shape.
-        List<InputPartition> commitRemoves = new ArrayList<>();
-        List<InputPartition> commitAdds = new ArrayList<>();
+        List<PartitionedFile> commitRemoves = new ArrayList<>();
+        List<PartitionedFile> commitAdds = new ArrayList<>();
         try (CommitActions commit = commitsIter.next();
             CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
           while (actionsIter.hasNext()) {
@@ -129,7 +215,9 @@ public class DeltaChangelogBatch implements Batch {
                         add::getBaseRowId,
                         add::getDefaultRowCommitVersion,
                         "AddFile",
-                        deletionVectorBase64));
+                        deletionVectorBase64,
+                        snapshot.getPath()));
+                totalBytes += add.getSize();
               }
               Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
               if (removeOpt.isPresent()) {
@@ -149,10 +237,12 @@ public class DeltaChangelogBatch implements Batch {
                         remove::getBaseRowId,
                         remove::getDefaultRowCommitVersion,
                         "RemoveFile",
-                        deletionVectorBase64));
+                        deletionVectorBase64,
+                        snapshot.getPath()));
+                totalBytes += remove.getSize().orElse(0L);
               }
               // Validate Metadata actions: schema and row-tracking config must match the
-              // end-version baseline established by DeltaChangelogScanBuilder. Mid-range
+              // end-version baseline established by DeltaV2ChangelogScanBuilder. Mid-range
               // schema evolution or row-tracking-toggle would silently corrupt downstream
               // CDC post-processing (row identity / column mapping drift).
               Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
@@ -181,58 +271,9 @@ public class DeltaChangelogBatch implements Batch {
     } catch (Exception e) {
       DeltaErrors.throwChangelogReadFailed("PLAN_INPUT_PARTITIONS", e);
     }
-    return partitions.toArray(new InputPartition[0]);
-  }
-
-  /**
-   * Rejects a schema at {@code version} that the end schema cannot read. Used for both the
-   * start/end pre-check and each in-range Metadata action.
-   */
-  private void requireReadCompatible(StructType schema, long version) {
-    if (!SchemaUtils.isReadCompatible(schema, endDataSchema)) {
-      DeltaErrors.throwChangelogSchemaChangeInRange(version);
-    }
-  }
-
-  /**
-   * Build a {@link CDCInputPartition} for a single AddFile or RemoveFile action. Both action types
-   * require non-empty {@code baseRowId} and {@code defaultRowCommitVersion}; the caller (catalog)
-   * has already validated that row tracking is enabled at the start version of the read, so any
-   * missing value here is an invariant violation rather than a user-facing error.
-   */
-  private static CDCInputPartition buildPartition(
-      String path,
-      long size,
-      String changeType,
-      long commitVersion,
-      long commitTimestampMillis,
-      Supplier<Optional<Long>> baseRowIdAccessor,
-      Supplier<Optional<Long>> defaultRowCommitVersionAccessor,
-      String actionDescription,
-      String deletionVector) {
-    long baseRowId =
-        baseRowIdAccessor
-            .get()
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        actionDescription + " " + path + " missing baseRowId"));
-    long defaultRcv =
-        defaultRowCommitVersionAccessor
-            .get()
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        actionDescription + " " + path + " missing defaultRowCommitVersion"));
-    return new CDCInputPartition(
-        path,
-        size,
-        commitVersion,
-        commitTimestampMillis,
-        changeType,
-        baseRowId,
-        defaultRcv,
-        deletionVector);
+    SQLConf sqlConf = SQLConf.get();
+    return PartitionUtils.planInputPartitions(
+        SparkSession.active(), partitions, totalBytes, hadoopConf, sqlConf);
   }
 
   /**
@@ -260,10 +301,11 @@ public class DeltaChangelogBatch implements Batch {
   public PartitionReaderFactory createReaderFactory() {
     StructType partitionSchema = new StructType();
     StructType readDataSchema =
-        endDataSchema.add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
+        endDataSchema.add(
+            DeltaV2Changelog.METADATA_COLUMN, DeltaV2Changelog.METADATA_STRUCT, false);
     Filter[] dataFilters = new Filter[0];
     scala.collection.immutable.Map<String, String> scalaOptions =
-        scala.collection.immutable.Map$.MODULE$.empty();
+        Map$.MODULE$.empty();
     SQLConf sqlConf = SQLConf.get();
 
     // Read-time CDF: tail columns are added by CDCPartitionReaderFactory below, so
@@ -286,165 +328,88 @@ public class DeltaChangelogBatch implements Batch {
             .add("_change_type", DataTypes.StringType, false)
             .add("_commit_version", DataTypes.LongType, false)
             .add("_commit_timestamp", DataTypes.TimestampType, false);
-    return new CDCPartitionReaderFactory(delegate, snapshot.getPath(), outputSchema);
-  }
-
-  /** Serialized to executors; represents one CDC file change unit. */
-  static class CDCInputPartition implements InputPartition, Serializable {
-    private final String filePath;
-    private final long fileSize;
-    private final long commitVersion;
-    private final long commitTimestampMillis;
-    private final String changeType;
-    private final long baseRowId;
-    private final long defaultRowCommitVersion;
-    private final String deletionVectorInfo;
-
-    CDCInputPartition(
-        String filePath,
-        long fileSize,
-        long commitVersion,
-        long commitTimestampMillis,
-        String changeType,
-        long baseRowId,
-        long defaultRowCommitVersion,
-        String deletionVectorInfo) {
-      this.filePath = filePath;
-      this.fileSize = fileSize;
-      this.commitVersion = commitVersion;
-      this.commitTimestampMillis = commitTimestampMillis;
-      this.changeType = changeType;
-      this.baseRowId = baseRowId;
-      this.defaultRowCommitVersion = defaultRowCommitVersion;
-      this.deletionVectorInfo = deletionVectorInfo;
-    }
-
-    public String getFilePath() {
-      return filePath;
-    }
-
-    public long getFileSize() {
-      return fileSize;
-    }
-
-    public long getCommitVersion() {
-      return commitVersion;
-    }
-
-    public long getCommitTimestampMillis() {
-      return commitTimestampMillis;
-    }
-
-    public String getChangeType() {
-      return changeType;
-    }
-
-    public long getBaseRowId() {
-      return baseRowId;
-    }
-
-    public long getDefaultRowCommitVersion() {
-      return defaultRowCommitVersion;
-    }
-
-    public String getDeletionVectorInfo() {
-      return deletionVectorInfo;
-    }
+    return new CDCPartitionReaderFactory(delegate, outputSchema);
   }
 
   /** Executor-side factory for CDC partition readers. */
   static class CDCPartitionReaderFactory implements PartitionReaderFactory, Serializable {
     private final PartitionReaderFactory delegate;
-    private final String tablePath;
     private final StructType outputSchema;
 
     CDCPartitionReaderFactory(
-        PartitionReaderFactory delegate, String tablePath, StructType outputSchema) {
+        PartitionReaderFactory delegate, StructType outputSchema) {
       this.delegate = delegate;
-      this.tablePath = tablePath;
       this.outputSchema = outputSchema;
     }
 
     @Override
     public PartitionReader<InternalRow> createReader(InputPartition partition) {
-      CDCInputPartition cdcPartition = (CDCInputPartition) partition;
-      InternalRow partitionValues = new GenericInternalRow(0);
-      // Join the raw table root and the URL-encoded file path (see sparkPathFromRawPath); the naive
-      // SparkPath.fromUrlString(new Path(tablePath, filePath).toString()) throws on a reserved
-      // character (space, '%') in the table path.
-      SparkPath sparkPath = sparkPathFromRawPath(tablePath, cdcPartition.getFilePath());
-      scala.collection.immutable.Map<String, Object> constantMetadata =
-          (scala.collection.immutable.Map<String, Object>)
-              (scala.collection.immutable.Map<?, ?>)
-                  scala.collection.immutable.Map$.MODULE$.empty();
-      constantMetadata =
-          constantMetadata.$plus(
-              new Tuple2<>(RowId$.MODULE$.BASE_ROW_ID(), cdcPartition.getBaseRowId()));
-      constantMetadata =
-          constantMetadata.$plus(
-              new Tuple2<>(
-                  DefaultRowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME(),
-                  cdcPartition.getDefaultRowCommitVersion()));
-
-      // When the action carries a DV, set both Parquet reader constants together. Setting only
-      // one triggers IllegalStateException in DeltaParquetFileFormat. IF_CONTAINED makes the
-      // reader drop physical rows whose index is in the DV bitmap (visible-rows semantics).
-      for (java.util.Map.Entry<String, Object> entry :
-          PartitionUtils.buildDvMetadata(cdcPartition.getDeletionVectorInfo()).entrySet()) {
-        constantMetadata =
-            constantMetadata.$plus(new Tuple2<>(entry.getKey(), entry.getValue()));
-      }
-
-      PartitionedFile file =
-          new PartitionedFile(
-              partitionValues,
-              sparkPath,
-              /* start */ 0L,
-              /* length */ cdcPartition.getFileSize(),
-              /* locations */ new String[0],
-              /* modificationTime */ cdcPartition.getCommitTimestampMillis(),
-              /* fileSize */ cdcPartition.getFileSize(),
-              constantMetadata);
-      FilePartition filePartition = new FilePartition(0, new PartitionedFile[] {file});
-      PartitionReader<InternalRow> baseReader = delegate.createReader(filePartition);
-      return new CDCPartitionReader(baseReader, cdcPartition, outputSchema);
+      FilePartition filePartition = (FilePartition) partition;
+      return new CDCPartitionReader(delegate, filePartition, outputSchema);
     }
   }
 
-  /** Executor-side reader stub for per-file CDC row materialization. */
   static class CDCPartitionReader implements PartitionReader<InternalRow> {
-    private final PartitionReader<InternalRow> baseReader;
+    private final PartitionReaderFactory delegate;
     private final UnsafeProjection projection;
-    private final GenericInternalRow cdcTail = new GenericInternalRow(3);
+    private final PartitionedFile[] files;
     private final JoinedRow joined = new JoinedRow();
+    private final GenericInternalRow cdcTail = new GenericInternalRow(3);
+    private int currentFileIndex = 0;
+    private PartitionReader<InternalRow> currentBaseReader;
+
 
     CDCPartitionReader(
-        PartitionReader<InternalRow> baseReader,
-        CDCInputPartition cdcPartition,
-        StructType outputSchema) {
-      this.baseReader = baseReader;
+        PartitionReaderFactory delegate, FilePartition partition, StructType outputSchema) {
+      this.delegate = delegate;
       this.projection = UnsafeProjection.create(outputSchema);
-      // Tail values are partition-constants. Set them once at construction so get() does not
-      // redo the same writes on every row.
-      this.cdcTail.update(0, UTF8String.fromString(cdcPartition.getChangeType()));
-      this.cdcTail.setLong(1, cdcPartition.getCommitVersion());
-      // millis to micros: Catalyst stores TimestampType as microseconds since epoch.
-      this.cdcTail.setLong(2, cdcPartition.getCommitTimestampMillis() * 1000L);
+      // Resolve the packed files once here so the loop below is accessor-agnostic.
+      this.files = partition.files();
     }
+
 
     @Override
     public boolean next() throws IOException {
-      return baseReader.next();
+      while (true) {
+        // current file still has rows
+        if (currentBaseReader != null && currentBaseReader.next()) {
+          return true;
+        }
+        // current files has no rows => close current file, open next
+        if (currentBaseReader != null) {
+          currentBaseReader.close();
+          currentBaseReader = null;
+        }
+        // last file has been read
+        if (currentFileIndex >= files.length) {
+          return false;
+        }
+        // open next file
+        PartitionedFile file = files[currentFileIndex++];
+        currentBaseReader =
+            delegate.createReader(new FilePartition(0, new PartitionedFile[] {file}));
+
+        scala.collection.immutable.Map<String, Object> meta =
+            file.otherConstantMetadataColumnValues();
+        this.cdcTail.update(0,
+            UTF8String.fromString((String) meta.apply(CDCSchemaContext.CDC_TYPE_COLUMN)));
+        this.cdcTail.setLong(1,
+            (Long) meta.apply(CDCSchemaContext.CDC_COMMIT_VERSION));
+        this.cdcTail.setLong(2,
+            (Long) meta.apply(CDCSchemaContext.CDC_COMMIT_TIMESTAMP));
+      }
     }
 
     @Override
     public InternalRow get() {
-      return projection.apply(joined.apply(baseReader.get(), cdcTail));
+      return projection.apply(joined.apply(currentBaseReader.get(), cdcTail));
     }
 
     @Override
     public void close() throws IOException {
-      baseReader.close();
+      if (currentBaseReader != null) {
+        currentBaseReader.close();
+      }
     }
   }
 }

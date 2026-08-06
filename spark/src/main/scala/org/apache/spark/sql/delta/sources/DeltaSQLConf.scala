@@ -492,17 +492,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_IS_PREDICATE_PARTITION_COLUMNS_ONLY_STRICT =
-    buildConf("isPredicatePartitionColumnsOnlyStrict.enabled")
-      .internal()
-      .doc("When true, callers that opt in use the strict predicate classification API " +
-        "(isPredicatePartitionColumnsOnlyStrict, isPredicateMetadataOnlyStrict, " +
-        "splitMetadataAndDataPredicatesStrict). Non-deterministic predicates are not pushed as " +
-        "partition filters. When false, uses legacy isPredicatePartitionColumnsOnly (vacuously " +
-        "true for columnless predicates such as rand()).")
-      .booleanConf
-      .createWithDefault(false)
-
   val DELTA_MAX_RETRY_COMMIT_ATTEMPTS =
     buildConf("maxCommitAttempts")
       .internal()
@@ -526,6 +515,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("When enabled, the conflict checker will enforce that features that are marked " +
         "as failing concurrent transactions at upgrade, will fail any conflicting commits with " +
         "their enablement protocol changes.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_COMMIT_IDEMPOTENCY_CHECK_ENABLED =
+    buildConf("commit.idempotencyCheck.enabled")
+      .internal()
+      .doc("When enabled, during commit conflict retries, if the winning commit at the exact " +
+        "version this transaction attempted to commit has the same txnId as this transaction, " +
+        "treat the commit as already succeeded (the write landed but the response was lost). " +
+        "Prevents duplicating data on retry after a transient commit-response loss.")
       .booleanConf
       .createWithDefault(false)
 

@@ -18,10 +18,13 @@ package org.apache.spark.sql.delta.amt
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CommitStats, DeltaLog}
+import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.actions.Checkpoint
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
+
+import org.apache.spark.sql.catalyst.TableIdentifier
 
 /**
  * Emission-policy scenarios for AMT (`adaptiveMetadata-preview`): the checkpoint-interval trigger
@@ -30,11 +33,9 @@ import org.apache.spark.sql.delta.util.JsonUtils
 class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
 
   /** The Checkpoint action emitted at exactly `version`, or fails. */
-  private def checkpointAt(deltaLog: DeltaLog, version: Long): Checkpoint =
-    checkpointsAt(deltaLog, version) match {
-      case Seq(cp) => cp
-      case other => fail(s"Expected exactly one Checkpoint at v$version, got: $other")
-    }
+  private def requireCheckpointAt(deltaLog: DeltaLog, version: Long): Checkpoint =
+    checkpointAt(deltaLog, version).getOrElse(
+      fail(s"Expected a Checkpoint at v$version."))
 
   /** Every AMT [[Checkpoint]] emitted in `[0, latestVersion]`, in commit order. */
   private def allCheckpoints(deltaLog: DeltaLog): Seq[Checkpoint] =
@@ -46,7 +47,7 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
    */
   private def allCheckpointsWithCommitVersion(deltaLog: DeltaLog): Seq[(Long, Checkpoint)] = {
     val latest = deltaLog.update().version
-    (0L to latest).flatMap(v => checkpointsAt(deltaLog, v).map(cp => (v, cp)))
+    (0L to latest).flatMap(v => checkpointAt(deltaLog, v).map(cp => (v, cp)))
   }
 
   /** The trigger name recorded in the AMT write metrics of the commit `f` produces at `version`. */
@@ -65,21 +66,35 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
       .getOrElse(fail(s"No AMT write metrics logged for version $version."))
   }
 
+  /**
+   * Writes a full AMT via a direct OPTIMIZE CHECKPOINT commit (the same operation the post-commit
+   * checkpoint hook issues), landing a full rewrite that describes the latest committed version.
+   * Used to bootstrap a full anchor at an arbitrary (off-interval-grid) version.
+   */
+  private def writeFullOptimizeCheckpoint(tableName: String): Unit = {
+    val deltaLog = deltaLogForName(tableName)
+    val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName))
+    deltaLog.startTransaction(Some(catalogTable), Some(deltaLog.update())).commit(
+      Seq.empty,
+      DeltaOperations.OptimizeCheckpoint(
+        incremental = false, triggerName = AMTTriggerMode.CheckpointIntervalFull.name))
+  }
+
 
   /**
    * One expected AMT checkpoint in a deterministic emission timeline.
    *
-   * @param describedVersion      the table version the emitted Checkpoint describes (the
+   * @param checkpointedVersion   the table version the emitted Checkpoint describes (the
    *                              triggering business commit)
    * @param manifestCommitVersion the version of the commit that carries the Checkpoint action -- in
    *                              deferred mode the follow-up OPTIMIZE CHECKPOINT commit, which
-   *                              lands at describedVersion + 1
+   *                              lands at checkpointedVersion + 1
    * @param incremental           whether the rewrite is incremental (false = full rewrite)
    * @param lastFullRewrite       expected `lastManifestCommitWithFullRewrite` marker on the
    *                              checkpoint
    */
   private case class ExpectedCheckpoint(
-      describedVersion: Long,
+      checkpointedVersion: Long,
       manifestCommitVersion: Long,
       incremental: Boolean,
       lastFullRewrite: Long)
@@ -93,18 +108,18 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
   private def assertCheckpointTimeline(
       deltaLog: DeltaLog, expected: Seq[ExpectedCheckpoint]): Unit = {
     val checkpoints = allCheckpointsWithCommitVersion(deltaLog)
-    assert(checkpoints.map(_._2.version) == expected.map(_.describedVersion),
+    assert(checkpoints.map(_._2.version) == expected.map(_.checkpointedVersion),
       s"Emitted checkpoint versions ${checkpoints.map(_._2.version)} must match " +
-        s"${expected.map(_.describedVersion)}.")
+        s"${expected.map(_.checkpointedVersion)}.")
     assert(checkpoints.map(_._1) == expected.map(_.manifestCommitVersion),
       s"Manifest commit versions ${checkpoints.map(_._1)} must match " +
         s"${expected.map(_.manifestCommitVersion)}.")
     checkpoints.zip(expected).foreach { case ((_, cp), exp) =>
       assert(cp.contentRoot.isIncremental.contains(exp.incremental),
-        s"Checkpoint describing v${exp.describedVersion}: expected incremental=" +
+        s"Checkpoint describing v${exp.checkpointedVersion}: expected incremental=" +
           s"${exp.incremental}, got ${cp.contentRoot.isIncremental}")
       assert(cp.contentRoot.lastManifestCommitWithFullRewrite.contains(exp.lastFullRewrite),
-        s"Checkpoint describing v${exp.describedVersion}: expected lastFullRewrite=" +
+        s"Checkpoint describing v${exp.checkpointedVersion}: expected lastFullRewrite=" +
           s"${exp.lastFullRewrite}, got ${cp.contentRoot.lastManifestCommitWithFullRewrite}")
     }
   }
@@ -132,9 +147,9 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
 
       val deltaLog = deltaLogForName(name)
       assert(deltaLog.update().version == 3, "The follow-up OPTIMIZE CHECKPOINT lands at v3.")
-      assert(checkpointsAt(deltaLog, 2).isEmpty, "v2 (business commit) carries no Checkpoint.")
+      assert(checkpointAt(deltaLog, 2).isEmpty, "v2 (business commit) carries no Checkpoint.")
       // The Checkpoint rides in v3 and describes state as of v2.
-      assert(checkpointAt(deltaLog, 3).version == 2)
+      assert(requireCheckpointAt(deltaLog, 3).version == 2)
       assert(amtProvider(deltaLog.update()).isDefined)
     }
   }
@@ -151,8 +166,9 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
 
       // The full rewrite records its own version as the last-full-rewrite marker.
       val deltaLog = deltaLogForName(name)
-      assert(checkpointAt(deltaLog, 3).contentRoot.lastManifestCommitWithFullRewrite.contains(2L))
-      assert(checkpointAt(deltaLog, 3).contentRoot.isIncremental.contains(false))
+      assert(requireCheckpointAt(deltaLog, 3)
+        .contentRoot.lastManifestCommitWithFullRewrite.contains(2L))
+      assert(requireCheckpointAt(deltaLog, 3).contentRoot.isIncremental.contains(false))
     }
   }
 
@@ -185,7 +201,8 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
         // land on an interval boundary (v2, v4, ..., v16) and trigger a follow-up checkpoint.
         (1 to 9).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
       }
-      // ExpectedCheckpoint(describedVersion, manifestCommitVersion, incremental, lastFullRewrite).
+      // ExpectedCheckpoint(checkpointedVersion, manifestCommitVersion, incremental,
+      //   lastFullRewrite).
       assertCheckpointTimeline(deltaLog, Seq(
         ExpectedCheckpoint(2, 3, incremental = false, lastFullRewrite = 2),
         ExpectedCheckpoint(4, 5, incremental = true, lastFullRewrite = 2),
@@ -227,7 +244,8 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
         // land on an interval boundary (v2, v4, ..., v16) and trigger a follow-up checkpoint.
         (1 to 9).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
       }
-      // ExpectedCheckpoint(describedVersion, manifestCommitVersion, incremental, lastFullRewrite).
+      // ExpectedCheckpoint(checkpointedVersion, manifestCommitVersion, incremental,
+      //   lastFullRewrite).
       assertCheckpointTimeline(deltaLog, Seq(
         ExpectedCheckpoint(2, 3, incremental = false, lastFullRewrite = 2),
         ExpectedCheckpoint(4, 5, incremental = true, lastFullRewrite = 2),
@@ -251,15 +269,15 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
         // v1 is the first commit: no prior AMT, so it must NOT inline even though it is "large".
         sql(s"INSERT INTO $name VALUES (1)")
         val deltaLog = deltaLogForName(name)
-        assert(checkpointsAt(deltaLog, 1).isEmpty,
+        assert(checkpointAt(deltaLog, 1).isEmpty,
           "The first large commit must not write an AMT inline (no full AMT exists yet).")
 
         // v2 is the interval boundary: the first (full) AMT is emitted via the deferred follow-up
         // OPTIMIZE CHECKPOINT commit at v3, not inline in v2.
         sql(s"INSERT INTO $name VALUES (2)")
-        assert(checkpointsAt(deltaLog, 2).isEmpty, "v2 must not write an AMT inline.")
+        assert(checkpointAt(deltaLog, 2).isEmpty, "v2 must not write an AMT inline.")
         assert(deltaLog.update().version == 3, "The first full AMT lands as a follow-up at v3.")
-        assert(checkpointAt(deltaLog, 3).contentRoot.isIncremental.contains(false),
+        assert(requireCheckpointAt(deltaLog, 3).contentRoot.isIncremental.contains(false),
           "The first AMT is a full rewrite.")
 
         // Now a full AMT exists. The next large commit (v4) writes its AMT inline (incrementally).
@@ -268,7 +286,7 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
           s"Once a full AMT exists, a large commit inlines its AMT; got ${v4Metrics.trigger}")
         assert(v4Metrics.incremental == "true",
           "The usage log must report incremental=true for the inline AMT write.")
-        assert(checkpointAt(deltaLog, 4).contentRoot.isIncremental.contains(true),
+        assert(requireCheckpointAt(deltaLog, 4).contentRoot.isIncremental.contains(true),
           "The inline AMT is incremental.")
       }
     }
@@ -304,6 +322,82 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
             s"Full rewrite at v$next is only ${next - prev} versions after v$prev (span " +
               s"$fullRewriteSpan).")
         case _ => ()
+      }
+    }
+  }
+
+  // A table whose full anchor sits off the interval grid (here the first full AMT is written by a
+  // direct OPTIMIZE CHECKPOINT at v2, describing v1) and whose commits otherwise all write their
+  // AMT inline must still get a periodic full rewrite. The span commit at v11 (11 - anchor 1 = 10 =
+  // 2 * interval) is where the full is due; whether it inlines or not, a full checkpoint must land
+  // describing v11.
+  //   - interval boundary inline = false: v11 is a small commit -> deferred follow-up path, where
+  //     case-1 cannot fire (11 - lastAMT 10 = 1) and case-1b emits the full instead.
+  //   - interval boundary inline = true:  v11 is a large commit -> inlines an incremental AMT and
+  //     planMaintenanceAfterInlineWrite schedules the full follow-up (the tree is materialized
+  //     twice at v11 and v12, the accepted cost of never inlining a large commit's actions).
+  Seq(true, false).foreach { boundaryInline =>
+    test("[full checkpoint off boundary] table which only gets inline commits except at interval " +
+        s"boundary is not starved of full checkpoint [interval boundary inline = $boundaryInline]"
+        ) {
+      withTable("amt_offgrid_full") {
+        val name = "amt_offgrid_full"
+        // interval 5, multiplier 2 -> fullRewriteSpan = 10.
+        //   commit 0             CREATE TABLE
+        //   commit 1  INSERT     (data commit; no full tree yet, so it does not write an AMT)
+        //   commit 2  OPTIMIZE CHECKPOINT full        (describes v1,  lastFull=1; off-grid anchor)
+        //   commit 3..10 INSERT range(8)  (large -> inline incremental each)
+        //   commit 11 INSERT     (interval boundary: large inline OR small deferred, per parameter)
+        //   commit 12 full checkpoint                (describes v11, lastFull=11)
+        createAMTTable(name, checkpointInterval = 5)
+        val deltaLog = deltaLogForName(name)
+        withSQLConf(
+            DeltaSQLConf.AMT_FULL_REWRITE_CHECKPOINT_INTERVAL_MULTIPLIER.key -> "2",
+            // A large commit (>= 4 actions) inlines its AMT once a full tree exists; a small one
+            // does not. maxRecordsPerFile 1 with optimized writes off makes an N-row insert commit
+            // N AddFile actions, so row count controls the action count directly.
+            DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+              -> "4",
+            DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false",
+            "spark.sql.files.maxRecordsPerFile" -> "1") {
+          // v1: a data commit off the interval boundary. No full tree exists yet, so it writes no
+          // AMT inline. v2: write the first (full) AMT via a direct OPTIMIZE CHECKPOINT commit, the
+          // same operation the checkpoint hook issues; it describes v1 and anchors lastFull off the
+          // interval grid.
+          sql(s"INSERT INTO $name VALUES (1)") // v1.
+          writeFullOptimizeCheckpoint(name) // v2 -> full checkpoint describing v1.
+          assert(deltaLog.update().version == 2, "The bootstrap OPTIMIZE CHECKPOINT lands at v2.")
+          assert(requireCheckpointAt(deltaLog, 2).contentRoot.isIncremental.contains(false),
+            "The bootstrap AMT is a full rewrite anchoring lastFull off the interval grid.")
+
+          // v3..v10: every commit is large, so each inlines an incremental AMT (a full tree now
+          // exists). The inline checkpoints ride on v3..v10; none crosses the span yet.
+          (1 to 8).foreach(_ => sql(s"INSERT INTO $name SELECT * FROM range(8)"))
+          assert(deltaLog.update().version == 10, "Eight inline commits land at v3..v10.")
+
+          // v11 is a full span past the anchor (11 - 1 = 10). Per the parameter it either inlines
+          // (large) or takes the deferred path (small); either way a full must follow at v12.
+          if (boundaryInline) {
+            sql(s"INSERT INTO $name SELECT * FROM range(8)") // v11 large -> inline incr + full v12.
+          } else {
+            sql(s"INSERT INTO $name VALUES (0)") // v11 small -> deferred; case-1b full v12.
+          }
+        }
+        // ExpectedCheckpoint(describedVersion, manifestCommitVersion, incremental, lastFullRewrite)
+        // The inline incremental describing v11 is present only when v11 itself inlines.
+        val v11Inline =
+          if (boundaryInline) {
+            Seq(ExpectedCheckpoint(11, 11, incremental = true, lastFullRewrite = 1))
+          } else {
+            Seq.empty
+          }
+        val inlineIncrementals =
+          (3L to 10L).map(v => ExpectedCheckpoint(v, v, incremental = true, lastFullRewrite = 1))
+        assertCheckpointTimeline(deltaLog,
+          Seq(ExpectedCheckpoint(1, 2, incremental = false, lastFullRewrite = 1)) ++
+            inlineIncrementals ++
+            v11Inline ++
+            Seq(ExpectedCheckpoint(11, 12, incremental = false, lastFullRewrite = 11)))
       }
     }
   }

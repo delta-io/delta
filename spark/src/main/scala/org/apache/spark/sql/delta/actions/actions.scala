@@ -1511,9 +1511,23 @@ object CommitInfo {
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
-      txnId: Option[String]): CommitInfo = {
-    apply(None, time, operation, inCommitTimestamp, operationParameters, commandContext,
-      readVersion, isolationLevel, isBlindAppend, operationMetrics, userMetadata, tags, txnId)
+      txnId: Option[String],
+      lastManifestCommit: Option[LastManifestCommit]): CommitInfo = {
+    apply(
+      version = None,
+      time,
+      operation,
+      inCommitTimestamp,
+      operationParameters,
+      commandContext,
+      readVersion,
+      isolationLevel,
+      isBlindAppend,
+      operationMetrics,
+      userMetadata,
+      tags,
+      txnId,
+      lastManifestCommit)
   }
 
   def apply(
@@ -1529,7 +1543,8 @@ object CommitInfo {
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
-      txnId: Option[String]): CommitInfo = {
+      txnId: Option[String],
+      lastManifestCommit: Option[LastManifestCommit]): CommitInfo = {
 
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
@@ -1555,7 +1570,7 @@ object CommitInfo {
       tags,
       getEngineInfo,
       txnId,
-      lastManifestCommit = None)
+      lastManifestCommit)
   }
   // scalastyle:on argcount
 
@@ -1624,6 +1639,19 @@ case class ContentRoot(
   @JsonIgnore
   def getAbsolutePath(tableRoot: Path): Path =
     AMTUtils.absolutePathForManifestFile(tableRoot, path)
+
+  /** The root manifest as a Hadoop [[FileStatus]] carrying its path and size. */
+  @JsonIgnore
+  def toFileStatus(tableRoot: Path): FileStatus = {
+    new FileStatus(
+      /* length = */ sizeInBytes,
+      /* isdir = */ false,
+      /* block_replication = */ 0,
+      /* blocksize = */ 1L,
+      // modificationTime is not tracked on the ContentRoot, so report 0.
+      /* modification_time = */ 0L,
+      getAbsolutePath(tableRoot))
+  }
 }
 
 object ContentRoot {

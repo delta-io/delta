@@ -43,6 +43,8 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructField;
@@ -259,10 +261,11 @@ public interface Transaction {
    *
    * @param engine {@link Engine} instance to use.
    * @param transactionState The transaction state
-   * @param partitionValues The partition values for the data. If the table is un-partitioned, the
-   *     map should be empty
+   * @param partitionValues The partition values for the data, keyed by logical partition column
+   *     name. If the table is un-partitioned, the map should be empty.
    * @return {@link DataWriteContext} containing metadata about where and how the data for partition
-   *     should be written.
+   *     should be written. The target directory and the returned partition-value keys use the
+   *     physical partition column names.
    */
   static DataWriteContext getWriteContext(
       Engine engine, Row transactionState, Map<String, Literal> partitionValues) {
@@ -275,6 +278,13 @@ public interface Transaction {
 
     partitionValues =
         validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
+
+    // The on-disk partition directory and AddFile partition-value keys use physical names, so
+    // translate the column-name list and the value-map keys to physical.
+    ColumnMapping.ColumnMappingMode mode = getColumnMappingMode(transactionState);
+    partitionColNames =
+        PartitionUtils.toPhysicalPartitionColNames(tableSchema, partitionColNames, mode);
+    partitionValues = PartitionUtils.toPhysicalPartitionValues(tableSchema, partitionValues, mode);
 
     String targetDirectory =
         getTargetDirectory(getTablePath(transactionState), partitionColNames, partitionValues);
