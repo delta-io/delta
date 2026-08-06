@@ -24,6 +24,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.DeltaOperations.{OP_SET_TBLPROPERTIES, ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -310,12 +311,8 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     resolveTimestampOrderingConflicts()
 
-    // If the winning commit emitted an inline AMT checkpoint, it is now the latest checkpoint
-    // before the next commit attempt.
-    winningCommitSummary.amtCheckpoint.foreach { checkpoint =>
-      currentTransactionInfo =
-        currentTransactionInfo.copy(preCommitLatestAMTCheckpointOpt = Some(checkpoint))
-    }
+    currentTransactionInfo = AMTUtils.updateCurrentTransactionInfo(
+      currentTransactionInfo, winningCommitSummary)
 
     logMetrics()
     currentTransactionInfo

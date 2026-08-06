@@ -34,15 +34,6 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
 
   import testImplicits._
 
-  /**
-   * A manifest deletion vector addresses entries by their position inside a leaf, so these tests
-   * need the checkpointed entries to live in leaves rather than stay resident in the root. The
-   * incremental writer only spills live adds into a leaf once the root would exceed
-   * `entriesPerLeaf`, and the default (50000) never trips for these small tables. A cap of one
-   * entry per leaf forces every live add into a leaf under every scenario.
-   */
-  private val mdvLeafResidentConfs = Seq(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "1")
-
   ///////////////////////////
   // Post commit snapshot
   ///////////////////////////
@@ -167,24 +158,20 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   testAcrossAMTCheckpointScenarios(
       "distributed reconstruction returns every action exactly once",
       "amt_dist_reconstruction",
-      sqlConfs = Seq(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10"))(
+      sqlConfs = leafPackingConfs)(
       setup = name => {
-        appendRowsAsSeparateFiles(name, 30) // ids 0..29, one file each.
-        appendRowsAsSeparateFiles(name, 29, startId = 30) // ids 30..58, one file each.
+        appendRowsAsSeparateFiles(name, leafPackedFiles)
+        appendRowsAsSeparateFiles(name, leafPackedFiles - 1, startId = leafPackedFiles)
       },
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (59)"))) { context =>
+        s"INSERT INTO $name VALUES (${2 * leafPackedFiles - 1})"))) { context =>
     val snapshot = context.postCheckpointSnapshot
     val provider = context.provider
-    // `setup` accumulates ids 0..58 over two commits and the trigger commit adds id 59, so the
-    // checkpointed tree is built from files that arrived across several commits.
-    val expectedRows = 0 until 60
+    val expectedRows = 0 until 2 * leafPackedFiles
     checkAnswer(spark.read.table(context.tableName), expectedRows.map(Row(_)))
     val committedPaths = snapshot.allFiles.select("path").as[String].collect().toSet
     assert(committedPaths.size == expectedRows.size)
-    // 60 live files at ten entries per leaf must pack into exactly six leaves.
-    assert(provider.leaves.size == 6,
-      s"60 files at entriesPerLeaf=10 must pack into 6 leaves; got ${provider.leaves.size}.")
+    assertLeafCount(provider.leaves, numFiles = 2 * leafPackedFiles)
     val df = provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
       .getOrElse(fail("AMT provider must contribute leaf-derived actions."))
 
@@ -269,14 +256,14 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   testAcrossAMTCheckpointScenarios(
       "manifest deletion vector drops superseded leaf entries during reconstruction",
       "amt_mdv_drop",
-      sqlConfs = mdvLeafResidentConfs)(
-      setup = name => (1 to 3).foreach(i => sql(s"INSERT INTO $name VALUES ($i)")),
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (4)"))) { context =>
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val snapshot = context.postCheckpointSnapshot
     val base = context.provider
     val baseCount = snapshot.allFiles.count()
-    assert(baseCount == 4)
+    assert(baseCount == leafPackedFiles, "The seeded files plus the trigger's.")
 
     val leaf = base.leaves.head
     val posToLoc = leafPosToLoc(leaf, base.tableRoot)
@@ -308,19 +295,18 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   testAcrossAMTCheckpointScenarios(
       "manifest deletion vectors apply per leaf across a multi-leaf tree",
       "amt_mdv_multi",
-      sqlConfs = Seq(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10"))(
+      sqlConfs = leafPackingConfs)(
       setup = name => {
-        appendRowsAsSeparateFiles(name, 30) // ids 0..29, one file each.
-        appendRowsAsSeparateFiles(name, 29, startId = 30) // ids 30..58, one file each.
+        appendRowsAsSeparateFiles(name, leafPackedFiles)
+        appendRowsAsSeparateFiles(name, leafPackedFiles - 1, startId = leafPackedFiles)
       },
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (59)"))) { context =>
+        s"INSERT INTO $name VALUES (${2 * leafPackedFiles - 1})"))) { context =>
     val base = context.provider
-    assert(base.leaves.size == 6,
-      s"60 files with entriesPerLeaf=10 must pack into 6 leaves; got ${base.leaves.size}.")
+    assertLeafCount(base.leaves, numFiles = 2 * leafPackedFiles)
     val deltaLog = context.postCheckpointSnapshot.deltaLog
     val full = reconstructedPaths(base, deltaLog)
-    assert(full.size == 60)
+    assert(full.size == 2 * leafPackedFiles)
 
     // The leaf-local row-index -> entry-location map for each observed leaf.
     val locs = base.leaves.map(leafPosToLoc(_, base.tableRoot))
@@ -376,8 +362,9 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       // the SQL operation metrics a real DELETE would populate are absent. History metrics would
       // call `Delete.transformMetrics`, which requires `numDeletedRows`; it is missing here and
       // would fail with `key not found: numDeletedRows`. Disable history metrics to skip that.
-      sqlConfs = mdvLeafResidentConfs :+
-        (DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false"))(
+      sqlConfs = Seq(
+        DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> entriesPerLeaf.toString,
+        DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false"))(
       setup = name => {
         // File A with two physical rows, then a persistent on-disk DV marking row 0 deleted.
         Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(name)
@@ -386,14 +373,18 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         assert(fileA.length == 1, "The two rows must land in a single file.")
         val dvActions = writeFileWithDVOnDisk(log, fileA.head, RoaringBitmapArray(0L))
         log.startTransaction().commit(dvActions, DeltaOperations.Delete(predicate = Seq.empty))
+        // DV-less siblings, so the tree packs multi-entry leaves around file A. File A and the
+        // trigger's file make up the rest of the packed count.
+        appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 2, startId = 10)
       },
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (3)"))) { context =>
     val snapshot = context.postCheckpointSnapshot
     val base = context.provider
 
-    // Classify the two reconstructed entries by DV presence, staying entirely within the
-    // reconstruction so path strings are consistent with the leaf `location` values.
+    // Classify the reconstructed entries by DV presence, staying entirely within the reconstruction
+    // so path strings are consistent with the leaf `location` values. Exactly one entry carries a
+    // DV (file A); the rest are the DV-less siblings the setup seeded.
     val fullAdds = base.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
       .getOrElse(fail("AMT provider must contribute leaf-derived file actions."))
       .where("add is not null")
@@ -401,17 +392,20 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       .collect()
       .map(r => r.getString(0) -> (Option(r.getString(1)), r.getString(2)))
       .toMap
-    assert(fullAdds.size == 2)
-    val aPath = fullAdds.collectFirst { case (p, (Some(_), _)) => p }
-      .getOrElse(fail("Expected one reconstructed entry to carry a DV."))
-    val bPath = fullAdds.collectFirst { case (p, (None, _)) => p }
-      .getOrElse(fail("Expected one reconstructed entry without a DV."))
+    assert(fullAdds.size == leafPackedFiles,
+      "One DV-bearing file plus the DV-less siblings.")
+    val withDv = fullAdds.filter(_._2._1.isDefined)
+    assert(withDv.size == 1, s"Exactly one reconstructed entry must carry a DV; got $withDv")
+    val aPath = withDv.head._1
     val aStats = fullAdds(aPath)._2
 
-    // Drop B (the DV-less sibling) via an MDV on whichever leaf holds it; A must survive untouched.
-    val bLeafAndPos = base.leaves.flatMap { leaf =>
-      leafPosToLoc(leaf, base.tableRoot).collectFirst { case (pos, `bPath`) => leaf -> pos }
-    }.headOption.getOrElse(fail(s"No leaf holds the DV-less sibling $bPath."))
+    // Drop one DV-less entry that shares file A's own leaf, so the MDV removes a true sibling from
+    // a multi-entry leaf while A sits beside it.
+    val aLeaf = base.leaves.find(leafPosToLoc(_, base.tableRoot).values.exists(_ == aPath))
+      .getOrElse(fail(s"No leaf holds the DV-bearing file $aPath."))
+    val aLeafEntries = leafPosToLoc(aLeaf, base.tableRoot)
+    val (bPos, bPath) = aLeafEntries.filter { case (_, loc) => loc != aPath }.head
+    val bLeafAndPos = (aLeaf, bPos)
     val patched = base.leaves.map { leaf =>
       if (leaf eq bLeafAndPos._1) {
         leaf.copy(manifest_info = leaf.manifest_info.copy(
@@ -425,22 +419,27 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       .where("add is not null")
       .selectExpr("add.path", "add.deletionVector.storageType", "add.stats")
       .collect()
-    assert(survivors.length == 1, "Only the DV-bearing sibling must survive the MDV.")
-    assert(survivors.head.getString(0) == aPath,
-      "The surviving path must be the DV-bearing file.")
-    assert(survivors.head.getString(1) != null,
+    // Only the MDV-marked sibling is dropped; every other entry -- including file A, which shares
+    // its leaf -- survives with its deletion vector and stats intact.
+    assert(survivors.length == fullAdds.size - 1,
+      s"The MDV must drop exactly one entry; kept ${survivors.length} of ${fullAdds.size}.")
+    assert(!survivors.exists(_.getString(0) == bPath),
+      s"The MDV-marked sibling $bPath must not survive.")
+    val a = survivors.find(_.getString(0) == aPath)
+      .getOrElse(fail(s"The DV-bearing file $aPath must survive the MDV."))
+    assert(a.getString(1) != null,
       "The surviving entry must retain its deletion vector after MDV filtering.")
-    assert(survivors.head.getString(2) == aStats,
+    assert(a.getString(2) == aStats,
       "The surviving entry's stats must be unchanged by MDV filtering.")
   }
 
   testAcrossAMTCheckpointScenarios(
       "a manifest DV with only one of dv/dv_cardinality set is rejected",
       "amt_mdv_malformed",
-      sqlConfs = mdvLeafResidentConfs)(
-      setup = name => (1 to 2).foreach(i => sql(s"INSERT INTO $name VALUES ($i)")),
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (3)"))) { context =>
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val base = context.provider
 
     // `dv` set but `dv_cardinality` missing: the AMT spec requires both or neither.

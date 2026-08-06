@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTWriteMetrics, AMTWriteResult, AMTWriterManager}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUtils, AMTWriteMetrics, AMTWriteResult, AMTWriterManager}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -1909,7 +1909,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
         operationMetrics = getOperationMetrics(op),
         userMetadata = getUserMetadata(op),
         tags = if (allTags.nonEmpty) Some(allTags) else None,
-        txnId = Some(txnId))
+        txnId = Some(txnId),
+        // We initialize lastManifestCommit by carrying forward the previous one. If this commit
+        // writes a new AMT checkpoint, the commitInfo will be updated afterwards.
+        lastManifestCommit = snapshot.lastManifestCommitOpt)
 
       val firstAttemptVersion = getFirstAttemptVersion
       val metadataUpdatedWithCoordinatedCommitsInfo = updateMetadataWithCoordinatedCommitsConfs()
@@ -2128,7 +2131,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
         Some(metrics),
         userMetadata = getUserMetadata(op),
         tags = if (tags.nonEmpty) Some(tags) else None,
-        txnId = Some(txnId))
+        txnId = Some(txnId),
+        // `commitLarge` never emits an inline AMT checkpoint, so it only carries the read
+        // snapshot's lastManifestCommitOpt forward.
+        lastManifestCommit = snapshot.lastManifestCommitOpt)
 
       val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
       updateMetadataWithCoordinatedCommitsConfs()
@@ -2883,7 +2889,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // If the table requires atomic Iceberg metadata generation
     // , generate iceberg metadata and update the transaction info.
     var icebergMetadataGenerationDurationMsOpt: Option[Long] = None
-    val updatedCurrentTransactionInfo =
+    var updatedCurrentTransactionInfo =
       targetCatalogTable
       .map { table =>
         val startNanos = System.nanoTime()
@@ -2911,7 +2917,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
       case Some(result) if !result.includeActionsInCommitJson =>
         throw new UnsupportedOperationException(
           "Omitting file actions from the commit JSON is not yet supported.")
-      case Some(result) => baseActions :+ result.checkpoint
+      case Some(result) =>
+        // When we have become a manifest commit, update the reference in the current commitInfo so
+        // the persisted commit (and its derived CRC) records where the AMT checkpoint lives.
+        updatedCurrentTransactionInfo = AMTUtils.updateCurrentTransactionInfo(
+          updatedCurrentTransactionInfo,
+          newLastManifestCommit = LastManifestCommit(
+            version = attemptVersion,
+            contentRootVersion = result.contentRootVersion)
+        )
+        // Recompute the actions from the patched txn info so the committed CommitInfo carries the
+        // reference, then append the inline checkpoint action.
+        updatedCurrentTransactionInfo.finalActionsToCommit :+ result.checkpoint
       case None => baseActions
     }
     logInfo(

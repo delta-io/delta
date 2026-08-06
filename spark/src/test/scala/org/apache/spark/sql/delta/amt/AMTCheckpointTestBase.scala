@@ -99,6 +99,43 @@ trait AMTCheckpointTestBase
     }
   }
 
+  /**
+   * The per-leaf cap tests use to get a deterministic, multi-entry leaf layout.
+   *
+   * A test that needs a leaf-resident entry cannot just write a file or two. For example, a back
+   * reference or a manifest deletion vector both need an entry that actually lives in a leaf. But a
+   * full rewrite spreads the live files over cap-sized partitions by hash of path and skips the
+   * empty ones, and if there is only a single leaf produced, that leaf is promoted to be a root, so
+   * a small table can end up with no leaf at all.
+   */
+  protected val entriesPerLeaf: Int = 10
+
+  /**
+   * File count that packs into whole [[entriesPerLeaf]]-sized leaves.
+   */
+  protected val leafPackedFiles: Int = 3 * entriesPerLeaf
+
+  /** Session conf that puts [[entriesPerLeaf]] entries in each leaf. */
+  protected def leafPackingConfs: Seq[(String, String)] =
+    Seq(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> entriesPerLeaf.toString)
+
+  /** Leaves that `numFiles` live files pack into at [[entriesPerLeaf]] entries per leaf. */
+  protected def expectedLeafCount(numFiles: Int): Int =
+    math.ceil(numFiles.toDouble / entriesPerLeaf).toInt
+
+  /**
+   * Asserts `leaves` holds exactly the leaves `numFiles` live files pack into. Fails with the
+   * arithmetic spelled out, so a count mismatch reads as a packing problem rather than a bare
+   * number comparison.
+   */
+  protected def assertLeafCount(
+      leaves: Seq[DataManifestEntry], numFiles: Int = leafPackedFiles): Unit = {
+    val expected = expectedLeafCount(numFiles)
+    assert(leaves.size == expected,
+      s"$numFiles files at $entriesPerLeaf per leaf must pack into $expected leaves; " +
+        s"got ${leaves.size}.")
+  }
+
   /** A production-supported combination of AMT placement and materialization strategy. */
   protected sealed abstract class AMTCheckpointScenario(
       val name: String,
@@ -324,6 +361,20 @@ trait AMTCheckpointTestBase
       assert(reconstructed.toSet == committed,
         s"${context.scenario.name}: file set changed: committed=$committed " +
           s"reconstructed=${reconstructed.toSet}")
+  }
+
+  /**
+   * Runs the test with inline writes forced (a low action-count threshold).
+   * AMT checkpoints will be emitted in every commit after the first full OPTIMIZE CHECKPOINT.
+   */
+  protected def testInline(testName: String)(body: => Unit): Unit = {
+    test(s"$testName (inline)") {
+      withSQLConf(
+        DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+          -> "1") {
+        body
+      }
+    }
   }
 
   /** True iff `name` looks like an AMT leaf parquet file. */
