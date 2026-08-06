@@ -580,11 +580,11 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     return (long) field.get(scan);
   }
 
-  private static org.apache.spark.sql.sources.Filter[] getDataFilters(DeltaV2Scan scan)
-      throws Exception {
+  private static org.apache.spark.sql.catalyst.expressions.Expression[] getDataFilters(
+      DeltaV2Scan scan) throws Exception {
     Field field = DeltaV2Scan.class.getDeclaredField("dataFilters");
     field.setAccessible(true);
-    return (org.apache.spark.sql.sources.Filter[]) field.get(scan);
+    return (org.apache.spark.sql.catalyst.expressions.Expression[]) field.get(scan);
   }
 
   private static long getTotalRows(DeltaV2Scan scan) throws Exception {
@@ -917,17 +917,11 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testEqualsWithSameFilters() {
     // Both scans with equivalent filters created separately (not same instance)
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder1.pushFilters(
-        new org.apache.spark.sql.sources.Filter[] {
-          new org.apache.spark.sql.sources.EqualTo("city", "hz")
-        });
+    pushFilters(builder1, new org.apache.spark.sql.sources.EqualTo("city", "hz"));
     DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder2.pushFilters(
-        new org.apache.spark.sql.sources.Filter[] {
-          new org.apache.spark.sql.sources.EqualTo("city", "hz")
-        });
+    pushFilters(builder2, new org.apache.spark.sql.sources.EqualTo("city", "hz"));
     DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     // Same options and equivalent filters should be equal
@@ -943,10 +937,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
     // Scan with filters pushed
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder2.pushFilters(
-        new org.apache.spark.sql.sources.Filter[] {
-          new org.apache.spark.sql.sources.EqualTo("city", "hz")
-        });
+    pushFilters(builder2, new org.apache.spark.sql.sources.EqualTo("city", "hz"));
     DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     // Same options but different filters should not be equal and hashCodes should differ
@@ -962,11 +953,11 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         new org.apache.spark.sql.sources.EqualTo("date", "20180520");
 
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {cityEq, dateEq});
+    pushFilters(builder1, new org.apache.spark.sql.sources.Filter[] {cityEq, dateEq});
     DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {dateEq, cityEq});
+    pushFilters(builder2, new org.apache.spark.sql.sources.Filter[] {dateEq, cityEq});
     DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     assertEquals(scan1, scan2);
@@ -985,11 +976,11 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         new org.apache.spark.sql.sources.GreaterThan("cnt", 10);
 
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {nameEq, cntGt});
+    pushFilters(builder1, new org.apache.spark.sql.sources.Filter[] {nameEq, cntGt});
     DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {cntGt, nameEq});
+    pushFilters(builder2, new org.apache.spark.sql.sources.Filter[] {cntGt, nameEq});
     DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     // Sanity check that dataFilters is actually populated, otherwise this test would trivially
@@ -1981,6 +1972,82 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
               "LIMIT 0 must report 0 rows, not the stale catalog count (999)");
           assertEquals(
               0L, getTotalBytes(scan), "LIMIT 0 should read zero bytes even with catalog stats");
+        });
+  }
+
+  @Test
+  public void testLimitPushdown_numRowsKnownUnderPlanStats() throws Exception {
+    // LIMIT + plan stats: V1's limit-aware filesForScan takes no keepNumRecords and nulls out
+    // per-file AddFile.stats, so the count has to come from the scan-level aggregate
+    // (DeltaScan.scanned.rows) instead. Without that fallback numRows() regresses to empty for
+    // every limit-pushdown query whenever CBO or planStats is on.
+    withSQLConf(
+        "spark.sql.cbo.planStats.enabled",
+        "true",
+        () -> {
+          // Baseline: no limit, count summed from per-file numRecords (table has 5 rows, 5 files).
+          DeltaV2Scan noLimit =
+              (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+          assertTrue(isRowCountKnown(noLimit), "row count should be known without a limit");
+          assertEquals(5L, noLimit.estimateStatistics().numRows().getAsLong());
+
+          // With a pushed limit, the per-file counts are gone but the aggregate still reports the
+          // rows the limited scan will read.
+          DeltaV2Scan withLimit = buildScanWithLimit(3);
+          assertTrue(
+              isRowCountKnown(withLimit),
+              "row count must stay known for a pushed limit (aggregate fallback)");
+          assertTrue(
+              withLimit.estimateStatistics().numRows().isPresent(),
+              "numRows must be present for LIMIT + planStats");
+          assertEquals(
+              3L,
+              withLimit.estimateStatistics().numRows().getAsLong(),
+              "numRows should be the limited row count reported by DeltaScan.scanned.rows");
+        });
+  }
+
+  @Test
+  public void testLimitPushdown_numRowsEmptyWhenPlanStatsDisabled() throws Exception {
+    // The aggregate fallback must respect the same plan-stats gate as the per-file path: with CBO
+    // and planStats off, a pushed limit must not start reporting numRows.
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "false",
+        () -> {
+          withSQLConf(
+              "spark.sql.cbo.planStats.enabled",
+              "false",
+              () -> {
+                DeltaV2Scan scan = buildScanWithLimit(3);
+                assertFalse(
+                    isRowCountKnown(scan),
+                    "row count must stay unknown when CBO and planStats are both disabled");
+                assertFalse(
+                    scan.estimateStatistics().numRows().isPresent(),
+                    "numRows must be empty when CBO and planStats are both disabled");
+              });
+        });
+  }
+
+  @Test
+  public void testLimitPushdown_numRowsInvalidatedByRuntimeFiltering() throws Exception {
+    // An aggregate row count describes the pre-prune file set. Runtime partition filtering has no
+    // per-file breakdown to re-derive from, so the count must become unknown rather than overstate
+    // what the pruned scan reads. (Without a limit the per-file counts survive pruning -- see
+    // testNumRowsAfterRuntimeFiltering.)
+    withSQLConf(
+        "spark.sql.cbo.planStats.enabled",
+        "true",
+        () -> {
+          DeltaV2Scan scan = buildScanWithLimit(3);
+          assertTrue(isRowCountKnown(scan), "precondition: count known before runtime filtering");
+
+          scan.filter(new Predicate[] {cityPredicate}); // city=hz prunes files
+
+          assertFalse(
+              scan.estimateStatistics().numRows().isPresent(),
+              "an aggregate-derived count must not survive runtime file pruning");
         });
   }
 

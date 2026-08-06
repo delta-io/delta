@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.fs.Path.getName;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
@@ -72,7 +73,7 @@ public final class DeltaHistoryManager {
       Engine engine,
       Path logPath,
       long millisSinceEpochUTC,
-      SnapshotImpl latestSnapshot,
+      Snapshot latestSnapshot,
       List<ParsedCatalogCommitData> catalogCommits) {
     DeltaHistoryManager.Commit commit =
         DeltaHistoryManager.getActiveCommitAtTimestamp(
@@ -122,7 +123,7 @@ public final class DeltaHistoryManager {
       Engine engine,
       Path logPath,
       long millisSinceEpochUTC,
-      SnapshotImpl latestSnapshot,
+      Snapshot latestSnapshot,
       List<ParsedCatalogCommitData> catalogCommits) {
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
             engine,
@@ -163,7 +164,7 @@ public final class DeltaHistoryManager {
    */
   public static Commit getActiveCommitAtTimestamp(
       Engine engine,
-      SnapshotImpl latestSnapshot,
+      Snapshot latestSnapshot,
       Path logPath,
       long timestamp,
       boolean mustBeRecreatable,
@@ -334,7 +335,7 @@ public final class DeltaHistoryManager {
    *     timestamps enabled, this will be the commit after the latest version. If in-commit
    *     timestamps were enabled for the entire history, this will be `earliestCommit`.
    */
-  private static Commit getICTEnablementCommit(SnapshotImpl snapshot, Commit earliestCommit) {
+  private static Commit getICTEnablementCommit(Snapshot snapshot, Commit earliestCommit) {
     Metadata metadata = snapshot.getMetadata();
     if (!IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       // Pretend ICT will be enabled after the latest version and requested timestamp.

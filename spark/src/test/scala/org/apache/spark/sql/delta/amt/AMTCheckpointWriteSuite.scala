@@ -35,13 +35,13 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
   testAcrossAMTCheckpointScenarios(
       "checkpoint emission writes a manifest tree and carries the user action once",
-      "amt_emit")(
-      setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+      "amt_emit",
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles),
       inlineCheckpointTriggerActionsOrSQL = Some(_ => Left((
         Seq(AddFile("missing-file.parquet", Map.empty, 0L, 0L, dataChange = true)
           .removeWithTimestamp(1L)),
         DeltaOperations.ManualUpdate)))) { context =>
-    val path = tablePath(context.tableName)
     val actionsFromCheckpointedCommit =
       actionsAt(context.postCheckpointSnapshot.deltaLog, context.checkpoint.version)
     assert(actionsFromCheckpointedCommit.exists {
@@ -49,69 +49,89 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       case _ => false
     }, "The described business commit must carry the user file action.")
 
+    val path = tablePath(context.tableName)
     val rootName = new File(context.checkpoint.contentRoot.path).getName
     assert(isRootFileName(rootName),
-      s"contentRoot must point at a root manifest file; got " +
-        context.checkpoint.contentRoot.path)
+      s"a written tree's root must carry a root manifest name; got $rootName")
     assert(rootFiles(path).exists(_.getName == rootName))
+    assertLeafCount(context.provider.leaves)
 
     // The emitted tree must reconstruct exactly the table's live files.
     assertReconstructsLiveFileSet(context)
   }
 
-  test("manifest pointers are stored relative to the table root") {
-    withTable("amt_relative_pointers") {
-      val name = "amt_relative_pointers"
-      createAMTTable(name, checkpointInterval = 2)
-      withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "1") {
-        sql(s"INSERT INTO $name VALUES (1)") // v1: one data file.
-        sql(s"INSERT INTO $name VALUES (2)") // v2: interval boundary -> triggers AMT emission.
-      }
-
-      val deltaLog = deltaLogForName(name)
-      val snapshot = deltaLog.update()
-      val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
-
-      // The Checkpoint's contentRoot pointer is stored relative to the table root, i.e.
-      // `metadata/root-<uuid>.parquet`, not an absolute URI.
-      val rootPointer = provider.checkpointAction.contentRoot.path
-      assert(rootPointer == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(rootPointer).getName}",
-        s"contentRoot.path must be table-root-relative; got $rootPointer")
-      assert(!new Path(rootPointer).isAbsolute,
-        s"contentRoot.path must not be absolute; got $rootPointer")
-      assert(isRootFileName(new File(rootPointer).getName))
-
-      // Every leaf pointer stored in the root manifest is likewise table-root-relative.
-      val leafLocations = {
-        spark.read.parquet(new File(new File(tablePath(name),
-          FileNames.AMT_METADATA_DIR_NAME), new File(rootPointer).getName).toString)
-          .where(col("content_type") === AMTSingleAction.ContentType.Type.DataManifest)
-          .select("location").as[String].collect().toSeq
-      }
-      // The clustered writer decides leaf count by partitioning, so assert at least one leaf
-      // pointer rather than an exact count; every pointer must be table-root-relative.
-      assert(leafLocations.nonEmpty, s"Expected at least one leaf pointer, got $leafLocations")
-      leafLocations.foreach { loc =>
-        assert(loc == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(loc).getName}",
-          s"leaf pointer must be table-root-relative; got $loc")
-        assert(isLeafFileName(new File(loc).getName))
-      }
-
-      // The pointers are stored relative on disk; the provider re-absolutizes them via
-      // `leafManifestAbsolutePaths`, and reconstruction driven off the manifest tree (root +
-      // leaves, both stored relative) surfaces exactly the two committed data files.
-      val leafLocs = provider.leaves.map(_.location)
-      assert(leafLocs.forall(loc =>
-        loc == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(loc).getName}"),
-        s"leaf pointer locations must be table-root-relative; got $leafLocs")
-      assert(provider.leafManifestAbsolutePaths.forall(_.isAbsolute),
-        s"resolved leaf manifest paths must be absolute; got ${provider.leafManifestAbsolutePaths}")
-      val reconstructed = provider.loadActionsForStateReconstruction(spark, deltaLog)
-        .getOrElse(fail("AMT provider must contribute reconstructed actions."))
-      assert(reconstructed.where("add is not null").count() == 2,
-        "Reconstruction from the relative-pointer manifest tree must surface both committed files.")
-      checkAnswer(spark.table(name), Seq(Row(1), Row(2)))
+  testAcrossAMTCheckpointScenarios(
+      "small full checkpoint promotes its single distributed manifest to the root",
+      "amt_root_only",
+      deferredScenarios = Seq(AMTCheckpointScenario.DeferredFull))(
+      setup = name => {
+        sql(s"INSERT INTO $name VALUES (1)")
+        sql(s"INSERT INTO $name VALUES (2)")
+      }) { context =>
+    val rootDataEntries = {
+      spark.read
+        .parquet(context.checkpoint.contentRoot.getAbsolutePath(context.provider.tableRoot)
+          .toString)
+        .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
+        .count()
     }
+
+    assert(context.provider.leaves.isEmpty, "The root must contain no leaf pointers.")
+    assert(rootDataEntries == 2L, "Both live files must be reachable as DATA entries in the root.")
+
+    // The promoted root alone must reconstruct exactly the table's live files.
+    assertReconstructsLiveFileSet(context)
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "manifest pointers are stored relative to the table root",
+      "amt_relative_pointers",
+      // The leaf packing keeps several leaf pointers in the root to check, rather than the single
+      // manifest a small table would promote.
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
+    val name = context.tableName
+    val provider = context.provider
+
+    // The Checkpoint's contentRoot pointer is stored relative to the table root, i.e.
+    // `metadata/root-<uuid>.parquet`, not an absolute URI.
+    val rootPointer = provider.checkpointAction.contentRoot.path
+    assert(rootPointer == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(rootPointer).getName}",
+      s"contentRoot.path must be table-root-relative; got $rootPointer")
+    assert(!new Path(rootPointer).isAbsolute,
+      s"contentRoot.path must not be absolute; got $rootPointer")
+    assert(isRootFileName(new File(rootPointer).getName))
+
+    // Every leaf pointer stored in the root manifest is likewise table-root-relative.
+    val leafLocations = {
+      spark.read.parquet(new File(new File(tablePath(name),
+        FileNames.AMT_METADATA_DIR_NAME), new File(rootPointer).getName).toString)
+        .where(col("content_type") === AMTSingleAction.ContentType.Type.DataManifest)
+        .select("location").as[String].collect().toSeq
+    }
+    assert(leafLocations.size == expectedLeafCount(leafPackedFiles),
+      s"$leafPackedFiles files at $entriesPerLeaf per leaf must yield "  +
+        s"${expectedLeafCount(leafPackedFiles)} leaf pointers; got $leafLocations")
+    leafLocations.foreach { loc =>
+      assert(loc == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(loc).getName}",
+        s"leaf pointer must be table-root-relative; got $loc")
+      assert(isLeafFileName(new File(loc).getName))
+    }
+
+    // The pointers are stored relative on disk; the provider re-absolutizes them via
+    // `leafManifestAbsolutePaths`, and reconstruction driven off the manifest tree (root +
+    // leaves, both stored relative) surfaces exactly the committed data files.
+    val leafLocs = provider.leaves.map(_.location)
+    assert(leafLocs.forall(loc =>
+      loc == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(loc).getName}"),
+      s"leaf pointer locations must be table-root-relative; got $leafLocs")
+    assert(provider.leafManifestAbsolutePaths.forall(_.isAbsolute),
+      s"resolved leaf manifest paths must be absolute; got ${provider.leafManifestAbsolutePaths}")
+    assertReconstructsLiveFileSet(context)
+    // `setup` writes one file per id, and the trigger adds the last one.
+    checkAnswer(spark.table(name), (0 until leafPackedFiles).map(Row(_)))
   }
 
   test("manifest tree round-trips when the table root contains spaces") {
