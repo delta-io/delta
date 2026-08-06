@@ -325,6 +325,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           s"""${AUTO_COMPACT_ALLOWED_VALUES.mkString("(", ",", ")")}""")
       .createOptional
 
+  val DELTA_AUTO_COMPACT_USE_FILE_SIZE_HISTOGRAM =
+    buildConf("autoCompact.useFileSizeHistogram")
+      .internal()
+      .doc(
+        s"""When enabled, unpartitioned tables will evaluate candidacy for auto compaction
+           | using the fileSizeHistogram. This enables accurate evaluation of small files
+           | without needing snapshot reconstruction.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_AUTO_COMPACT_RECORD_PARTITION_STATS_ENABLED =
     buildConf("autoCompact.recordPartitionStats.enabled")
       .internal()
