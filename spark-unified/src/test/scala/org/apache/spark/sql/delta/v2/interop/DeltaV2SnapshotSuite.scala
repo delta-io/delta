@@ -83,6 +83,8 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
     assert(v2.dataPath === v1.dataPath)
     // With ICT disabled, both read the commit-file modification time for the same commit.
     assert(v2.timestamp === v1.timestamp)
+    // A Kernel-backed snapshot has no V1 DeltaLog from which to derive usage-log tags.
+    assert(v2.getCommonTags.isEmpty)
 
     // allFiles is read through Kernel but must describe the same physical files as V1: same paths,
     // sizes, and partition values (compared as a set -- ordering is not guaranteed).
