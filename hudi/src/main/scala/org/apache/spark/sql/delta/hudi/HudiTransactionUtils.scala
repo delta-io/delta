@@ -117,7 +117,7 @@ object HudiTransactionUtils extends DeltaLogging {
                                     conf: StorageConfiguration[_]): HoodieTableMetaClient = {
       val keyGeneratorClass = getKeyGeneratorClass(partitionFields)
       HoodieTableMetaClient
-        .withPropertyBuilder
+        .newTableBuilder
         .setCommitTimezone(HoodieTimelineTimeZone.UTC)
         .setHiveStylePartitioningEnable(true)
         .setTableType(HoodieTableType.COPY_ON_WRITE)
