@@ -41,6 +41,8 @@ import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.types.VariantType;
 import java.util.stream.Stream;
+import org.apache.spark.SparkException;
+import org.apache.spark.SparkRuntimeException;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.MetadataBuilder;
@@ -171,6 +173,50 @@ public class SchemaUtilsTest {
     assertEquals(expectedSparkSchema, actualSparkSchema);
   }
 
+  @Test
+  public void testConvertKernelCollationsToSpark() {
+    assertEquals(
+        org.apache.spark.sql.types.StringType$.MODULE$.apply("UTF8_LCASE"),
+        SchemaUtils.convertKernelDataTypeToSparkDataType(new StringType("SPARK.UTF8_LCASE")));
+    assertEquals(
+        org.apache.spark.sql.types.StringType$.MODULE$.apply("UNICODE"),
+        SchemaUtils.convertKernelDataTypeToSparkDataType(new StringType("ICU.UNICODE")));
+    assertEquals(
+        org.apache.spark.sql.types.StringType$.MODULE$.apply("en_CI"),
+        SchemaUtils.convertKernelDataTypeToSparkDataType(new StringType("ICU.en_AS_CI")));
+  }
+
+  @Test
+  public void testConvertKernelCollationRejectsUnknownProvider() {
+    SparkRuntimeException exception =
+        assertThrows(
+            SparkRuntimeException.class,
+            () ->
+                SchemaUtils.convertKernelDataTypeToSparkDataType(
+                    new StringType("OTHER.UTF8_LCASE")));
+    assertEquals("COLLATION_INVALID_PROVIDER", exception.getCondition());
+    assertEquals("OTHER", exception.getMessageParameters().get("provider"));
+    assertEquals("spark, icu", exception.getMessageParameters().get("supportedProviders"));
+  }
+
+  @Test
+  public void testConvertKernelCollationRejectsProviderNameMismatch() {
+    assertInvalidKernelCollation("ICU.UTF8_LCASE");
+  }
+
+  @Test
+  public void testConvertKernelCollationRejectsUnknownName() {
+    SparkException exception =
+        assertThrows(
+            SparkException.class,
+            () ->
+                SchemaUtils.convertKernelDataTypeToSparkDataType(
+                    new StringType("SPARK.UNKNOWN_COLLATION")));
+    assertEquals("COLLATION_INVALID_NAME", exception.getCondition());
+    assertEquals("UNKNOWN_COLLATION", exception.getMessageParameters().get("collationName"));
+    assertEquals("sr_Latn", exception.getMessageParameters().get("proposals"));
+  }
+
   static Stream<Arguments> nullInPrimitiveArraysProvider() {
     return Stream.of(
         Arguments.of(
@@ -242,6 +288,18 @@ public class SchemaUtilsTest {
     org.apache.spark.sql.types.DataType toSpark =
         SchemaUtils.convertKernelDataTypeToSparkDataType(kernelDataType);
     assertEquals(sparkDataType, toSpark);
+  }
+
+  private void assertInvalidKernelCollation(String collationIdentifier) {
+    SparkRuntimeException exception =
+        assertThrows(
+            SparkRuntimeException.class,
+            () ->
+                SchemaUtils.convertKernelDataTypeToSparkDataType(
+                    new StringType(collationIdentifier)));
+    assertEquals("COLLATION_INVALID_NAME", exception.getCondition());
+    assertEquals(collationIdentifier, exception.getMessageParameters().get("collationName"));
+    assertEquals("", exception.getMessageParameters().get("proposals"));
   }
 
   ////////////////////////////////
