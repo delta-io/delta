@@ -207,7 +207,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       leaves = allLeafPointers,
       includeActionsInCommitJson = true)
     val numExistingLeavesUpdated = carriedLeafPointers.count(p =>
-      mdvPositionsByLeaf.getOrElse(p.location, Seq.empty).nonEmpty)
+      mdvPositionsByLeaf.getOrElse(p.location, Set.empty[Long]).nonEmpty)
     val incrementalWriteMetrics = IncrementalAMTWriteMetrics(
       numIntermediateCommits = intermediateLogCommits.size,
       numExistingLeavesUpdated = numExistingLeavesUpdated,
@@ -243,17 +243,21 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
   private def carryForwardLeaves(
       provider: AMTCheckpointProvider,
       mdvRemoves: Seq[RemoveFile],
-      cdfRemoves: Seq[RemoveFile]): (Seq[DataManifestEntry], Map[String, Seq[Long]]) = {
-    def positionsByLeaf(removes: Seq[RemoveFile]): Map[String, Seq[Long]] =
+      cdfRemoves: Seq[RemoveFile]): (Seq[DataManifestEntry], Map[String, Set[Long]]) = {
+    // A position is a SET member: the MDV and deleted_positions are both bitmaps, so removing
+    // the same (leaf, position) twice -- e.g. a leaf file removed, re-added and removed again --
+    // masks it once. Deduplicating here keeps numLeafMdvBitsAdded equal to the bits the MDV
+    // actually gained.
+    def positionsByLeaf(removes: Seq[RemoveFile]): Map[String, Set[Long]] =
       removes.flatMap(r => r.backReference.map(br => br.manifest -> br.pos))
-        .groupBy(_._1).map { case (leaf, pairs) => leaf -> pairs.map(_._2) }
+        .groupBy(_._1).map { case (leaf, pairs) => leaf -> pairs.map(_._2).toSet }
     val mdvPositionsByLeaf = positionsByLeaf(mdvRemoves)
     val cdfPositionsByLeaf = positionsByLeaf(cdfRemoves)
     val pointers = provider.leaves
       .map { pointer =>
         val leafKey = pointer.location
-        val newMdvPositions = mdvPositionsByLeaf.getOrElse(leafKey, Seq.empty)
-        val cdfPositions = cdfPositionsByLeaf.getOrElse(leafKey, Seq.empty)
+        val newMdvPositions = mdvPositionsByLeaf.getOrElse(leafKey, Set.empty[Long])
+        val cdfPositions = cdfPositionsByLeaf.getOrElse(leafKey, Set.empty[Long])
         // Cumulative MDV = old dv + every position removed from this leaf since the old AMT.
         val manifestInfo =
           if (newMdvPositions.isEmpty) {
@@ -269,7 +273,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
         // delete from this leaf), never the old pointer's stale value.
         val deletedPositions =
           if (cdfPositions.isEmpty) None
-          else Some(AMTUtils.serializeMdv(RoaringBitmapArray(cdfPositions: _*)))
+          else Some(AMTUtils.serializeMdv(RoaringBitmapArray(cdfPositions.toSeq: _*)))
         val tracking = AMTWriteHelper.addedTracking.copy(deleted_positions = deletedPositions)
         pointer.copy(manifest_info = manifestInfo, tracking = tracking)
       }

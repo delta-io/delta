@@ -54,6 +54,14 @@ trait AMTCheckpointTestBase
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key, "false")
 
+  /**
+   * Runs `body` with the format check that rejects reading AMT manifest parquet files directly
+   * disabled, so a test can read a root or leaf manifest off disk.
+   */
+  protected def allowReadWithinDeltaLog[T](body: => T): T = {
+    body
+  }
+
   /** Typed view of a snapshot's checkpoint provider when it is AMT-backed. */
   protected def amtProvider(snapshot: Snapshot): Option[AMTCheckpointProvider] =
     snapshot.checkpointProvider match {
@@ -429,6 +437,27 @@ trait AMTCheckpointTestBase
           .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
           .count()
       }.sum
+  }
+
+
+  /**
+   * The number of live files the CURRENT snapshot's AMT reconstructs across the WHOLE tree -- root
+   * and leaves. Goes through the provider's own reconstruction, which drops MDV-masked leaf entries
+   * and `tracking=removed` root tombstones, so it equals `snapshot.allFiles.count()` on both full
+   * and incremental trees. Unlike [[currentLeafDataEntries]], it counts live files stored directly
+   * in the root too (as an incremental commit does below the spill threshold).
+   *
+   * Prefer [[assertReconstructsLiveFileSet]] when the test runs through
+   * [[testAcrossAMTCheckpointScenarios]]; this count is for scenario-specific tests that drive the
+   * checkpoint themselves and so have no [[AMTCheckpointScenarioContext]].
+   */
+  protected def currentLiveDataEntries(snapshot: Snapshot): Long = {
+    val provider = amtProvider(snapshot)
+      .getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
+    provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
+      .getOrElse(fail("AMT provider must contribute leaf-derived file actions."))
+      .where(col("add").isNotNull)
+      .count()
   }
 
 }
