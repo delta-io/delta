@@ -448,6 +448,11 @@ public class DeltaV2Table extends DeltaV2TableShims
     return isTimeTravel ? READ_ONLY_CAPABILITIES : CAPABILITIES;
   }
 
+  @Override
+  public boolean canRenameConflictingMetadataColumns() {
+    return true;
+  }
+
   /**
    * Returns the version of the snapshot loaded when this table was constructed, as a String.
    *

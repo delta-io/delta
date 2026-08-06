@@ -1,5 +1,7 @@
 package io.delta.spark.internal.v2.read;
 
+import static io.delta.spark.internal.v2.read.metadata.MetadataColumnTestUtils.metadataColumnStructField;
+import static io.delta.spark.internal.v2.read.metadata.MetadataColumnTestUtils.renamedMetadataColumnStructField;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.spark.internal.v2.DeltaV2TestBase;
@@ -197,7 +199,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     StructType prunedSchema =
         new StructType()
             .add("name", DataTypes.StringType)
-            .add("_metadata", new StructType().add("file_path", DataTypes.StringType))
+            .add(metadataColumnStructField(new StructType().add("file_path", DataTypes.StringType)))
             .add("date", DataTypes.StringType)
             .add("city", DataTypes.StringType)
             .add("part", DataTypes.IntegerType);
@@ -209,6 +211,54 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         Scan.ColumnarSupportMode.UNSUPPORTED,
         scan.columnarSupportMode(),
         "columnarSupportMode should return UNSUPPORTED when _metadata is requested");
+  }
+
+  @Test
+  public void testColumnarSupportModeWithCollisionRenamedMetadataColumn() {
+    // Struct renamed to physical `__metadata` (logical name still `_metadata`); columnarSupportMode
+    // must recognize it by marker, not physical name.
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    StructType prunedSchema =
+        new StructType()
+            .add("name", DataTypes.StringType)
+            .add("_metadata", DataTypes.StringType)
+            .add(
+                renamedMetadataColumnStructField(
+                    "__metadata", new StructType().add("file_path", DataTypes.StringType)))
+            .add("date", DataTypes.StringType)
+            .add("city", DataTypes.StringType)
+            .add("part", DataTypes.IntegerType);
+    builder.pruneColumns(prunedSchema);
+
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+
+    assertEquals(
+        Scan.ColumnarSupportMode.UNSUPPORTED,
+        scan.columnarSupportMode(),
+        "columnarSupportMode should return UNSUPPORTED when the renamed __metadata is requested");
+  }
+
+  @Test
+  public void testColumnarSupportModeWithUserMetadataColumnOnly() {
+    // A user column literally named `_metadata` (no metadata-column marker) and no metadata struct
+    // must NOT be mistaken for the metadata column: columnarSupportMode stays SUPPORTED. This
+    // guards the false positive the old physical-name check produced.
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    StructType prunedSchema =
+        new StructType()
+            .add("name", DataTypes.StringType)
+            .add("_metadata", DataTypes.StringType)
+            .add("date", DataTypes.StringType)
+            .add("city", DataTypes.StringType)
+            .add("part", DataTypes.IntegerType);
+    builder.pruneColumns(prunedSchema);
+
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+
+    assertEquals(
+        Scan.ColumnarSupportMode.SUPPORTED,
+        scan.columnarSupportMode(),
+        "columnarSupportMode should stay SUPPORTED for a user _metadata column with no struct");
   }
 
   @Test

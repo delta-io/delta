@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -28,7 +29,7 @@ import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.functions.{col, lit, when}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{LongType, StructType}
+import org.apache.spark.sql.types.{LongType, StringType, StructType}
 
 class RowTrackingReadWriteSuite extends RowIdTestUtils
   with ParquetTest {
@@ -360,6 +361,36 @@ class RowTrackingReadWriteSuite extends RowIdTestUtils
         val expectedAnswer =
           Seq(Row(1, -1, -2, 11, 111), Row(2, -1, -2, 22, 222), Row(3, -1, -2, 33, 333))
         checkAnswer(df, expectedAnswer)
+      }
+    }
+  }
+
+  for (v2Mode <- Seq("NONE", "STRICT")) {
+    test(s"row_id reachable via __metadata when a user _metadata column collides " +
+        s"(v2Mode=$v2Mode)") {
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> v2Mode) {
+        withTable(testTableName) {
+          withRowTrackingEnabled(enabled = true) {
+            val tableSchema = new StructType()
+              .add("id", LongType)
+              .add(FileFormat.METADATA_NAME, StringType)
+            spark.createDataFrame(
+                Seq(Row(1L, "a"), Row(2L, "b")).asJava,
+                tableSchema)
+              .write.format("delta").mode("append").saveAsTable(testTableName)
+
+            // The user column still resolves as plain `_metadata`, and the collision-renamed
+            // metadata struct exposes row_id under `__metadata`.
+            withAllParquetReaders {
+              checkAnswer(
+                spark.table(testTableName).selectExpr(
+                  "id",
+                  FileFormat.METADATA_NAME,
+                  s"_${FileFormat.METADATA_NAME}.${RowId.ROW_ID} AS row_id"),
+                Seq(Row(1L, "a", 0L), Row(2L, "b", 1L)))
+            }
+          }
+        }
       }
     }
   }
