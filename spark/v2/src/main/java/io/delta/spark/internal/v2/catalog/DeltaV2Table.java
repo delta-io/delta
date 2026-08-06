@@ -530,6 +530,8 @@ public class DeltaV2Table extends DeltaV2TableShims
     return DeltaV2ScanUtils.newScanBuilder(
         name(),
         initialSnapshot,
+        kernelEngine,
+        catalogTable,
         snapshotManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),

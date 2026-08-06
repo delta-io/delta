@@ -151,9 +151,11 @@ object AMTWriteHelper extends DeltaLogging {
 
   /**
    * Writes a clustered AMT manifest tree for a full checkpoint of `readSnapshot`'s live files.
-   * All files are clustered and flushed into leaf manifests -- one leaf per Spark partition,
-   * written by executors. The root lists only leaf pointers (no inline data entries). Returns the
-   * [[ContentRoot]] plus the per-leaf [[DataManifestEntry]] pointers.
+   * Live files are clustered and flushed into manifests -- one per Spark partition, written by
+   * executors. A snapshot small enough to produce a single manifest needs no tree: that manifest is
+   * promoted to the root and no leaf pointers are returned. Otherwise a root listing one pointer
+   * per leaf is written. Returns the [[ContentRoot]] plus the per-leaf [[DataManifestEntry]]
+   * pointers, which are empty for a promoted single-manifest checkpoint.
    */
   private def writeClusteredManifestTree(
       spark: SparkSession,
@@ -179,9 +181,17 @@ object AMTWriteHelper extends DeltaLogging {
       metadataDir = metadataDir,
       addFilesDf = addFilesDf,
       desiredNumLeaves = desiredNumLeaves)
-    val contentRoot =
-      writeRoot(spark, fs, hadoopConf, tableRoot, metadataDir, leafEntries.map(_.wrap))
-    (contentRoot, leafEntries)
+    leafEntries match {
+      case Seq(onlyLeaf) =>
+        // If there is only one leaf, promote it to the root.
+        val contentRoot =
+          ContentRoot(path = onlyLeaf.location, sizeInBytes = onlyLeaf.file_size_in_bytes)
+        (contentRoot, Seq.empty)
+      case _ =>
+        val contentRoot =
+          writeRoot(spark, fs, hadoopConf, tableRoot, metadataDir, leafEntries.map(_.wrap))
+        (contentRoot, leafEntries)
+    }
   }
 
 
