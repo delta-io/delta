@@ -16,16 +16,20 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTestUtils, DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.RowIndexFilterType
+import org.apache.spark.sql.delta.{Checkpoints, DataFrameUtils, DeletionVectorsTestUtils, DeltaLog, DeltaOperations, DeltaParquetFileFormat}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.execution.datasources.{FileIndex, FileStatusWithMetadata, HadoopFsRelation, LogicalRelation, PartitionDirectory}
 import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.types.{LongType, StructType}
 
 /**
  * Verifies that [[Snapshot]] APIs correct results on AMT tables.
@@ -33,6 +37,7 @@ import org.apache.spark.sql.functions.col
 class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUtils {
 
   import testImplicits._
+
 
   ///////////////////////////
   // Post commit snapshot
@@ -455,6 +460,88 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     }
     assert(e.getMessage.contains("dv and dv_cardinality must both be set or both unset"),
       s"Unexpected message: ${e.getMessage}")
+  }
+
+  for (vectorizedReader <- Seq(true, false)) {
+    test("AMTParquetFileFormat materializes an inline manifest DV skip column, " +
+        s"vectorizedReader=$vectorizedReader") {
+      // 6 rows; mark leaf-local positions 1 and 4 deleted.
+      checkManifestDvScan(numRows = 6, deletedPositions = Set(1L, 4L), vectorizedReader)
+    }
+
+    test("AMTParquetFileFormat keeps all rows when no manifest DV is present, " +
+        s"vectorizedReader=$vectorizedReader") {
+      checkManifestDvScan(numRows = 5, deletedPositions = Set.empty, vectorizedReader)
+    }
+
+    test("AMTParquetFileFormat drops the whole leaf when the manifest DV covers it, " +
+        s"vectorizedReader=$vectorizedReader") {
+      checkManifestDvScan(numRows = 4, deletedPositions = Set(0L, 1L, 2L, 3L), vectorizedReader)
+    }
+  }
+
+  /** Inline manifest-DV scan metadata over `positions`, keyed exactly like a data-file DV. */
+  private def manifestDvScanMetadata(positions: Long*): Map[String, Any] = {
+    val descriptor = DeletionVectorDescriptor.inlineInLog(
+      mdvBytesFor(positions: _*), positions.length.toLong)
+    Map(
+      DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED -> descriptor.serializeToBase64(),
+      DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE -> RowIndexFilterType.IF_CONTAINED)
+  }
+
+  /** A one-file [[FileIndex]] that attaches inline manifest-DV scan metadata to its single file. */
+  private class SingleFileWithMetadataIndex(file: FileStatus, meta: Map[String, Any])
+    extends FileIndex {
+    override def rootPaths: Seq[Path] = Seq(file.getPath)
+    override def listFiles(
+        partitionFilters: Seq[Expression],
+        dataFilters: Seq[Expression]): Seq[PartitionDirectory] =
+      Seq(PartitionDirectory(InternalRow.empty, Seq(FileStatusWithMetadata(file, meta))))
+    override def inputFiles: Array[String] = Array(file.getPath.toString)
+    override def refresh(): Unit = {}
+    override def sizeInBytes: Long = file.getLen
+    override def partitionSchema: StructType = new StructType()
+  }
+
+  /**
+   * Writes ids `0 until numRows` to a single parquet file, then reads it back through a full
+   * [[AMTParquetFileFormat]] scan carrying an inline manifest DV over `deletedPositions`. Asserts
+   * every row is returned with its id intact and `__delta_internal_is_row_deleted` set to DROP (1)
+   * at exactly the DV positions and KEEP (0) elsewhere.
+   */
+  private def checkManifestDvScan(
+      numRows: Int,
+      deletedPositions: Set[Long],
+      vectorizedReader: Boolean): Unit = withTempDir { dir =>
+    spark.range(0, numRows.toLong, 1, 1).write.mode("overwrite").parquet(dir.toString)
+    val hadoopConf = spark.sessionState.newHadoopConf()
+    val dirPath = new Path(dir.toString)
+    val file = dirPath.getFileSystem(hadoopConf).listStatus(dirPath)
+      .find(_.getPath.getName.endsWith(".parquet"))
+      .getOrElse(fail("Expected a single parquet part file."))
+
+    val scanMetadata =
+      if (deletedPositions.isEmpty) Map.empty[String, Any]
+      else manifestDvScanMetadata(deletedPositions.toSeq.sorted: _*)
+    val readingSchema = new StructType().add("id", LongType)
+      .add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD)
+    val relation = HadoopFsRelation(
+      location = new SingleFileWithMetadataIndex(file, scanMetadata),
+      partitionSchema = new StructType(),
+      dataSchema = readingSchema,
+      bucketSpec = None,
+      fileFormat = new AMTParquetFileFormat(dir.toString),
+      options = Map.empty)(spark)
+
+    withSQLConf("spark.sql.parquet.enableVectorizedReader" -> vectorizedReader.toString) {
+      val actual = DataFrameUtils.ofRows(spark, LogicalRelation(relation))
+        .select("id", DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME)
+        .as[(Long, Byte)]
+      val expected = (0L until numRows.toLong).map { id =>
+        (id, if (deletedPositions.contains(id)) 1.toByte else 0.toByte)
+      }
+      checkDatasetUnorderly(actual, expected: _*)
+    }
   }
 
   /** Reconstructed live `add.path`s from the (possibly MDV-patched) provider. */

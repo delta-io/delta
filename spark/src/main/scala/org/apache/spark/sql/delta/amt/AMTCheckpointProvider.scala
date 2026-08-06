@@ -16,10 +16,11 @@
 
 package org.apache.spark.sql.delta.amt
 
+import org.apache.spark.sql.delta.{RowIndexFilter, RowIndexFilterType}
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
-import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, RemoveFile, SingleAction}
-import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
+import org.apache.spark.sql.delta.DeltaParquetFileFormat
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, DeletionVectorDescriptor, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.util.DeltaEncoder
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -143,26 +144,24 @@ final class AMTCheckpointProvider(
     val encodedRootPath = SparkPath.fromPath(rootManifestAbsolutePath).urlEncoded
     val serializableConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
 
-    val files = rootStatus +: leafStatuses
-    val fmt = DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET
-    // Read every leaf row, then drop the MDV-marked (leaf, rowIndex) entries with a filter on
-    // top, using a broadcast of each leaf's manifest DV bitmap bytes keyed by its `_metadata`
-    // file path.
-    val index = DeltaLogFileIndex(fmt, files.toArray)
-    val mdvByLeaf: Map[String, Array[Byte]] = leaves.flatMap { leaf =>
-      leaf.manifestDV.map { case (dvBytes, _) =>
-        SparkPath.fromPath(leaf.getAbsolutePath(localTableRoot)).urlEncoded -> dvBytes
+    val files = (rootStatus +: leafStatuses).toArray
+    // Carry each leaf's inline manifest DV as per-file scan metadata under the same keys
+    // data-file DVs use, so AMTParquetFileFormat materializes the `__delta_internal_is_row_deleted`
+    // marker column that loadEntriesWithLocation filters on.
+    val perFileMetadata: Map[String, Map[String, Any]] = leaves.flatMap { leaf =>
+      leaf.manifestDV.map { case (dvBytes, cardinality) =>
+        val encoded = DeletionVectorDescriptor.inlineInLog(dvBytes, cardinality).serializeToBase64()
+        leaf.getAbsolutePath(localTableRoot).toString -> Map[String, Any](
+          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED -> encoded,
+          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE -> RowIndexFilterType.IF_CONTAINED)
       }
     }.toMap
-    val mdvBroadcast = spark.sparkContext.broadcast(mdvByLeaf)
+    val index = DeltaLogFileIndex(
+      new AMTParquetFileFormat(localTableRoot.toString), files, perFileMetadata)
     val dataEntries = AMTCheckpointProvider.loadEntriesWithLocation(spark, deltaLog, index)
       .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
       .where(col("entry.tracking.status").isin(
         AMTCheckpointProvider.liveTrackingStatuses.toSeq: _*))
-      .filter { entryWithLoc =>
-        mdvBroadcast.value.get(entryWithLoc.leafPath)
-          .forall(bytes => !RoaringBitmapArray.readFrom(bytes).contains(entryWithLoc.pos))
-      }
 
     dataEntries
       .mapPartitions { entries =>
@@ -307,7 +306,12 @@ object AMTCheckpointProvider {
     implicit val entryLocEncoder: Encoder[AMTDataEntryWithLocation] =
       amtDataEntryWithLocationEncoder
     val amtSchema = spark.emptyDataset[AMTSingleAction].schema
-    deltaLog.loadIndex(index, amtSchema)
+    // Reads the leaf whole with an extra marker column that AMTParquetFileFormat materializes
+    // from the per-file manifest DV; the masked rows are dropped by the filter below.
+    val readSchema = amtSchema.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD)
+    deltaLog.loadIndex(index, readSchema)
+      .where(col(DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME) ===
+        lit(RowIndexFilter.KEEP_ROW_VALUE))
       .select(
         struct(amtSchema.fieldNames.toIndexedSeq.map(col): _*).as("entry"),
         col(s"$METADATA_NAME.$FILE_PATH").as("leafPath"),
