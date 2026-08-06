@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.amt
 
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, WinningCommitSummary}
+import org.apache.spark.sql.delta.actions.LastManifestCommit
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -48,6 +50,39 @@ object AMTUtils {
     val child = new Path(location)
     if (child.toUri.getScheme != null || child.isAbsolute) child
     else new Path(tableRoot, child)
+  }
+
+  /** Returns a copy of the passed-in current transaction info with `lastManifestCommit` updated. */
+  def updateCurrentTransactionInfo(
+      currentTransactionInfo: CurrentTransactionInfo,
+      newLastManifestCommit: LastManifestCommit): CurrentTransactionInfo = {
+    currentTransactionInfo.copy(
+      commitInfo = currentTransactionInfo.commitInfo.map(_.copy(
+        lastManifestCommit = Some(newLastManifestCommit)))
+    )
+  }
+
+  /**
+   * Returns a copy of the passed-in current transaction info with the AMT fields updated to reflect
+   * the winning commit.
+   */
+  def updateCurrentTransactionInfo(
+      currentTransactionInfo: CurrentTransactionInfo,
+      winningCommitSummary: WinningCommitSummary): CurrentTransactionInfo = {
+    // If the winning commit emitted an inline AMT checkpoint, it is now the latest checkpoint
+    // before the next commit attempt.
+    winningCommitSummary.amtCheckpoint.map { winningAMTCheckpoint =>
+      currentTransactionInfo.copy(
+        // If the winning commit emitted an inline AMT checkpoint, it is now the latest checkpoint
+        // before the next commit attempt.
+        preCommitLatestAMTCheckpointOpt = Some(winningAMTCheckpoint),
+        // Update the current commitInfo to reflect the winning manifest commit.
+        commitInfo = currentTransactionInfo.commitInfo.map(_.copy(
+          lastManifestCommit = Some(LastManifestCommit(
+            version = winningCommitSummary.commitVersion,
+            contentRootVersion = winningAMTCheckpoint.version))))
+      )
+    }.getOrElse(currentTransactionInfo)
   }
 
   // Serializes a Manifest Deletion Vector to the on-disk byte form carried in `manifest_info.dv`.

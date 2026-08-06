@@ -28,17 +28,6 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
 
   import testImplicits._
 
-  /**
-   * A back reference identifies a data file by (leaf manifest, position), so a back reference only
-   * exists for an entry that lives in a leaf: an entry that stays resident in the root is
-   * reconstructed with `backReference = None`. The incremental writer spills live adds into leaves
-   * only once the root would exceed `entriesPerLeaf`, and the default (50000) never trips for these
-   * small tables -- so without this every entry would stay in the root and carry no back reference.
-   * A cap of one entry forces every live add into its own leaf, matching the leaf-resident layout a
-   * full rewrite produces, so all checkpoint scenarios stamp back references.
-   */
-  private val leafResidentConfs = Seq(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "1")
-
   /** Relativizes an absolute leaf manifest path the same way the stamped `backReference.manifest`
    *  is, so test assertions compare against the identical value. */
   private def relativeManifest(snapshot: Snapshot, absLeaf: Path): String = {
@@ -76,23 +65,23 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
   }
 
   /**
-   * Creates an AMT table and inserts two single-row files, the second insert landing on a
-   * checkpoint boundary so both files are captured in the leaves and stamped with back references.
-   * Returns the two reconstructed leaf-derived `AddFile`s (each carrying a back reference).
+   * Creates an AMT table, seeds it with single-row files, and checkpoints them into leaves. Returns
+   * the reconstructed leaf-derived `AddFile`s (each carrying a back reference).
    */
-  private def emitTwoStampedAddFiles(name: String): Seq[AddFile] = {
-    // A back reference only exists for a leaf-resident entry, so cap the leaf capacity to force
-    // both live adds out of the root and into leaves (see `leafResidentConfs`).
-    withSQLConf(leafResidentConfs: _*) {
-      createAMTTable(name, checkpointInterval = 2)
-      sql(s"INSERT INTO $name VALUES (1)")
-      sql(s"INSERT INTO $name VALUES (2)") // Lands on a checkpoint boundary -> emit.
+  private def emitStampedAddFiles(name: String): Seq[AddFile] = {
+    // The interval is parked out of reach so the tree comes from the explicit OPTIMIZE CHECKPOINT
+    // below rather than from a commit happening to land on the interval grid.
+    createAMTTable(name, checkpointInterval = 100)
+    val deltaLog = deltaLogForName(name)
+    withSQLConf(leafPackingConfs: _*) {
+      appendRowsAsSeparateFiles(name, numRows = leafPackedFiles)
+      commitCheckpoint(deltaLog, incremental = false)
     }
-    val snapshot = deltaLogForName(name).update()
+    val snapshot = deltaLog.update()
     assert(amtProvider(snapshot).isDefined, "table must be AMT-backed after the emit.")
     val adds = liveAddFiles(snapshot)
-    assert(adds.size == 2 && adds.forall(_.backReference.isDefined),
-      "both emitted files must be reconstructed from the leaves with a back reference.")
+    assert(adds.size == leafPackedFiles && adds.forall(_.backReference.isDefined),
+      "every emitted file must be reconstructed from the leaves with a back reference.")
     adds
   }
 
@@ -132,14 +121,15 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
   testAcrossAMTCheckpointScenarios(
       "reconstructed AddFiles are stamped with a back reference matching the leaf layout",
       "amt_back_ref_stamped",
-      sqlConfs = leafResidentConfs)(
-      setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (2)"))) { context =>
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val groundTruth = leafLocationByBackRef(context.postCheckpointSnapshot)
     val adds = liveAddFiles(context.postCheckpointSnapshot)
-    assert(adds.size == 2,
-      s"Both inserted files must be reconstructed from the leaves, got ${adds.size}.")
+    assert(adds.size == leafPackedFiles,
+      s"All $leafPackedFiles inserted files must be reconstructed from the leaves, " +
+        s"got ${adds.size}.")
 
     val leafPaths = context.provider.leafManifestAbsolutePaths
       .map(relativeManifest(context.postCheckpointSnapshot, _)).toSet
@@ -155,12 +145,42 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
   }
 
   testAcrossAMTCheckpointScenarios(
+      "no back references are generated for a root without leaves",
+      "amt_back_ref_root_only")(
+      setup = name => {
+        sql(s"INSERT INTO $name VALUES (1)")
+        sql(s"INSERT INTO $name VALUES (2)")
+      },
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (3)"))) { context =>
+    assert(context.provider.leaves.isEmpty,
+      "precondition: the tree must hold no leaves for entries to stay root-resident.")
+    val adds = liveAddFiles(context.postCheckpointSnapshot)
+    assert(adds.size == 3,
+      s"All three live files must be reconstructed from the root; got ${adds.size}.")
+    adds.foreach { add =>
+      assert(add.backReference.isEmpty,
+        s"Root-resident ${add.path} must carry no back reference, but was ${add.backReference}.")
+    }
+
+    // A DELETE of a root-resident file likewise has no back reference to propagate.
+    val deltaLog = context.postCheckpointSnapshot.deltaLog
+    val vBefore = deltaLog.update().version
+    sql(s"DELETE FROM ${context.tableName} WHERE id = 1")
+    val removes = actionsAfter(deltaLog, vBefore).collect { case r: RemoveFile => r }
+    assert(removes.size == 1, s"The file holding id=1 must be removed whole; got ${removes.size}.")
+    assert(removes.head.backReference.isEmpty,
+      s"Removing a root-resident file must emit an empty back reference, " +
+        s"but was ${removes.head.backReference}.")
+  }
+
+  testAcrossAMTCheckpointScenarios(
       "DELETE emits a RemoveFile carrying the removed file's back reference",
       "amt_back_ref_delete",
-      sqlConfs = leafResidentConfs)(
-      setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (2)"))) { context =>
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val backRefByPath = stampedBackRefs(context.postCheckpointSnapshot)
     val deltaLog = context.postCheckpointSnapshot.deltaLog
     sql(s"DELETE FROM ${context.tableName} WHERE id = 1")
@@ -179,17 +199,17 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
   testAcrossAMTCheckpointScenarios(
       "a file added after the emit and removed before the next emit has no back reference",
       "amt_back_ref_post_emit",
-      sqlConfs = leafResidentConfs)(
-      setup = name => (1 to 2).foreach(i => sql(s"INSERT INTO $name VALUES ($i)")),
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (3)"))) { context =>
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val stamped = liveAddFiles(context.postCheckpointSnapshot)
     val stampedPaths = stamped.map(_.path).toSet
-    assert(stamped.size == 3 && stamped.forall(_.backReference.isDefined),
-      "all three emitted files must be stamped from the leaves.")
+    assert(stamped.size == leafPackedFiles && stamped.forall(_.backReference.isDefined),
+      s"all $leafPackedFiles emitted files must be stamped from the leaves.")
 
     // This file is added off a checkpoint boundary, so it never enters a leaf.
-    sql(s"INSERT INTO ${context.tableName} VALUES (4)")
+    sql(s"INSERT INTO ${context.tableName} VALUES ($leafPackedFiles)")
     val deltaLog = context.postCheckpointSnapshot.deltaLog
     val newFile = deltaLog.update().allFiles.collect()
       .find(add => !stampedPaths.contains(add.path))
@@ -199,7 +219,7 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
 
     // Removing the unstamped file must produce an unstamped tombstone.
     val vBefore = deltaLog.update().version
-    sql(s"DELETE FROM ${context.tableName} WHERE id = 4")
+    sql(s"DELETE FROM ${context.tableName} WHERE id = $leafPackedFiles")
     val remove = actionsAfter(deltaLog, vBefore).collect { case r: RemoveFile => r }
       .find(_.path == newFile.path)
       .getOrElse(fail(s"expected a RemoveFile for the post-emit file ${newFile.path}."))
@@ -210,10 +230,14 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
   testAcrossAMTCheckpointScenarios(
       "removeRows propagates the back reference to the superseding AddFile and the RemoveFile",
       "amt_back_ref_remove_rows",
-      sqlConfs = leafResidentConfs)(
-      setup = name => Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(name),
+      sqlConfs = leafPackingConfs)(
+      setup = name => {
+        // A single file holding two rows.
+        Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(name)
+        appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 2, startId = 100)
+      },
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (3)"))) {
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) {
       context =>
     val twoRowFile = liveAddFiles(context.postCheckpointSnapshot)
       .find(_.numPhysicalRecords.contains(2L))
@@ -235,10 +259,14 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
   testAcrossAMTCheckpointScenarios(
       "DELETE via a persistent DV (removeRows) propagates through a real command",
       "amt_back_ref_dv_delete",
-      sqlConfs = leafResidentConfs)(
-      setup = name => Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(name),
+      sqlConfs = leafPackingConfs)(
+      setup = name => {
+        // A single file holding two rows.
+        Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(name)
+        appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 2, startId = 100)
+      },
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (3)"))) {
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) {
       context =>
     val backRefByPath =
       liveAddFiles(context.postCheckpointSnapshot).map(add => add.path -> add.backReference).toMap
@@ -292,7 +320,8 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
            |WHEN MATCHED THEN UPDATE SET id = 200""".stripMargin),
       tombstones = 1, exact = false),
     PropagationCase("INSERT OVERWRITE", "amt_back_ref_insert_overwrite",
-      n => sql(s"INSERT OVERWRITE $n VALUES (99)"), tombstones = 2, exact = true),
+      n => sql(s"INSERT OVERWRITE $n VALUES (99)"),
+      tombstones = leafPackedFiles, exact = true),
     PropagationCase("RESTORE", "amt_back_ref_restore",
       n => sql(s"RESTORE TABLE $n TO VERSION AS OF 1"), tombstones = 1, exact = false))
 
@@ -300,10 +329,10 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
     testAcrossAMTCheckpointScenarios(
         s"${c.label} tombstones carry the source files' back references",
         c.table,
-        sqlConfs = leafResidentConfs)(
-        setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+        sqlConfs = leafPackingConfs)(
+        setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
         inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-          s"INSERT INTO $name VALUES (2)"))) { context =>
+          s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
       val backRefByPath = stampedBackRefs(context.postCheckpointSnapshot)
       c.run(context.tableName)
 
@@ -356,7 +385,7 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
 
   test("commit accepts a RemoveFile carrying the correct back reference") {
     withTable("amt_commit_ok") {
-      val adds = emitTwoStampedAddFiles("amt_commit_ok")
+      val adds = emitStampedAddFiles("amt_commit_ok")
       // Tombstoning a leaf-derived file keeps its (correct) back reference: the commit must pass.
       commitActions("amt_commit_ok", Seq(adds.head.removeWithTimestamp()))
     }
@@ -364,7 +393,7 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
 
   test("commit accepts a fresh file that carries no back reference") {
     withTable("amt_commit_fresh") {
-      val adds = emitTwoStampedAddFiles("amt_commit_fresh")
+      val adds = emitStampedAddFiles("amt_commit_fresh")
       // A brand-new file not present in the tree legitimately carries no back reference.
       val fresh = adds.head.copy(path = "brand-new-file.parquet", backReference = None)
       commitActions("amt_commit_fresh", Seq(fresh))
@@ -373,7 +402,7 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
 
   test("commit fails when a leaf-derived file's tombstone is missing its back reference") {
     withTable("amt_commit_missing") {
-      val adds = emitTwoStampedAddFiles("amt_commit_missing")
+      val adds = emitStampedAddFiles("amt_commit_missing")
       // Strip the back reference off a tombstone for a file the tree says should carry one.
       val stripped = adds.head.removeWithTimestamp().copy(backReference = None)
       val ex = intercept[IllegalStateException] {
@@ -386,7 +415,7 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
 
   test("commit fails when a fresh file carries a spurious back reference") {
     withTable("amt_commit_spurious") {
-      val adds = emitTwoStampedAddFiles("amt_commit_spurious")
+      val adds = emitStampedAddFiles("amt_commit_spurious")
       // A file not in the tree must not carry a back reference.
       val spurious = adds.head.copy(path = "brand-new-file.parquet")
       val ex = intercept[IllegalStateException] {
@@ -398,7 +427,7 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
 
   test("commit fails when a present file's tombstone carries the wrong back reference") {
     withTable("amt_commit_wrong") {
-      val adds = emitTwoStampedAddFiles("amt_commit_wrong")
+      val adds = emitStampedAddFiles("amt_commit_wrong")
       val wrongBr = adds.head.backReference.get.copy(pos = adds.head.backReference.get.pos + 1000L)
       val wrong = adds.head.removeWithTimestamp().copy(backReference = Some(wrongBr))
       val ex = intercept[IllegalStateException] {
@@ -417,10 +446,10 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
     testAcrossAMTCheckpointScenarios(
         testName,
         "amt_clone_src",
-        sqlConfs = leafResidentConfs)(
-        setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+        sqlConfs = leafPackingConfs)(
+        setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
         inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-          s"INSERT INTO $name VALUES (2)"))) { context =>
+          s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
       val src = context.tableName
       // Derive the clone target from the scenario-unique source, so the scenarios do not share a
       // table directory (see the naming note in `testAcrossAMTCheckpointScenarios`).
@@ -456,20 +485,19 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
   testAcrossAMTCheckpointScenarios(
       "RESTORE tombstones keep the current back ref; re-added files carry none",
       "amt_back_ref_restore_tombstones",
-      sqlConfs = leafResidentConfs)(
-      setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+      sqlConfs = Seq(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "1"))(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (2)"))) { context =>
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val name = context.tableName
-    // restoreTarget holds two stamped files A, B.
+    // The version RESTORE returns to, where every seeded file is stamped from a leaf.
     val restoredToByPath = stampedBackRefs(context.postCheckpointSnapshot)
     val deltaLog = deltaLogForName(name)
     val restoreTarget = context.checkpoint.version
 
-    // The overwrite drops A, B and writes C; a second insert adds D. The suite-wide
-    // `leafResidentConfs` makes the explicit incremental checkpoint spill every net-new file into
-    // its own leaf, so the current live files C, D get stamped with this table's own back
-    // references.
+    // The overwrite replaces every seeded file with one new file, and a second insert adds another.
+    // One entry per leaf makes the explicit incremental checkpoint spill each net-new file into its
+    // own leaf, so both current live files get stamped with this table's own back references.
     sql(s"INSERT OVERWRITE $name VALUES (99)")
     sql(s"INSERT INTO $name VALUES (100)")
     commitCheckpoint(deltaLog, incremental = true)

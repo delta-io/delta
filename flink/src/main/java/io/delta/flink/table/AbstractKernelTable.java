@@ -139,7 +139,14 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   protected final DeltaCatalog catalog;
   protected String tableId;
-  protected String tableUUID;
+
+  /**
+   * @deprecated The UC Delta API no longer requires a table UUID for credential lookup. This field
+   *     is retained for remaining Kernel and metrics call sites and should be removed after they
+   *     are migrated.
+   */
+  @Deprecated protected String tableUUID;
+
   protected URI tablePath;
   protected final TableConf conf;
   /*
@@ -469,8 +476,10 @@ public abstract class AbstractKernelTable implements DeltaTable {
           partitionColumns,
           conf.catalogConf(),
           tableDesc -> {
+            this.conf.update(tableDesc.requiredProperties);
             this.tablePath = normalize(tableDesc.tablePath);
             this.tableUUID = tableDesc.uuid;
+            credentialManager.initializeCredentials(tableDesc.getStorageProperties());
             createDeltaTable();
           });
     }

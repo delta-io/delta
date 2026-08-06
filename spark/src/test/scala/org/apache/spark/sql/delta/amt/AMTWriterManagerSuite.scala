@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.exceptions.ConcurrentWriteException
 
 /**
@@ -57,22 +58,22 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
     withTable("amt_optimize_ckpt") {
       val name = "amt_optimize_ckpt"
       createAMTTable(name, checkpointInterval = 2)
-      sql(s"INSERT INTO $name VALUES (1)")
+      withSQLConf(leafPackingConfs: _*) {
+        appendRowsAsSeparateFiles(name, numRows = leafPackedFiles)
 
-      val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint(
-        incremental = false, triggerName = AMTTriggerMode.CheckpointIntervalFull.name))
-      val result = manager.writeAMT(
-        commitVersion = snapshot.version + 1,
-        currentTransactionInfo = txnInfoFor(snapshot, actions = Seq.empty),
-        preCommitLogSegment = snapshot.logSegment).getOrElse(
-          fail("OPTIMIZE checkpoint must materialize an AMT."))
-      // A full rewrite flushes the live files into freshly clustered leaves via the distributed
-      // write path, so at least one leaf must be written.
-      assert(result.leaves.nonEmpty, "The clustered rewrite must write at least one leaf.")
-      // The commit carries no user actions, so the tree describes state as of the read version.
-      assert(result.contentRootVersion == snapshot.version)
-      // The metric records the trigger name carried on the operation.
-      assert(manager.metrics.attempts.head.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
+        val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint(
+          incremental = false, triggerName = AMTTriggerMode.CheckpointIntervalFull.name))
+        val result = manager.writeAMT(
+          commitVersion = snapshot.version + 1,
+          currentTransactionInfo = txnInfoFor(snapshot, actions = Seq.empty),
+          preCommitLogSegment = snapshot.logSegment).getOrElse(
+            fail("OPTIMIZE checkpoint must materialize an AMT."))
+        assertLeafCount(result.leaves)
+        // The commit carries no user actions, so the tree describes state as of the read version.
+        assert(result.contentRootVersion == snapshot.version)
+        // The metric records the trigger name carried on the operation.
+        assert(manager.metrics.attempts.head.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
+      }
     }
   }
 

@@ -40,7 +40,7 @@ import scala.Tuple2;
 import scala.collection.immutable.Map$;
 
 /**
- * Unit test for {@link DeltaChangelogBatch.CDCPartitionReader}, the executor-side reader that
+ * Unit test for {@link DeltaV2ChangelogBatch.CDCPartitionReader}, the executor-side reader that
  * iterates every {@link PartitionedFile} bundled into one bin-packed {@link FilePartition}, opens a
  * delegate reader per file, and joins that file's CDC tail ({@code _change_type},
  * {@code _commit_version}, {@code _commit_timestamp}) onto each of its rows.
@@ -68,7 +68,7 @@ public class CDCPartitionReaderTest {
 
   /**
    * Build a {@link PartitionedFile} whose constant-metadata map holds only the CDC tail, mirroring
-   * what {@code DeltaChangelogBatch.buildPartition} packs for the reader to recover per file.
+   * what {@code DeltaV2ChangelogBatch.buildPartition} packs for the reader to recover per file.
    */
   private static PartitionedFile cdcFile(
       int index, String changeType, long commitVersion, long commitTimestampMicros) {
@@ -178,7 +178,7 @@ public class CDCPartitionReaderTest {
     }
   }
 
-  private static List<EmittedRow> drain(DeltaChangelogBatch.CDCPartitionReader reader)
+  private static List<EmittedRow> drain(DeltaV2ChangelogBatch.CDCPartitionReader reader)
       throws IOException {
     List<EmittedRow> out = new ArrayList<>();
     while (reader.next()) {
@@ -206,8 +206,8 @@ public class CDCPartitionReaderTest {
             List.of(dataRow(20L)));
     FakeFactory factory = new FakeFactory(rowsPerFile);
 
-    DeltaChangelogBatch.CDCPartitionReader reader =
-        new DeltaChangelogBatch.CDCPartitionReader(factory, partition, OUTPUT_SCHEMA);
+    DeltaV2ChangelogBatch.CDCPartitionReader reader =
+        new DeltaV2ChangelogBatch.CDCPartitionReader(factory, partition, OUTPUT_SCHEMA);
     List<EmittedRow> emitted = drain(reader);
     reader.close();
 
@@ -242,8 +242,8 @@ public class CDCPartitionReaderTest {
         List.of(List.of(dataRow(1L)), List.of(), List.of(dataRow(3L)));
     FakeFactory factory = new FakeFactory(rowsPerFile);
 
-    DeltaChangelogBatch.CDCPartitionReader reader =
-        new DeltaChangelogBatch.CDCPartitionReader(factory, partition, OUTPUT_SCHEMA);
+    DeltaV2ChangelogBatch.CDCPartitionReader reader =
+        new DeltaV2ChangelogBatch.CDCPartitionReader(factory, partition, OUTPUT_SCHEMA);
     List<EmittedRow> emitted = drain(reader);
     reader.close();
 
@@ -262,8 +262,8 @@ public class CDCPartitionReaderTest {
     FilePartition partition = new FilePartition(0, new PartitionedFile[0]);
     FakeFactory factory = new FakeFactory(List.of());
 
-    DeltaChangelogBatch.CDCPartitionReader reader =
-        new DeltaChangelogBatch.CDCPartitionReader(factory, partition, OUTPUT_SCHEMA);
+    DeltaV2ChangelogBatch.CDCPartitionReader reader =
+        new DeltaV2ChangelogBatch.CDCPartitionReader(factory, partition, OUTPUT_SCHEMA);
     assertFalse(reader.next(), "no files means no rows");
     reader.close();
     assertEquals(0, factory.created.size());
