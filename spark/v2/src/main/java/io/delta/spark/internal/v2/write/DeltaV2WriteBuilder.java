@@ -19,8 +19,10 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.TableConfig;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import org.apache.hadoop.conf.Configuration;
@@ -87,17 +89,22 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   public Write build() {
     validateDataSchema(initialSnapshot, writeInfo.schema());
 
-    // TODO(#7140): support partitioned writes to column-mapped tables. Unpartitioned is supported;
-    // partitioned writes need partition values keyed by physical name, so reject for now.
+    // TODO: support partitioned IcebergCompat / materializePartitionColumns writes.
     if (!partitionSchema.isEmpty()) {
-      ColumnMappingMode cmMode =
-          ColumnMapping.getColumnMappingMode(initialSnapshot.getTableProperties());
-      if (cmMode != ColumnMappingMode.NONE) {
+      SnapshotImpl snapshotImpl = (SnapshotImpl) initialSnapshot;
+      Metadata metadata = snapshotImpl.getMetadata();
+      Protocol protocol = snapshotImpl.getProtocol();
+      boolean icebergCompat =
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata)
+              || TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+      // Detect the materializePartitionColumns writer feature by its protocol name.
+      boolean materializePartitionColumns =
+          protocol.getWriterFeatures().contains("materializePartitionColumns");
+      if (icebergCompat || materializePartitionColumns) {
         throw new UnsupportedOperationException(
-            "DSv2 partitioned writes are not supported on column-mapped Delta tables "
-                + "(delta.columnMapping.mode = "
-                + cmMode
-                + "). Use the V1 write path (format(\"delta\").write()) instead.");
+            "DSv2 partitioned writes are not supported on tables that materialize partition "
+                + "columns (IcebergCompat or the materializePartitionColumns feature). Use the V1 "
+                + "write path (format(\"delta\").write()) instead.");
       }
     }
 
