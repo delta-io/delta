@@ -21,7 +21,6 @@ import static io.delta.spark.internal.v2.utils.StatsUtils.toV2Statistics;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
@@ -31,6 +30,7 @@ import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.exception.NoRecreatableHistoryException;
 import io.delta.spark.internal.v2.exception.TableNotFoundException;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.read.DeltaV2ScanUtils;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
@@ -246,7 +246,7 @@ public class DeltaV2Table extends DeltaV2TableShims
 
     this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    this.kernelEngine = DefaultEngine.create(this.hadoopConf);
+    this.kernelEngine = KernelEngineFactory.createDefaultEngine(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     try {
       this.initialSnapshot =

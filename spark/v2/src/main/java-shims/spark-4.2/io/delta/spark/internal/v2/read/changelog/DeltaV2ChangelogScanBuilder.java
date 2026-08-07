@@ -2,11 +2,11 @@ package io.delta.spark.internal.v2.read.changelog;
 
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.Objects;
@@ -48,7 +48,7 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
     Configuration hadoopConf =
         Objects.requireNonNull(
             SparkSession.active().sparkContext().hadoopConfiguration(), "hadoopConf is null");
-    Engine engine = DefaultEngine.create(hadoopConf);
+    Engine engine = KernelEngineFactory.createDefaultEngine(hadoopConf);
     DeltaSnapshotManager snapshotManager = deltaV2Table.getSnapshotManager();
     CommitRange commitRange =
         snapshotManager.getTableChanges(engine, startVersion, Optional.of(endVersion));

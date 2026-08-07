@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTestUtils, DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTestUtils, DeltaLog, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -52,6 +53,21 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   }
 
   testAcrossAMTCheckpointScenarios(
+      "plain AMT tables reconstruct AddFiles with no amtPassthrough",
+      "amt_passthrough_roundtrip")(
+      setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (2)"))) { context =>
+    // These are plain parquet/v4 files with no Iceberg passthrough, so `toAddFile` carries
+    // nothing (avoids per-file overhead).
+    val files = context.postCheckpointSnapshot.allFiles.collect()
+    assert(files.nonEmpty)
+    assert(files.forall(_.amtPassthrough.isEmpty),
+      s"plain AMT files must carry no passthrough; got " +
+        s"${files.map(_.amtPassthrough).mkString(", ")}")
+  }
+
+  testAcrossAMTCheckpointScenarios(
       "snapshot.allFiles matches leaves across insert/overwrite/delete before a checkpoint",
       "amt_overwrite")(
       setup = name => {
@@ -67,6 +83,291 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       "Only the surviving overwrite file should be live.")
     // The tree must capture exactly the surviving live files after overwrite + delete.
     assertReconstructsLiveFileSet(context)
+  }
+
+  // AMT inline or not should be irrelevant to test result.
+  testAcrossAMTCheckpointScenarios(
+    "amtPassthrough survives from one AMT into the next",
+    "amt_passthrough_amt_to_amt",
+    deferredScenarios = Seq.empty
+  )(
+    setup = name => {
+      sql(s"INSERT INTO $name VALUES (1)")
+      withSQLConf(
+        DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+          -> "1"
+      ) {
+        deltaLogForName(name)
+          .startTransaction()
+          .commit(
+            Seq(
+              createTestAddFile(encodedPath = "passthrough-file")
+                .copy(amtPassthrough = Some(fullPassthrough))
+            ),
+            DeltaOperations.ManualUpdate
+          )
+      }
+      // At this point tree should be materialized.
+      val seeded =
+        amtFilesInTree(deltaLogForName(name).update(), Some("passthrough-file"))
+      assert(
+        seeded.length == 1,
+        s"expected one tree entry for passthrough-file, got: $seeded."
+      )
+      assert(
+        seeded.head.amtPassthrough.contains(fullPassthrough),
+        "sanity: passthrough must be in the seeded AMT before the checkpoint."
+      )
+    },
+    inlineCheckpointTriggerActionsOrSQL =
+      Some(name => Right(s"INSERT INTO $name VALUES (100)"))
+  ) { context =>
+    val seededVersion = amtProvider(context.preCheckpointSnapshot)
+      .getOrElse(fail("the seed commit must have emitted an AMT"))
+      .version
+    assert(
+      context.provider.version > seededVersion,
+      s"a new AMT must have re-materialized past the seeded one at v$seededVersion; " +
+        s"got v${context.provider.version}."
+    )
+
+    // The passthrough survives into the re-materialized AMT and reconstructs on read.
+    val snapshot = context.postCheckpointSnapshot
+    val inTree = amtFilesInTree(snapshot, Some("passthrough-file"))
+    assert(
+      inTree.length == 1,
+      s"expected one tree entry for passthrough-file, got: $inTree."
+    )
+    assert(
+      inTree.head.amtPassthrough.contains(fullPassthrough),
+      s"passthrough must propagate into the re-materialized AMT; got " +
+        s"${inTree.head.amtPassthrough}."
+    )
+    val liveFile =
+      snapshot.allFiles.collect().filter(_.path == "passthrough-file")
+    assert(
+      liveFile.length == 1,
+      s"expected exactly one seeded file, got: ${liveFile.toSeq}."
+    )
+    assert(
+      liveFile.head.amtPassthrough.contains(fullPassthrough),
+      s"passthrough must reconstruct from the re-materialized AMT; got " +
+        s"${liveFile.head.amtPassthrough}."
+    )
+  }
+
+  // AMT inline or not should be irrelevant to test result.
+  testAcrossAMTCheckpointScenarios(
+    "amtPassthrough survives from one AMT, with in-place rewrite, into the next",
+    "amt_passthrough_inplace",
+    deferredScenarios = Seq.empty
+  )(
+    setup = name => {
+      sql(s"INSERT INTO $name VALUES (1)")
+      val log = deltaLogForName(name)
+      withSQLConf(
+        DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+          -> "1"
+      ) {
+        log
+          .startTransaction()
+          .commit(
+            Seq(
+              createTestAddFile(encodedPath = "passthrough-file")
+                .copy(
+                  amtPassthrough = Some(fullPassthrough),
+                  stats = """{"numRecords":1}"""
+                )
+            ),
+            DeltaOperations.ManualUpdate
+          )
+      }
+      val seedAMTVersion = amtProvider(log.update()).map(_.version)
+      // AMTPassthrough before the rewrite.
+      val seeded = amtFilesInTree(log.update(), Some("passthrough-file"))
+      assert(
+        seeded.length == 1,
+        s"expected one tree entry for passthrough-file, got: $seeded."
+      )
+      assert(
+        seeded.head.amtPassthrough.contains(fullPassthrough),
+        "passthrough seeded into the AMT."
+      )
+      val current = log
+        .update()
+        .allFiles
+        .collect()
+        .find(_.path == "passthrough-file")
+        .getOrElse(fail("passthrough-file must be live."))
+      assert(
+        current.amtPassthrough.contains(fullPassthrough),
+        s"the live file carries passthrough before the rewrite; got " +
+          s"${current.amtPassthrough}."
+      )
+
+      // The rewrite must land as a plain LOG commit.
+      withSQLConf(
+        DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+          -> Long.MaxValue.toString
+      ) {
+        log
+          .startTransaction()
+          .commit(
+            Seq(
+              current.copy(
+                stats = """{"numRecords":1,"probe":true}""",
+                dataChange = false
+              )
+            ),
+            DeltaOperations.ComputeStats(predicate = Nil)
+          )
+      }
+      // Verify that AMT checkpoint version stays the same.
+      val afterRewriteAMTVersion = amtProvider(log.update()).map(_.version)
+      assert(
+        afterRewriteAMTVersion == seedAMTVersion,
+        s"the in-place rewrite must NOT be committed into an AMT; the tree moved from " +
+          s"$seedAMTVersion to $afterRewriteAMTVersion."
+      )
+
+      // The reconstructed live file keeps its passthrough, and the stats update lands.
+      val afterRewrite =
+        log.update().allFiles.collect().filter(_.path == "passthrough-file")
+      assert(afterRewrite.length == 1)
+      assert(
+        afterRewrite.head.stats == """{"numRecords":1,"probe":true}""",
+        "the in-place stats update itself must land."
+      )
+      assert(
+        afterRewrite.head.amtPassthrough.contains(fullPassthrough),
+        s"passthrough must survive the in-place rewrite; got " +
+          s"${afterRewrite.head.amtPassthrough}."
+      )
+    },
+    inlineCheckpointTriggerActionsOrSQL =
+      Some(name => Right(s"INSERT INTO $name VALUES (100)"))
+  ) { context =>
+    // A new AMT re-materialized past the rewrite and still carries the passthrough.
+    val seededVersion = amtProvider(context.preCheckpointSnapshot)
+      .getOrElse(fail("the seed commit must have emitted an AMT"))
+      .version
+    assert(
+      context.provider.version > seededVersion,
+      s"a new AMT must have re-materialized past the rewrite; the tree is still at " +
+        s"v${context.provider.version} (seeded at v$seededVersion)."
+    )
+    val snapshot = context.postCheckpointSnapshot
+    val survived = amtFilesInTree(snapshot, Some("passthrough-file"))
+    assert(
+      survived.length == 1,
+      s"expected one tree entry for passthrough-file, got: $survived."
+    )
+    assert(
+      survived.head.amtPassthrough.contains(fullPassthrough),
+      s"passthrough must survive into the re-materialized AMT; got " +
+        s"${survived.head.amtPassthrough}."
+    )
+    val finalLive =
+      snapshot.allFiles.collect().filter(_.path == "passthrough-file")
+    assert(
+      finalLive.length == 1 &&
+        finalLive.head.amtPassthrough.contains(fullPassthrough),
+      s"passthrough must survive the rewrite + re-materialization; got " +
+        s"${finalLive.map(_.amtPassthrough).toSeq}."
+    )
+  }
+
+  // Bypasses `testAcrossAMTCheckpointScenarios`: this test needs the table to have NO AMT at all
+  // while the passthrough is seeded.
+  test("amtPassthrough from a log commit is carried into the next AMT") {
+    withSQLConf(
+      DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+        -> "1"
+    ) {
+      withTable("amt_passthrough_from_log_commit") {
+        val name = "amt_passthrough_from_log_commit"
+        createAMTTable(name, checkpointInterval = 10000)
+        val log = deltaLogForName(name)
+        assert(
+          amtProvider(log.update()).isEmpty,
+          "no AMT may exist before the first trigger."
+        )
+
+        // V1 is a LOG commit: the file's passthrough lives only in the commit JSON at this point.
+        val passthrough = fullPassthrough
+        val fileWithPassthrough = createTestAddFile(encodedPath = "passthrough-file")
+          .copy(amtPassthrough = Some(passthrough), stats = """{"numRecords":1}""")
+        log
+          .startTransaction()
+          .commit(Seq(fileWithPassthrough), DeltaOperations.ManualUpdate)
+        assert(
+          amtProvider(deltaLogForName(name).update()).isEmpty,
+          "the seeding commit must stay a LOG commit (no AMT yet)."
+        )
+        val fromLog = deltaLogForName(name)
+          .update()
+          .allFiles
+          .collect()
+          .filter(_.path == "passthrough-file")
+        assert(
+          fromLog.length == 1,
+          s"expected the seeded file to be live, got: ${fromLog.toSeq}."
+        )
+        assert(
+          fromLog.head.amtPassthrough.contains(passthrough),
+          s"the log-commit file must carry its passthrough; got " +
+            s"${fromLog.head.amtPassthrough}."
+        )
+
+        // Now trigger the table's first AMT.
+        sql(s"ALTER TABLE $name SET TBLPROPERTIES ('delta.checkpointInterval' = '2')")
+        sql(s"INSERT INTO $name VALUES (100)")
+        sql(s"INSERT INTO $name VALUES (101)")
+        val snapshot = deltaLogForName(name).update()
+        val amtVersion = amtProvider(snapshot).map(_.version)
+        assert(
+          amtVersion.contains(5L),
+          s"the first AMT must describe content version 5; got $amtVersion."
+        )
+
+        val inTree = amtFilesInTree(snapshot, Some("passthrough-file"))
+        assert(
+          inTree.length == 1,
+          s"expected one tree entry for passthrough-file, got: $inTree."
+        )
+        assert(
+          inTree.head.amtPassthrough.contains(passthrough),
+          s"the log commit's passthrough must be carried into the AMT; got " +
+            s"${inTree.head.amtPassthrough}."
+        )
+        val live = snapshot.allFiles.collect().filter(_.path == "passthrough-file")
+        assert(
+          live.length == 1 && live.head.amtPassthrough.contains(passthrough),
+          s"passthrough must reconstruct from the AMT; got " +
+            s"${live.map(_.amtPassthrough).toSeq}."
+        )
+      }
+    }
+  }
+
+  /**
+   * A passthrough with every [[AMTPassthrough]] field set, so tests use the whole carrier.
+   */
+  private def fullPassthrough: AMTPassthrough = AMTPassthrough(spec_id = Some(42))
+
+  /**
+   * The AMT-derived live [[AddFile]]s in the snapshot's current tree, optionally restricted to
+   * `path`.
+   */
+  private def amtFilesInTree(snapshot: Snapshot, path: Option[String] = None): Seq[AddFile] = {
+    val provider = amtProvider(snapshot).getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
+    val live = provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
+      .getOrElse(fail("AMT provider must contribute tree-derived file actions."))
+      .where("add is not null")
+      .select(col("add").as[AddFile])
+      .collect()
+      .toSeq
+    path.map(p => live.filter(_.path == p)).getOrElse(live)
   }
 
   testAcrossAMTCheckpointScenarios(
