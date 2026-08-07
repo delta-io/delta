@@ -17,6 +17,9 @@
 package org.apache.spark.sql.delta.v2.interop
 
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 import io.delta.kernel.TableManager
@@ -91,6 +94,10 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
     def fileKeys(s: Snapshot) =
       s.allFiles.collect().map(f => (f.path, f.size, f.partitionValues)).toSet
     assert(fileKeys(v2) === fileKeys(v1))
+
+    // Both bin the same file sizes with the same default bins, so the histograms agree.
+    assert(v2.sizeInBytes === v1.sizeInBytes)
+    assert(v2.fileSizeHistogram === v1.fileSizeHistogram)
   }
 
   /**
@@ -159,6 +166,111 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       intercept[UnsupportedOperationException](snapshot.stateDS)
       intercept[UnsupportedOperationException](snapshot.tombstones)
       intercept[UnsupportedOperationException](snapshot.computeChecksum)
+      intercept[UnsupportedOperationException](snapshot.deltaFileIndexOpt)
+      intercept[UnsupportedOperationException](snapshot.checkpointProvider)
+
+      // The commit-stats accessors stay callable, reporting the "not available" sentinel rather
+      // than propagating the throws above, so emitting commit stats does not trip them.
+      assert(snapshot.deltaFileSizeInBytes() === -1L)
+      assert(snapshot.checkpointSizeInBytes() === -1L)
+    }
+  }
+
+  test("domainMetadata is enumerated from Kernel and matches V1") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      // A clustered table carries the "delta.clustering" domain, so there is a real domain to read.
+      spark.sql(s"CREATE TABLE delta.`$path` (id LONG) USING delta CLUSTER BY (id)")
+
+      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+      val v1 = DeltaLog.forTable(spark, path).update()
+
+      // The Kernel-sourced Seq agrees with V1 log replay, domain-for-domain.
+      assert(snapshot.domainMetadata.map(dm => dm.domain -> dm.configuration).toMap ===
+        v1.domainMetadata.map(dm => dm.domain -> dm.configuration).toMap)
+      // The clustering domain specifically resolves, and Kernel surfaces only active domains.
+      val clustering =
+        snapshot.domainMetadata.find(_.domain == ClusteringMetadataDomain.domainName)
+      assert(clustering.nonEmpty)
+      assert(!clustering.get.removed)
+      assert(snapshot.domainMetadata.forall(!_.removed))
+      // The cached by-name readers resolve off the same Seq.
+      assert(snapshot.clusteringDomainMetadata.nonEmpty)
+      // Inherited from SnapshotStateManager (not overridden here): Kernel serves domain metadata
+      // without V1 state reconstruction, so it is always "known".
+      assert(snapshot.domainMetadatasIfKnown.contains(snapshot.domainMetadata))
+    }
+  }
+
+  test("fileSizeHistogram is served from the Kernel checksum when one exists") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      // Files of deliberately different sizes so a mis-binned histogram would not coincidentally
+      // match V1's.
+      spark.range(0, 1000).write.format("delta").save(path)
+      spark.range(0, 5).write.format("delta").mode("append").save(path)
+
+      val kernelSnapshot = loadKernelSnapshot(path)
+      // Precondition: Kernel really has a checksum-sourced histogram here, so the assertions below
+      // exercise the CRC path rather than passing via the scan-file fallback. Asserted through the
+      // same getCurrentCrcInfo() route the production code reads.
+      assert(kernelSnapshot.getCurrentCrcInfo.get().getFileSizeHistogram.isPresent)
+
+      val v2 = new DeltaV2Snapshot(kernelSnapshot, spark)
+      val v1 = DeltaLog.forTable(spark, path).update()
+
+      // Same bin boundaries as V1's DEFAULT_BINS, so the Kernel histogram needs no re-binning.
+      assert(v2.fileSizeHistogram.nonEmpty)
+      assert(v2.fileSizeHistogram.get.sortedBinBoundaries ===
+        FileSizeHistogramUtils.DEFAULT_BINS)
+      // Counts and bytes agree with V1 bin-for-bin, and account for every file.
+      assert(v2.fileSizeHistogram === v1.fileSizeHistogram)
+      assert(v2.fileSizeHistogram.get.fileCounts.sum === v1.numOfFiles)
+      assert(v2.fileSizeHistogram.get.totalBytes.sum === v1.sizeInBytes)
+    }
+  }
+
+  test("fileSizeHistogram falls back to binning scan files when the checksum has none") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      // Suppress checksum writes so no CRC (and hence no Kernel histogram) is available; the
+      // fallback must still produce V1-equivalent bins.
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
+        spark.range(0, 1000).write.format("delta").save(path)
+      }
+
+      val v2 = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+      val v1 = DeltaLog.forTable(spark, path).update()
+
+      assert(v2.fileSizeHistogram.nonEmpty)
+      assert(v2.fileSizeHistogram.get.sortedBinBoundaries ===
+        FileSizeHistogramUtils.DEFAULT_BINS)
+      assert(v2.fileSizeHistogram.get.fileCounts.sum === v1.numOfFiles)
+      assert(v2.fileSizeHistogram.get.totalBytes.sum === v1.sizeInBytes)
+    }
+  }
+
+  test("fileSizeHistogram is None when the histogram config is disabled") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(5).write.format("delta").save(path)
+
+      withSQLConf(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> "false") {
+        // The config gate is checked before either the Kernel or the fallback path.
+        assert(new DeltaV2Snapshot(loadKernelSnapshot(path), spark).fileSizeHistogram.isEmpty)
+      }
+    }
+  }
+
+  test("domainMetadata is empty for a table with no domains") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(1).write.format("delta").save(path)
+
+      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+      // Empty here is a real answer (V1 agrees), not a stand-in for "could not read".
+      assert(snapshot.domainMetadata.isEmpty)
+      assert(DeltaLog.forTable(spark, path).update().domainMetadata.isEmpty)
     }
   }
 
