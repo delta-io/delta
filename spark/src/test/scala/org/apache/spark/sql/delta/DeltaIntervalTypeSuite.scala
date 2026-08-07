@@ -23,6 +23,7 @@ import java.time.{Duration, Period}
 import scala.jdk.CollectionConverters._
 
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.exceptions.TestFailedException
 
 import org.apache.spark.SparkIllegalArgumentException
@@ -43,6 +44,7 @@ import org.apache.spark.sql.types.StructType
 class DeltaIntervalTypeSuite
   extends QueryTest
   with SharedSparkSession
+  with DeltaSQLCommandTest
   with DeltaSourceSuiteBase {
 
   private def assertPartitionByTwoColumns(
@@ -254,7 +256,9 @@ class DeltaIntervalTypeSuite
       "106751991 day 4 hour 0 minute 54.776 second",
       ExpectException {
         case e: ArithmeticException =>
-          assert(e.getMessage.contains("INTERVAL_ARITHMETIC_OVERFLOW"))
+          assert(
+            e.getMessage.contains("INTERVAL_ARITHMETIC_OVERFLOW") ||
+              e.getMessage == "long overflow")
       }
     ),
     new IntervalTestCase(
