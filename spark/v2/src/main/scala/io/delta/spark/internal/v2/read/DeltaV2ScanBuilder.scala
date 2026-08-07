@@ -19,6 +19,7 @@ package io.delta.spark.internal.v2.read
 import java.util.{Locale, Objects, Optional, OptionalInt}
 import java.util.function.Supplier
 
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.stats.DeltaScan
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
@@ -74,7 +75,8 @@ private[read] class DeltaV2ScanBuilder(
   extends ScanBuilder
   with SupportsPushDownRequiredColumns
   with SupportsPushDownCatalystFilters
-  with SupportsPushDownLimit {
+  with SupportsPushDownLimit
+  with DeltaLogging {
 
   // Use Objects.requireNonNull (throws NullPointerException) rather than Scala's require (throws
   // IllegalArgumentException) to preserve the exact null-check behavior of the original Java class.
@@ -102,17 +104,18 @@ private[read] class DeltaV2ScanBuilder(
   private var hasPostScanResidualFilters: Boolean = false
   private var pushedLimit: OptionalInt = OptionalInt.empty()
 
-  override def pushFilters(filters: Seq[Expression]): Seq[Expression] = {
-    val (partitionFilters, dataFilters) =
-      DataSourceUtils.getPartitionFiltersAndDataFilters(partitionSchema, filters)
-    partitionCatalystFilters = partitionFilters.toArray
-    dataCatalystFilters = dataFilters.toArray
-    // Data filters need post-scan evaluation (min/max skipping is not row-exact); partition
-    // filters are exact and need no re-evaluation. ScanBuilder mutations can be cumulative, so a
-    // later pushFilters call must not make an earlier residual safe to ignore.
-    hasPostScanResidualFilters |= dataFilters.nonEmpty
-    dataFilters
-  }
+  override def pushFilters(filters: Seq[Expression]): Seq[Expression] =
+    recordFrameProfile("Delta", "DeltaV2.pushFilters") {
+      val (partitionFilters, dataFilters) =
+        DataSourceUtils.getPartitionFiltersAndDataFilters(partitionSchema, filters)
+      partitionCatalystFilters = partitionFilters.toArray
+      dataCatalystFilters = dataFilters.toArray
+      // Data filters need post-scan evaluation (min/max skipping is not row-exact); partition
+      // filters are exact and need no re-evaluation. ScanBuilder mutations can be cumulative, so a
+      // later pushFilters call must not make an earlier residual safe to ignore.
+      hasPostScanResidualFilters |= dataFilters.nonEmpty
+      dataFilters
+    }
 
   // Filters are kept as Catalyst expressions and are not translated to data source predicates.
   override def pushedFilters: Array[Predicate] = Array.empty
