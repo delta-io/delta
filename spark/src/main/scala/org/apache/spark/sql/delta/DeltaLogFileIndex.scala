@@ -24,6 +24,7 @@ import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, PartitionDirectory}
+import org.apache.spark.sql.execution.datasources.FileStatusWithMetadata
 import org.apache.spark.sql.execution.datasources.json.JsonFileFormat
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.types.{LongType, StructField, StructType}
@@ -38,7 +39,8 @@ import org.apache.spark.sql.types.{LongType, StructField, StructType}
  */
 class DeltaLogFileIndex private[delta] (
     val format: FileFormat,
-    val files: Array[FileStatus]
+    val files: Array[FileStatus],
+    val perFileMetadata: Map[String, Map[String, Any]] = Map.empty
     )
   extends FileIndex
   with Logging {
@@ -51,7 +53,12 @@ class DeltaLogFileIndex private[delta] (
     files
       .groupBy(f => FileNames.getFileVersionOpt(f.getPath).getOrElse(-1L))
       .map { case (version, versionFiles) =>
-        PartitionDirectory(InternalRow(version), versionFiles)
+        // Attach each file's manifest DV bytes (if any) as per-file scan metadata so they travel
+        // to the task via `PartitionedFile.otherConstantMetadataColumnValues`.
+        val statuses = versionFiles.map { f =>
+          FileStatusWithMetadata(f, perFileMetadata.getOrElse(f.getPath.toString, Map.empty))
+        }.toIndexedSeq
+        PartitionDirectory(InternalRow(version), statuses)
       }
       .toSeq
   }
@@ -112,4 +119,13 @@ object DeltaLogFileIndex {
     filesOpt.flatMap(DeltaLogFileIndex(format, _))
   }
 
+  /**
+   * Builds an index that carries per-file scan metadata (e.g. inline manifest DV bytes).
+   */
+  def apply(
+      format: FileFormat,
+      files: Array[FileStatus],
+      perFileMetadata: Map[String, Map[String, Any]]): DeltaLogFileIndex = {
+    new DeltaLogFileIndex(format, files, perFileMetadata = perFileMetadata)
+  }
 }
