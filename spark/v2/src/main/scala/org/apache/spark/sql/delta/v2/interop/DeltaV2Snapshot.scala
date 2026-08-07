@@ -220,10 +220,11 @@ class DeltaV2Snapshot(
     kernelSnapshot.getCurrentCrcInfo.toScala
       .flatMap(_.getFileSizeHistogram.toScala)
       .map { bins =>
+        val result = bins.captureFileSizeHistogramResult()
         FileSizeHistogram(
-          sortedBinBoundaries = bins.getSortedBinBoundaries.toIndexedSeq,
-          fileCounts = bins.getFileCounts,
-          totalBytes = bins.getTotalBytes)
+          sortedBinBoundaries = result.getSortedBinBoundaries.toIndexedSeq,
+          fileCounts = result.getFileCounts,
+          totalBytes = result.getTotalBytes)
       }
 
   // Get the domain metadata from Kernel.
