@@ -33,8 +33,8 @@ import org.apache.spark.sql.delta.actions.{
 }
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, StatisticsCollection}
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import org.apache.hadoop.fs.Path
-import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 
@@ -83,7 +83,7 @@ class DeltaV2Snapshot(
   // No DeltaLog to source a Hadoop conf from, so use the session Hadoop conf for the engine.
   def this(kernelSnapshot: KernelSnapshot, sparkSession: SparkSession) =
     this(kernelSnapshot, sparkSession,
-      DefaultEngine.create(sparkSession.sessionState.newHadoopConf()))
+      KernelEngineFactory.createDefaultEngine(sparkSession.sessionState.newHadoopConf()))
   // scalastyle:on deltahadoopconfiguration
 
   // --- logSegment/deltaLog = null guardrail: construction-path overrides ----------------------
