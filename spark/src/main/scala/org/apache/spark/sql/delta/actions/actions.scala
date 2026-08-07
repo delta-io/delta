@@ -30,7 +30,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.amt.AMTUtils
+import org.apache.spark.sql.delta.amt.{AMTPassthrough, AMTUtils}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -917,7 +917,8 @@ case class AddFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
     clusteringProvider: Option[String] = None,
-    backReference: Option[BackReference] = None
+    backReference: Option[BackReference] = None,
+    amtPassthrough: Option[AMTPassthrough] = None
 ) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 

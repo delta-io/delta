@@ -195,6 +195,8 @@ public class FlinkUnityCatalogTable implements CatalogTable {
           return new AtomicDataType(new BooleanType(nullable));
         case "binary":
           return new AtomicDataType(new VarBinaryType(nullable, VarBinaryType.MAX_LENGTH));
+        case "byte":
+          return new AtomicDataType(new TinyIntType(nullable));
         case "date":
           return new AtomicDataType(new DateType(nullable));
         case "double":
@@ -205,6 +207,10 @@ public class FlinkUnityCatalogTable implements CatalogTable {
           return new AtomicDataType(new IntType(nullable));
         case "long":
           return new AtomicDataType(new BigIntType(nullable));
+        case "short":
+          return new AtomicDataType(new SmallIntType(nullable));
+        case "void":
+          return new AtomicDataType(new NullType());
         case "string":
           return new AtomicDataType(new VarCharType(nullable, VarCharType.MAX_LENGTH));
         case "timestamp":

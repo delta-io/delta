@@ -229,9 +229,10 @@ abstract class CloneTableBase(
         addFileIter.map { fileToCopy =>
           val copiedFile = fileToCopy.copy(dataChange = dataChangeInFileAction)
           // CLONE does not preserve Row IDs and Commit Versions, nor the source table's AMT
-          // back reference.
+          // back reference and passthrough.
           copiedFile.copy(
-            baseRowId = None, defaultRowCommitVersion = None, backReference = None)
+            baseRowId = None, defaultRowCommitVersion = None, backReference = None,
+            amtPassthrough = None)
         }
       sourceTable.snapshot.foreach { sourceSnapshot =>
         // Handle DomainMetadata for cloning a table.

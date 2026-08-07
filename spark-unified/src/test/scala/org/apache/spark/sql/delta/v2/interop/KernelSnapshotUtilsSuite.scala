@@ -20,15 +20,16 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.kernel.TableManager
-import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.SnapshotImpl
 
 class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
 
   // scalastyle:off deltahadoopconfiguration
-  private def engine: Engine = DefaultEngine.create(spark.sessionState.newHadoopConf())
+  private def engine: Engine =
+    KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
   // scalastyle:on deltahadoopconfiguration
 
   private def kernelSnapshotFor(path: String, engine: Engine): SnapshotImpl =
