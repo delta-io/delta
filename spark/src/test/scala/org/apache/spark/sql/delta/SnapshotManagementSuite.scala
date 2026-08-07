@@ -647,7 +647,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         new Commit(1, fs.getFileStatus(DeltaCommitFileProvider(freshSnapshot).deltaFile(1)), 0)
 
       // With retries disabled, a persistently stale listing throws and logs inconsistentList.
-      doReturn(staleSegment).when(spyLog)
+      doReturn(staleSegment, Nil: _*).when(spyLog)
         .getLogSegmentAfterCommit(anyLong(), any(), any(), any(), any(), any(), any(), any())
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES.key -> "0") {
         val records = Log4jUsageLogger.track {
@@ -665,7 +665,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       }
 
       // A listing that catches up on retry succeeds instead of throwing.
-      doReturn(staleSegment).doReturn(freshSegment).when(spyLog)
+      doReturn(staleSegment, freshSegment).when(spyLog)
         .getLogSegmentAfterCommit(anyLong(), any(), any(), any(), any(), any(), any(), any())
       val records = Log4jUsageLogger.track {
         spyLog.updateAfterCommit(
