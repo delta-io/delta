@@ -430,7 +430,7 @@ class IcebergConverter
           )
 
           val actionIterators =
-            DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(spark, log, commits)
+            DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(spark, commits)
           var deltaVersion = prevSnapshot.version
           val commitInfos = actionIterators.map { actionsIter =>
             try {
