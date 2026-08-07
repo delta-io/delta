@@ -16,12 +16,15 @@
 
 package io.delta.flink.sink.sql;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.flink.MockHttp;
 import java.util.UUID;
 import org.apache.flink.table.catalog.ObjectPath;
+import org.apache.flink.table.catalog.stats.CatalogColumnStatistics;
+import org.apache.flink.table.catalog.stats.CatalogTableStatistics;
 import org.junit.jupiter.api.Test;
 
 /** Test suite for {@link FlinkUnityCatalog}. */
@@ -51,6 +54,18 @@ class FlinkUnityCatalogTest {
     MockHttp.withMock(
         MockHttp.forUnsupportedUCTable(),
         mock -> assertTrue(catalog(mock).tableExists(TABLE_PATH)));
+  }
+
+  @Test
+  void statisticsAreUnknownWhenTheCatalogDoesNotProvideThem() {
+    MockHttp.withMock(
+        MockHttp.forExistingUCTable(UUID.randomUUID().toString(), "s3://bucket/default/tbl"),
+        mock -> {
+          FlinkUnityCatalog catalog = catalog(mock);
+          assertEquals(CatalogTableStatistics.UNKNOWN, catalog.getTableStatistics(TABLE_PATH));
+          assertEquals(
+              CatalogColumnStatistics.UNKNOWN, catalog.getTableColumnStatistics(TABLE_PATH));
+        });
   }
 
   private static FlinkUnityCatalog catalog(MockHttp mock) {
