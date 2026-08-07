@@ -134,7 +134,7 @@ class DeltaIntervalTypeSuite
     new IntervalTestCase(
       "year to month",
       "10 years 5 months",
-      ExpectEqualTo(Period.of(10, 5, 0)),
+      ExpectEqualTo(Period.of(10, 5, 0))
     ),
     new IntervalTestCase(
       "day to second",
