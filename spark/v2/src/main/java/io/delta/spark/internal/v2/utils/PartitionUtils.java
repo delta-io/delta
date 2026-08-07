@@ -185,7 +185,11 @@ public class PartitionUtils {
     // Fill values in a single pass over partitionValues
     for (int idx = 0; idx < partitionValues.getSize(); idx++) {
       final String key = partitionValues.getKeys().getString(idx);
-      final String strVal = partitionValues.getValues().getString(idx);
+      // getString throws on a null entry, so check for null first.
+      final String strVal =
+          partitionValues.getValues().isNullAt(idx)
+              ? null
+              : partitionValues.getValues().getString(idx);
       final Integer pos = physicalNameToIndex.get(key);
       if (pos != null) {
         final StructField field = partitionSchema.fields()[pos];
