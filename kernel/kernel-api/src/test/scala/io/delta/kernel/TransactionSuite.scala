@@ -155,6 +155,11 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
       val partitionKeys =
         ctx.asInstanceOf[DataWriteContextImpl].getPartitionValues.keySet().asScala
       assert(partitionKeys === Set("col-state", "col-country"))
+
+      assert(ctx.getStatisticsColumns.asScala.toSet === Set(
+        new Column("col-name"),
+        new Column("col-id"),
+        new Column("col-city")))
     }
   }
 
