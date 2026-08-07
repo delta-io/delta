@@ -23,26 +23,30 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.catalyst.TableIdentifier
 
 /**
  * Tests that [[LastManifestCommit]] is surfaced reliably by [[Snapshot.lastManifestCommitOpt]].
  */
 trait SnapshotLastManifestCommitSuiteBase extends AMTCheckpointTestBase {
 
-  override protected def sparkConf: SparkConf = super.sparkConf
-    // Inline every manifest commit instead of deferring to a follow-up OPTIMIZE CHECKPOINT commit.
-    // This simplifies the test suite as the deferring is not the primary focus of the suite.
-    .set(DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key, "1")
-
   /** Whether this suite runs with `.crc` files enabled, read from the effective conf. */
   protected def writeChecksumEnabled: Boolean =
     spark.conf.get(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)
+
+  ////////////////////////
+  // Fake, Injected LMCs
+  ////////////////////////
 
   /**
    * Seeds `lmc` onto every source that exists for this suite's mode. Always rewrites the delta-file
    * `CommitInfo`; the CRC-enabled suite additionally rewrites the `.crc`.
    */
-  protected def injectLmc(deltaLog: DeltaLog, version: Long, lmc: Option[LastManifestCommit]): Unit
+  protected def injectLmc(
+      deltaLog: DeltaLog, version: Long, lmc: Option[LastManifestCommit]): Unit = {
+    injectLmcIntoCommitInfo(deltaLog, version, lmc)
+    injectLmcIntoCrc(deltaLog, version, lmc)
+  }
 
   /** Rewrites the `CommitInfo` at `version` to carry `lmc`, preserving all other actions. */
   protected def injectLmcIntoCommitInfo(
@@ -154,31 +158,203 @@ trait SnapshotLastManifestCommitSuiteBase extends AMTCheckpointTestBase {
       assert(freshSnapshotAt(name, 1).lastManifestCommitOpt.isEmpty)
     }
   }
-}
 
-/** Runs the shared cases with `.crc` files enabled; the reference is seeded to CommitInfo + CRC. */
-class SnapshotLastManifestCommitSuite extends SnapshotLastManifestCommitSuiteBase {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, "true")
+  ////////////////////////////
+  // Actually Populated LMCs
+  ////////////////////////////
 
-  override protected def injectLmc(
-      deltaLog: DeltaLog, version: Long, lmc: Option[LastManifestCommit]): Unit = {
-    injectLmcIntoCommitInfo(deltaLog, version, lmc)
-    injectLmcIntoCrc(deltaLog, version, lmc)
+  /** The `lastManifestCommit` recorded on the CommitInfo committed at `version`, if any. */
+  private def lastManifestCommitFromCommitInfoAt(
+      deltaLog: DeltaLog, version: Long): Option[LastManifestCommit] = {
+    actionsAt(deltaLog, version)
+      .collectFirst { case ci: CommitInfo => ci }
+      .flatMap(_.lastManifestCommit)
+  }
+
+  /** The `lastManifestCommit` persisted in the CRC at `version`, if the CRC exists. */
+  private def lastManifestCommitFromCrcAt(
+      deltaLog: DeltaLog, version: Long): Option[LastManifestCommit] =
+    deltaLog.readChecksum(version).flatMap(_.lastManifestCommit)
+
+  /** Asserts the commit at `version` has the expected manifest-commit states. */
+  private def assertCommitStates(
+      deltaLog: DeltaLog,
+      version: Long,
+      emitsCheckpoint: Boolean,
+      expected: Option[LastManifestCommit]): Unit = {
+    assert(checkpointAt(deltaLog, version).nonEmpty == emitsCheckpoint,
+      s"v$version checkpoint emission: expected $emitsCheckpoint.")
+    // The CRC only carries the reference when `.crc` files are written for this suite; without
+    // them there is no CRC to inspect.
+    if (writeChecksumEnabled) {
+      assert(lastManifestCommitFromCrcAt(deltaLog, version) == expected,
+        s"v$version CRC must carry LMC $expected.")
+    }
+    assert(lastManifestCommitFromCommitInfoAt(deltaLog, version) == expected,
+      s"v$version CommitInfo must carry LMC $expected.")
+    assert(deltaLog.getSnapshotAt(version).lastManifestCommitOpt == expected,
+      s"v$version snapshot must resolve LMC $expected.")
+  }
+
+  test("manifest commits persist lastManifestCommit to the CRC and CommitInfo, " +
+      "while non-manifest commits carry the previous manifest-commit reference forward") {
+    withTable("amt_lmc_persist") {
+      val name = "amt_lmc_persist"
+      createAMTTable(name, checkpointInterval = 3)
+
+      sql(s"INSERT INTO $name VALUES (1)") // v1: no checkpoint.
+      sql(s"INSERT INTO $name VALUES (2)") // v2: no checkpoint.
+      sql(s"INSERT INTO $name VALUES (3)") // v3: triggers a checkpoint, but not in this commit.
+                                           // v4: AMT checkpoint emitted via hook.
+      sql(s"INSERT INTO $name VALUES (4)") // v5: no checkpoint.
+      sql(s"INSERT INTO $name VALUES (5)") // v6: triggers another checkpoint, not in this commit.
+                                           // v7: AMT checkpoint emitted via hook.
+
+      val deltaLog = deltaLogForName(name)
+
+      // Before the first manifest checkpoint (first emit is v4), there is no reference to record.
+      assertCommitStates(deltaLog, 1, emitsCheckpoint = false, expected = None)
+      assertCommitStates(deltaLog, 2, emitsCheckpoint = false, expected = None)
+
+      // The checkpoint-trigger commit (v3) does not create or store a reference yet.
+      assertCommitStates(deltaLog, 3, emitsCheckpoint = false, expected = None)
+      // The actual manifest commit stores the new reference to the CRC and CommitInfo.
+      // Note that the manifest commit version is 4, but the content root version is 3.
+      val expectedLmcAtV4 = LastManifestCommit(version = 4, contentRootVersion = 3)
+      assertCommitStates(deltaLog, 4, emitsCheckpoint = true, expected = Some(expectedLmcAtV4))
+
+      // The non-manifest commit carries the previous manifest-commit reference forward.
+      assertCommitStates(deltaLog, 5, emitsCheckpoint = false, expected = Some(expectedLmcAtV4))
+
+      // The next checkpoint-trigger commit (v6) does not create or store a new reference yet.
+      assertCommitStates(deltaLog, 6, emitsCheckpoint = false, expected = Some(expectedLmcAtV4))
+      // The actual manifest commit stores the new reference to the CRC and CommitInfo.
+      // Note that the manifest commit version is 7, but the content root version is 6.
+      val expectedLmcAtV7 = LastManifestCommit(version = 7, contentRootVersion = 6)
+      assertCommitStates(deltaLog, 7, emitsCheckpoint = true, expected = Some(expectedLmcAtV7))
+    }
+  }
+
+  testInline("consecutive manifest commits persist lastManifestCommit to the CRC and CommitInfo") {
+    withTable("amt_lmc_persist_inline") {
+      val name = "amt_lmc_persist_inline"
+      createAMTTable(name, checkpointInterval = 2)
+
+      sql(s"INSERT INTO $name VALUES (1)") // v1: no checkpoint (no existing tree to inline into).
+      sql(s"INSERT INTO $name VALUES (2)") // v2: reaches the interval boundary.
+                                            // v3: the FIRST AMT is emitted as a deferred OPTIMIZE
+                                            //     CHECKPOINT (a full rewrite describing state@v2).
+      sql(s"INSERT INTO $name VALUES (3)") // v4: now a tree exists, so this commit emits inline.
+      sql(s"INSERT INTO $name VALUES (4)") // v5: another inline manifest commit.
+
+      val deltaLog = deltaLogForName(name)
+
+      // v1/v2: carry no manifest reference yet: the first AMT has not been written.
+      assertCommitStates(deltaLog, 1, emitsCheckpoint = false, expected = None)
+      assertCommitStates(deltaLog, 2, emitsCheckpoint = false, expected = None)
+
+      // v3: the deferred first AMT. It is a full rewrite of state as of v2, so version=3 but
+      // contentRootVersion=2.
+      val expectedLmcAtV3 = LastManifestCommit(version = 3, contentRootVersion = 2)
+      assertCommitStates(deltaLog, 3, emitsCheckpoint = true, expected = Some(expectedLmcAtV3))
+
+      // v4: with a tree in place, the business commit writes its manifest inline, so version and
+      // contentRootVersion coincide.
+      val expectedLmcAtV4 = LastManifestCommit(version = 4, contentRootVersion = 4)
+      assertCommitStates(deltaLog, 4, emitsCheckpoint = true, expected = Some(expectedLmcAtV4))
+
+      // v5: another inline manifest commit.
+      val expectedLmcAtV5 = LastManifestCommit(version = 5, contentRootVersion = 5)
+      assertCommitStates(deltaLog, 5, emitsCheckpoint = true, expected = Some(expectedLmcAtV5))
+    }
+  }
+
+  test("commitLarge (RESTORE) always carries lastManifestCommit forward") {
+    withTable("amt_lmc_restore") {
+      val name = "amt_lmc_restore"
+      createAMTTable(name, checkpointInterval = 2)
+      sql(s"INSERT INTO $name VALUES (1)")        // v1: no checkpoint
+      sql(s"INSERT INTO $name VALUES (2)")        // v2: reaches the interval boundary
+                                                  // v3: the FIRST AMT is always a deferred OPTIMIZE
+                                                  //     CHECKPOINT (describing state@v2).
+      sql(s"RESTORE TABLE $name VERSION AS OF 1") // v4: RESTORE commit (via commitLarge)
+
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(name))
+
+      // RESTORE commits via commitLarge, which never emits AMT checkpoints, even when the
+      // checkpoint interval is reached. The lastManifestCommit valid as of its read snapshot must
+      // be carried forward.
+      assert(snapshot.version == 4, s"RESTORE should commit to v4, but got v${snapshot.version}.")
+      val expectedLmc = LastManifestCommit(version = 3, contentRootVersion = 2)
+
+      assert(checkpointAt(deltaLog, 4).isEmpty, s"v4 must not emit a checkpoint.")
+      // CommitLarge does not write a CRC, so we skip the CRC assertions.
+      assert(
+        lastManifestCommitFromCommitInfoAt(deltaLog, 4).contains(expectedLmc),
+        s"v4 CommitInfo must carry LMC $expectedLmc.")
+      assert(
+        freshSnapshotAt(name, 4).lastManifestCommitOpt.contains(expectedLmc),
+        s"v4 snapshot must resolve LMC $expectedLmc.")
+    }
   }
 }
 
-/** Runs the shared cases with `.crc` files disabled; the reference is seeded to CommitInfo only. */
+/**
+ * With incremental CRC and verification both enabled, the commit discards the incrementally-derived
+ * checksum and verifies against a full reconstruction, so the final CRC file is actually sourced
+ * from reconstruction via [[Snapshot.computeChecksum]], not incremental derivation.
+ */
+class SnapshotLastManifestCommitIncrementalCRCWithVerificationSuite
+  extends SnapshotLastManifestCommitSuiteBase {
+
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, "true")
+    .set(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key, "true")
+    .set(DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY.key, "true")
+    .set(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key, "true")
+}
+
+/**
+ * With incremental CRC enabled but verification off, the commit trusts and caches the
+ * incrementally-derived checksum, so the final CRC file is indeed sourced from incremental
+ * derivation via [[Checksum.computeNewChecksum]]. This matches the production hot path.
+ */
+class SnapshotLastManifestCommitIncrementalCRCWithoutVerificationSuite
+  extends SnapshotLastManifestCommitSuiteBase {
+
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, "true")
+    .set(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key, "true")
+    .set(DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY.key, "false")
+    .set(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key, "false")
+}
+
+/**
+ * With incremental CRC disabled, the final CRC file is sourced directly from reconstruction via
+ * [[Snapshot.computeChecksum]]. No incremental derivation is ever attempted.
+ */
+class SnapshotLastManifestCommitNonIncrementalCRCSuite
+  extends SnapshotLastManifestCommitSuiteBase {
+
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, "true")
+    .set(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key, "false")
+    // When incremental CRC is disabled, the verify flags are irrelevant.
+}
+
+/** No CRC files are ever written in this suite. Aims to test the fallback paths. */
 class SnapshotLastManifestCommitWithoutCRCSuite extends SnapshotLastManifestCommitSuiteBase {
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, "false")
+    // When CRC is disabled, the incremental/verify flags are all irrelevant.
 
   override protected def injectLmc(
       deltaLog: DeltaLog, version: Long, lmc: Option[LastManifestCommit]): Unit = {
+    // No CRC files are written, so the only inject lastManifestCommit into the CommitInfo.
     injectLmcIntoCommitInfo(deltaLog, version, lmc)
   }
 
-  test("lastManifestCommitOpt falls back to CommitInfo when no other source carries the ref") {
+  testInline("lastManifestCommitOpt falls back to reading CommitInfo with no other sources") {
     // With CRC unavailable, when the snapshot sits on an AMT checkpoint, there is no trailing delta
     // to provide the CommitInfo during P&M query, so we must fallback to a direct CommitInfo read.
     val lmc = LastManifestCommit(version = 7, contentRootVersion = 5)

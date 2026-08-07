@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 
 class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {

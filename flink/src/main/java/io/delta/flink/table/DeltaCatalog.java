@@ -122,6 +122,9 @@ public interface DeltaCatalog extends Serializable {
     /** Storage properties returned while resolving the table, when available. */
     Map<String, String> storageProperties = Map.of();
 
+    /** Properties the catalog requires when initializing a newly allocated table. */
+    Map<String, String> requiredProperties = Map.of();
+
     public TableDescriptor() {}
 
     public TableDescriptor(String tableId, String uuid, URI tablePath) {
@@ -134,6 +137,16 @@ public interface DeltaCatalog extends Serializable {
       this.uuid = uuid;
       this.tablePath = tablePath;
       this.storageProperties = Collections.unmodifiableMap(new HashMap<>(storageProperties));
+    }
+
+    public TableDescriptor(
+        String tableId,
+        String uuid,
+        URI tablePath,
+        Map<String, String> storageProperties,
+        Map<String, String> requiredProperties) {
+      this(tableId, uuid, tablePath, storageProperties);
+      this.requiredProperties = Collections.unmodifiableMap(new HashMap<>(requiredProperties));
     }
 
     public String getTableId() {
@@ -150,6 +163,10 @@ public interface DeltaCatalog extends Serializable {
 
     public Map<String, String> getStorageProperties() {
       return storageProperties;
+    }
+
+    public Map<String, String> getRequiredProperties() {
+      return requiredProperties;
     }
   }
 }
