@@ -1601,9 +1601,9 @@ def normalizeColumnNamesInDataType(
     case ByteType =>
     case ShortType =>
     case IntegerType =>
-    case _: YearMonthIntervalType =>
+    case dt: YearMonthIntervalType =>
     case LongType =>
-    case _: DayTimeIntervalType =>
+    case dt: DayTimeIntervalType =>
     case FloatType =>
     case DoubleType =>
     case StringType =>
