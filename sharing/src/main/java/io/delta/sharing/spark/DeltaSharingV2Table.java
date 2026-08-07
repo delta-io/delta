@@ -35,7 +35,6 @@ import org.apache.spark.sql.connector.catalog.SupportsMetadataColumns;
 import org.apache.spark.sql.connector.catalog.SupportsRead;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCapability;
-import org.apache.spark.sql.connector.catalog.V2TableWithV1Fallback;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
@@ -65,10 +64,7 @@ import io.delta.kernel.engine.Engine;
  * the V1 Delta Sharing connector, unchanged.
  */
 public class DeltaSharingV2Table
-    implements Table,
-        SupportsRead,
-        SupportsMetadataColumns,
-        V2TableWithV1Fallback {
+    implements Table, SupportsRead, SupportsMetadataColumns {
 
   private static final Logger LOG = LoggerFactory.getLogger(DeltaSharingV2Table.class);
 
@@ -109,16 +105,6 @@ public class DeltaSharingV2Table
   }
 
   public CatalogTable getCatalogTable() {
-    return catalogTable;
-  }
-
-
-  /**
-   * V1 fallback for read capabilities this V2 table does not implement. Because {@link
-   * #capabilities()} advertises only {@code BATCH_READ}, a streaming read resolves through this.
-   */
-  @Override
-  public CatalogTable v1Table() {
     return catalogTable;
   }
 
