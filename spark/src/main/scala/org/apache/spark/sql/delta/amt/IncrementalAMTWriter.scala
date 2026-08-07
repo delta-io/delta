@@ -106,7 +106,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     val windowCommits =
       intermediateLogCommits.map(f => SingleCommit(deltaLog, FileNames.getFileVersion(f), f))
     val actionsFromDeltas =
-      DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsSeq(spark, deltaLog, windowCommits)
+      DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsSeq(spark, windowCommits)
     // 1.c: this commit attempt's own actions (actionsToCommit).
 
     // ---- Step 2: log-replay all three parts, keyed by their real commit versions. ----
