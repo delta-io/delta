@@ -18,9 +18,9 @@ package io.delta.spark.internal.v2.read;
 import static io.delta.spark.internal.v2.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
@@ -264,7 +264,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
             (io.delta.kernel.internal.SnapshotImpl) latestSnapshot,
             options,
             snapshotManager,
-            DefaultEngine.create(hadoopConf),
+            KernelEngineFactory.createDefaultEngine(hadoopConf),
             Option.apply(checkpointLocation),
             /* mergeConsecutiveSchemaChanges= */ false);
 
