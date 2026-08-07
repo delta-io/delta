@@ -30,6 +30,8 @@ import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.types.AtomicDataType;
 import org.apache.flink.table.types.KeyValueDataType;
 import org.apache.flink.table.types.logical.MapType;
+import org.apache.flink.table.types.logical.SmallIntType;
+import org.apache.flink.table.types.logical.TinyIntType;
 import org.apache.flink.table.types.logical.VarBinaryType;
 import org.junit.jupiter.api.Test;
 
@@ -112,6 +114,17 @@ class FlinkUnityCatalogTableTest {
         ((KeyValueDataType) ((UnresolvedPhysicalColumn) schema.getColumns().get(8)).getDataType())
                 .getLogicalType()
             instanceof MapType);
+  }
+
+  @Test
+  void testNarrowIntegerTypes() {
+    assertEquals(
+        new TinyIntType(true),
+        FlinkUnityCatalogTable.fromJson("{\"type\":\"byte\",\"nullable\":true}").getLogicalType());
+    assertEquals(
+        new SmallIntType(false),
+        FlinkUnityCatalogTable.fromJson("{\"type\":\"short\",\"nullable\":false}")
+            .getLogicalType());
   }
 
   @Test
