@@ -209,6 +209,8 @@ public class FlinkUnityCatalogTable implements CatalogTable {
           return new AtomicDataType(new BigIntType(nullable));
         case "short":
           return new AtomicDataType(new SmallIntType(nullable));
+        case "void":
+          return new AtomicDataType(new NullType());
         case "string":
           return new AtomicDataType(new VarCharType(nullable, VarCharType.MAX_LENGTH));
         case "timestamp":
