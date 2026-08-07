@@ -45,7 +45,6 @@ import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
@@ -88,6 +87,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.functions;
 import org.apache.spark.sql.internal.SQLConf;
@@ -145,7 +145,7 @@ class DeltaV2MicroBatchStream
   private static final int FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS = 3;
 
   private final Engine engine;
-  private final DeltaSnapshotManager snapshotManager;
+  private final DeltaV2SnapshotManager snapshotManager;
   private final DeltaOptions options;
   private final boolean ignoreFileDeletion;
   private final boolean skipChangeCommits;
@@ -233,7 +233,7 @@ class DeltaV2MicroBatchStream
   private final StorageLevel snapshotCacheStorageLevel;
 
   public DeltaV2MicroBatchStream(
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       Snapshot snapshotAtSourceInit,
       Configuration hadoopConf,
       SparkSession spark,
@@ -848,13 +848,13 @@ class DeltaV2MicroBatchStream
    * Returns the earliest commit version whose timestamp is >= the provided timestamp.
    *
    * <p>This method fetches the commit at the given timestamp via
-   * [[DeltaSnapshotManager.getActiveCommitAtTime]], computes the starting version using
+   * [[DeltaV2SnapshotManager.getActiveCommitAtTime]], computes the starting version using
    * [[DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp]], and validates the protocol at the
    * returned version.
    */
   private static long getStartingVersionFromTimestamp(
       SparkSession spark,
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       Engine engine,
       Timestamp timestamp,
       boolean canExceedLatest) {
@@ -891,7 +891,7 @@ class DeltaV2MicroBatchStream
    * <p>Returns true when the validation was performed and succeeded.
    */
   private static boolean validateProtocolAt(
-      SparkSession spark, DeltaSnapshotManager snapshotManager, Engine engine, long version) {
+      SparkSession spark, DeltaV2SnapshotManager snapshotManager, Engine engine, long version) {
     boolean alwaysValidateProtocol =
         (Boolean)
             spark

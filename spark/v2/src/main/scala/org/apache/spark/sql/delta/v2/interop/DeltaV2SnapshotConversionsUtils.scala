@@ -18,10 +18,11 @@ package org.apache.spark.sql.delta.v2.interop
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.actions.{Metadata => KernelMetadata}
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
 import io.delta.kernel.internal.util.VectorUtils
+
+import org.apache.spark.sql.delta.actions.{Format, Metadata, Protocol}
 
 /**
  * Bridges Kernel's actions ([[KernelMetadata]] / [[KernelProtocol]]) to V1 Delta actions

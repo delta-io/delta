@@ -7,7 +7,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.Objects;
 import java.util.Optional;
@@ -49,7 +49,7 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
         Objects.requireNonNull(
             SparkSession.active().sparkContext().hadoopConfiguration(), "hadoopConf is null");
     Engine engine = DefaultEngine.create(hadoopConf);
-    DeltaSnapshotManager snapshotManager = deltaV2Table.getSnapshotManager();
+    DeltaV2SnapshotManager snapshotManager = deltaV2Table.getSnapshotManager();
     CommitRange commitRange =
         snapshotManager.getTableChanges(engine, startVersion, Optional.of(endVersion));
     // Boundary checks: both endpoints must already carry the schema + RT state that

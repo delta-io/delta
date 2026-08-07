@@ -19,13 +19,14 @@ package io.delta.spark.internal.v2.read
 import java.util.{Locale, Objects, Optional, OptionalInt}
 import java.util.function.Supplier
 
-import org.apache.spark.sql.delta.stats.DeltaScan
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
-import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager
 import io.delta.kernel.Snapshot
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.SnapshotImpl
+import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
+
+import org.apache.spark.sql.delta.stats.DeltaScan
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
@@ -65,16 +66,16 @@ private[read] class DeltaV2ScanBuilder(
     initialSnapshot: Snapshot,
     kernelEngine: Engine,
     catalogTable: Optional[CatalogTable],
-    snapshotManager: DeltaSnapshotManager,
+    snapshotManager: DeltaV2SnapshotManager,
     dataSchema: StructType,
     partitionSchema: StructType,
     tableSchema: StructType,
     catalogStats: Optional[Statistics],
     options: CaseInsensitiveStringMap)
-  extends ScanBuilder
-  with SupportsPushDownRequiredColumns
-  with SupportsPushDownCatalystFilters
-  with SupportsPushDownLimit {
+    extends ScanBuilder
+    with SupportsPushDownRequiredColumns
+    with SupportsPushDownCatalystFilters
+    with SupportsPushDownLimit {
 
   // Use Objects.requireNonNull (throws NullPointerException) rather than Scala's require (throws
   // IllegalArgumentException) to preserve the exact null-check behavior of the original Java class.
@@ -174,7 +175,9 @@ private[read] class DeltaV2ScanBuilder(
     val deltaScanSupplier = new Supplier[DeltaScan] {
       override def get(): DeltaScan = {
         val snapshot =
-          new DeltaV2Snapshot(initialSnapshot.asInstanceOf[SnapshotImpl], sparkSession,
+          new DeltaV2Snapshot(
+            initialSnapshot.asInstanceOf[SnapshotImpl],
+            sparkSession,
             kernelEngine)
 
         // When a limit is pushed, route selection through V1's limit-aware filesForScan. It
@@ -183,7 +186,8 @@ private[read] class DeltaV2ScanBuilder(
         def selectFiles(): DeltaScan =
           if (effectiveLimit.isPresent) {
             snapshot.filesForScan(
-              effectiveLimit.getAsInt.toLong, partitionFiltersForScan)
+              effectiveLimit.getAsInt.toLong,
+              partitionFiltersForScan)
           } else {
             snapshot.filesForScan(catalystFilters, keepNumRecords)
           }
@@ -236,7 +240,7 @@ private[read] object DeltaV2ScanBuilder {
       initialSnapshot: Snapshot,
       kernelEngine: Engine,
       catalogTable: Optional[CatalogTable],
-      snapshotManager: DeltaSnapshotManager,
+      snapshotManager: DeltaV2SnapshotManager,
       dataSchema: StructType,
       partitionSchema: StructType,
       tableSchema: StructType,
@@ -279,7 +283,7 @@ private[read] object DeltaV2ScanBuilder {
       tableName: String,
       snapshot: Snapshot,
       kernelEngine: Engine,
-      snapshotManager: DeltaSnapshotManager,
+      snapshotManager: DeltaV2SnapshotManager,
       dataSchema: StructType,
       partitionSchema: StructType,
       tableSchema: StructType,
