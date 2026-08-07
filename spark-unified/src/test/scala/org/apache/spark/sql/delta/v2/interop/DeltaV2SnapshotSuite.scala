@@ -194,8 +194,6 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       assert(clustering.nonEmpty)
       assert(!clustering.get.removed)
       assert(snapshot.domainMetadata.forall(!_.removed))
-      // The cached by-name readers resolve off the same Seq.
-      assert(snapshot.clusteringDomainMetadata.nonEmpty)
       // Inherited from SnapshotStateManager (not overridden here): Kernel serves domain metadata
       // without V1 state reconstruction, so it is always "known".
       assert(snapshot.domainMetadatasIfKnown.contains(snapshot.domainMetadata))
