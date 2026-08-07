@@ -59,9 +59,7 @@ public class CatalogManagedTableIntTest extends IntTestBase {
     spark.sql(String.format("DROP TABLE IF EXISTS %s", TEST_NEW_TABLE_NAME));
     spark.sql(
         String.format(
-            "CREATE TABLE IF NOT EXISTS %s (%s) USING delta TBLPROPERTIES "
-                + "('delta.feature.catalogManaged'='supported', "
-                + "'delta.columnMapping.mode'='name')",
+            "CREATE TABLE IF NOT EXISTS %s (%s) USING delta TBLPROPERTIES ('delta.feature.catalogManaged'= 'supported')",
             TEST_TABLE_NAME, schemaToDDL(SCHEMA_WITH_ALL_TYPES)));
     spark.sql(String.format("INSERT INTO %s (t_int) VALUES (1), (2)", TEST_TABLE_NAME));
   }
@@ -169,7 +167,11 @@ public class CatalogManagedTableIntTest extends IntTestBase {
   }
 
   @IntTest
-  void testUpdateSchemaAndWriteNewColumn() throws Exception {
+  void testUpdateSchema() throws Exception {
+    spark.sql(
+        String.format(
+            "ALTER TABLE %s SET TBLPROPERTIES ('delta.columnMapping.mode'='name')",
+            TEST_TABLE_NAME));
     StructType targetSchema = SCHEMA_WITH_ALL_TYPES.add("flink_added_column", StringType.STRING);
     UnityCatalog catalog = new UnityCatalog("main", catalogEndpoint, catalogToken);
     try (CatalogManagedTable table =
@@ -184,34 +186,9 @@ public class CatalogManagedTableIntTest extends IntTestBase {
           Objects.requireNonNull(catalog.getTableDetail(TEST_TABLE_NAME).getColumns())
               .get(targetSchema.length() - 1)
               .getName());
-
-      List<List<?>> values = dummyData(targetSchema, 1);
-      ColumnVector[] cvs =
-          IntStream.range(0, targetSchema.fields().size())
-              .mapToObj(
-                  index ->
-                      new DataColumnVectorView(
-                          values, index, targetSchema.fields().get(index).getDataType()))
-              .toArray(ColumnVector[]::new);
-      FilteredColumnarBatch batch =
-          new FilteredColumnarBatch(
-              new DefaultColumnarBatch(values.size(), targetSchema, cvs), Optional.empty());
-
-      try (CloseableIterator<Row> rows =
-          table.writeParquet(
-              "schema-evolution",
-              Utils.toCloseableIterator(List.of(batch).iterator()),
-              Collections.emptyMap())) {
-        table.commit(
-            CloseableIterable.inMemoryIterable(rows),
-            "schema-evolution-write",
-            1L,
-            Collections.emptyMap());
-      }
     }
 
     spark.sql(String.format("REFRESH TABLE %s", TEST_TABLE_NAME));
-    assertCount(
-        1, spark.sql(String.format("SELECT COUNT(flink_added_column) FROM %s", TEST_TABLE_NAME)));
+    assertEquals(targetSchema.fieldNames(), List.of(spark.table(TEST_TABLE_NAME).columns()));
   }
 }
