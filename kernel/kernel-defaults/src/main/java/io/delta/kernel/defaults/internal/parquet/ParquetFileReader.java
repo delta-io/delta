@@ -33,9 +33,9 @@ import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.parquet.conf.ParquetConfiguration;
 import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
-import org.apache.parquet.format.converter.ParquetMetadataConverter;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.api.InitContext;
 import org.apache.parquet.hadoop.api.ReadSupport;
@@ -126,9 +126,12 @@ public class ParquetFileReader {
             org.apache.parquet.io.InputFile parquetInputFile =
                 ParquetIOUtils.createParquetInputFile(inputFile);
 
-            ParquetMetadata footer =
-                org.apache.parquet.hadoop.ParquetFileReader.readFooter(
-                    parquetInputFile, ParquetMetadataConverter.NO_FILTER);
+            // Pass the configuration explicitly at both `parquet-mr` entry points below, so
+            // neither constructs a fresh Hadoop Configuration per file. See
+            // ParquetIOUtils#parquetConfiguration.
+            ParquetConfiguration parquetConf = ParquetIOUtils.parquetConfiguration(inputFile);
+
+            ParquetMetadata footer = ParquetIOUtils.readFooter(parquetInputFile, parquetConf);
 
             MessageType parquetSchema = footer.getFileMetaData().getSchema();
             Optional<FilterPredicate> parquetPredicate =
@@ -138,7 +141,7 @@ public class ParquetFileReader {
             // no API to do that in the current version of parquet-mr which takes InputFile
             // as input.
             reader =
-                new ParquetReader.Builder<Object>(parquetInputFile) {
+                new ParquetReader.Builder<Object>(parquetInputFile, parquetConf) {
                   @Override
                   protected ReadSupport<Object> getReadSupport() {
                     return readSupport;
