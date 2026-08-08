@@ -83,7 +83,7 @@ public class ConflictChecker {
   private final List<DomainMetadata> attemptDomainMetadatas;
 
   // Helper states during conflict resolution
-  private Optional<Long> lastWinningRowIdHighWatermark = Optional.empty();
+  private Optional<Long> lastWinningRowIdHighWatermark;
   // Paths of data files this (losing) transaction removes; used to detect delete-vs-delete
   // conflicts against the winning transactions.
   private Set<String> attemptRemovedFilePaths = Collections.emptySet();
@@ -93,12 +93,14 @@ public class ConflictChecker {
       TransactionImpl transaction,
       long attemptVersion,
       List<DomainMetadata> domainMetadatas,
-      CloseableIterable<Row> dataActions) {
+      CloseableIterable<Row> dataActions,
+      Optional<Long> priorWinningRowIdHighWatermark) {
     this.snapshotOpt = snapshotOpt;
     this.transaction = transaction;
     this.attemptVersion = attemptVersion;
     this.attemptDomainMetadatas = domainMetadatas;
     this.attemptDataActions = dataActions;
+    this.lastWinningRowIdHighWatermark = priorWinningRowIdHighWatermark;
   }
 
   /**
@@ -107,12 +109,16 @@ public class ConflictChecker {
    *
    * @param engine {@link Engine} instance to use
    * @param snapshot {@link SnapshotImpl} of the table when the losing transaction has started
+   * @param attemptVersion the version this transaction just tried (and failed) to commit
    * @param transaction {@link TransactionImpl} that encountered the conflict (a.k.a the losing
    *     transaction)
    * @param domainMetadatas List of {@link DomainMetadata} that the losing transaction is trying to
    *     commit
    * @param dataActions {@link CloseableIterable} of data actions that the losing transaction is
    *     trying to commit
+   * @param priorWinningRowIdHighWatermark the highest row-ID watermark seen across all previous
+   *     commit conflict passes. Carried forward so that a pass whose winning commits don't include
+   *     a row-tracking DomainMetadata action don't reset the watermark.
    * @return {@link TransactionRebaseState} that the losing transaction needs to rebase against
    * @throws ConcurrentWriteException if there are logical conflicts between the losing transaction
    *     and the winning transactions that cannot be resolved.
@@ -123,12 +129,19 @@ public class ConflictChecker {
       long attemptVersion,
       TransactionImpl transaction,
       List<DomainMetadata> domainMetadatas,
-      CloseableIterable<Row> dataActions)
+      CloseableIterable<Row> dataActions,
+      Optional<Long> priorWinningRowIdHighWatermark)
       throws ConcurrentWriteException {
     // We currently set isBlindAppend=false in our CommitInfo to avoid unsafe resolution by other
     // connectors. Here, we still can assume that conflict resolution is safe to perform in Kernel.
     // checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
-    return new ConflictChecker(snapshot, transaction, attemptVersion, domainMetadatas, dataActions)
+    return new ConflictChecker(
+            snapshot,
+            transaction,
+            attemptVersion,
+            domainMetadatas,
+            dataActions,
+            priorWinningRowIdHighWatermark)
         .resolveConflicts(engine);
   }
 
@@ -205,7 +218,8 @@ public class ConflictChecker {
         getLastCommitTimestamp(lastWinningVersion, lastWinningTxn, winningCommitInfoOpt.get()),
         updatedDataActions,
         updatedDomainMetadatas,
-        updatedCrcInfo);
+        updatedCrcInfo,
+        lastWinningRowIdHighWatermark);
   }
 
   /**
@@ -224,18 +238,21 @@ public class ConflictChecker {
     private final CloseableIterable<Row> updatedDataActions;
     private final List<DomainMetadata> updatedDomainMetadatas;
     private final Optional<CRCInfo> updatedCrcInfo;
+    private final Optional<Long> winningRowIdHighWatermark;
 
     public TransactionRebaseState(
         long latestVersion,
         long latestCommitTimestamp,
         CloseableIterable<Row> updatedDataActions,
         List<DomainMetadata> updatedDomainMetadatas,
-        Optional<CRCInfo> updatedCrcInfo) {
+        Optional<CRCInfo> updatedCrcInfo,
+        Optional<Long> winningRowIdHighWatermark) {
       this.latestVersion = latestVersion;
       this.latestCommitTimestamp = latestCommitTimestamp;
       this.updatedDataActions = updatedDataActions;
       this.updatedDomainMetadatas = updatedDomainMetadatas;
       this.updatedCrcInfo = updatedCrcInfo;
+      this.winningRowIdHighWatermark = winningRowIdHighWatermark;
     }
 
     /**
@@ -268,6 +285,15 @@ public class ConflictChecker {
 
     public Optional<CRCInfo> getUpdatedCrcInfo() {
       return updatedCrcInfo;
+    }
+
+    /**
+     * Return the highest row-ID high watermark seen across all winning transactions processed in
+     * this (and any prior) rebase pass. {@code Optional.empty()} if no winning transaction carried
+     * a row-tracking DomainMetadata action.
+     */
+    public Optional<Long> getWinningRowIdHighWatermark() {
+      return winningRowIdHighWatermark;
     }
   }
 
@@ -429,9 +455,9 @@ public class ConflictChecker {
   }
 
   private List<FileStatus> getWinningCommitFiles(Engine engine) {
-    // TODO delta-io/delta#5018 this should be based on attemptVersion not readSnapshot version
-    String firstWinningCommitFile =
-        deltaFile(transaction.getLogPath(), transaction.getReadTableVersion() + 1);
+    // List from attemptVersion: the commit at that version is the one that caused the
+    // FileAlreadyExistsException, so it is the first winning commit we haven't yet processed.
+    String firstWinningCommitFile = deltaFile(transaction.getLogPath(), attemptVersion);
 
     try (CloseableIterator<FileStatus> files =
         wrapEngineExceptionThrowsIO(
