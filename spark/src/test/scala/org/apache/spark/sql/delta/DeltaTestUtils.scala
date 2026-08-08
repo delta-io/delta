@@ -48,7 +48,7 @@ import org.apache.spark.{SparkConf, SparkContext, SparkFunSuite, SparkThrowable}
 import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, DataFrame, DataFrameWriter, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, FileSourceMetadataAttribute}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.{quietly, FailFastMode}
 import org.apache.spark.sql.execution.{FileSourceScanLike, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
@@ -222,6 +222,17 @@ trait DeltaTestUtilsBase {
       spark.listenerManager.unregister(planCapturingListener)
     }
   }
+
+  /**
+   * Returns the schema of `scan` with the file source metadata columns (e.g.
+   * `_metadata.file_path`, which DML commands use to identify the files to rewrite) removed.
+   *
+   * These columns are file-constant: they are derived from the file being scanned rather than
+   * read from it, so they don't affect data column pruning and should be ignored when asserting
+   * on which columns a scan reads.
+   */
+  def dataSchemaOf(scan: FileSourceScanLike): StructType =
+    StructType(scan.schema.filterNot(f => FileSourceMetadataAttribute.isValid(f.metadata)))
 
   /**
    * Run a thunk with logical and physical plans for all queries captured and passed
