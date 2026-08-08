@@ -26,7 +26,6 @@ import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
@@ -45,6 +44,7 @@ import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
@@ -250,7 +250,7 @@ class DeltaV2MicroBatchStream
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
     this.spark = Objects.requireNonNull(spark, "spark is null");
-    this.engine = DefaultEngine.create(hadoopConf);
+    this.engine = KernelEngineFactory.createDefaultEngine(hadoopConf);
     this.options = Objects.requireNonNull(options, "options is null");
     this.ignoreFileDeletion = this.options.ignoreFileDeletion();
     // Deprecated. Please use `skipChangeCommits` from now on.
