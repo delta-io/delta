@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.MDC
+import org.apache.spark.util.ThreadUtils
 
 /**
  * Row-level concurrency resolution for the [[ConflictChecker]]: instead of aborting a concurrent
@@ -148,17 +149,15 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
       val dvStore = DeletionVectorStore.createInstance(deltaLog.newDeltaHadoopConf())
       val tablePath = deltaLog.dataPath
 
-      // path -> (rebased AddFile, rebased RemoveFile)
-      val replacements = mutable.Map.empty[String, (AddFile, RemoveFile)]
-      for (path <- sharedPaths) {
+      // Reconcile each shared file's DVs independently; the work is driver-side object-store DV
+      // I/O (read + merge + write). When many files conflict, parallelize across a bounded pool
+      // to shorten the conflict window; a single file stays on the caller thread.
+      def reconcileOnePath(path: String): Option[(String, (AddFile, RemoveFile))] =
         try {
           reconcileFileDeletionVectors(
               dvStore, tablePath,
               winningDvUpdates(path), currentAddByPath(path), currentRemoveByPath(path))
-            .foreach { rebased =>
-              replacements(path) = rebased
-              rowLevelResolvedPaths += path
-            }
+            .map(path -> _)
         } catch {
           case NonFatal(e) =>
             // Fail safe: DV decode/merge/write is a pure optimization over the conservative
@@ -168,7 +167,22 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
             // conflict detection. Other shared files are still resolved independently.
             logWarning(log"Row-level concurrency resolution failed for file " +
               log"${MDC(DeltaLogKeys.PATH, path)}; leaving it for the standard conflict checks", e)
+            None
         }
+
+      // Bounded driver parallelism (cf. DeltaFileOperations footer reads, which use 8).
+      val pathList = sharedPaths.toSeq
+      val parallelism = math.min(pathList.size, 8)
+      val reconciled =
+        if (parallelism <= 1) pathList.flatMap(reconcileOnePath)
+        else ThreadUtils.parmap(pathList, "rowLevelConflictResolution", parallelism)(
+          reconcileOnePath).flatten
+
+      // Apply per-file results on the caller thread (no shared-state races across the pool).
+      val replacements = mutable.Map.empty[String, (AddFile, RemoveFile)]
+      for ((path, rebased) <- reconciled) {
+        replacements(path) = rebased
+        rowLevelResolvedPaths += path
       }
 
       if (replacements.nonEmpty) {
