@@ -164,6 +164,7 @@ public class TransactionImpl implements Transaction {
   private Optional<Long> providedRowIdHighWatermark = Optional.empty();
   private Supplier<Map<String, String>> committerProperties = Collections::emptyMap;
   private boolean closed; // To avoid trying to commit the same transaction again.
+  private final Map<String, String> commitTags;
 
   public TransactionImpl(
       boolean isCreateOrReplace,
@@ -179,6 +180,38 @@ public class TransactionImpl implements Transaction {
       Optional<Integer> maxRetriesOpt,
       int logCompactionInterval,
       Clock clock) {
+    this(
+        isCreateOrReplace,
+        dataPath,
+        readSnapshotOpt,
+        engineInfo,
+        operation,
+        newProtocol,
+        newMetadata,
+        committer,
+        setTxnOpt,
+        newClusteringColumnsOpt,
+        maxRetriesOpt,
+        logCompactionInterval,
+        clock,
+        emptyMap() /* commitTags */);
+  }
+
+  public TransactionImpl(
+      boolean isCreateOrReplace,
+      Path dataPath,
+      Optional<SnapshotImpl> readSnapshotOpt,
+      String engineInfo,
+      Operation operation,
+      Optional<Protocol> newProtocol,
+      Optional<Metadata> newMetadata,
+      Committer committer,
+      Optional<SetTransaction> setTxnOpt,
+      Optional<List<Column>> newClusteringColumnsOpt,
+      Optional<Integer> maxRetriesOpt,
+      int logCompactionInterval,
+      Clock clock,
+      Map<String, String> commitTags) {
     checkArgument(isCreateOrReplace || readSnapshotOpt.isPresent());
     // For a new table, a protocol and metadata must be provided
     checkArgument(
@@ -202,6 +235,7 @@ public class TransactionImpl implements Transaction {
     this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
     this.currentCrcInfo = readSnapshotOpt.flatMap(SnapshotImpl::getCurrentCrcInfo);
+    this.commitTags = Collections.unmodifiableMap(requireNonNull(commitTags, "commitTags is null"));
   }
 
   ////////////////
@@ -623,7 +657,8 @@ public class TransactionImpl implements Transaction {
         getOperationParameters(), /* operationParameters */
         isBlindAppend(), /* isBlindAppend */
         Optional.of(txnId.toString()), /* txnId */
-        emptyMap() /* operationMetrics */);
+        emptyMap(), /* operationMetrics */
+        commitTags /* tags */);
   }
 
   /**
