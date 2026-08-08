@@ -103,11 +103,28 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
     // Skip Auto Compact if current transaction is not qualified or the table is not qualified
     // based on the value of autoCompactTypeOpt.
     if (shouldSkipAutoCompact(autoCompactTypeOpt, spark, txn)) return
-    compactIfNecessary(
-        spark,
-        txn,
-        OP_TYPE,
-        maxDeletedRowsRatio = None)
+    val asyncEnabled = AsyncAutoCompactService.isEnabled(spark)
+    val tableId = txn.postCommitSnapshot.metadata.id
+    val fallbackEnabled = conf.getConf(
+      org.apache.spark.sql.delta.sources.DeltaSQLConf
+        .DELTA_AUTO_COMPACT_ASYNC_FALLBACK_TO_INLINE_ENABLED)
+    val inFallback = fallbackEnabled && AsyncAutoCompactService.isInInlineFallback(tableId)
+    if (asyncEnabled && !inFallback) {
+      // Hand the committed txn off to the JVM-wide async worker pool. The writer thread returns
+      // immediately; the worker re-evaluates eligibility against a fresh snapshot and (if still
+      // eligible) runs the OPTIMIZE as its own commit. See AsyncAutoCompactService for the
+      // correctness invariants around partition reservation and conflict handling.
+      AsyncAutoCompactService.submit(spark, txn)
+    } else {
+      // Either async is disabled, or this table has been demoted to sticky inline mode after
+      // a prior async AC yielded to in-flight DML. Inline runs cannot be cancelled
+      // by a future writer, so progress is guaranteed.
+      compactIfNecessary(
+          spark,
+          txn,
+          OP_TYPE,
+          maxDeletedRowsRatio = None)
+    }
   }
 
   /**

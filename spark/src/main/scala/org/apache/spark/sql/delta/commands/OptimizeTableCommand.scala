@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.files.SQLMetricsReporting
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.{SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.hooks.{AsyncAutoCompactCancelledException, AsyncAutoCompactService, InflightDMLRegistry}
 import org.apache.spark.sql.delta.util.BinPackingUtils
 
 import org.apache.spark.SparkContext
@@ -574,6 +575,19 @@ class OptimizeExecutor(
       optimizeOperation: Operation,
       actions: Seq[Action],
       metrics: Map[String, SQLMetric])(f: OptimisticTransaction => Boolean): Unit = {
+    // Async Auto Compaction DML yield: if a long-running DML (MERGE/DELETE/UPDATE/OVERWRITE)
+    // acquired InflightDMLRegistry on this table between our Spark-job completion and now,
+    // abort cleanly rather than racing the DML to commit (which would force the DML to throw
+    // ConcurrentModificationException and re-execute minutes of Spark work). Only applies when
+    // running on the async worker thread; inline AC and user-initiated OPTIMIZE proceed
+    // unconditionally.
+    if (isAutoCompact && AsyncAutoCompactService.isAsyncWorker &&
+        InflightDMLRegistry.isActive(snapshot.metadata.id)) {
+      throw new AsyncAutoCompactCancelledException(
+        snapshot.metadata.id,
+        s"Async Auto Compaction yielded at pre-commit to in-flight DML on table " +
+          s"${snapshot.metadata.id}")
+    }
     try {
       txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(actions, optimizeOperation,
