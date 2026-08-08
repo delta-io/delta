@@ -360,7 +360,8 @@ trait MetadataCleanup extends DeltaLogging {
     }
 
     checkpointProvider.createCompatibilityCheckpoint(
-      spark, self, snapshotToCleanup.logPath, hadoopConf)
+      spark, self, snapshotToCleanup.logPath, hadoopConf,
+      tableProperties = snapshotToCleanup.metadata.configuration)
     metrics.v2CheckpointCompatLogicTimeTakenMs = System.currentTimeMillis() - startTimeMs
     metrics.checkpointVersion = checkpointVersion
   }
