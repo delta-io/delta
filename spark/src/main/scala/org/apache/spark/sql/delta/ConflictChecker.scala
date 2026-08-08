@@ -221,11 +221,12 @@ object WinningCommitSummary {
 }
 
 private[delta] class ConflictChecker(
-    spark: SparkSession,
+    protected val spark: SparkSession,
     initialCurrentTransactionInfo: CurrentTransactionInfo,
-    winningCommitSummary: WinningCommitSummary,
+    protected val winningCommitSummary: WinningCommitSummary,
     isolationLevel: IsolationLevel)
-  extends DeltaLogging with ConflictCheckerPredicateElimination {
+  extends DeltaLogging with ConflictCheckerPredicateElimination
+  with RowLevelConcurrencyResolution {
 
   protected val winningCommitVersion = winningCommitSummary.commitVersion
   protected val startTimeMs = System.currentTimeMillis()
@@ -304,6 +305,12 @@ private[delta] class ConflictChecker(
 
     // Update the table version in newly added type widening metadata.
     updateTypeWideningMetadata()
+
+    // Row-level concurrency: try to resolve "same physical file" conflicts by merging deletion
+    // vectors before the file-level checks run, so that concurrent DML touching disjoint rows of
+    // the same file no longer aborts. Runs after row-ID reassignment so merged files keep stable
+    // base row IDs.
+    resolveRowLevelConflicts()
 
     // Data file checks.
     checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn()
@@ -1147,8 +1154,15 @@ private[delta] class ConflictChecker(
           Seq.empty
       }
 
+      // Only re-scan the added files when row-level resolution actually reconciled something: a
+      // file is skippable only if its path is in `rowLevelResolvedPaths`, so an empty set means the
+      // filter is a no-op. Skips the traversal (and its allocation) on the common no-conflict path.
+      val addedFilesAfterRowLevelResolution =
+        if (rowLevelResolvedPaths.isEmpty) addedFilesToCheckForConflicts
+        else addedFilesToCheckForConflicts.filterNot(canSkipAddedFileForRowLevelConcurrency)
+
       val fileMatchingPartitionReadPredicates =
-        getFirstFileMatchingPartitionPredicates(addedFilesToCheckForConflicts)
+        getFirstFileMatchingPartitionPredicates(addedFilesAfterRowLevelResolution)
 
       if (fileMatchingPartitionReadPredicates.nonEmpty) {
         throw DeltaErrors.concurrentAppendException(
@@ -1170,7 +1184,7 @@ private[delta] class ConflictChecker(
       val readFilePaths = currentTransactionInfo.readFiles.map(
         f => f.path -> f.partitionValues).toMap
       val deleteReadOverlap = winningCommitSummary.removedFiles
-        .find(r => readFilePaths.contains(r.path))
+        .find(r => readFilePaths.contains(r.path) && !rowLevelResolvedPaths.contains(r.path))
       if (deleteReadOverlap.nonEmpty) {
         val partitionOpt = getPrettyPartitionMessage(readFilePaths(deleteReadOverlap.get.path))
         throw DeltaErrors.concurrentDeleteReadException(
@@ -1179,7 +1193,11 @@ private[delta] class ConflictChecker(
           winningCommitVersion,
           partitionOpt)
       }
-      if (winningCommitSummary.removedFiles.nonEmpty && currentTransactionInfo.readWholeTable) {
+      // Row-level concurrency: a removed file that was reconciled at the row level must not
+      // re-trigger the whole-table conflict either.
+      val unresolvedRemovedFiles =
+        winningCommitSummary.removedFiles.exists(r => !rowLevelResolvedPaths.contains(r.path))
+      if (unresolvedRemovedFiles && currentTransactionInfo.readWholeTable) {
         throw DeltaErrors.concurrentDeleteReadException(
           winningCommitSummary.commitInfo,
           getTableNameOrPath,
@@ -1200,7 +1218,7 @@ private[delta] class ConflictChecker(
         .collect { case r: RemoveFile => r.path -> r.partitionValues }
         .toMap
       val deleteOverlap = winningCommitSummary.removedFiles
-        .find(r => deletedFilePaths.contains(r.path))
+        .find(r => deletedFilePaths.contains(r.path) && !rowLevelResolvedPaths.contains(r.path))
       if (deleteOverlap.nonEmpty) {
         val partitionOpt = getPrettyPartitionMessage(deletedFilePaths(deleteOverlap.get.path))
         throw DeltaErrors.concurrentDeleteDeleteException(
