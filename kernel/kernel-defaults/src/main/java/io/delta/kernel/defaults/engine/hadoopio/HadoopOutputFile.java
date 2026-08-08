@@ -68,8 +68,13 @@ public class HadoopOutputFile implements OutputFile {
     return new HadoopPositionOutputStream(fs.create(writePath)) {
       @Override
       public void close() throws IOException {
+        // super.close() aborts the temp stream if it is abortable, else closes it normally
         super.close();
         if (useRename) {
+          if (isAborted()) {
+            fs.delete(writePath, false /* recursive */);
+            return;
+          }
           boolean renameDone = false;
           try {
             renameDone = fs.rename(writePath, targetPath);
