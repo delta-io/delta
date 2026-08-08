@@ -19,14 +19,18 @@ package org.apache.spark.sql.delta
 import java.util.UUID
 
 import scala.collection.mutable
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.hadoop.fs.Path
+
+import org.apache.spark.internal.MDC
 
 /**
  * Row-level concurrency resolution for the [[ConflictChecker]]: instead of aborting a concurrent
@@ -125,13 +129,15 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
       .toMap
     if (winningDvUpdates.isEmpty) return
 
-    // Current transaction's DV updates, indexed by path.
-    val currentAddByPath = currentTransactionInfo.actions.collect {
-      case a: AddFile if a.deletionVector != null => a.path -> a
-    }.toMap
-    val currentRemoveByPath = currentTransactionInfo.actions.collect {
-      case r: RemoveFile => r.path -> r
-    }.toMap
+    // Current transaction's DV updates and file removes, indexed by path. Built in a single pass
+    // over the actions (last-writer-wins per path, matching the prior `.collect{}.toMap`).
+    val currentAddByPath = mutable.Map.empty[String, AddFile]
+    val currentRemoveByPath = mutable.Map.empty[String, RemoveFile]
+    currentTransactionInfo.actions.foreach {
+      case a: AddFile if a.deletionVector != null => currentAddByPath(a.path) = a
+      case r: RemoveFile => currentRemoveByPath(r.path) = r
+      case _ =>
+    }
 
     val sharedPaths = winningDvUpdates.keySet
       .intersect(currentAddByPath.keySet)
@@ -145,47 +151,24 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
       // path -> (rebased AddFile, rebased RemoveFile)
       val replacements = mutable.Map.empty[String, (AddFile, RemoveFile)]
       for (path <- sharedPaths) {
-        val winningAdd = winningDvUpdates(path)
-        val currentAdd = currentAddByPath(path)
-        val currentRemove = currentRemoveByPath(path)
-
-        def bitmapOf(dv: DeletionVectorDescriptor): RoaringBitmapArray =
-          readDeletionVectorOrEmpty(dvStore, dv, tablePath)
-        val baseBitmap = bitmapOf(currentRemove.deletionVector)
-        val winningBitmap = bitmapOf(winningAdd.deletionVector)
-        val currentBitmap = bitmapOf(currentAdd.deletionVector)
-
-        // `baseBitmap` is the DV of `P` at the current txn's read time (carried on its RemoveFile);
-        // for a 2-way conflict it equals the winner's pre-image too. Both `dv_win` and `dv_cur` are
-        // supersets of it (a DV only grows), so the newly-deleted rows are `dv \ base` on each side
-        // and their overlap is `(dv_win INTERSECT dv_cur) MINUS base`. If empty, the two txns
-        // touched disjoint rows and the schedule `current ; winner` is a valid serialization under
-        // both WriteSerializable and Serializable (the winner's rewrites/deletes are of rows the
-        // current txn did not touch), so merging is safe. If non-empty, the same row was touched by
-        // both -> genuine conflict, left for the standard checks. (For 3+ way chains `base` becomes
-        // previous winner's DV rather than the original pre-image; the merge stays correct and the
-        // overlap test stays conservative.)
-        val newlyDeletedOverlap = winningBitmap.copy()
-        newlyDeletedOverlap.and(currentBitmap)
-        newlyDeletedOverlap.andNot(baseBitmap)
-
-        if (newlyDeletedOverlap.isEmpty) {
-          // Disjoint: merge the deletion vectors and rebase onto the winner's post-image.
-          val mergedBitmap = winningBitmap.copy()
-          mergedBitmap.merge(currentBitmap)
-          val mergedDescriptor = writeMergedDeletionVector(dvStore, tablePath, mergedBitmap)
-          // Keep the current AddFile's identity (base row ID / default row commit version already
-          // reconciled by the row-ID phases) but point it at the merged DV.
-          val rebasedAdd = currentAdd
-            .copy(deletionVector = mergedDescriptor, dataChange = true)
-            .withoutTightBoundStats
-          // Tombstone the winner's now-live AddFile (carries the winning DV) instead of the stale
-          // pre-image.
-          val rebasedRemove = winningAdd.removeWithTimestamp()
-          replacements(path) = (rebasedAdd, rebasedRemove)
-          rowLevelResolvedPaths += path
+        try {
+          reconcileFileDeletionVectors(
+              dvStore, tablePath,
+              winningDvUpdates(path), currentAddByPath(path), currentRemoveByPath(path))
+            .foreach { rebased =>
+              replacements(path) = rebased
+              rowLevelResolvedPaths += path
+            }
+        } catch {
+          case NonFatal(e) =>
+            // Fail safe: DV decode/merge/write is a pure optimization over the conservative
+            // default. If it fails for this file (unreadable/corrupt DV, transient I/O), skip
+            // row-level resolution for it so the standard file-level checks abort cleanly with a
+            // retryable Concurrent* exception instead of surfacing an unexpected error out of
+            // conflict detection. Other shared files are still resolved independently.
+            logWarning(log"Row-level concurrency resolution failed for file " +
+              log"${MDC(DeltaLogKeys.PATH, path)}; leaving it for the standard conflict checks", e)
         }
-        // else: overlapping row-level modification -> genuine conflict, leave for standard checks.
       }
 
       if (replacements.nonEmpty) {
@@ -208,6 +191,59 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
             "resolvedPaths" -> rowLevelResolvedPaths.size,
             "winningOperation" -> winningOperationName.getOrElse("UNKNOWN")))
       }
+    }
+  }
+
+  /**
+   * Reconciles the winning and current transactions' deletion vectors for a single shared file `P`.
+   * Returns the rebased `(AddFile, RemoveFile)` to substitute into the current transaction when the
+   * two transactions deleted disjoint rows, or `None` when they overlap (a genuine row-level
+   * conflict, left for the standard checks). All deletion-vector I/O for `P` happens here, so its
+   * caller can wrap it in a fail-safe boundary.
+   */
+  private def reconcileFileDeletionVectors(
+      dvStore: DeletionVectorStore,
+      tablePath: Path,
+      winningAdd: AddFile,
+      currentAdd: AddFile,
+      currentRemove: RemoveFile): Option[(AddFile, RemoveFile)] = {
+    def bitmapOf(dv: DeletionVectorDescriptor): RoaringBitmapArray =
+      readDeletionVectorOrEmpty(dvStore, dv, tablePath)
+    val baseBitmap = bitmapOf(currentRemove.deletionVector)
+    val winningBitmap = bitmapOf(winningAdd.deletionVector)
+    val currentBitmap = bitmapOf(currentAdd.deletionVector)
+
+    // `baseBitmap` is the DV of `P` at the current txn's read time (carried on its RemoveFile);
+    // for a 2-way conflict it equals the winner's pre-image too. Both `dv_win` and `dv_cur` are
+    // supersets of it (a DV only grows), so the newly-deleted rows are `dv \ base` on each side
+    // and their overlap is `(dv_win INTERSECT dv_cur) MINUS base`. If empty, the two txns
+    // touched disjoint rows and the schedule `current ; winner` is a valid serialization under
+    // both WriteSerializable and Serializable (the winner's rewrites/deletes are of rows the
+    // current txn did not touch), so merging is safe. If non-empty, the same row was touched by
+    // both -> genuine conflict, left for the standard checks. (For 3+ way chains `base` becomes
+    // previous winner's DV rather than the original pre-image; the merge stays correct and the
+    // overlap test stays conservative.)
+    val newlyDeletedOverlap = winningBitmap.copy()
+    newlyDeletedOverlap.and(currentBitmap)
+    newlyDeletedOverlap.andNot(baseBitmap)
+
+    if (!newlyDeletedOverlap.isEmpty) {
+      // Overlapping row-level modification -> genuine conflict, leave for the standard checks.
+      None
+    } else {
+      // Disjoint: merge the deletion vectors and rebase onto the winner's post-image.
+      val mergedBitmap = winningBitmap.copy()
+      mergedBitmap.merge(currentBitmap)
+      val mergedDescriptor = writeMergedDeletionVector(dvStore, tablePath, mergedBitmap)
+      // Keep the current AddFile's identity (base row ID / default row commit version already
+      // reconciled by the row-ID phases) but point it at the merged DV.
+      val rebasedAdd = currentAdd
+        .copy(deletionVector = mergedDescriptor, dataChange = true)
+        .withoutTightBoundStats
+      // Tombstone the winner's now-live AddFile (carries the winning DV) instead of the stale
+      // pre-image.
+      val rebasedRemove = winningAdd.removeWithTimestamp()
+      Some((rebasedAdd, rebasedRemove))
     }
   }
 
