@@ -17,8 +17,10 @@
 package org.apache.spark.sql.delta.v2.interop
 
 import java.io.File
+import java.nio.file.{Files, StandardCopyOption}
 
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.actions.{AddFile, SetTransaction}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.DefaultEngine
@@ -29,15 +31,20 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.SystemClock
 
 /**
- * Tests for the [[DeltaV2OptimisticTransaction]] skeleton. This suite exercises the construction
- * path only: a transaction can be built over a Kernel snapshot (with a null V1 `deltaLog`) and its
- * read state (`readVersion`, `metadata`, `protocol`, `snapshot`) resolves from the wrapped
- * [[DeltaV2Snapshot]]. The commit lifecycle is not yet implemented and must fail loudly.
+ * Tests for [[DeltaV2OptimisticTransaction]]. Two groups:
+ *  - Construction: a transaction builds over a Kernel snapshot (with a null V1 `deltaLog`) and its
+ *    read state (`readVersion`, `metadata`, `protocol`, `snapshot`) resolves from the wrapped
+ *    [[DeltaV2Snapshot]].
+ *  - Commit: [[AddFile]] actions commit through Kernel's `Transaction.commit` while the surrounding
+ *    V1 machinery runs unchanged; the durable log is asserted from both the V1 (`DeltaLog.update`)
+ *    and Kernel (`Table.forPath(...).getLatestSnapshot`) views. Non-AddFile actions fail loudly.
  */
 class DeltaV2OptimisticTransactionSuite
     extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest {
+
+  import testImplicits._
 
   /** Builds a Kernel-backed transaction over the latest snapshot of the table at `dir`. */
   private def startKernelTxn(dir: File): DeltaV2OptimisticTransaction = {
@@ -49,8 +56,8 @@ class DeltaV2OptimisticTransactionSuite
       .forPath(engine, dir.getCanonicalPath)
       .getLatestSnapshot(engine)
       .asInstanceOf[SnapshotImpl]
-    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap, spark)
-    new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot)
+    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap, spark, engine)
+    new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot, engine)
   }
 
   /** Seeds a simple (unpartitioned) V1 Delta table at `dir`. */
@@ -118,19 +125,287 @@ class DeltaV2OptimisticTransactionSuite
     }
   }
 
-  test("commit path is not implemented and fails loudly") {
+  test("blind append of a synthetic AddFile commits through Kernel") {
     withTempDir { dir =>
       seedTable(dir)
       val txn = startKernelTxn(dir)
-      // Call the commit chokepoint directly: going through txn.commit(...) would first reach the
-      // V1 prepareCommit machinery, which NPEs on the null deltaLog before this seam.
-      val e = intercept[UnsupportedOperationException] {
-        txn.writeCommitFile(
-          attemptVersion = txn.readVersion + 1L,
-          jsonActions = Iterator.empty,
-          currentTransactionInfo = null)
+      assert(txn.readVersion === 0L)
+
+      val add = AddFile(
+        path = "synthetic-file",
+        partitionValues = Map.empty,
+        size = 1L,
+        modificationTime = 1L,
+        dataChange = true)
+      txn.commit(add :: Nil, DeltaOperations.ManualUpdate)
+
+      // V1 view of the durable log sees the kernel-written commit.
+      val postV1 = DeltaLog.forTable(spark, dir.getCanonicalPath).update()
+      assert(postV1.version === 1L)
+      assert(postV1.allFiles.collect().map(_.path).contains("synthetic-file"))
+
+      // Kernel view agrees.
+      // scalastyle:off deltahadoopconfiguration
+      val engine = DefaultEngine.create(spark.sessionState.newHadoopConf())
+      // scalastyle:on deltahadoopconfiguration
+      val kernelPost = Table.forPath(engine, dir.getCanonicalPath).getLatestSnapshot(engine)
+      assert(kernelPost.getVersion === 1L)
+    }
+  }
+
+  test("appended parquet file is readable end to end") {
+    withTempDir { dir =>
+      seedTable(dir)
+
+      // Stage a real parquet file with the table's schema in a sibling directory (writing
+      // format("parquet") under the table root trips DELTA_INVALID_FORMAT validation), then copy
+      // it into the table dir, mirroring how OptimisticTransactionSuite drives commits at the
+      // file-action level.
+      val staging = new File(dir.getParentFile, s"${dir.getName}-staging")
+      spark.range(5, 7).toDF("id").coalesce(1)
+        .write.parquet(staging.getCanonicalPath)
+      val parquetFile = staging.listFiles()
+        .filter(f => f.getName.endsWith(".parquet") && !f.getName.startsWith("_"))
+        .head
+      val targetName = s"part-kernel-poc-${parquetFile.getName}"
+      val target = new File(dir, targetName)
+      Files.copy(parquetFile.toPath, target.toPath, StandardCopyOption.REPLACE_EXISTING)
+
+      val txn = startKernelTxn(dir)
+      val add = AddFile(
+        path = targetName,
+        partitionValues = Map.empty,
+        size = target.length(),
+        modificationTime = target.lastModified(),
+        dataChange = true)
+      txn.commit(add :: Nil, DeltaOperations.ManualUpdate)
+
+      checkAnswer(
+        spark.read.format("delta").load(dir.getCanonicalPath),
+        Seq(0L, 1L, 2L, 3L, 4L, 5L, 6L).toDF("id"))
+    }
+  }
+
+  test("consecutive kernel commits advance the version") {
+    withTempDir { dir =>
+      seedTable(dir)
+      (1 to 3).foreach { i =>
+        val txn = startKernelTxn(dir)
+        assert(txn.readVersion === (i - 1).toLong)
+        val add = AddFile(s"synthetic-$i", Map.empty, 1L, 1L, dataChange = true)
+        txn.commit(add :: Nil, DeltaOperations.ManualUpdate)
       }
-      assert(e.getMessage.contains("not implemented"))
+      val post = DeltaLog.forTable(spark, dir.getCanonicalPath).update()
+      assert(post.version === 3L)
+      assert(post.allFiles.collect().map(_.path).count(_.startsWith("synthetic-")) === 3)
+    }
+  }
+
+  test("unsupported actions fail loudly") {
+    withTempDir { dir =>
+      seedTable(dir)
+      val txn = startKernelTxn(dir)
+      val setTxn = SetTransaction("test-app", 1L, Some(1L))
+      val e = intercept[UnsupportedOperationException] {
+        txn.commit(setTxn :: Nil, DeltaOperations.ManualUpdate)
+      }
+      assert(e.getMessage.contains("kernel wrapper gap"))
+    }
+  }
+
+  /**
+   * Commits a synthetic [[AddFile]] carrying `statsJson` through Kernel. Used by the stats tests
+   * below to drive `kernelStatistics` with a chosen stats payload.
+   */
+  private def commitWithStats(dir: File, statsJson: String): Unit = {
+    val txn = startKernelTxn(dir)
+    val add = AddFile(
+      path = "synthetic-stats-file",
+      partitionValues = Map.empty,
+      size = 1L,
+      modificationTime = 1L,
+      dataChange = true,
+      stats = statsJson)
+    txn.commit(add :: Nil, DeltaOperations.ManualUpdate)
+  }
+
+  test("full stats JSON round-trips into the kernel add action") {
+    withTempDir { dir =>
+      seedTable(dir)
+      commitWithStats(
+        dir,
+        """{"numRecords":3,"minValues":{"id":1},"maxValues":{"id":9},"nullCount":{"id":0}}""")
+
+      val post = DeltaLog.forTable(spark, dir.getCanonicalPath).update()
+      assert(post.version === 1L)
+      val committed = post.allFiles.collect().find(_.path == "synthetic-stats-file").get
+      // min/max survive the Kernel round-trip rather than being dropped to numRecords-only.
+      assert(committed.stats.contains("\"numRecords\":3"))
+      assert(committed.stats.contains("\"minValues\""))
+      assert(committed.stats.contains("\"maxValues\""))
+    }
+  }
+
+  test("stats-less AddFile commits with empty stats rather than failing") {
+    withTempDir { dir =>
+      seedTable(dir)
+      // stats defaults to null on AddFile; absent stats are legitimate and must not error.
+      commitWithStats(dir, statsJson = null)
+      assert(DeltaLog.forTable(spark, dir.getCanonicalPath).update().version === 1L)
+    }
+  }
+
+  test("numRecords-only stats JSON commits (no min/max to parse)") {
+    withTempDir { dir =>
+      seedTable(dir)
+      commitWithStats(dir, """{"numRecords":7}""")
+
+      val post = DeltaLog.forTable(spark, dir.getCanonicalPath).update()
+      val committed = post.allFiles.collect().find(_.path == "synthetic-stats-file").get
+      assert(committed.stats.contains("\"numRecords\":7"))
+    }
+  }
+
+  test("malformed stats JSON fails the commit instead of silently dropping stats") {
+    withTempDir { dir =>
+      seedTable(dir)
+      // Truncated JSON: the previous implementation swallowed this and committed
+      // numRecords-only (here, no stats at all), losing data-skipping stats silently.
+      val e = intercept[Exception] {
+        commitWithStats(dir, """{"numRecords":3,"minValues":{"id":""")
+      }
+      assert(
+        e.getMessage != null && e.getMessage.contains("Failed to parse JSON"),
+        s"expected a JSON parse failure, got: ${e.getMessage}")
+      // The bad write did not land.
+      assert(DeltaLog.forTable(spark, dir.getCanonicalPath).update().version === 0L)
+    }
+  }
+
+  test("stats JSON whose value type contradicts the schema fails the commit") {
+    withTempDir { dir =>
+      seedTable(dir)
+      // `id` is a LONG; a string min value is a real stats/schema inconsistency.
+      val e = intercept[Exception] {
+        commitWithStats(
+          dir,
+          """{"numRecords":3,"minValues":{"id":"not-a-number"},"maxValues":{"id":9}}""")
+      }
+      assert(e.getMessage != null, "expected a typed-parse failure with a message")
+      assert(DeltaLog.forTable(spark, dir.getCanonicalPath).update().version === 0L)
+    }
+  }
+
+  /**
+   * Seeds a table partitioned by a single column `p` of `partitionType`, inserts one row with
+   * `partitionValueSql`, then commits a synthetic [[AddFile]] through Kernel reusing the seeded
+   * row's serialized partition values. Asserts the commit succeeds and advances the version.
+   *
+   * This exercises the partition-value typing in `generateKernelAppendActionRows`: Kernel's
+   * `getWriteContext` validates each literal's type against the partition schema with exact
+   * type-equality, so a non-string partition column would fail if values were still typed as
+   * strings.
+   */
+  private def checkTypedPartitionAppend(
+      partitionType: String, partitionValueSql: String): Unit = {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.sql(
+        s"""CREATE TABLE delta.`$path` (id LONG, p $partitionType)
+           |USING delta PARTITIONED BY (p)""".stripMargin)
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, $partitionValueSql)")
+
+      val log = DeltaLog.forTable(spark, path)
+      val baseVersion = log.update().version
+      val sample = log.snapshot.allFiles.collect().head
+
+      val txn = startKernelTxn(dir)
+      val add = AddFile(
+        path = s"synthetic-${sample.path}",
+        partitionValues = sample.partitionValues,
+        size = 1L,
+        modificationTime = 1L,
+        dataChange = true)
+      txn.commit(add :: Nil, DeltaOperations.ManualUpdate)
+
+      val post = log.update()
+      assert(post.version === baseVersion + 1)
+      assert(post.allFiles.collect().map(_.path).exists(_.startsWith("synthetic-")))
+    }
+  }
+
+  test("append to int-partitioned table types the partition literal") {
+    checkTypedPartitionAppend("INT", "5")
+  }
+
+  test("append to date-partitioned table types the partition literal") {
+    checkTypedPartitionAppend("DATE", "DATE'2024-03-11'")
+  }
+
+  test("append to timestamp-partitioned table types the partition literal") {
+    checkTypedPartitionAppend("TIMESTAMP", "TIMESTAMP'2024-03-11 11:00:00.123456'")
+  }
+
+  test("append to decimal-partitioned table types the partition literal") {
+    checkTypedPartitionAppend("DECIMAL(10,2)", "CAST(12.34 AS DECIMAL(10,2))")
+  }
+
+  test("append to boolean-partitioned table types the partition literal") {
+    checkTypedPartitionAppend("BOOLEAN", "true")
+  }
+
+  test("append with a null partition value types the null literal") {
+    checkTypedPartitionAppend("INT", "NULL")
+  }
+
+  test("append to string-partitioned table still works") {
+    checkTypedPartitionAppend("STRING", "'foo'")
+  }
+
+  test("multiple AddFiles per partition all commit through Kernel") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.sql(
+        s"""CREATE TABLE delta.`$path` (id LONG, p INT)
+           |USING delta PARTITIONED BY (p)""".stripMargin)
+      // Two partitions (p=0, p=1), each with a real data file so we can reuse their serialized
+      // partition values below.
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 0), (2, 1)")
+
+      val log = DeltaLog.forTable(spark, path)
+      val baseVersion = log.update().version
+      // partitionValues keyed by partition -> one representative file per partition.
+      val samplesByPartition =
+        log.snapshot.allFiles.collect().groupBy(_.partitionValues).map {
+          case (partitionValues, files) => partitionValues -> files.head
+        }
+      assert(samplesByPartition.size === 2, "expected one file per partition to reuse")
+
+      // Stage two synthetic AddFiles per partition (four total) so the per-partition grouping in
+      // generateKernelAppendActionRows must emit multiple append action rows for the same write
+      // context, not just one.
+      val adds = samplesByPartition.toSeq.flatMap { case (partitionValues, sample) =>
+        (1 to 2).map { i =>
+          AddFile(
+            path = s"synthetic-p${partitionValues.values.head}-$i-${sample.path}",
+            partitionValues = partitionValues,
+            size = 1L,
+            modificationTime = 1L,
+            dataChange = true)
+        }
+      }
+      assert(adds.size === 4)
+
+      val txn = startKernelTxn(dir)
+      txn.commit(adds.toList, DeltaOperations.ManualUpdate)
+
+      val post = log.update()
+      assert(post.version === baseVersion + 1)
+      val committedPaths = post.allFiles.collect().map(_.path)
+      // All four synthetic files landed, spread across both partitions.
+      adds.foreach(add => assert(committedPaths.contains(add.path), s"missing ${add.path}"))
+      assert(committedPaths.count(_.startsWith("synthetic-p0")) === 2)
+      assert(committedPaths.count(_.startsWith("synthetic-p1")) === 2)
     }
   }
 }

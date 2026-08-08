@@ -500,9 +500,25 @@ class Snapshot(
     stateDS.where("remove IS NOT NULL").map(_.remove)
   }
 
-  def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
+  /**
+   * Total size of this snapshot commit files.
+   *
+   * Returns the indexed size, 0 when `deltaFileIndexOpt` is None, or -1 when
+   * `deltaFileIndexOpt` is unimplemented. -1 is the commit-stats sentinel for an uncollected
+   * stat.
+   */
+  def deltaFileSizeInBytes(): Long =
+    Try(deltaFileIndexOpt).toOption.map(_.map(_.sizeInBytes).getOrElse(0L)).getOrElse(-1L)
 
-  def checkpointSizeInBytes(): Long = checkpointProvider.effectiveCheckpointSizeInBytes()
+  /**
+   * Size of this snapshot checkpoint.
+   *
+   * Returns the provider's effective size (0 for [[EmptyCheckpointProvider]]), or -1 when
+   * `checkpointProvider` is unimplemented. -1 is the commit-stats sentinel for an uncollected
+   * stat.
+   */
+  def checkpointSizeInBytes(): Long =
+    Try(checkpointProvider.effectiveCheckpointSizeInBytes()).getOrElse(-1L)
 
   override def metadata: Metadata = _reconstructedProtocolMetadataICTAndLMC.metadata
 
