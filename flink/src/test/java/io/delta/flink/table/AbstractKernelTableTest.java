@@ -16,6 +16,9 @@
 
 package io.delta.flink.table;
 
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_ID_KEY;
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_MODE_KEY;
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -34,8 +37,11 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.types.FieldMetadata;
 import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -44,13 +50,57 @@ import java.lang.reflect.Field;
 import java.net.URI;
 import java.nio.file.AccessDeniedException;
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.flink.util.InstantiationUtil;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.Test;
 
 /** JUnit 6 test suite for AbstractKernelTable. */
 class AbstractKernelTableTest extends TestHelper {
+
+  private static final class BarrierLocalFileSystemTable extends LocalFileSystemTable {
+    private final CyclicBarrier snapshotBarrier;
+    private final AtomicBoolean blockNextSnapshot = new AtomicBoolean();
+
+    private BarrierLocalFileSystemTable(
+        URI tablePath, Map<String, String> conf, StructType schema, CyclicBarrier snapshotBarrier) {
+      super(tablePath, conf, schema, List.of());
+      this.snapshotBarrier = snapshotBarrier;
+      setCacheManager(new SnapshotCacheManager.NoCacheManager());
+    }
+
+    void blockNextSnapshot() {
+      blockNextSnapshot.set(true);
+    }
+
+    @Override
+    protected Snapshot loadLatestSnapshot() {
+      Snapshot snapshot = super.loadLatestSnapshot();
+      if (blockNextSnapshot.compareAndSet(true, false)) {
+        try {
+          snapshotBarrier.await(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          throw new RuntimeException(e);
+        } catch (BrokenBarrierException | TimeoutException e) {
+          throw new RuntimeException(e);
+        }
+      }
+      return snapshot;
+    }
+  }
+
+  private static Throwable awaitFailure(Future<?> future) throws Exception {
+    try {
+      future.get(30, TimeUnit.SECONDS);
+      return null;
+    } catch (ExecutionException e) {
+      return e.getCause();
+    }
+  }
 
   /**
    * Helper method to create a test table with default configuration.
@@ -160,6 +210,198 @@ class AbstractKernelTableTest extends TestHelper {
           assertFalse(snapshot.getTableProperties().containsKey("something"));
           assertTrue(
               ((SnapshotImpl) snapshot).getProtocol().getWriterFeatures().contains("v2Checkpoint"));
+        });
+  }
+
+  @Test
+  void testUpdateSchemaPreservesAndAssignsColumnMappingMetadata() {
+    StructType initialSchema = new StructType().add("id", IntegerType.INTEGER);
+    FieldMetadata userMetadata =
+        FieldMetadata.builder().putString("user.metadata", "preserved").build();
+    StructType nestedType =
+        new StructType().add(new StructField("city", StringType.STRING, true, userMetadata));
+    StructType targetSchema =
+        new StructType()
+            // Deliberately omit existing mapping metadata. The table snapshot remains
+            // authoritative.
+            .add("id", IntegerType.INTEGER)
+            .add(new StructField("name", StringType.STRING, true, userMetadata))
+            .add(new StructField("address", nestedType, true, userMetadata));
+
+    withTestTable(
+        initialSchema,
+        Collections.emptyList(),
+        Map.of(COLUMN_MAPPING_MODE_KEY, "name"),
+        table -> {
+          StructField oldId = table.getSchema().at(0);
+          long oldIdMapping = oldId.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
+          String oldPhysicalName = oldId.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+          long oldVersion = table.snapshot().orElseThrow().getVersion();
+
+          table.updateSchema(targetSchema);
+
+          StructType updatedSchema = table.getSchema();
+          assertEquals(List.of("id", "name", "address"), updatedSchema.fieldNames());
+          assertEquals(oldVersion + 1, table.snapshot().orElseThrow().getVersion());
+          assertEquals(
+              oldIdMapping, updatedSchema.at(0).getMetadata().getLong(COLUMN_MAPPING_ID_KEY));
+          assertEquals(
+              oldPhysicalName,
+              updatedSchema.at(0).getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
+
+          StructField name = updatedSchema.at(1);
+          assertNotNull(name.getMetadata().getLong(COLUMN_MAPPING_ID_KEY));
+          assertNotNull(name.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
+          assertEquals("preserved", name.getMetadata().getString("user.metadata"));
+
+          StructField nestedCity = ((StructType) updatedSchema.at(2).getDataType()).at(0);
+          assertNotNull(nestedCity.getMetadata().getLong(COLUMN_MAPPING_ID_KEY));
+          assertNotNull(nestedCity.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
+          assertEquals("preserved", nestedCity.getMetadata().getString("user.metadata"));
+
+          table.updateSchema(targetSchema);
+          assertEquals(oldVersion + 1, table.snapshot().orElseThrow().getVersion());
+        });
+  }
+
+  @Test
+  void testUpdateSchemaPreservesCallerSuppliedColumnMappingMetadata() {
+    StructType initialSchema = new StructType().add("id", IntegerType.INTEGER);
+    FieldMetadata suppliedMappingMetadata =
+        FieldMetadata.builder()
+            .putLong(COLUMN_MAPPING_ID_KEY, 999L)
+            .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "caller-physical-name")
+            .build();
+    StructType targetSchema =
+        initialSchema.add(
+            new StructField("name", StringType.STRING, true, suppliedMappingMetadata));
+
+    withTestTable(
+        initialSchema,
+        Collections.emptyList(),
+        Map.of(COLUMN_MAPPING_MODE_KEY, "name"),
+        table -> {
+          table.updateSchema(targetSchema);
+
+          StructField addedField = table.getSchema().at(1);
+          assertEquals(999L, addedField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY));
+          assertEquals(
+              "caller-physical-name",
+              addedField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
+        });
+  }
+
+  @Test
+  void testUpdateSchemaRejectsUnsupportedChanges() {
+    StructType nestedType = new StructType().add("value", IntegerType.INTEGER);
+    StructType initialSchema =
+        new StructType().add("id", IntegerType.INTEGER).add("payload", nestedType);
+
+    withTestTable(
+        initialSchema,
+        Collections.emptyList(),
+        Map.of(COLUMN_MAPPING_MODE_KEY, "name"),
+        table -> {
+          long initialVersion = table.snapshot().orElseThrow().getVersion();
+          List<StructType> invalidTargets =
+              List.of(
+                  new StructType().add("id", IntegerType.INTEGER),
+                  new StructType().add("payload", nestedType).add("id", IntegerType.INTEGER),
+                  new StructType().add("id", LongType.LONG).add("payload", nestedType),
+                  new StructType()
+                      .add(new StructField("id", IntegerType.INTEGER, false))
+                      .add("payload", nestedType),
+                  new StructType()
+                      .add("id", IntegerType.INTEGER)
+                      .add("payload", new StructType().add("renamed", IntegerType.INTEGER)),
+                  initialSchema.add(new StructField("required", StringType.STRING, false)));
+
+          invalidTargets.forEach(
+              target ->
+                  assertThrows(IllegalArgumentException.class, () -> table.updateSchema(target)));
+          assertEquals(initialVersion, table.snapshot().orElseThrow().getVersion());
+        });
+  }
+
+  @Test
+  void testConcurrentSchemaUpdatesDoNotMergeDifferentTargets() {
+    withTempDir(
+        dir -> {
+          StructType initialSchema = new StructType().add("id", IntegerType.INTEGER);
+          Map<String, String> properties =
+              Map.of(
+                  COLUMN_MAPPING_MODE_KEY,
+                  "name",
+                  "fs.file.impl",
+                  "org.apache.hadoop.fs.RawLocalFileSystem",
+                  "fs.file.impl.disable.cache",
+                  "true");
+          CyclicBarrier snapshotBarrier = new CyclicBarrier(2);
+          ExecutorService executor = Executors.newFixedThreadPool(2);
+
+          try (BarrierLocalFileSystemTable first =
+                  new BarrierLocalFileSystemTable(
+                      dir.toURI(), properties, initialSchema, snapshotBarrier);
+              BarrierLocalFileSystemTable second =
+                  new BarrierLocalFileSystemTable(
+                      dir.toURI(), properties, initialSchema, snapshotBarrier)) {
+            first.open();
+            second.open();
+
+            StructType sharedTarget = initialSchema.add("name", StringType.STRING);
+            first.blockNextSnapshot();
+            second.blockNextSnapshot();
+            Future<?> firstShared = executor.submit(() -> first.updateSchema(sharedTarget));
+            Future<?> secondShared = executor.submit(() -> second.updateSchema(sharedTarget));
+            assertNull(awaitFailure(firstShared));
+            assertNull(awaitFailure(secondShared));
+            assertEquals(1L, first.snapshot().orElseThrow().getVersion());
+
+            StructType emailTarget = sharedTarget.add("email", StringType.STRING);
+            StructType phoneTarget = sharedTarget.add("phone", StringType.STRING);
+            first.blockNextSnapshot();
+            second.blockNextSnapshot();
+            Future<?> emailUpdate = executor.submit(() -> first.updateSchema(emailTarget));
+            Future<?> phoneUpdate = executor.submit(() -> second.updateSchema(phoneTarget));
+            Throwable emailFailure = awaitFailure(emailUpdate);
+            Throwable phoneFailure = awaitFailure(phoneUpdate);
+
+            assertEquals(
+                1L, Stream.of(emailFailure, phoneFailure).filter(Objects::nonNull).count());
+            assertInstanceOf(
+                IllegalArgumentException.class, emailFailure == null ? phoneFailure : emailFailure);
+            Snapshot latest = first.snapshot().orElseThrow();
+            assertEquals(2L, latest.getVersion());
+            assertTrue(
+                List.of(emailTarget.fieldNames(), phoneTarget.fieldNames())
+                    .contains(latest.getSchema().fieldNames()));
+          } finally {
+            executor.shutdownNow();
+          }
+        });
+  }
+
+  @Test
+  void testUpdateSchemaRequiresColumnMappingAndOpenTable() {
+    StructType initialSchema = new StructType().add("id", IntegerType.INTEGER);
+    StructType targetSchema = initialSchema.add("name", StringType.STRING);
+
+    withTempDir(
+        dir -> {
+          LocalFileSystemTable unopened =
+              new LocalFileSystemTable(dir.toURI(), Map.of(), initialSchema, List.of());
+          assertThrows(IllegalStateException.class, () -> unopened.updateSchema(targetSchema));
+        });
+
+    withTestTable(
+        initialSchema,
+        Collections.emptyList(),
+        table -> {
+          long initialVersion = table.snapshot().orElseThrow().getVersion();
+          RuntimeException error =
+              assertThrows(RuntimeException.class, () -> table.updateSchema(targetSchema));
+          assertTrue(error.getMessage().toLowerCase(Locale.ROOT).contains("column mapping"));
+          assertEquals(initialVersion, table.snapshot().orElseThrow().getVersion());
         });
   }
 
