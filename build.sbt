@@ -39,8 +39,8 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala212 = "2.12.18"
-val scala213 = "2.13.13"
+val scala212 = "2.12.20"
+val scala213 = "2.13.15"
 val all_scala_versions = Seq(scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
@@ -63,7 +63,7 @@ sharing / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
-val flinkVersion = "1.16.1"
+val flinkVersion = "1.16.2"
 val hadoopVersion = "3.4.0"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
@@ -1121,6 +1121,9 @@ lazy val javaOnlyReleaseSettings = releaseSettings ++ Seq(
 
   // exclude scala-library from dependencies in generated pom.xml
   autoScalaLibrary := false,
+
+  // JDK 17 javadoc is stricter than JDK 8; suppress lint warnings for javadoc generation
+  Compile / doc / javacOptions += "-Xdoclint:none",
 )
 
 lazy val releaseSettings = Seq(
