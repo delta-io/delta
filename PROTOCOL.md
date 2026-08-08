@@ -621,7 +621,7 @@ Field Name | Data Type | Description | optional/required
 path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path. | required
 deletionTimestamp | Option[Long] | The time the deletion occurred, represented as milliseconds since the epoch | optional
 dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version | required
-extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present | optional
+extendedFileMetadata | Boolean | When `true` the fields `partitionValues` and `size` are present | optional
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization) | optional
 size| Long | The size of this data file in bytes | optional
 stats | [Statistics Struct](#Per-file-Statistics) | Contains statistics (e.g., count, min/max values for columns) about the data in this logical file | optional
