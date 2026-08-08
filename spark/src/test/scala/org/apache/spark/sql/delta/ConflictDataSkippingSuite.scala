@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{QueryTest, Row, SaveMode}
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, GreaterThanOrEqual, LessThan, Literal}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, GreaterThanOrEqual, LessThan, Literal}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.LongType
@@ -247,6 +247,34 @@ class ConflictDataSkippingSuite extends QueryTest
       // Sanity: a single predicate keeps its whole matching range (files with max id >= 200).
       val geOnly = snapshot.filterFilesByDataSkipping(allFiles, Seq(ge200))
       assert(geOnly.size == 8, s"expected 8 files with id >= 200, got ${geOnly.size}")
+    }
+  }
+
+  test("filterFilesMatchingAnyReadPredicate OR-combines independent reads in one call") {
+    // Independent reads have OR semantics: a file survives if it could match ANY read. This is the
+    // multi-read path ConflictChecker uses -- all reads are evaluated together in a single job.
+    withTempDir { dir =>
+      createTable(dir)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val snapshot = log.update()
+      val allFiles = snapshot.allFiles.collect().toSeq
+      assert(allFiles.size == 10)
+
+      val id = AttributeReference("id", LongType)()
+      // Read 1: id in [200, 300) -> the single [200,300) file. Read 2: id >= 800 -> the [800,900)
+      // and [900,1000) files. Their union (OR across reads) is exactly 3 files.
+      val read1 = Seq[Expression](
+        GreaterThanOrEqual(id, Literal(200L)), LessThan(id, Literal(300L)))
+      val read2 = Seq[Expression](GreaterThanOrEqual(id, Literal(800L)))
+      val survivors =
+        snapshot.filterFilesMatchingAnyReadPredicate(allFiles, Seq(read1, read2))
+      assert(survivors.size == 3,
+        s"expected [200,300) + [800,1000), got ${survivors.map(_.path).sorted}")
+
+      // A read with no usable predicate matches everything, so nothing can be skipped -> all kept.
+      val allKept = snapshot.filterFilesMatchingAnyReadPredicate(allFiles, Seq(read1, Seq.empty))
+      assert(allKept.size == allFiles.size,
+        s"a read with no predicate must keep all files, got ${allKept.size}")
     }
   }
 }

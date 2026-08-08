@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta.stats
 import java.io.Closeable
 
 import scala.collection.mutable.ArrayBuffer
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
@@ -684,36 +685,73 @@ trait DataSkippingReaderBase
    * is unavailable) are kept.
    *
    * `dataFilters` must come from a single logical read: they are AND-combined via
-   * [[buildDataSkippingPredicate]]. Callers with multiple independent reads must invoke this per
-   * read and union the survivors (OR semantics).
-   *
-   * One-way safe: it applies `expr || !verifyStatsForFilter(...)` exactly as
-   * [[getDataSkippedFiles]], so a file is dropped only when its stats *prove* it cannot match -- a
-   * real conflict is never turned into a false negative. Returns the original [[AddFile]]s (matched
-   * by path), stats untouched.
+   * [[buildDataSkippingPredicate]]. This is the one-read case of
+   * [[filterFilesMatchingAnyReadPredicate]]; callers with multiple independent reads should use
+   * that method so all reads are evaluated in a single Spark job.
    */
   private[delta] def filterFilesByDataSkipping(
       files: Seq[AddFile],
-      dataFilters: Seq[Expression]): Seq[AddFile] = {
+      dataFilters: Seq[Expression]): Seq[AddFile] =
+    filterFilesMatchingAnyReadPredicate(files, Seq(dataFilters))
+
+  /**
+   * Conflict-detection helper (reader-side data skipping) over several INDEPENDENT reads: returns
+   * the subset of `files` that could still match ANY read and therefore must be treated as
+   * conflicts. Each inner `Seq[Expression]` is one logical read's data filters (AND-combined via
+   * [[buildDataSkippingPredicate]]); the reads are OR-combined, matching read semantics -- a file
+   * is a candidate if it could match any one of them.
+   *
+   * All reads are evaluated in a SINGLE Spark job: the per-read skipping predicates are OR-ed
+   * together into one `where` clause, rather than filtering per read and unioning the survivors
+   * (which launched one job per read). Note we cannot instead flatten every read's filters into one
+   * predicate -- that would AND them (read1 AND read2), the opposite of the OR we need.
+   *
+   * One-way safe: each read contributes `expr || !verifyStatsForFilter(...)` exactly as
+   * [[getDataSkippedFiles]], so a file is dropped only when its stats *prove* it fails EVERY read
+   * -- a real conflict is never a false negative. Files with missing/insufficient stats, a
+   * read with no usable skipping predicate (empty / ineligible filters -> matches everything), or a
+   * table without stats are all kept. Returns the original [[AddFile]]s (matched by path).
+   *
+   * Fail-safe: skipping here is a pure optimization over correct (conservative) conflict detection,
+   * so if building or evaluating the predicate throws we fall back to the default behavior of
+   * keeping all `files` as conflict candidates rather than failing the commit.
+   */
+  private[delta] def filterFilesMatchingAnyReadPredicate(
+      files: Seq[AddFile],
+      dataFiltersPerRead: Seq[Seq[Expression]]): Seq[AddFile] = {
     import org.apache.spark.sql.delta.implicits._
-    if (files.isEmpty || dataFilters.isEmpty || schema.isEmpty) return files
-    buildDataSkippingPredicate(dataFilters) match {
-      // No usable data-skipping predicate -> keep all files (conservative).
-      case None => files
-      case Some(pred) =>
-        val survivingPaths = recordFrameProfile(
-            "Delta", "DataSkippingReader.filterFilesByDataSkipping") {
-          // `expr || !verifyStatsForFilter(...)` keeps any file whose referenced stats are
-          // missing/NULL (mirrors getDataSkippedFiles): only skip when stats prove no match.
-          files.toDF(spark)
-            .withColumn("stats", parseAndDecodeStats(col("stats")))
-            .where(pred.expr || !verifyStatsForFilter(pred.referencedStats))
-            .select("path")
-            .collect()
-            .map(_.getString(0))
-            .toSet
-        }
-        files.filter(f => survivingPaths.contains(f.path))
+    if (files.isEmpty || dataFiltersPerRead.isEmpty || schema.isEmpty) return files
+    try {
+      // One skipping predicate per read. A read with no usable predicate (empty or ineligible
+      // filters) matches every file -> nothing can be skipped, so keep all files without a job.
+      val perReadPredicates = dataFiltersPerRead.map { dataFilters =>
+        if (dataFilters.isEmpty) None else buildDataSkippingPredicate(dataFilters)
+      }
+      if (perReadPredicates.exists(_.isEmpty)) return files
+      // Survive if the file could match ANY read. Per read, `expr || !verifyStatsForFilter(...)`
+      // keeps any file whose referenced stats are missing/NULL (mirrors getDataSkippedFiles): only
+      // skip when stats prove no match. OR the reads so a match against any one keeps the file.
+      val survivorCondition = perReadPredicates.flatten
+        .map(pred => pred.expr || !verifyStatsForFilter(pred.referencedStats))
+        .reduce(_ || _)
+      val survivingPaths = recordFrameProfile(
+          "Delta", "DataSkippingReader.filterFilesMatchingAnyReadPredicate") {
+        files.toDF(spark)
+          .withColumn("stats", parseAndDecodeStats(col("stats")))
+          .where(survivorCondition)
+          .select("path")
+          .collect()
+          .map(_.getString(0))
+          .toSet
+      }
+      files.filter(f => survivingPaths.contains(f.path))
+    } catch {
+      case NonFatal(e) =>
+        // Optimization only: never let a skipping failure abort a commit. Fall back to the default
+        // (feature-off) behavior of treating every added file as a conflict candidate.
+        logWarning(log"Conflict-time data skipping failed to evaluate; falling back to treating " +
+          log"all added files as conflict candidates", e)
+        files
     }
   }
 
