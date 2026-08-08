@@ -41,4 +41,22 @@ class S3LogStoreUtilTest extends AnyFunSuite {
         new FilterFileSystem(new FilterFileSystem(raw)), p, p.getParent)
     }
   }
+
+  // The fast listFrom request must be delimited (single-directory), so it never recurses
+  // into `_staged_commits/`. The prefix must end in "/" or the delimiter groups nothing.
+  test("buildListObjectsV2Request is a delimited single-directory listing") {
+    val req = S3LogStoreUtil.buildListObjectsV2Request(
+      "bucket",
+      "tbl/_delta_log", // parentKey as produced by pathToKey: no trailing slash
+      "tbl/_delta_log/00000000000000000003.json",
+      1000)
+
+    assert("/" == req.delimiter())
+    assert("tbl/_delta_log/" == req.prefix())
+    assert(req.prefix().endsWith("/"))
+    assert("bucket" == req.bucket())
+    assert(1000 == req.maxKeys())
+    assert(S3LogStoreUtil.keyBefore("tbl/_delta_log/00000000000000000003.json") ==
+      req.startAfter())
+  }
 }
