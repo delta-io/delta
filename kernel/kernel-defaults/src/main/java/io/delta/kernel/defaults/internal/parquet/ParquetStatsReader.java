@@ -57,11 +57,23 @@ public class ParquetStatsReader {
   public static DataFileStatistics readDataFileStatistics(
       InputFile kernelInputFile, StructType dataSchema, List<Column> statsColumns)
       throws IOException {
-    // Read the Parquet footer to compute the statistics
     org.apache.parquet.io.InputFile parquetFile =
         ParquetIOUtils.createParquetInputFile(kernelInputFile);
     ParquetMetadata footer =
         ParquetFileReader.readFooter(parquetFile, ParquetMetadataConverter.NO_FILTER);
+    return extractDataFileStatistics(footer, dataSchema, statsColumns);
+  }
+
+  /**
+   * Extract statistics from the in-memory {@link ParquetMetadata}
+   *
+   * @param footer the {@link ParquetMetadata} to extract statistics from
+   * @param dataSchema the schema of the data in the file
+   * @param statsColumns the columns for which statistics should be collected
+   * @return file/column level statistics as a {@link DataFileStatistics} instance
+   */
+  public static DataFileStatistics extractDataFileStatistics(
+      ParquetMetadata footer, StructType dataSchema, List<Column> statsColumns) {
     ImmutableMultimap.Builder<Column, ColumnChunkMetaData> metadataForColumn =
         ImmutableMultimap.builder();
 
