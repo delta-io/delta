@@ -423,6 +423,42 @@ class RowLevelConcurrencySuite extends QueryTest
   }
 
   // ---------------------------------------------------------------------------
+  // Two shared files in one conflict -> bounded-parallel reconcile (ThreadUtils.parmap).
+  // Every test above conflicts on one file (sharedPaths.size == 1 -> caller-thread branch).
+  // A DELETE whose predicate spans two files DV-updates both in ONE commit, so the loser
+  // reconciles two shared paths at once, crossing the `parallelism <= 1` boundary into parmap.
+  // parmap preserves input order, so the reconciled result matches the sequential branch.
+  // ---------------------------------------------------------------------------
+
+  test("disjoint DELETEs spanning two files reconcile via the bounded-parallel path") {
+    withTempDir { dir =>
+      // Two data files: ids [0,100) and [100,200), one file each (separate appends).
+      spark.range(start = 0, end = 100, step = 1, numPartitions = 1)
+        .write.format("delta").mode("append").save(dir.getAbsolutePath)
+      spark.range(start = 100, end = 200, step = 1, numPartitions = 1)
+        .write.format("delta").mode("append").save(dir.getAbsolutePath)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      assert(log.update().allFiles.collect().length === 2, "test table must have two data files")
+
+      // Each DELETE's IN list spans both files (one id < 100, one id >= 100), so each commit
+      // removes and re-adds BOTH files with a per-file DV. The loser therefore has two shared
+      // paths in one resolveRowLevelConflicts call -> parallelism == 2 (the parmap branch).
+      val txnA =
+        sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id IN (20, 120)", rowLevelConcurrency = true)
+      val txnB =
+        sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id IN (10, 110)", rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+
+      assert(ids(dir) === (0L to 199L).filterNot(id => Set(10L, 20L, 110L, 120L).contains(id)))
+      // Both files survive, each carrying its own merged DV (winner + loser delete): cardinality 2.
+      assert(deletionVectorCardinalities(log).sorted === Seq(2L, 2L))
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Partitioned table (DV merge is partition-agnostic)
   // ---------------------------------------------------------------------------
 
