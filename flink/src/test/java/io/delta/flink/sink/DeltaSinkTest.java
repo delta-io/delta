@@ -30,7 +30,9 @@ import io.delta.kernel.Snapshot.ChecksumWriteMode;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.types.*;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.utils.CloseableIterable;
@@ -393,6 +395,50 @@ public class DeltaSinkTest extends TestHelper {
 
           assertNotNull(deltaSink.createWriter(new TestWriterInitContext(1, 1, 1)));
           assertNotNull(deltaSink.createCommitter(new TestCommitterInitContext(1, 1, 1)));
+        });
+  }
+
+  @Test
+  void testColumnMappedPartitionedWrite() {
+    withTempDir(
+        dir -> {
+          String tablePath = dir.getPath();
+          RowType flinkSchema =
+              RowType.of(
+                  new LogicalType[] {new IntType(), new VarCharType(VarCharType.MAX_LENGTH)},
+                  new String[] {"id", "region"});
+          StructType deltaSchema = Conversions.FlinkToDelta.schema(flinkSchema);
+          DefaultEngine engine = DefaultEngine.create(new Configuration());
+          TableManager.buildCreateTableTransaction(tablePath, deltaSchema, "test")
+              .withTableProperties(Map.of("delta.columnMapping.mode", "name"))
+              .withDataLayoutSpec(DataLayoutSpec.partitioned(List.of(new Column("region"))))
+              .build(engine)
+              .commit(engine, CloseableIterable.emptyIterable());
+
+          DeltaSink deltaSink =
+              DeltaSink.builder()
+                  .withTablePath(tablePath)
+                  .withFlinkSchema(flinkSchema)
+                  .withPartitionColNames(List.of("region"))
+                  .build();
+
+          runSink(
+              deltaSink,
+              flinkSchema,
+              2,
+              String::valueOf,
+              value -> {
+                int id = Integer.parseInt(value);
+                return GenericRowData.of(id, StringData.fromString(id == 0 ? "west" : "east"));
+              });
+
+          verifyTableContent(
+              tablePath,
+              (version, actions, props) -> {
+                List<AddFile> actionList = new ArrayList<>();
+                actions.iterator().forEachRemaining(actionList::add);
+                assertEquals(2, actionList.stream().mapToLong(a -> a.getNumRecords().get()).sum());
+              });
         });
   }
 
