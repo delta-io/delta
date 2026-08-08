@@ -117,7 +117,7 @@ SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
 
 # The default Spark version
 # This is intentionally hardcoded here to explicitly test the default version.
-DEFAULT_SPARK = "4.1.0"
+DEFAULT_SPARK = "4.2.0"
 
 
 def substitute_xversion(jar_templates: List[str], delta_version: str) -> Set[str]:
