@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.storage.{DelegatingLogStore, LogStore, LogStoreAdaptor}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkContext, SparkFunSuite}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
@@ -99,6 +100,22 @@ class LogStoreProviderSuite extends SparkFunSuite {
   test("class-conf = set, scheme has default, scheme-conf = set") {
     testLogStoreClassConfAndSchemeConf("s3a", customLogStoreClassName,
       DelegatingLogStore.defaultAzureLogStoreClassName)
+  }
+
+  test("public S3LogStore can be instantiated through the s3a scheme conf") {
+    val publicS3LogStoreClass = classOf[io.delta.storage.S3LogStore]
+    val sparkConf = constructSparkConf(
+      Seq(LogStore.logStoreSchemeConfKey("s3a") -> publicS3LogStoreClass.getName))
+
+    withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
+      val logStore = LogStore(spark)
+      assert(logStore.isInstanceOf[DelegatingLogStore])
+      val delegate = logStore.asInstanceOf[DelegatingLogStore]
+        .getDelegate(new Path("s3a://bucket/table/_delta_log/00000000000000000001.json"))
+
+      assert(delegate.isInstanceOf[LogStoreAdaptor])
+      assert(delegate.asInstanceOf[LogStoreAdaptor].logStoreImpl.getClass === publicS3LogStoreClass)
+    }
   }
 
   test("verifyLogStoreConfs - scheme conf keys ") {

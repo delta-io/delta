@@ -82,10 +82,19 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
     }
 
     private Path resolvePath(FileSystem fs, Path path) {
+        return resolvePathWithoutUserInfo(fs, path);
+    }
+
+    /**
+     * Resolves an S3 path without reserving the historical private helper's signature in
+     * subclasses. Existing subclasses may already declare their own {@code resolvePath} method,
+     * so the conditional-write implementation calls this distinctly named package-private helper.
+     */
+    static Path resolvePathWithoutUserInfo(FileSystem fs, Path path) {
         return stripUserInfo(fs.makeQualified(path));
     }
 
-    private Path stripUserInfo(Path path) {
+    private static Path stripUserInfo(Path path) {
         final URI uri = path.toUri();
 
         try {

@@ -145,23 +145,27 @@ spark-shell \
 
 ## Amazon S3
 
-Delta Lake supports reads and writes to S3 in two different modes: Single-cluster and Multi-cluster.
+Delta Lake supports three S3 write modes. The default coordinates writers within one Spark driver.
+For writers in multiple drivers, choose either native S3 conditional writes or DynamoDB coordination.
 
-|  | Single-cluster | Multi-cluster |
-| --- | --- | --- |
-| Configuration | Comes with Delta Lake out-of-the-box | Is experimental and requires extra configuration |
-| Reads | Supports concurrent reads from multiple clusters | Supports concurrent reads from multiple clusters |
-| Writes | Supports concurrent writes from a _single_ Spark driver | Supports multi-cluster writes |
-| Permissions | S3 credentials | S3 and DynamoDB operating permissions |
+|  | Single-driver | Native conditional writes | DynamoDB coordination |
+| --- | --- | --- | --- |
+| Configuration | Default | Opt-in | Experimental and opt-in |
+| Reads | Multiple drivers | Multiple drivers | Multiple drivers |
+| Writes | One Spark driver | Multiple Spark drivers | Multiple Spark drivers |
+| Permissions | S3 | S3 | S3 and DynamoDB |
 
 ### Single-cluster setup (default)
 
-In this default mode, Delta Lake supports concurrent reads from multiple clusters, but concurrent writes to S3 must originate from a _single_ Spark driver in order for Delta Lake to provide transactional guarantees. This is because S3 currently does not provide mutual exclusion, that is, there is no way to ensure that only one writer is able to create a file.
+In this default mode, Delta Lake supports concurrent reads from multiple clusters, but concurrent
+writes to S3 must originate from a _single_ Spark driver. The default `S3SingleDriverLogStore`
+coordinates writers only within its own JVM and does not request S3 conditional writes.
 
 <Aside type="caution">
   Concurrent writes to the same Delta table on S3 storage from multiple Spark
-  drivers can lead to data loss. For a multi-cluster solution, please see the
-  [Multi-cluster setup](#multi-cluster-setup) section below.
+  drivers can lead to data loss. Use either [native S3 conditional
+  writes](#native-s3-conditional-writes-multi-driver) or the
+  [DynamoDB-backed setup](#dynamodb-backed-multi-cluster-setup) for multiple writers.
 </Aside>
 
 #### Requirements (S3 single-cluster)
@@ -220,11 +224,40 @@ For efficient listing of Delta Lake metadata files on S3, set the configuration 
   </TabItem>
 </Tabs>
 
-### Multi-cluster setup
+### Native S3 conditional writes (multi-driver)
+
+S3 supports atomic create-if-absent writes through the `If-None-Match: *` request condition. The
+opt-in `S3LogStore` uses Hadoop S3A's conditional create API, so writers in different Spark drivers
+compete on the S3 request itself and exactly one writer can create each Delta commit file.
+
+#### Requirements (S3 native conditional writes)
+
+- Hadoop 3.4.2 `hadoop-common` and `hadoop-aws`. Keep the Hadoop modules at the same version.
+- An S3A filesystem and S3 backend that support conditional PUT and conditional multipart
+  completion.
+- S3 credentials and the normal read, write, and list permissions for the Delta table, including
+  `s3:GetObject` for the HEAD request used to reconcile an interrupted conditional write.
+- Every writer to a table must use `S3LogStore`. A writer using `S3SingleDriverLogStore` can bypass
+  the S3 condition and overwrite a concurrent commit.
+
+Configure the LogStore for `s3a` paths:
+
+```ini
+spark.delta.logStore.s3a.impl=io.delta.storage.S3LogStore
+```
+
+This setting changes only `s3a` paths. The default remains `S3SingleDriverLogStore`, so deployments
+must opt in after upgrading their Hadoop dependencies. A missing conditional-write, custom-header,
+extended-attribute read, or abort capability fails the write instead of falling back to JVM-local
+coordination. An S3 `409 ConditionalRequestConflict` with no visible destination replays the whole
+upload using the S3A retry limit and interval. Replay data stays in memory for typical commits and
+spills to an owner-only local temporary file for larger commits.
+
+### DynamoDB-backed multi-cluster setup
 
 <Aside type="note">This support is new and experimental.</Aside>
 
-This mode supports concurrent writes to S3 from multiple clusters and has to be explicitly enabled by configuring Delta Lake to use the right `LogStore` implementation. This implementation uses [DynamoDB](https://aws.amazon.com/dynamodb/) to provide the mutual exclusion that S3 is lacking.
+This mode supports concurrent writes to S3 from multiple clusters and has to be explicitly enabled by configuring Delta Lake to use the right `LogStore` implementation. This implementation uses [DynamoDB](https://aws.amazon.com/dynamodb/) for mutual exclusion and remains available for deployments that cannot use the native conditional-write requirements above.
 
 <Aside type="caution">
   This multi-cluster writing solution is only safe when all writers use this
