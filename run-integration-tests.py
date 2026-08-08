@@ -450,6 +450,33 @@ def run_s3_log_store_util_integration_tests():
         print("Failed IntegrationTests")
         raise
 
+def run_s3_log_store_integration_tests():
+    print("\n\n##### Running S3LogStore tests #####")
+
+    env = { "S3_LOG_STORE_TEST_ENABLED": "true" }
+    assert os.environ.get("S3_LOG_STORE_TEST_BUCKET") is not None, "S3_LOG_STORE_TEST_BUCKET must be set"
+    assert os.environ.get("S3_LOG_STORE_TEST_RUN_UID") is not None, "S3_LOG_STORE_TEST_RUN_UID must be set"
+    if os.environ.get("S3_LOG_STORE_TEST_ENDPOINT") is not None:
+        assert os.environ.get("S3_LOG_STORE_TEST_ACCESS_KEY"), \
+            "S3_LOG_STORE_TEST_ACCESS_KEY must be set with S3_LOG_STORE_TEST_ENDPOINT"
+        assert os.environ.get("S3_LOG_STORE_TEST_SECRET_KEY"), \
+            "S3_LOG_STORE_TEST_SECRET_KEY must be set with S3_LOG_STORE_TEST_ENDPOINT"
+    if os.environ.get("S3_LOG_STORE_TEST_FAULT_PROXY_UPSTREAM") is None:
+        print(
+            "S3_LOG_STORE_TEST_FAULT_PROXY_UPSTREAM is not set; "
+            "lost-response and injected-409 tests will be reported as canceled."
+        )
+
+    try:
+        cmd = ["build/sbt", "project storage",
+               "testOnly io.delta.storage.integration.S3LogStoreIntegrationTest -- -n IntegrationTest"]
+        print("\nRunning S3LogStore IntegrationTests\n=====================")
+        print("Command: %s" % " ".join(cmd))
+        run_cmd(cmd, stream_output=True, env=env)
+    except:
+        print("Failed S3LogStore IntegrationTests")
+        raise
+
 def run_flink_integration_tests():
     print("\n\n##### Running Flink tests #####")
     env = { }
@@ -746,6 +773,18 @@ if __name__ == "__main__":
         action="store_true",
         help="Run only S3LogStoreUtil tests")
     parser.add_argument(
+        "--s3-log-store-only",
+        required=False,
+        default=False,
+        action="store_true",
+        help=(
+            "Run only S3LogStore tests. Requires S3_LOG_STORE_TEST_BUCKET and "
+            "S3_LOG_STORE_TEST_RUN_UID. Custom endpoints also require "
+            "S3_LOG_STORE_TEST_ENDPOINT, S3_LOG_STORE_TEST_ACCESS_KEY, and "
+            "S3_LOG_STORE_TEST_SECRET_KEY. S3_LOG_STORE_TEST_FAULT_PROXY_UPSTREAM enables "
+            "lost-response and injected-409 tests."
+        ))
+    parser.add_argument(
         "--flink-only",
         required=False,
         default=False,
@@ -958,6 +997,10 @@ if __name__ == "__main__":
 
     if args.s3_log_store_util_only:
         run_s3_log_store_util_integration_tests()
+        quit()
+
+    if args.s3_log_store_only:
+        run_s3_log_store_integration_tests()
         quit()
 
     if args.flink_only:
