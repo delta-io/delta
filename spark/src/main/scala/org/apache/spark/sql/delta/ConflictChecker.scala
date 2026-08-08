@@ -1193,7 +1193,8 @@ private[delta] class ConflictChecker(
       // still conflict, otherwise its RemoveFile / DV would target a file that no longer exists
       // and rows could be lost or resurrected. Genuine deletes commit `dataChange = true` and
       // are always kept, so real delete/read conflicts still fire.
-      val currentTxnIsAppendOnly = currentTransactionInfo.actions.forall {
+      // Lazy: only forced when the feature flag below is on, so the default path skips the scan.
+      lazy val currentTxnIsAppendOnly = currentTransactionInfo.actions.forall {
         case _: RemoveFile => false
         case a: AddFile => a.deletionVector == null
         case _ => true
