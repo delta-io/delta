@@ -117,7 +117,12 @@ public class DefaultGenericVector implements ColumnVector {
   @Override
   public String getString(int rowId) {
     assertValidRowId(rowId);
-    throwIfUnsafeAccess(StringType.class, "string");
+    if (!(dataType instanceof StringType
+        || dataType instanceof GeometryType
+        || dataType instanceof GeographyType)) {
+      throw new UnsupportedOperationException(
+          String.format("Trying to access a `string` value from vector of type `%s`", dataType));
+    }
     return (String) rowIdToValueAccessor.apply(rowId);
   }
 

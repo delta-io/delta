@@ -20,7 +20,6 @@ import java.io.File
 import java.net.URI
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaGenerateSymlinkManifestSuiteShims._
 import org.apache.spark.sql.delta.DeltaOperations.Delete
 import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
 import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
@@ -123,7 +122,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase
       val e = intercept[AnalysisException] {
         spark.sql(s"GENERATE symlink_format_manifest FOR TABLE v")
       }
-      assert(e.getMessage.contains(FAILS_ON_TEMP_VIEWS_ERROR_MSG))
+      assert(e.getMessage.contains("'GENERATE' expects a table but `v` is a view."))
     }
   }
 

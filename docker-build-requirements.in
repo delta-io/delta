@@ -1,0 +1,24 @@
+# Dockerfile dependencies for delta-spark (Python 3.8, Ubuntu focal)
+# Build tooling (pip pinned for -SNAPSHOT version string compatibility)
+pip==24.0
+setuptools==41.0.1
+wheel==0.33.4
+
+# PySpark
+pyspark==3.5.3
+
+# Linting
+mypy==0.982
+pydocstyle==3.0.0
+
+# Data / analytics
+pandas==1.0.5
+pyarrow==8.0.0
+numpy==1.20.3
+
+# Runtime
+importlib_metadata==3.10.0
+
+# Crypto / packaging
+cryptography==37.0.4
+twine==4.0.1

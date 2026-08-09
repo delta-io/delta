@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.hive;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +48,8 @@ import org.apache.iceberg.Transaction;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.encryption.EncryptionUtil;
+import org.apache.iceberg.encryption.KeyManagementClient;
 import org.apache.iceberg.exceptions.*;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
@@ -59,6 +62,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.util.LocationUtil;
+import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.view.BaseMetastoreViewCatalog;
 import org.apache.iceberg.view.View;
 import org.apache.iceberg.view.ViewBuilder;
@@ -69,7 +73,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * This class is directly copied from iceberg 1.10.0; The only change made is
+ * This class is directly copied from iceberg 1.11.0; The only change made is
  * 1.
  *  accept metadataUpdates in constructor and pass to HiveTableOperations
  *  to support using schema/partitionSpec with field ids assigned by Delta lake
@@ -93,8 +97,10 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
   private String name;
   private Configuration conf;
   private FileIO fileIO;
+  private KeyManagementClient keyManagementClient;
   private ClientPool<IMetaStoreClient, TException> clients;
   private boolean listAllTables = false;
+  private boolean uniqueTableLocation;
   private Map<String, String> catalogProperties;
 
   // HACK-HACK This is newly added
@@ -135,6 +141,17 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
             fileIOImpl == null
                     ? new HadoopFileIO(conf)
                     : CatalogUtil.loadFileIO(fileIOImpl, properties, conf);
+
+    if (catalogProperties.containsKey(CatalogProperties.ENCRYPTION_KMS_TYPE)
+        || catalogProperties.containsKey(CatalogProperties.ENCRYPTION_KMS_IMPL)) {
+      this.keyManagementClient = EncryptionUtil.createKmsClient(properties);
+    }
+
+    this.uniqueTableLocation =
+        PropertyUtil.propertyAsBoolean(
+            properties,
+            CatalogProperties.UNIQUE_TABLE_LOCATION,
+            CatalogProperties.UNIQUE_TABLE_LOCATION_DEFAULT);
 
     this.clients = new CachedClientPool(conf, properties);
   }
@@ -712,7 +729,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
     String dbName = tableIdentifier.namespace().level(0);
     String tableName = tableIdentifier.name();
     // HACK-HACK This is modified
-    return new HiveTableOperations(conf, clients, fileIO, name, dbName, tableName, metadataUpdates);
+    return new HiveTableOperations(conf, clients, fileIO, keyManagementClient, name, dbName, tableName, metadataUpdates);
   }
 
   @Override
@@ -728,12 +745,14 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
     // - Create the metadata in HMS, and this way committing the changes
 
     // Create a new location based on the namespace / database if it is set on database level
+    String tableLocation = LocationUtil.tableLocation(tableIdentifier, uniqueTableLocation);
     try {
       Database databaseData =
               clients.run(client -> client.getDatabase(tableIdentifier.namespace().levels()[0]));
       if (databaseData.getLocationUri() != null) {
         // If the database location is set use it as a base.
-        return String.format("%s/%s", databaseData.getLocationUri(), tableIdentifier.name());
+        String databaseLocation = LocationUtil.stripTrailingSlash(databaseData.getLocationUri());
+        return String.format("%s/%s", databaseLocation, tableLocation);
       }
 
     } catch (NoSuchObjectException e) {
@@ -750,7 +769,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
 
     // Otherwise, stick to the {WAREHOUSE_DIR}/{DB_NAME}.db/{TABLE_NAME} path
     String databaseLocation = databaseLocation(tableIdentifier.namespace().levels()[0]);
-    return String.format("%s/%s", databaseLocation, tableIdentifier.name());
+    return String.format("%s/%s", databaseLocation, tableLocation);
   }
 
   private String databaseLocation(String databaseName) {
@@ -841,6 +860,15 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
     return catalogProperties == null ? ImmutableMap.of() : catalogProperties;
   }
 
+  @Override
+  public void close() throws IOException {
+    super.close();
+
+    if (keyManagementClient != null) {
+      keyManagementClient.close();
+    }
+  }
+
   @VisibleForTesting
   void setListAllTables(boolean listAllTables) {
     this.listAllTables = listAllTables;
@@ -917,5 +945,27 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
       }
       return super.create();
     }
+  }
+
+  @Override
+  public org.apache.iceberg.Table registerTable(
+          TableIdentifier identifier, String metadataFileLocation) {
+    Preconditions.checkArgument(
+            identifier != null && isValidIdentifier(identifier), "Invalid identifier: %s", identifier);
+    Preconditions.checkArgument(
+            metadataFileLocation != null && !metadataFileLocation.isEmpty(),
+            "Cannot register an empty metadata file location as a table");
+
+    if (tableExists(identifier)) {
+      throw new org.apache.iceberg.exceptions.AlreadyExistsException(
+              "Table already exists: %s", identifier);
+    }
+
+    if (viewExists(identifier)) {
+      throw new org.apache.iceberg.exceptions.AlreadyExistsException(
+              "View with same name already exists: %s", identifier);
+    }
+
+    return super.registerTable(identifier, metadataFileLocation);
   }
 }

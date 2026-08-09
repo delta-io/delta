@@ -133,21 +133,54 @@ public final class FieldMetadata {
         .collect(Collectors.joining(", ", "{", "}"));
   }
 
+  /** Are the metadata same, ignoring the specified keys? */
+  public boolean equalsIgnoreKeys(FieldMetadata other, Set<String> keys) {
+    Preconditions.checkArgument(keys != null, "keys must not be null");
+    if (this == other) {
+      return true;
+    }
+    if (other == null) {
+      return false;
+    }
+
+    Map<String, Object> filteredMetadata = new HashMap<>();
+    for (Map.Entry<String, Object> entry : this.metadata.entrySet()) {
+      if (!keys.contains(entry.getKey())) {
+        filteredMetadata.put(entry.getKey(), entry.getValue());
+      }
+    }
+    Map<String, Object> otherFilteredMetadata = new HashMap<>();
+    for (Map.Entry<String, Object> entry : other.metadata.entrySet()) {
+      if (!keys.contains(entry.getKey())) {
+        otherFilteredMetadata.put(entry.getKey(), entry.getValue());
+      }
+    }
+
+    if (filteredMetadata.size() != otherFilteredMetadata.size()) {
+      return false;
+    }
+    return filteredMetadata.entrySet().stream()
+        .allMatch(
+            e -> {
+              Object value = e.getValue();
+              Object otherValue = otherFilteredMetadata.get(e.getKey());
+              return Objects.deepEquals(value, otherValue);
+            });
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
     if (o == null || getClass() != o.getClass()) return false;
-    FieldMetadata that = (FieldMetadata) o;
-    if (this.metadata.size() != that.metadata.size()) return false;
+    FieldMetadata other = (FieldMetadata) o;
+    if (this.metadata.size() != other.metadata.size()) return false;
     return this.metadata.entrySet().stream()
         .allMatch(
-            e ->
-                Objects.equals(e.getValue(), that.metadata.get(e.getKey()))
-                    || (e.getValue() != null
-                        && e.getValue().getClass().isArray()
-                        && that.metadata.get(e.getKey()).getClass().isArray()
-                        && Arrays.equals(
-                            (Object[]) e.getValue(), (Object[]) that.metadata.get(e.getKey()))));
+            e -> {
+              Object value = e.getValue();
+              Object otherValue = other.metadata.get(e.getKey());
+              return Objects.deepEquals(value, otherValue);
+            });
   }
 
   @Override

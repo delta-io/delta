@@ -28,7 +28,6 @@ import scala.language.implicitConversions
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED
-import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
 import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, modifyCommitTimestamp}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
@@ -49,8 +48,8 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
-/** A set of tests which we can open source after Spark 3.0 is released. */
-trait DeltaTimeTravelTests extends QueryTest
+/** Helper methods for Delta time travel tests, without test registrations. */
+trait DeltaTimeTravelTestHelpers extends QueryTest
     with SharedSparkSession
     with GivenWhenThen
     with DeltaSQLCommandTest
@@ -80,6 +79,12 @@ trait DeltaTimeTravelTests extends QueryTest
     // TODO: would be great to verify our logging metrics
   }
 
+  protected def identifierWithTimestamp(identifier: String, ts: Long): String = {
+    s"$identifier@${timeFormatter.format(new Date(ts))}"
+  }
+  protected def identifierWithVersion(identifier: String, v: Long): String = {
+    s"$identifier@v$v"
+  }
   protected def getTableLocation(table: String): String = {
     spark.sessionState.catalog.getTableMetadata(TableIdentifier(table)).location.toString
   }
@@ -158,6 +163,10 @@ trait DeltaTimeTravelTests extends QueryTest
   protected implicit def longToTimestampExpr(value: Long): String = {
     s"cast($value / 1000 as timestamp)"
   }
+}
+
+/** Delta time travel tests, built on the shared [[DeltaTimeTravelTestHelpers]]. */
+trait DeltaTimeTravelTests extends DeltaTimeTravelTestHelpers {
 
   import testImplicits._
 
@@ -377,7 +386,7 @@ trait DeltaTimeTravelTests extends QueryTest
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
-          "tableName" -> "2018-10-24 14:14:18.0",
+          "lastCommitTimestamp" -> "2018-10-24 14:14:18.0",
           "maximumTimestamp" -> "2018-10-24 14:14:18")
       )
 
@@ -390,7 +399,7 @@ trait DeltaTimeTravelTests extends QueryTest
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
-          "tableName" -> "2018-10-24 14:14:18.0",
+          "lastCommitTimestamp" -> "2018-10-24 14:14:18.0",
           "maximumTimestamp" -> "2018-10-24 14:14:18")
       )
 
@@ -541,8 +550,7 @@ trait DeltaTimeTravelTests extends QueryTest
   }
 }
 
-abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
-  {
+abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests {
   test("cannot time travel target tables of insert/delete/update/merge") {
     val tblName = "delta_table"
     withTable(tblName) {
@@ -573,9 +581,8 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
   }
 
   test("vacuumed version") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
-      cancel("VACUUM is not supported on catalog owned managed tables.")
-    }
+    assume(!catalogOwnedDefaultCreationEnabledInTests,
+      "VACUUM is blocked on catalog-managed tables")
 
     quietly {
       val tblName = "delta_table"
@@ -615,14 +622,14 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
       }
       assert(e1.getMessage.contains("[0, 2]"))
 
-      val e2 = intercept[MULTIPLE_TIME_TRAVEL_FORMATS_ERROR_TYPE] {
+      val e2 = intercept[org.apache.spark.sql.AnalysisException] {
         spark.read.format("delta")
           .option("versionAsOf", 3)
           .option("timestampAsOf", "2020-10-22 23:20:11")
           .table(tblName).collect()
       }
 
-      assert(e2.getMessage.contains(MULTIPLE_TIME_TRAVEL_FORMATS_ERROR_MSG))
+      assert(e2.getMessage.contains("Cannot specify both version and timestamp"))
 
     }
   }

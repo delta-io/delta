@@ -20,8 +20,7 @@ import Unidoc._
  * 
  * The Spark versions used for Delta is defined in the SparkVersionSpec object, and controlled by the sparkVersion property.
  * There are 2 keys labels assigned to the Spark versions: DEFAULT and MASTER.
- * - DEFAULT VERSION: This is the default when no sparkVersion property is specified
- *   Spark-dependent artifacts for this version have NO Spark version suffix (e.g., delta-spark_2.13).
+ * - DEFAULT VERSION: This is the default when no sparkVersion property is specified.
  *
  * - MASTER VERSION: The Spark master/development branch version
  *   This is optional and typically 
@@ -51,13 +50,16 @@ import Unidoc._
  * If not specified, it defaults to the DEFAULT version.
  *
  * Examples:
- *   build/sbt                                    # Uses default version (3.5.7)
- *   build/sbt -DsparkVersion=3.5                 # Uses 3.5.7
- *   build/sbt -DsparkVersion=3.5.7               # Uses 3.5.7
- *   build/sbt -DsparkVersion=4.0                 # Uses 4.0.2-SNAPSHOT
- *   build/sbt -DsparkVersion=4.0.2-SNAPSHOT      # Uses 4.0.2-SNAPSHOT
- *   build/sbt -DsparkVersion=default             # Uses 3.5.7
- *   build/sbt -DsparkVersion=master              # Uses 4.0.2-SNAPSHOT
+ *   build/sbt                                    # Uses default version
+ *   build/sbt -DsparkVersion=4.0                 # Uses Spark 4.0.x
+ *   build/sbt -DsparkVersion=4.0.1               # Uses Spark 4.0.1 only if this version is defined in ALL_SPECS
+ *   build/sbt -DsparkVersion=4.1                 # Uses Spark 4.1.x whatever it is defined in ALL_SPECS
+ *   build/sbt -DsparkVersion=default             # Uses default version
+ *   build/sbt -DsparkVersion=master              # Uses master version (if defined)
+ *   USE_MAVEN_LOCAL_FOR_SOURCE_SPARK=true \
+ *     build/sbt -DsparkVersion=4.2 -DsparkCommit=<sha> -DsparkArtifactVersion=<version>
+ *                                                # Uses Spark 4.2 compatibility settings
+ *                                                # with locally built Spark artifacts
  *
  * ========================================================
  * Cross-Building for Development and Testing
@@ -67,6 +69,8 @@ import Unidoc._
  *   build/sbt -DsparkVersion=<version> compile
  *   build/sbt -DsparkVersion=<version> test
  *   build/sbt -DsparkVersion=master compile test
+ *   USE_MAVEN_LOCAL_FOR_SOURCE_SPARK=true \
+ *     build/sbt -DsparkVersion=4.2 -DsparkCommit=<sha> -DsparkArtifactVersion=<version> compile test
  *
  * To publish to local Maven for testing:
  *   # Publish all modules for default Spark version
@@ -84,7 +88,7 @@ import Unidoc._
  * 1. Spark-Dependent Published Modules:
  *    - Use CrossSparkVersions.sparkDependentSettings(sparkVersion)
  *    - Include releaseSettings (publishable)
- *    - Examples: delta-spark, delta-connect-*, delta-sharing-spark, delta-iceberg
+ *    - Examples: delta-spark, delta-connect-*, delta-sharing-spark, delta-iceberg, delta-hudi, delta-contribs
  *    - These modules get version-specific artifact names for non-default Spark versions
  *    - Automatically included in cross-Spark publishing
  *
@@ -101,42 +105,54 @@ import Unidoc._
  *    - These modules are built once and work with all Spark versions
  *
  * ========================================================
- * Artifact Naming Convention
+ * Artifact Naming Convention of Spark-dependent modules
  * ========================================================
  * 
- * Default Spark version artifacts (no suffix, so does not change with Spark version):
- *   io.delta:delta-spark_2.13:3.4.0
- *   io.delta:delta-connect-server_2.13:3.4.0
- *   io.delta:delta-storage:3.4.0
+ * By default, Spark-dependent modules ALWAYS include the Spark version suffix:
+ *   io.delta:delta-spark_4.0_2.13:4.1.0
+ *   io.delta:delta-spark_4.1_2.13:4.1.0
+ *   io.delta:delta-connect-server_4.0_2.13:4.1.0
+ *   io.delta:delta-storage:4.1.0  (Spark-independent, no suffix)
  *
- * Other Spark version artifacts (with suffix, so changes with Spark version, e.g., for Spark 4.0):
- *   io.delta:delta-spark_4.0_2.13:3.4.0
- *   io.delta:delta-connect-server_4.0_2.13:3.4.0
- *   io.delta:delta-storage:3.4.0  (no change, Spark-independent)
+ * During release, backward-compatible artifacts are ALSO published (without suffix):
+ *   io.delta:delta-spark_2.13:4.1.0       (backward compatibility)
+ *   io.delta:delta-connect-server_2.13:4.1.0
+ *
+ * This means during release, Spark-dependent modules are published TWICE:
+ *   - With suffix (e.g., delta-spark_4.1_2.13) - the default/normal name
+ *   - Without suffix (e.g., delta-spark_2.13) - for backward compatibility
  *
  * ========================================================
  * Cross-Release Workflow
  * ========================================================
  * 
- * The cross-release workflow publishes artifacts for all Spark versions in two steps:
+ * The cross-release workflow publishes artifacts for all Spark versions:
  *
- * Step 1: Publish ALL modules for the default Spark version
- *   build/sbt publishSigned  (or publishM2 for local testing)
+ * Step 1: Publish ALL modules WITHOUT Spark suffix (backward compatibility)
+ *   build/sbt -DskipSparkSuffix=true publishSigned
+ *   # Publishes: delta-spark_2.13, delta-storage, delta-kernel-api, etc.
  *
- * Step 2: Publish ONLY Spark-dependent modules for each non-default Spark version
+ * Step 2: Publish Spark-dependent modules WITH suffix for each non-master Spark version
  *   build/sbt -DsparkVersion=4.0 "runOnlyForReleasableSparkModules publishSigned"
+ *   build/sbt -DsparkVersion=4.1 "runOnlyForReleasableSparkModules publishSigned"
+ *   # Publishes: delta-spark_4.0_2.13, delta-spark_4.1_2.13, etc.
  *
- * This workflow is automated in the release process via crossSparkReleaseSteps().
+ * This workflow is automated via crossSparkReleaseSteps() in the release process.
  * See releaseProcess in build.sbt for integration.
  *
  * Why this approach?
- * - Spark-independent modules (kernel, storage) are built once with default Spark
- * - Spark-dependent modules are built multiple times, once per Spark version
- * - This avoids redundant builds and conflicting artifacts
+ * - Default behavior always includes Spark suffix for clarity
+ * - Release also publishes without suffix for backward compatibility
+ * - Spark-independent modules (kernel, storage) are built once
+ * - Spark-dependent modules are built for each Spark version
+ *
+ * For manual testing during development:
+ *   build/sbt publishM2  # Publishes delta-spark_4.0_2.13 (default, with suffix)
  *
  * For manual release testing:
- *   build/sbt publishM2
+ *   build/sbt -DskipSparkSuffix=true publishM2  # Without suffix (backward compat)
  *   build/sbt -DsparkVersion=4.0 "runOnlyForReleasableSparkModules publishM2"
+ *   build/sbt -DsparkVersion=4.1 "runOnlyForReleasableSparkModules publishM2"
  *   # Verify JARs in ~/.m2/repository/io/delta/
  *
  * ========================================================
@@ -160,6 +176,34 @@ import Unidoc._
  *   Example:
  *     build/sbt showSparkVersions
  *
+ * exportSparkVersionsJson
+ *   Exports Spark version information to target/spark-versions.json.
+ *   This is the SINGLE SOURCE OF TRUTH for Spark versions used by:
+ *   - GitHub Actions workflows (for dynamic matrix generation)
+ *   - CI/CD scripts (for version-specific configuration)
+ *
+ *   The JSON is an array where each element contains:
+ *   - fullVersion: Full version string (e.g., "4.0.1", "4.1.0")
+ *   - shortVersion: Short version string (e.g., "4.0", "4.1")
+ *   - isMaster: Whether this is the master/snapshot version
+ *   - isDefault: Whether this is the default Spark version
+ *   - targetJvm: Target JVM version (e.g., "17")
+ *   - packageSuffix: Maven artifact suffix for this version (e.g., "_4.0", "_4.1")
+ *   - sourceBuildDefaultRef: Default Spark source ref to build for source-built lanes, if any
+ *
+ *   Example:
+ *     build/sbt exportSparkVersionsJson
+ *     # Generates: target/spark-versions.json
+ *     # Output: [{"fullVersion": "4.0.1", "shortVersion": "4.0", "isMaster": false, "isDefault": true, "targetJvm": "17", "packageSuffix": "_4.0"}, ...]
+ *
+ *   Use with Python utilities to extract specific fields:
+ *     python3 project/scripts/get_spark_version_info.py --all-spark-versions
+ *     python3 project/scripts/get_spark_version_info.py --get-field "4.0" targetJvm
+ *     python3 project/scripts/get_spark_version_info.py --get-field "master" targetJvm
+ *
+ *   This ensures GitHub Actions always uses the versions defined here,
+ *   eliminating manual synchronization across multiple files.
+ *
  * ========================================================
  */
 
@@ -169,17 +213,30 @@ import Unidoc._
  *
  * @param fullVersion The full Spark version (e.g., "3.5.7", "4.0.2-SNAPSHOT")
  * @param targetJvm Target JVM version (e.g., "11", "17")
- * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
+ * @param additionalSourceDirs Shim source directory suffixes compiled for this Spark version, in
+ *                             any order. These include the version's private shim dir (e.g.
+ *                             "scala-shims/spark-4.1") and any cross-version shim dirs shared with
+ *                             adjacent versions (e.g. "scala-shims/spark-4.0-4.1"). A file in a
+ *                             shared dir is compiled for every version that lists it, so identical
+ *                             shims are written once instead of copied per version. Non-existent
+ *                             dirs are ignored by sbt, so listing a dir a module doesn't use is
+ *                             harmless.
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
+ * @param sourceBuildDefaultRef Default Spark source ref for source-built CI/cache workflows.
+ *   This lives here with the rest of the Spark policy so CI workflows do not fragment refs.
  */
 case class SparkVersionSpec(
   fullVersion: String,
   targetJvm: String,
-  additionalSourceDir: Option[String],
+  additionalSourceDirs: Seq[String] = Seq.empty,
+  supportIceberg: Boolean,
+  supportHudi: Boolean = true,
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
-  jacksonVersion: String = "2.15.2"
+  jacksonVersion: String = "2.15.2",
+  additionalResolvers: Seq[Resolver] = Seq.empty,
+  sourceBuildDefaultRef: Option[String] = None
 ) {
   /** Returns the Spark short version (e.g., "3.5", "4.0") */
   def shortVersion: String = {
@@ -194,59 +251,80 @@ case class SparkVersionSpec(
   /** Whether this is the master Spark version */
   def isMaster: Boolean = SparkVersionSpec.MASTER.contains(this)
 
-  /** Returns log4j config file based on source directory */
-  def log4jConfig: String = {
-    if (additionalSourceDir.exists(_.contains("master"))) "log4j2_spark_master.properties"
-    else "log4j2.properties"
-  }
+  /** Returns log4j config file */
+  def log4jConfig: String = "log4j2.properties"
+
+  /** Whether this is an unreleased snapshot or master version */
+  def isSnapshot: Boolean = isMaster || fullVersion.contains("SNAPSHOT")
 
   /** Whether to export JARs instead of class directories (needed for Spark Connect on master) */
-  def exportJars: Boolean = additionalSourceDir.exists(_.contains("master"))
+  def exportJars: Boolean = isMaster
 
   /** Whether to generate Javadoc/Scaladoc for this version */
   def generateDocs: Boolean = isDefault
+
+  /** Base version used when deriving a local, commit-qualified artifact version for source-built Spark. */
+  def artifactBaseVersion: String = fullVersion.stripSuffix("-SNAPSHOT")
 }
 
 object SparkVersionSpec {
 
-  private val spark35 = SparkVersionSpec(
-    fullVersion = "3.5.7",
-    targetJvm = "11",
-    additionalSourceDir = Some("scala-spark-3.5"),
-    antlr4Version = "4.9.3",
-    additionalJavaOptions = Seq.empty
+  private val java17TestSettings = Seq(
+    // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+    "--add-opens=java.base/java.io=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+    "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+    "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
   )
 
-  private val spark40Snapshot = SparkVersionSpec(
-    fullVersion = "4.0.2-SNAPSHOT",
+  private val spark40 = SparkVersionSpec(
+    fullVersion = "4.0.1",
     targetJvm = "17",
-    additionalSourceDir = Some("scala-spark-master"),
+    additionalSourceDirs = Seq("scala-shims/spark-4.0", "scala-shims/spark-4.0-4.1"),
+    supportIceberg = true,
     antlr4Version = "4.13.1",
-    additionalJavaOptions = Seq(
-      // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
-      "--add-opens=java.base/java.lang=ALL-UNNAMED",
-      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-      "--add-opens=java.base/java.io=ALL-UNNAMED",
-      "--add-opens=java.base/java.net=ALL-UNNAMED",
-      "--add-opens=java.base/java.nio=ALL-UNNAMED",
-      "--add-opens=java.base/java.util=ALL-UNNAMED",
-      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
-      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-      "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
-      "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
-      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
-    ),
+    additionalJavaOptions = java17TestSettings,
+    jacksonVersion = "2.18.2"
+  )
+
+  private val spark41 = SparkVersionSpec(
+    fullVersion = "4.1.0",
+    targetJvm = "17",
+    additionalSourceDirs =
+      Seq("scala-shims/spark-4.1", "scala-shims/spark-4.0-4.1", "scala-shims/spark-4.1-4.2"),
+    supportIceberg = true,
+    supportHudi = false,
+    antlr4Version = "4.13.1",
+    additionalJavaOptions = java17TestSettings,
+    jacksonVersion = "2.18.2"
+  )
+
+  private val spark42 = SparkVersionSpec(
+    fullVersion = "4.2.0",
+    targetJvm = "17",
+    additionalSourceDirs = Seq("scala-shims/spark-4.2", "scala-shims/spark-4.1-4.2"),
+    supportIceberg = false,
+    supportHudi = false,
+    antlr4Version = "4.13.1",
+    additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
   )
 
   /** Default Spark version */
-  val DEFAULT = spark35
+  val DEFAULT = spark41
 
   /** Spark master branch version (optional). Release branches should not build against master */
-  val MASTER: Option[SparkVersionSpec] = Some(spark40Snapshot)
+  val MASTER: Option[SparkVersionSpec] = None
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark35, spark40Snapshot)
+  val ALL_SPECS = Seq(spark40, spark41, spark42)
 }
 
 /** See docs on top of this file */
@@ -292,16 +370,60 @@ object CrossSparkVersions extends AutoPlugin {
    */
   def getSparkVersion(): String = getSparkVersionSpec().fullVersion
 
-  /**
-   * Returns module name with optional Spark version suffix.
-   * Default Spark version: "module-name" (e.g., delta-spark_2.13)
-   * Other Spark versions: "module-name_X.Y" (e.g., delta-spark_4.0_2.13)
-   */
-  private def moduleName(baseName: String, sparkVer: String): String = {
-    val spec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
-      .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
+  private def propertyOrEnv(propertyName: String, envName: String): Option[String] = {
+    sys.props.get(propertyName).orElse(sys.env.get(envName)).filter(_.nonEmpty)
+  }
 
-    if (spec.isDefault) {
+  private def getSparkCommit(): Option[String] =
+    propertyOrEnv("sparkCommit", "SPARK_COMMIT")
+
+  private def getSparkArtifactVersionOverride(): Option[String] =
+    propertyOrEnv("sparkArtifactVersion", "SPARK_ARTIFACT_VERSION")
+
+  /**
+   * Returns the Maven artifact version used for org.apache.spark dependencies.
+   *
+   * `sparkVersion` selects the compatibility profile (shims, suffixes, JVM options,
+   * Jackson overrides). `sparkArtifactVersion` selects the actual Maven version used for
+   * locally built Spark artifacts from project/scripts/build_spark.sh.
+   */
+  def getSparkArtifactVersion(): String = {
+    val spec = getSparkVersionSpec()
+    getSparkArtifactVersionOverride().getOrElse {
+      getSparkCommit().foreach { _ =>
+        throw new IllegalArgumentException(
+          "sparkCommit/SPARK_COMMIT requires sparkArtifactVersion/SPARK_ARTIFACT_VERSION. " +
+            "Use project/scripts/get_spark_version_info.py --resolve-source-build to " +
+            "resolve the Spark SHA and commit-qualified Maven artifact version.")
+      }
+      spec.fullVersion
+    }
+  }
+
+  private def sourceBuiltSparkResolvers: Seq[Resolver] = {
+    if (getSparkCommit().isDefined || getSparkArtifactVersionOverride().isDefined) {
+      // This covers non-overridden SBT resolution. The build/sbt repository override path also
+      // needs maven-local in its repository config so source-built Spark artifacts are visible.
+      Seq(Resolver.mavenLocal)
+    } else {
+      Seq.empty
+    }
+  }
+
+  /**
+   * Returns module name with Spark version suffix.
+   * 
+   * By default, ALL Spark-dependent modules include the Spark version suffix:
+   *   delta-spark_4.0_2.13, delta-spark_4.1_2.13, etc.
+   *
+   * During release, the `skipSparkSuffix=true` property is used to also publish
+   * backward-compatible artifacts without the suffix (e.g., delta-spark_2.13).
+   */
+  private def moduleName(baseName: String, spec: SparkVersionSpec): String = {
+    // skipSparkSuffix removes the suffix (used during release for backward compatibility)
+    val skipSparkSuffix = sys.props.getOrElse("skipSparkSuffix", "false").toBoolean
+
+    if (skipSparkSuffix) {
       baseName
     } else {
       s"${baseName}_${spec.shortVersion}"
@@ -309,7 +431,7 @@ object CrossSparkVersions extends AutoPlugin {
   }
 
   // Scala version constant (Scala 2.12 support was dropped)
-  private val scala213 = "2.13.16"
+  private val scala213 = "2.13.17"
 
   /**
    * Common Spark version-specific settings used by all Spark-aware modules.
@@ -321,18 +443,25 @@ object CrossSparkVersions extends AutoPlugin {
     val baseSettings = Seq(
       scalaVersion := scala213,
       crossScalaVersions := Seq(scala213),
-      // For adding staged Spark RC versions, e.g.:
-      // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
+      resolvers ++= spec.additionalResolvers ++ sourceBuiltSparkResolvers,
       Antlr4 / antlr4Version := spec.antlr4Version,
       Test / javaOptions ++= (Seq(s"-Dlog4j.configurationFile=${spec.log4jConfig}") ++ spec.additionalJavaOptions)
     )
 
-    val additionalSourceDirSettings = spec.additionalSourceDir.map { dir =>
+    // Add a shim directory's scala-shims and java-shims variants to both Compile and Test.
+    // sbt ignores non-existent source directories, so a module that has no files under a given
+    // dir is unaffected.
+    def shimDirSettings(dir: String): Seq[Setting[_]] = {
+      val javaShimsDir = dir.replace("scala-shims", "java-shims")
       Seq(
         Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / dir,
+        Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / javaShimsDir,
         Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / dir
       )
-    }.getOrElse(Seq.empty)
+    }
+
+    // The version-specific shim dir plus any cross-version shared shim dirs (e.g. spark-4.1-4.2).
+    val additionalSourceDirSettings = spec.additionalSourceDirs.flatMap(shimDirSettings)
 
     val conditionalSettings = Seq(
       if (spec.exportJars) Seq(exportJars := true) else Nil,
@@ -344,10 +473,7 @@ object CrossSparkVersions extends AutoPlugin {
     // Jackson dependency overrides to match Spark version and avoid conflicts
     val jacksonOverrides = Seq(
       dependencyOverrides ++= {
-        val sparkVer = sparkVersionKey.value
-        val jacksonVer = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
-          .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
-          .jacksonVersion
+        val jacksonVer = spec.jacksonVersion
         Seq(
           "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
           "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
@@ -371,7 +497,7 @@ object CrossSparkVersions extends AutoPlugin {
     Seq(
       sparkVersionKey := getSparkVersion(),
       // Dynamically modify moduleName to add Spark version suffix
-      Keys.moduleName := moduleName(Keys.name.value, sparkVersionKey.value)
+      Keys.moduleName := moduleName(Keys.name.value, getSparkVersionSpec())
     )
   }
 
@@ -390,45 +516,79 @@ object CrossSparkVersions extends AutoPlugin {
    * Generates release steps for cross-Spark publishing.
    *
    * Returns a sequence of release steps that:
-   * 1. Publishes all modules for the default Spark version
-   * 2. Publishes only Spark-dependent modules for other Spark versions
+   * 1. Publishes all modules WITHOUT Spark suffix (backward compatibility)
+   * 2. Publishes Spark-dependent modules WITH Spark suffix for each non-master version
+   *
+   * For example, with Spark versions 4.0 (default) and 4.1:
+   * - Step 1 publishes: delta-spark_2.13, delta-storage, delta-kernel-api, etc. (no suffix)
+   * - Step 2 publishes: delta-spark_4.0_2.13, delta-spark_4.1_2.13, etc. (with suffix)
+   *
+   * Each step runs as a separate SBT subprocess so the build reloads with
+   * the correct sparkVersion/skipSparkSuffix settings (SBT settings like
+   * moduleName are evaluated once at build load time and can't be changed
+   * at runtime).
    *
    * Usage in build.sbt:
    *   releaseProcess := Seq[ReleaseStep](
    *     ...,
-   *   ) ++ CrossSparkVersions.crossSparkReleaseSteps("+publishSigned") ++ Seq(
+   *   ) ++ CrossSparkVersions.crossSparkReleaseSteps("publishSigned") ++ Seq(
    *     ...
    *   )
    */
   def crossSparkReleaseSteps(task: String): Seq[ReleaseStep] = {
-    import sbtrelease.ReleasePlugin.autoImport._
-    import sbtrelease.ReleaseStateTransformations._
+    // SBT settings (like moduleName) are evaluated once at build load time.
+    // To publish with different Spark versions or suffix modes, we must run
+    // separate SBT processes so the build reloads with the correct settings.
+    // The release version is already committed to version.sbt by prior steps,
+    // so subprocess SBT instances will pick up the correct version.
 
-    // Step 1: Publish all modules for default Spark version
-    val defaultSparkStep: ReleaseStep = releaseStepCommand(task)
+    def runSbtSubprocess(state: State, sbtArgs: Seq[String], description: String): State = {
+      val extracted = Project.extract(state)
+      val baseDir = extracted.get(ThisBuild / Keys.baseDirectory)
+      val cmd = Seq(s"${baseDir.getAbsolutePath}/build/sbt") ++ sbtArgs
+      println(s"[info] ========================================")
+      println(s"[info] $description")
+      println(s"[info] Running: ${cmd.mkString(" ")}")
+      println(s"[info] ========================================")
+      val exitCode = scala.sys.process.Process(cmd, baseDir).!
+      if (exitCode != 0) {
+        sys.error(s"$description failed with exit code $exitCode")
+      }
+      state
+    }
 
-    // Step 2: Publish only Spark-dependent modules for other Spark versions
-    val otherSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.ALL_SPECS
-      .filter(_ != SparkVersionSpec.DEFAULT)
-      .flatMap { spec =>
-        Seq[ReleaseStep](
-          // Custom release step that sets system property and runs command
-          { (state: State) =>
-            // Set the sparkVersion system property
-            sys.props("sparkVersion") = spec.fullVersion
+    // Step 1: Publish ALL modules WITHOUT Spark suffix (backward compatibility)
+    // Uses skipSparkSuffix=true to get artifact names like delta-spark_2.13
+    val backwardCompatStep: ReleaseStep = { (state: State) =>
+      runSbtSubprocess(
+        state,
+        Seq("-DskipSparkSuffix=true", task),
+        "Publishing all modules without Spark suffix (backward compat)"
+      )
+    }
 
-            // Run the runOnlyForReleasableSparkModules command
-            Command.process(s"runOnlyForReleasableSparkModules $task", state)
-          }: ReleaseStep
-        )
+    // Step 2+: Publish Spark-dependent modules WITH suffix for each non-master Spark version
+    // This gives users versioned artifacts like delta-spark_4.0_2.13, delta-spark_4.1_2.13
+    val suffixedSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.ALL_SPECS
+      .filterNot(_.isSnapshot)
+      .map { spec =>
+        { (state: State) =>
+          runSbtSubprocess(
+            state,
+            Seq(s"-DsparkVersion=${spec.fullVersion}",
+                s"runOnlyForReleasableSparkModules $task"),
+            s"Publishing Spark-dependent modules with suffix for Spark ${spec.fullVersion}"
+          )
+        }: ReleaseStep
       }
 
-    defaultSparkStep +: otherSparkSteps
+    backwardCompatStep +: suffixedSparkSteps
   }
 
   override lazy val projectSettings = Seq(
     commands += Command.args("runOnlyForReleasableSparkModules", "<task>") { (state, args) =>
-      // Used mainly for cross-Spark publishing of the Spark-dependent modules
+      // Used for cross-Spark publishing of Spark-dependent modules only.
+      // Runs the specified task only on publishable Spark-dependent projects.
       if (args.isEmpty) {
         sys.error("Usage: runOnlyForReleasableSparkModules <task>\nExample: build/sbt -DsparkVersion=<version> \"runOnlyForReleasableSparkModules publishM2\"")
       }
@@ -460,7 +620,13 @@ object CrossSparkVersions extends AutoPlugin {
 
         // Build scoped task for each Spark-dependent project sequentially
         sparkDependentProjects.foldLeft(state) { (currentState, projRef) =>
-          val scopedTask = s"${projRef.project}/$task"
+          // Handle SBT cross-build prefix: "+publishSigned" must become
+          // "+project/publishSigned", not "project/+publishSigned"
+          val scopedTask = if (task.startsWith("+")) {
+            s"+${projRef.project}/${task.stripPrefix("+")}"
+          } else {
+            s"${projRef.project}/$task"
+          }
           Command.process(scopedTask, currentState)
         }
       }
@@ -470,6 +636,51 @@ object CrossSparkVersions extends AutoPlugin {
       SparkVersionSpec.ALL_SPECS.foreach { spec =>
         println(spec.fullVersion)
       }
+      state
+    },
+    commands += Command.command("exportSparkVersionsJson") { state =>
+      // Export Spark version information as JSON for use by CI/CD and other tools
+      import java.io.{File, PrintWriter}
+
+      val outputFile = new File("target/spark-versions.json")
+      outputFile.getParentFile.mkdirs()
+
+      def jsonString(value: Option[String]): String = {
+        value.map { raw =>
+          "\"" + raw.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        }.getOrElse("null")
+      }
+      
+      val writer = new PrintWriter(outputFile)
+      // scalastyle:off
+      try {
+        writer.println("[")
+        SparkVersionSpec.ALL_SPECS.zipWithIndex.foreach { case (spec, idx) =>
+          val comma = if (idx < SparkVersionSpec.ALL_SPECS.size - 1) "," else ""
+          val isMaster = SparkVersionSpec.MASTER.contains(spec)
+          val isDefault = spec == SparkVersionSpec.DEFAULT
+          // Package suffix always includes Spark version (e.g., "_4.0", "_4.1")
+          val packageSuffix = s"_${spec.shortVersion}"
+          writer.println(s"""  {""")
+          writer.println(s"""    "fullVersion": "${spec.fullVersion}",""")
+          writer.println(s"""    "shortVersion": "${spec.shortVersion}",""")
+          writer.println(s"""    "isMaster": $isMaster,""")
+          writer.println(s"""    "isDefault": $isDefault,""")
+          writer.println(s"""    "targetJvm": "${spec.targetJvm}",""")
+          writer.println(s"""    "packageSuffix": "$packageSuffix",""")
+          writer.println(s"""    "sourceBuildDefaultRef": ${jsonString(spec.sourceBuildDefaultRef)},""")
+          writer.println(s"""    "supportIceberg": "${spec.supportIceberg}",""")
+          writer.println(s"""    "supportHudi": "${spec.supportHudi}"""")
+          writer.println(s"""  }$comma""")
+        }
+        writer.println("]")
+        
+        println(s"[info] Spark version information exported to: ${outputFile.getAbsolutePath}")
+      } finally {
+        writer.close()
+      }
+      // scalastyle:on
+      
       state
     }
   )

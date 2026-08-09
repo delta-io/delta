@@ -14,10 +14,8 @@
 # limitations under the License.
 #
 
-import json
-from typing import TYPE_CHECKING
-
-from pyspark.errors.exceptions.connect import SparkConnectException
+import pyspark.errors.exceptions.connect
+from pyspark.errors.exceptions.connect import SparkConnectGrpcException
 
 from delta.exceptions.base import (
     DeltaConcurrentModificationException as BaseDeltaConcurrentModificationException,
@@ -30,11 +28,10 @@ from delta.exceptions.base import (
     ConcurrentTransactionException as BaseConcurrentTransactionException,
 )
 
-if TYPE_CHECKING:
-    from google.rpc.error_details_pb2 import ErrorInfo
 
-
-class DeltaConcurrentModificationException(SparkConnectException, BaseDeltaConcurrentModificationException):
+class DeltaConcurrentModificationException(
+    SparkConnectGrpcException, BaseDeltaConcurrentModificationException
+):
     """
     The basic class for all Delta commit conflict exceptions.
 
@@ -44,7 +41,7 @@ class DeltaConcurrentModificationException(SparkConnectException, BaseDeltaConcu
     """
 
 
-class ConcurrentWriteException(SparkConnectException, BaseConcurrentWriteException):
+class ConcurrentWriteException(SparkConnectGrpcException, BaseConcurrentWriteException):
     """
     Thrown when a concurrent transaction has written data after the current transaction read the
     table.
@@ -55,7 +52,7 @@ class ConcurrentWriteException(SparkConnectException, BaseConcurrentWriteExcepti
     """
 
 
-class MetadataChangedException(SparkConnectException, BaseMetadataChangedException):
+class MetadataChangedException(SparkConnectGrpcException, BaseMetadataChangedException):
     """
     Thrown when the metadata of the Delta table has changed between the time of read
     and the time of commit.
@@ -66,7 +63,7 @@ class MetadataChangedException(SparkConnectException, BaseMetadataChangedExcepti
     """
 
 
-class ProtocolChangedException(SparkConnectException, BaseProtocolChangedException):
+class ProtocolChangedException(SparkConnectGrpcException, BaseProtocolChangedException):
     """
     Thrown when the protocol version has changed between the time of read
     and the time of commit.
@@ -77,7 +74,7 @@ class ProtocolChangedException(SparkConnectException, BaseProtocolChangedExcepti
     """
 
 
-class ConcurrentAppendException(SparkConnectException, BaseConcurrentAppendException):
+class ConcurrentAppendException(SparkConnectGrpcException, BaseConcurrentAppendException):
     """
     Thrown when files are added that would have been read by the current transaction.
 
@@ -87,7 +84,7 @@ class ConcurrentAppendException(SparkConnectException, BaseConcurrentAppendExcep
     """
 
 
-class ConcurrentDeleteReadException(SparkConnectException, BaseConcurrentDeleteReadException):
+class ConcurrentDeleteReadException(SparkConnectGrpcException, BaseConcurrentDeleteReadException):
     """
     Thrown when the current transaction reads data that was deleted by a concurrent transaction.
 
@@ -97,7 +94,9 @@ class ConcurrentDeleteReadException(SparkConnectException, BaseConcurrentDeleteR
     """
 
 
-class ConcurrentDeleteDeleteException(SparkConnectException, BaseConcurrentDeleteDeleteException):
+class ConcurrentDeleteDeleteException(
+    SparkConnectGrpcException, BaseConcurrentDeleteDeleteException
+):
     """
     Thrown when the current transaction deletes data that was deleted by a concurrent transaction.
 
@@ -107,7 +106,7 @@ class ConcurrentDeleteDeleteException(SparkConnectException, BaseConcurrentDelet
     """
 
 
-class ConcurrentTransactionException(SparkConnectException, BaseConcurrentTransactionException):
+class ConcurrentTransactionException(SparkConnectGrpcException, BaseConcurrentTransactionException):
     """
     Thrown when concurrent transaction both attempt to update the same idempotent transaction.
 
@@ -117,25 +116,63 @@ class ConcurrentTransactionException(SparkConnectException, BaseConcurrentTransa
     """
 
 
-def _convert_delta_exception(info: "ErrorInfo", message: str):
-    classes = []
-    if "classes" in info.metadata:
-        classes = json.loads(info.metadata["classes"])
+_delta_exception_registered = False
 
-    if "io.delta.exceptions.ConcurrentWriteException" in classes:
-        return ConcurrentWriteException(message)
-    if "io.delta.exceptions.MetadataChangedException" in classes:
-        return MetadataChangedException(message)
-    if "io.delta.exceptions.ProtocolChangedException" in classes:
-        return ProtocolChangedException(message)
-    if "io.delta.exceptions.ConcurrentAppendException" in classes:
-        return ConcurrentAppendException(message)
-    if "io.delta.exceptions.ConcurrentDeleteReadException" in classes:
-        return ConcurrentDeleteReadException(message)
-    if "io.delta.exceptions.ConcurrentDeleteDeleteException" in classes:
-        return ConcurrentDeleteDeleteException(message)
-    if "io.delta.exceptions.ConcurrentTransactionException" in classes:
-        return ConcurrentTransactionException(message)
-    if "io.delta.exceptions.DeltaConcurrentModificationException" in classes:
-        return DeltaConcurrentModificationException(message)
-    return None
+
+# Server-side Delta exception class name -> Python Delta exception class. We register only the
+# io.delta.exceptions.* names because those are the public API; org.apache.spark.sql.delta.* are
+# their internal Scala superclasses (returned in the class hierarchy at runtime) and are not part
+# of the contract user code catches. See _register_exception_class_mappings for how this is used.
+_DELTA_EXCEPTION_CLASS_MAPPING = {
+    "io.delta.exceptions.DeltaConcurrentModificationException":
+        DeltaConcurrentModificationException,
+    "io.delta.exceptions.ConcurrentWriteException": ConcurrentWriteException,
+    "io.delta.exceptions.MetadataChangedException": MetadataChangedException,
+    "io.delta.exceptions.ProtocolChangedException": ProtocolChangedException,
+    "io.delta.exceptions.ConcurrentAppendException": ConcurrentAppendException,
+    "io.delta.exceptions.ConcurrentDeleteReadException": ConcurrentDeleteReadException,
+    "io.delta.exceptions.ConcurrentDeleteDeleteException": ConcurrentDeleteDeleteException,
+    "io.delta.exceptions.ConcurrentTransactionException": ConcurrentTransactionException,
+}
+
+
+def _register_exception_class_mappings() -> None:
+    """
+    Register the Delta-specific exception classes in PySpark's Spark Connect error conversion.
+
+    PySpark converts a server error by looking up the server-side exception class names in
+    EXCEPTION_CLASS_MAPPING. Registering the Delta classes there makes Delta commit-conflict
+    exceptions surface as these classes instead of a generic SparkConnectGrpcException, and lets
+    PySpark's generic conversion attach the structured error metadata (error class, SQL state,
+    server-side stacktrace, message parameters, query contexts) the same way it does for its own
+    exceptions.
+
+    The lookup iterates the server-sent class hierarchy (ordered most-derived first) and returns
+    on the first name found in EXCEPTION_CLASS_MAPPING. We register only io.delta.exceptions.*
+    names - both the concrete exceptions and their base DeltaConcurrentModificationException - so
+    the most-derived registered class wins over the base. For example a ConcurrentAppendException
+    arrives as
+
+        ["io.delta.exceptions.ConcurrentAppendException",              # <- picked (registered)
+         "org.apache.spark.sql.delta.ConcurrentAppendException",       # <- skipped (legacy alias,
+                                                                       #    not registered)
+         "io.delta.exceptions.DeltaConcurrentModificationException",   # <- would match, but the
+                                                                       #    earlier hit wins
+         ...]
+
+    and maps to the concrete ConcurrentAppendException, not the base.
+
+    The org.apache.spark.sql.delta.* entries are internal Scala superclasses of the
+    io.delta.exceptions.* classes; they appear in the hierarchy at runtime but are not part of the
+    user-facing catch contract, so we deliberately don't register them.
+
+    This mirrors, for Spark Connect, the conversion that delta.exceptions.captured installs for
+    the classic (py4j) client.
+    """
+    pyspark.errors.exceptions.connect.EXCEPTION_CLASS_MAPPING.update(
+        _DELTA_EXCEPTION_CLASS_MAPPING)
+
+
+if not _delta_exception_registered:
+    _register_exception_class_mappings()
+    _delta_exception_registered = True

@@ -498,36 +498,62 @@ public class TransactionMetadataFactory {
                       oldMetadata.getConfiguration(), metadata.getConfiguration()));
         });
 
-    // We must do our icebergWriterCompatV1 checks/updates FIRST since it has stricter column
-    // mapping requirements (id mode) than icebergCompatV2. It also may enable icebergCompatV2.
-    Optional<Metadata> icebergWriterCompatV1 =
+    // WriterCompat must run FIRST (stricter requirements, may enable standalone compat internally)
+    applyIcebergCompatValidation(
         IcebergWriterCompatV1MetadataValidatorAndUpdater
-            .validateAndUpdateIcebergWriterCompatV1Metadata(
-                isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
-    if (icebergWriterCompatV1.isPresent()) {
-      newMetadata = icebergWriterCompatV1;
-    }
-
-    Optional<Metadata> icebergWriterCompatV3 =
+            ::validateAndUpdateIcebergWriterCompatV1Metadata);
+    applyIcebergCompatValidation(
         IcebergWriterCompatV3MetadataValidatorAndUpdater
-            .validateAndUpdateIcebergWriterCompatV3Metadata(
-                isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
-    if (icebergWriterCompatV3.isPresent()) {
-      newMetadata = icebergWriterCompatV3;
-    }
+            ::validateAndUpdateIcebergWriterCompatV3Metadata);
 
-    // TODO: refactor this method to use a single validator and updater.
-    Optional<Metadata> icebergCompatV2Metadata =
-        IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
-            isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
-    if (icebergCompatV2Metadata.isPresent()) {
-      newMetadata = icebergCompatV2Metadata;
+    // Skip standalone compat validation if the corresponding writer compat already ran it.
+    // WriterCompatV1 validates CompatV2 (via enforcer), WriterCompatV3 validates CompatV3.
+    applyIcebergCompatValidationIfNeeded(
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED,
+        IcebergCompatV2MetadataValidatorAndUpdater::validateAndUpdateIcebergCompatV2Metadata);
+    applyIcebergCompatValidationIfNeeded(
+        TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED,
+        IcebergCompatV3MetadataValidatorAndUpdater::validateAndUpdateIcebergCompatV3Metadata);
+  }
+
+  /**
+   * Shared signature for all IcebergCompat validate-and-update methods. Each implementation checks
+   * whether its compat feature is enabled and, if so, validates the metadata/protocol and returns
+   * updated metadata (or empty if no update is needed).
+   */
+  @FunctionalInterface
+  private interface IcebergCompatValidator {
+    Optional<Metadata> validateAndUpdate(
+        boolean isCreateOrReplace,
+        Metadata metadata,
+        Protocol protocol,
+        Optional<Protocol> prevProtocol);
+  }
+
+  /**
+   * Applies an iceberg compat validator, updating newMetadata if it returns updated metadata. The
+   * previous protocol from the read snapshot is passed as defense-in-depth: if the read snapshot
+   * already had deletion vectors enabled, the check should reject it even when the new protocol in
+   * this transaction does not include DVs.
+   */
+  private void applyIcebergCompatValidation(IcebergCompatValidator validator) {
+    Optional<Protocol> prevProtocol = latestSnapshotOpt.map(SnapshotImpl::getProtocol);
+    Optional<Metadata> result =
+        validator.validateAndUpdate(
+            isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol(), prevProtocol);
+    if (result.isPresent()) {
+      newMetadata = result;
     }
-    Optional<Metadata> icebergCompatV3Metadata =
-        IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata(
-            isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
-    if (icebergCompatV3Metadata.isPresent()) {
-      newMetadata = icebergCompatV3Metadata;
+  }
+
+  /**
+   * Applies an iceberg compat validator, but only if the given writer compat gate is not enabled.
+   * When the writer compat feature is enabled, it already runs this compat validation internally.
+   */
+  private void applyIcebergCompatValidationIfNeeded(
+      TableConfig<Boolean> writerCompatGate, IcebergCompatValidator validator) {
+    if (!writerCompatGate.fromMetadata(getEffectiveMetadata())) {
+      applyIcebergCompatValidation(validator);
     }
   }
 

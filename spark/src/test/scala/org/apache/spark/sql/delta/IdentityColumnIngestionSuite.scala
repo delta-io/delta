@@ -20,10 +20,10 @@ import java.io.PrintWriter
 
 import org.apache.spark.sql.delta.GeneratedAsIdentityType.{GeneratedAlways, GeneratedByDefault}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.types._
 
 /**

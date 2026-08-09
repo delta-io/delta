@@ -16,10 +16,13 @@
 
 package org.apache.spark.sql.delta.sources
 
+import java.io.FileNotFoundException
+
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.DeltaErrors
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.DataFrame
@@ -200,22 +203,53 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     val changes = getFileChangesForCDC(
       startVersion, startIndex, isInitialSnapshot, limits = None, Some(endOffset))
 
+    // Versions before startVersion have already been processed, so we treat
+    // startVersion - 1 as already "seen".
+    var maxVersionSeen = startVersion - 1
+    // The last commit version we expect the iterator to cover.
+    // If endOffset.index < 0, we don't need to read any file from
+    // endOffset.reservoirVersion, so the last version we must see is one before it.
+    // Similarly if start >= end (no data to read from that version), subtract 1.
+    val lastExpectedVersion = if (endOffset.index >= 0 &&
+      (startVersion < endOffset.reservoirVersion || startIndex < endOffset.index)) {
+      endOffset.reservoirVersion
+    } else {
+      endOffset.reservoirVersion - 1
+    }
+    // iterator will be materialized during CDCReader.changesToDF
     val groupedFileAndCommitInfoActions =
       changes.map { case (v, indexFiles, commitInfoOpt) =>
+        maxVersionSeen = v
         (v, indexFiles.filter(_.hasFileAction).map(_.getFileAction).toSeq ++ commitInfoOpt)
       }
 
     val (result, duration) = Utils.timeTakenMs {
-      CDCReader
-        .changesToDF(
-          readSnapshotDescriptor,
-          startVersion,
-          endOffset.reservoirVersion,
-          groupedFileAndCommitInfoActions,
-          spark,
-          catalogTableOpt,
-          isStreaming = true)
-        .fileChangeDf
+      // CDCReader calls getSnapshotAt directly instead of using DeltaSource's wrapper, which can
+      // result in FileNotFoundExceptions from the Delta log. We wrap these to present a clearer
+      // error message.
+      try {
+        CDCReader
+          .changesToDF(
+            readSnapshotDescriptor,
+            startVersion,
+            endOffset.reservoirVersion,
+            groupedFileAndCommitInfoActions,
+            spark,
+            catalogTableOpt,
+            isStreaming = true)
+          .fileChangeDf
+      } catch {
+        case e: FileNotFoundException =>
+          throw DeltaErrors.logFileNotFoundExceptionForStreamingSource(e)
+      }
+    }
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION) &&
+        maxVersionSeen < lastExpectedVersion) {
+      recordTrailingCommitMissingEvent(
+        startVersion, startIndex, isInitialSnapshot, endOffset,
+        lastExpectedVersion, maxVersionSeen, isStreamingCDC = true)
+      throw DeltaErrors.streamingTrailingCommitMissing(
+        lastExpectedVersion, maxVersionSeen)
     }
     logInfo(log"Getting CDC dataFrame for delta_log_path=" +
       log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +

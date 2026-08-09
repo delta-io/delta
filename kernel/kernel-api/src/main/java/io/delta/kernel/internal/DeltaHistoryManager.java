@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.fs.Path.getName;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
@@ -72,7 +73,7 @@ public final class DeltaHistoryManager {
       Engine engine,
       Path logPath,
       long millisSinceEpochUTC,
-      SnapshotImpl latestSnapshot,
+      Snapshot latestSnapshot,
       List<ParsedCatalogCommitData> catalogCommits) {
     DeltaHistoryManager.Commit commit =
         DeltaHistoryManager.getActiveCommitAtTimestamp(
@@ -122,7 +123,7 @@ public final class DeltaHistoryManager {
       Engine engine,
       Path logPath,
       long millisSinceEpochUTC,
-      SnapshotImpl latestSnapshot,
+      Snapshot latestSnapshot,
       List<ParsedCatalogCommitData> catalogCommits) {
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
             engine,
@@ -163,7 +164,7 @@ public final class DeltaHistoryManager {
    */
   public static Commit getActiveCommitAtTimestamp(
       Engine engine,
-      SnapshotImpl latestSnapshot,
+      Snapshot latestSnapshot,
       Path logPath,
       long timestamp,
       boolean mustBeRecreatable,
@@ -248,9 +249,11 @@ public final class DeltaHistoryManager {
         searchResult = new Commit(placeholderEarliestCommit.getVersion(), ict);
       } else {
         // We know the table was not catalogManaged here since ICT was not enabled ==> we don't
-        // need to worry about catalogCommits
-        // start non-ICT linear search over [earliestVersion, )
-        List<Commit> commits = getCommits(engine, logPath, earliestVersion);
+        // need to worry about catalogCommits.
+        // The requested timestamp is before ICT enablement, so the file modification-time
+        // search must be bounded to the pre-ICT commits.
+        List<Commit> commits =
+            getCommits(engine, logPath, earliestVersion, ictEnablementCommit.version);
         searchResult =
             lastCommitBeforeOrAtTimestamp(commits, timestamp)
                 .orElse(
@@ -332,7 +335,7 @@ public final class DeltaHistoryManager {
    *     timestamps enabled, this will be the commit after the latest version. If in-commit
    *     timestamps were enabled for the entire history, this will be `earliestCommit`.
    */
-  private static Commit getICTEnablementCommit(SnapshotImpl snapshot, Commit earliestCommit) {
+  private static Commit getICTEnablementCommit(Snapshot snapshot, Commit earliestCommit) {
     Metadata metadata = snapshot.getMetadata();
     if (!IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       // Pretend ICT will be enabled after the latest version and requested timestamp.
@@ -513,16 +516,18 @@ public final class DeltaHistoryManager {
   }
 
   /**
-   * Returns the commit version and timestamps of all commits starting from version {@code start}.
-   * Guarantees that the commits returned have both monotonically increasing versions and
-   * timestamps.
+   * Returns the versions and modification timestamps of commits in the range {@code [start,
+   * endExclusive)}.
+   *
+   * <p>Guarantees that returned commits have monotonically increasing versions and timestamps.
    */
-  private static List<Commit> getCommits(Engine engine, Path logPath, long start)
+  private static List<Commit> getCommits(Engine engine, Path logPath, long start, long endExclusive)
       throws TableNotFoundException {
     CloseableIterator<Commit> commits =
         listFrom(engine, logPath, start)
             .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
-            .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()));
+            .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()))
+            .takeWhile(commit -> commit.version < endExclusive);
     return monotonizeCommitTimestamps(commits);
   }
 

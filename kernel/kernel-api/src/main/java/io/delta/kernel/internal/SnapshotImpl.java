@@ -23,6 +23,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Operation;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.clustering.ClusteringColumnInfo;
 import io.delta.kernel.commit.CatalogCommitter;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.commit.PublishFailedException;
@@ -34,6 +35,7 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.checkpoints.Checkpointer;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.checksum.ChecksumUtils;
 import io.delta.kernel.internal.checksum.ChecksumWriter;
@@ -51,6 +53,7 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.statistics.SnapshotStatistics;
+import io.delta.kernel.statistics.TableStats;
 import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
@@ -91,6 +94,14 @@ public class SnapshotImpl implements Snapshot {
 
   private Lazy<SnapshotReport> lazySnapshotReport;
   private Lazy<Optional<List<Column>>> lazyClusteringColumns;
+  private Lazy<Optional<List<ClusteringColumnInfo>>> lazyClusteringColumnInfos;
+
+  /**
+   * Indicates whether this snapshot was built as a "latest" snapshot query (i.e., no time-travel
+   * parameters were provided). This is intent-based - it indicates what the user requested, not
+   * whether the snapshot is actually the latest version.
+   */
+  private final boolean wasBuiltAsLatest;
 
   // TODO: Do not take in LogReplay as a constructor argument.
   // TODO: Also take in clustering columns for post-commit snapshot
@@ -114,6 +125,10 @@ public class SnapshotImpl implements Snapshot {
     this.metadata = requireNonNull(metadata);
     this.committer = committer;
     this.inCommitTimestampOpt = inCommitTimestampOpt;
+    // TODO: Post-commit snapshots build a version-based SnapshotQueryContext
+    // (see TransactionImpl.buildPostCommitSnapshotOpt), so isLatestQuery() may be false even
+    // when this snapshot is intended to be the latest version.
+    this.wasBuiltAsLatest = snapshotContext.isLatestQuery();
 
     // We create the actual Snapshot report lazily (on first access) instead of eagerly in this
     // constructor because some Snapshot metrics, like {@link
@@ -125,6 +140,15 @@ public class SnapshotImpl implements Snapshot {
             () ->
                 ClusteringMetadataDomain.fromSnapshot(this)
                     .map(ClusteringMetadataDomain::getClusteringColumns));
+    // Cache the resolved per-column descriptors (physical/logical/data type) on first access
+    // so callers that read clustering metadata across multiple plan rules don't pay the
+    // schema walk repeatedly. Builds on top of `lazyClusteringColumns` -- each physical column
+    // is resolved against the snapshot's schema via ClusteringColumnInfo.resolveAll.
+    this.lazyClusteringColumnInfos =
+        new Lazy<>(
+            () ->
+                getPhysicalClusteringColumns()
+                    .map(physCols -> ClusteringColumnInfo.resolveAll(getSchema(), physCols)));
   }
 
   /////////////////
@@ -207,7 +231,7 @@ public class SnapshotImpl implements Snapshot {
   }
 
   @Override
-  public void publish(Engine engine) throws PublishFailedException {
+  public Snapshot publish(Engine engine) throws PublishFailedException {
     final List<ParsedCatalogCommitData> allCatalogCommits = getLogSegment().getAllCatalogCommits();
     final boolean isFileSystemBasedTable = !TableFeatures.isCatalogManagedSupported(protocol);
     final boolean isCatalogCommitter = committer instanceof CatalogCommitter;
@@ -227,14 +251,14 @@ public class SnapshotImpl implements Snapshot {
     } else {
       if (isFileSystemBasedTable) {
         logger.info("Publishing not applicable: this is a filesystem-managed table");
-        return;
+        return this;
       }
 
       if (!isCatalogCommitter) {
         logger.info(
             "[{}] Publishing not applicable: committer does not support publishing",
             committer.getClass().getName());
-        return;
+        return this;
       }
     }
 
@@ -252,13 +276,24 @@ public class SnapshotImpl implements Snapshot {
 
     if (catalogCommitsToPublish.isEmpty()) {
       logger.info("No catalog commits need to be published");
-      return;
+      return this;
     }
 
     final PublishMetadata publishMetadata =
         new PublishMetadata(version, logPath.toString(), catalogCommitsToPublish);
 
     ((CatalogCommitter) committer).publish(engine, publishMetadata);
+    LogSegment updatedLogSegment = getLogSegment().newAsPublished();
+    return new SnapshotImpl(
+        dataPath,
+        version,
+        new Lazy<>(() -> updatedLogSegment),
+        logReplay,
+        protocol,
+        metadata,
+        committer,
+        SnapshotQueryContext.forVersionSnapshot(dataPath.toString(), version),
+        this.inCommitTimestampOpt);
   }
 
   @Override
@@ -295,6 +330,17 @@ public class SnapshotImpl implements Snapshot {
     }
   }
 
+  public void writeCheckpoint(Engine engine) throws IOException {
+    // Refuse to create a checkpoint if the table is CatalogManaged but the current snapshot is not
+    // published
+    if (TableFeatures.isCatalogManagedSupported(protocol)
+        && getLogSegment().getMaxPublishedDeltaVersion().orElse(-1L) < version) {
+      throw DeltaErrors.checkpointOnUnpublishedCommits(
+          getPath(), version, getLogSegment().getMaxPublishedDeltaVersion().orElse(-1L));
+    }
+    Checkpointer.checkpoint(engine, System::currentTimeMillis, this);
+  }
+
   ///////////////////
   // Internal APIs //
   ///////////////////
@@ -305,18 +351,31 @@ public class SnapshotImpl implements Snapshot {
     return new ReplaceTableTransactionBuilderV2Impl(this, schema, engineInfo);
   }
 
+  @Override
   public Committer getCommitter() {
     return committer;
   }
 
+  @Override
   public Path getLogPath() {
     return logPath;
   }
 
+  @Override
   public Path getDataPath() {
     return dataPath;
   }
 
+  /**
+   * Returns true if this snapshot was built as a "latest" snapshot query (i.e., no time-travel
+   * parameters were provided). This is intent-based - it indicates what the user requested, not
+   * whether the snapshot is actually the latest version.
+   */
+  public boolean wasBuiltAsLatest() {
+    return wasBuiltAsLatest;
+  }
+
+  @Override
   public Protocol getProtocol() {
     return protocol;
   }
@@ -341,6 +400,17 @@ public class SnapshotImpl implements Snapshot {
   }
 
   /**
+   * Override of {@link Snapshot#getClusteringColumnInfos()} that returns the cached resolved
+   * descriptors (physical column, logical column, data type) for this snapshot. The first
+   * invocation computes the list by combining {@link #getPhysicalClusteringColumns()} with a
+   * column-mapping-aware schema walk; subsequent invocations return the cached result.
+   */
+  @Override
+  public Optional<List<ClusteringColumnInfo>> getClusteringColumnInfos() {
+    return lazyClusteringColumnInfos.get();
+  }
+
+  /**
    * Get the domain metadata map from the log replay, which lazily loads and replays a history of
    * domain metadata actions, resolving them to produce the current state of the domain metadata.
    * Only active domain metadata are included in this map.
@@ -353,14 +423,17 @@ public class SnapshotImpl implements Snapshot {
   }
 
   /** Returns the crc info for the current snapshot if the checksum file is read */
+  @Override
   public Optional<CRCInfo> getCurrentCrcInfo() {
     return logReplay.getCrcInfoAtSnapshotVersion();
   }
 
+  @Override
   public Metadata getMetadata() {
     return metadata;
   }
 
+  @Override
   public LogSegment getLogSegment() {
     return lazyLogSegment.get();
   }
@@ -370,6 +443,7 @@ public class SnapshotImpl implements Snapshot {
     return lazyLogSegment;
   }
 
+  @Override
   public CreateCheckpointIterator getCreateCheckpointIterator(Engine engine) {
     long minFileRetentionTimestampMillis =
         System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
@@ -378,14 +452,14 @@ public class SnapshotImpl implements Snapshot {
 
   /**
    * Get the latest transaction version for given <i>applicationId</i>. This information comes from
-   * the transactions identifiers stored in Delta transaction log. This API is not a public API. For
-   * now keep this internal to enable Flink upgrade to use Kernel.
+   * the transactions identifiers stored in Delta transaction log.
    *
    * @param applicationId Identifier of the application that put transaction identifiers in Delta
    *     transaction log
    * @return Last transaction version or {@link Optional#empty()} if no transaction identifier
    *     exists for this application.
    */
+  @Override
   public Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
     return logReplay.getLatestTransactionIdentifier(engine, applicationId);
   }
@@ -430,6 +504,24 @@ public class SnapshotImpl implements Snapshot {
       }
 
       return Optional.of(Snapshot.ChecksumWriteMode.FULL);
+    }
+
+    @Override
+    public Optional<Integer> getIncrementalChecksumLoadCost() {
+      return getLogSegment()
+          .getLastSeenChecksum()
+          .map(file -> (int) (version - FileNames.getFileVersion(new Path(file.getPath()))));
+    }
+
+    @Override
+    public Optional<TableStats> getTableStats(Engine engine) throws IOException {
+      Optional<CRCInfo> crc = getCurrentCrcInfo();
+      if (!crc.isPresent()) {
+        crc =
+            ChecksumUtils.tryBuildCrcIncrementally(
+                engine, getLogSegment(), logReplay.getLastSeenCrcInfo());
+      }
+      return crc.map(c -> new TableStats(c.getTableSizeBytes(), c.getNumFiles()));
     }
   }
 }

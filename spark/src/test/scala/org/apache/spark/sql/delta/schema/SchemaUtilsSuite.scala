@@ -22,7 +22,7 @@ import java.util.regex.Pattern
 
 import scala.annotation.tailrec
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaTestUtils, TypeWideningMode}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils, TypeWideningMode}
 import org.apache.spark.sql.delta.RowCommitVersion
 import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -49,8 +49,7 @@ class SchemaUtilsSuite extends QueryTest
   with SharedSparkSession
   with GivenWhenThen
   with DeltaSQLTestUtils
-  with DeltaSQLCommandTest
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaSQLCommandTest {
   import SchemaUtils._
   import TypeWideningMode._
   import testImplicits._
@@ -108,7 +107,7 @@ class SchemaUtilsSuite extends QueryTest
       .add("dupColName", IntegerType)
       .add("b", IntegerType)
       .add("dupColName", StringType)
-    expectFailure("dupColName") { checkColumnNameDuplication(schema, "") }
+    expectFailure("dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
   }
 
   test("duplicate column name in top level - case sensitivity") {
@@ -116,7 +115,7 @@ class SchemaUtilsSuite extends QueryTest
       .add("dupColName", IntegerType)
       .add("b", IntegerType)
       .add("dupCOLNAME", StringType)
-    expectFailure("dupColName") { checkColumnNameDuplication(schema, "") }
+    expectFailure("dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
   }
 
   test("duplicate column name for nested column + non-nested column") {
@@ -125,7 +124,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("a", IntegerType)
         .add("b", IntegerType))
       .add("dupColName", IntegerType)
-    expectFailure("dupColName") { checkColumnNameDuplication(schema, "") }
+    expectFailure("dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
   }
 
   test("duplicate column name for nested column + non-nested column - case sensitivity") {
@@ -134,7 +133,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("a", IntegerType)
         .add("b", IntegerType))
       .add("dupCOLNAME", IntegerType)
-    expectFailure("dupCOLNAME") { checkColumnNameDuplication(schema, "") }
+    expectFailure("dupCOLNAME") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
   }
 
   test("duplicate column name in nested level") {
@@ -144,7 +143,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", IntegerType)
         .add("dupColName", StringType)
       )
-    expectFailure("top.dupColName") { checkColumnNameDuplication(schema, "") }
+    expectFailure("top.dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
   }
 
   test("duplicate column name in nested level - case sensitivity") {
@@ -154,7 +153,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", IntegerType)
         .add("dupCOLNAME", StringType)
       )
-    expectFailure("top.dupColName") { checkColumnNameDuplication(schema, "") }
+    expectFailure("top.dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
   }
 
   test("duplicate column name in double nested level") {
@@ -166,7 +165,7 @@ class SchemaUtilsSuite extends QueryTest
           .add("dupColName", StringType))
         .add("d", IntegerType)
       )
-    expectFailure("top.b.dupColName") { checkColumnNameDuplication(schema, "") }
+    expectFailure("top.b.dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
   }
 
   test("duplicate column name in double nested array") {
@@ -178,7 +177,9 @@ class SchemaUtilsSuite extends QueryTest
           .add("dupColName", StringType))))
         .add("d", IntegerType)
       )
-    expectFailure("top.b.element.element.dupColName") { checkColumnNameDuplication(schema, "") }
+    expectFailure("top.b.element.element.dupColName") {
+      checkColumnNameDuplication(schema, "TABLE_SCHEMA")
+    }
   }
 
   test("duplicate column name in double nested map") {
@@ -190,21 +191,21 @@ class SchemaUtilsSuite extends QueryTest
         .add("top", new StructType()
           .add("b", MapType(keyType.add("dupColName", StringType), keyType))
         )
-      checkColumnNameDuplication(schema, "")
+      checkColumnNameDuplication(schema, "TABLE_SCHEMA")
     }
     expectFailure("top.b.value.dupColName") {
       val schema = new StructType()
         .add("top", new StructType()
           .add("b", MapType(keyType, keyType.add("dupColName", StringType)))
         )
-      checkColumnNameDuplication(schema, "")
+      checkColumnNameDuplication(schema, "TABLE_SCHEMA")
     }
     // This is okay
     val schema = new StructType()
       .add("top", new StructType()
         .add("b", MapType(keyType, keyType))
       )
-    checkColumnNameDuplication(schema, "")
+    checkColumnNameDuplication(schema, "TABLE_SCHEMA")
   }
 
   test("duplicate column name in nested array") {
@@ -214,7 +215,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", IntegerType)
         .add("dupColName", StringType))
       )
-    expectFailure("top.element.dupColName") { checkColumnNameDuplication(schema, "") }
+    expectFailure("top.element.dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
   }
 
   test("duplicate column name in nested array - case sensitivity") {
@@ -224,7 +225,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", IntegerType)
         .add("dupCOLNAME", StringType))
       )
-    expectFailure("top.element.dupColName") { checkColumnNameDuplication(schema, "") }
+    expectFailure("top.element.dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
   }
 
   test("non duplicate column because of back tick") {
@@ -233,7 +234,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("a", IntegerType)
         .add("b", IntegerType))
       .add("top.a", IntegerType)
-    checkColumnNameDuplication(schema, "")
+    checkColumnNameDuplication(schema, "TABLE_SCHEMA")
   }
 
   test("non duplicate column because of back tick - nested") {
@@ -243,7 +244,7 @@ class SchemaUtilsSuite extends QueryTest
           .add("a", IntegerType)
           .add("b", IntegerType))
         .add("top.a", IntegerType))
-    checkColumnNameDuplication(schema, "")
+    checkColumnNameDuplication(schema, "TABLE_SCHEMA")
   }
 
   test("duplicate column with back ticks - nested") {
@@ -252,7 +253,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("top.a", StringType)
         .add("b", IntegerType)
         .add("top.a", IntegerType))
-    expectFailure("first.`top.a`") { checkColumnNameDuplication(schema, "") }
+    expectFailure("first.`top.a`") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
   }
 
   test("duplicate column with back ticks - nested and case sensitivity") {
@@ -261,7 +262,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("TOP.a", StringType)
         .add("b", IntegerType)
         .add("top.a", IntegerType))
-    expectFailure("first.`top.a`") { checkColumnNameDuplication(schema, "") }
+    expectFailure("first.`top.a`") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
   }
 
   /////////////////////////////
@@ -2601,7 +2602,9 @@ class SchemaUtilsSuite extends QueryTest
       allowAutomaticWidening = AllowAutomaticWideningMode.default),
     AllTypeWideningToCommonWiderType,
     TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
-    TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true)
+    TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true),
+    AllTypeWideningWithDecimalCoercion,
+    TypeEvolutionWithDecimalCoercion
   )
 
   test("typeWideningMode - byte->short->int is always allowed") {
@@ -2638,7 +2641,7 @@ class SchemaUtilsSuite extends QueryTest
     MapType(IntegerType, IntegerType) -> MapType(LongType, LongType),
     ArrayType(IntegerType) -> ArrayType(LongType)
   ))
-  testSparkMasterOnly(s"typeWideningMode ${fromType.sql} -> ${toType.sql}") {
+  test(s"typeWideningMode ${fromType.sql} -> ${toType.sql}") {
     val narrow = new StructType().add("a", fromType)
     val wide = new StructType().add("a", toType)
 
@@ -2650,7 +2653,9 @@ class SchemaUtilsSuite extends QueryTest
           allowAutomaticWidening = AllowAutomaticWideningMode.default),
         TypeEvolution(
           uniformIcebergCompatibleOnly = true,
-          allowAutomaticWidening = AllowAutomaticWideningMode.default))) {
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
+        AllTypeWideningWithDecimalCoercion,
+        TypeEvolutionWithDecimalCoercion)) {
       // Narrowing is not allowed.
       expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType")) {
@@ -2683,7 +2688,7 @@ class SchemaUtilsSuite extends QueryTest
     ShortType -> DoubleType,
     IntegerType -> DecimalType(10, 0)
   ))
-  testSparkMasterOnly(
+  test(
     s"typeWideningMode - blocked type evolution ${fromType.sql} -> ${toType.sql}") {
     val narrow = new StructType().add("a", fromType)
     val wide = new StructType().add("a", toType)
@@ -2696,7 +2701,8 @@ class SchemaUtilsSuite extends QueryTest
         TypeEvolution(
           uniformIcebergCompatibleOnly = true,
           allowAutomaticWidening = AllowAutomaticWideningMode.SAME_FAMILY_TYPE),
-        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true),
+        TypeEvolutionWithDecimalCoercion)) {
       expectAnalysisErrorClass(
         "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         Map("currentDataType" -> fromType.toString, "updateDataType" -> toType.toString),
@@ -2716,7 +2722,7 @@ class SchemaUtilsSuite extends QueryTest
     DateType -> TimestampNTZType,
     DecimalType(10, 2) -> DecimalType(12, 4)
   ))
-  testSparkMasterOnly(
+  test(
       s"typeWideningMode - Uniform Iceberg compatibility ${fromType.sql} -> ${toType.sql}") {
     val narrow = new StructType().add("a", fromType)
     val wide = new StructType().add("a", toType)
@@ -2771,7 +2777,7 @@ class SchemaUtilsSuite extends QueryTest
     }
   }
 
-  testSparkMasterOnly(
+  test(
     s"typeWideningMode - widen to common wider decimal") {
     val left = new StructType().add("a", DecimalType(10, 2))
     val right = new StructType().add("a", DecimalType(5, 4))
@@ -2781,7 +2787,9 @@ class SchemaUtilsSuite extends QueryTest
       // Increasing decimal scale isn't supported by Iceberg, so only possible when we don't enforce
       // Iceberg compatibility.
       TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
-      AllTypeWideningToCommonWiderType
+      AllTypeWideningToCommonWiderType,
+      AllTypeWideningWithDecimalCoercion,
+      TypeEvolutionWithDecimalCoercion
     )
 
     for (typeWideningMode <- modesCanWidenToCommonWiderDecimal) {
@@ -2806,7 +2814,7 @@ class SchemaUtilsSuite extends QueryTest
 
   }
 
-  testSparkMasterOnly(
+  test(
     s"typeWideningMode - widen to common wider decimal exceeds max decimal precision") {
     // We'd need a DecimalType(40, 19) to fit both types, which exceeds max decimal precision of 38.
     val left = new StructType().add("a", DecimalType(20, 19))
@@ -2825,6 +2833,83 @@ class SchemaUtilsSuite extends QueryTest
         matchPVals = false) {
         mergeSchemas(right, left, typeWideningMode = typeWideningMode)
       }
+    }
+  }
+
+  test(s"typeWideningMode - widen integral type to common wider decimal") {
+    val left = new StructType()
+      .add("a", ByteType)
+      .add("b", ShortType)
+      .add("c", IntegerType)
+      .add("d", LongType)
+    val right = new StructType()
+      .add("a", DecimalType(2, 1))
+      .add("b", DecimalType(2, 1))
+      .add("c", DecimalType(2, 1))
+      .add("d", DecimalType(2, 1))
+    val wider = new StructType()
+      .add("a", DecimalType(11, 1))
+      .add("b", DecimalType(11, 1))
+      .add("c", DecimalType(11, 1))
+      .add("d", DecimalType(21, 1))
+
+    assert(mergeSchemas(left, right, typeWideningMode = AllTypeWideningWithDecimalCoercion)
+      == wider)
+    assert(mergeSchemas(left, right, typeWideningMode = AllTypeWideningToCommonWiderType)
+      == wider)
+
+    // check that flipping conf to false prevents integral type decimal coercion
+    // for `AllTypeWideningToCommonWiderType`
+    withSQLConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ALLOW_INTEGRAL_DECIMAL_COERCION.key ->
+      "false") {
+      val exception = intercept[DeltaAnalysisException] {
+        mergeSchemas(left, right, typeWideningMode = AllTypeWideningToCommonWiderType)
+      }
+      checkError(
+        exception,
+        "DELTA_FAILED_TO_MERGE_FIELDS",
+        sqlState = "22005",
+        parameters = Map("currentField" -> "a", "updateField" -> "a")
+      )
+    }
+  }
+  test(s"typeWideningMode - widen integral type to common wider decimal (reverse direction)") {
+    // Test the reverse case: DecimalType on left, IntegralType on right
+    // This ensures the fix in PR #6491 works correctly in both directions
+    val left = new StructType()
+      .add("a", DecimalType(2, 1))
+      .add("b", DecimalType(2, 1))
+      .add("c", DecimalType(2, 1))
+      .add("d", DecimalType(2, 1))
+    val right = new StructType()
+      .add("a", ByteType)
+      .add("b", ShortType)
+      .add("c", IntegerType)
+      .add("d", LongType)
+    val wider = new StructType()
+      .add("a", DecimalType(11, 1))
+      .add("b", DecimalType(11, 1))
+      .add("c", DecimalType(11, 1))
+      .add("d", DecimalType(21, 1))
+
+    assert(mergeSchemas(left, right, typeWideningMode = AllTypeWideningWithDecimalCoercion)
+      == wider)
+    assert(mergeSchemas(left, right, typeWideningMode = AllTypeWideningToCommonWiderType)
+      == wider)
+
+    // check that flipping conf to false prevents integral type decimal coercion
+    // for `AllTypeWideningToCommonWiderType`
+    withSQLConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ALLOW_INTEGRAL_DECIMAL_COERCION.key ->
+      "false") {
+      val exception = intercept[DeltaAnalysisException] {
+        mergeSchemas(left, right, typeWideningMode = AllTypeWideningToCommonWiderType)
+      }
+      checkError(
+        exception,
+        "DELTA_FAILED_TO_MERGE_FIELDS",
+        sqlState = "22005",
+        parameters = Map("currentField" -> "a", "updateField" -> "a")
+      )
     }
   }
 

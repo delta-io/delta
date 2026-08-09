@@ -36,4 +36,45 @@ class ExpressionsSuite extends AnyFunSuite {
     }
     assert(ex3.getMessage.matches("struct.* is an invalid data type for Literal."))
   }
+
+  test("ofDecimal: adjusts precision when scale exceeds caller-provided precision") {
+    // Java's BigDecimal.precision() returns the count of significant digits in the
+    // unscaled value, not the SQL precision. For example, BigDecimal.valueOf(0, 18) has
+    // precision=1 and scale=18. A naive caller passing bd.precision() as the precision
+    // argument would create DecimalType(1, 18) which is invalid. ofDecimal should
+    // adjust precision upward to at least scale.
+    val bd = java.math.BigDecimal.valueOf(0, 18)
+    assert(bd.precision() == 1)
+    assert(bd.scale() == 18)
+    val lit = Literal.ofDecimal(bd, bd.precision(), bd.scale())
+    val dt = lit.getDataType.asInstanceOf[DecimalType]
+    assert(dt.getPrecision == 18)
+    assert(dt.getScale == 18)
+  }
+
+  test("ofDecimal: normal case with precision >= scale is unchanged") {
+    val bd = new java.math.BigDecimal("123.45")
+    val lit = Literal.ofDecimal(bd, 10, 2)
+    val dt = lit.getDataType.asInstanceOf[DecimalType]
+    assert(dt.getPrecision == 10)
+    assert(dt.getScale == 2)
+    assert(lit.getValue.asInstanceOf[java.math.BigDecimal].compareTo(bd) == 0)
+  }
+
+  test("ofDecimal: rejects scale exceeding DecimalType max precision (38)") {
+    val bd = java.math.BigDecimal.valueOf(0, 39) // scale=39 > MAX_PRECISION
+    val ex = intercept[IllegalArgumentException] {
+      Literal.ofDecimal(bd, bd.precision(), bd.scale())
+    }
+    assert(ex.getMessage.contains("Invalid precision and scale combo"))
+  }
+
+  test("ofDecimal: rejects value that exceeds adjusted precision") {
+    // BigDecimal "99999.99" has 7 significant digits, so precision=5, scale=2 is too small
+    val bd = new java.math.BigDecimal("99999.99")
+    val ex = intercept[IllegalArgumentException] {
+      Literal.ofDecimal(bd, 5, 2)
+    }
+    assert(ex.getMessage.contains("exceeds max precision"))
+  }
 }

@@ -86,6 +86,7 @@ class InMemoryLogReplay(
         }
       case _: CommitInfo => // do nothing
       case _: AddCDCFile => // do nothing
+      case _: Checkpoint => // AMT pointer; the manifest tree is loaded separately.
       case null => // Some crazy future feature. Ignore
     }
   }
@@ -109,6 +110,17 @@ class InMemoryLogReplay(
 
   private[delta] def getDomainMetadatas: Iterable[DomainMetadata] = domainMetadatas.values
 
+  /**
+   * Returns the most recent [[Protocol]] seen during replay, or None if no Protocol action was
+   * seen during the replay.
+   */
+  private[delta] def getProtocol: Option[Protocol] = Option(currentProtocolVersion)
+  /**
+   * Returns the most recent [[Metadata]] seen during replay, or None if no Metadata action was
+   * seen during the replay.
+   */
+  private[delta] def getMetadata: Option[Metadata] = Option(currentMetaData)
+
   /** Returns the current state of the Table as an iterator of actions. */
   override def checkpoint: Iterator[Action] = {
     val fileActions = (activeFiles.values ++ getTombstones).toSeq.sortBy(_.path)
@@ -127,4 +139,14 @@ class InMemoryLogReplay(
 object InMemoryLogReplay{
   /** The unit of path uniqueness in delta log actions is the tuple `(parquet file, dv)`. */
   final case class UniqueFileActionTuple(fileURI: URI, deletionVectorURI: Option[String])
+
+  implicit class UniqueAddFileTuple(a: AddFile) {
+    def toUniqueFileActionTuple: UniqueFileActionTuple =
+      UniqueFileActionTuple(a.pathAsUri, a.getDeletionVectorUniqueId)
+  }
+
+  implicit class UniqueRemoveFileTuple(r: RemoveFile) {
+    def toUniqueFileActionTuple: UniqueFileActionTuple =
+      UniqueFileActionTuple(r.pathAsUri, r.getDeletionVectorUniqueId)
+  }
 }

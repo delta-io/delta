@@ -22,12 +22,12 @@ import java.util.TimeZone
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.DeltaInsertIntoTableSuiteShims._
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.InvalidDefaultValueErrorShims
 import org.scalatest.BeforeAndAfter
 
 import org.apache.spark.{SparkConf, SparkContext, SparkException, SparkThrowable}
@@ -45,8 +45,7 @@ class DeltaInsertIntoSQLSuite
   extends DeltaInsertIntoTestsWithTempViews(
     supportsDynamicOverwrite = true,
     includeSQLOnlyTests = true)
-  with DeltaSQLCommandTest
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -59,7 +58,7 @@ class DeltaInsertIntoSQLSuite
     }
   }
 
-  testSparkMasterOnly("Variant type") {
+  test("Variant type") {
     withTable("t") {
       sql("CREATE TABLE t (id LONG, v VARIANT) USING delta")
       sql("INSERT INTO t (id, v) VALUES (1, parse_json('{\"a\": 1}'))")
@@ -169,7 +168,8 @@ class DeltaInsertIntoSQLSuite
     // true (due to case sensitivity) so that we call resolveQueryColumnsByName and hit the right
     // code path.
 
-    // when the number of columns does not match, throw an arity mismatch error.
+    // when the number of columns does not match and schema evolution is disabled, throw
+    // an arity mismatch error.
     testInsertByNameError(
       targetSchema = "(A int)",
       expectedErrorClass = "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS")
@@ -331,13 +331,7 @@ class DeltaInsertIntoSQLSuite
           .format("delta")
           .insertInto(tableName)
       }
-      checkErrorMatchPVals(
-        exception = err,
-        "_LEGACY_ERROR_TEMP_DELTA_0007",
-        parameters = Map(
-          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-        )
-      )
+      checkError(err, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
 
       // insert data with schema evolution
       withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
@@ -408,13 +402,7 @@ class DeltaInsertIntoSQLSuite
       val e = intercept[AnalysisException] {
         sql("INSERT INTO target SELECT * FROM source")
       }
-      checkErrorMatchPVals(
-        exception = e,
-        "_LEGACY_ERROR_TEMP_DELTA_0007",
-        parameters = Map(
-          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-        )
-      )
+      checkError(e, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         sql("INSERT INTO target SELECT * FROM source")
@@ -449,13 +437,7 @@ class DeltaInsertIntoSQLSuite
       val e = intercept[AnalysisException] {
         sql("INSERT INTO target SELECT * FROM source")
       }
-      checkErrorMatchPVals(
-        exception = e,
-        "_LEGACY_ERROR_TEMP_DELTA_0007",
-        parameters = Map(
-          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-        )
-      )
+      checkError(e, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         sql("INSERT INTO target SELECT * FROM source")
@@ -692,12 +674,15 @@ abstract class DeltaInsertIntoTestsWithTempViews(
         } catch {
           case e: AnalysisException =>
             assert(
-              e.getMessage.contains(INSERT_INTO_TMP_VIEW_ERROR_MSG) ||
+              e.getMessage.contains("[EXPECT_TABLE_NOT_VIEW.NO_ALTERNATIVE]") ||
               e.getMessage.contains("Inserting into an RDD-based table is not allowed") ||
               e.getMessage.contains("Table default.v not found") ||
               e.getMessage.contains("Table or view 'v' not found in database 'default'") ||
               e.getMessage.contains("The table or view `default`.`v` cannot be found") ||
-              e.getMessage.contains("[UNSUPPORTED_INSERT.RDD_BASED] Can't insert into the target."))
+              e.getMessage.contains(
+                "[UNSUPPORTED_INSERT.RDD_BASED] Can't insert into the target.") ||
+              e.getMessage.contains(
+                "The table or view `spark_catalog`.`default`.`v` cannot be found"))
         }
       }
     }
@@ -872,7 +857,7 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
           sql(s"create table t4 (s int default badvalue) using $v2Format " +
             s"$tblPropertiesAllowDefaults")
         },
-        INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG,
+        InvalidDefaultValueErrorShims.INVALID_DEFAULT_VALUE_ERROR_CODE,
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
@@ -1070,9 +1055,9 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       QueryTest.checkAnswer(
         descriptionDf.filter(
           "!(col_name in ('Catalog', 'Created Time', 'Created By', 'Database', " +
-            "'index', 'Is_managed_location', 'Location', 'Name', 'Owner', 'Partition Provider'," +
-            "'Provider', 'Table', 'Table Properties',  'Type', '_partition', 'Last Access', " +
-            "'Statistics', ''))"),
+            "'index', 'Is_managed_location', 'Location', 'Name', 'Namespace', 'Owner', " +
+            "'Partition Provider', 'Provider', 'Table', 'Table Properties', 'Type', " +
+            "'_partition', 'Last Access', 'Statistics', ''))"),
         Seq(
           Row("# Column Default Values", "", ""),
           Row("# Detailed Table Information", "", ""),
@@ -1093,13 +1078,19 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
            |$tblPropertiesAllowDefaults
         """.stripMargin)
       val currentCatalog = spark.sessionState.catalogManager.currentCatalog.name()
+      val stringTypeSql =
+        if (org.apache.spark.SPARK_VERSION.startsWith("4.2")) {
+          "STRING COLLATE UTF8_BINARY"
+        } else {
+          "STRING"
+        }
       QueryTest.checkAnswer(sql("SHOW CREATE TABLE T"),
         Seq(
           Row(
             s"""CREATE TABLE ${currentCatalog}.default.T (
                |  a BIGINT,
                |  b BIGINT DEFAULT 42,
-               |  c STRING DEFAULT 'abc, "def"' COMMENT 'comment')
+               |  c $stringTypeSql DEFAULT 'abc, "def"' COMMENT 'comment')
                |USING parquet
                |COMMENT 'This is a comment'
                |TBLPROPERTIES (
@@ -1574,6 +1565,24 @@ abstract class DeltaInsertIntoTests(
         sql(s"SELECT data FROM $t1 where ts = timestamp'2025-11-26 04:00:00.123456'"), Seq(Row(6)))
 
       checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(6)))
+    }
+  }
+
+  // FIXME: Documenting existing behaviour. Fixing this should be a bugfix and not behavior change.
+  test("insertInto: __HIVE_DEFAULT_PARTITION__ results in null partition column") {
+    val t1 = "tbl"
+    withTable(t1) {
+      sql(s"CREATE TABLE $t1 (part string, data string) USING $v2Format PARTITIONED BY (part)")
+
+      // Insert with __HIVE_DEFAULT_PARTITION__ as partition value
+      // __HIVE_DEFAULT_PARTITION__ is a tombstone value for null partition column
+      sql(s"INSERT INTO $t1 VALUES ('__HIVE_DEFAULT_PARTITION__', 'test')")
+
+      // Verify that the partition column is null
+      checkAnswer(
+        sql(s"SELECT part, data FROM $t1"),
+        Seq(Row(null, "test"))
+      )
     }
   }
 

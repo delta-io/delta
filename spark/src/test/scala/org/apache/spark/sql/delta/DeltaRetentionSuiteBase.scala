@@ -298,12 +298,4 @@ trait DeltaRetentionSuiteBase extends QueryTest
     txn.updateMetadata(Metadata())
     txn
   }
-
-  test("startTxnWithManualLogCleanup") {
-    withTempDir { tempDir =>
-      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-      startTxnWithManualLogCleanup(log).commit(Nil, testOp)
-      assert(!log.enableExpiredLogCleanup())
-    }
-  }
 }

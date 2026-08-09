@@ -48,6 +48,9 @@ trait ConflictResolutionTestUtils
 
   override val timeout: FiniteDuration = 120.seconds
 
+  /** Wraps `executeImpl`. Default is pass-through; suites may override for setup/cleanup. */
+  def wrapExecution[T](thunk: => T): T = thunk
+
   def abbreviate(str: String, abbrevMarker: String, len: Int): String = {
     if (str == null || abbrevMarker == null) {
       null
@@ -67,7 +70,9 @@ trait ConflictResolutionTestUtils
     def execute(ctx: TestContext): Unit = {
       ctx.trackTransaction(this) {
         withSQLConf(sqlConf.toSeq: _*) {
-          executeImpl(ctx)
+          wrapExecution {
+            executeImpl(ctx)
+          }
         }
       }
     }
@@ -98,7 +103,9 @@ trait ConflictResolutionTestUtils
       withSQLConf(sqlConf.toSeq: _*) {
         val (observer_, future_) = runFunctionWithObserver(name, executor,
           fn = () => {
-            executeImpl(ctx)
+            wrapExecution {
+              executeImpl(ctx)
+            }
             // DV tests do not use the results. We just return an empty array to conform with
             // function's signature.
             Array.empty[Row]

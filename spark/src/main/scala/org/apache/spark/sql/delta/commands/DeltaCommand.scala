@@ -38,13 +38,13 @@ import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliase
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 
 /**
@@ -202,7 +202,7 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
         // is table
         case LogicalRelationWithTable(HadoopFsRelation(_, _, _, _, _, _), Some(_)) => true
         // is iceberg table
-        case DataSourceV2Relation(_: IcebergTablePlaceHolder, _, _, _, _) => false
+        case DataSourceV2RelationShim(_: IcebergTablePlaceHolder, _, _, _, _) => false
         // could not resolve table/db
         case _: UnresolvedRelation =>
           throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
@@ -474,6 +474,25 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
       log" (${MDC(DeltaLogKeys.NUM_RECORDS, stats.numLogicalRecordsAddedPartial)})" +
       log" does not match removed records" +
       log" (${MDC(DeltaLogKeys.NUM_RECORDS2, stats.numLogicalRecordsRemovedPartial)})")
+  }
+
+  /**
+   * Creates a LogicalPlan for the current Delta table snapshot,
+   * optionally wrapping it with a table alias if provided.
+   */
+  protected def createTableRelation(
+      txn: OptimisticTransaction, tableAliasOpt: Option[String]): LogicalPlan = {
+    val baseRelation = txn.deltaLog.createRelation(
+      snapshotToUseOpt = Some(txn.snapshot),
+      catalogTableOpt = txn.catalogTable)
+    val tableRelation = LogicalRelation(baseRelation)
+    if (tableAliasOpt.isDefined) {
+      SubqueryAlias(
+        identifier = tableAliasOpt.get,
+        child = tableRelation)
+    } else {
+      tableRelation
+    }
   }
 }
 

@@ -22,6 +22,8 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -52,6 +54,15 @@ public interface CommitRange {
    * @return the ending version number of the commit range
    */
   long getEndVersion();
+
+  /**
+   * Returns the delta commit files that make up this commit range, one per version in {@code
+   * [getStartVersion(), getEndVersion()]}, in increasing version order.
+   *
+   * @return the list of {@link FileStatus}es for the delta commit files in this range
+   * @since 4.4.0
+   */
+  List<FileStatus> getDeltaFiles();
 
   /**
    * Returns the original query boundary used to define the start boundary of this commit range.
@@ -122,4 +133,45 @@ public interface CommitRange {
    */
   CloseableIterator<CommitActions> getCommitActions(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet);
+
+  /**
+   * Returns an iterator of the requested actions for the commits in this commit range.
+   *
+   * <p>Equivalent to {@link #getActions(Engine, Snapshot, Set)} but does not require the caller to
+   * construct a {@link Snapshot} at the start version. Use this overload when you already know the
+   * version (e.g. it came from a continuation token) and want to avoid the cost of loading a
+   * Snapshot purely to satisfy the API.
+   *
+   * <p>The semantics, batch layout, and resource-management contract are identical to {@link
+   * #getActions(Engine, Snapshot, Set)}; see that method for details.
+   *
+   * @param engine the {@link Engine} to use for reading the Delta log files
+   * @param actionSet the set of action types to include in the results. Only actions of these types
+   *     will be returned in the iterator
+   * @return a {@link CloseableIterator} over columnar batches containing the requested actions
+   *     within this commit range
+   * @throws KernelException if the version range contains a version with reader protocol that is
+   *     unsupported by Kernel
+   */
+  CloseableIterator<ColumnarBatch> getActions(
+      Engine engine, Set<DeltaLogActionUtils.DeltaAction> actionSet);
+
+  /**
+   * Returns an iterator of commits in this commit range, where each commit is represented as a
+   * {@link CommitActions} object.
+   *
+   * <p>Equivalent to {@link #getCommitActions(Engine, Snapshot, Set)} but does not require the
+   * caller to construct a {@link Snapshot} at the start version. Use this overload when you already
+   * know the version and want to avoid the cost of loading a Snapshot purely to satisfy the API.
+   *
+   * @param engine the {@link Engine} to use for reading the Delta log files
+   * @param actionSet the set of action types to include in the results. Only actions of these types
+   *     will be returned in each commit's actions iterator
+   * @return a {@link CloseableIterator} over {@link CommitActions}, one per commit version in this
+   *     range
+   * @throws KernelException if the version range contains a version with reader protocol that is
+   *     unsupported by Kernel
+   */
+  CloseableIterator<CommitActions> getCommitActions(
+      Engine engine, Set<DeltaLogActionUtils.DeltaAction> actionSet);
 }

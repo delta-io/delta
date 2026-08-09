@@ -117,11 +117,6 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             FileSystem fs,
             Path resolvedPath) throws IOException {
         final Path parentPath = resolvedPath.getParent();
-        if (!fs.exists(parentPath)) {
-            throw new FileNotFoundException(
-                String.format("No such file or directory: %s", parentPath)
-            );
-        }
 
         FileStatus[] statuses;
         if (
@@ -130,6 +125,15 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         ) {
             statuses = fs.listStatus(parentPath);
         } else {
+            // Fast S3A list path (S3AFileSystem only, opt-in via delta.enableFastS3AListFrom).
+            // It returns an empty result (rather than throwing) for a missing directory, which is
+            // indistinguishable from listing past the latest version, so keep the exists() probe
+            // here to preserve listFrom's documented FileNotFoundException contract.
+            if (!fs.exists(parentPath)) {
+                throw new FileNotFoundException(
+                    String.format("No such file or directory: %s", parentPath)
+                );
+            }
             statuses = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, parentPath);
         }
 

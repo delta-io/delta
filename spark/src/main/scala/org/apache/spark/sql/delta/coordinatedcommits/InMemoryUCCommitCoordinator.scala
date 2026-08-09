@@ -34,6 +34,7 @@ import io.delta.storage.commit.{
 }
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{CommitLimitReachedException => JCommitLimitReachedException, InvalidTargetTableException => JInvalidTargetTableException}
+import io.delta.storage.commit.uniform.UniformMetadata
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 
@@ -71,8 +72,19 @@ class InMemoryUCCommitCoordinator {
     /** Underlying storage of UC commit records */
     private val ucCommits: mutable.ArrayBuffer[UCCommit] = mutable.ArrayBuffer.empty
 
+    /** Last UniformMetadata received from a commit call. For test only. */
+    private var currentUniformMetadataOpt: Option[UniformMetadata] = None
+
     /** RWLock to protect the commitsMap */
     val lock: ReentrantReadWriteLock = new ReentrantReadWriteLock()
+
+    /** @return the last UniformMetadata stored by the coordinator. For test only. */
+    def getCurrentUniformMetadataOpt: Option[UniformMetadata] = currentUniformMetadataOpt
+
+    /** Updates the stored UniformMetadata. */
+    def updateUniformMetadata(uniformMetadata: UniformMetadata): Unit = {
+      currentUniformMetadataOpt = Some(uniformMetadata)
+    }
 
     /**
      * Returns the last ratified commit version for the table.
@@ -288,7 +300,8 @@ class InMemoryUCCommitCoordinator {
        lastKnownBackfilledVersion: Option[Long] = None,
        isDisownCommit: Boolean = false,
        protocolOpt: Option[AbstractProtocol] = None,
-       metadataOpt: Option[AbstractMetadata] = None): Unit = {
+       metadataOpt: Option[AbstractMetadata] = None,
+       uniformOpt: Option[UniformMetadata] = None): Unit = {
     // either commitFileName or backfilledUntil (or both) need to be set
     require(commitFileName.nonEmpty || lastKnownBackfilledVersion.nonEmpty)
     // Onboard the table if it is not already present in the perTableMap.
@@ -315,6 +328,10 @@ class InMemoryUCCommitCoordinator {
         val tableData = perTableMap.get(UUID.fromString(tableId))
         tableData.appendCommit(commitToAppend, isDisownCommit)
       }
+      uniformOpt.foreach { uniform =>
+        val tableData = perTableMap.get(UUID.fromString(tableId))
+        tableData.updateUniformMetadata(uniform)
+      }
       if (throwIOExceptionAfterCommit) {
         throwIOExceptionAfterCommit = false
         throw new IOException("Problem after comitting")
@@ -326,6 +343,12 @@ class InMemoryUCCommitCoordinator {
     }
   }
 
+  /** Returns the last UniformMetadata stored for the given table. For test only. */
+  def getUniformMetadata(tableId: String): Option[UniformMetadata] = {
+    Option(perTableMap.get(UUID.fromString(tableId)))
+      .flatMap(_.getCurrentUniformMetadataOpt)
+  }
+
   def getCommitsFromCoordinator(
       tableId: String,
       tableUri: URI,
@@ -333,13 +356,13 @@ class InMemoryUCCommitCoordinator {
       endVersion: Option[Long]): JGetCommitsResponse = {
     val tableUUID = UUID.fromString(tableId)
     val path = Option(perTableMap.get(tableUUID)).map(_.path).getOrElse {
-      return new JGetCommitsResponse(Seq.empty.asJava, -1)
+      return new JGetCommitsResponse(Seq.empty.asJava, 0L)
     }
     validateTableURI(path, tableUri, UCCoordinatedCommitsRequestType.GET_COMMITS)
     withLock[JGetCommitsResponse](tableUUID) {
       val tableData = perTableMap.get(tableUUID)
       val commits = tableData.getCommits(startVersion, endVersion)
-      new JGetCommitsResponse(commits.asJava, tableData.lastRatifiedCommitVersion)
+      new JGetCommitsResponse(commits.asJava, math.max(tableData.lastRatifiedCommitVersion, 0L))
     }
   }
 }

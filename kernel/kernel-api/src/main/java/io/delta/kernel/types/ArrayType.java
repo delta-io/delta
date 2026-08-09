@@ -55,6 +55,31 @@ public class ArrayType extends DataType {
         && ((ArrayType) dataType).getElementType().equivalent(getElementType());
   }
 
+  /**
+   * Checks whether the given {@code dataType} is compatible with this type when writing data.
+   * Collation differences are ignored.
+   *
+   * <p>This method is intended to be used during the write path to validate that an input type
+   * matches the expected schema before data is written.
+   *
+   * <p>It should not be used in other cases, such as the read path.
+   *
+   * @param dataType the input data type being written
+   * @return {@code true} if the input type is compatible with this type.
+   */
+  @Override
+  public boolean isWriteCompatible(DataType dataType) {
+    if (this == dataType) {
+      return true;
+    }
+    if (dataType == null || getClass() != dataType.getClass()) {
+      return false;
+    }
+    ArrayType arrayType = (ArrayType) dataType;
+    return (elementField == null && arrayType.elementField == null)
+        || (elementField != null && elementField.isWriteCompatible(arrayType.elementField));
+  }
+
   @Override
   public boolean isNested() {
     return true;

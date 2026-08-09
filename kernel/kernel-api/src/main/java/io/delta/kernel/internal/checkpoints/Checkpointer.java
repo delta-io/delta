@@ -19,8 +19,11 @@ import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.EXPIRED_LOG_CLEANUP_ENABLED;
 import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
 import static io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs;
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.CHECKPOINT_PROTECTION_W_FEATURE;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -91,6 +94,11 @@ public class Checkpointer {
       numberOfAddFiles = checkpointDataIter.getNumberOfAddActions();
     } catch (FileAlreadyExistsException faee) {
       throw new CheckpointAlreadyExistsException(version);
+    } catch (IOException io) {
+      if (io.getCause() instanceof FileAlreadyExistsException) {
+        throw new CheckpointAlreadyExistsException(version);
+      }
+      throw io;
     }
 
     final CheckpointMetaData checkpointMetaData =
@@ -101,14 +109,33 @@ public class Checkpointer {
     logger.info(
         "{}: Finished writing last checkpoint metadata file for version: {}", tablePath, version);
 
-    // Clean up delta log files if enabled.
     final Metadata metadata = snapshot.getMetadata();
-    if (EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(metadata)) {
+    if (shouldPerformLogCleanup(snapshot)) {
       cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(metadata));
     } else {
       logger.info(
           "{}: Log cleanup is disabled. Skipping the deletion of expired log files", tablePath);
     }
+  }
+
+  /**
+   * Only clean up expired log files when:
+   *
+   * <ul>
+   *   <li>Snapshot was built as "latest" by intent (not time-traveled)
+   *   <li>checkpointProtection feature is not enabled
+   *   <li>delta.enableExpiredLogCleanup table property is set to true
+   * </ul>
+   */
+  private static boolean shouldPerformLogCleanup(SnapshotImpl snapshot) {
+    final boolean hasCheckpointProtection =
+        snapshot
+            .getProtocol()
+            .getWriterFeatures()
+            .contains(CHECKPOINT_PROTECTION_W_FEATURE.featureName());
+    return snapshot.wasBuiltAsLatest()
+        && EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(snapshot.getMetadata())
+        && !hasCheckpointProtection;
   }
 
   /**
@@ -191,8 +218,11 @@ public class Checkpointer {
           } else if (FileNames.isCheckpointFile(fileName)) {
             currentFileVersion = FileNames.checkpointVersion(fileName);
           } else {
-            // allow all other types of files.
-            currentFileVersion = currentVersion;
+            // Skip unrecognized file types (e.g. .crc files). If we assigned
+            // them a version, they could prematurely trigger the break condition
+            // below and cause us to miss recent checkpoints.
+            numberOfFilesSearched++;
+            continue;
           }
 
           boolean shouldContinue =
@@ -252,6 +282,11 @@ public class Checkpointer {
   /** Returns information about the most recent checkpoint. */
   public Optional<CheckpointMetaData> readLastCheckpointFile(Engine engine) {
     return loadMetadataFromFile(engine, 0 /* tries */);
+  }
+
+  /** Reads {@code _last_checkpoint} as an opaque JSON blob. */
+  public Optional<LastCheckpointSerialized> readLastCheckpointSerialized(Engine engine) {
+    return loadSerializedFromFile(engine, 0 /* tries */);
   }
 
   /**
@@ -351,6 +386,81 @@ public class Checkpointer {
       // is to list files and find the last checkpoint file. And the `_last_checkpoint`
       // file is possibly being written to.
       return loadMetadataFromFile(engine, tries + 1);
+    }
+  }
+
+  /**
+   * Loads the opaque {@code _last_checkpoint} JSON blob via {@link LastCheckpointFileReader}.
+   *
+   * @param engine {@link Engine instance to use}
+   * @param tries Number of times already tried to load before this call.
+   */
+  private Optional<LastCheckpointSerialized> loadSerializedFromFile(Engine engine, int tries) {
+    if (tries >= READ_LAST_CHECKPOINT_FILE_MAX_RETRIES) {
+      logger.warn(
+          "Failed to load serialized last checkpoint from file {} after {} attempts.",
+          lastCheckpointFilePath,
+          READ_LAST_CHECKPOINT_FILE_MAX_RETRIES);
+      return Optional.empty();
+    }
+
+    logger.info(
+        "Loading serialized last checkpoint from the _last_checkpoint file. Attempt: {} / {}",
+        tries + 1,
+        READ_LAST_CHECKPOINT_FILE_MAX_RETRIES);
+
+    try {
+      Optional<String> jsonOpt =
+          LastCheckpointFileReader.readUtf8(engine, lastCheckpointFilePath.toString());
+      if (!jsonOpt.isPresent()) {
+        logger.warn(
+            "Last checkpoint file {} has no data. Retrying after 1sec. (current attempt = {})",
+            lastCheckpointFilePath,
+            tries);
+        try {
+          Thread.sleep(1000);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return Optional.empty();
+        }
+        return loadSerializedFromFile(engine, tries + 1);
+      }
+
+      String json = jsonOpt.get();
+      // Detect a torn read: _last_checkpoint may be overwritten between getFileStatus (size)
+      // and readFiles (bytes).
+      validateJsonObject(json);
+      return Optional.of(new LastCheckpointSerialized(json));
+    } catch (Exception e) {
+      if (e instanceof FileNotFoundException
+          || (e instanceof KernelEngineException
+              && e.getCause() instanceof FileNotFoundException)) {
+        return Optional.empty();
+      }
+      String msg =
+          String.format(
+              "Failed to load serialized last checkpoint from file %s. "
+                  + "It must be in the process of being written. "
+                  + "Retrying after 1sec. (current attempt of %s (max 3)",
+              lastCheckpointFilePath, tries);
+      logger.warn(msg, e);
+      return loadSerializedFromFile(engine, tries + 1);
+    }
+  }
+
+  /** Syntax check for the opaque blob path: valid JSON object with a {@code version} field. */
+  private static void validateJsonObject(String json) throws IOException {
+    final JsonNode node;
+    try {
+      node = JsonUtils.mapper().readTree(json);
+    } catch (JsonProcessingException e) {
+      throw new IOException("Failed to parse _last_checkpoint as JSON", e);
+    }
+    if (node == null || !node.isObject()) {
+      throw new IOException("_last_checkpoint must be a JSON object");
+    }
+    if (!node.has("version")) {
+      throw new IOException("_last_checkpoint missing version field");
     }
   }
 }

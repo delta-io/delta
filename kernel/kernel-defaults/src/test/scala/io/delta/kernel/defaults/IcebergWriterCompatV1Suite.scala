@@ -470,7 +470,9 @@ trait IcebergWriterCompatV1SuiteBase
 
   testIncompatibleUnsupportedTableFeature(
     "changeDataFeed",
-    tablePropertiesToEnable = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true"))
+    tablePropertiesToEnable = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true"),
+    expectedErrorMessage =
+      "Table features [changeDataFeed] are incompatible with icebergWriterCompatV1")
 
   testIncompatibleUnsupportedTableFeature(
     "invariants",
@@ -563,12 +565,6 @@ trait IcebergWriterCompatV1SuiteBase
   testIncompatibleUnsupportedTableFeature(
     "defaultColumns inactive",
     tablePropertiesToEnable = Map("delta.feature.defaultColumns" -> "supported"),
-    expectedErrorMessage = "Unsupported Delta table feature")
-
-  // collations is not added to Kernel yet --> throws an error on feature lookup
-  testIncompatibleUnsupportedTableFeature(
-    "collations inactive",
-    tablePropertiesToEnable = Map("delta.feature.collations" -> "supported"),
     expectedErrorMessage = "Unsupported Delta table feature")
 
   /* ----- Legacy incompatible features allowed if they are inactive  ----- */

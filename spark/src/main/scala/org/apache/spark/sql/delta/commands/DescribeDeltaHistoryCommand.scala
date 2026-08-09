@@ -113,7 +113,7 @@ case class DescribeDeltaHistoryCommand(
         )
       }
       import org.apache.spark.sql.delta.implicits._
-      val commits = deltaLog.history.getHistory(limit)
+      val commits = deltaLog.history.getHistory(limit, table.catalogTable)
       sparkSession.implicits.localSeqToDatasetHolder(commits).toDF().collect().toSeq
     }
   }

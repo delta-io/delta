@@ -120,6 +120,60 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
   }
 
   /**
+   * Returns a new {@link CloseableIterator} that applies a function to each element of this
+   * iterator, where each element is transformed into another iterator, and the results are
+   * flattened into a single iterator.
+   *
+   * <p>Example:
+   *
+   * <pre>{@code
+   * // [1, 2, 3].flatMap(x -> [x, x]) => [1, 1, 2, 2, 3, 3]
+   * iterator.flatMap(commit -> processCommit(commit))
+   * }</pre>
+   *
+   * @param mapper A function that transforms each element into a {@link CloseableIterator}
+   * @param <U> The type of elements in the resulting iterator
+   * @return A flattened {@link CloseableIterator} over all elements from all inner iterators
+   */
+  default <U> CloseableIterator<U> flatMap(Function<T, CloseableIterator<U>> mapper) {
+    CloseableIterator<T> delegate = this;
+    return new CloseableIterator<U>() {
+      private CloseableIterator<U> currentInner = null;
+
+      @Override
+      public boolean hasNext() {
+        while (true) {
+          if (currentInner != null && currentInner.hasNext()) {
+            return true;
+          }
+          if (currentInner != null) {
+            Utils.closeCloseables(currentInner);
+            currentInner = null;
+          }
+          if (!delegate.hasNext()) {
+            return false;
+          }
+          currentInner = mapper.apply(delegate.next());
+        }
+      }
+
+      @Override
+      public U next() {
+        if (!hasNext()) {
+          throw new NoSuchElementException();
+        }
+        return currentInner.next();
+      }
+
+      @Override
+      public void close() throws IOException {
+        Utils.closeCloseables(currentInner, delegate);
+        currentInner = null;
+      }
+    };
+  }
+
+  /**
    * Returns a new {@link CloseableIterator} that includes only the elements of this iterator for
    * which the given {@code mapper} function returns {@code true}.
    *

@@ -22,7 +22,7 @@ import scala.annotation.tailrec
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
 import org.apache.spark.sql.delta.fuzzer.{OptimisticTransactionPhases, PhaseLockingTransactionExecutionObserver}
@@ -122,6 +122,32 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
   protected val backfillObservers =
     new ConcurrentLinkedDeque[PhaseLockingTransactionExecutionObserver]
 
+  // Collects errors from background threads so busyWaitFor can fail fast with useful messages.
+  object BackgroundErrorSink {
+    private val errors = new ConcurrentLinkedDeque[Throwable]()
+
+    def recordError(t: Throwable): Unit = errors.addLast(t)
+
+    def isEmpty: Boolean = errors.isEmpty()
+
+    def hasErrors: Boolean = !errors.isEmpty()
+
+    def clear(): Unit = errors.clear()
+
+    def checkAndThrow(): Unit = {
+      if (hasErrors) {
+        import scala.jdk.CollectionConverters._
+        val errorList = errors.iterator().asScala.toList
+        val summaries = errorList.map { t =>
+          val sw = new java.io.StringWriter()
+          t.printStackTrace(new java.io.PrintWriter(sw))
+          sw.toString
+        }
+        fail(s"Background thread(s) failed:\n${summaries.mkString("\n---\n")}")
+      }
+    }
+  }
+
   // An observer that adds transaction observers to `backfillObservers` for all batches.
   object TrackingBackfillExecutionObserver extends BackfillExecutionObserver {
     override def executeBatch[T](f: => T): T = {
@@ -143,6 +169,8 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
   protected def prepareSingleBackfillBatchCommit(): Unit = {
     var nextBlockedObserver: Option[PhaseLockingTransactionExecutionObserver] = None
     def foundNextBlockedObserver(): Boolean = {
+      // Fail fast if background thread died.
+      BackgroundErrorSink.checkAndThrow()
       backfillObservers.forEach { observer =>
         val prepareEntryState = observer.phases.preparePhase.entryBarrier.load()
         if (nextBlockedObserver.isEmpty &&
@@ -153,8 +181,9 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
       nextBlockedObserver.isDefined
     }
     busyWaitFor(foundNextBlockedObserver, timeout)
-    unblockUntilPreCommit(nextBlockedObserver.get)
-    busyWaitFor(nextBlockedObserver.get.phases.preparePhase.hasEntered, timeout)
+    val observerToWaitOn = nextBlockedObserver.get
+    unblockUntilPreCommit(observerToWaitOn)
+    busyWaitForPreparePhase(observerToWaitOn)
   }
 
   // Commit the backfill batch that has been prepared by 'prepareSingleBackfillBatchCommit'.
@@ -164,6 +193,16 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
     require(observer.phases.preparePhase.hasEntered)
     unblockCommit(observer)
     waitForCommit(observer)
+  }
+
+  // Wait for an observer to enter the prepare phase, with fail-fast on background errors.
+  protected def busyWaitForPreparePhase(
+      observer: PhaseLockingTransactionExecutionObserver): Unit = {
+    def hasPrepared(): Boolean = {
+      BackgroundErrorSink.checkAndThrow()
+      observer.phases.preparePhase.hasEntered
+    }
+    busyWaitFor(hasPrepared, timeout)
   }
 
   // Launch the backfill command and wait until the table feature has been committed.
@@ -176,18 +215,28 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
   // Launch the backfill in a separate thread to run in parallel to `concurrentTransaction`.
   private def launchBackfillInBackgroundThread(): Future[_] = {
     val threadPool = ThreadUtils.newDaemonSingleThreadExecutor("backfill-thread-pool")
-    val backfillRunnable: Runnable = () => backfillTransaction()
+    val backfillRunnable: Runnable = () => {
+      try {
+        backfillTransaction()
+      } catch {
+        case t: Throwable =>
+          BackgroundErrorSink.recordError(t)
+          throw t
+      }
+    }
     threadPool.submit(backfillRunnable)
   }
 
   protected def withTrackedBackfillCommits(testBlock: => Unit): Unit = {
     assert(backfillObservers.isEmpty)
+    assert(BackgroundErrorSink.isEmpty)
     try {
       BackfillExecutionObserver.withObserver(TrackingBackfillExecutionObserver) {
         testBlock
       }
     } finally {
       backfillObservers.clear()
+      BackgroundErrorSink.clear()
     }
   }
 
@@ -203,6 +252,32 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
     }
   }
 
+  /**
+   * Sets explicit insertion times on files to guarantee deterministic ordering for backfill.
+   * Files in partitions 0-1 get early insertion time (batch 1).
+   * Files in partitions 2-3 get later insertion time (batch 2).
+   */
+  private def setDeterministicInsertionTimes(): Unit = {
+    val log = deltaLog
+    val snapshot = log.update()
+    val allFiles = snapshot.allFiles.collect()
+
+    // Partitions 0-1 get insertion time 1000, partitions 2-3 get insertion time 2000
+    val earlyTime = "1000"
+    val lateTime = "2000"
+
+    val updatedFiles = allFiles.map { file =>
+      val partition = file.partitionValues(partitionColumnName).toInt
+      val insertionTime = if (partition < 2) earlyTime else lateTime
+      val existingTags = Option(file.tags).getOrElse(Map.empty[String, String])
+      val newTags = existingTags + (AddFile.Tags.INSERTION_TIME.name -> insertionTime)
+      file.copy(tags = newTags)
+    }
+
+    // Replace files with updated versions using ManualUpdate
+    log.startTransaction(None).commit(updatedFiles, ManualUpdate)
+  }
+
   protected def withTestTable(testBlock: => Unit): Unit = {
     withTable(testTableName) {
       // Row tracking will be enabled by the backfill.
@@ -212,6 +287,11 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
           tableCreationDF
             .repartitionByRange(numFilesPerPartition, col(colName))
             .write.format("delta").partitionBy(partitionColumnName).saveAsTable(testTableName)
+
+          // Set explicit insertion times to guarantee deterministic ordering:
+          // - Partitions 0-1 get early insertion time (will be batch 1)
+          // - Partitions 2-3 get later insertion time (will be batch 2)
+          setDeterministicInsertionTimes()
         }
 
         val tableDF = spark.table(testTableName)
@@ -287,7 +367,7 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
             case (concurrentTransactionObserver :: Nil) =>
               // Prepare concurrent transaction.
               unblockUntilPreCommit(concurrentTransactionObserver)
-              busyWaitFor(concurrentTransactionObserver.phases.preparePhase.hasEntered, timeout)
+              busyWaitForPreparePhase(concurrentTransactionObserver)
 
               // Prepare the commit of one backfill batch.
               prepareSingleBackfillBatchCommit()
@@ -335,8 +415,7 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
                 case (concurrentTransactionObserver :: Nil) =>
                   // Prepare concurrent commit.
                   unblockUntilPreCommit(concurrentTransactionObserver)
-                  busyWaitFor(
-                    concurrentTransactionObserver.phases.preparePhase.hasEntered, timeout)
+                  busyWaitForPreparePhase(concurrentTransactionObserver)
 
                   // Commit one backfill.
                   commitSingleBackfillBatch()
@@ -377,11 +456,11 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
               case (concurrentTransactionObserver :: backfillObserver :: Nil) =>
                 // Prepare concurrent transaction commit.
                 unblockUntilPreCommit(concurrentTransactionObserver)
-                busyWaitFor(concurrentTransactionObserver.phases.preparePhase.hasEntered, timeout)
+                busyWaitForPreparePhase(concurrentTransactionObserver)
 
                 // Prepare table feature commit.
                 unblockUntilPreCommit(backfillObserver)
-                busyWaitFor(backfillObserver.phases.preparePhase.hasEntered, timeout)
+                busyWaitForPreparePhase(backfillObserver)
 
                 // Commit concurrent transaction.
                 unblockCommit(concurrentTransactionObserver)
@@ -418,7 +497,7 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
                 case (concurrentTransactionObserver :: Nil) =>
                   // Prepare concurrent commit.
                   unblockUntilPreCommit(concurrentTransactionObserver)
-                  busyWaitFor(concurrentTransactionObserver.phases.preparePhase.hasEntered, timeout)
+                  busyWaitForPreparePhase(concurrentTransactionObserver)
 
                   val backfillFuture = launchBackFillAndBlockAfterFeatureIsCommitted()
                   busyWaitFor(backfillObservers.size() > 0, timeout)
@@ -441,6 +520,9 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
     /**
      * Scenario 3: Prepare the concurrent commit before the table feature is enabled
      * and commit after at least one backfill committed and before the metadata update commit.
+     *
+     * The concurrent transaction touches partitions 1 and 2 (one from batch 1, one from batch 2).
+     * Partition 3 is not touched, guaranteeing batch 2 always has work to do.
      */
     test(s"$concurrentTransactionName - Scenario 3") {
       withTrackedBackfillCommits {
@@ -454,20 +536,21 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
                   case (concurrentTransactionObserver :: Nil) =>
                     // Prepare concurrent commit.
                     unblockUntilPreCommit(concurrentTransactionObserver)
-                    busyWaitFor(
-                      concurrentTransactionObserver.phases.preparePhase.hasEntered, timeout)
+                    busyWaitForPreparePhase(concurrentTransactionObserver)
 
                     val backfillFuture = launchBackFillAndBlockAfterFeatureIsCommitted()
 
-                    // Commit one backfill batch.
+                    // Commit one backfill batch (processes partitions 0-1).
                     commitSingleBackfillBatch()
 
-                    // Commit concurrent transaction.
+                    // Commit concurrent transaction (touches partitions 1 and 2).
                     unblockCommit(concurrentTransactionObserver)
                     waitForCommit(concurrentTransactionObserver)
 
-                    // Finish the backfill command, which has 2 batches.
+                    // Commit second backfill batch (processes partitions 2-3).
+                    // Partition 3 is untouched, so there's always work for batch 2.
                     commitSingleBackfillBatch()
+
                     backfillFuture.get(timeout.toSeconds, TimeUnit.SECONDS)
                 }
               ThreadUtils.awaitResult(concurrentTransactionFuture, timeout)
@@ -510,7 +593,7 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
 
                   // Prepare concurrent transaction.
                   unblockUntilPreCommit(concurrentTransactionObserver)
-                  busyWaitFor(concurrentTransactionObserver.phases.preparePhase.hasEntered, timeout)
+                  busyWaitForPreparePhase(concurrentTransactionObserver)
 
                   // Prepare the commit of one backfill batch.
                   prepareSingleBackfillBatchCommit()
@@ -534,6 +617,9 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
      * Scenario 6: The concurrent transaction starts after the table feature is enabled and commits
      * after one backfill has been committed concurrently, requiring conflict resolution on the
      * concurrent transaction.
+     *
+     * The concurrent transaction touches partitions 1 and 2 (one from batch 1, one from batch 2).
+     * Partition 3 is not touched, guaranteeing batch 2 always has work to do.
      */
     test(s"$concurrentTransactionName - Scenario 6") {
       withTrackedBackfillCommits {
@@ -550,18 +636,19 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
 
                     // Prepare concurrent commit.
                     unblockUntilPreCommit(concurrentTransactionObserver)
-                    busyWaitFor(
-                      concurrentTransactionObserver.phases.preparePhase.hasEntered, timeout)
+                    busyWaitForPreparePhase(concurrentTransactionObserver)
 
-                    // Commit one backfill.
+                    // Commit one backfill batch (processes partitions 0-1).
                     commitSingleBackfillBatch()
 
-                    // Commit concurrent transaction.
+                    // Commit concurrent transaction (touches partitions 1 and 2).
                     unblockCommit(concurrentTransactionObserver)
                     waitForCommit(concurrentTransactionObserver)
 
-                    // Finish the backfill command, which has 2 batches.
+                    // Commit second backfill batch (processes partitions 2-3).
+                    // Partition 3 is untouched, so there's always work for batch 2.
                     commitSingleBackfillBatch()
+
                     ThreadUtils.awaitResult(backfillFuture, timeout)
                 }
               ThreadUtils.awaitResult(concurrentTransactionFuture, timeout)
@@ -587,7 +674,7 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
 
                   // Prepare concurrent commit.
                   unblockUntilPreCommit(concurrentTransactionObserver)
-                  busyWaitFor(concurrentTransactionObserver.phases.preparePhase.hasEntered, timeout)
+                  busyWaitForPreparePhase(concurrentTransactionObserver)
 
                   // Finish the backfill, which only has one batch.
                   commitSingleBackfillBatch()
@@ -613,22 +700,25 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
     tableCreationDF.union(spark.createDataFrame(insertedRow))
   }
 
+  // DELETE touches partitions 1 and 2 (id % 4 == 1 or 2)
   testAllScenarios("DELETE") { () =>
-    sql(s"DELETE FROM $testTableName WHERE $colName = 3").collect()
+    sql(s"DELETE FROM $testTableName WHERE $colName IN (1, 2)").collect()
   } { () =>
     assert(!usePersistentDeletionVectors ||
       !DeletionVectorUtils.isTableDVFree(latestSnapshot))
-    tableCreationDF.where(s"$colName != 3")
+    tableCreationDF.where(s"$colName NOT IN (1, 2)")
   }
 
+  // UPDATE touches partitions 1 and 2 (id % 4 == 1 or 2)
   testAllScenarios("UPDATE") { () =>
-    sql(s"UPDATE $testTableName SET $colName = 1337 WHERE $colName = 3").collect()
+    sql(s"UPDATE $testTableName SET $colName = $colName + 1000 WHERE $colName IN (1, 2)").collect()
   } { () =>
     assert(
       !usePersistentDeletionVectors || !DeletionVectorUtils.isTableDVFree(latestSnapshot)
     )
-    val updatedRow = Seq((1337, 3 % numPartitions))
-    tableCreationDF.where("id != 3").union(spark.createDataFrame(updatedRow))
+    // id=1 becomes 1001 (partition 1), id=2 becomes 1002 (partition 2)
+    val updatedRows = Seq((1001, 1), (1002, 2))
+    tableCreationDF.where("id NOT IN (1, 2)").union(spark.createDataFrame(updatedRows))
   }
 
   // DF to create the view used as a source for MERGEs. When joining on 'colName', the lower half
@@ -648,38 +738,67 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
     }
   }
 
+  // MERGE touches partitions 1 and 2 only via partition conditions on WHEN clauses
   testAllScenarios("MERGE with not matched and not matched by source") { () =>
     withMergeSource { sourceViewName =>
       val mergeStatement =
         s"""MERGE INTO $testTableName t
            |USING $sourceViewName s
            |ON s.$colName = t.$colName
-           |WHEN NOT MATCHED THEN INSERT *
-           |WHEN NOT MATCHED BY SOURCE THEN DELETE
+           |WHEN NOT MATCHED AND s.$partitionColumnName IN (1, 2) THEN INSERT *
+           |WHEN NOT MATCHED BY SOURCE AND t.$partitionColumnName IN (1, 2) THEN DELETE
            |""".stripMargin
       sql(mergeStatement).collect()
     }
   } { () =>
-    mergeSourceDF
+    // Target has ids [0, numRows), source has ids [numRows/2, numRows + numRows/2)
+    // per mergeSourceDF definition.
+    // MATCHED: [numRows/2, numRows)
+    // NOT MATCHED BY SOURCE: [0, numRows/2)
+    // NOT MATCHED: [numRows, ...)
+    // With partition filter, we DELETE [0, numRows/2) in partitions 1,2 and
+    // INSERT [numRows, ...) in partitions 1,2.
+    // targetRowsToKeep: outside partitions 1,2 (untouched) OR id >= numRows/2
+    // (matched, not deleted).
+    val targetRowsToKeep = tableCreationDF.where(
+      s"$partitionColumnName NOT IN (1, 2) OR $colName >= ${numRows / 2}")
+    val sourceRowsToInsert = mergeSourceDF.where(
+      s"$partitionColumnName IN (1, 2) AND $colName >= $numRows")
+    targetRowsToKeep.union(sourceRowsToInsert)
   }
 
+  // MERGE touches partitions 1 and 2 only via partition conditions on WHEN clauses
   testAllScenarios("MERGE with matched and not matched") { () =>
     withMergeSource { sourceViewName =>
       val mergeStatement =
         s"""MERGE INTO $testTableName t
            |USING $sourceViewName s
            |ON s.$colName = t.$colName
-           |WHEN MATCHED THEN UPDATE SET *
-           |WHEN NOT MATCHED THEN INSERT *
+           |WHEN MATCHED AND t.$partitionColumnName IN (1, 2) THEN UPDATE SET *
+           |WHEN NOT MATCHED AND s.$partitionColumnName IN (1, 2) THEN INSERT *
            |""".stripMargin
       sql(mergeStatement).collect()
     }
   } { () =>
-    tableCreationDF.union(mergeSourceDF).distinct()
+    // Target has ids [0, numRows), source has ids [numRows/2, numRows + numRows/2)
+    // per mergeSourceDF definition.
+    // MATCHED: [numRows/2, numRows)
+    // NOT MATCHED: [numRows, ...)
+    // With partition filter, we UPDATE [numRows/2, numRows) in partitions 1,2 and
+    // INSERT [numRows, ...) in partitions 1,2.
+    // targetRowsNotUpdated: outside partitions 1,2 (untouched) OR id < numRows/2 (unmatched).
+    val targetRowsNotUpdated = tableCreationDF.where(
+      s"$partitionColumnName NOT IN (1, 2) OR $colName < ${numRows / 2}")
+    val updatedRows = mergeSourceDF.where(
+      s"$partitionColumnName IN (1, 2) AND $colName < $numRows")
+    val insertedRows = mergeSourceDF.where(
+      s"$partitionColumnName IN (1, 2) AND $colName >= $numRows")
+    targetRowsNotUpdated.union(updatedRows).union(insertedRows)
   }
 
+  // OPTIMIZE touches partitions 1 and 2 only
   testAllScenarios("OPTIMIZE") { () =>
-    sql(s"OPTIMIZE $testTableName WHERE $partitionColumnName < ($numFiles / 4)").collect()
+    sql(s"OPTIMIZE $testTableName WHERE $partitionColumnName IN (1, 2)").collect()
   } { () =>
     tableCreationDF
   }

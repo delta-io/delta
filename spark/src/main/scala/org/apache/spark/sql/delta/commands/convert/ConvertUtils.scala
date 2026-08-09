@@ -204,8 +204,7 @@ trait ConvertUtilsBase extends DeltaLogging {
 
         val values = partValues
           .literals
-          .map(l => Cast(l, StringType, tz, ansiEnabled = false).eval())
-          .map(Option(_).map(_.toString).orNull)
+          .map(PartitionUtils.literalToNormalizedString(_, tz))
 
         partitionColNames.zip(partValues.columnNames).foreach { case (expected, parsed) =>
           if (!resolver(expected, parsed)) {
@@ -335,14 +334,7 @@ trait ConvertUtilsBase extends DeltaLogging {
 /**
  * Configuration for fetching Parquet schema.
  *
- * @param assumeBinaryIsString: whether unannotated BINARY fields should be assumed to be Spark
- *                              SQL [[StringType]] fields.
- * @param assumeInt96IsTimestamp: whether unannotated INT96 fields should be assumed to be Spark
- *                                SQL [[TimestampType]] fields.
  * @param ignoreCorruptFiles: a boolean indicating whether corrupt files should be ignored during
  *                            schema retrieval.
  */
-case class ParquetSchemaFetchConfig(
-  assumeBinaryIsString: Boolean,
-  assumeInt96IsTimestamp: Boolean,
-  ignoreCorruptFiles: Boolean)
+case class ParquetSchemaFetchConfig(ignoreCorruptFiles: Boolean)

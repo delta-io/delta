@@ -35,14 +35,11 @@ import org.apache.spark.sql.types._
 /**
  * Test suite covering feature enablement and configuration tests.
  */
-class TypeWideningTableFeatureEnablementSuite
-  extends QueryTest
+class TypeWideningTableFeatureEnablementSuite extends TypeWideningTableFeatureEnablementTests
     with TypeWideningTestMixin
     with TypeWideningDropFeatureTestMixin
-    with TypeWideningTableFeatureEnablementTests
 
-trait TypeWideningTableFeatureEnablementTests
-  extends DeltaExcludedBySparkVersionTestMixinShims
+trait TypeWideningTableFeatureEnablementTests extends QueryTest
     with TypeWideningTestCases {
   self: QueryTest
     with TypeWideningTestMixin
@@ -55,7 +52,7 @@ trait TypeWideningTableFeatureEnablementTests
       s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'true')")
     assert(isTypeWideningSupported)
     assert(isTypeWideningEnabled)
-    enableTypeWidening(tempPath, enabled = false)
+    enableTypeWidening(enabled = false)
     assert(isTypeWideningSupported)
     assert(!isTypeWideningEnabled)
   }
@@ -66,14 +63,14 @@ trait TypeWideningTableFeatureEnablementTests
     assert(!isTypeWideningSupported)
     assert(!isTypeWideningEnabled)
     // Setting the property to false shouldn't add the table feature if it's not present.
-    enableTypeWidening(tempPath, enabled = false)
+    enableTypeWidening(enabled = false)
     assert(!isTypeWideningSupported)
     assert(!isTypeWideningEnabled)
 
-    enableTypeWidening(tempPath)
+    enableTypeWidening()
     assert(isTypeWideningSupported)
     assert(isTypeWideningEnabled)
-    enableTypeWidening(tempPath, enabled = false)
+    enableTypeWidening(enabled = false)
     assert(isTypeWideningSupported)
     assert(!isTypeWideningEnabled)
   }
@@ -86,15 +83,12 @@ trait TypeWideningTableFeatureEnablementTests
     assert(ex.getMessage.contains("For input string: \"bla\""))
     sql(s"CREATE TABLE delta.`$tempPath` (a int) USING DELTA " +
        s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
-    checkError(
+    checkInvalidBooleanTablePropertyError(
       intercept[SparkException] {
         sql(s"ALTER TABLE delta.`$tempPath` " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'bla')")
       },
-      "_LEGACY_ERROR_TEMP_2045",
-      parameters = Map(
-        "message" -> "For input string: \"bla\""
-      )
+      invalidValue = "bla"
     )
     assert(!isTypeWideningSupported)
     assert(!isTypeWideningEnabled)
@@ -140,9 +134,9 @@ trait TypeWideningTableFeatureEnablementTests
     sql(s"CREATE TABLE delta.`$tempPath` (a int) USING DELTA " +
       s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
-    enableTypeWidening(tempPath, enabled = true)
+    enableTypeWidening(enabled = true)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
-    enableTypeWidening(tempPath, enabled = false)
+    enableTypeWidening(enabled = false)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
   }
 }
@@ -159,7 +153,6 @@ class TypeWideningTableFeatureDropSuite
 
 trait TypeWideningTableFeatureDropTests
   extends RowTrackingTestUtils
-    with DeltaExcludedBySparkVersionTestMixinShims
     with TypeWideningTestCases {
   self: QueryTest
     with TypeWideningTestMixin
@@ -229,7 +222,7 @@ trait TypeWideningTableFeatureDropTests
       sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA " +
         s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
       addSingleFile(Seq(1, 2, 3), ByteType)
-      enableTypeWidening(tempPath)
+      enableTypeWidening()
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
 
       dropTableFeature(
@@ -374,19 +367,30 @@ trait TypeWideningTableFeatureDropTests
       }
     }
   }
+
+  test("void->any is not considered type-widening and doesn't cause rewrite when dropping " +
+      "the table feature") {
+    append(Seq((1, null), (2, null)).toDF("a", "v"))
+    sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN v TYPE INT")
+    append(Seq((3, 3)).toDF("a", "v"))
+    dropTableFeature(
+      expectedOutcome = ExpectedOutcome.SUCCESS,
+      expectedNumFilesRewritten = 0,
+      expectedColumnTypes = Map.empty
+    )
+    checkAnswer(readDeltaTableByIdentifier(), Row(1, null) :: Row(2, null) :: Row(3, 3) :: Nil)
+  }
 }
 
 /**
  * Additional tests covering e.g. unsupported type change check, CLONE, RESTORE.
  */
 class TypeWideningTableFeatureAdvancedSuite
-  extends QueryTest
+  extends TypeWideningTableFeatureAdvancedTests
     with TypeWideningTestMixin
     with TypeWideningDropFeatureTestMixin
-    with TypeWideningTableFeatureAdvancedTests
 
-trait TypeWideningTableFeatureAdvancedTests
-  extends DeltaExcludedBySparkVersionTestMixinShims
+trait TypeWideningTableFeatureAdvancedTests extends QueryTest
     with TypeWideningTestCases {
   self: QueryTest
     with TypeWideningTestMixin
@@ -441,7 +445,7 @@ trait TypeWideningTableFeatureAdvancedTests
       .putMetadataArray("delta.typeChanges", Array(
         new MetadataBuilder()
           .putString("toType", "string")
-          .putString("fromType", "int")
+          .putString("fromType", "integer")
           .putLong("tableVersion", 2)
           .putString("fieldPath", "element")
           .build()
@@ -542,42 +546,6 @@ trait TypeWideningTableFeatureAdvancedTests
         ManualUpdate)
     }
     readDeltaTable(tempPath).collect()
-  }
-
-  testSparkLatestOnly(
-    "helpful error when reading type changes not supported yet during preview") {
-    sql(s"CREATE TABLE delta.`$tempDir` (a int) USING DELTA")
-    val metadata = new MetadataBuilder()
-      .putMetadataArray("delta.typeChanges", Array(
-        new MetadataBuilder()
-          .putString("toType", "long")
-          .putString("fromType", "int")
-          .build()
-      )).build()
-
-    // Delta 3.2/3.3 doesn't support changing type from int->long, we manually commit that type
-    // change to simulate what Delta 4.0 could do.
-    deltaLog.withNewTransaction { txn =>
-      txn.commit(
-        Seq(txn.snapshot.metadata.copy(
-          schemaString = new StructType()
-            .add("a", LongType, nullable = true, metadata).json
-        )),
-        ManualUpdate)
-    }
-
-    checkError(
-      exception = intercept[DeltaUnsupportedOperationException] {
-        readDeltaTable(tempPath).collect()
-      },
-      "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_PREVIEW",
-      parameters = Map(
-        "fieldPath" -> "a",
-        "fromType" -> "INT",
-        "toType" -> "BIGINT",
-        "typeWideningFeatureName" -> "typeWidening"
-      )
-    )
   }
 
   test("type widening rewrite metrics") {
@@ -691,13 +659,11 @@ trait TypeWideningTableFeatureAdvancedTests
  * Test suite covering preview vs stable feature interactions.
  */
 class TypeWideningTableFeaturePreviewSuite
-  extends QueryTest
+  extends TypeWideningTableFeatureVersionTests
     with TypeWideningTestMixin
     with TypeWideningDropFeatureTestMixin
-    with TypeWideningTableFeatureVersionTests
 
-trait TypeWideningTableFeatureVersionTests
-  extends DeltaExcludedBySparkVersionTestMixinShims
+trait TypeWideningTableFeatureVersionTests extends QueryTest
     with TypeWideningTestCases {
   self: QueryTest
     with TypeWideningTestMixin
@@ -778,7 +744,7 @@ trait TypeWideningTableFeatureVersionTests
     addTableFeature(tempPath, TypeWideningPreviewTableFeature)
     assertFeatureSupported(preview = true, stable = true)
 
-    enableTypeWidening(tempPath)
+    enableTypeWidening()
     addSingleFile(Seq(1), ByteType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
     // Dropping the stable feature doesn't also drop the preview feature.
@@ -819,7 +785,7 @@ trait TypeWideningTableFeatureVersionTests
     assertFeatureSupported(preview = true, stable = false)
 
     // Enable the table property, this should keep the preview feature but not add the stable one.
-    enableTypeWidening(tempPath)
+    enableTypeWidening()
     assertFeatureSupported(preview = true, stable = false)
 
     addSingleFile(Seq(1), ByteType)
@@ -855,7 +821,7 @@ trait TypeWideningTableFeatureVersionTests
       s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
 
     addTableFeature(tempPath, TypeWideningPreviewTableFeature)
-    enableTypeWidening(tempPath)
+    enableTypeWidening()
     addSingleFile(Seq(1), ByteType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE short")
 
@@ -894,7 +860,7 @@ trait TypeWideningTableFeatureVersionTests
       s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
 
     addTableFeature(tempPath, TypeWideningTableFeature)
-    enableTypeWidening(tempPath)
+    enableTypeWidening()
     addSingleFile(Seq(1), ByteType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE short")
     assert(deltaLog.update().metadata.schema === new StructType()

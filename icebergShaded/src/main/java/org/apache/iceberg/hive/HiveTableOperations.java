@@ -42,6 +42,7 @@ import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableProperties;
+import org.apache.iceberg.encryption.KeyManagementClient;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
@@ -58,7 +59,7 @@ import org.slf4j.LoggerFactory;
 /**
  * TODO we should be able to extract some more commonalities to BaseMetastoreTableOperations to
  * avoid code duplication between this class and Metacat Tables.
- * This class is directly copied from iceberg 1.10.0; The only change made are
+ * This class is directly copied from iceberg 1.11.0; The only change made are
  *  1) accept metadataUpdates in constructor apply those before writing metadata
  *  to support using schema/partitionSpec with field ids assigned by Delta lake;
  *  2) handle NoSuchIcebergTableException in doRefresh to regard a table entry
@@ -81,6 +82,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
   private final long maxHiveTablePropertySize;
   private final int metadataRefreshMaxRetries;
   private final FileIO fileIO;
+  private final KeyManagementClient keyManagementClient;
   private final ClientPool<IMetaStoreClient, TException> metaClients;
   // HACK-HACK This is newly added
   private List<MetadataUpdate> metadataUpdates = new ArrayList();
@@ -89,11 +91,12 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
           Configuration conf,
           ClientPool<IMetaStoreClient, TException> metaClients,
           FileIO fileIO,
+          KeyManagementClient keyManagementClient,
           String catalogName,
           String database,
           String table,
           List<MetadataUpdate> metadataUpdates) {
-    this(conf, metaClients, fileIO, catalogName, database, table);
+    this(conf, metaClients, fileIO, keyManagementClient, catalogName, database, table);
     this.metadataUpdates = metadataUpdates;
   }
 
@@ -101,12 +104,14 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
           Configuration conf,
           ClientPool<IMetaStoreClient, TException> metaClients,
           FileIO fileIO,
+          KeyManagementClient keyManagementClient,
           String catalogName,
           String database,
           String table) {
     this.conf = conf;
     this.metaClients = metaClients;
     this.fileIO = fileIO;
+    this.keyManagementClient = keyManagementClient;
     this.fullName = catalogName + "." + database + "." + table;
     this.catalogName = catalogName;
     this.database = database;
@@ -207,7 +212,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
             BaseMetastoreOperations.CommitStatus.FAILURE;
     boolean updateHiveTable = false;
 
-    HiveLock lock = lockObject(base);
+    HiveLock lock = lockObject(base != null ? base : adjustedMetadata);
     try {
       lock.lock();
 

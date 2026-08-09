@@ -36,9 +36,13 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Contains methods to create user-facing Delta exceptions. */
 public final class DeltaErrors {
+  private static final Logger logger = LoggerFactory.getLogger(DeltaErrors.class);
+
   private DeltaErrors() {}
 
   public static KernelException missingCheckpoint(String tablePath, long checkpointVersion) {
@@ -108,19 +112,10 @@ public final class DeltaErrors {
     return new CommitRangeNotFoundException(tablePath, startVersion, endVersionOpt);
   }
 
-  public static KernelException startVersionNotFound(
+  public static StartVersionNotFoundException startVersionNotFound(
       String tablePath, long startVersionRequested, Optional<Long> earliestAvailableVersion) {
-    String message =
-        String.format(
-            "%s: Requested table changes beginning with startVersion=%s but no log file found for "
-                + "version %s.",
-            tablePath, startVersionRequested, startVersionRequested);
-    if (earliestAvailableVersion.isPresent()) {
-      message =
-          message
-              + String.format(" Earliest available version is %s", earliestAvailableVersion.get());
-    }
-    return new KernelException(message);
+    return new StartVersionNotFoundException(
+        tablePath, startVersionRequested, earliestAvailableVersion);
   }
 
   public static KernelException endVersionNotFound(
@@ -142,20 +137,42 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static KernelException invalidResolvedVersionRange(
+      String tablePath, long startVersion, long endVersion) {
+    String message =
+        String.format(
+            "%s: Invalid resolved version range: after timestamp resolution, "
+                + "startVersion=%d > endVersion=%d. "
+                + "Please adjust the provided timestamp boundaries.",
+            tablePath, startVersion, endVersion);
+    return new KernelException(message);
+  }
+
+  public static KernelException resolvedEndVersionAfterMaxCatalogVersion(
+      String tablePath, long resolvedEndVersion, long maxCatalogVersion) {
+    String message =
+        String.format(
+            "%s: Resolved end version to %s which is after max catalog version %s",
+            tablePath, resolvedEndVersion, maxCatalogVersion);
+    return new KernelException(message);
+  }
+
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
   public static UnsupportedProtocolVersionException unsupportedReaderProtocol(
-      String tablePath, int tableReaderVersion) {
+      String tablePath, int minReaderVersion, int minWriterVersion) {
     return new UnsupportedProtocolVersionException(
         tablePath,
-        tableReaderVersion,
+        minReaderVersion,
+        minWriterVersion,
         UnsupportedProtocolVersionException.ProtocolVersionType.READER);
   }
 
   public static UnsupportedProtocolVersionException unsupportedWriterProtocol(
-      String tablePath, int tableWriterVersion) {
+      String tablePath, int minReaderVersion, int minWriterVersion) {
     return new UnsupportedProtocolVersionException(
         tablePath,
-        tableWriterVersion,
+        minReaderVersion,
+        minWriterVersion,
         UnsupportedProtocolVersionException.ProtocolVersionType.WRITER);
   }
 
@@ -192,6 +209,17 @@ public final class DeltaErrors {
     String message =
         "This version of Delta Kernel does not support writing to tables with "
             + "column invariants present.";
+    return new KernelException(message);
+  }
+
+  public static KernelException checkpointOnUnpublishedCommits(
+      String tablePath, long version, long maxPublishedVersion) {
+    String message =
+        String.format(
+            "Unable to create checkpoint: Snapshot at at path"
+                + " `%s` with version %d has unpublished commits. "
+                + "Max known published version is %d",
+            tablePath, version, maxPublishedVersion);
     return new KernelException(message);
   }
 
@@ -465,6 +493,18 @@ public final class DeltaErrors {
     return new ConcurrentWriteException(message);
   }
 
+  public static ConcurrentWriteException concurrentDeleteDeleteException(
+      String filePath, long attemptVersion) {
+    String message =
+        String.format(
+            "A concurrent transaction removed (or updated the deletion vector of) file %s that "
+                + "this transaction (attempting version %d) also removes. Letting both commits "
+                + "through would leave two active entries for the same data file. Retry the "
+                + "operation against the latest table state.",
+            filePath, attemptVersion);
+    return new ConcurrentWriteException(message);
+  }
+
   public static KernelException missingNumRecordsStatsForRowTracking() {
     return new KernelException(
         "Cannot write to a rowTracking-supported table without 'numRecords' statistics. "
@@ -503,6 +543,17 @@ public final class DeltaErrors {
         String.format(
             "Cannot modify append-only table. Table `%s` has configuration %s=true.",
             tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
+  }
+
+  public static KernelException cdfMixedAddRemoveNotSupported(String tablePath) {
+    return new KernelException(
+        String.format(
+            "Cannot add and remove data in the same transaction when Change Data Feed is enabled "
+                + "on table %s. This would require writing CDC files for DML operations, which is "
+                + "not yet supported by Delta Kernel. You can perform add-only operations (like "
+                + "INSERT or CREATE TABLE), remove-only operations (like DELETE), or mixed "
+                + "operations with dataChange=false (like OPTIMIZE).",
+            tablePath));
   }
 
   public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {
@@ -592,6 +643,16 @@ public final class DeltaErrors {
       // originate from the engine implementation there are some edge cases such as
       // deserializeStructType)
       throw e;
+    } catch (KernelEngineException e) {
+      // Don't double-wrap: KernelEngineException is a sibling of KernelException (both extend
+      // RuntimeException), so it doesn't match the catch above. Without this, an already-wrapped
+      // engine exception gets re-wrapped by an outer wrapEngineException call, which hides the
+      // original cause one extra level deep and breaks direct-cause checks at consumers.
+      logger.debug(
+          "Rethrowing already-wrapped KernelEngineException while handling engine operation: {}",
+          String.format(msgString, args),
+          e);
+      throw e;
     } catch (RuntimeException e) {
       throw new KernelEngineException(String.format(msgString, args), e);
     }
@@ -610,6 +671,14 @@ public final class DeltaErrors {
       // Let any KernelExceptions fall through (even though these generally shouldn't
       // originate from the engine implementation there are some edge cases such as
       // deserializeStructType)
+      throw e;
+    } catch (KernelEngineException e) {
+      // See note in wrapEngineException: avoid double-wrapping an already-wrapped engine
+      // exception.
+      logger.debug(
+          "Rethrowing already-wrapped KernelEngineException while handling engine operation: {}",
+          String.format(msgString, args),
+          e);
       throw e;
     } catch (RuntimeException e) {
       throw new KernelEngineException(String.format(msgString, args), e);

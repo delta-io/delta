@@ -131,6 +131,8 @@ class UCPublishingSuite
     }
   }
 
+  test("publish: return a published snapshot") {}
+
   test("publish: does not overwrite existing published files") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====

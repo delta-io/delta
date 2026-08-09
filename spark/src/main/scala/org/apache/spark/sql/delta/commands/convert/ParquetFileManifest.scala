@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.commands.convert
 
+import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.{DeltaErrors, SerializableFileStatus}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -25,7 +26,6 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
-import org.apache.spark.sql.execution.streaming.MetadataLogFileIndex
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
@@ -57,10 +57,7 @@ class ManualListingFileManifest(
       }.toMap
       val footerSeq = DeltaFileOperations.readParquetFootersInParallel(
         conf.value.value, fileStatuses.map(_.toFileStatus), fetchConfig.ignoreCorruptFiles)
-      val schemaConverter = new ParquetToSparkSchemaConverter(
-        assumeBinaryIsString = fetchConfig.assumeBinaryIsString,
-        assumeInt96IsTimestamp = fetchConfig.assumeInt96IsTimestamp
-      )
+      val schemaConverter = new ParquetToSparkSchemaConverter(conf.value.value)
       footerSeq.map { footer =>
         val fileStatus = pathToStatusMapping(footer.getFile.toString)
         val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)
@@ -138,10 +135,7 @@ class CatalogFileManifest(
           conf.value.value,
           fileStatuses.map(_.toFileStatus),
           fetchConfig.ignoreCorruptFiles)
-        val schemaConverter = new ParquetToSparkSchemaConverter(
-          assumeBinaryIsString = fetchConfig.assumeBinaryIsString,
-          assumeInt96IsTimestamp = fetchConfig.assumeInt96IsTimestamp
-        )
+        val schemaConverter = new ParquetToSparkSchemaConverter(conf.value.value)
         footerSeq.map { footer =>
           val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)
           val fileStatus = pathToFile(footer.getFile.toString)
@@ -187,7 +181,7 @@ class MetadataLogFileManifest(
     serializableConf: SerializableConfiguration)
   extends ConvertTargetFileManifest with DeltaLogging {
 
-  val index = new MetadataLogFileIndex(spark, new Path(basePath), Map.empty, None)
+  val index = createMetadataLogFileIndex(spark, new Path(basePath), Map.empty, None)
 
   protected def doList(): Dataset[SerializableFileStatus] = {
     import org.apache.spark.sql.delta.implicits._
@@ -211,10 +205,7 @@ class MetadataLogFileManifest(
       }.toMap
       val footerSeq = DeltaFileOperations.readParquetFootersInParallel(
         conf.value.value, fileStatuses.map(_.toFileStatus), fetchConfig.ignoreCorruptFiles)
-      val schemaConverter = new ParquetToSparkSchemaConverter(
-        assumeBinaryIsString = fetchConfig.assumeBinaryIsString,
-        assumeInt96IsTimestamp = fetchConfig.assumeInt96IsTimestamp
-      )
+      val schemaConverter = new ParquetToSparkSchemaConverter(conf.value.value)
       footerSeq.map { footer =>
         val fileStatus = pathToStatusMapping(footer.getFile.toString)
         val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)

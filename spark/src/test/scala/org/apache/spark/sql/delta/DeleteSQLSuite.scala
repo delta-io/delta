@@ -35,7 +35,7 @@ trait DeleteSQLTests extends DeleteSQLMixin {
   import testImplicits._
 
   // For EXPLAIN, which is not supported in OSS
-  test("explain") {
+  test("explain", ChecksPhysicalDeltaPlan()) {
     append(Seq((2, 2)).toDF("key", "value"))
     val df = sql(s"EXPLAIN DELETE FROM $tableSQLIdentifier WHERE key = 2")
     val outputs = df.collect().map(_.mkString).mkString
@@ -45,7 +45,8 @@ trait DeleteSQLTests extends DeleteSQLMixin {
     checkAnswer(readDeltaTableByIdentifier(), Row(2, 2))
   }
 
-  test("delete from a temp view") {
+  test("delete from a temp view",
+      DSv2Incompatible("deleting from temp views would not be supported on DSv2")) {
     withTable("tab") {
       withTempView("v") {
         Seq((1, 1), (0, 3), (1, 5)).toDF("key", "value").write.format("delta").saveAsTable("tab")
@@ -56,7 +57,8 @@ trait DeleteSQLTests extends DeleteSQLMixin {
     }
   }
 
-  test("delete from a SQL temp view") {
+  test("delete from a SQL temp view",
+      DSv2Incompatible("deleting from temp views would not be supported on DSv2")) {
     withTable("tab") {
       withTempView("v") {
         Seq((1, 1), (0, 3), (1, 5)).toDF("key", "value").write.format("delta").saveAsTable("tab")

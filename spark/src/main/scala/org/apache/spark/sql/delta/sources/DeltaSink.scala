@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.sources
 import java.util.concurrent.ConcurrentHashMap
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOperations.StreamingUpdate
 import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction}
@@ -39,9 +40,9 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, QuotingUtils}
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.execution.streaming.{IncrementalExecution, Sink, StreamExecution}
+import org.apache.spark.sql.execution.streaming.Sink
 import org.apache.spark.sql.streaming.OutputMode
-import org.apache.spark.sql.types.{ArrayType, DataType, MapType, NullType, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType}
 import org.apache.spark.util.Utils
 
 /**
@@ -113,7 +114,11 @@ case class DeltaSink(
     val txn = deltaLog.startTransaction(catalogTable)
     assert(queryId != null)
 
-    if (SchemaUtils.typeExistsRecursively(data.schema)(_.isInstanceOf[NullType])) {
+    // Reject streaming writes if the query output schema contains void (NullType), or if the
+    // target table has a generated void column. Stored (non-generated) void columns are allowed.
+    if (SchemaUtils.nullTypeExistsRecursively(data.schema) ||
+      GeneratedColumn.hasGeneratedNullTypeColumn(
+        txn.protocol, txn.snapshot.schema)) {
       throw DeltaErrors.streamWriteNullTypeException
     }
 
@@ -176,8 +181,6 @@ case class DeltaSink(
    */
   private def getWriteSchema(
       protocol: Protocol, metadata: Metadata, dataSchema: StructType): StructType = {
-    if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS)) return dataSchema
-
     if (canOverwriteSchema) return dataSchema
 
     val typeWideningMode = if (canMergeSchema && TypeWidening.isEnabled(protocol, metadata)) {
@@ -197,8 +200,6 @@ case class DeltaSink(
 
   /** Casts columns in the given dataframe to match the target schema. */
   private def castDataIfNeeded(data: DataFrame, targetSchema: StructType): DataFrame = {
-    if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS)) return data
-
     // We should respect 'spark.sql.caseSensitive' here but writing to a Delta sink is currently
     // case insensitive so we align with that.
     val targetTypes =

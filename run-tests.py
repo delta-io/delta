@@ -48,14 +48,35 @@ def get_args():
         required=False,
         default=None,
         help="some shard")
+    parser.add_argument(
+        "--spark-version",
+        required=False,
+        default=None,
+        help="Spark version to use (passed as -DsparkVersion to SBT)")
+    parser.add_argument(
+        "--kernel-version",
+        required=False,
+        default=None,
+        help="Delta Kernel version to use (passed as -DkernelVersion to SBT)")
     return parser.parse_args()
 
 
-def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None):
+def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None,
+                  spark_version=None, kernel_version=None):
     print("##### Running SBT tests #####")
+    print(f"[run-tests.py] run_sbt_tests: spark_version={spark_version!r}, "
+          f"kernel_version={kernel_version!r}")
 
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
-    cmd = [sbt_path, "clean"]
+    cmd = [sbt_path]
+
+    # Pass Spark version as system property to SBT (must come before commands)
+    if spark_version:
+        cmd.append(f"-DsparkVersion={spark_version}")
+    if kernel_version:
+        cmd.append(f"-DkernelVersion={kernel_version}")
+
+    cmd.append("clean")
 
     test_cmd = "test"
     if shard:
@@ -86,79 +107,16 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
     cmd += ["-J-Xmx6G"]
     run_cmd(cmd, stream_output=True)
 
-def setup_pyspark_scala213_compatibility():
-    """
-    Setup PySpark with Scala 2.13 compatibility when SCALA_VERSION is set to 2.13.x.
-    This downloads Spark with Scala 2.13 and sets up the environment variables.
 
-    Download and setup Spark 3.5.3 with Scala 2.13 for compatibility with Delta Scala 2.13
-    Future note for Spark 4.0 upgrade: PySpark 3.5.3 from pip includes Scala 2.12 JARs, but
-    because of the upgrade to Scala 2.13, it was causing binary incompatibility errors.
-    For now (before Spark 4.0), we install PySpark without dependencies and use Spark 3.5.3 compiled
-    for Scala 2.13 to ensure compatibility. Remove the four steps below for Spark 4.0 upgrade.
-    """
-    scala_version = os.getenv("SCALA_VERSION")
-    if not scala_version or not scala_version.startswith("2.13"):
-        return False
-
-    print("##### Setting up PySpark Scala 2.13 compatibility #####")
-
-    # Check if Scala 2.13 Spark is already set up
-    spark_home = os.getenv("SPARK_HOME")
-    if spark_home and "scala2.13" in spark_home:
-        print(f"PySpark Scala 2.13 already configured: {spark_home}")
-        return True
-
-    try:
-        import subprocess
-        from pathlib import Path
-
-        # Download Spark 3.5.3 with Scala 2.13
-        SPARK_VERSION = "3.5.3"
-        SCALA_SUFFIX = "2.13"
-        SPARK_DIR = f"spark-{SPARK_VERSION}-bin-hadoop3-scala{SCALA_SUFFIX}"
-        
-        spark_url = f"https://archive.apache.org/dist/spark/spark-{SPARK_VERSION}/{SPARK_DIR}.tgz"
-        spark_tgz = f"{SPARK_DIR}.tgz"
-
-        # Download if not already present
-        if not os.path.exists(SPARK_DIR):
-            print(f"Downloading Spark with Scala 2.13: {spark_url}")
-            run_cmd(["curl", "-LO", spark_url], stream_output=True)
-            print(f"Extracting {spark_tgz}")
-            run_cmd(["tar", "-xzf", spark_tgz], stream_output=True)
-        else:
-            print(f"Using existing Spark directory: {SPARK_DIR}")
-
-        # Set SPARK_HOME environment variable
-        new_spark_home = os.path.abspath(SPARK_DIR)
-        os.environ["SPARK_HOME"] = new_spark_home
-        print(f"Set SPARK_HOME to: {new_spark_home}")
-
-        # Add Spark bin to PATH
-        spark_bin = os.path.join(new_spark_home, "bin")
-        current_path = os.environ.get("PATH", "")
-        if spark_bin not in current_path:
-            os.environ["PATH"] = f"{spark_bin}:{current_path}"
-            print(f"Added to PATH: {spark_bin}")
-
-        print("PySpark Scala 2.13 compatibility setup completed successfully")
-        return True
-
-    except Exception as e:
-        print(f"Warning: Failed to setup PySpark Scala 2.13 compatibility: {e}")
-        print("Continuing with existing PySpark installation...")
-        return False
-
-
-
-def run_python_tests(root_dir):
+def run_python_tests(root_dir, kernel_version=None):
     print("##### Running Python tests #####")
-    # Setup PySpark Scala 2.13 compatibility if needed
-    setup_pyspark_scala213_compatibility()
+    print(f"[run-tests.py] run_python_tests: kernel_version={kernel_version!r}")
     python_test_script = path.join(root_dir, path.join("python", "run-tests.py"))
     print("Calling script %s", python_test_script)
-    run_cmd(["python3", python_test_script], env={'DELTA_TESTING': '1'}, stream_output=True)
+    env = {'DELTA_TESTING': '1'}
+    if kernel_version:
+        env['KERNEL_VERSION'] = kernel_version
+    run_cmd(["python3", python_test_script], env=env, stream_output=True)
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
@@ -258,7 +216,7 @@ def pull_or_build_docker_image(root_dir):
     return test_env_image_tag
 
 
-def run_tests_in_docker(image_tag, test_group):
+def run_tests_in_docker(image_tag, test_group, kernel_version=None):
     """
     Run the necessary tests in a docker container made from the given image.
     It starts the container with the delta repo mounted in it, and then
@@ -281,12 +239,20 @@ def run_tests_in_docker(image_tag, test_group):
     if disable_unidoc is not None:
         envs = envs + "-e DISABLE_UNIDOC=%s " % disable_unidoc
 
+    extra_maven_repo = os.getenv("EXTRA_MAVEN_REPO")
+    if extra_maven_repo is not None:
+        envs = envs + "-e EXTRA_MAVEN_REPO=%s " % extra_maven_repo
+
     cwd = os.getcwd()
     test_script = os.path.basename(__file__)
 
     test_script_args = ""
     if test_group:
         test_script_args += " --group %s" % test_group
+    if kernel_version:
+        test_script_args += " --kernel-version %s" % kernel_version
+    print(f"[run-tests.py] run_tests_in_docker: forwarding to container: "
+          f"test_group={test_group!r}, kernel_version={kernel_version!r}")
 
     test_run_cmd = "docker run --rm  -v %s:%s -w %s %s %s ./%s %s" % (
         cwd, cwd, cwd, envs, image_tag, test_script, test_script_args
@@ -338,9 +304,14 @@ if __name__ == "__main__":
 
     if os.getenv("USE_DOCKER") is not None:
         test_env_image_tag = pull_or_build_docker_image(root_dir)
-        run_tests_in_docker(test_env_image_tag, args.group)
+        kernel_version = args.kernel_version or os.getenv("KERNEL_VERSION")
+        run_tests_in_docker(test_env_image_tag, args.group, kernel_version)
     elif args.group == "spark-python":
-        run_python_tests(root_dir)
+        kernel_version = args.kernel_version or os.getenv("KERNEL_VERSION")
+        run_python_tests(root_dir, kernel_version)
     else:
         scala_version = os.getenv("SCALA_VERSION")
-        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard)
+        spark_version = args.spark_version or os.getenv("SPARK_VERSION")
+        kernel_version = args.kernel_version or os.getenv("KERNEL_VERSION")
+        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard,
+                      spark_version, kernel_version)

@@ -163,14 +163,14 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
           if (schemaHasChanged(snapshot, spark)) {
             updateSchema(spark, snapshot)
             recordDeltaEvent(
-              snapshot.deltaLog,
+              snapshot,
               "delta.catalog.update.schema",
               data = loggingData
             )
           } else if (propertiesHaveChanged(properties, snapshot.metadata, spark)) {
             updateProperties(spark, snapshot)
             recordDeltaEvent(
-              snapshot.deltaLog,
+              snapshot,
               "delta.catalog.update.properties",
               data = loggingData
             )
@@ -179,7 +179,7 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
             // table properties.
             updateProperties(spark, snapshot)
             recordDeltaEvent(
-              snapshot.deltaLog,
+              snapshot,
               "delta.catalog.update.clusteringColumns",
               data = loggingData
             )
@@ -187,7 +187,7 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
         } catch {
           case NonFatal(e) =>
             recordDeltaEvent(
-              snapshot.deltaLog,
+              snapshot,
               "delta.catalog.update.error",
               data = Map(
                 "exceptionMsg" -> ExceptionUtils.getMessage(e),
@@ -272,8 +272,8 @@ case class UpdateCatalog(table: CatalogTable) extends UpdateCatalogBase {
       spark: SparkSession,
       snapshot: Snapshot): Unit = {
     if (!shouldRun(spark, snapshot)) return
+    UpdateCatalog.activeAsyncRequests.incrementAndGet()
     Future[Unit] {
-      UpdateCatalog.activeAsyncRequests.incrementAndGet()
       execute(spark, snapshot)
     }(UpdateCatalog.getOrCreateExecutionContext(spark.sessionState.conf)).onComplete { _ =>
       UpdateCatalog.activeAsyncRequests.decrementAndGet()

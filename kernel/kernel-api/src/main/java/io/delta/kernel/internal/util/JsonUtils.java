@@ -36,7 +36,6 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.Map;
 
@@ -239,8 +238,7 @@ public class JsonUtils {
         }
         String textValue = valueNode.asText();
         OffsetDateTime offsetDateTime = OffsetDateTime.parse(textValue, TIMESTAMP_FORMATTER);
-        long epochMicros = ChronoUnit.MICROS.between(EPOCH, offsetDateTime);
-        return Literal.ofTimestamp(epochMicros);
+        return Literal.ofTimestamp(TimestampUtils.toEpochMicros(offsetDateTime));
 
       } else if (dataType instanceof TimestampNTZType) {
         if (!valueNode.isTextual()) {
@@ -251,8 +249,7 @@ public class JsonUtils {
         String textValue = valueNode.asText();
         LocalDateTime localDateTime =
             LocalDateTime.parse(textValue, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-        long epochMicros = ChronoUnit.MICROS.between(EPOCH.toLocalDateTime(), localDateTime);
-        return Literal.ofTimestampNtz(epochMicros);
+        return Literal.ofTimestampNtz(TimestampUtils.toEpochMicros(localDateTime));
 
       } else if (dataType instanceof VariantType) {
         if (!valueNode.isTextual()) {
@@ -261,6 +258,19 @@ public class JsonUtils {
         }
         String textValue = valueNode.asText();
         return Literal.ofString(textValue);
+      } else if (dataType instanceof GeometryType || dataType instanceof GeographyType) {
+        if (!valueNode.isTextual()) {
+          String typeName = dataType instanceof GeometryType ? "geometry" : "geography";
+          throw new KernelException(
+              String.format("Expected %s as WKT string but got: %s", typeName, valueNode));
+        }
+        String wkt = valueNode.asText();
+        if (dataType instanceof GeographyType) {
+          GeometryUtils.validateGeographyPointWKT(wkt);
+        } else {
+          GeometryUtils.validatePointWKT(wkt);
+        }
+        return Literal.ofGeospatialWKT(wkt, dataType);
       } else {
         throw unsupportedStatsDataType(dataType);
       }

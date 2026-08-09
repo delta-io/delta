@@ -23,11 +23,12 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FINDING_TOUCHED_FILES_MSG}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase.totalBytesAndDistinctPartitionValues
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.StatsCollectionUtils
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.SparkContext
@@ -39,6 +40,7 @@ import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
+import org.apache.spark.sql.catalyst.plans.logical.SupportsSubquery
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
@@ -112,7 +114,10 @@ case class DeleteCommand(
     catalogTable: Option[CatalogTable],
     target: LogicalPlan,
     condition: Option[Expression])
-  extends LeafRunnableCommand with DeltaCommand with DeleteCommandMetrics {
+  extends LeafRunnableCommand
+  with DeltaCommand
+  with DeleteCommandMetrics
+  with SupportsSubquery {
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
@@ -289,10 +294,13 @@ case class DeleteCommand(
               opName = "DELETE")
 
             if (touchedFiles.nonEmpty) {
+              val stringTruncateLength = StatsCollectionUtils.getDataSkippingStringPrefixLength(
+                sparkSession, txn.metadata)
               val (actions, metricMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
                 sparkSession,
                 touchedFiles,
-                txn.snapshot)
+                txn.snapshot,
+                stringTruncateLength)
               metrics("numDeletedRows").set(metricMap("numModifiedRows"))
               numDeletionVectorsAdded = metricMap("numDeletionVectorsAdded")
               numDeletionVectorsRemoved = metricMap("numDeletionVectorsRemoved")
@@ -344,8 +352,7 @@ case class DeleteCommand(
                 snapshot = txn.snapshot)
               val filterCond = Not(EqualNullSafe(cond, Literal.TrueLiteral))
               val rewrittenActions = rewriteFiles(txn, targetDF, filterCond, filesToRewrite.length)
-              val (changeFiles, rewrittenFiles) = rewrittenActions
-                .partition(_.isInstanceOf[AddCDCFile])
+              val (rewrittenFiles, changeFiles) = DMLUtils.partitionCDCFiles(rewrittenActions)
               numAddedFiles = rewrittenFiles.size
               val removedFiles = filesToRewrite.map(f =>
                 getTouchedFile(deltaLog.dataPath, f, nameToAddFileMap))
@@ -360,7 +367,7 @@ case class DeleteCommand(
                 numPartitionsAddedTo = Some(rewrittenPartitions)
               }
               numAddedChangeFiles = changeFiles.size
-              changeFileBytes = changeFiles.collect { case f: AddCDCFile => f.size }.sum
+              changeFileBytes = changeFiles.map(_.size).sum
               rewriteTimeMs =
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime) - scanTimeMs
               numDeletedRows = Some(metrics("numDeletedRows").value)
@@ -398,6 +405,15 @@ case class DeleteCommand(
     txn.registerSQLMetrics(sparkSession, metrics)
     sendDriverMetrics(sparkSession, metrics)
 
+    val alwaysReportSomeZero =
+      conf.getConf(DeltaSQLConf.METRICS_ALWAYS_REPORT_SOME_ZERO_METRICS)
+    def reportSomeZero(rowCount: Option[Long]): Option[Long] =
+      if (alwaysReportSomeZero) {
+        Some(rowCount.getOrElse(0L))
+      } else {
+        rowCount
+      }
+
     val numRecordsStats = NumRecordsStats.fromActions(deleteActions)
     val deleteMetric = DeleteMetric(
         condition = condition.map(_.sql).getOrElse("true"),
@@ -414,8 +430,8 @@ case class DeleteCommand(
         numPartitionsAfterSkipping,
         numPartitionsAddedTo,
         numPartitionsRemovedFrom,
-        numCopiedRows,
-        numDeletedRows,
+        reportSomeZero(numCopiedRows),
+        reportSomeZero(numDeletedRows),
         numAddedBytes,
         numRemovedBytes,
         changeFileBytes = changeFileBytes,

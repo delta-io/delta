@@ -31,7 +31,7 @@ import io.delta.kernel.exceptions.{CommitRangeNotFoundException, KernelException
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.TableImpl
-import io.delta.kernel.internal.actions.{AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
+import io.delta.kernel.internal.actions.{AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.{FileNames, ManualClock, VectorUtils}
 import io.delta.kernel.types.{DataType, LongType, StructField}
@@ -523,6 +523,47 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
   }
 }
 
+class CommitRangeNoSnapshotTableChangesSuite extends TableChangesSuite {
+
+  override def getChanges(
+      tablePath: String,
+      startVersion: Long,
+      endVersion: Long,
+      actionSet: Set[DeltaAction]): Seq[ColumnarBatch] = {
+    val commitRange =
+      TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(startVersion))
+        .withEndBoundary(CommitBoundary.atVersion(endVersion))
+        .build(defaultEngine)
+    commitRange.getActions(defaultEngine, actionSet.asJava).toSeq
+  }
+
+  test("getCommitActions(Engine, Set) matches the Snapshot overload commit-by-commit") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      (0 to 4).foreach { _ =>
+        spark.range(10).write.format("delta").mode("append").save(tablePath)
+      }
+      val commitRange =
+        TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
+          .withEndBoundary(CommitBoundary.atVersion(4))
+          .build(defaultEngine)
+      val startSnapshot =
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 0)
+
+      val withSnapshot =
+        commitRange.getCommitActions(defaultEngine, startSnapshot, FULL_ACTION_SET.asJava).toSeq
+      val withoutSnapshot =
+        commitRange.getCommitActions(defaultEngine, FULL_ACTION_SET.asJava).toSeq
+
+      assert(withSnapshot.size == withoutSnapshot.size)
+      withSnapshot.zip(withoutSnapshot).foreach { case (a, b) =>
+        assert(a.getVersion == b.getVersion)
+        assert(a.getActions.toSeq.map(_.getSize).sum == b.getActions.toSeq.map(_.getSize).sum)
+      }
+    }
+  }
+}
+
 abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
 
   /* actionSet including all currently supported actions */
@@ -934,6 +975,11 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
       size: Long,
       tags: Map[String, String]) extends StandardAction
 
+  case class StandardTxn(
+      appId: String,
+      version: Long,
+      lastUpdated: Option[Long]) extends StandardAction
+
   def standardizeKernelAction(row: Row, startIdx: Int = 2): Option[StandardAction] = {
     val actionIdx = (startIdx until row.getSchema.length()).find(!row.isNullAt(_)).getOrElse(
       return None)
@@ -1027,7 +1073,17 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
             cdcRow.getMap(AddCDCFile.FULL_SCHEMA.indexOf("partitionValues"))).asScala.toMap,
           cdcRow.getLong(AddCDCFile.FULL_SCHEMA.indexOf("size")),
           tags))
-
+      case DeltaAction.TXN.colName =>
+        val txnRow = row.getStruct(actionIdx)
+        val lastUpdated = if (txnRow.isNullAt(SetTransaction.FULL_SCHEMA.indexOf("lastUpdated"))) {
+          None
+        } else {
+          Some(txnRow.getLong(SetTransaction.FULL_SCHEMA.indexOf("lastUpdated")))
+        }
+        Some(StandardTxn(
+          txnRow.getString(SetTransaction.FULL_SCHEMA.indexOf("appId")),
+          txnRow.getLong(SetTransaction.FULL_SCHEMA.indexOf("version")),
+          lastUpdated))
       case _ =>
         throw new RuntimeException("Encountered an action that hasn't been added as an option yet")
     }
@@ -1061,6 +1117,8 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
         commitInfo.operationMetrics.getOrElse(Map.empty)))
     case cdc: SparkAddCDCFile =>
       Some(StandardCdc(cdc.path, cdc.partitionValues, cdc.size, cdc.tags))
+    case txn: SparkSetTransaction =>
+      Some(StandardTxn(txn.appId, txn.version, txn.lastUpdated))
     case _ => None
   }
 
@@ -1082,6 +1140,7 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
           case _: SparkProtocol => actionSet.contains(DeltaAction.PROTOCOL)
           case _: SparkCommitInfo => actionSet.contains(DeltaAction.COMMITINFO)
           case _: SparkAddCDCFile => actionSet.contains(DeltaAction.CDC)
+          case _: SparkSetTransaction => actionSet.contains(DeltaAction.TXN)
           case _ => false
         })
     }

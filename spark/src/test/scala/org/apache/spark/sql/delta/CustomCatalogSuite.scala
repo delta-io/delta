@@ -38,12 +38,27 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
     super.sparkConf.set("spark.sql.catalog.dummy", classOf[DummyCatalog].getName)
 
   test("CatalogTable exists in DeltaTableV2 if use table identifier") {
+    object AppendDeltaTable {
+      // AppendData has a different number of argument in Spark 4.1 vs 4.2.
+      // Define an extractor to allow matching without depending on the number of arguments.
+      def unapply(append: AppendData): Option[DeltaTableV2] = {
+        append.table match {
+          case relation: DataSourceV2Relation =>
+            relation.table match {
+              case r: DeltaTableV2 => Some(r)
+              case _ => None
+            }
+          case _ => None
+        }
+      }
+    }
+
     def catalogTableExists(sqlCmd: String): Unit = {
       val plan = spark.sql(sqlCmd).queryExecution.analyzed
       val catalogTable = plan match {
         case cmd: UnaryNode with DeltaCommand =>
           cmd.getDeltaTable(cmd.child, "dummy").catalogTable
-        case AppendData(DataSourceV2Relation(table: DeltaTableV2, _, _, _, _), _, _, _, _, _) =>
+        case AppendDeltaTable(table) =>
           table.catalogTable
         case cmd: DeleteCommand =>
           cmd.catalogTable

@@ -201,6 +201,118 @@ trait DeltaLimitPushDownTests extends QueryTest
     }
   }
 
+  // Non-deterministic predicates can be misclassified as partition-only for limit push-down.
+  // DELTA_LIMIT_PUSHDOWN_SKIP_NON_DETERMINISTIC_FILTERS gates the fix.
+  //
+  // E2E over writeNonDetTestTable (10000 rows, partition col a). LIMIT = 500.
+  //
+  // scalastyle:off line.size.limit
+  // | Predicate                                         | Gate on: rows | Gate on: scan | Gate off: rows   | Gate off: scan |
+  // |---------------------------------------------------|---------------|---------------|------------------|----------------|
+  // | rand() > 0.5                                      | 500           | full          | < 500            | partial        |
+  // | monotonically_increasing_id() % 2 = 0             | 500           | full          | < 500            | partial        |
+  // | hash(uuid()) % 100 < 50                           | 500           | full          | < 500            | partial        |
+  // | xxhash64(uuid()) < 0                              | 500           | full          | < 500            | partial        |
+  // | spark_partition_id() % 2 = 0                      | 500           | full          | < 500            | partial        |
+  // | substring(uuid(), 1, 1) < '8'                     | 500           | full          | < 500            | partial        |
+  // | a = 1 OR hash(uuid()) % 2 = 0                     | 500           | full          | < 500            | partial        |
+  // | (a < 50) OR monotonically_increasing_id() % 2 = 0 | 500           | full          | 500 (no assert)  | partial        |
+  // scalastyle:on line.size.limit
+  //
+  // Gate on: skipNonDeterministicFilters=true. Gate off: legacy (false). Control: a >= 0 still
+  // uses limit push-down under gate on (scanned < total).
+
+  private val nonDetLimitRowCount = 500
+
+  // (predicate, expectLegacyRowLoss) - gate-off row < limit only when double-filtering is visible.
+  private val nonDetLimitPredicates: Seq[(String, Boolean)] = Seq(
+    ("rand() > 0.5", true),
+    ("monotonically_increasing_id() % 2 = 0", true),
+    ("hash(uuid()) % 100 < 50", true),
+    ("xxhash64(uuid()) < 0", true),
+    ("spark_partition_id() % 2 = 0", true),
+    ("substring(uuid(), 1, 1) < '8'", true),
+    ("a = 1 OR hash(uuid()) % 2 = 0", true),
+    ("(a < 50) OR monotonically_increasing_id() % 2 = 0", false)
+  )
+
+  private def withNonDetLimitPushdownConfs(skipNonDeterministic: Boolean)(thunk: => Unit): Unit = {
+    withSQLConf(
+        DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_SKIP_NON_DETERMINISTIC_FILTERS.key ->
+          skipNonDeterministic.toString) {
+      thunk
+    }
+  }
+
+  private def collectWhereLimit(
+      tableName: String,
+      predicate: String,
+      limit: Int): Array[Row] = {
+    spark.read.format("delta").table(tableName).where(predicate).limit(limit).collect()
+  }
+
+  private def writeNonDetTestTable(tableName: String): Unit = {
+    // 100 partitions x 100 rows = 10000 rows, one file per partition, so that an (incorrectly
+    // triggered) limit push-down prunes down to a small subset of files.
+    spark.range(10000)
+      .selectExpr("int(id % 100) as a", "int(id) as b")
+      .write.format("delta").partitionBy("a").saveAsTable(tableName)
+
+    val describeRows = spark.sql(s"DESCRIBE EXTENDED $tableName").collect()
+    val partitionInfoIdx = describeRows.indexWhere(_.getString(0) == "# Partition Information")
+    assert(partitionInfoIdx >= 0,
+      s"DESCRIBE EXTENDED $tableName did not contain # Partition Information")
+    val partitionCols = describeRows.drop(partitionInfoIdx + 2)
+      .takeWhile(row => row.getString(0) != null && !row.getString(0).startsWith("#"))
+      .map(_.getString(0))
+    assert(partitionCols.contains("a"),
+      s"Expected partition column a in DESCRIBE EXTENDED, got $partitionCols")
+  }
+
+  test("non-deterministic predicates are not pushed down with limit (gate on)") {
+    withTempTable(createTable = false) { tableName =>
+      writeNonDetTestTable(tableName)
+      withNonDetLimitPushdownConfs(skipNonDeterministic = true) {
+        nonDetLimitPredicates.foreach { case (predicate, _) =>
+          val Seq(scan) = getScanReport {
+            val rows = collectWhereLimit(tableName, predicate, nonDetLimitRowCount)
+            assert(rows.length === nonDetLimitRowCount,
+              s"Predicate '$predicate': expected $nonDetLimitRowCount rows but got ${rows.length}")
+          }
+          assert(scan.size("scanned").bytesCompressed === scan.size("total").bytesCompressed,
+            s"Predicate '$predicate': expected full-table scan")
+        }
+
+        val Seq(detScan) = getScanReport {
+          collectWhereLimit(tableName, "a >= 0", nonDetLimitRowCount)
+        }
+        assert(detScan.size("scanned").bytesCompressed.get <
+          detScan.size("total").bytesCompressed.get)
+      }
+    }
+  }
+
+  test("non-deterministic predicates are incorrectly pushed down with limit (gate off, legacy)") {
+    withTempTable(createTable = false) { tableName =>
+      writeNonDetTestTable(tableName)
+      withNonDetLimitPushdownConfs(skipNonDeterministic = false) {
+        nonDetLimitPredicates.foreach { case (predicate, expectLegacyRowLoss) =>
+          val Seq(scan) = getScanReport {
+            val rows = collectWhereLimit(tableName, predicate, nonDetLimitRowCount)
+            if (expectLegacyRowLoss) {
+              assert(rows.length < nonDetLimitRowCount,
+                s"Predicate '$predicate': expected fewer than $nonDetLimitRowCount rows " +
+                  s"(double-filtered) but got ${rows.length}")
+            }
+          }
+          assert(scan.size("scanned").bytesCompressed.get < scan.size("total").bytesCompressed.get,
+            s"Predicate '$predicate': expected partial scan (limit push-down)")
+        }
+      }
+    }
+  }
+
   test("limit push-down flag") {
     withTempTable(createTable = false) { tableName =>
       val ds = Seq((1, 4), (2, 5), (3, 6)).toDF("key", "value").as[(Int, Int)]

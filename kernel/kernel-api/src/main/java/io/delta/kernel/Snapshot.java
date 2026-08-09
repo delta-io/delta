@@ -17,8 +17,18 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.clustering.ClusteringColumnInfo;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.commit.PublishFailedException;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.KernelException;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.replay.CreateCheckpointIterator;
+import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
@@ -117,6 +127,130 @@ public interface Snapshot {
   /** @return statistics about this snapshot */
   SnapshotStatistics getStatistics();
 
+  /**
+   * Returns the table protocol at this snapshot.
+   *
+   * @return the {@link Protocol} for this snapshot
+   * @since 4.4.0
+   */
+  Protocol getProtocol();
+
+  /**
+   * Returns the table metadata at this snapshot.
+   *
+   * @return the {@link Metadata} for this snapshot
+   * @since 4.4.0
+   */
+  Metadata getMetadata();
+
+  /**
+   * Returns the {@link Committer} used to commit transactions against this snapshot's table.
+   *
+   * @return the committer for this snapshot
+   * @since 4.4.0
+   */
+  Committer getCommitter();
+
+  /**
+   * Returns the table data path, i.e. the same location as {@link #getPath()} in {@link Path} form.
+   *
+   * <p>When turning the result back into a string for file paths, use {@link Path#toString()}
+   * rather than {@code toUri().toString()}: the latter percent-encodes special characters, which
+   * breaks resolution for table roots containing e.g. spaces.
+   *
+   * @return the table data path
+   * @since 4.4.0
+   */
+  default Path getDataPath() {
+    return new Path(getPath());
+  }
+
+  /**
+   * Returns the path to this table's {@code _delta_log} directory.
+   *
+   * @return the {@code _delta_log} path
+   * @since 4.4.0
+   */
+  default Path getLogPath() {
+    return new Path(getDataPath(), "_delta_log");
+  }
+
+  /**
+   * Returns the latest transaction version recorded in the Delta log for the given application id,
+   * or empty if none exists.
+   *
+   * @param engine the engine to use for IO operations
+   * @param applicationId identifier of the application that wrote transaction identifiers into the
+   *     Delta log
+   * @return the last transaction version for {@code applicationId}, or empty if none
+   * @since 4.4.0
+   */
+  default Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
+    return Optional.empty();
+  }
+
+  /**
+   * Returns the checksum ({@code CRC}) information for this snapshot if it was loaded from a
+   * checksum file, otherwise empty.
+   *
+   * <p>An empty result means no checksum was read, not that the table has no checksum file.
+   *
+   * @return the {@link CRCInfo} for this snapshot, or empty if no checksum was loaded
+   * @since 4.4.0
+   */
+  default Optional<CRCInfo> getCurrentCrcInfo() {
+    return Optional.empty();
+  }
+
+  /**
+   * Returns the log segment that backs this snapshot.
+   *
+   * @return the {@link LogSegment} for this snapshot
+   * @since 4.4.0
+   */
+  LogSegment getLogSegment();
+
+  /**
+   * Returns an iterator over the actions that should be written into a checkpoint for this
+   * snapshot.
+   *
+   * @param engine the engine to use for IO operations
+   * @return iterator of filtered columnar batches for checkpoint writing
+   * @since 4.4.0
+   */
+  CreateCheckpointIterator getCreateCheckpointIterator(Engine engine);
+
+  /**
+   * Get per-clustering-column descriptors with the physical column reference (as stored in the
+   * {@code delta.clustering} domain), the logical column reference (resolved against {@link
+   * #getSchema()}), and the column's data type. Returned in the order the columns appear in the
+   * domain.
+   *
+   * <ul>
+   *   <li>{@code Optional.empty()} -- snapshot has no {@code delta.clustering} domain
+   *   <li>{@code Optional.of(List.of())} -- clustered with no columns
+   *   <li>{@code Optional.of([info1, info2])} -- clustered with the listed columns
+   * </ul>
+   *
+   * <p>Implementations must override this method; the default body throws {@link
+   * UnsupportedOperationException}. A turnkey implementation can compose {@link
+   * #getDomainMetadata(String)} (with {@link ClusteringColumnInfo#CLUSTERING_DOMAIN_NAME}) and
+   * {@link ClusteringColumnInfo#resolveAllFromDomainJson(StructType, String)}; overrides are
+   * encouraged to cache the result so repeated callers (e.g. plan rules invoking it per file group)
+   * don't re-deserialize the JSON and re-walk the schema.
+   *
+   * @throws UnsupportedOperationException if the {@link Snapshot} implementation does not override
+   *     this method.
+   * @throws KernelException if the {@code delta.clustering} domain JSON is not a valid clustering
+   *     domain configuration, or if a physical clustering column cannot be resolved against the
+   *     snapshot's schema.
+   * @since 4.3.0
+   */
+  default Optional<List<ClusteringColumnInfo>> getClusteringColumnInfos() {
+    throw new UnsupportedOperationException(
+        "getClusteringColumnInfos() is not implemented for this Snapshot");
+  }
+
   /** @return a scan builder to construct a {@link Scan} to read data from this snapshot */
   ScanBuilder getScanBuilder();
 
@@ -138,9 +272,9 @@ public interface Snapshot {
    * @param engine the engine to use for publishing commits
    * @see io.delta.kernel.commit.CatalogCommitter#publish
    * @throws PublishFailedException if the publish operation fails
+   * @return a new Snapshot reflecting the published state
    */
-  // TODO: Return a new Snapshot reflecting the published state
-  void publish(Engine engine) throws PublishFailedException;
+  Snapshot publish(Engine engine) throws PublishFailedException;
 
   /**
    * Writes a checksum file for this snapshot using the specified mode:
@@ -171,4 +305,17 @@ public interface Snapshot {
    * @see SnapshotStatistics#getChecksumWriteMode()
    */
   void writeChecksum(Engine engine, ChecksumWriteMode mode) throws IOException;
+
+  /**
+   * Writes a checkpoint for the current snapshot.
+   *
+   * @param engine The execution engine used to write the checkpoint and, if necessary, read log
+   *     entries required to compute it.
+   * @throws IOException If an I/O error occurs while computing or writing the checkpoint.
+   * @throws IllegalStateException If attempting to create a checkpoint on an unpublished catalog
+   *     managed commit.
+   * @throws CheckpointAlreadyExistsException If a checkpoint already exists for the target snapshot
+   *     version.
+   */
+  void writeCheckpoint(Engine engine) throws IOException, CheckpointAlreadyExistsException;
 }

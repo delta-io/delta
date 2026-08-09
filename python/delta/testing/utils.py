@@ -54,7 +54,7 @@ class DeltaTestCase(ReusedSQLTestCase):
 
     def tearDown(self) -> None:
         super(DeltaTestCase, self).tearDown()
-        shutil.rmtree(self.tempPath)
+        shutil.rmtree(self.tempPath, ignore_errors=True)
 
     @contextmanager
     def tempTable(self) -> Generator[str, None, None]:

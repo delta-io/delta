@@ -29,7 +29,7 @@ import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, DropTable, LogicalPlan, OverwriteByExpression, ShowCreateTable, V2WriteCommand}
 import org.apache.spark.sql.execution.command._
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
 
 /**
  * A rule to add helpful error messages when Delta is being used with unsupported Hive operations
@@ -103,7 +103,7 @@ case class DeltaUnsupportedOperationsCheck(spark: SparkSession)
       // OK
       return
 
-    case DataSourceV2Relation(tbl: DeltaTableV2, _, _, _, _) if !tbl.tableExists =>
+    case DataSourceV2RelationShim(tbl: DeltaTableV2, _, _, _, _) if !tbl.tableExists =>
       throw DeltaErrors.pathNotExistsException(tbl.deltaLog.dataPath.toString)
 
     case r: ResolvedTable if r.table.isInstanceOf[DeltaTableV2] &&

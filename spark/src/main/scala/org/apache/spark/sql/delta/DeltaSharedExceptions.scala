@@ -21,7 +21,7 @@ import scala.collection.JavaConverters._
 import org.antlr.v4.runtime.ParserRuleContext
 
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.parser.{ParseException, ParserUtils}
+import org.apache.spark.sql.catalyst.parser.{DeltaParseException, ParseException, ParseExceptionShims, ParserUtils}
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.QueryContext
 
@@ -29,11 +29,14 @@ class DeltaAnalysisException(
     errorClass: String,
     messageParameters: Array[String],
     cause: Option[Throwable] = None,
-    origin: Option[Origin] = None)
+    origin: Option[Origin] = None,
+    precomputedMessage: Option[String] = None,
+    precomputedMessageParametersMap: Option[java.util.Map[String, String]] = None)
   extends AnalysisException(
-    message = DeltaThrowableHelper.getMessage(errorClass, messageParameters),
-    messageParameters = DeltaThrowableHelper
-      .getMessageParameters(errorClass, errorSubClass = null, messageParameters).asScala.toMap,
+    message = precomputedMessage.getOrElse(
+      DeltaThrowableHelper.getMessage(errorClass, messageParameters)),
+    messageParameters = precomputedMessageParametersMap.getOrElse(DeltaThrowableHelper
+      .getMessageParameters(errorClass, errorSubClass = null, messageParameters)).asScala.toMap,
     errorClass = Some(errorClass),
     line = origin.flatMap(_.line),
     startPosition = origin.flatMap(_.startPosition),
@@ -43,10 +46,28 @@ class DeltaAnalysisException(
   def getMessageParametersArray: Array[String] = messageParameters
   override def getErrorClass: String = errorClass
   override def getMessageParameters: java.util.Map[String, String] =
-    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+    precomputedMessageParametersMap.getOrElse(
+      DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+    )
   override def withPosition(origin: Origin): AnalysisException =
-    new DeltaAnalysisException(errorClass, messageParameters, cause, Some(origin))
+    new DeltaAnalysisException(errorClass, messageParameters, cause, Some(origin),
+      precomputedMessage, precomputedMessageParametersMap)
 }
+
+class DeltaAnalysisExceptionWithSubErrors(
+    errorClass: String,
+    messageParameters: Array[String],
+    subErrors: Seq[(String, Array[String])])
+  extends DeltaAnalysisException(
+    errorClass = errorClass,
+    messageParameters = messageParameters,
+    cause = None,
+    origin = None,
+    precomputedMessage = Some(
+      DeltaThrowableHelper.getMessageWithSubErrors(errorClass, messageParameters, subErrors)),
+    precomputedMessageParametersMap = Some(
+      DeltaThrowableHelper.getMainErrorMessageParameters(errorClass, messageParameters))
+  )
 
 class DeltaIllegalArgumentException(
     errorClass: String,
@@ -81,19 +102,10 @@ class DeltaUnsupportedOperationException(
   override def getQueryContext: Array[QueryContext] = new Array(0);
 }
 
-class DeltaParseException(
-    ctx: ParserRuleContext,
-    errorClass: String,
-    messageParameters: Map[String, String] = Map.empty)
-  extends ParseException(
-      Option(ParserUtils.command(ctx)),
-      ParserUtils.position(ctx.getStart),
-      ParserUtils.position(ctx.getStop),
-      errorClass,
-      messageParameters
-    ) with DeltaThrowable {
-  override def getErrorClass: String = errorClass
-}
+// DeltaParseException is now defined in ParseExceptionShims
+// (see scala-spark-*/shims/ParseExceptionShims.scala) to handle the different ParseException
+// constructor signatures between Spark versions.
+// In Spark 4.1, ParseException removed the 'stop' parameter from its constructor.
 
 class DeltaArithmeticException(
     errorClass: String,

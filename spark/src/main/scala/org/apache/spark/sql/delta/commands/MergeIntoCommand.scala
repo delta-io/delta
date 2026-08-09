@@ -101,7 +101,8 @@ case class MergeIntoCommand(
           protocol = targetFileIndex.protocol,
           metadata = targetFileIndex.metadata,
           otherProtocol = deltaTxn.protocol,
-          otherMetadata = deltaTxn.metadata
+          otherMetadata = deltaTxn.metadata,
+          tableNameOrPath = deltaTxn.tableNameOrPath
         )
 
         if (canMergeSchema) {
