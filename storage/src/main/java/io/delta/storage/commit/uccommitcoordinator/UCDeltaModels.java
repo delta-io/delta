@@ -21,6 +21,7 @@ import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +41,32 @@ public final class UCDeltaModels {
   public enum TableType {
     MANAGED,
     EXTERNAL
+  }
+
+  /** Maintenance operations that this Delta client can run when a catalog permits them. */
+  public enum ClientMaintenanceOperation {
+    OPTIMIZE,
+    VACUUM;
+
+    /**
+     * Parses the catalog's case-sensitive operation names. Unknown names and duplicates are
+     * ignored so a newer catalog can add operations without breaking an older client.
+     */
+    public static Set<ClientMaintenanceOperation> fromNames(Collection<String> names) {
+      if (names == null || names.isEmpty()) {
+        return Collections.emptySet();
+      }
+      EnumSet<ClientMaintenanceOperation> operations =
+          EnumSet.noneOf(ClientMaintenanceOperation.class);
+      for (String name : names) {
+        try {
+          operations.add(ClientMaintenanceOperation.valueOf(name));
+        } catch (IllegalArgumentException | NullPointerException ignored) {
+          // Unknown and null entries do not change the policy.
+        }
+      }
+      return Collections.unmodifiableSet(operations);
+    }
   }
 
   public static class DeltaProtocol implements AbstractProtocol {
@@ -115,6 +142,7 @@ public final class UCDeltaModels {
     private final AbstractMetadata metadata;
     private final Map<String, String> storageProperties;
     private final Optional<UniformMetadata> uniformMetadata;
+    private final Set<ClientMaintenanceOperation> additionalClientMaintenanceOperations;
 
     public TableInfo(
         UUID tableId,
@@ -123,12 +151,36 @@ public final class UCDeltaModels {
         AbstractMetadata metadata,
         Map<String, String> storageProperties,
         Optional<UniformMetadata> uniformMetadata) {
+      this(
+          tableId,
+          tableType,
+          location,
+          metadata,
+          storageProperties,
+          uniformMetadata,
+          Collections.emptySet());
+    }
+
+    public TableInfo(
+        UUID tableId,
+        TableType tableType,
+        String location,
+        AbstractMetadata metadata,
+        Map<String, String> storageProperties,
+        Optional<UniformMetadata> uniformMetadata,
+        Set<ClientMaintenanceOperation> additionalClientMaintenanceOperations) {
       this.tableId = tableId;
       this.tableType = tableType;
       this.location = location;
       this.metadata = metadata;
       this.storageProperties = storageProperties;
       this.uniformMetadata = uniformMetadata;
+      this.additionalClientMaintenanceOperations =
+          additionalClientMaintenanceOperations == null
+                  || additionalClientMaintenanceOperations.isEmpty()
+              ? Collections.emptySet()
+              : Collections.unmodifiableSet(
+                  EnumSet.copyOf(additionalClientMaintenanceOperations));
     }
 
     /** UC's {@code table_uuid}; distinct from {@link AbstractMetadata#getId()} (the Delta id). */
@@ -156,6 +208,11 @@ public final class UCDeltaModels {
     /** UniForm conversion metadata, or empty if the table has no UniForm enabled. */
     public Optional<UniformMetadata> getUniformMetadata() {
       return uniformMetadata;
+    }
+
+    /** Catalog permissions that are client-only and are never persisted in Delta metadata. */
+    public Set<ClientMaintenanceOperation> getAdditionalClientMaintenanceOperations() {
+      return additionalClientMaintenanceOperations;
     }
   }
 

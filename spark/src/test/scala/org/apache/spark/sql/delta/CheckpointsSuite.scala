@@ -1226,6 +1226,20 @@ class CheckpointsSuite
     }
   }
 
+  test("catalog-managed checkpoint is written without metadata cleanup") {
+    withCatalogManagedTable() { tableName =>
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val snapshot = deltaLog.update()
+
+      val usageRecords = Log4jUsageLogger.track {
+        deltaLog.checkpoint(snapshot)
+      }
+
+      assert(deltaLog.readLastCheckpointFile().exists(_.version == snapshot.version))
+      assert(filterUsageRecords(usageRecords, "delta.log.cleanup").isEmpty)
+    }
+  }
+
   testDifferentCheckpoints("Ensure variant stats in checkpoint") { (policy, _) =>
     // Test all combinations of (writeStatsAsJson, writeStatsAsStruct)
     // Skip (false, false) as that would have no stats at all
@@ -2027,4 +2041,3 @@ class CheckpointsWithCatalogOwnedBatch2Suite extends CheckpointsSuite {
 class CheckpointsWithCatalogOwnedBatch100Suite extends CheckpointsSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
-

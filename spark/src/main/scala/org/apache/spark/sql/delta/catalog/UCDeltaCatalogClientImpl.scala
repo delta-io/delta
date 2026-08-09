@@ -29,7 +29,10 @@ import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractProtocol
 import io.delta.storage.commit.uccommitcoordinator.{UCConfigUtils, UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uniform.{UniformMetadata => StorageUniformMetadata}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
-import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{
+  ClientMaintenanceOperation,
+  TableInfo
+}
 import io.delta.storage.commit.uccommitcoordinator.exceptions.{
   CredentialFetchFailedException,
   UnsupportedTableFormatException,
@@ -633,7 +636,12 @@ private[catalog] class UCDeltaCatalogClientImpl(
       comment = Option(m.getDescription),
       createTime = if (m.getCreatedTime != null) m.getCreatedTime else 0L,
       tracksPartitionsInCatalog = false)
-    V1Table(catalogTable)
+    new UCDeltaV1Table(
+      catalogTable,
+      info.getAdditionalClientMaintenanceOperations.asScala.flatMap {
+        case ClientMaintenanceOperation.OPTIMIZE => Some(CatalogMaintenanceOperation.Optimize)
+        case ClientMaintenanceOperation.VACUUM => Some(CatalogMaintenanceOperation.Vacuum)
+      }.toSet)
   }
 
   private def toUcTableType(t: CatalogTableType): UCDeltaModels.TableType = t match {
@@ -648,6 +656,12 @@ private[catalog] class UCDeltaCatalogClientImpl(
     case UCDeltaModels.TableType.EXTERNAL => CatalogTableType.EXTERNAL
   }
 }
+
+/** A UC-loaded V1 table with catalog policy kept outside Delta table properties. */
+private[delta] final class UCDeltaV1Table(
+    catalogTable: CatalogTable,
+    val additionalClientMaintenanceOperations: Set[CatalogMaintenanceOperation])
+  extends V1Table(catalogTable) with SupportsCatalogMaintenancePolicy
 
 object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with Logging {
   // Test-only instrumentation. The mutable counters are encapsulated so production code

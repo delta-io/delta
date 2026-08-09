@@ -421,6 +421,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
       table match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
+          val maintenanceOperations = v1 match {
+            case policyTable: SupportsCatalogMaintenancePolicy =>
+              policyTable.additionalClientMaintenanceOperations
+            case _ => Set.empty[CatalogMaintenanceOperation]
+          }
           // Server-side planning only applies to Delta tables. Attempt it here, inside the
           // Delta-`V1Table` branch, rather than on every loaded table: a non-Delta table or a
           // catalog-specific shape (e.g. Unity Catalog's `MetadataTable` wrapping a `ViewInfo`
@@ -443,7 +448,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           //     HMS case has credentials in practice, so the read succeeds; the "no `_delta_log`
           //     read" guarantee holds for the credential-less UC case, not universally.)
           if (ServerSidePlannedTable.isEnabled(spark)) {
-            val deltaTable = loadCatalogTable(ident, v1.catalogTable)
+            val deltaTable =
+              loadCatalogTableWithMaintenancePolicy(ident, v1.catalogTable, maintenanceOperations)
             val tableSchema = if (v1.schema.nonEmpty) v1.schema else deltaTable.schema()
             ServerSidePlannedTable
               .tryCreate(spark, ident, deltaTable, isUnityCatalog,
@@ -451,7 +457,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
                 tableSchema = tableSchema)
               .getOrElse(deltaTable)
           } else {
-            loadCatalogTable(ident, v1.catalogTable)
+            loadCatalogTableWithMaintenancePolicy(ident, v1.catalogTable, maintenanceOperations)
           }
         case o => o
       }
@@ -544,6 +550,18 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       new Path(catalogTable.location),
       catalogTable = Some(catalogTable),
       tableIdentifier = Some(ident.toString))
+  }
+
+  private def loadCatalogTableWithMaintenancePolicy(
+      ident: Identifier,
+      catalogTable: CatalogTable,
+      additionalClientMaintenanceOperations: Set[CatalogMaintenanceOperation]): Table = {
+    loadCatalogTable(ident, catalogTable) match {
+      case table: DeltaTableV2 =>
+        table.withAdditionalClientMaintenanceOperations(
+          additionalClientMaintenanceOperations)
+      case table => table
+    }
   }
 
   /**

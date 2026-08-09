@@ -28,6 +28,7 @@ import io.delta.storage.commit.UCDeltaGetCommitsResponse;
 import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.ClientMaintenanceOperation;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo;
 import io.delta.storage.commit.uccommitcoordinator.exceptions.CredentialFetchFailedException;
 import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException;
@@ -86,6 +87,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -617,9 +619,18 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     AdaptedTableMetadata adapted = new AdaptedTableMetadata(name, m);
     Optional<UniformMetadata> uniformMetadata =
         toStorageUniformMetadata(response.getUniform());
+    Set<ClientMaintenanceOperation> maintenanceOperations =
+        ClientMaintenanceOperation.fromNames(
+            response.getAdditionalClientMaintenanceOperations());
     if (!credentialVendingEnabled) {
       return new TableInfo(
-          ucTableId, tableType, location, adapted, Collections.emptyMap(), uniformMetadata);
+          ucTableId,
+          tableType,
+          location,
+          adapted,
+          Collections.emptyMap(),
+          uniformMetadata,
+          maintenanceOperations);
     }
     Map<String, String> storageProps;
     try {
@@ -629,13 +640,26 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       // recover. The exception carries the catalog-side TableInfo (with empty storageProperties)
       // so the caller can still build a CatalogTable.
       TableInfo withoutCreds = new TableInfo(
-          ucTableId, tableType, location, adapted, Collections.emptyMap(), uniformMetadata);
+          ucTableId,
+          tableType,
+          location,
+          adapted,
+          Collections.emptyMap(),
+          uniformMetadata,
+          maintenanceOperations);
       throw new CredentialFetchFailedException(
           String.format("Credential fetch failed for table %s.%s.%s (HTTP %s): %s",
               catalog, schema, name, e.getCode(), e.getResponseBody()),
           e, withoutCreds);
     }
-    return new TableInfo(ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
+    return new TableInfo(
+        ucTableId,
+        tableType,
+        location,
+        adapted,
+        storageProps,
+        uniformMetadata,
+        maintenanceOperations);
   }
 
   private static Optional<UniformMetadata> toStorageUniformMetadata(

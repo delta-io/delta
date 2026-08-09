@@ -67,7 +67,9 @@ class DeltaTableV2 private(
     val catalogTable: Option[CatalogTable],
     val tableIdentifier: Option[String],
     val timeTravelOpt: Option[DeltaTimeTravelSpec],
-    val options: Map[String, String])
+    val options: Map[String, String],
+    private[delta] val additionalClientMaintenanceOperations:
+      Set[CatalogMaintenanceOperation] = Set.empty)
   extends Table
   with SupportsWrite
   with V2TableWithV1Fallback
@@ -431,9 +433,43 @@ class DeltaTableV2 private(
     tableIdentifier: Option[String] = this.tableIdentifier,
     timeTravelOpt: Option[DeltaTimeTravelSpec] = this.timeTravelOpt,
     options: Map[String, String] = this.options
+  ): DeltaTableV2 = copyWithMaintenancePolicy(
+    spark,
+    path,
+    catalogTable,
+    tableIdentifier,
+    timeTravelOpt,
+    options,
+    additionalClientMaintenanceOperations)
+
+  private[delta] def withAdditionalClientMaintenanceOperations(
+      operations: Set[CatalogMaintenanceOperation]): DeltaTableV2 = copyWithMaintenancePolicy(
+    spark,
+    path,
+    catalogTable,
+    tableIdentifier,
+    timeTravelOpt,
+    options,
+    operations)
+
+  private def copyWithMaintenancePolicy(
+      spark: SparkSession,
+      path: Path,
+      catalogTable: Option[CatalogTable],
+      tableIdentifier: Option[String],
+      timeTravelOpt: Option[DeltaTimeTravelSpec],
+      options: Map[String, String],
+      additionalClientMaintenanceOperations: Set[CatalogMaintenanceOperation]
   ): DeltaTableV2 = {
     val deltaTableV2 =
-      new DeltaTableV2(spark, path, catalogTable, tableIdentifier, timeTravelOpt, options)
+      new DeltaTableV2(
+        spark,
+        path,
+        catalogTable,
+        tableIdentifier,
+        timeTravelOpt,
+        options,
+        additionalClientMaintenanceOperations)
     deltaTableV2.pathInfo.timeTravelByPath = timeTravelByPath
     deltaTableV2.pathInfo.partitionFilters = partitionFilters
     deltaTableV2

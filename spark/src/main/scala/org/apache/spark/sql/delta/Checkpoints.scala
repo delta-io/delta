@@ -341,7 +341,11 @@ trait Checkpoints extends DeltaLogging {
     val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint, catalogTableOpt)
     writeLastCheckpointFile(
       snapshotToCheckpoint.deltaLog, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
-    doLogCleanup(snapshotToCheckpoint, catalogTableOpt)
+    // Checkpoints are allowed on catalog-managed tables, but expired log cleanup is a separate
+    // maintenance operation. No catalog permission for cleanup is defined yet.
+    if (!snapshotToCheckpoint.isCatalogOwned) {
+      doLogCleanup(snapshotToCheckpoint, catalogTableOpt)
+    }
   }
 
   protected[delta] def writeLastCheckpointFile(

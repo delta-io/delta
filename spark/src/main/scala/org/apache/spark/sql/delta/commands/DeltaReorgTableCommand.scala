@@ -16,8 +16,9 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.catalog.{CatalogMaintenanceOperation, CatalogMaintenancePolicy}
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.{LeafCommand, LogicalPlan, UnaryCommand}
@@ -75,9 +76,8 @@ case class DeltaReorgTableCommand(
       optimizeByReorg(sparkSession)
     case DeltaReorgTableSpec(DeltaReorgTableMode.UNIFORM_ICEBERG, Some(icebergCompatVersion)) =>
       val table = getDeltaTable(target, "REORG")
-      if (table.update().isCatalogOwned) {
-        throw DeltaErrors.operationBlockedOnCatalogManagedTable("REORG")
-      }
+      CatalogMaintenancePolicy.requireAllowed(
+        table, table.update(), CatalogMaintenanceOperation.Reorg)
       upgradeUniformIcebergCompatVersion(table, sparkSession, icebergCompatVersion)
   }
 

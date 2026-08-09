@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, Clus
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.catalog.{CatalogMaintenanceOperation, CatalogMaintenancePolicy}
 import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.files.SQLMetricsReporting
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -113,6 +114,16 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
 }
 
 object OptimizeTableCommand {
+
+  private[delta] def maintenanceOperation(
+      optimizeContext: DeltaOptimizeContext): CatalogMaintenanceOperation = {
+    if (optimizeContext.reorg.nonEmpty) {
+      CatalogMaintenanceOperation.Reorg
+    } else {
+      CatalogMaintenanceOperation.Optimize
+    }
+  }
+
   /**
    * Alternate constructor that converts a provided path or table identifier into the
    * correct child LogicalPlan node. If both path and tableIdentifier are specified (or
@@ -162,9 +173,8 @@ case class OptimizeTableCommand(
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
     }
 
-    if (snapshot.isCatalogOwned) {
-      throw DeltaErrors.operationBlockedOnCatalogManagedTable("OPTIMIZE")
-    }
+    CatalogMaintenancePolicy.requireAllowed(
+      table, snapshot, OptimizeTableCommand.maintenanceOperation(optimizeContext))
 
     val isClusteredTable = ClusteredTableUtils.isSupported(snapshot.protocol)
     if (isClusteredTable) {

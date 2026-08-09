@@ -85,16 +85,22 @@ class UCDeltaTokenBasedRestClientSuite
       location: String = "s3://bucket/table",
       tableType: String = "MANAGED",
       commitsJson: String = "[]",
-      latestTableVersion: Long = -1L): String =
+      latestTableVersion: Long = -1L,
+      additionalMaintenanceOperationsJson: Option[String] = None): String = {
+    val maintenanceOperations = additionalMaintenanceOperationsJson
+      .map(value => s""","additional-client-maintenance-operations":$value""")
+      .getOrElse("")
     s"""{"metadata":{"table-uuid":"$tableUuid","data-source-format":"$format",""" +
-    s""""table-type":"$tableType",""" +
-    s""""location":"$location",""" +
-    s""""columns":{"type":"struct","fields":[""" +
-    s"""{"name":"date","type":"string","nullable":true,"metadata":{}},""" +
-    s"""{"name":"value","type":"integer","nullable":true,"metadata":{}}""" +
-    s"""]},""" +
-    s""""properties":{"key1":"val1"},"partition-columns":["date"],"created-time":1000},""" +
-    s""""commits":$commitsJson,"latest-table-version":$latestTableVersion}"""
+      s""""table-type":"$tableType",""" +
+      s""""location":"$location",""" +
+      s""""columns":{"type":"struct","fields":[""" +
+      s"""{"name":"date","type":"string","nullable":true,"metadata":{}},""" +
+      s"""{"name":"value","type":"integer","nullable":true,"metadata":{}}""" +
+      s"""]},""" +
+      s""""properties":{"key1":"val1"},"partition-columns":["date"],"created-time":1000},""" +
+      s""""commits":$commitsJson,"latest-table-version":$latestTableVersion""" +
+      s"""$maintenanceOperations}"""
+  }
 
   private def deltaCommitJson(
       version: Long,
@@ -228,6 +234,44 @@ class UCDeltaTokenBasedRestClientSuite
       assert(parsed.get("fields").size() === 2)
       assert(parsed.get("fields").get(0).get("name").asText() === "date")
       assert(parsed.get("fields").get(1).get("type").asText() === "integer")
+      assert(info.getAdditionalClientMaintenanceOperations.isEmpty)
+    }
+  }
+
+  test("loadTable parses recognized maintenance operations as a case-sensitive set") {
+    deltaHandler = (exchange, _) => sendJson(
+      exchange,
+      HttpStatus.SC_OK,
+      loadTableJson(additionalMaintenanceOperationsJson = Some(
+        """["OPTIMIZE","VACUUM","OPTIMIZE","optimize","REORG","FUTURE",null]""")))
+
+    withClient { c =>
+      assert(c.loadTable(testIdentifier).getAdditionalClientMaintenanceOperations.asScala ===
+        Set(
+          UCDeltaModels.ClientMaintenanceOperation.OPTIMIZE,
+          UCDeltaModels.ClientMaintenanceOperation.VACUUM))
+    }
+  }
+
+  test("loadTable ignores maintenance operation names with the wrong case") {
+    deltaHandler = (exchange, _) => sendJson(
+      exchange,
+      HttpStatus.SC_OK,
+      loadTableJson(additionalMaintenanceOperationsJson = Some("""["optimize","Vacuum"]""")))
+
+    withClient { c =>
+      assert(c.loadTable(testIdentifier).getAdditionalClientMaintenanceOperations.isEmpty)
+    }
+  }
+
+  test("loadTable treats an empty maintenance operation list as no additions") {
+    deltaHandler = (exchange, _) => sendJson(
+      exchange,
+      HttpStatus.SC_OK,
+      loadTableJson(additionalMaintenanceOperationsJson = Some("[]")))
+
+    withClient { c =>
+      assert(c.loadTable(testIdentifier).getAdditionalClientMaintenanceOperations.isEmpty)
     }
   }
 

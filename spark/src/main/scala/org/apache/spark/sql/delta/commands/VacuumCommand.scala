@@ -28,7 +28,11 @@ import scala.math.min
 import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction, RemoveFile, SingleAction}
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.{
+  CatalogMaintenanceOperation,
+  CatalogMaintenancePolicy,
+  DeltaTableV2
+}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, DeltaFileOperations, FileNames, JsonUtils, Utils => DeltaUtils}
@@ -175,8 +179,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               s"but found ${catalogTable.tableType} for table ${catalogTable.identifier}."
           )
         }
-        throw DeltaErrors.operationBlockedOnCatalogManagedTable("VACUUM")
       }
+      CatalogMaintenancePolicy.requireAllowed(
+        table, snapshot, CatalogMaintenanceOperation.Vacuum)
 
       // By default, we will do full vacuum unless LITE vacuum conf is set
       val isLiteVacuumEnabled = spark.sessionState.conf.getConf(DeltaSQLConf.LITE_VACUUM_ENABLED)

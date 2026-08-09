@@ -25,7 +25,7 @@ import scala.jdk.CollectionConverters._
 import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier => StorageTableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCDeltaClient, UCDeltaModels}
-import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{DeltaProtocol, StagingTableInfo, TableInfo, TableType => UcTableType}
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{ClientMaintenanceOperation, DeltaProtocol, StagingTableInfo, TableInfo, TableType => UcTableType}
 import io.delta.storage.commit.uccommitcoordinator.exceptions.{CredentialFetchFailedException, UnsupportedTableFormatException, NoSuchTableException => StorageNoSuchTableException}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
@@ -713,14 +713,19 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       "s3://bucket/table",
       metadata,
       util.Map.of("fs.s3a.access.key", "key"),
-      Optional.empty())
+      Optional.empty(),
+      util.Set.of(ClientMaintenanceOperation.OPTIMIZE, ClientMaintenanceOperation.VACUUM))
 
     val client = new UCDeltaCatalogClientImpl(
       catalogName = "main",
       ucClient = new StubUCDeltaClient(info))
 
     val table = client.loadTable(Identifier.of(Array("sch"), "tbl"))
-    val v1 = table.asInstanceOf[V1Table].catalogTable
+    val ucV1 = table.asInstanceOf[UCDeltaV1Table]
+    assert(ucV1.additionalClientMaintenanceOperations === Set(
+      CatalogMaintenanceOperation.Optimize,
+      CatalogMaintenanceOperation.Vacuum))
+    val v1 = ucV1.catalogTable
     assert(v1.identifier.table === "tbl")
     assert(v1.identifier.database === Some("sch"))
     assert(v1.identifier.catalog === Some("main"))
@@ -734,6 +739,8 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     val merged = v1.storage.properties
     assert(merged.get("ucTableId") === Some(tableId.toString))
     assert(merged.get("fs.s3a.access.key") === Some("key"))
+    assert(!merged.contains("additional-client-maintenance-operations"))
+    assert(!v1.properties.contains("additional-client-maintenance-operations"))
   }
 
   test("loadTable falls back to SSP on CredentialFetchFailedException when SSP is enabled") {
@@ -745,7 +752,8 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       "s3://bucket/no-creds-table",
       metadata,
       Collections.emptyMap(), // no storage properties either
-      Optional.empty())
+      Optional.empty(),
+      util.Set.of(ClientMaintenanceOperation.OPTIMIZE, ClientMaintenanceOperation.VACUUM))
     val credEx = new CredentialFetchFailedException(
       "creds exhausted", new RuntimeException("simulated"), tableInfoNoCreds)
 
@@ -760,7 +768,11 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     spark.conf.unset(sspKey)
     try {
       val table = client.loadTable(Identifier.of(Array("sch"), "tbl"))
-      val v1 = table.asInstanceOf[V1Table].catalogTable
+      val ucV1 = table.asInstanceOf[UCDeltaV1Table]
+      assert(ucV1.additionalClientMaintenanceOperations === Set(
+        CatalogMaintenanceOperation.Optimize,
+        CatalogMaintenanceOperation.Vacuum))
+      val v1 = ucV1.catalogTable
       assert(v1.identifier.table === "tbl")
       assert(v1.storage.locationUri.map(_.toString) === Some("s3://bucket/no-creds-table"))
       assert(v1.storage.properties.isEmpty,

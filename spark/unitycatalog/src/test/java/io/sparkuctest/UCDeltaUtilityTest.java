@@ -20,6 +20,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
 import java.util.List;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -140,25 +142,85 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   @Test
-  public void testMaintenanceOpsBlockedOnManagedTable() throws Exception {
+  public void testManagedTableMaintenancePolicy() throws Exception {
     withNewTable(
         "maintenance_blocked",
         "id INT",
         TableType.MANAGED,
         tableName -> {
-          sql("INSERT INTO %s VALUES (1)", tableName);
+          for (int id = 1; id <= 4; id++) {
+            sql("INSERT INTO %s VALUES (%d)", tableName, id);
+          }
 
-          assertThatThrownBy(() -> sql("OPTIMIZE %s", tableName))
-              .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
-              .hasMessageContaining("OPTIMIZE");
+          long filesBeforeOptimize =
+              ((Number)
+                      spark()
+                          .sql(String.format("DESCRIBE DETAIL %s", tableName))
+                          .head()
+                          .getAs("numFiles"))
+                  .longValue();
+          Assertions.assertThat(filesBeforeOptimize).isGreaterThan(1L);
 
-          assertThatThrownBy(() -> sql("VACUUM %s", tableName))
-              .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
-              .hasMessageContaining("VACUUM");
+          sql("OPTIMIZE %s", tableName);
+          long filesAfterOptimize =
+              ((Number)
+                      spark()
+                          .sql(String.format("DESCRIBE DETAIL %s", tableName))
+                          .head()
+                          .getAs("numFiles"))
+                  .longValue();
+          Assertions.assertThat(filesAfterOptimize).isLessThan(filesBeforeOptimize);
+
+          String tableLocation =
+              spark().sql(String.format("DESCRIBE DETAIL %s", tableName)).head().getAs("location");
+          Path rejectedStagedCommit =
+              new Path(
+                  tableLocation,
+                  "_delta_log/_staged_commits/"
+                      + "00000000000000000999.00000000-0000-0000-0000-000000000000.json");
+          FileSystem tableFileSystem =
+              rejectedStagedCommit.getFileSystem(spark().sparkContext().hadoopConfiguration());
+          tableFileSystem.create(rejectedStagedCommit, false).close();
+          tableFileSystem.setTimes(rejectedStagedCommit, 1L, -1L);
+          Assertions.assertThat(tableFileSystem.exists(rejectedStagedCommit)).isTrue();
+
+          String retentionCheck = "spark.databricks.delta.retentionDurationCheck.enabled";
+          String previousRetentionCheck = spark().conf().get(retentionCheck, "true");
+          try {
+            spark().conf().set(retentionCheck, "false");
+            List<List<String>> vacuumCandidates =
+                sql("VACUUM %s RETAIN 0 HOURS DRY RUN", tableName);
+            Assertions.assertThat(vacuumCandidates).isNotEmpty();
+            List<Path> vacuumCandidatePaths = new ArrayList<>();
+            for (List<String> candidate : vacuumCandidates) {
+              Assertions.assertThat(candidate).hasSize(1);
+              Path candidatePath = new Path(candidate.get(0));
+              Assertions.assertThat(candidatePath.toUri().getPath())
+                  .isNotEqualTo(rejectedStagedCommit.toUri().getPath());
+              vacuumCandidatePaths.add(candidatePath);
+            }
+            sql("VACUUM %s RETAIN 0 HOURS", tableName);
+            for (Path candidatePath : vacuumCandidatePaths) {
+              FileSystem candidateFileSystem =
+                  candidatePath.getFileSystem(spark().sparkContext().hadoopConfiguration());
+              Assertions.assertThat(candidateFileSystem.exists(candidatePath)).isFalse();
+            }
+            Assertions.assertThat(tableFileSystem.exists(rejectedStagedCommit)).isTrue();
+          } finally {
+            spark().conf().set(retentionCheck, previousRetentionCheck);
+          }
 
           assertThatThrownBy(() -> sql("REORG TABLE %s APPLY (PURGE)", tableName))
               .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
-              .hasMessageContaining("OPTIMIZE");
+              .hasMessageContaining("REORG");
+          assertThatThrownBy(
+                  () ->
+                      sql(
+                          "REORG TABLE %s APPLY "
+                              + "(UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION = 2))",
+                          tableName))
+              .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
+              .hasMessageContaining("REORG");
         });
   }
 }

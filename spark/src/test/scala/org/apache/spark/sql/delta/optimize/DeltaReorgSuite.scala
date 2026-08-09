@@ -18,6 +18,13 @@ package org.apache.spark.sql.delta.optimize
 
 import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMapping, DeltaLog, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.catalog.CatalogMaintenanceOperation
+import org.apache.spark.sql.delta.commands.{
+  DeltaOptimizeContext,
+  DeltaPurgeOperation,
+  DeltaRewriteTypeWideningOperation,
+  OptimizeTableCommand
+}
 import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -301,15 +308,32 @@ class DeltaReorgSuite extends QueryTest
     }
   }
 
-  test("reorg on a catalog managed table should fail") {
+  test("public reorg operations on a catalog managed table should fail") {
     withCatalogManagedTable() { tableName =>
-      checkError(
-        intercept[DeltaUnsupportedOperationException] {
-          spark.sql(s"REORG TABLE $tableName APPLY (PURGE)")
-        },
-        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
-        parameters = Map("operation" -> "OPTIMIZE")
-      )
+      Seq(
+        s"REORG TABLE $tableName APPLY (PURGE)",
+        s"REORG TABLE $tableName " +
+          "APPLY (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION = 2))"
+      ).foreach { command =>
+        checkError(
+          intercept[DeltaUnsupportedOperationException] {
+            spark.sql(command)
+          },
+          "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+          parameters = Map("operation" -> "REORG")
+        )
+      }
+    }
+  }
+
+  test("delegated reorg operations retain their command identity") {
+    Seq(new DeltaPurgeOperation(), new DeltaRewriteTypeWideningOperation()).foreach { reorg =>
+      val context = DeltaOptimizeContext(
+        reorg = Some(reorg),
+        minFileSize = Some(0L),
+        maxDeletedRowsRatio = Some(0d))
+      assert(OptimizeTableCommand.maintenanceOperation(context) ===
+        CatalogMaintenanceOperation.Reorg)
     }
   }
 }
