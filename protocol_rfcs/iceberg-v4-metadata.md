@@ -71,13 +71,19 @@ This design enables:
 
 <ins>The `_last_checkpoint` file remains a non-authoritative hint, as defined in the existing protocol. Readers discover whether a table supports `adaptiveMetadata` from the `protocol` action in the log or checkpoint, not from `_last_checkpoint`.</ins>
 
-<ins>When the `adaptiveMetadata` table feature is enabled and a manifest commit has been written, the `_last_checkpoint` file may embed the [`checkpoint` action](#checkpoint-action) for the latest checkpoint version:</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled and a manifest commit has been written, the `_last_checkpoint` file may carry these additional fields:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>checkpoint</ins> | <ins>Struct</ins> | <ins>The `checkpoint` action for the latest manifest commit. Schema defined in [Checkpoint Action](#checkpoint-action).</ins> |
+| <ins>checkpointType</ins> | <ins>String</ins> | <ins>Optional. `adaptiveMetadata` if the latest checkpoint is a [`checkpoint` action](#checkpoint-action); absent for classic/multi-part/V2 checkpoints. Unrecognized values are ignored (reader falls back to log replay).</ins> |
+| <ins>manifestCommitVersion</ins> | <ins>Long</ins> | <ins>Present when `checkpointType` is `adaptiveMetadata`. The `checkpointMetadata.version` of the latest [`checkpoint` action](#checkpoint-action). Distinct from `contentRoot.version`.</ins> |
+| <ins>checkpoint</ins> | <ins>Struct</ins> | <ins>Optional, only when `checkpointType` is `adaptiveMetadata`. The embedded [`checkpoint` action](#checkpoint-action) for the latest manifest commit. May be omitted (see below). Schema in [Checkpoint Action](#checkpoint-action).</ins> |
 
-<ins>When the embedded `checkpoint` action is present, readers can use `contentRoot.path` to begin prefetching the root manifest immediately, and the action provides the complete table state at `checkpointMetadata.version`. If the hint is absent, stale, or does not contain a `checkpoint` action, readers fall back to log replay to locate the latest `checkpoint` action.</ins>
+<ins>`checkpoint` and `v2Checkpoint` are mutually exclusive, as are the `adaptiveMetadata` and `v2Checkpoint` features.</ins>
+
+<ins>The embedded `checkpoint` is a prefetch optimization only; readers must not require it. When present, a reader uses `contentRoot.path` to prefetch the root manifest for the state at `checkpointMetadata.version`. When absent or stale (`manifestCommitVersion` older than a `checkpoint` action found in the log), the reader seeks to the latest `checkpoint` action in the log via `manifestCommitVersion`, or falls back to log replay.</ins>
+
+<ins>`_last_checkpoint` is overwritten non-atomically on some object stores, so it must stay small. Since a `checkpoint` action embeds all non-content metadata, writers must bound it — as V2 checkpoints trim their inline caches above a threshold — omitting the `checkpoint` struct (while still writing `checkpointType` and `manifestCommitVersion`) when it would exceed that threshold.</ins>
 
 ### Checkpoints
 
