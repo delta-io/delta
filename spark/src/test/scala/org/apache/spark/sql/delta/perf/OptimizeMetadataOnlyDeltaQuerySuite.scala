@@ -970,6 +970,86 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     }
   }
 
+  test("min-max - partition values ignore files fully removed by a deletion vector") {
+    // A file whose deletion vector invalidates every record contributes no rows to the
+    // table, so its partition value must not be able to set the table-wide MIN/MAX.
+    // Such files are protocol-legal: nothing requires `cardinality < numRecords`.
+    withTempDir { dir =>
+      val tempPath = dir.getCanonicalPath
+      // A single Spark partition writes exactly one file per partition value. Partition 1
+      // gets two rows and is the only one kept, so the files to fully delete are exactly
+      // the single-row ones. Identifying them by row count rather than by partition value
+      // keeps this test independent of the column mapping mode.
+      spark.range(0, 4, 1, 1)
+        .select(
+          col("id").cast("int").as("Column1"),
+          when(col("id") === 0, lit(0))
+            .when(col("id") === 3, lit(2))
+            .otherwise(lit(1)).as("Column2"))
+        .write.format("delta").partitionBy("Column2").save(tempPath)
+
+      val log = DeltaLog.forTable(spark, new Path(tempPath))
+      enableDeletionVectorsInTable(new Path(tempPath), true)
+
+      val files = log.update().allFiles.collect()
+      assert(files.length === 3)
+      val (filesToFullyDelete, filesToKeep) = files.partition(_.numPhysicalRecords.contains(1L))
+      assert(filesToFullyDelete.length === 2)
+      assert(filesToKeep.length === 1)
+
+      // Cover every row of each file with a deletion vector instead of removing the
+      // AddFile, which is what a writer does when it cannot prove the file is fully
+      // replaced (see TouchedFileWithDV.isFullyReplaced).
+      filesToFullyDelete.foreach { file =>
+        removeRowsFromFile(log, file, Seq.range(0, file.numPhysicalRecords.get))
+      }
+      val remainingFiles = log.update().allFiles.collect()
+      assert(remainingFiles.length === 3)
+      assert(remainingFiles.count(_.numLogicalRecords.contains(0L)) === 2)
+
+      // Only partition 1 still has rows, so MIN and MAX must both be 1.
+      checkResultsAndOptimizedPlan(
+        s"SELECT MIN(Column2), MAX(Column2) FROM delta.`$tempPath`",
+        "LocalRelation [none#0, none#1]")
+      checkAnswer(
+        spark.sql(s"SELECT MIN(Column2), MAX(Column2) FROM delta.`$tempPath`"),
+        Row(1, 1))
+    }
+  }
+
+  test("min-max - partition values keep files partially removed by a deletion vector") {
+    // A file that still has live rows genuinely contributes its partition value, so the
+    // optimization must keep using it.
+    withTempDir { dir =>
+      val tempPath = dir.getCanonicalPath
+      // A single Spark partition writes exactly one file per partition value, each with
+      // two rows, so removing one row per file leaves every file non-empty.
+      spark.range(0, 4, 1, 1)
+        .select(
+          col("id").cast("int").as("Column1"),
+          (col("id") % 2).cast("int").as("Column2"))
+        .write.format("delta").partitionBy("Column2").save(tempPath)
+
+      val log = DeltaLog.forTable(spark, new Path(tempPath))
+      enableDeletionVectorsInTable(new Path(tempPath), true)
+
+      val files = log.update().allFiles.collect()
+      assert(files.length === 2)
+      files.foreach { file =>
+        assert(file.numPhysicalRecords.get === 2)
+        removeRowsFromFile(log, file, Seq(0L))
+      }
+      assert(log.update().allFiles.collect().forall(_.numLogicalRecords.contains(1L)))
+
+      checkResultsAndOptimizedPlan(
+        s"SELECT MIN(Column2), MAX(Column2) FROM delta.`$tempPath`",
+        "LocalRelation [none#0, none#1]")
+      checkAnswer(
+        spark.sql(s"SELECT MIN(Column2), MAX(Column2) FROM delta.`$tempPath`"),
+        Row(0, 1))
+    }
+  }
+
   test("optimization not supported - filter on partitioned column") {
     val tableName = "TestPartitionedFilter"
 

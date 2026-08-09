@@ -17,13 +17,14 @@
 package org.apache.spark.sql.delta.perf
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTable, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTable}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
 import org.apache.spark.sql.delta.stats.DeltaStatistics.TIGHT_BOUNDS
@@ -39,6 +40,9 @@ import java.util.Locale
  * ShortType, IntegerType, LongType, FloatType, DoubleType, DateType).
  * - All AddFiles in the Delta Log must have stats on columns used in MIN/MAX expressions,
  * or the columns must be partitioned, in the latter case it uses partitionValues, a required field.
+ * Files that contribute no rows to the table (no records at all, or a deletion vector that
+ * invalidates every record) are excluded, so that a partition value that no live row has cannot
+ * become the table-wide MIN/MAX.
  * - For MIN/MAX, the per-column stat used must be trustworthy across the whole table. Per the
  * Delta protocol, files with `stats.tightBounds = false` (only emitted by writers that add
  * deletion vectors without recomputing stats) have wide bounds: their `stat_min` is a lower
@@ -304,8 +308,9 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
   }
 
   private def extractMinMaxFromPartitionValue(
-      snapshot: Snapshot,
+      deltaScanGenerator: DeltaScanGenerator,
       lowerCaseColumnNames: Set[String]): Map[String, DeltaColumnStat] = {
+    val snapshot = deltaScanGenerator.snapshotToScan
 
     val partitionedColumns = snapshot.metadata.partitionSchema
       .filter(col => lowerCaseColumnNames.contains(col.name.toLowerCase(Locale.ROOT)))
@@ -327,7 +332,7 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
           max(s"`$physicalName`").as(s"max_$physicalName"))
       }
 
-      val partitionedColumnsQuery = snapshot.allFiles
+      val partitionedColumnsQuery = filesWithLogicalRecords(deltaScanGenerator)
         .select(partitionedColumnsValues: _*)
         .agg(partitionedColumnsAgg.head, partitionedColumnsAgg.tail: _*)
         .head()
@@ -346,6 +351,27 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
   }
 
   /**
+   * Files that are known to contribute at least one row to the table.
+   *
+   * A partition value must only be considered when the file actually contributes data, otherwise
+   * MIN/MAX over a partition column can return a value that no live row has. Two kinds of files
+   * contribute nothing: files with no records at all (e.g. the empty `AddFile`s that DELETE can
+   * produce) and files whose deletion vector invalidates every record.
+   *
+   * Files whose `numRecords` is unknown are conservatively kept, which cannot hide a deletion
+   * vector: the protocol requires that "when adding a logical file with a deletion vector, then
+   * that logical file must have correct `numRecords` information for the data file in the `stats`
+   * field", so a file with an unknown record count has no deletion vector.
+   */
+  private def filesWithLogicalRecords(deltaScanGenerator: DeltaScanGenerator): DataFrame = {
+    val dvCardinality = coalesce(col("deletionVector.cardinality"), lit(0))
+    val numLogicalRecords = col("stats.numRecords") - dvCardinality
+    deltaScanGenerator
+      .filesWithStatsForScan(Nil)
+      .where(numLogicalRecords.isNull || numLogicalRecords > 0)
+  }
+
+  /**
   * Extract the Count, Min and Max values from Delta Log stats and partitionValues.
   * The first field is the rows count in the table or `None` if we cannot calculate it from stats
   * If the column is not partitioned, the values are extracted from stats when it exists.
@@ -358,7 +384,7 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
     val deltaScanGen = getDeltaScanGenerator(tahoeLogFileIndex)
 
     val partitionedValues = extractMinMaxFromPartitionValue(
-      deltaScanGen.snapshotToScan,
+      deltaScanGen,
       lowerCaseColumnNames)
 
     val partitionedColNames = partitionedValues.keySet.map(_.toLowerCase(Locale.ROOT))
