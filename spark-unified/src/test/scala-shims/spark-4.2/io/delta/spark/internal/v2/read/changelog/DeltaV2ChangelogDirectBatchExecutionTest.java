@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import java.sql.Timestamp;
 import java.util.ArrayList;
@@ -76,7 +76,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
           spark.sql(String.format("DELETE FROM %s WHERE id = 1", tableName));
 
-          DeltaSnapshotManager snapshotManager =
+          DeltaV2SnapshotManager snapshotManager =
               SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
           StructType dataSchema = spark.table(tableName).schema();
           long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
@@ -148,7 +148,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
                   tableName, tablePath));
           spark.sql(String.format("INSERT INTO %s VALUES (1)", tableName));
 
-          DeltaSnapshotManager snapshotManager =
+          DeltaV2SnapshotManager snapshotManager =
               SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
           StructType dataSchema = spark.table(tableName).schema();
           long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
@@ -199,7 +199,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
           spark.sql(String.format("UPDATE %s SET name = 'AliceX' WHERE id = 1", tableName));
 
-          DeltaSnapshotManager snapshotManager =
+          DeltaV2SnapshotManager snapshotManager =
               SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
           StructType dataSchema = spark.table(tableName).schema();
           long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
@@ -272,7 +272,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
           spark.sql(String.format("INSERT INTO %s VALUES (3, 'Charlie')", tableName));
 
-          DeltaSnapshotManager snapshotManager =
+          DeltaV2SnapshotManager snapshotManager =
               SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
           StructType dataSchema = spark.table(tableName).schema();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
@@ -341,7 +341,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
                   tableName, tablePath));
           spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
 
-          DeltaSnapshotManager snapshotManager =
+          DeltaV2SnapshotManager snapshotManager =
               SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
           long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
@@ -406,7 +406,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
                   tableName, tablePath));
           spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
 
-          DeltaSnapshotManager snapshotManager =
+          DeltaV2SnapshotManager snapshotManager =
               SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
           long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);

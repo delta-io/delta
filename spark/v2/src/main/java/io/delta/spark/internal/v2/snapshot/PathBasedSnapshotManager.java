@@ -30,10 +30,11 @@ import java.util.ArrayList;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 
-/** Implementation of DeltaSnapshotManager for managing Delta snapshots for Path-based Table. */
+/** Implementation of DeltaV2SnapshotManager for managing Delta snapshots for Path-based Table. */
 @Experimental
-public class PathBasedSnapshotManager implements DeltaSnapshotManager {
+public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
 
   private final String tablePath;
   private final Engine kernelEngine;

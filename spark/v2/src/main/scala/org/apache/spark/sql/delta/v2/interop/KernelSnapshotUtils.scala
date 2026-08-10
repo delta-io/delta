@@ -19,18 +19,13 @@ package org.apache.spark.sql.delta.v2.interop
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.OptionConverters._
 
-import org.apache.spark.sql.delta.actions.{
-  AddFile,
-  DeletionVectorDescriptor => V1DeletionVectorDescriptor
-}
-import org.apache.spark.sql.delta.implicits._
 import io.delta.kernel.data.MapValue
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl}
-import io.delta.kernel.internal.actions.{
-  AddFile => KernelAddFile,
-  DeletionVectorDescriptor => KernelDeletionVectorDescriptor
-}
+import io.delta.kernel.internal.actions.{AddFile => KernelAddFile, DeletionVectorDescriptor => KernelDeletionVectorDescriptor}
+
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor => V1DeletionVectorDescriptor}
+import org.apache.spark.sql.delta.implicits._
 
 import org.apache.spark.sql.{Dataset, SparkSession}
 
@@ -67,7 +62,7 @@ private[delta] object KernelSnapshotUtils {
       kernelSnapshot: SnapshotImpl,
       engine: Engine): Seq[AddFile] = {
     val scan = kernelSnapshot.getScanBuilder.build().asInstanceOf[ScanImpl]
-    val scanFileBatches = scan.getScanFiles(engine, true /* includeStats */)
+    val scanFileBatches = scan.getScanFiles(engine, true /* includeStats */ )
     try {
       val files = ArrayBuffer.empty[AddFile]
       while (scanFileBatches.hasNext) {
@@ -75,7 +70,7 @@ private[delta] object KernelSnapshotUtils {
         try {
           while (rows.hasNext) {
             val kernelAddFile = new KernelAddFile(
-              rows.next().getStruct(0 /* addFileColumnOrdinal */))
+              rows.next().getStruct(0 /* addFileColumnOrdinal */ ))
             files += toV1AddFile(kernelAddFile)
           }
         } finally {
