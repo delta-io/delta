@@ -2313,8 +2313,15 @@
   },
   "DELTA_NON_PARTITION_COLUMN_ABSENT" : {
     "message" : [
-      "Data written into Delta needs to contain at least one non-partitioned column.<details>"
+      "Data written into Delta needs to contain at least one non-partitioned column."
     ],
+    "subClass" : {
+      "NULL_TYPE_COLUMNS_DROPPED" : {
+        "message" : [
+          "Columns which are of NullType have been dropped."
+        ]
+      }
+    },
     "sqlState" : "KD005"
   },
   "DELTA_NON_PARTITION_COLUMN_REFERENCE" : {
