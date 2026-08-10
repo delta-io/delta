@@ -16,27 +16,9 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
-import com.databricks.spark.util.TagDefinition
-import org.apache.spark.sql.delta.{
-  CheckpointProvider,
-  DeltaColumnMappingMode,
-  DeltaLogFileIndex,
-  Snapshot,
-  VersionChecksum
-}
-import org.apache.spark.sql.delta.actions.{
-  AddFile,
-  Metadata,
-  Protocol,
-  RemoveFile,
-  SingleAction
-}
-import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
-import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, StatisticsCollection}
-import io.delta.spark.internal.v2.kernel.KernelEngineFactory
-import org.apache.hadoop.fs.Path
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 
 import org.apache.spark.sql.delta.{CheckpointProvider, DeltaColumnMappingMode, DeltaLogFileIndex, Snapshot, VersionChecksum}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile, SingleAction}
@@ -88,9 +70,10 @@ class DeltaV2Snapshot(
   // scalastyle:off deltahadoopconfiguration
   // No DeltaLog to source a Hadoop conf from, so use the session Hadoop conf for the engine.
   def this(kernelSnapshot: KernelSnapshot, sparkSession: SparkSession) =
-    this(kernelSnapshot, sparkSession,
-      KernelEngineFactory.createDefaultEngine(
-        sparkSession.sessionState.newHadoopConf()))
+    this(
+      kernelSnapshot,
+      sparkSession,
+      KernelEngineFactory.createDefaultEngine(sparkSession.sessionState.newHadoopConf()))
   // scalastyle:on deltahadoopconfiguration
 
   // --- logSegment/deltaLog = null guardrail: construction-path overrides ----------------------

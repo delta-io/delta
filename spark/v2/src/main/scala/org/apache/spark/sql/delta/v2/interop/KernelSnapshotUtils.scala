@@ -22,10 +22,7 @@ import scala.jdk.OptionConverters._
 import io.delta.kernel.data.MapValue
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl}
-import io.delta.kernel.internal.actions.{
-  AddFile => KernelAddFile,
-  DeletionVectorDescriptor => KernelDeletionVectorDescriptor
-}
+import io.delta.kernel.internal.actions.{AddFile => KernelAddFile, DeletionVectorDescriptor => KernelDeletionVectorDescriptor}
 
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor => V1DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.implicits._
