@@ -72,7 +72,9 @@ public interface Scan {
    *                       null (or absent in JSON) when no DV is associated with this data file, or
    *                       a struct (described below) that contains necessary information about the
    *                       DV that is part of this logical file. For description of each member
-   *                       variable in `deletionVector` (see Protocol.md, Deletion Vectors)
+   *                       variable in `deletionVector` @see <a
+   *                       href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#Deletion-Vectors">
+   *                       Protocol</a>
    *                       <ul>
    *                         <li>name: {@code storageType}, type: {@code string}
    *                         <li>name: {@code pathOrInlineDv}, type: {@code string}, description:
@@ -90,7 +92,7 @@ public interface Scan {
    *           <ul>
    *             <li>name: {@code tableRoot}, type: {@code string}
    *             <li>Description: Absolute path of the table location. The path is a URI as
-   *                 specified by RFC 2396 URI Generic Syntax, which needs to be decoded to get the
+   *                 specified by RFC 2396 URI Generic Syntax, which needs to be decode to get the
    *                 data file path. NOTE: this is temporary. Will be removed in future. See <a
    *                 href="https://github.com/delta-io/delta/issues/2089">#2089</a>.
    *           </ul>

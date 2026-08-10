@@ -733,10 +733,7 @@ val icebergSparkRuntimeArtifactName = {
  s"iceberg-spark-runtime-$expMaj.$expMin"
 }
 
-// When true, omit delta-iceberg from sparkGroup aggregate/publish. Used to ship
-// patch releases (e.g. 3.3.3) without rebuilding icebergShaded (Gradle/Shadow),
-// and to validate clients against a prior delta-iceberg version from Maven Central.
-// Usage: build/sbt -DskipDeltaIceberg=true sparkGroup/publishM2
+// When true, omit delta-iceberg from sparkGroup aggregate/publish.
 val skipDeltaIceberg =
   sys.props.get("skipDeltaIceberg").exists(v => v == "" || v.equalsIgnoreCase("true"))
 
@@ -749,7 +746,9 @@ lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
     commonSettings,
     skipReleaseSettings,
     exportJars := true,
-    Compile / unmanagedJars += (iceberg / assembly).value,
+    Compile / unmanagedJars ++= {
+      if (skipDeltaIceberg) Seq.empty else Seq((iceberg / assembly).value)
+    },
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -778,9 +777,14 @@ lazy val iceberg = (project in file("iceberg"))
     name := "delta-iceberg",
     commonSettings,
     scalaStyleSettings,
-    // skipDeltaIceberg: do not publish; also avoids triggering icebergShaded/Gradle
-    // during sparkGroup/publishM2 when the module is left out of the aggregate.
     if (skipDeltaIceberg) skipReleaseSettings else releaseSettings,
+    // When skipDeltaIceberg=true, disable compilation to avoid triggering icebergShaded/Gradle.
+    Compile / unmanagedSourceDirectories := {
+      if (skipDeltaIceberg) Nil else (Compile / unmanagedSourceDirectories).value
+    },
+    Compile / managedSourceDirectories := {
+      if (skipDeltaIceberg) Nil else (Compile / managedSourceDirectories).value
+    },
     libraryDependencies ++= Seq(
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
@@ -788,7 +792,9 @@ lazy val iceberg = (project in file("iceberg"))
       "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.4.0" % "provided",
       "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
     ),
-    Compile / unmanagedJars += (icebergShaded / assembly).value,
+    Compile / unmanagedJars ++= {
+      if (skipDeltaIceberg) Seq.empty else Seq((icebergShaded / assembly).value)
+    },
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
     assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
@@ -853,14 +859,10 @@ lazy val icebergShaded = (project in file("icebergShaded"))
 
     // Compile, patch and generated Iceberg JARs
     generateIcebergJarsTask := {
-      if (skipDeltaIceberg) {
-        streams.value.log.info("skipDeltaIceberg=true — skipping generate_iceberg_jars.py")
-      } else {
-        import sys.process._
-        val scriptPath = baseDirectory.value / "generate_iceberg_jars.py"
-        // Download iceberg code in `iceberg_src` dir and generate the JARs in `lib` dir
-        Seq("python3", scriptPath.getPath)!
-      }
+      import sys.process._
+      val scriptPath = baseDirectory.value / "generate_iceberg_jars.py"
+      // Download iceberg code in `iceberg_src` dir and generate the JARs in `lib` dir
+      Seq("python3", scriptPath.getPath)!
     },
     Compile / unmanagedJars := (Compile / unmanagedJars).dependsOn(generateIcebergJarsTask).value,
     cleanFiles += baseDirectory.value / "iceberg_src",
@@ -1581,15 +1583,8 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
  */
 
 // Don't use these groups for any other projects
-lazy val sparkGroupAggregates: Seq[ProjectReference] = {
-  val base: Seq[ProjectReference] =
-    Seq(spark, contribs, storage, storageS3DynamoDB, sharing, hudi)
-  if (skipDeltaIceberg) base
-  else base ++ Seq[ProjectReference](iceberg, testDeltaIcebergJar)
-}
-
 lazy val sparkGroup = project
-  .aggregate(sparkGroupAggregates: _*)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
