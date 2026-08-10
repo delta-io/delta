@@ -6,6 +6,8 @@ on:
     paths:
       - 'flink/**'
       - 'kernel/**'
+      - 'build.sbt'
+      - '.github/workflows/flink_test.yaml'
       - '!**/*.md'
       - '!**/*.txt'
   pull_request:
@@ -13,6 +15,8 @@ on:
     paths:
       - 'flink/**'
       - 'kernel/**'
+      - 'build.sbt'
+      - '.github/workflows/flink_test.yaml'
       - '!**/*.md'
       - '!**/*.txt'
 
@@ -27,8 +31,16 @@ env:
 
 jobs:
   test:
-    name: "DF"
+    name: "DF: Flink ${{ matrix.flink }}"
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        flink:
+          - "2.0.2"
+          - "2.1.3"
+          - "2.2.1"
+          - "2.3.0"
     steps:
       - name: Show runner specs
         run: |
@@ -56,7 +68,7 @@ jobs:
             ~/.sbt
             ~/.ivy2
             ~/.cache/coursier
-          key: sbt-flink
+          key: sbt-flink-${{ matrix.flink }}
       - name: Check cache status
         run: |
           if [ "${{ steps.cache-sbt.outputs.cache-hit }}" == "true" ]; then
@@ -70,7 +82,7 @@ jobs:
         uses: ./.github/actions/setup-unitycatalog
       - name: Run unit tests
         run: |
-          build/sbt flinkGroup/test
+          build/sbt -DflinkVersion=${{ matrix.flink }} flinkGroup/test
       - name: Save SBT cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -79,4 +91,4 @@ jobs:
             ~/.sbt
             ~/.ivy2
             ~/.cache/coursier
-          key: sbt-flink
+          key: sbt-flink-${{ matrix.flink }}

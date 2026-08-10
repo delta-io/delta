@@ -8,7 +8,22 @@ Note: this is a private build right now. Suggestions and feedbacks are welcome.
 ```
 
 ### Supported Flink Versions
-- **Flink v2.0**
+
+Delta tests the latest patch release from each supported Flink minor line:
+
+| Flink line | Tested version |
+|------------|----------------|
+| 2.0        | 2.0.2          |
+| 2.1        | 2.1.3          |
+| 2.2        | 2.2.1          |
+| 2.3        | 2.3.0          |
+
+The default build uses Flink 2.3.0. To build and test another supported version, set
+`flinkVersion` on the command line:
+
+```bash
+sbt -DflinkVersion=2.0.2 flink/test
+```
 
 ### Connector Overview
 - Built on **Flink Connector V2 API**

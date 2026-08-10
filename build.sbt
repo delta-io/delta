@@ -64,7 +64,7 @@ val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
-val flinkVersion = "2.0.1"
+val flinkVersion = sys.props.getOrElse("flinkVersion", "2.3.0")
 val gcsConnectorVersion = "4.0.4"
 
 // Optional kernel version override. See `project/KernelVersion.scala` for the
