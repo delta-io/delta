@@ -36,6 +36,7 @@ import io.delta.spark.internal.v2.read.metadata.MetadataStructReadFunction;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructSchemaContext;
 import java.time.ZoneId;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -162,45 +163,60 @@ public class PartitionUtils {
    */
   public static InternalRow getPartitionRow(
       MapValue partitionValues, StructType partitionSchema, ZoneId zoneId) {
+    return getPartitionRow(buildPartitionValuesMap(partitionValues), partitionSchema, zoneId);
+  }
+
+  /**
+   * Copies partition values out of a potentially batch-backed Kernel map.
+   *
+   * <p>The returned map remains valid after the Kernel batch is closed.
+   */
+  public static Map<String, String> buildPartitionValuesMap(MapValue partitionValues) {
+    Objects.requireNonNull(partitionValues, "partitionValues is null");
+    Map<String, String> result = new LinkedHashMap<>(partitionValues.getSize());
+    for (int index = 0; index < partitionValues.getSize(); index++) {
+      String key = partitionValues.getKeys().getString(index);
+      String value =
+          partitionValues.getValues().isNullAt(index)
+              ? null
+              : partitionValues.getValues().getString(index);
+      result.put(key, value);
+    }
+    return Collections.unmodifiableMap(result);
+  }
+
+  /** Returns an immutable copy of already materialized partition values. */
+  public static Map<String, String> buildPartitionValuesMap(Map<String, String> partitionValues) {
+    Objects.requireNonNull(partitionValues, "partitionValues is null");
+    return Collections.unmodifiableMap(new LinkedHashMap<>(partitionValues));
+  }
+
+  /**
+   * Build the partition {@link InternalRow} from durable partition values copied out of a Kernel
+   * row. This overload is for consumers that outlive the Kernel batch backing {@link MapValue}.
+   */
+  public static InternalRow getPartitionRow(
+      Map<String, String> partitionValues, StructType partitionSchema, ZoneId zoneId) {
     final int numPartCols = partitionSchema.fields().length;
-    assert partitionValues.getSize() == numPartCols
+    assert partitionValues.size() == numPartCols
         : String.format(
             java.util.Locale.ROOT,
             "Partition values size from add file %d != partition columns size %d",
-            partitionValues.getSize(),
+            partitionValues.size(),
             numPartCols);
 
     final Object[] values = new Object[numPartCols];
-
-    // Build physical name -> index map once
-    // Partition values use physical names as keys when column mapping is enabled
-    final Map<String, Integer> physicalNameToIndex = new HashMap<>(numPartCols);
-    for (int i = 0; i < numPartCols; i++) {
-      StructField field = partitionSchema.fields()[i];
-      String physicalName = DeltaColumnMapping.getPhysicalName(field);
-      physicalNameToIndex.put(physicalName, i);
-      values[i] = null;
-    }
-
-    // Fill values in a single pass over partitionValues
-    for (int idx = 0; idx < partitionValues.getSize(); idx++) {
-      final String key = partitionValues.getKeys().getString(idx);
-      // getString throws on a null entry, so check for null first.
-      final String strVal =
-          partitionValues.getValues().isNullAt(idx)
-              ? null
-              : partitionValues.getValues().getString(idx);
-      final Integer pos = physicalNameToIndex.get(key);
-      if (pos != null) {
-        final StructField field = partitionSchema.fields()[pos];
-        if (strVal == null) {
-          values[pos] = null;
-        } else if (field.dataType() instanceof StringType) {
-          values[pos] = UTF8String.fromString(strVal);
-        } else {
-          values[pos] =
-              PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
-        }
+    for (int index = 0; index < numPartCols; index++) {
+      final StructField field = partitionSchema.fields()[index];
+      final String physicalName = DeltaColumnMapping.getPhysicalName(field);
+      final String strVal = partitionValues.get(physicalName);
+      if (strVal == null) {
+        values[index] = null;
+      } else if (field.dataType() instanceof StringType) {
+        values[index] = UTF8String.fromString(strVal);
+      } else {
+        values[index] =
+            PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
       }
     }
     return new GenericInternalRow(values);
@@ -343,16 +359,32 @@ public class PartitionUtils {
    */
   public static PartitionedFile buildPartitionedFile(
       AddFile addFile, StructType partitionSchema, String tablePath, ZoneId zoneId) {
-    scala.collection.immutable.Map<String, Object> metadata =
-        mergeIntoScalaMap(
-            buildDvMetadataScala(addFile.getDeletionVector()),
-            buildRowTrackingMetadata(addFile.getBaseRowId(), addFile.getDefaultRowCommitVersion()));
-    return makePartitionedFile(
-        new Path(tablePath, addFile.getPath()).toString(),
+    return buildPartitionedFile(
+        addFile.getPath(),
         addFile.getSize(),
         addFile.getModificationTime(),
+        addFile.getDeletionVector(),
+        addFile.getBaseRowId(),
+        addFile.getDefaultRowCommitVersion(),
         getPartitionRow(addFile.getPartitionValues(), partitionSchema, zoneId),
-        metadata);
+        tablePath);
+  }
+
+  private static PartitionedFile buildPartitionedFile(
+      String path,
+      long size,
+      long modificationTime,
+      Optional<DeletionVectorDescriptor> deletionVector,
+      Optional<Long> baseRowId,
+      Optional<Long> defaultRowCommitVersion,
+      InternalRow partitionRow,
+      String tablePath) {
+    scala.collection.immutable.Map<String, Object> metadata =
+        mergeIntoScalaMap(
+            buildDvMetadataScala(deletionVector),
+            buildRowTrackingMetadata(baseRowId, defaultRowCommitVersion));
+    return makePartitionedFile(
+        new Path(tablePath, path).toString(), size, modificationTime, partitionRow, metadata);
   }
 
   /**

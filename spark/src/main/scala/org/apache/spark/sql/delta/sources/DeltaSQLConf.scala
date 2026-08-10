@@ -3327,6 +3327,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_SHARING_STREAMING_CONVERT_STARTING_TIMESTAMP_TO_VERSION =
+    buildConf("spark.sql.delta.sharing.streamingConvertStartingTimestampToVersion")
+      .doc("When true, a Delta Sharing streaming query converts startingTimestamp to a version " +
+        "on the sharing server, passing that version to the wrapped DeltaSource. When false, the " +
+        "wrapped DeltaSource resolves the timestamp again on the local delta log, where an empty " +
+        "version range fails with DELTA_TIMESTAMP_GREATER_THAN_COMMIT.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_SHARING_ENABLE_AUTO_RESOLVE_FOR_CDF =
     buildConf("spark.sql.delta.sharing.enableAutoResolveForCdf")
       .doc("When true, Delta Sharing CDF queries without an explicit responseFormat will " +
