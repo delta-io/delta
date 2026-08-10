@@ -23,11 +23,13 @@ import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.TableInfo;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.catalog.CatalogBaseTable;
 import org.apache.flink.table.catalog.CatalogTable;
@@ -48,6 +50,7 @@ public class FlinkUnityCatalogTable implements CatalogTable {
   private final Map<String, String> properties;
   private final Schema schema;
   private final String dataFormat;
+  private final List<String> partitionKeys;
 
   private final URI endpoint;
   private final String token;
@@ -61,12 +64,26 @@ public class FlinkUnityCatalogTable implements CatalogTable {
       Map<String, String> properties,
       URI endpoint,
       String token) {
+    this(name, schema, dataFormat, comment, description, properties, List.of(), endpoint, token);
+  }
+
+  private FlinkUnityCatalogTable(
+      String name,
+      Schema schema,
+      String dataFormat,
+      String comment,
+      String description,
+      Map<String, String> properties,
+      List<String> partitionKeys,
+      URI endpoint,
+      String token) {
     this.name = name;
     this.dataFormat = dataFormat;
     this.comment = comment;
     this.description = description;
     this.properties = properties;
     this.schema = schema;
+    this.partitionKeys = List.copyOf(partitionKeys);
 
     this.endpoint = endpoint;
     this.token = token;
@@ -82,8 +99,17 @@ public class FlinkUnityCatalogTable implements CatalogTable {
         tableInfo.getComment(),
         "",
         tableInfo.getProperties(),
+        buildPartitionKeys(tableInfo.getColumns()),
         endpoint,
         token);
+  }
+
+  static List<String> buildPartitionKeys(List<ColumnInfo> columnInfos) {
+    return columnInfos.stream()
+        .filter(column -> column.getPartitionIndex() != null)
+        .sorted(Comparator.comparing(ColumnInfo::getPartitionIndex))
+        .map(ColumnInfo::getName)
+        .collect(Collectors.toList());
   }
 
   public static Schema buildSchema(List<ColumnInfo> columnInfos) {
@@ -168,7 +194,9 @@ public class FlinkUnityCatalogTable implements CatalogTable {
         case "boolean":
           return new AtomicDataType(new BooleanType(nullable));
         case "binary":
-          return new AtomicDataType(new BinaryType(nullable, BinaryType.MAX_LENGTH));
+          return new AtomicDataType(new VarBinaryType(nullable, VarBinaryType.MAX_LENGTH));
+        case "byte":
+          return new AtomicDataType(new TinyIntType(nullable));
         case "date":
           return new AtomicDataType(new DateType(nullable));
         case "double":
@@ -179,6 +207,10 @@ public class FlinkUnityCatalogTable implements CatalogTable {
           return new AtomicDataType(new IntType(nullable));
         case "long":
           return new AtomicDataType(new BigIntType(nullable));
+        case "short":
+          return new AtomicDataType(new SmallIntType(nullable));
+        case "void":
+          return new AtomicDataType(new NullType());
         case "string":
           return new AtomicDataType(new VarCharType(nullable, VarCharType.MAX_LENGTH));
         case "timestamp":
@@ -200,18 +232,18 @@ public class FlinkUnityCatalogTable implements CatalogTable {
 
   @Override
   public boolean isPartitioned() {
-    return false;
+    return !partitionKeys.isEmpty();
   }
 
   @Override
   public List<String> getPartitionKeys() {
-    return List.of();
+    return partitionKeys;
   }
 
   @Override
   public CatalogTable copy(Map<String, String> options) {
     return new FlinkUnityCatalogTable(
-        name, schema, dataFormat, comment, description, options, endpoint, token);
+        name, schema, dataFormat, comment, description, options, partitionKeys, endpoint, token);
   }
 
   // TODO: token is visible in Flink EXPLAIN and serialized job graph; consider a secure approach
@@ -224,7 +256,9 @@ public class FlinkUnityCatalogTable implements CatalogTable {
           FlinkUnityCatalogFactory.ENDPOINT.key(),
           endpoint.toString(),
           FlinkUnityCatalogFactory.TOKEN.key(),
-          token);
+          token,
+          DeltaDynamicTableSinkFactory.PARTITIONS.key(),
+          String.join(",", partitionKeys));
     }
     return Map.of();
   }
@@ -237,7 +271,7 @@ public class FlinkUnityCatalogTable implements CatalogTable {
   @Override
   public CatalogBaseTable copy() {
     return new FlinkUnityCatalogTable(
-        name, schema, dataFormat, comment, description, properties, endpoint, token);
+        name, schema, dataFormat, comment, description, properties, partitionKeys, endpoint, token);
   }
 
   @Override
