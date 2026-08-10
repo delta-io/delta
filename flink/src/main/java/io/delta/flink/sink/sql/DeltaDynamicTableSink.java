@@ -129,6 +129,8 @@ public class DeltaDynamicTableSink implements DynamicTableSink, SupportsPartitio
                       "unitycatalog.table_name", tableId.asSummaryString()))
               .withEndpoint(options.get(FlinkUnityCatalogFactory.ENDPOINT.key()))
               .withToken(options.get(FlinkUnityCatalogFactory.TOKEN.key()))
+              .withPartitionColNames(
+                  Arrays.asList(options.getOrDefault(PARTITIONS.key(), "").split(",")))
               .withWriteMode(writeMode)
               .withPrimaryKey(primaryKeyOrdinals)
               .build();

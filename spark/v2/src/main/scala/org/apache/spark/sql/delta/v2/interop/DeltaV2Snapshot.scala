@@ -16,28 +16,17 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
-import com.databricks.spark.util.TagDefinition
-import org.apache.spark.sql.delta.{
-  CheckpointProvider,
-  DeltaColumnMappingMode,
-  DeltaLogFileIndex,
-  Snapshot,
-  VersionChecksum
-}
-import org.apache.spark.sql.delta.actions.{
-  AddFile,
-  Metadata,
-  Protocol,
-  RemoveFile,
-  SingleAction
-}
-import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
-import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, StatisticsCollection}
-import org.apache.hadoop.fs.Path
-import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 
+import org.apache.spark.sql.delta.{CheckpointProvider, DeltaColumnMappingMode, DeltaLogFileIndex, Snapshot, VersionChecksum}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
+import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, StatisticsCollection}
+
+import com.databricks.spark.util.TagDefinition
+import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 
 /**
@@ -62,19 +51,18 @@ class DeltaV2Snapshot(
     // The separating comma lives inside the edge block: it is only needed when the edge-only
     // catalogTableOpt parameter follows. Without it, the OSS export would strip catalogTableOpt and
     // leave a trailing comma that scalac accepts but scalastyle's parser rejects.
-    kernelEngine: Engine
-  )
-  extends Snapshot(
-    // toString keeps this compiling across Kernel versions: getDataPath returns String in the
-    // currently pinned Kernel and io.delta.kernel.internal.fs.Path in newer Kernels.
-    path = new Path(kernelSnapshot.getDataPath.toString),
-    version = kernelSnapshot.getVersion,
-    // A DeltaV2Snapshot must not depend on the V1 LogSegment or DeltaLog. Both are null; the
-    // construction-path members that would otherwise dereference them are overridden below, so
-    // the nulls are never dereferenced on the scan path.
-    logSegment = null,
-    deltaLog = null,
-    checksumOpt = None) {
+    kernelEngine: Engine)
+    extends Snapshot(
+      // toString keeps this compiling across Kernel versions: getDataPath returns String in the
+      // currently pinned Kernel and io.delta.kernel.internal.fs.Path in newer Kernels.
+      path = new Path(kernelSnapshot.getDataPath.toString),
+      version = kernelSnapshot.getVersion,
+      // A DeltaV2Snapshot must not depend on the V1 LogSegment or DeltaLog. Both are null; the
+      // construction-path members that would otherwise dereference them are overridden below, so
+      // the nulls are never dereferenced on the scan path.
+      logSegment = null,
+      deltaLog = null,
+      checksumOpt = None) {
 
   override protected def spark: SparkSession = sparkSession
 
@@ -82,8 +70,10 @@ class DeltaV2Snapshot(
   // scalastyle:off deltahadoopconfiguration
   // No DeltaLog to source a Hadoop conf from, so use the session Hadoop conf for the engine.
   def this(kernelSnapshot: KernelSnapshot, sparkSession: SparkSession) =
-    this(kernelSnapshot, sparkSession,
-      DefaultEngine.create(sparkSession.sessionState.newHadoopConf()))
+    this(
+      kernelSnapshot,
+      sparkSession,
+      KernelEngineFactory.createDefaultEngine(sparkSession.sessionState.newHadoopConf()))
   // scalastyle:on deltahadoopconfiguration
 
   // --- logSegment/deltaLog = null guardrail: construction-path overrides ----------------------
@@ -133,7 +123,6 @@ class DeltaV2Snapshot(
   // This snapshot has no DeltaLog from which to derive usage-log tags, so emit none.
   override def getCommonTags: Map[TagDefinition, String] = Map.empty
 
-
   // --- SnapshotDescriptor / state surface ----------------------------------------------------
 
   override lazy val metadata: Metadata =
@@ -179,7 +168,6 @@ class DeltaV2Snapshot(
 
   override lazy val statsColumnSpec: DeltaStatsColumnSpec =
     StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
-
 
   // --- ValidateChecksum: Kernel has no V1 checksum to validate; no-op ------------------------
   override def validateChecksum(contextInfo: Map[String, String]): Boolean = true

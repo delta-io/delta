@@ -68,10 +68,10 @@ public class SerializableReadOnlySnapshotTest extends DeltaV2TestBase {
 
     assertEquals(original.getVersion(), deserialized.getVersion());
 
-    Scan scan = deserialized.toScan();
+    Engine engine = DefaultEngine.create(deserialized.getHadoopConf());
+    Scan scan = deserialized.toScan(engine);
     assertNotNull(scan);
 
-    Engine engine = DefaultEngine.create(deserialized.getHadoopConf());
     List<FilteredColumnarBatch> batches = new ArrayList<>();
     try (CloseableIterator<FilteredColumnarBatch> iter = scan.getScanFiles(engine)) {
       while (iter.hasNext()) {
@@ -93,7 +93,7 @@ public class SerializableReadOnlySnapshotTest extends DeltaV2TestBase {
     SerializableReadOnlySnapshot serializable =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
 
-    Scan scan = serializable.toScan();
+    Scan scan = serializable.toScan(defaultEngine);
     assertNotNull(scan);
     assertNotNull(scan.getScanState(defaultEngine));
     assertNotNull(scan.getRemainingFilter());
