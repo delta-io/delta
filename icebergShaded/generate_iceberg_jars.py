@@ -164,6 +164,18 @@ def patch_iceberg_build_for_proxies():
         print(">>> Patching Gradle plugin repo: GRADLE_PROXY_URL=%s" % gradle_proxy)
         block = _make_maven_block(gradle_proxy, "gradle-proxy", jfrog_token)
         content = content.replace("gradlePluginPortal()", block)
+
+        # The plugins { id '...' } block resolves through pluginManagement
+        # repos which default to the Gradle Plugin Portal — unreachable in
+        # proxy environments. Move nebula to the buildscript classpath and
+        # use apply plugin instead.
+        content = re.sub(r"plugins\s*\{[^}]*\}", 'apply plugin: "nebula.dependency-recommender"', content)
+        content = content.replace(
+            "classpath 'com.palantir.gradle.gitversion:gradle-git-version:0.15.0'",
+            "classpath 'com.palantir.gradle.gitversion:gradle-git-version:0.15.0'\n"
+            "    classpath 'com.netflix.nebula:nebula-dependency-recommender:11.0.0'"
+        )
+        print(">>> Moved nebula plugin from plugins{} to buildscript classpath")
     else:
         print(">>> GRADLE_PROXY_URL not set — using upstream gradlePluginPortal()")
 
