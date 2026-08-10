@@ -18,27 +18,21 @@ package io.delta.spark.internal.v2.read;
 import static io.delta.spark.internal.v2.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.data.Row;
-import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.ScanImpl;
-import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
-import io.delta.kernel.internal.data.ScanStateRow;
-import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
-import java.io.IOException;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.Expression;
@@ -50,8 +44,10 @@ import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
+import org.apache.spark.sql.delta.stats.DeltaScan;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
+import org.apache.spark.sql.execution.datasources.v2.DeltaV2FilterTranslator;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StringType;
@@ -74,14 +70,19 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   private final StructType dataSchema;
   private final StructType partitionSchema;
   private final StructType ddlOrderedReadOutputSchema;
-  private final Predicate[] pushedToKernelFilters;
-  private final Filter[] dataFilters;
+  // Produces the V1 DeltaScan via DeltaV2Snapshot.filesForScan. Kept lazy because streaming scans
+  // never consume batch-selected files and must not run the batch data-skipping path during
+  // ScanBuilder.build().
+  private final Supplier<DeltaScan> deltaScanSupplier;
+  // Pushed data filters (min/max skipping), as Catalyst expressions, for explain and scan equality.
+  private final Expression[] dataFilters;
+  // Pushed partition filters (row-exact), as Catalyst expressions, for explain and scan equality.
+  private final Expression[] partitionFilters;
+  private final Set<Expression> partitionFiltersSet;
   // Derived Sets used only for equals/hashCode: filters are AND-ed at evaluation time,
   // so list order has no semantic meaning and two scans with the same filter set in
   // different orders should compare equal.
-  private final Set<Predicate> pushedToKernelFiltersSet;
-  private final Set<Filter> dataFiltersSet;
-  private final io.delta.kernel.Scan kernelScan;
+  private final Set<Expression> dataFiltersSet;
   private final Optional<Statistics> catalogStats;
   private final Configuration hadoopConf;
   private final boolean isCDCRead;
@@ -121,9 +122,9 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
-      Predicate[] pushedToKernelFilters,
-      Filter[] dataFilters,
-      io.delta.kernel.Scan kernelScan,
+      Supplier<DeltaScan> scanSupplier,
+      Expression[] dataFilters,
+      Expression[] partitionFilters,
       Optional<Statistics> catalogStats,
       CaseInsensitiveStringMap options,
       OptionalInt pushedLimit) {
@@ -133,12 +134,13 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
-    this.pushedToKernelFilters =
-        pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
-    this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
-    this.pushedToKernelFiltersSet = Set.copyOf(Arrays.asList(this.pushedToKernelFilters));
-    this.dataFiltersSet = Set.copyOf(Arrays.asList(this.dataFilters));
-    this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
+    this.deltaScanSupplier = Objects.requireNonNull(scanSupplier, "deltaScanSupplier is null");
+    this.dataFilters = dataFilters == null ? new Expression[0] : dataFilters.clone();
+    this.partitionFilters = partitionFilters == null ? new Expression[0] : partitionFilters.clone();
+    this.partitionFiltersSet = canonicalizedSet(this.partitionFilters);
+    // Canonicalize so equals/hashCode ignore exprId/ordering: two scans of the same table with the
+    // same logical filters compare equal even when the filter expressions carry different exprIds.
+    this.dataFiltersSet = canonicalizedSet(this.dataFilters);
     this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
     this.pushedLimit = Objects.requireNonNull(pushedLimit, "pushedLimit is null");
@@ -203,6 +205,11 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
         : Scan.ColumnarSupportMode.UNSUPPORTED;
   }
 
+  // TODO: Drop toBatch (and the filter translation it needs) once this scan implements the
+  // file-source Scan interface. DataSourceV2Strategy already routes a Scan that implements
+  // org.apache.spark.sql.connector.read.FileScan through FileScanBridge to FileSourceScanExec,
+  // ahead of the plain DataSourceV2ScanRelation case, so toBatch stops being reachable at that
+  // point and the Batch-only bookkeeping below goes away with it.
   @Override
   public Batch toBatch() {
     if (isCDCRead) {
@@ -211,6 +218,19 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
               + "connector. Either remove the CDC read option or use a streaming read.");
     }
     ensurePlanned();
+    // File selection is done by V1 data skipping (partitionedFiles), so no kernel predicates are
+    // pushed to the batch. Keep two distinct filter sets: partition + data filters distinguish
+    // batches that select different files under otherwise-equal state, while only data filters may
+    // reach the Parquet reader. Partition columns are materialized from the file path rather than
+    // stored in Parquet, so passing a partition predicate to Parquet can incorrectly reject every
+    // row. Order-insensitive equality is handled by DeltaV2Batch.
+    final Expression[] pushedCatalystFilters =
+        new Expression[partitionFilters.length + dataFilters.length];
+    System.arraycopy(partitionFilters, 0, pushedCatalystFilters, 0, partitionFilters.length);
+    System.arraycopy(
+        dataFilters, 0, pushedCatalystFilters, partitionFilters.length, dataFilters.length);
+    final Filter[] batchPushedFilters = DeltaV2FilterTranslator.translate(pushedCatalystFilters);
+    final Filter[] batchDataFilters = DeltaV2FilterTranslator.translate(dataFilters);
     return new DeltaV2Batch(
         initialSnapshot,
         dataSchema,
@@ -218,8 +238,9 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
         readDataSchema,
         ddlOrderedReadOutputSchema,
         partitionedFiles,
-        pushedToKernelFilters,
-        dataFilters,
+        new Predicate[0],
+        batchDataFilters,
+        batchPushedFilters,
         totalBytes,
         scalaOptions,
         hadoopConf);
@@ -243,7 +264,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
             (io.delta.kernel.internal.SnapshotImpl) latestSnapshot,
             options,
             snapshotManager,
-            DefaultEngine.create(hadoopConf),
+            KernelEngineFactory.createDefaultEngine(hadoopConf),
             Option.apply(checkpointLocation),
             /* mergeConsecutiveSchemaChanges= */ false);
 
@@ -258,7 +279,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
         partitionSchema,
         readDataSchema,
         ddlOrderedReadOutputSchema,
-        dataFilters != null ? dataFilters : new Filter[0],
+        new Filter[0],
         scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty(),
         metadataTrackingLog,
         checkpointLocation);
@@ -267,9 +288,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   @Override
   public String description() {
     final String pushed =
-        Arrays.stream(pushedToKernelFilters)
-            .map(Object::toString)
-            .collect(Collectors.joining(", "));
+        Arrays.stream(partitionFilters).map(Object::toString).collect(Collectors.joining(", "));
     final String data =
         Arrays.stream(dataFilters).map(Object::toString).collect(Collectors.joining(", "));
     final StringBuilder description =
@@ -434,9 +453,10 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
    * @return the table path with trailing slash
    */
   public String getTablePath() {
-    final Engine tableEngine = DefaultEngine.create(hadoopConf);
-    final Row scanState = kernelScan.getScanState(tableEngine);
-    final String tableRoot = ScanStateRow.getTableRoot(scanState).toUri().toString();
+    // PartitionUtils passes the resolved path to SparkPath.fromUrlString, so the table root must be
+    // URL-encoded (for example, spaces and literal '%' characters).
+    final String tableRoot =
+        new Path(((SnapshotImpl) initialSnapshot).getDataPath().toString()).toUri().toString();
     return tableRoot.endsWith("/") ? tableRoot : tableRoot + "/";
   }
 
@@ -450,116 +470,66 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
    * toward the limit.
    */
   private void planScanFiles() {
-    // Short-circuit LIMIT 0. When plan stats are enabled, mark the row count as known because it is
-    // derived directly from the limit, rather than falling back to catalog stats.
-    if (isLimitPushed() && pushedLimit.getAsInt() == 0) {
-      estimatedSizeInBytes = 0;
-      rowCountKnown = arePlanStatsEnabled();
-      totalRows = 0;
-      return;
-    }
-
-    final Engine tableEngine = DefaultEngine.create(hadoopConf);
     final String tablePath = getTablePath();
-
-    // TODO: Promote getScanFiles(Engine, boolean includeStats) to the public Scan interface to
-    // avoid coupling to the kernel-internal ScanImpl class. Until that API is available, this
-    // instanceof check is the only way to request per-file statistics from the kernel.
+    // Select files lazily via V1 data skipping over the Kernel-backed snapshot, which
+    // DataSkippingDeltaV2SnapshotSuite validates against the V1 oracle. Keeping this work behind
+    // batch planning avoids running an unused batch scan for MicroBatchStream. When a limit is
+    // pushed the supplier routes selection through V1's limit-aware filesForScan. Here we
+    // materialize the selected V1 AddFiles into PartitionedFiles and aggregate stats.
     //
-    // Read per-file stats JSON when either:
-    //  - the optimizer will use numRows (CBO or planStats enabled), matching V1's behavior
-    //    (LogicalRelation.computeStats()), or
-    //  - a limit is pushed, in which case we need numRecords to decide when to stop planning.
-    // Both require the kernel scan to be a ScanImpl (the only path that supports includeStats).
-    final boolean scanIsStatsCapable = kernelScan instanceof ScanImpl;
-    final boolean includeStats = scanIsStatsCapable && (arePlanStatsEnabled() || isLimitPushed());
-    final CloseableIterator<FilteredColumnarBatch> scanFileBatches;
-    if (includeStats) {
-      scanFileBatches = ((ScanImpl) kernelScan).getScanFiles(tableEngine, true /* includeStats */);
-      // Only participate in CBO numRows reporting when the optimizer actually consumes it, matching
-      // V1's LogicalRelation.computeStats() gate. A limit alone forces stats to be read (for
-      // termination via logicalRowCount) but must not start surfacing numRows when CBO is off.
-      rowCountKnown = arePlanStatsEnabled(); // assume all files have stats; cleared on first miss
-    } else {
-      rowCountKnown = false;
-      scanFileBatches = kernelScan.getScanFiles(tableEngine);
-    }
+    // Two mutually exclusive row-count sources, mirroring which one V1 populates:
+    //   - No limit: the builder passes keepNumRecords (the same plan-stats condition as
+    //     arePlanStatsEnabled), so each AddFile carries numRecords and we sum per file below.
+    //     Per-file counts also let runtime partition filtering re-derive the post-prune count.
+    //   - Limit pushed: V1's limit-aware filesForScan takes no keepNumRecords and always nulls
+    //     out AddFile.stats (DataSkippingReader.getFilesAndNumRecords defaults keepStats=false),
+    //     but it does report the aggregate in DeltaScan.scanned.rows -- the very field V1's
+    //     PreparedDeltaFileIndex.getNumOfRows reads. The aggregate fallback below picks it up.
+    final DeltaScan deltaScan =
+        Objects.requireNonNull(deltaScanSupplier.get(), "deltaScanSupplier returned null");
+    rowCountKnown = arePlanStatsEnabled();
+    final List<org.apache.spark.sql.delta.actions.AddFile> scanFiles =
+        scala.jdk.javaapi.CollectionConverters.asJava(deltaScan.files());
 
-    // Tracks logical (surviving) rows accumulated so far for limit pushdown. This differs from
-    // totalRows, which is the physical numRecords sum used for CBO and stops being tracked once any
-    // file lacks stats. accumulatedLimitRows always drives limit termination when a limit is
-    // pushed.
-    long accumulatedLimitRows = 0L;
-    try (scanFileBatches) {
-      // Check the limit before hasNext() to avoid any unnecessary kernel iterator I/O.
-      while (!isLimitReached(accumulatedLimitRows) && scanFileBatches.hasNext()) {
-        final FilteredColumnarBatch batch = scanFileBatches.next();
+    for (org.apache.spark.sql.delta.actions.AddFile addFile : scanFiles) {
+      partitionedFiles.add(
+          PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId));
+      // Track the selected file descriptor in parallel with partitionedFiles for the row-level
+      // ReplaceData write path (getSelectedFiles) and runtime-filter bookkeeping below.
+      selectedFiles.add(DeltaScanFile.fromV1AddFile(addFile));
+      totalBytes += addFile.size();
 
-        try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
-          while (!isLimitReached(accumulatedLimitRows) && addFileRowIter.hasNext()) {
-            final Row row = addFileRowIter.next();
-            final AddFile addFile = new AddFile(row.getStruct(0));
-
-            final PartitionedFile partitionedFile =
-                PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
-
-            totalBytes += addFile.getSize();
-            partitionedFiles.add(partitionedFile);
-            selectedFiles.add(new DeltaScanFile(addFile));
-
-            Optional<Long> numRecords =
-                rowCountKnown || isLimitPushed() ? addFile.getNumRecords() : Optional.empty();
-            if (rowCountKnown) {
-              if (numRecords.isPresent()) {
-                totalRows += numRecords.get();
-                perFileRowCounts.add(numRecords.get());
-              } else {
-                // This file has no numRecords — row count is unknowable for the whole scan.
-                // Clear partial state and stop accumulating for all subsequent files.
-                rowCountKnown = false;
-                totalRows = 0;
-                perFileRowCounts.clear();
-              }
-            }
-
-            if (isLimitPushed()) {
-              accumulatedLimitRows += logicalRowCount(addFile, numRecords);
-            }
-          }
+      if (rowCountKnown) {
+        scala.Option<Object> numRecords = addFile.numPhysicalRecords();
+        if (numRecords.isDefined()) {
+          long n = ((Number) numRecords.get()).longValue();
+          totalRows += n;
+          perFileRowCounts.add(n);
+        } else {
+          // This file has no numRecords -- row count is unknowable for the whole scan.
+          // Clear partial state and stop accumulating for all subsequent files.
+          rowCountKnown = false;
+          totalRows = 0;
+          perFileRowCounts.clear();
         }
       }
-    } catch (IOException e) {
-      throw new RuntimeException(e);
+    }
+
+    // Fall back to the scan-level aggregate when per-file counts were unavailable. This is the
+    // normal case for a pushed limit (V1 nulls per-file stats but fills scanned.rows) and also
+    // recovers the count for any other filesForScan path that reports only the aggregate.
+    // perFileRowCounts stays empty, so runtime partition filtering below invalidates the count
+    // rather than pretending a scan-level total still applies to a pruned file set.
+    if (!rowCountKnown && arePlanStatsEnabled()) {
+      final scala.Option<Object> scannedRows = deltaScan.scanned().rows();
+      if (scannedRows.isDefined()) {
+        rowCountKnown = true;
+        totalRows = ((Number) scannedRows.get()).longValue();
+      }
     }
 
     // Pre-compute estimated size accounting for column projection
     estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(totalBytes);
-  }
-
-  /** Returns true iff a limit was pushed down from Spark. */
-  private boolean isLimitPushed() {
-    return pushedLimit.isPresent();
-  }
-
-  /**
-   * Returns true iff a limit is pushed and the accumulated logical row count already satisfies it.
-   */
-  private boolean isLimitReached(long accumulatedLimitRows) {
-    return isLimitPushed() && accumulatedLimitRows >= pushedLimit.getAsInt();
-  }
-
-  /**
-   * Returns the surviving row count contributed by a file toward a pushed limit: the physical
-   * {@code numRecords} minus deletion-vector cardinality. Returns 0 when statistics are missing, so
-   * a file without stats is planned but never counted toward the limit.
-   */
-  private static long logicalRowCount(AddFile addFile, Optional<Long> numRecords) {
-    if (!numRecords.isPresent()) {
-      return 0L;
-    }
-    long dvCardinality =
-        addFile.getDeletionVector().map(DeletionVectorDescriptor::getCardinality).orElse(0L);
-    return Math.max(0L, numRecords.get() - dvCardinality);
   }
 
   /**
@@ -582,8 +552,13 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
 
       List<PartitionedFile> runtimeFilteredPartitionedFiles = new ArrayList<>();
       List<DeltaScanFile> runtimeFilteredFiles = new ArrayList<>();
-      // Parallel to runtimeFilteredPartitionedFiles; only used when rowCountKnown is true.
-      List<Long> filteredRowCounts = rowCountKnown ? new ArrayList<>() : null;
+      // Per-file counts exist only when planScanFiles summed them file by file. When the count came
+      // from the scan-level aggregate instead (pushed limit), there is nothing to re-derive from,
+      // so the count cannot survive pruning -- see the invalidation below.
+      final boolean perFileCountsAvailable =
+          rowCountKnown && this.perFileRowCounts.size() == this.partitionedFiles.size();
+      // Parallel to runtimeFilteredPartitionedFiles; only used when per-file counts are available.
+      List<Long> filteredRowCounts = perFileCountsAvailable ? new ArrayList<>() : null;
       long newTotalRows = 0L;
       for (int i = 0; i < this.partitionedFiles.size(); i++) {
         PartitionedFile pf = this.partitionedFiles.get(i);
@@ -594,7 +569,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
         if (allMatch) {
           runtimeFilteredPartitionedFiles.add(pf);
           runtimeFilteredFiles.add(this.selectedFiles.get(i));
-          if (rowCountKnown) {
+          if (perFileCountsAvailable) {
             long rc = this.perFileRowCounts.get(i);
             filteredRowCounts.add(rc);
             newTotalRows += rc;
@@ -610,11 +585,17 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
         this.totalBytes =
             runtimeFilteredPartitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
         this.estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(this.totalBytes);
-        if (rowCountKnown) {
+        if (perFileCountsAvailable) {
           // Recompute totalRows from per-file counts of files that survived pruning so
           // numRows() reports the post-prune count rather than a stale pre-filter value.
           this.perFileRowCounts = filteredRowCounts;
           this.totalRows = newTotalRows;
+        } else if (rowCountKnown) {
+          // The count came from the scan-level aggregate, which describes the pre-prune file set.
+          // With no per-file breakdown it cannot be adjusted, so report unknown rather than a
+          // count that overstates what will actually be read.
+          this.rowCountKnown = false;
+          this.totalRows = 0L;
         }
       }
     }
@@ -722,7 +703,10 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
    *   <li>whether per-file stats JSON is parsed in {@link #planScanFiles()}
    * </ul>
    *
-   * Future readers touching any of these paths should treat this helper as load-bearing.
+   * <p>The scan builder evaluates the same condition to decide whether to ask {@code filesForScan}
+   * for per-file record counts; the two must stay in sync.
+   *
+   * <p>Future readers touching any of these paths should treat this helper as load-bearing.
    */
   private boolean arePlanStatsEnabled() {
     return sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
@@ -742,30 +726,41 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
         && Objects.equals(dataSchema, that.dataSchema)
         && Objects.equals(partitionSchema, that.partitionSchema)
         && Objects.equals(readDataSchema, that.readDataSchema)
-        && Objects.equals(pushedToKernelFiltersSet, that.pushedToKernelFiltersSet)
+        && Objects.equals(partitionFiltersSet, that.partitionFiltersSet)
         && Objects.equals(dataFiltersSet, that.dataFiltersSet)
-        // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
-        // with pushed down filters that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
         && Objects.equals(pushedLimit, that.pushedLimit)
         && Objects.equals(appliedRuntimePredicates, that.appliedRuntimePredicates)
         && Objects.equals(catalogStats, that.catalogStats);
   }
 
+  /** Set of exprId-normalized filter expressions (exprId- and order-insensitive) for equals. */
+  private static Set<Expression> canonicalizedSet(Expression[] filters) {
+    Set<Expression> set = new HashSet<>();
+    for (Expression f : filters) {
+      set.add(DeltaV2ScanBuilder.normalizeForEquality(f));
+    }
+    return set;
+  }
+
   @Override
   public int hashCode() {
-    return Objects.hash(
-        catalogStats,
-        initialSnapshot.getPath(),
-        initialSnapshot.getVersion(),
-        dataSchema,
-        partitionSchema,
-        readDataSchema,
-        options,
-        pushedLimit,
-        appliedRuntimePredicates,
-        pushedToKernelFiltersSet,
-        dataFiltersSet);
+    int result =
+        Objects.hash(
+            catalogStats,
+            initialSnapshot.getPath(),
+            initialSnapshot.getVersion(),
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            options,
+            pushedLimit,
+            appliedRuntimePredicates,
+            dataFiltersSet);
+    // Fold in the partition-filter set so scans that differ only by pushed partition filters hash
+    // differently, matching equals()'s partitionFiltersSet check.
+    result = 31 * result + Objects.hashCode(partitionFiltersSet);
+    return result;
   }
 
   /**

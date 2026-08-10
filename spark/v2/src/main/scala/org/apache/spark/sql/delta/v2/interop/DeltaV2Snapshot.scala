@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
+import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta.{
   CheckpointProvider,
   DeltaColumnMappingMode,
@@ -32,8 +33,8 @@ import org.apache.spark.sql.delta.actions.{
 }
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, StatisticsCollection}
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import org.apache.hadoop.fs.Path
-import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 
@@ -48,7 +49,7 @@ import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
  * member the construction or scan path would dereference them through is overridden below. V1 state
  * reconstruction (`stateDF` etc.) is not wired to Kernel yet and throws.
  */
-private[v2] class DeltaV2Snapshot(
+class DeltaV2Snapshot(
     // Typed as the internal SnapshotImpl (aliased KernelSnapshot), not the public Kernel
     // `Snapshot` interface: the decoded data path is only exposed on SnapshotImpl in the
     // OSS-published Kernel. The public io.delta.kernel.Snapshot has no `getDataPath`, and its
@@ -82,7 +83,7 @@ private[v2] class DeltaV2Snapshot(
   // No DeltaLog to source a Hadoop conf from, so use the session Hadoop conf for the engine.
   def this(kernelSnapshot: KernelSnapshot, sparkSession: SparkSession) =
     this(kernelSnapshot, sparkSession,
-      DefaultEngine.create(sparkSession.sessionState.newHadoopConf()))
+      KernelEngineFactory.createDefaultEngine(sparkSession.sessionState.newHadoopConf()))
   // scalastyle:on deltahadoopconfiguration
 
   // --- logSegment/deltaLog = null guardrail: construction-path overrides ----------------------
@@ -128,6 +129,9 @@ private[v2] class DeltaV2Snapshot(
   // The Delta log directory path, sourced from Kernel (parallels `dataPath`). Overrides the base
   // SnapshotDescriptor.logPath
   override def logPath: Path = new Path(kernelSnapshot.getLogPath.toString)
+
+  // This snapshot has no DeltaLog from which to derive usage-log tags, so emit none.
+  override def getCommonTags: Map[TagDefinition, String] = Map.empty
 
 
   // --- SnapshotDescriptor / state surface ----------------------------------------------------

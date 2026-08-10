@@ -19,13 +19,25 @@ package io.delta.flink.sink.sql;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.unitycatalog.client.model.ColumnInfo;
+import io.unitycatalog.client.model.DataSourceFormat;
+import io.unitycatalog.client.model.TableInfo;
+import java.net.URI;
 import java.util.List;
+import java.util.Map;
+import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.Schema.UnresolvedPhysicalColumn;
+import org.apache.flink.table.api.TableEnvironment;
+import org.apache.flink.table.catalog.CatalogTable;
+import org.apache.flink.table.catalog.GenericInMemoryCatalog;
+import org.apache.flink.table.catalog.ObjectPath;
 import org.apache.flink.table.types.AtomicDataType;
 import org.apache.flink.table.types.KeyValueDataType;
-import org.apache.flink.table.types.logical.BinaryType;
 import org.apache.flink.table.types.logical.MapType;
+import org.apache.flink.table.types.logical.NullType;
+import org.apache.flink.table.types.logical.SmallIntType;
+import org.apache.flink.table.types.logical.TinyIntType;
+import org.apache.flink.table.types.logical.VarBinaryType;
 import org.junit.jupiter.api.Test;
 
 /** Test suite for {@link FlinkUnityCatalogTable}. */
@@ -99,7 +111,7 @@ class FlinkUnityCatalogTableTest {
     assertTrue(
         ((AtomicDataType) ((UnresolvedPhysicalColumn) schema.getColumns().get(2)).getDataType())
                 .getLogicalType()
-            instanceof BinaryType);
+            instanceof VarBinaryType);
     assertTrue(
         ((UnresolvedPhysicalColumn) schema.getColumns().get(8)).getDataType()
             instanceof KeyValueDataType);
@@ -107,5 +119,80 @@ class FlinkUnityCatalogTableTest {
         ((KeyValueDataType) ((UnresolvedPhysicalColumn) schema.getColumns().get(8)).getDataType())
                 .getLogicalType()
             instanceof MapType);
+  }
+
+  @Test
+  void testNarrowIntegerTypes() {
+    assertEquals(
+        new TinyIntType(true),
+        FlinkUnityCatalogTable.fromJson("{\"type\":\"byte\",\"nullable\":true}").getLogicalType());
+    assertEquals(
+        new SmallIntType(false),
+        FlinkUnityCatalogTable.fromJson("{\"type\":\"short\",\"nullable\":false}")
+            .getLogicalType());
+  }
+
+  @Test
+  void testResolveTableWithVoidColumn() throws Exception {
+    TableInfo tableInfo =
+        new TableInfo()
+            .name("events")
+            .columns(
+                List.of(
+                    column("id"),
+                    new ColumnInfo()
+                        .name("pending")
+                        .typeJson(
+                            "{\"name\":\"pending\",\"type\":\"void\",\"nullable\":true,"
+                                + "\"metadata\":{}}")))
+            .dataSourceFormat(DataSourceFormat.DELTA)
+            .properties(Map.of());
+    FlinkUnityCatalogTable table =
+        new FlinkUnityCatalogTable(tableInfo, URI.create("https://example.com"), "token");
+    GenericInMemoryCatalog catalog = new GenericInMemoryCatalog("test_catalog");
+    catalog.createTable(new ObjectPath("default", "events"), table, false);
+    TableEnvironment tableEnvironment =
+        TableEnvironment.create(EnvironmentSettings.newInstance().inBatchMode().build());
+    tableEnvironment.registerCatalog("test_catalog", catalog);
+
+    assertEquals(
+        new NullType(),
+        tableEnvironment
+            .from("`test_catalog`.`default`.`events`")
+            .getResolvedSchema()
+            .getColumnDataTypes()
+            .get(1)
+            .getLogicalType());
+  }
+
+  @Test
+  void testPartitionMetadata() {
+    List<ColumnInfo> columns =
+        List.of(column("id"), column("day").partitionIndex(1), column("region").partitionIndex(0));
+    TableInfo tableInfo =
+        new TableInfo()
+            .name("events")
+            .columns(columns)
+            .dataSourceFormat(DataSourceFormat.DELTA)
+            .properties(Map.of());
+
+    FlinkUnityCatalogTable table =
+        new FlinkUnityCatalogTable(tableInfo, URI.create("https://example.com"), "token");
+
+    assertTrue(table.isPartitioned());
+    assertEquals(List.of("region", "day"), table.getPartitionKeys());
+    assertEquals("region,day", table.getOptions().get("partitions"));
+
+    CatalogTable copiedTable = (CatalogTable) table.copy();
+    assertEquals(table.getPartitionKeys(), copiedTable.getPartitionKeys());
+    assertEquals(table.getPartitionKeys(), table.copy(Map.of()).getPartitionKeys());
+  }
+
+  private static ColumnInfo column(String name) {
+    return new ColumnInfo()
+        .name(name)
+        .typeJson(
+            String.format(
+                "{\"name\":\"%s\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}", name));
   }
 }
