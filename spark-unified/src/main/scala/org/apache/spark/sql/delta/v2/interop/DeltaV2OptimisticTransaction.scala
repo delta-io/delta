@@ -118,6 +118,10 @@ private[v2] class DeltaV2OptimisticTransaction(
   // The Kernel commit is atomic on its own, and there is no V1 driver cache.
   override private[delta] def isCommitLockEnabled: Boolean = false
 
+  // A Kernel-backed post-commit snapshot has no V1 LogSegment and no V1 deltaLog; V1 checkpointing
+  // does not apply.
+  override protected def isCheckpointNeeded(
+      committedVersion: Long, postCommitSnapshot: Snapshot): Boolean = false
 
   // Commit-stats telemetry: the table id is sourced from the Kernel snapshot (no V1 deltaLog).
   override protected def commitTableId: String = snapshot.metadata.id
