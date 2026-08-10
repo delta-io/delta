@@ -30,7 +30,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.amt.AMTUtils
+import org.apache.spark.sql.delta.amt.{AMTPassthrough, AMTUtils}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -917,7 +917,8 @@ case class AddFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
     clusteringProvider: Option[String] = None,
-    backReference: Option[BackReference] = None
+    backReference: Option[BackReference] = None,
+    amtPassthrough: Option[AMTPassthrough] = None
 ) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 
@@ -1511,9 +1512,23 @@ object CommitInfo {
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
-      txnId: Option[String]): CommitInfo = {
-    apply(None, time, operation, inCommitTimestamp, operationParameters, commandContext,
-      readVersion, isolationLevel, isBlindAppend, operationMetrics, userMetadata, tags, txnId)
+      txnId: Option[String],
+      lastManifestCommit: Option[LastManifestCommit]): CommitInfo = {
+    apply(
+      version = None,
+      time,
+      operation,
+      inCommitTimestamp,
+      operationParameters,
+      commandContext,
+      readVersion,
+      isolationLevel,
+      isBlindAppend,
+      operationMetrics,
+      userMetadata,
+      tags,
+      txnId,
+      lastManifestCommit)
   }
 
   def apply(
@@ -1529,7 +1544,8 @@ object CommitInfo {
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
-      txnId: Option[String]): CommitInfo = {
+      txnId: Option[String],
+      lastManifestCommit: Option[LastManifestCommit]): CommitInfo = {
 
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
@@ -1555,7 +1571,7 @@ object CommitInfo {
       tags,
       getEngineInfo,
       txnId,
-      lastManifestCommit = None)
+      lastManifestCommit)
   }
   // scalastyle:on argcount
 

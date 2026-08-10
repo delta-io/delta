@@ -635,7 +635,8 @@ class Snapshot(
             col("add.baseRowId"),
             col("add.defaultRowCommitVersion"),
             col("add.clusteringProvider"),
-            col("add.backReference")
+            col("add.backReference"),
+            col("add.amtPassthrough")
           )))
         .withColumn("remove", when(
           col("remove.path").isNotNull,
@@ -742,7 +743,7 @@ class Snapshot(
       checksumOpt.flatMap(_.fileSizeHistogram)
         .orElse(Option.when(_computedStateTriggered)(fileSizeHistogram).flatten)
     }.flatten,
-    lastManifestCommit = None
+    lastManifestCommit = lastManifestCommitOpt
   )
 
   /** Returns the data schema of the table, used for reading stats */

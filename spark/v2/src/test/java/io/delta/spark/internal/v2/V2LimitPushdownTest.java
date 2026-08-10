@@ -248,12 +248,20 @@ public class V2LimitPushdownTest extends V2TestBase {
             "INSERT INTO delta.`%s` VALUES (1, 'a'), (2, 'a'), (3, 'a'), (4, 'b'), (5, 'b')",
             tablePath));
 
-    // A partition filter is fully pushed (no post-scan residual), so limit pushdown stays active.
+    // Whether the partition filter and limit are pushed depends on optimizer support. The query
+    // result must remain correct either way.
     long count =
         spark.sql(str("SELECT * FROM dsv2.delta.`%s` WHERE part = 'a' LIMIT 2", tablePath)).count();
     assertEquals(2, count, "Partition filter + LIMIT should return 2 rows");
-    assertLimitPushedForQuery(
-        str("SELECT * FROM dsv2.delta.`%s` WHERE part = 'a' LIMIT 2", tablePath), 2);
+    if (spark.version().startsWith("4.0")) {
+      // Spark 4.0 does not route SupportsPushDownCatalystFilters through PushDownUtils, so the
+      // partition filter remains above the scan and prevents limit pushdown.
+      assertLimitNotPushedForQuery(
+          str("SELECT * FROM dsv2.delta.`%s` WHERE part = 'a' LIMIT 2", tablePath));
+    } else {
+      assertLimitPushedForQuery(
+          str("SELECT * FROM dsv2.delta.`%s` WHERE part = 'a' LIMIT 2", tablePath), 2);
+    }
     assertOrderedV1V2SanityWithFilter(tablePath, "part = 'a'", "id", 2);
   }
 

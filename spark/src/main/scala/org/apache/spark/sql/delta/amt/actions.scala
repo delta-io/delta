@@ -21,12 +21,14 @@ import java.util.UUID
 import scala.util.Try
 
 import org.apache.spark.sql.delta.DeltaColumnMapping
-import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.stats.DeltaStatistics
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
@@ -469,13 +471,15 @@ case class DataEntry(
       stats = stats,
       deletionVector = dv,
       baseRowId = tracking.first_row_id,
-      defaultRowCommitVersion = tracking.sequence_number)
+      defaultRowCommitVersion = tracking.sequence_number,
+      amtPassthrough = AMTPassthrough.fromDataEntry(this))
   }
 }
 
 object DataEntry {
   /** Creates [[DataEntry]] from AddFile. */
-  def fromAddFile(add: AddFile, tracking: Tracking, tableRoot: Path): DataEntry =
+  def fromAddFile(add: AddFile, tracking: Tracking, tableRoot: Path): DataEntry = {
+    val passthrough = add.amtPassthrough
     DataEntry(
       location = add.path,
       file_format = AMTSingleAction.FileFormatParquet,
@@ -493,7 +497,74 @@ object DataEntry {
       partition = Partition(Option(add.partitionValues).filter(_.nonEmpty)),
       deletion_vector =
         Option(add.deletionVector).map(DeletionVector.fromDescriptor(_, tableRoot)),
+      spec_id = passthrough.flatMap(_.spec_id),
       content_stats = None)
+  }
+}
+
+/**
+ * The AMT-native fields of a [[DataEntry]] that should be carried by [[AddFile]].
+ */
+case class AMTPassthrough(
+    @JsonDeserialize(contentAs = classOf[java.lang.Integer])
+    spec_id: Option[Int] = None)
+
+object AMTPassthrough {
+  /** Name of the `amtPassthrough` field on the AddFile schema. */
+  final val FIELD_NAME: String = "amtPassthrough"
+
+  /** The struct type of the `amtPassthrough` field on the AddFile schema. */
+  final lazy val STRUCT_TYPE: StructType =
+    Action.addFileSchema(FIELD_NAME).dataType.asInstanceOf[StructType]
+
+  /**
+   * Positions of the `amtPassthrough` struct within an [[InternalRow]].
+   */
+  case class RowIndices(structIndex: Int, numFields: Int, specId: Int)
+
+  object RowIndices {
+    /**
+     * Resolve the positions against `schema`, the schema of an `add`-shaped row, or `None` when
+     * `schema` does not project `amtPassthrough` at all.
+     */
+    def resolve(schema: StructType): Option[RowIndices] =
+      schema.getFieldIndex(FIELD_NAME).map { structIndex =>
+        val passthroughSchema = schema(FIELD_NAME).dataType.asInstanceOf[StructType]
+        RowIndices(
+          structIndex = structIndex,
+          numFields = passthroughSchema.fields.length,
+          specId = passthroughSchema.fieldIndex("spec_id"))
+      }
+  }
+
+  /**
+   * Read the [[AMTPassthrough]] out of `row` at the pre-resolved `indices`, or `None` when the row
+   * carries no AMT-native fields.
+   */
+  def fromRow(row: InternalRow, indices: RowIndices): Option[AMTPassthrough] = {
+    if (row.isNullAt(indices.structIndex)) {
+      None
+    } else {
+      val struct = row.getStruct(indices.structIndex, indices.numFields)
+      Some(AMTPassthrough(
+        spec_id =
+          if (struct.isNullAt(indices.specId)) None else Some(struct.getInt(indices.specId))))
+    }
+  }
+
+  /**
+   * Build the [[AMTPassthrough]] carried on a Delta [[AddFile]] from `entry`, or `None` when the
+   * entry has no AMT-native fields to carry.
+   */
+  def fromDataEntry(entry: DataEntry): Option[AMTPassthrough] = {
+    require(
+      entry.file_format == AMTSingleAction.FileFormatParquet &&
+        entry.format_version == AMTSingleAction.FormatVersionV4,
+      s"amtPassthrough only supports parquet/v4. got " +
+        s"${entry.file_format}/${entry.format_version}.")
+    val passthrough = AMTPassthrough(spec_id = entry.spec_id)
+    if (passthrough == AMTPassthrough()) None else Some(passthrough)
+  }
 }
 
 /**

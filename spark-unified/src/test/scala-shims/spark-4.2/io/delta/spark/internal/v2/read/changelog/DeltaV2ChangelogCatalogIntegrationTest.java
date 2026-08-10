@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import java.util.Arrays;
 import java.util.List;
@@ -33,10 +33,10 @@ import org.junit.jupiter.api.Test;
 /**
  * Integration tests for catalog-routed CDC entrypoint (TableCatalog.loadChangelog).
  *
- * <p>These tests intentionally exercise SQL/DataFrame paths (not direct DeltaChangelog
+ * <p>These tests intentionally exercise SQL/DataFrame paths (not direct DeltaV2Changelog
  * construction) so they validate analyzer -> catalog -> changelog wiring.
  */
-public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase {
+class DeltaV2ChangelogCatalogIntegrationTest extends DeltaV2ChangelogTestBase {
 
   // ===========================================================================================
   // Fixtures and helpers
@@ -106,7 +106,7 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   private java.sql.Timestamp commitTimestamp(String tableLocation, long version) {
     // Reads through the kernel snapshot manager, so it works inside the STRICT block the test body
     // runs in. tableLocation is resolved by withHistoryTable before STRICT is set.
-    DeltaSnapshotManager snapshotManager =
+    DeltaV2SnapshotManager snapshotManager =
         SnapshotManagerFactory.create(tableLocation, defaultEngine, Optional.empty());
     long millis = snapshotManager.loadSnapshotAt(version).getTimestamp(defaultEngine);
     return new java.sql.Timestamp(millis);
@@ -944,7 +944,7 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   /**
    * A CHANGES read on a table that does not have row tracking enabled at the end version must be
    * rejected with the {@code DELTA_CHANGELOG_REQUIRES_ROW_TRACKING} error class. The check happens
-   * eagerly in {@code DeltaChangelogScanBuilder.build} against the end-version snapshot.
+   * eagerly in {@code DeltaV2ChangelogScanBuilder.build} against the end-version snapshot.
    */
   @Test
   public void testChangelogRejectsTableWithoutRowTracking() throws Exception {
@@ -984,7 +984,8 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
 
   /**
    * Range ends in an RT-disabled state. The eager end-snapshot check in {@code
-   * DeltaChangelogScanBuilder.build} must reject with {@code DELTA_CHANGELOG_REQUIRES_ROW_TRACKING}
+   * DeltaV2ChangelogScanBuilder.build} must reject with {@code
+   * DELTA_CHANGELOG_REQUIRES_ROW_TRACKING}
    * before the per-commit loop runs.
    */
   @Test
@@ -1034,7 +1035,7 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   /**
    * Range starts and ends with row tracking enabled, but a mid-range commit carries a Metadata
    * action that disables row tracking. The per-commit Metadata loop in {@code
-   * DeltaChangelogBatch.planInputPartitions} must reject with {@code
+   * DeltaV2ChangelogBatch.planInputPartitions} must reject with {@code
    * DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE}, because the eager boundary checks see only
    * RT-enabled endpoints.
    */

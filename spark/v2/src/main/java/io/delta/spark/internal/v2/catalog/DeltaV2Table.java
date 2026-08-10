@@ -21,7 +21,6 @@ import static io.delta.spark.internal.v2.utils.StatsUtils.toV2Statistics;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
@@ -31,11 +30,11 @@ import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.exception.NoRecreatableHistoryException;
 import io.delta.spark.internal.v2.exception.TableNotFoundException;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.read.DeltaV2ScanUtils;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.shims.CatalogV2UtilShims;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.write.DeltaRowLevelOperationBuilder;
@@ -80,6 +79,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
@@ -118,7 +118,7 @@ public class DeltaV2Table extends DeltaV2TableShims
   private final Identifier identifier;
   private final String tablePath;
   private final Map<String, String> options;
-  private final DeltaSnapshotManager snapshotManager;
+  private final DeltaV2SnapshotManager snapshotManager;
   /** Snapshot created during connector setup */
   private final Snapshot initialSnapshot;
 
@@ -246,7 +246,7 @@ public class DeltaV2Table extends DeltaV2TableShims
 
     this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    this.kernelEngine = DefaultEngine.create(this.hadoopConf);
+    this.kernelEngine = KernelEngineFactory.createDefaultEngine(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     try {
       this.initialSnapshot =
@@ -350,7 +350,7 @@ public class DeltaV2Table extends DeltaV2TableShims
    * (TableCatalog.loadChangelog) use this to resolve versions, timestamps, and snapshots without
    * having to build their own snapshot manager.
    */
-  public DeltaSnapshotManager getSnapshotManager() {
+  public DeltaV2SnapshotManager getSnapshotManager() {
     return snapshotManager;
   }
 
@@ -384,7 +384,7 @@ public class DeltaV2Table extends DeltaV2TableShims
    * share a singular load once the snapshot manager exposes it TODO(#5999).
    */
   private static long resolveTimestampToVersion(
-      DeltaSnapshotManager manager, long timestampMicros) {
+      DeltaV2SnapshotManager manager, long timestampMicros) {
     long timeMillis = timestampMicros / 1000;
     DeltaHistoryManager.Commit commit =
         manager.getActiveCommitAtTime(
@@ -530,6 +530,8 @@ public class DeltaV2Table extends DeltaV2TableShims
     return DeltaV2ScanUtils.newScanBuilder(
         name(),
         initialSnapshot,
+        kernelEngine,
+        catalogTable,
         snapshotManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
@@ -541,7 +543,8 @@ public class DeltaV2Table extends DeltaV2TableShims
   /**
    * Validates that {@code version} exists in the Delta log, then loads the snapshot pinned to it.
    */
-  private static Snapshot loadSnapshotAtCheckedVersion(DeltaSnapshotManager manager, long version) {
+  private static Snapshot loadSnapshotAtCheckedVersion(
+      DeltaV2SnapshotManager manager, long version) {
     manager.checkVersionExists(
         version, /* mustBeRecreatable = */ true, /* allowOutOfRange = */ false);
     return manager.loadSnapshotAt(version);

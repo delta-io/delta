@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, LogSegment, MaintenanceOperation, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, Checkpoint}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.sql.SparkSession
 
@@ -60,7 +61,18 @@ case class AMTWriteMetrics(
 case class SingleAMTWriteMetrics(
     trigger: String,
     incremental: String,
-    materializeDurationMs: Long)
+    materializeDurationMs: Long,
+    // Detailed shape breakdown of an incremental write; None for a full rewrite.
+    incrementalWriteMetrics: Option[IncrementalAMTWriteMetrics] = None)
+
+case class IncrementalAMTWriteMetrics(
+    numIntermediateCommits: Int,
+    numExistingLeavesUpdated: Int,
+    numExistingLeavesUntouched: Int,
+    numNewLeaves: Int,
+    numRootLiveAdds: Int,
+    numRootTombstones: Int,
+    numLeafMdvBitsAdded: Int)
 
 /**
  * The outcome of an AMT write for a single commit attempt.
@@ -97,6 +109,7 @@ class AMTWriterManager(
    * @param commitVersion       the version this attempt targets
    * @param currentTransactionInfo the in-flight transaction (its actions, protocol, metadata)
    * @param preCommitLogSegment the log segment prior to this commit
+   * @return the AMT write result; `None` if no AMT write is triggered or it's a non-AMT table.
    */
   def writeAMT(
       commitVersion: Long,
@@ -116,13 +129,13 @@ class AMTWriterManager(
         val incremental =
           optimize.incremental && AMTWriteHelper.previousAMTContentRoot(readSnapshot).isDefined
         Some(materialize(
-          commitVersion, currentTransactionInfo,
+          commitVersion, currentTransactionInfo, preCommitLogSegment,
           incremental = incremental, trigger = optimize.triggerName))
       case _ if shouldDoInlineIncrementalCheckpoint(actionsToCommit) =>
         // A large business commit rebuilds its manifest tree inline (incrementally).
         val mode = AMTTriggerMode.InlineWithLargeCommitIncremental
         Some(materialize(
-          commitVersion, currentTransactionInfo,
+          commitVersion, currentTransactionInfo, preCommitLogSegment,
           incremental = mode.isIncremental, trigger = mode.name))
       case _ =>
         None
@@ -147,21 +160,27 @@ class AMTWriterManager(
   private def materialize(
       commitVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
+      preCommitLogSegment: LogSegment,
       incremental: Boolean,
       trigger: String): AMTWriteResult = {
+    val amtProviderOpt = readSnapshot.checkpointProvider match {
+      case amt: AMTCheckpointProvider => Some(amt)
+      case _ => None
+    }
     val (result, singleMetric) =
-      if (incremental) {
-        AMTWriteHelper.writeIncrementalMaterialization(
-          spark = spark,
-          readSnapshot = readSnapshot,
-          commitVersion = commitVersion,
+      if (incremental && amtProviderOpt.isDefined) {
+        val oldAMTVersion = amtProviderOpt.get.checkpointAction.version
+        // The commits written after the old AMT, up to the last committed version.
+        val intermediateLogCommits = preCommitLogSegment.deltas
+          .filter(f => FileNames.getFileVersion(f) > oldAMTVersion)
+        new IncrementalAMTWriter(spark, deltaLog).writeIncremental(
+          oldAMTVersion = oldAMTVersion,
+          oldAMTCheckpointProvider = amtProviderOpt.get,
+          intermediateLogCommits = intermediateLogCommits,
+          attemptVersion = commitVersion,
           actionsToCommit = currentTransactionInfo.actions,
-          postCommitProtocol = currentTransactionInfo.protocol,
-          postCommitMetadata = currentTransactionInfo.metadata,
-          trigger = trigger,
-          incremental = incremental)
+          trigger = trigger)
       } else {
-        // A full rewrite re-materializes the whole live file set; the commit carries no actions.
         assert(currentTransactionInfo.actions.isEmpty,
           "A full AMT rewrite must carry no actions, got " +
             s"${currentTransactionInfo.actions.size}.")

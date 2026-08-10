@@ -26,9 +26,9 @@ import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.util.List;
 import java.util.Optional;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 
 /**
  * Snapshot manager for Unity Catalog managed tables.
@@ -36,7 +36,7 @@ import java.util.Optional;
  * <p>Used for tables with the catalog-managed commit feature enabled. Unity Catalog serves as the
  * source of truth for the table's commit history.
  */
-public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
+public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
 
   private final UCCatalogManagedClient ucCatalogManagedClient;
   private final String tableId;

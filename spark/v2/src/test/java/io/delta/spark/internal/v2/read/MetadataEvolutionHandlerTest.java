@@ -38,7 +38,6 @@ import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.util.*;
@@ -50,6 +49,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -111,8 +111,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
    * A no-op snapshot manager that throws on any call. Used for tests that only exercise handler
    * logic (tracking state, offset arithmetic, iterator manipulation) without hitting the delta log.
    */
-  private static final DeltaSnapshotManager THROWING_SNAPSHOT_MANAGER =
-      new DeltaSnapshotManager() {
+  private static final DeltaV2SnapshotManager THROWING_SNAPSHOT_MANAGER =
+      new DeltaV2SnapshotManager() {
         @Override
         public Snapshot loadLatestSnapshot() {
           throw new UnsupportedOperationException("not expected in this test");
