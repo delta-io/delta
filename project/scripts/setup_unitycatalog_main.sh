@@ -91,7 +91,7 @@ UC_DIR="${UC_DIR:-/tmp/unitycatalog}"
 UC_REPO="${UC_REPO:-https://github.com/unitycatalog/unitycatalog.git}"
 UC_REF="${UC_REF:-$UC_PIN_SHA}"
 UC_FORCE="${UC_FORCE:-0}"
-SPARK_VERSION="${SPARK_VERSION:-4.1}"
+SPARK_VERSION="${SPARK_VERSION:-4.2}"
 DELTA_RELEASE_MODE="${DELTA_RELEASE_MODE:-0}"
 
 # Compose version coordinate. When UC_VERSION is set from env, use it verbatim (no SHA suffix).
