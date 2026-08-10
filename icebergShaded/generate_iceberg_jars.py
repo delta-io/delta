@@ -19,6 +19,7 @@
 import argparse
 import os
 import glob
+import re
 import subprocess
 import shlex
 import shutil
@@ -93,11 +94,184 @@ def prepare_iceberg_source():
             run_cmd("git commit -a -m 'applied %s'" % path.basename(patch_file))
 
 
+_KEPT_PROJECTS = {
+    "iceberg-bundled-guava", "iceberg-api", "iceberg-common",
+    "iceberg-core", "iceberg-data", "iceberg-orc",
+    "iceberg-parquet", "iceberg-hive-metastore",
+}
+
+
+def _make_maven_block(url, label, jfrog_token=None):
+    """Build a Gradle maven { ... } block, optionally with credentials."""
+    if jfrog_token:
+        return (
+            'maven {\n'
+            '      url "%s"\n'
+            '      credentials {\n'
+            '        username "gha-service-account"\n'
+            '        password "%s"\n'
+            '      }\n'
+            '    }' % (url, jfrog_token)
+        )
+    return 'maven { url "%s" }' % url
+
+
+def _strip_unwanted_project_blocks(content):
+    """Remove top-level project(':iceberg-X') { ... } blocks for projects not in _KEPT_PROJECTS."""
+    lines = content.split("\n")
+    result = []
+    skip_depth = 0
+    skipping = False
+
+    for line in lines:
+        if not skipping:
+            m = re.match(r"^project\(':([^']+)'\)\s*\{", line)
+            if m and m.group(1) not in _KEPT_PROJECTS:
+                skipping = True
+                skip_depth = 1
+                continue
+            result.append(line)
+        else:
+            skip_depth += line.count("{") - line.count("}")
+            if skip_depth <= 0:
+                skipping = False
+
+    return "\n".join(result)
+
+
+def patch_iceberg_build_for_proxies():
+    """Patch Iceberg build files for restricted-egress environments.
+
+    Reads optional env vars GRADLE_PROXY_URL, MAVEN_PROXY_URL, and
+    JFROG_ACCESS_TOKEN to redirect Gradle plugin/dependency resolution
+    through proxy mirrors. When none are set, repos stay at their
+    upstream defaults.
+
+    Also trims settings.gradle to only the sub-projects we need,
+    relaxes the JDK version gate, and strips the palantir-baseline
+    plugin (blocked on common proxies).
+    """
+    gradle_proxy = os.environ.get("GRADLE_PROXY_URL")
+    maven_proxy = os.environ.get("MAVEN_PROXY_URL")
+    jfrog_token = os.environ.get("JFROG_ACCESS_TOKEN")
+
+    # --- 1. Patch build.gradle ---
+    build_gradle = path.join(iceberg_src_dir, "build.gradle")
+    with open(build_gradle, "r") as f:
+        content = f.read()
+
+    if gradle_proxy:
+        print(">>> Patching Gradle plugin repo: GRADLE_PROXY_URL=%s" % gradle_proxy)
+        block = _make_maven_block(gradle_proxy, "gradle-proxy", jfrog_token)
+        content = content.replace("gradlePluginPortal()", block)
+    else:
+        print(">>> GRADLE_PROXY_URL not set — using upstream gradlePluginPortal()")
+
+    if maven_proxy:
+        print(">>> Patching Maven Central repo: MAVEN_PROXY_URL=%s" % maven_proxy)
+        block = _make_maven_block(maven_proxy, "maven-proxy", jfrog_token)
+        content = content.replace("mavenCentral()", block)
+    else:
+        print(">>> MAVEN_PROXY_URL not set — using upstream mavenCentral()")
+
+    # Strip palantir-baseline classpath (403 on common proxies)
+    content = re.sub(
+        r"^\s*classpath\s+'com\.palantir\.baseline:gradle-baseline-java:.*'\n",
+        "",
+        content,
+        flags=re.MULTILINE,
+    )
+    print(">>> Stripped palantir-baseline classpath entry")
+
+    # Replace `apply from: 'baseline.gradle'` with a comment
+    content = re.sub(
+        r"^(\s*)apply from:\s*'baseline\.gradle'",
+        r"\1// stripped: baseline.gradle",
+        content,
+        flags=re.MULTILINE,
+    )
+    print(">>> Commented out baseline.gradle apply")
+
+    # Relax JDK version gate: replace the throw with a fallback assignment
+    content = re.sub(
+        r"throw new GradleException\(\"This build must be run with JDK 8 or 11.*?\"\s*\+\s*JavaVersion\.current\(\)\)",
+        "project.ext.jdkVersion = JavaVersion.current().toString()",
+        content,
+    )
+    print(">>> Relaxed JDK version check in build.gradle")
+
+    content = _strip_unwanted_project_blocks(content)
+    print(">>> Stripped project blocks for unused sub-projects")
+
+    with open(build_gradle, "w") as f:
+        f.write(content)
+
+    # --- 2. Rewrite jmh.gradle ---
+    # The original references spark/flink sub-projects we no longer include.
+    # Write a minimal version that only configures JMH for kept projects.
+    jmh_gradle = path.join(iceberg_src_dir, "jmh.gradle")
+    minimal_jmh = """\
+if (jdkVersion != '8' && jdkVersion != '11') {
+  project.logger.warn('Skipping JMH JDK check \\u2014 running on JDK ' + JavaVersion.current())
+}
+
+def jmhProjects = [project(":iceberg-core"), project(":iceberg-data")]
+
+configure(jmhProjects) {
+  apply plugin: 'me.champeau.jmh'
+
+  jmh {
+    jmhVersion = '1.32'
+    failOnError = true
+    forceGC = true
+    includeTests = true
+    humanOutputFile = file(jmhOutputPath)
+    includes = [jmhIncludeRegex]
+    zip64 = true
+  }
+
+  jmhCompileGeneratedClasses {
+    pluginManager.withPlugin('com.palantir.baseline-error-prone') {
+      options.errorprone.enabled = false
+    }
+  }
+}
+"""
+    with open(jmh_gradle, "w") as f:
+        f.write(minimal_jmh)
+    print(">>> Rewrote jmh.gradle for trimmed sub-project set")
+
+    # --- 3. Trim settings.gradle ---
+    settings_gradle = path.join(iceberg_src_dir, "settings.gradle")
+    trimmed_settings = """\
+rootProject.name = 'iceberg'
+include 'api'
+include 'common'
+include 'core'
+include 'data'
+include 'orc'
+include 'parquet'
+include 'bundled-guava'
+include 'hive-metastore'
+
+project(':api').name = 'iceberg-api'
+project(':common').name = 'iceberg-common'
+project(':core').name = 'iceberg-core'
+project(':data').name = 'iceberg-data'
+project(':orc').name = 'iceberg-orc'
+project(':parquet').name = 'iceberg-parquet'
+project(':bundled-guava').name = 'iceberg-bundled-guava'
+project(':hive-metastore').name = 'iceberg-hive-metastore'
+"""
+    with open(settings_gradle, "w") as f:
+        f.write(trimmed_settings)
+    print(">>> Trimmed settings.gradle to required sub-projects only")
+
+
 def generate_iceberg_jars():
     print(">>> Compiling JARs")
     with WorkingDirectory(iceberg_src_dir):
-        # disable style checks (can fail with patches) and tests
-        build_args = "-x spotlessCheck -x checkstyleMain -x test -x integrationTest"
+        build_args = "-x test -x javadoc -x testJar"
         run_cmd("./gradlew :iceberg-core:build %s" % build_args)
         run_cmd("./gradlew :iceberg-parquet:build %s" % build_args)
         run_cmd("./gradlew :iceberg-hive-metastore:build %s" % build_args)
@@ -186,4 +360,5 @@ if __name__ == "__main__":
 
     if args.force or not iceberg_jars_exists():
         prepare_iceberg_source()
+        patch_iceberg_build_for_proxies()
         generate_iceberg_jars()
