@@ -46,7 +46,7 @@ trait V1V2SourceSchemaLogCompatibilitySuiteBase
   override protected def isCdcTest: Boolean = false
 
   override protected def runOnlyTests: Seq[String] = Seq(
-    // Scenario tests — multi-step flows where each connector picks up what the other left.
+    // Scenario tests - multi-step flows where each connector picks up what the other left.
     "alternating connectors with no schema evolution leaves the schema log untouched",
     "V1-initialized schema log can be read by V2",
     "V2-initialized schema log can be read by V1",
@@ -59,7 +59,7 @@ trait V1V2SourceSchemaLogCompatibilitySuiteBase
     "alternating connectors (V2-V1-V2-V1) across additive then non-additive evolution (rename)",
     "alternating connectors (V2-V1-V2-V1) across additive then non-additive evolution (drop)",
 
-    // Equivalence tests — V1 and V2 produce/consume byte-identical log files for the same input.
+    // Equivalence tests - V1 and V2 produce/consume byte-identical log files for the same input.
     "V1 and V2 write equivalent schema tracking log entries (rename)",
     "V1 and V2 write equivalent schema tracking log entries (drop)",
     "V1 and V2 mergers produce equivalent merged schema log entries",

@@ -18,12 +18,11 @@ package io.delta.spark.internal.v2.read;
 import static io.delta.spark.internal.v2.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
@@ -45,6 +44,7 @@ import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.stats.DeltaScan;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.execution.datasources.v2.DeltaV2FilterTranslator;
@@ -64,7 +64,7 @@ import scala.Option;
  */
 class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
-  private final DeltaSnapshotManager snapshotManager;
+  private final DeltaV2SnapshotManager snapshotManager;
   private final Snapshot initialSnapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;
@@ -116,7 +116,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
 
   // TODO(#6743): bundle scan-level schemas into a single ScanSchemaContext.
   public DeltaV2Scan(
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       Snapshot initialSnapshot,
       StructType tableSchema,
       StructType dataSchema,
@@ -264,7 +264,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
             (io.delta.kernel.internal.SnapshotImpl) latestSnapshot,
             options,
             snapshotManager,
-            DefaultEngine.create(hadoopConf),
+            KernelEngineFactory.createDefaultEngine(hadoopConf),
             Option.apply(checkpointLocation),
             /* mergeConsecutiveSchemaChanges= */ false);
 

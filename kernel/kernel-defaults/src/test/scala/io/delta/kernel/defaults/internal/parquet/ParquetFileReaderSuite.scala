@@ -19,11 +19,13 @@ import java.math.BigDecimal
 import java.util.TimeZone
 
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
 import io.delta.kernel.utils.MetadataColumnTestUtils
 
+import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.internal.SQLConf
 import org.scalatest.funsuite.AnyFunSuite
 import org.slf4j.LoggerFactory
@@ -32,6 +34,18 @@ class ParquetFileReaderSuite extends AnyFunSuite
     with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils
     with MetadataColumnTestUtils {
   private val logger = LoggerFactory.getLogger(classOf[ParquetFileReaderSuite])
+
+  test("parquetConfiguration reuses the HadoopInputFile's configuration") {
+    // Disable the FileSystem cache for this scheme so newInputFile initializes a fresh
+    // FileSystem carrying this exact Configuration, rather than a cached one whose conf
+    // (the cache keys on scheme+authority+UGI, not conf) would lack the sentinel key.
+    val conf = new Configuration(false)
+    conf.setBoolean("fs.file.impl.disable.cache", true)
+    conf.set("my.sentinel.key", "sentinel-value")
+    val input = new HadoopFileIO(conf).newInputFile("file:/tmp/does-not-need-to-exist", 0)
+    val parquetConf = ParquetIOUtils.parquetConfiguration(input)
+    assertResult("sentinel-value")(parquetConf.get("my.sentinel.key"))
+  }
 
   test("decimals encoded using dictionary encoding ") {
     // Below golden tables contains three decimal columns
