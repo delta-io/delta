@@ -539,4 +539,129 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
     }
   }
 
+  /**
+   * ANALYZE COMPUTE STATISTICS back reference integration test.
+   * First build a tree with 40 leaf files and 5 root files.
+   * Then do 3 commits on top:
+   *   - commit A: INSERT five more net-new files. They are not in the tree, so each must carry no
+   *     back reference.
+   *   - commit B: re-add three existing files through a manual transaction - one leaf file (must
+   *     carry its stamped back reference), one root file, and one commit-A file (both must carry
+   *     none).
+   *   - commit C: remove three files - one leaf file (tombstone must carry its back reference),
+   *     one root file, and one commit-A file (tombstones must carry none).
+   *
+   * Finally ANALYZE recomputes stats for every surviving file and recommits each as an
+   * `AddFile.copy` that preserves `backReference`, in a single transaction, and asserts the whole
+   * surviving set. 39 leaf files (stamped), 4 root files, and 4 commit-A files (unstamped)
+   */
+  testAcrossAMTCheckpointScenarios(
+      "ANALYZE COMPUTE STATISTICS over a mixed root+leaf tree carries correct back reference",
+      "amt_back_ref_analyze",
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = 4 * entriesPerLeaf - 1),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (${4 * entriesPerLeaf - 1})"))) { context =>
+    val name = context.tableName
+    val deltaLog = context.postCheckpointSnapshot.deltaLog
+    val numLeafFiles = 4 * entriesPerLeaf // Seeded ids [0, numLeafFiles).
+    val numRootFiles = 5
+    val numCommitAFiles = 5
+    // The full checkpoint stamped every seeded file into a leaf.
+    val leafBackRefByPath = stampedBackRefs(context.postCheckpointSnapshot)
+    assertLeafCount(context.provider.leaves, numLeafFiles)
+
+    // Five net-new files, then an incremental checkpoint so they land directly in the new root.
+    appendRowsAsSeparateFiles(name, numRows = numRootFiles, startId = numLeafFiles)
+    commitCheckpoint(deltaLog, incremental = true)
+    val rootTree = amtProvider(deltaLog.update()).getOrElse(fail("expected AMTCheckpointProvider"))
+    assert(rootTree.checkpointAction.contentRoot.isIncremental.contains(true),
+      "the follow-up checkpoint must be an incremental rewrite.")
+    assertLeafCount(rootTree.leaves, numLeafFiles)
+    val rootFilePaths = AMTCheckpointProvider
+      .readLiveRootDataEntries(spark, deltaLog, rootTree.checkpointAction)
+      .map(_.path).toSet
+    assert(rootFilePaths.size == numRootFiles,
+      s"expected $numRootFiles root-resident files, got ${rootFilePaths.size}.")
+    assert(rootFilePaths.intersect(leafBackRefByPath.keySet).isEmpty,
+      "root-resident and leaf-resident files must be disjoint.")
+
+    val treeSnapshot = deltaLog.update()
+    val leafAdds = liveAddFiles(treeSnapshot).filter(a => leafBackRefByPath.contains(a.path))
+    val rootAdds = liveAddFiles(treeSnapshot).filter(a => rootFilePaths.contains(a.path))
+    assert(leafAdds.size == numLeafFiles && leafAdds.forall(_.backReference.isDefined))
+    assert(rootAdds.size == numRootFiles && rootAdds.forall(_.backReference.isEmpty))
+
+    // commit A: five more net-new files(not in the tree).
+    val vBeforeCommitA = deltaLog.update().version
+    appendRowsAsSeparateFiles(
+      name, numRows = numCommitAFiles, startId = numLeafFiles + numRootFiles)
+    val commitAAdds = actionsAfter(deltaLog, vBeforeCommitA).collect { case a: AddFile => a }
+    assert(commitAAdds.size == numCommitAFiles && commitAAdds.forall(_.backReference.isEmpty),
+      "commit-A files never entered the tree, so each must carry no back reference.")
+
+    // commit B: readd three existing files through a manual transaction
+    val vBeforeCommitB = deltaLog.update().version
+    val reAdds = Seq(leafAdds(0), rootAdds(0), commitAAdds(0)).map(_.copy(dataChange = false))
+    commitActions(name, reAdds)
+    val readded = actionsAfter(deltaLog, vBeforeCommitB).collect { case a: AddFile => a }
+      .map(a => a.path -> a.backReference).toMap
+    assert(readded(leafAdds(0).path) == leafAdds(0).backReference,
+      "the re-added leaf file must keep its stamped back reference.")
+    assert(readded(rootAdds(0).path).isEmpty && readded(commitAAdds(0).path).isEmpty,
+      "the re-added root and commit-A files must carry no back reference.")
+
+    // commit C: remove three files
+    val vBeforeCommitC = deltaLog.update().version
+    commitActions(name, Seq(
+      leafAdds(1).removeWithTimestamp(),
+      rootAdds(1).removeWithTimestamp(),
+      commitAAdds(1).removeWithTimestamp()))
+    val tombstones = actionsAfter(deltaLog, vBeforeCommitC).collect { case r: RemoveFile => r }
+      .map(r => r.path -> r.backReference).toMap
+    assert(tombstones(leafAdds(1).path) == leafAdds(1).backReference,
+      "the leaf file's tombstone must carry its stamped back reference.")
+    assert(tombstones(rootAdds(1).path).isEmpty && tombstones(commitAAdds(1).path).isEmpty,
+      "the root and commit-A tombstones must carry no back reference.")
+
+    // The surviving live set: 39 leaf (stamped), 4 root, 4 commit-A (unstamped).
+    val liveByPath = liveAddFiles(deltaLog.update()).map(add => add.path -> add.backReference).toMap
+    val survivingLeaf = liveByPath.filter { case (p, _) => leafBackRefByPath.contains(p) }
+    val survivingRoot = liveByPath.filter { case (p, _) => rootFilePaths.contains(p) }
+    val commitAPaths = commitAAdds.map(_.path).toSet
+    val survivingCommitA = liveByPath.filter { case (p, _) => commitAPaths.contains(p) }
+    assert(survivingLeaf.size == numLeafFiles - 1 && survivingLeaf.values.forall(_.isDefined),
+      s"expected ${numLeafFiles - 1} stamped leaf survivors, got ${survivingLeaf.size}.")
+    assert(survivingRoot.size == numRootFiles - 1 && survivingRoot.values.forall(_.isEmpty),
+      s"expected ${numRootFiles - 1} unstamped root survivors, got ${survivingRoot.size}.")
+    assert(survivingCommitA.size == numCommitAFiles - 1 &&
+        survivingCommitA.values.forall(_.isEmpty),
+      s"expected ${numCommitAFiles - 1} unstamped commit-A survivors, got " +
+        s"${survivingCommitA.size}.")
+
+    // ANALYZE: recompute stats for the whole live set in a single transaction.
+    // The commit passes only if each recomputed AddFile carried exactly the back reference the tree
+    // expects: stamped for leaf survivors, empty for root and commit-A survivors.
+    val vBeforeAnalyze = deltaLog.update().version
+    sql(s"ANALYZE TABLE $name COMPUTE DELTA STATISTICS")
+
+    val recomputed = actionsAfter(deltaLog, vBeforeAnalyze).collect { case a: AddFile => a }
+    assert(recomputed.nonEmpty, "ANALYZE must re-commit the live files with fresh stats.")
+    recomputed.foreach { a =>
+      val expected = liveByPath.getOrElse(a.path,
+        fail(s"ANALYZE re-committed $a for a path that was not live before it ran."))
+      assert(a.backReference == expected,
+        s"recomputed AddFile ${a.path} back-ref ${a.backReference} must equal source $expected.")
+    }
+    val recomputedByPath = recomputed.map(a => a.path -> a.backReference).toMap
+    survivingLeaf.foreach { case (path, expected) =>
+      assert(recomputedByPath.get(path).contains(expected),
+        s"surviving leaf file $path must be recomputed with its back reference $expected.")
+    }
+    (survivingRoot.keys ++ survivingCommitA.keys).foreach { path =>
+      assert(recomputedByPath.get(path).contains(None),
+        s"unstamped survivor $path must be recomputed with no back reference.")
+    }
+  }
+
 }
