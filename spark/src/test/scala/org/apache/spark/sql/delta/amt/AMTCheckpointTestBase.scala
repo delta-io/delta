@@ -136,6 +136,11 @@ trait AMTCheckpointTestBase
         s"got ${leaves.size}.")
   }
 
+  /** Asserts two leaf sequences are field-by-field equal. */
+  protected def assertLeavesEqual(
+      actual: Seq[DataManifestEntry], expected: Seq[DataManifestEntry]): Unit =
+    AMTLeafComparisons.assertLeavesEqual(actual, expected)
+
   /** A production-supported combination of AMT placement and materialization strategy. */
   protected sealed abstract class AMTCheckpointScenario(
       val name: String,
@@ -431,4 +436,48 @@ trait AMTCheckpointTestBase
       }.sum
   }
 
+}
+
+/**
+ * Field-by-field equality for AMT leaf pointers, shared across suites (some of which do not extend
+ * [[AMTCheckpointTestBase]]). Compares by content rather than case-class `==` (which compares the
+ * `Array[Byte]` fields by reference) and rather than a json comparison (tests of serialization must
+ * not rely on serialization to check their result).
+ */
+object AMTLeafComparisons {
+  /** Value equality for `Option[Array[Byte]]` (case-class `==` compares arrays by reference). */
+  private def sameBytes(a: Option[Array[Byte]], b: Option[Array[Byte]]): Boolean =
+    (a, b) match {
+      case (Some(x), Some(y)) => x.sameElements(y)
+      case (None, None) => true
+      case _ => false
+    }
+
+  /** Asserts two leaf pointers are field-by-field equal, comparing byte-array fields by content. */
+  def assertLeafEquals(actual: DataManifestEntry, expected: DataManifestEntry): Unit = {
+    // Blank the array-bearing members so a single `==` covers every other field structurally.
+    def blanked(e: DataManifestEntry): DataManifestEntry = e.copy(
+      tracking = e.tracking.copy(deleted_positions = None, replaced_positions = None),
+      manifest_info = e.manifest_info.copy(dv = None),
+      content_stats = None,
+      key_metadata = None)
+    assert(blanked(actual) == blanked(expected),
+      s"leaf non-array fields differ: $actual vs $expected")
+    assert(sameBytes(actual.tracking.deleted_positions, expected.tracking.deleted_positions),
+      "tracking.deleted_positions differ")
+    assert(sameBytes(actual.tracking.replaced_positions, expected.tracking.replaced_positions),
+      "tracking.replaced_positions differ")
+    assert(sameBytes(actual.manifest_info.dv, expected.manifest_info.dv), "manifest_info.dv differ")
+    assert(sameBytes(actual.key_metadata, expected.key_metadata), "key_metadata differ")
+    assert(sameBytes(
+        actual.content_stats.flatMap(_.raw_stats), expected.content_stats.flatMap(_.raw_stats)),
+      "content_stats.raw_stats differ")
+  }
+
+  /** Asserts two leaf sequences are field-by-field equal (see [[assertLeafEquals]]). */
+  def assertLeavesEqual(
+      actual: Seq[DataManifestEntry], expected: Seq[DataManifestEntry]): Unit = {
+    assert(actual.size == expected.size, s"leaf count differs: ${actual.size} vs ${expected.size}")
+    actual.zip(expected).foreach { case (a, e) => assertLeafEquals(a, e) }
+  }
 }

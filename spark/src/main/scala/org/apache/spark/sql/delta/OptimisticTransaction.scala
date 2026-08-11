@@ -3009,6 +3009,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // if needed.
       amtWriterManager.planMaintenance(attemptVersion, postCommitSnapshot)
     } else {
+      // The _last_checkpoint file must be updated here rather than the checkpoint hook, because the
+      // hook does not know about the new AMT checkpoint emitted in this commit.
+      amtWriteResultOpt.foreach { writeResult =>
+        deltaLog.writeLastCheckpointFileForAMT(manifestCommitVersion = attemptVersion, writeResult)
+      }
       // The AMT was written inline with this commit (always incremental). A full rewrite is never
       // inlined, so schedule a follow-up full OPTIMIZE CHECKPOINT commit when the full-rewrite
       // cadence is due -- otherwise a table whose commits consistently inline would never get a
