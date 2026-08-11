@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, LogSegment, OptimisticTransaction, Snapshot, VersionChecksum}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, CommitInfo, Protocol}
-import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook}
+import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import io.delta.storage.commit.Commit
 import org.apache.hadoop.conf.Configuration
@@ -33,7 +33,7 @@ import io.delta.kernel.{Operation, Table, Transaction}
 import io.delta.kernel.data.{Row => KernelRow}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshotImpl}
 import io.delta.kernel.internal.util.{PartitionUtils, Utils => KernelUtils}
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.types.{DataType, StringType}
@@ -49,20 +49,16 @@ import org.apache.spark.util.{Clock, SystemClock}
  * Extends V1 [[org.apache.spark.sql.delta.OptimisticTransaction]] directly, mirroring
  * [[DeltaV2Snapshot]] on the read side. Constructed with `deltaLog = null` (guardrail): every V1
  * DeltaLog reach on the commit lifecycle is either handled by an overridable base hook this class
- * overrides, or neutralized by unregistering the V1-only post-commit hooks in the constructor, so
- * any missed dependency surfaces loudly instead of silently using V1 state.
+ * overrides, or neutralized by skipping registration of the V1-only post-commit hooks, so any
+ * missed dependency surfaces loudly instead of silently using V1 state.
  *
- * Scope of this increment: blind appends of [[AddFile]] actions committed through Kernel's
- * `Transaction.commit`, single-writer. The surrounding V1 machinery (prepareCommit, retry loop,
- * post-commit install) runs unchanged. Everything else fails loudly with a "kernel wrapper gap"
- * message: RemoveFile and any non-AddFile action, protocol changes, and -- because the conflict
- * path is not wired to a Kernel log reader yet -- concurrent-writer retries. MST and coordinated
- * commits are out of scope.
+ * Supported: single-writer blind appends of [[AddFile]] actions, committed through Kernel's
+ * `Transaction.commit`. The surrounding V1 machinery (prepareCommit, retry loop, post-commit
+ * install) runs unchanged.
  *
- * TODO: Column-mapped tables (`delta.columnMapping.mode` = `name` / `id`) are NOT yet handled.
- * `AddFile`'s `partitionValues` keys and stats
- * JSON keys are PHYSICAL names, while this class reads the Kernel LOGICAL schema, so partition
- * typing and stats deserialization both look up names that cannot match.
+ * Not supported (fails loudly with a "kernel wrapper gap" error): RemoveFile and any non-AddFile
+ * action, protocol changes, concurrent-writer retries (the conflict path is not wired to a Kernel
+ * log reader), MST, and coordinated commits.
  */
 private[v2] class DeltaV2OptimisticTransaction(
     catalogTable: Option[CatalogTable],
@@ -73,7 +69,7 @@ private[v2] class DeltaV2OptimisticTransaction(
     catalogTable,
     deltaV2Snapshot) {
 
-  private def kernelSnapshot: SnapshotImpl = deltaV2Snapshot.kernelSnapshot
+  private def kernelSnapshot: KernelSnapshotImpl = deltaV2Snapshot.kernelSnapshot
 
   // Opt in to the base null-deltaLog guardrail: this transaction legitimately has no V1 DeltaLog
   override protected def allowNullDeltaLog: Boolean = true
@@ -104,22 +100,24 @@ private[v2] class DeltaV2OptimisticTransaction(
   // A Kernel-backed transaction has no V1 DeltaLog to source a clock from; use a system clock
   override def clock: Clock = new SystemClock
 
-
-  // Drop the post-commit hooks registered eagerly by the base constructor. They deref the
-  // null deltaLog / null logSegment.
-  // TODO: Will re-register these hooks when compatible with V2 path.
-  unregisterPostCommitHooksWhere { hook =>
-      hook == ChecksumHook ||
+  private def isUnsupportedPostCommitHook(hook: PostCommitHook): Boolean =
+    hook == ChecksumHook ||
       hook == CheckpointHook ||
       hook == IcebergConverterHook ||
       hook == HudiConverterHook
+
+  override def registerPostCommitHook(hook: PostCommitHook): Unit = {
+    if (!isUnsupportedPostCommitHook(hook)) {
+      super.registerPostCommitHook(hook)
+    }
   }
 
-  // The Kernel commit is atomic on its own, and there is no V1 driver cache.
+  // Disables the per-table commit lock, which serializes concurrent commits to the same
+  // table within one driver JVM (V1 borrows the DeltaLog `snapshotLock`). Not supported yet.
+  // Will implement as a follow-up.
   override private[delta] def isCommitLockEnabled: Boolean = false
 
-  // A Kernel-backed post-commit snapshot has no V1 LogSegment and no V1 deltaLog; V1 checkpointing
-  // does not apply.
+  // Kernel-backed checkpointing post commit hook is not supported yet.
   override protected def isCheckpointNeeded(
       committedVersion: Long, postCommitSnapshot: Snapshot): Boolean = false
 
@@ -143,10 +141,13 @@ private[v2] class DeltaV2OptimisticTransaction(
       catalogTableOpt: Option[CatalogTable],
       amtCheckpointOpt: Option[Checkpoint],
       isIdempotentRetry: Boolean): Snapshot = {
+    // TODO: Use Kernel's incremental snapshot load API to build the post-commit snapshot from the
+    // pre-commit snapshot plus this commit, instead of a full reload that replays the log. It is
+    // supported in Rust but not yet exposed on the Java wrapper.
     val postCommitKernelSnapshot = Table
       .forPath(engine, dataPath.toString)
       .getLatestSnapshot(engine)
-      .asInstanceOf[SnapshotImpl]
+      .asInstanceOf[KernelSnapshotImpl]
     require(
       postCommitKernelSnapshot.getVersion >= committedVersion,
       s"Kernel reload returned version ${postCommitKernelSnapshot.getVersion}, older than the " +
@@ -158,8 +159,8 @@ private[v2] class DeltaV2OptimisticTransaction(
    * Commit-IO seam: write the commit through Kernel.
    *
    * Translates the transaction's staged [[AddFile]]s (grouped per partition, with full statistics)
-   * to Kernel action rows and commits through `Transaction.commit`. Honors the V1 contract: commits
-   * at exactly `attemptVersion` or throws [[FileAlreadyExistsException]].
+   * to Kernel action rows and commits through `Transaction.commit`, returning a [[Commit]] at the
+   * version Kernel reports (which may exceed `attemptVersion` if Kernel rebased past a conflict).
    */
   override protected[interop] def writeCommitFile(
       attemptVersion: Long,
@@ -196,15 +197,11 @@ private[v2] class DeltaV2OptimisticTransaction(
         engine,
         CloseableIterable.inMemoryIterable(
           KernelUtils.toCloseableIterator(actionRows.iterator())))
-      val resultVersion = commitResult.getVersion
-      if (resultVersion != attemptVersion) {
-        throw new IllegalStateException(
-          s"Kernel committed version $resultVersion but the transaction expected $attemptVersion")
-      }
-      val deltaFile = FileNames.unsafeDeltaFile(logPath, attemptVersion)
+      val committedVersion = commitResult.getVersion
+      val deltaFile = FileNames.unsafeDeltaFile(logPath, committedVersion)
       val fs = deltaFile.getFileSystem(newDeltaHadoopConf())
       val fileStatus = fs.getFileStatus(deltaFile)
-      (None, new Commit(attemptVersion, fileStatus, fileStatus.getModificationTime),
+      (None, new Commit(committedVersion, fileStatus, fileStatus.getModificationTime),
         currentTransactionInfo)
     } finally {
     }

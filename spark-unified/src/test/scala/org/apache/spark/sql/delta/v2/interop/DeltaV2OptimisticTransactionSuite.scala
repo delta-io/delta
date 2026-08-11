@@ -23,8 +23,8 @@ import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.{AddFile, SetTransaction}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.kernel.Table
-import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.internal.SnapshotImpl
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
@@ -50,7 +50,7 @@ class DeltaV2OptimisticTransactionSuite
   private def startKernelTxn(dir: File): DeltaV2OptimisticTransaction = {
     // scalastyle:off deltahadoopconfiguration
     // No DeltaLog here (the snapshot is loaded via Kernel), so use the session Hadoop conf.
-    val engine = DefaultEngine.create(spark.sessionState.newHadoopConf())
+    val engine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
     val kernelSnap = Table
       .forPath(engine, dir.getCanonicalPath)
@@ -146,7 +146,7 @@ class DeltaV2OptimisticTransactionSuite
 
       // Kernel view agrees.
       // scalastyle:off deltahadoopconfiguration
-      val engine = DefaultEngine.create(spark.sessionState.newHadoopConf())
+      val engine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
       // scalastyle:on deltahadoopconfiguration
       val kernelPost = Table.forPath(engine, dir.getCanonicalPath).getLatestSnapshot(engine)
       assert(kernelPost.getVersion === 1L)
