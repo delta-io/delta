@@ -18,7 +18,7 @@ jobs:
       matrix:
         # These Scala versions must match those in the build.sbt
         scala: [2.13.16]
-        spark_version: ["4.0", "4.1"]
+        spark_version: ["4.0", "4.1", "4.2"]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
     steps:
