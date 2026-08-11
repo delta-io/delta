@@ -1339,7 +1339,8 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.nonPartitionColumnAbsentException(false)
       }
-      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT", "KD005", Map.empty[String, String])
+      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT.ALL_PARTITION_COLUMNS", "KD005",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {

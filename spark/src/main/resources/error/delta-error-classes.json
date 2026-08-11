@@ -2316,6 +2316,11 @@
       "Data written into Delta needs to contain at least one non-partitioned column."
     ],
     "subClass" : {
+      "ALL_PARTITION_COLUMNS" : {
+        "message" : [
+          "All of the provided columns are partition columns."
+        ]
+      },
       "NULL_TYPE_COLUMNS_DROPPED" : {
         "message" : [
           "Columns which are of NullType have been dropped."

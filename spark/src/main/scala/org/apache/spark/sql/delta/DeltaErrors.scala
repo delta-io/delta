@@ -1274,7 +1274,7 @@ trait DeltaErrorsBase
     val errorClass = if (colsDropped) {
       "DELTA_NON_PARTITION_COLUMN_ABSENT.NULL_TYPE_COLUMNS_DROPPED"
     } else {
-      "DELTA_NON_PARTITION_COLUMN_ABSENT"
+      "DELTA_NON_PARTITION_COLUMN_ABSENT.ALL_PARTITION_COLUMNS"
     }
     new DeltaAnalysisException(
       errorClass = errorClass,
