@@ -200,6 +200,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(n => n >= 0, "must not be negative.")
       .createWithDefault(2)
 
+  val DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES =
+    buildConf("commit.inconsistentList.maxRetries")
+      .internal()
+      .doc("How many times to retry fetching the log segment after a commit when the listing " +
+        "returns a version lower than the committed version. The listing can be stale for a " +
+        "few seconds after a commit (in case of list-after-write storage inconsistency), and " +
+        "each retry waits with exponential backoff, capped at 30 seconds, before re-listing.")
+      .intConf
+      .checkValue(n => n >= 0 && n < 10, "must be between 0 (inclusive) and 10 (exclusive).")
+      .createWithDefault(3)
+
   val DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL =
     buildConf("snapshotCache.storageLevel")
       .internal()
