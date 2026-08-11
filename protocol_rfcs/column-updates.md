@@ -1,7 +1,7 @@
-# Efficient Column Updates
+# Column Updates
 **Associated GitHub issue for discussions: https://github.com/delta-io/delta/issues/7414**
 
-This protocol change introduces the Efficient Column Updates feature, which allows a writer to
+This protocol change introduces the Column Updates feature, which allows a writer to
 replace selected columns of a data file without rewriting the other columns in that file.
 
 The writer stores the replacement values in a Parquet column file. The column file
@@ -16,7 +16,7 @@ data file and its column files by physical row position.
 
 > ***In [Add File and Remove File](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file), replace the two paragraphs starting with "Every logical file" and ending with "`(path, NULL)` instead" with the following text.***
 
-Every _logical file_ of the table is represented by a path to a data file, combined with an optional Deletion Vector (DV) and zero or more column files. A DV identifies which rows of the data file are no longer in the table. A column file supplies current values for a set of columns in the data file. Deletion Vectors and column files are optional features. See [Deletion Vectors](#deletion-vectors) and [Efficient Column Updates](#efficient-column-updates) for details.
+Every _logical file_ of the table is represented by a path to a data file, combined with an optional Deletion Vector (DV) and zero or more column files. A DV identifies which rows of the data file are no longer in the table. A column file supplies current values for a set of columns in the data file. Deletion Vectors and column files are optional features. See [Deletion Vectors](#deletion-vectors) and [Column Updates](#column-updates) for details.
 
 When an `add` action is encountered for a logical file that is already present in the table, statistics and other information from the latest version should replace that from any previous version.
 The primary key for the entry of a logical file in the set of files is a tuple of the data file's `path`, a unique id describing the DV, and a unique id describing the column file set. If no DV is part of this logical file, then the DV part of the primary key is `NULL`. If no column files are part of this logical file, then the column file set part of the primary key is `NULL`.
@@ -38,13 +38,13 @@ That means specifically that for any commit…
 
 Field Name | Data Type | Description | optional/required
 -|-|-|-
-columnFiles | Array[[ColumnFileDescriptor Struct](#column-file-descriptor-struct)] | The column files associated with this data file. See also [Efficient Column Updates](#efficient-column-updates). | optional
+columnFiles | Array[[ColumnFileDescriptor Struct](#column-file-descriptor-struct)] | The column files associated with this data file. See also [Column Updates](#column-updates). | optional
 
 > ***Add the following row to the schema of the `remove` action, after `defaultRowCommitVersion`.***
 
 Field Name | Data Type | Description | optional/required
 -|-|-|-
-columnFiles | Array[[ColumnFileDescriptor Struct](#column-file-descriptor-struct)] | The column files associated with the logical file being removed. See also [Efficient Column Updates](#efficient-column-updates). | optional
+columnFiles | Array[[ColumnFileDescriptor Struct](#column-file-descriptor-struct)] | The column files associated with the logical file being removed. See also [Column Updates](#column-updates). | optional
 
 ## Action Reconciliation
 
@@ -61,9 +61,9 @@ columnFiles | Array[[ColumnFileDescriptor Struct](#column-file-descriptor-struct
 
 > ***Add the following section after [Deletion Vectors](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#deletion-vectors) and before Catalog-managed Tables.***
 
-# Efficient Column Updates
+# Column Updates
 
-Efficient Column Updates allow a logical file to obtain selected column values from one or more Parquet column files. The feature name is `columnUpdates`. This is a reader-writer feature.
+Column Updates allow a logical file to obtain selected column values from one or more Parquet column files. The feature name is `columnUpdates`. This is a reader-writer feature. Column Updates require Column Mapping to be enabled for the stable column IDs.
 
 To support this feature:
 
@@ -71,6 +71,19 @@ To support this feature:
 - The feature `columnUpdates` must exist in the table protocol's `readerFeatures` and `writerFeatures`.
 - The feature `columnMapping` must exist in the table protocol's `readerFeatures` and `writerFeatures`.
 - The table property `delta.columnMapping.mode` must be set to `name` or `id`.
+
+Column Updates store values in [Column Files](#column-file-format) that are tracked in metadata
+using [Column File Descriptors](#column-file-descriptor-struct).
+
+## Column File Format
+
+A column file is a Parquet file associated with exactly one base data file. Its columns are `_pos`, `_last_updated_sequence_number`, and a subset of columns of the base file with nullability on top (i.e. `INTEGER NOT NULL` in the base file becomes `INTEGER` in the column file). It has one row for each physical row in the base file.
+
+`_pos` is the physical offset of the corresponding row in the base file.
+
+`_last_updated_sequence_number` stores row lineage information for Iceberg V4 change detection. It contains either the sequence number of the update that last changed this row, or `NULL` to indicate that the most recent update changed this row.
+
+For examples of column files see [Column Updates examples](#column-updates-examples).
 
 ## Column File Descriptor Struct
 
@@ -90,30 +103,20 @@ sizeInBytes | Long | The size of the column file in bytes. | required
 
 The identity of a column file set is the sorted list of each descriptor's `path` and sorted `fieldIds`. These are the only fields that affect the logical data.
 
-## Column File Format
-
-A column file is a Parquet file associated with exactly one base data file. Its columns are `_pos`, `_last_updated_sequence_number`, and a subset of columns of the base file with nullability on top (i.e. `INTEGER NOT NULL` in the base file becomes `INTEGER` in the column file). It has one row for each physical row in the base file.
-
-`_pos` is the physical offset of the corresponding row in the base file.
-
-`_last_updated_sequence_number` stores row lineage information for Iceberg V4 change detection. It contains either the sequence number of the update that last changed this row, or `NULL` to indicate that the most recent update changed this row.
-
-For examples of column files see [Efficient Column Updates examples](#efficient-column-updates-examples).
-
-## Reader Requirements for Efficient Column Updates
+## Reader Requirements for Column Updates
 
 During a read, if a field is present in `columnFiles[].fieldIds`, the reader must consider the corresponding values for that column in the base file as invalid and read them from the column file instead.
 
 The row-group boundaries of a column file and its base data file may differ. A reader
 must align records by physical row position, not by row-group number.
 
-## Writer Requirements for Efficient Column Updates
+## Writer Requirements for Column Updates
 
 During a write that replaces an `add` action with a new `add` action and a `remove`
 tombstone on the same `path`, without rewriting the base data file, the writer must
 carry over all `columnFiles` entries.
 
-During a write that uses an Efficient Column Update, the writer must:
+During a write that uses the Column Updates feature, the writer must:
 
 - retain entries that do not contain a field ID written by the update;
 - remove the newly written field IDs from each overlapping entry;
@@ -134,9 +137,9 @@ RESTORE must restore the complete column file state for the selected snapshot.
 The `columnUpdates` feature must not be removed while any retained table version
 references a column file.
 
-## Efficient Column Updates Examples
+## Column Updates Examples
 
-This table shows the Parquet files and log actions after each statement, assuming every `UPDATE` uses Efficient Column Updates. The example assumes that the column `foo` has Column Mapping ID 7, and column `bar` has ID 8. The table abbreviates `_last_updated_sequence_number` to `_lusn`, and `add`/`remove` actions only contain relevant fields.
+This table shows the Parquet files and log actions after each statement, assuming every `UPDATE` uses the Column Updates feature. The example assumes that the column `foo` has Column Mapping ID 7, and column `bar` has ID 8. The table abbreviates `_last_updated_sequence_number` to `_lusn`, and `add`/`remove` actions only contain relevant fields.
 
 <table>
 <tr>
@@ -304,4 +307,4 @@ WHERE key = 'a'
 
 Feature | Name | Readers or Writers?
 -|-|-
-[Efficient Column Updates](#efficient-column-updates) | `columnUpdates` | Readers and writers
+[Column Updates](#column-updates) | `columnUpdates` | Readers and writers
