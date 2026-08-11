@@ -19,13 +19,14 @@ package org.apache.spark.sql.delta.amt
 import java.io.File
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, DeltaLog, DeltaOperations, Snapshot}
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CommitStats, DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, RemoveFile}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
@@ -53,6 +54,14 @@ trait AMTCheckpointTestBase
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key, "false")
+
+  /**
+   * Runs `body` with the format check that rejects reading AMT manifest parquet files directly
+   * disabled, so a test can read a root or leaf manifest off disk.
+   */
+  protected def allowReadWithinDeltaLog[T](body: => T): T = {
+    body
+  }
 
   /** Typed view of a snapshot's checkpoint provider when it is AMT-backed. */
   protected def amtProvider(snapshot: Snapshot): Option[AMTCheckpointProvider] =
@@ -286,17 +295,46 @@ trait AMTCheckpointTestBase
       postCheckpointSnapshot = postCheckpointSnapshot)
   }
 
-  protected def commitCheckpoint(deltaLog: DeltaLog, incremental: Boolean): Unit = {
+  /**
+   * Emits an AMT checkpoint on `deltaLog` via the real commit path and returns the incremental
+   * write's shape metrics, read back out of the logged [[CommitStats]]. `incremental = false`
+   * forces a full rewrite (and returns None, since a full write logs no incremental metrics);
+   * `true` an incremental one.
+   */
+  protected def commitCheckpoint(
+      deltaLog: DeltaLog, incremental: Boolean): Option[IncrementalAMTWriteMetrics] = {
     val triggerName = if (incremental) {
       AMTTriggerMode.CheckpointIntervalIncremental.name
     } else {
       AMTTriggerMode.CheckpointIntervalFull.name
     }
-    deltaLog.startTransaction().commit(
-      Seq.empty,
-      DeltaOperations.OptimizeCheckpoint(
-        incremental = incremental,
-        triggerName = triggerName))
+    val attemptVersion = deltaLog.update().version + 1
+    trackIncrementalAMTWriteMetrics(attemptVersion) {
+      deltaLog.startTransaction().commit(
+        Seq.empty,
+        DeltaOperations.OptimizeCheckpoint(
+          incremental = incremental,
+          triggerName = triggerName))
+    }
+  }
+
+  /**
+   * Runs `commit` and returns the [[IncrementalAMTWriteMetrics]] logged for the commit at
+   * `commitVersion`, or None if that commit wrote a full (non-incremental) AMT. Exposed for tests
+   * that commit user actions inline (their own checkpoint rides in the same commit) rather than
+   * through [[commitCheckpoint]]'s empty OPTIMIZE CHECKPOINT.
+   */
+  protected def trackIncrementalAMTWriteMetrics(
+      commitVersion: Long)(commit: => Unit): Option[IncrementalAMTWriteMetrics] = {
+    Log4jUsageLogger.track {
+      commit
+    }.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains("delta.commit.stats"))
+      .map(e => JsonUtils.fromJson[CommitStats](e.blob))
+      .find(_.commitVersion == commitVersion)
+      .flatMap(_.amtWriteMetrics)
+      .flatMap(_.attempts.headOption)
+      .flatMap(_.incrementalWriteMetrics)
   }
 
   private def assertAMTCheckpointScenarioInvariants(
@@ -429,6 +467,27 @@ trait AMTCheckpointTestBase
           .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
           .count()
       }.sum
+  }
+
+
+  /**
+   * The number of live files the CURRENT snapshot's AMT reconstructs across the WHOLE tree -- root
+   * and leaves. Goes through the provider's own reconstruction, which drops MDV-masked leaf entries
+   * and `tracking=removed` root tombstones, so it equals `snapshot.allFiles.count()` on both full
+   * and incremental trees. Unlike [[currentLeafDataEntries]], it counts live files stored directly
+   * in the root too (as an incremental commit does below the spill threshold).
+   *
+   * Prefer [[assertReconstructsLiveFileSet]] when the test runs through
+   * [[testAcrossAMTCheckpointScenarios]]; this count is for scenario-specific tests that drive the
+   * checkpoint themselves and so have no [[AMTCheckpointScenarioContext]].
+   */
+  protected def currentLiveDataEntries(snapshot: Snapshot): Long = {
+    val provider = amtProvider(snapshot)
+      .getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
+    provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
+      .getOrElse(fail("AMT provider must contribute leaf-derived file actions."))
+      .where(col("add").isNotNull)
+      .count()
   }
 
 }
