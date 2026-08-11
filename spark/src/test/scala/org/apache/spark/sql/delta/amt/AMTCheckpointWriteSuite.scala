@@ -20,7 +20,7 @@ import java.io.File
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{Checkpoints, CommitStats, CurrentTransactionInfo, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.{Checkpoints, CommitStats, CurrentTransactionInfo, DeltaOperations, LastCheckpointInfo, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -340,6 +340,82 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
       assert(commitStats.amtWriteMetrics.isEmpty,
         "Commit stats must not carry AMT write metrics when no AMT is emitted.")
+    }
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "an emitted AMT populates _last_checkpoint",
+      "amt_last_checkpoint")(
+      setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (2)"))) { context =>
+    val deltaLog = context.postCheckpointSnapshot.deltaLog
+    val info = deltaLog.readLastCheckpointFile().getOrElse {
+      fail("An AMT emission must write _last_checkpoint.")
+    }
+
+    // `version` names the tree's content-root version, and `parts` the leaf count.
+    assert(info.version == context.checkpoint.version,
+      s"Expected content root v${context.checkpoint.version}, got v${info.version}.")
+    assert(info.parts.contains(context.provider.leaves.size),
+      s"Expected ${context.provider.leaves.size} leaves, got ${info.parts}.")
+    assert(info.sizeInBytes.exists(_ > 0L), "The AMT size in bytes must be recorded.")
+    // `size` (action count) and `numOfAddFiles` are intentionally unavailable for AMT.
+    assert(info.size == -1, s"AMT size must be -1, got ${info.size}.")
+    assert(info.numOfAddFiles.isEmpty,
+      s"AMT numOfAddFiles must be empty, got ${info.numOfAddFiles}.")
+
+    assert(info.checkpointType == Some(LastCheckpointInfo.CheckpointType.AMT))
+    val amt = info.amtCheckpoint.getOrElse {
+      fail("_last_checkpoint must carry amtCheckpoint.")
+    }
+    assert(amt.checkpoint == Some(context.checkpoint))
+    assertLeavesEqual(amt.leaves.get, context.provider.leaves)
+    assert(amt.manifestCommitVersion == context.manifestCommitVersion,
+      s"Expected manifest at v${context.manifestCommitVersion}, got v${amt.manifestCommitVersion}.")
+  }
+
+  test("_last_checkpoint is not updated when no AMT is emitted") {
+    withTable("amt_last_checkpoint_unchanged") {
+      val name = "amt_last_checkpoint_unchanged"
+      // Interval 3. Emission triggers only when the version distance from the last AMT is an exact
+      // positive multiple of the interval, so the timeline is:
+      //   v1: below the first boundary  -> no emission
+      //   v2: below the first boundary  -> no emission
+      //   v3: first boundary            -> deferred AMT recorded at v4, describing v3
+      //   v4: OPTIMIZE CHECKPOINT      -> emits an AMT
+      //   v5: one past the last AMT    -> no emission (the next boundary is v6)
+      createAMTTable(name, checkpointInterval = 3)
+      val deltaLog = deltaLogForName(name)
+
+      // -- Before any emission: no pointer at all. --
+      sql(s"INSERT INTO $name VALUES (1)")
+      sql(s"INSERT INTO $name VALUES (2)")
+      assert(deltaLog.update().version == 2, "Neither v1 nor v2 should schedule a follow-up AMT.")
+      assert(checkpointAt(deltaLog, 1).isEmpty, "v1 emits no AMT.")
+      assert(checkpointAt(deltaLog, 2).isEmpty, "v2 emits no AMT.")
+      assert(deltaLog.readLastCheckpointFile().isEmpty,
+        "Commits that emit no AMT must not write _last_checkpoint.")
+
+      // -- The boundary commit emits, and the follow-up commit writes the pointer. --
+      sql(s"INSERT INTO $name VALUES (3)")
+      assert(deltaLog.update().version == 4, "The v3 boundary defers its AMT to v4.")
+      val afterEmission = deltaLog.readLastCheckpointFile().getOrElse {
+        fail("The deferred AMT must write _last_checkpoint.")
+      }
+      assert(afterEmission.version == 3, "The tree describes state as of the v3 boundary.")
+      assert(afterEmission.amtCheckpoint.map(_.manifestCommitVersion) == Some(4L),
+        "The manifest commit version should be v4.")
+
+      // -- A later commit that emits nothing must leave the existing pointer untouched. --
+      sql(s"INSERT INTO $name VALUES (4)")
+      assert(deltaLog.update().version == 5, "v5 should not schedule a follow-up AMT.")
+      assert(checkpointAt(deltaLog, 5).isEmpty, "v5 emits no AMT.")
+      val afterNonAMTCommit = deltaLog.readLastCheckpointFile().getOrElse {
+        fail("_last_checkpoint must survive commits that emit no AMT.")
+      }
+      assert(afterNonAMTCommit == afterEmission,
+        "A non-AMT commit must not modify _last_checkpoint.")
     }
   }
 
