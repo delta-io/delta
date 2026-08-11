@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.util
 
 import java.util.Locale
+import java.util.Locale.Category
 
 import scala.collection.JavaConverters._
 
@@ -118,13 +119,11 @@ class FileNamesSuite extends AnyFunSuite {
   }
 
   test("path builders always emit ASCII digits under a non-Latin-digit default locale") {
-    // Locale.getDefault(FORMAT) governs String.format's numeric output. Under locales whose
-    // NumberFormat emits non-ASCII digits (e.g. Arabic-Indic), a version-formatting `%020d`
-    // without an explicit locale would produce a file name that the read-side `\d+` patterns
-    // (ASCII-only in Java) cannot parse, corrupting the transaction log.
-    val previousDefault = Locale.getDefault
+    // ar-EG's NumberFormat emits non-ASCII digits, so a bare `%020d` would write a name the
+    // read-side ASCII-only `\d+` patterns can't parse.
+    val previousDefault = Locale.getDefault(Category.FORMAT)
     try {
-      Locale.setDefault(Locale.forLanguageTag("ar-EG"))
+      Locale.setDefault(Category.FORMAT, Locale.forLanguageTag("ar-EG"))
       val path = new Path("/a")
       val version = 1234L
 
@@ -160,7 +159,7 @@ class FileNamesSuite extends AnyFunSuite {
       assert(staged.startsWith("/a/_staged_commits/00000000000000001234."))
       assert(isStagedDeltaFile(staged))
     } finally {
-      Locale.setDefault(previousDefault)
+      Locale.setDefault(Category.FORMAT, previousDefault)
     }
   }
 
