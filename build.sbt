@@ -733,6 +733,10 @@ val icebergSparkRuntimeArtifactName = {
  s"iceberg-spark-runtime-$expMaj.$expMin"
 }
 
+// When true, omit delta-iceberg from sparkGroup aggregate/publish.
+val skipDeltaIceberg =
+  sys.props.get("skipDeltaIceberg").exists(v => v == "" || v.equalsIgnoreCase("true"))
+
 lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
   // delta-iceberg depends on delta-spark! So, we need to include it during our test.
   .dependsOn(spark % "test")
@@ -742,7 +746,9 @@ lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
     commonSettings,
     skipReleaseSettings,
     exportJars := true,
-    Compile / unmanagedJars += (iceberg / assembly).value,
+    Compile / unmanagedJars ++= {
+      if (skipDeltaIceberg) Seq.empty else Seq((iceberg / assembly).value)
+    },
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -771,7 +777,14 @@ lazy val iceberg = (project in file("iceberg"))
     name := "delta-iceberg",
     commonSettings,
     scalaStyleSettings,
-    releaseSettings,
+    if (skipDeltaIceberg) skipReleaseSettings else releaseSettings,
+    // When skipDeltaIceberg=true, disable compilation to avoid triggering icebergShaded/Gradle.
+    Compile / unmanagedSourceDirectories := {
+      if (skipDeltaIceberg) Nil else (Compile / unmanagedSourceDirectories).value
+    },
+    Compile / managedSourceDirectories := {
+      if (skipDeltaIceberg) Nil else (Compile / managedSourceDirectories).value
+    },
     libraryDependencies ++= Seq(
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
@@ -779,7 +792,9 @@ lazy val iceberg = (project in file("iceberg"))
       "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.4.0" % "provided",
       "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
     ),
-    Compile / unmanagedJars += (icebergShaded / assembly).value,
+    Compile / unmanagedJars ++= {
+      if (skipDeltaIceberg) Seq.empty else Seq((icebergShaded / assembly).value)
+    },
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
     assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
