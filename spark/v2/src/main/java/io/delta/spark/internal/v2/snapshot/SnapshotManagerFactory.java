@@ -29,9 +29,10 @@ import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 
 /**
- * Factory for creating {@link DeltaSnapshotManager} instances.
+ * Factory for creating {@link DeltaV2SnapshotManager} instances.
  *
  * <p>This factory determines the appropriate snapshot manager based on the table configuration:
  *
@@ -52,9 +53,9 @@ public final class SnapshotManagerFactory {
    * @param tablePath the filesystem path to the Delta table
    * @param kernelEngine the pre-configured Kernel {@link Engine} to use for table operations
    * @param catalogTable optional Spark catalog table metadata
-   * @return a {@link DeltaSnapshotManager} appropriate for the table type
+   * @return a {@link DeltaV2SnapshotManager} appropriate for the table type
    */
-  public static DeltaSnapshotManager create(
+  public static DeltaV2SnapshotManager create(
       String tablePath, Engine kernelEngine, Optional<CatalogTable> catalogTable) {
 
     if (catalogTable.isPresent()) {
