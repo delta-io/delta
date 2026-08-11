@@ -15,15 +15,15 @@
  */
 package org.apache.spark.sql.delta.v2
 
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor => SparkDvDescriptor}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
+
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
+import org.apache.spark.SparkFunSuite
 
 /** Unit tests for [[CDCDeletionVectorHelper.computeDVDiff]]. All tests use inline DVs. */
 class CDCDeletionVectorHelperSuite extends SparkFunSuite {

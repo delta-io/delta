@@ -1287,6 +1287,8 @@ object Checkpoints
       additionalCols ++= partitionValues
       additionalCols ++= Checkpoints.extractStats(snapshot.statsSchema, "add.stats")
     }
+    // amtResidue and backReference are dropped on purpose here: V1/V2 checkpoints are incompatible
+    // with AMT, so these AMT-era extras do not belong in the checkpoint `add` struct.
     val withAdd = state.withColumn("add",
       when(col("add").isNotNull, struct(Seq(
         col("add.path"),

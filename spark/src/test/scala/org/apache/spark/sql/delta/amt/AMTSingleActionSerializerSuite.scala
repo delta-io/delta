@@ -18,12 +18,14 @@ package org.apache.spark.sql.delta.amt
 
 import java.util.UUID
 
-import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, InMemoryLogReplay}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{StringType, StructField, StructType}
 
 /**
  * Shape, builder, invariant, and parquet round-trip tests for the AMT
@@ -362,5 +364,114 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       id = UUID.randomUUID(), sizeInBytes = 10, cardinality = 1L, offset = None)
     val ex = intercept[IllegalArgumentException](DeletionVector.fromDescriptor(dv, tableRoot))
     assert(ex.getMessage.contains("missing an offset"))
+  }
+
+  /** A DATA entry carrying the AMT-native `spec_id` that has no Delta equivalent. */
+  private def entryWithPassthrough: DataEntry = DataEntry(
+    location = "f.parquet",
+    file_format = AMTSingleAction.FileFormatParquet,
+    tracking = addedTracking,
+    record_count = 10L,
+    file_size_in_bytes = 100L,
+    spec_id = Some(7))
+
+  test("toAddFile carries no passthrough for the default parquet/v4 entry") {
+    val add = DataEntry(
+      location = "f.parquet", file_format = AMTSingleAction.FileFormatParquet,
+      tracking = addedTracking, record_count = 10L, file_size_in_bytes = 100L).toAddFile(tableRoot)
+    assert(add.amtPassthrough.isEmpty, "a default entry must add no per-file passthrough")
+  }
+
+  test("DataEntry round-trips toAddFile -> fromAddFile") {
+    val add = entryWithPassthrough.toAddFile(tableRoot)
+    assert(add.amtPassthrough.isDefined, "a genuine passthrough must be carried")
+    val restored = DataEntry.fromAddFile(add, addedTracking, tableRoot)
+    assert(restored.spec_id.contains(7))
+    // file_format / format_version are not carried; they are reconstructed at the M1 defaults.
+    assert(restored.file_format == AMTSingleAction.FileFormatParquet)
+    assert(restored.format_version == AMTSingleAction.FormatVersionV4)
+  }
+
+  test("fromAddFile falls back to defaults with no passthrough") {
+    val restored = DataEntry.fromAddFile(sampleAddFile, addedTracking, tableRoot)
+    assert(restored.file_format == AMTSingleAction.FileFormatParquet)
+    assert(restored.spec_id.isEmpty)
+    assert(restored.format_version == AMTSingleAction.FormatVersionV4)
+  }
+
+  test("amtPassthrough round-trips through the commit JSON") {
+    val add = entryWithPassthrough.toAddFile(tableRoot)
+    assert(add.amtPassthrough.isDefined)
+    val json = add.json
+    assert(json.contains("amtPassthrough"), s"amtPassthrough must be serialized; got $json")
+    assert(json.contains("spec_id"), s"spec_id must be serialized; got $json")
+
+    val roundTripped = Action.fromJson(json) match {
+      case a: AddFile => a
+      case other => fail(s"expected an AddFile, got $other")
+    }
+    assert(roundTripped.amtPassthrough == add.amtPassthrough)
+    assert(roundTripped.amtPassthrough.flatMap(_.spec_id).contains(7))
+  }
+
+  test("an AddFile with no amtPassthrough keeps it out of the commit JSON") {
+    // Include.NON_ABSENT: non-AMT tables must not gain a new key in their commit JSON.
+    assert(sampleAddFile.amtPassthrough.isEmpty)
+    assert(!sampleAddFile.json.contains("amtPassthrough"))
+  }
+
+  test("amtPassthrough survives copy and InMemoryLogReplay state reconstruction") {
+    val add = entryWithPassthrough.toAddFile(tableRoot).copy(path = "f.parquet")
+    val passthrough = add.amtPassthrough
+    assert(passthrough.isDefined)
+    // Below simulates the real write path in [[writeIncrementalMaterialization]]
+    assert(add.copy(dataChange = false).amtPassthrough == passthrough)
+    val replay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = None, minSetTransactionRetentionTimestamp = None)
+    replay.append(0, Iterator(add))
+    val reconstructed = replay.allFiles
+    assert(reconstructed.length == 1)
+    // The passthrough survives replay and is still usable end-to-end.
+    assert(reconstructed.head.amtPassthrough == passthrough)
+    assert(DataEntry.fromAddFile(reconstructed.head, addedTracking, tableRoot).spec_id.contains(7))
+  }
+
+  test("amtPassthrough participates in AddFile equality") {
+    val base = sampleAddFile
+    val withA = base.copy(amtPassthrough = Some(AMTPassthrough(spec_id = Some(7))))
+    val withB = base.copy(amtPassthrough = Some(AMTPassthrough(spec_id = Some(7))))
+    assert(withA == withB && withA.hashCode == withB.hashCode,
+      "equal-content passthrough must compare equal")
+    val withC = base.copy(amtPassthrough = Some(AMTPassthrough(spec_id = Some(9))))
+    assert(withA != withC, "different passthrough content must compare unequal")
+    // Present vs absent -> unequal.
+    assert(withA != base && base != withA)
+  }
+
+  test("RowIndices.resolve returns None when the schema does not project amtPassthrough") {
+    val schema = StructType(Seq(StructField("path", StringType)))
+    assert(AMTPassthrough.RowIndices.resolve(schema).isEmpty)
+  }
+
+  test("RowIndices.resolve and fromRow read the passthrough positionally") {
+    val addSchema = Action.addFileSchema
+    val indices = AMTPassthrough.RowIndices.resolve(addSchema)
+      .getOrElse(fail("the AddFile schema must project amtPassthrough"))
+    assert(addSchema.fieldNames(indices.structIndex) == AMTPassthrough.FIELD_NAME)
+    assert(indices.numFields == AMTPassthrough.STRUCT_TYPE.fields.length)
+
+    // A row carrying spec_id -> read back; a row with a null struct -> None.
+    val withPassthrough = new GenericInternalRow(addSchema.fields.length)
+    withPassthrough.update(indices.structIndex, new GenericInternalRow(Array[Any](7)))
+    assert(AMTPassthrough.fromRow(withPassthrough, indices)
+      .contains(AMTPassthrough(spec_id = Some(7))))
+
+    val withoutPassthrough = new GenericInternalRow(addSchema.fields.length)
+    assert(AMTPassthrough.fromRow(withoutPassthrough, indices).isEmpty)
+
+    // A present struct whose own field is null -> present, but with no spec_id.
+    val nullSpecId = new GenericInternalRow(addSchema.fields.length)
+    nullSpecId.update(indices.structIndex, new GenericInternalRow(Array[Any](null)))
+    assert(AMTPassthrough.fromRow(nullSpecId, indices).contains(AMTPassthrough(spec_id = None)))
   }
 }
