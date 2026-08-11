@@ -306,41 +306,31 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
   // Framing bytes that DeletionVectorStore adds around the raw bitmap on disk (length + checksum).
   private val dvFraming = DeletionVectorStore.getTotalSizeOfDVFieldsInFile(0)
 
-  test("DeletionVector.fromDescriptor maps a UUID-relative DV to an absolute location") {
+  test("DeletionVector.fromDescriptor maps a UUID-relative DV to an unencoded absolute location") {
     val id = UUID.randomUUID()
     val dv = DeletionVectorDescriptor.onDiskWithRelativePath(
-      id = id, sizeInBytes = 20, cardinality = 3L, offset = Some(8))
+      id = id,
+      randomPrefix = "test%dv%prefix-",
+      sizeInBytes = 20,
+      cardinality = 3L,
+      offset = Some(8))
     val amtDv = DeletionVector.fromDescriptor(dv, tableRoot)
-    // location is the absolute path the u-DV resolves to under the table root.
     assert(amtDv.location == dv.absolutePath(tableRoot).toString)
+    assert(amtDv.location.contains("test%dv%prefix-"))
     assert(amtDv.offset == 8L)
     assert(amtDv.cardinality == 3L)
     // size_in_bytes is the total on-disk size: raw bitmap plus framing.
     assert(amtDv.size_in_bytes == 20L + dvFraming)
-  }
 
-  test("DeletionVector round-trips a UUID-relative DV (matching uniqueId)") {
-    // Cover both a bare and a random-prefixed UUID-relative DV.
-    Seq("", "abc123").foreach { prefix =>
-      val dv = DeletionVectorDescriptor.onDiskWithRelativePath(
-        id = UUID.randomUUID(), randomPrefix = prefix,
-        sizeInBytes = 34, cardinality = 5L, offset = Some(16))
-      val roundTripped = DeletionVector.toDescriptor(
-        DeletionVector.fromDescriptor(dv, tableRoot), tableRoot)
-      assert(roundTripped.storageType == DeletionVectorDescriptor.UUID_DV_MARKER,
-        s"prefix='$prefix': expected a UUID-relative DV, got ${roundTripped.storageType}.")
-      // uniqueId (storageType + pathOrInlineDv + @offset) must survive the round-trip -- it is the
-      // (path, dv) dedup key state reconstruction relies on.
-      assert(roundTripped.uniqueId == dv.uniqueId,
-        s"prefix='$prefix': ${roundTripped.uniqueId} != ${dv.uniqueId}.")
-      assert(roundTripped.sizeInBytes == dv.sizeInBytes)
-      assert(roundTripped.cardinality == dv.cardinality)
-      assert(roundTripped.offset == dv.offset)
-    }
+    val roundTripped = DeletionVector.toDescriptor(amtDv, tableRoot)
+    assert(roundTripped.storageType == DeletionVectorDescriptor.PATH_DV_MARKER)
+    assert(roundTripped.pathOrInlineDv == dv.urlEncodedPath(tableRoot))
+    assert(roundTripped.pathOrInlineDv.contains("test%25dv%25prefix-"))
+    assert(roundTripped.absolutePath(tableRoot) == dv.absolutePath(tableRoot))
   }
 
   test("DeletionVector round-trips an absolute-path DV outside the table root") {
-    // An absolute DV whose path is not a Delta DV file under the table root stays `p`.
+    // An absolute DV whose path is outside the table root stays `p`.
     val dv = DeletionVectorDescriptor.onDiskWithAbsolutePath(
       path = "s3://other-bucket/dvs/custom.bin",
       sizeInBytes = 12, cardinality = 1L, offset = Some(4))

@@ -16,10 +16,6 @@
 
 package org.apache.spark.sql.delta.amt
 
-import java.util.UUID
-
-import scala.util.Try
-
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.stats.DeltaStatistics
@@ -746,49 +742,20 @@ object DeletionVector {
       cardinality = dv.cardinality)
   }
 
-  /** Rebuilds the Delta [[DeletionVectorDescriptor]] from the AMT sub-struct. */
+  /**
+   * Rebuilds the Delta [[DeletionVectorDescriptor]] from the AMT sub-struct.
+   */
   def toDescriptor(dv: DeletionVector, tableRoot: Path): DeletionVectorDescriptor = {
     val rawSize = dv.size_in_bytes.toInt -
-      (DeletionVectorStore.getTotalSizeOfDVFieldsInFile(0))
-    recoverRelativeUuid(dv.location, tableRoot) match {
-      case Some((id, randomPrefix)) =>
-        DeletionVectorDescriptor.onDiskWithRelativePath(
-          id = id,
-          randomPrefix = randomPrefix,
-          sizeInBytes = rawSize,
-          cardinality = dv.cardinality,
-          offset = Some(dv.offset.toInt))
-      case None =>
-        DeletionVectorDescriptor.onDiskWithAbsolutePath(
-          path = dv.location,
-          sizeInBytes = rawSize,
-          cardinality = dv.cardinality,
-          offset = Some(dv.offset.toInt))
-    }
-  }
-
-  /**
-   * If `location` is a Delta-written DV blob under `tableRoot` (a `deletion_vector_<uuid>.bin` file
-   * directly under it or under one random-prefix directory), returns its UUID and prefix so the `u`
-   * descriptor can be rebuilt; None otherwise (treated as an absolute `p`).
-   */
-  private def recoverRelativeUuid(location: String, tableRoot: Path): Option[(UUID, String)] = {
-    val path = new Path(location)
-    val parent = path.getParent
-    val uuid =
-      Try(DeletionVectorDescriptor.getUUIDFromDeletionVectorFileName(path.getName)).toOption
-    val rootStr = tableRoot.toString
-    uuid.flatMap { id =>
-      if (parent.toString == rootStr) {
-        // <tableRoot>/deletion_vector_<uuid>.bin -- no random prefix.
-        Some((id, ""))
-      } else if (parent.getParent.toString == rootStr) {
-        // <tableRoot>/<prefix>/deletion_vector_<uuid>.bin -- one random-prefix directory.
-        Some((id, parent.getName))
-      } else {
-        None
-      }
-    }
+      DeletionVectorStore.getTotalSizeOfDVFieldsInFile(0)
+    // AMT stored paths are unencoded.
+    val absolutePath = DeletionVectorStore.unescapedStringToPath(dv.location)
+    require(absolutePath.isAbsolute)
+    DeletionVectorDescriptor.onDiskWithAbsolutePath(
+      path = DeletionVectorStore.pathToEscapedString(absolutePath),
+      sizeInBytes = rawSize,
+      cardinality = dv.cardinality,
+      offset = Some(dv.offset.toInt))
   }
 }
 
@@ -841,4 +808,3 @@ case class ManifestInfo(
  * @param raw_stats Column-stats payload; M1 writers leave it None.
  */
 case class ContentStats(raw_stats: Option[Array[Byte]] = None)
-
