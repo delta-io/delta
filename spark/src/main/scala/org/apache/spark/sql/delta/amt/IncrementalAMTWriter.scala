@@ -183,11 +183,13 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     // An incremental rewrite carries forward the previous tree's last-full-rewrite marker.
     val lastFullRewriteVersion = oldCheckpoint.contentRoot
       .lastManifestCommitWithFullRewrite.getOrElse(contentStateVersion)
+    val allLeafPointers = carriedLeafPointers ++ spilledLeafPointers
     val contentRoot = ContentRoot(
       path = contentRootBase.path,
       sizeInBytes = contentRootBase.sizeInBytes,
       isIncremental = true,
-      lastManifestCommitWithFullRewrite = lastFullRewriteVersion)
+      lastManifestCommitWithFullRewrite = lastFullRewriteVersion,
+      numLeaves = allLeafPointers.size.toLong)
     val postCommitProtocol = replay.getProtocol.getOrElse(
       throw new IllegalStateException("Replay produced no protocol for the incremental AMT."))
     val postCommitMetadata = replay.getMetadata.getOrElse(
@@ -200,7 +202,6 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       domainMetadata = replay.getDomainMetadatas.toSeq,
       txns = replay.getTransactions.toSeq,
       sidecars = Seq.empty)
-    val allLeafPointers = carriedLeafPointers ++ spilledLeafPointers
     val result = AMTWriteResult(
       contentRootVersion = contentStateVersion,
       checkpoint = checkpoint,

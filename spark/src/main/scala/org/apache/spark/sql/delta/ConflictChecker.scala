@@ -70,7 +70,8 @@ private[delta] case class CurrentTransactionInfo(
     val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
     val op: DeltaOperations.Operation,
-    val preCommitLatestAMTCheckpointOpt: Option[Checkpoint] = None
+    val preCommitLatestAMTCheckpointOpt: Option[Checkpoint] = None,
+    val currentCommitAttemptAMTCheckpointOpt: Option[Checkpoint] = None
     , val convertedIcebergMetadata: Option[UniformMetadata] = None
     , idempotentCommitAlreadyLandedAt: Option[Long] = None
  ) {
@@ -311,8 +312,11 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     resolveTimestampOrderingConflicts()
 
-    currentTransactionInfo = AMTUtils.updateCurrentTransactionInfo(
-      currentTransactionInfo, winningCommitSummary)
+    // Fold the winning commit into our transaction info before the next attempt: this advances
+    // `preCommitLatestAMTCheckpointOpt` to the winner's inline AMT checkpoint (when the winner
+    // wrote one) and clears `currentCommitAttemptAMTCheckpointOpt`.
+    currentTransactionInfo =
+      AMTUtils.updateCurrentTransactionInfo(currentTransactionInfo, winningCommitSummary)
 
     logMetrics()
     currentTransactionInfo

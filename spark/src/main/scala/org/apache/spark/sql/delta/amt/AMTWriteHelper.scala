@@ -69,7 +69,8 @@ object AMTWriteHelper extends DeltaLogging {
     // describes the read snapshot's version.
     val contentStateVersion = readSnapshot.version
     val contentRoot = policyTaggedContentRoot(
-      readSnapshot, contentRootBase, incremental = false, contentStateVersion)
+      readSnapshot, contentRootBase, incremental = false, contentStateVersion,
+      numLeaves = leaves.size.toLong)
     buildResult(
       contentStateVersion = contentStateVersion,
       contentRoot = contentRoot,
@@ -90,7 +91,8 @@ object AMTWriteHelper extends DeltaLogging {
       readSnapshot: Snapshot,
       contentRootBase: ContentRoot,
       incremental: Boolean,
-      contentStateVersion: Long): ContentRoot = {
+      contentStateVersion: Long,
+      numLeaves: Long): ContentRoot = {
     val lastFullRewriteVersion =
       if (incremental) {
         previousAMTContentRoot(readSnapshot)
@@ -103,7 +105,8 @@ object AMTWriteHelper extends DeltaLogging {
       path = contentRootBase.path,
       sizeInBytes = contentRootBase.sizeInBytes,
       isIncremental = incremental,
-      lastManifestCommitWithFullRewrite = lastFullRewriteVersion)
+      lastManifestCommitWithFullRewrite = lastFullRewriteVersion,
+      numLeaves = numLeaves)
   }
 
   /**
