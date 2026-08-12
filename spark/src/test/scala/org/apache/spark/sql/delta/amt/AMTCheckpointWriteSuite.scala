@@ -121,14 +121,15 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     }
 
     // The pointers are stored relative on disk; the provider re-absolutizes them via
-    // `leafManifestAbsolutePaths`, and reconstruction driven off the manifest tree (root +
+    // `liveLeafManifestAbsolutePaths`, and reconstruction driven off the manifest tree (root +
     // leaves, both stored relative) surfaces exactly the committed data files.
     val leafLocs = provider.leaves.map(_.location)
     assert(leafLocs.forall(loc =>
       loc == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(loc).getName}"),
       s"leaf pointer locations must be table-root-relative; got $leafLocs")
-    assert(provider.leafManifestAbsolutePaths.forall(_.isAbsolute),
-      s"resolved leaf manifest paths must be absolute; got ${provider.leafManifestAbsolutePaths}")
+    assert(provider.liveLeafManifestAbsolutePaths.forall(_.isAbsolute),
+      "resolved leaf manifest paths must be absolute; got " +
+        s"${provider.liveLeafManifestAbsolutePaths}")
     assertReconstructsLiveFileSet(context)
     // `setup` writes one file per id, and the trigger adds the last one.
     checkAnswer(spark.table(name), (0 until leafPackedFiles).map(Row(_)))
@@ -165,7 +166,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
           s"contentRoot.path must be table-root-relative; got $rootPointer")
         // The provider re-absolutizes leaf pointers to paths that live under the spaced root and
         // are not percent-encoded.
-        provider.leafManifestAbsolutePaths.foreach { leafPath =>
+        provider.liveLeafManifestAbsolutePaths.foreach { leafPath =>
           assert(leafPath.isAbsolute && leafPath.toString.contains("amt table with spaces"),
             s"resolved leaf path must live under the spaced table root; got $leafPath")
           assert(!leafPath.toString.contains("%20"),
@@ -233,10 +234,10 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
       val provider = AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint)
       // The provider resolves the spaced pointers to absolute, raw paths under the table root.
-      assert(provider.leafManifestAbsolutePaths.forall(p =>
+      assert(provider.liveLeafManifestAbsolutePaths.forall(p =>
         p.isAbsolute && p.toString.contains("leaf with space.parquet") &&
           !p.toString.contains("%20")),
-        s"resolved leaf paths must stay raw; got ${provider.leafManifestAbsolutePaths}")
+        s"resolved leaf paths must stay raw; got ${provider.liveLeafManifestAbsolutePaths}")
 
       // Reconstruction reads the DATA entry back through the spaced leaf path.
       val reconstructed = provider.loadActionsForStateReconstruction(spark, deltaLog)
@@ -290,8 +291,35 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       s"Expected 21 live files, got ${context.postCheckpointSnapshot.allFiles.count()}.")
     assert(context.provider.leaves.size == 3,
       s"21 files at entriesPerLeaf=7 must pack into 3 leaves; got ${context.provider.leaves.size}.")
-    assert(context.provider.leaves.forall(_.record_count <= 7),
-      s"Every leaf must respect entriesPerLeaf=7: ${context.provider.leaves}")
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "full rewrite records each distributed leaf's entry count",
+      "amt_leaf_counts",
+      deferredScenarios = Seq(AMTCheckpointScenario.DeferredFull),
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles)) { context =>
+    val leaves = context.provider.leaves
+    assertLeafCount(leaves)
+    val totalLiveFiles = context.postCheckpointSnapshot.allFiles.count()
+    leaves.foreach { leaf =>
+      val mi = leaf.manifest_info
+      // The distributed writer counts the rows it flushes into each leaf and reports that count
+      // as record_count and existing_files_count (the data files already lived in the table, so
+      // they are EXISTING, not ADDED). Both fields were left 0 before this fix.
+      assert(leaf.record_count > 0L,
+        s"A full-rewrite leaf must report a non-zero record_count; got $leaf.")
+      assert(mi.existing_files_count.toLong == leaf.record_count,
+        s"existing_files_count must equal record_count; got $mi vs ${leaf.record_count}.")
+      assert(mi.added_files_count == 0 && mi.deleted_files_count == 0 &&
+        mi.replaced_files_count == 0,
+        s"A fresh full-rewrite leaf counts only existing files; got $mi.")
+    }
+    // Conservation: the per-leaf counts account for every live file (a multi-leaf tree keeps no
+    // root-resident data entries).
+    assert(leaves.map(_.record_count).sum == totalLiveFiles,
+      s"Leaf record_counts must sum to $totalLiveFiles; got ${leaves.map(_.record_count)}.")
+    assertReconstructsLiveFileSet(context)
   }
 
   /** Parses the `delta.commit.stats` [[CommitStats]] logged for `version`, or fails. */
