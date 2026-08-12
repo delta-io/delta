@@ -248,6 +248,19 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testPruneColumnsRetainsFullyPushedFilterColumn(@TempDir File tempDir) throws Exception {
+    DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
+    pushFilters(builder, new EqualTo("dep_id", 1));
+    builder.pruneColumns(
+        new StructType().add("id", DataTypes.IntegerType, true /* nullable */));
+
+    Scan scan = builder.build();
+    assertEquals(
+        Arrays.asList("id", "dep_id", "dep_name"),
+        Arrays.asList(scan.readSchema().fieldNames()));
+  }
+
+  @Test
   public void testPushFilters_singleUnsupportedPartitionFilter(@TempDir File tempDir)
       throws Exception {
     // A partition filter Kernel could not represent is still exact, so it is a partition filter.
