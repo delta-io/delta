@@ -37,9 +37,11 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.FieldMetadata;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -315,6 +317,49 @@ class AbstractKernelTableTest extends TestHelper {
                       .add("id", IntegerType.INTEGER)
                       .add("payload", new StructType().add("renamed", IntegerType.INTEGER)),
                   initialSchema.add(new StructField("required", StringType.STRING, false)));
+
+          invalidTargets.forEach(
+              target ->
+                  assertThrows(IllegalArgumentException.class, () -> table.updateSchema(target)));
+          assertEquals(initialVersion, table.snapshot().orElseThrow().getVersion());
+        });
+  }
+
+  @Test
+  void testUpdateSchemaValidatesArrayAndMapTypesRecursively() {
+    StructType nestedType =
+        new StructType().add("first", StringType.STRING).add("last", StringType.STRING);
+    StructType reorderedNestedType =
+        new StructType().add("last", StringType.STRING).add("first", StringType.STRING);
+    ArrayType arrayType = new ArrayType(nestedType, true);
+    MapType mapType = new MapType(StringType.STRING, nestedType, true);
+    StructType initialSchema = new StructType().add("items", arrayType).add("lookup", mapType);
+
+    withTestTable(
+        initialSchema,
+        Collections.emptyList(),
+        Map.of(COLUMN_MAPPING_MODE_KEY, "name"),
+        table -> {
+          long initialVersion = table.snapshot().orElseThrow().getVersion();
+
+          // The logical schema remains equal even though the snapshot has column mapping metadata.
+          table.updateSchema(initialSchema);
+          assertEquals(initialVersion, table.snapshot().orElseThrow().getVersion());
+
+          List<StructType> invalidTargets =
+              List.of(
+                  new StructType()
+                      .add("items", new ArrayType(nestedType, false))
+                      .add("lookup", mapType),
+                  new StructType()
+                      .add("items", new ArrayType(reorderedNestedType, true))
+                      .add("lookup", mapType),
+                  new StructType()
+                      .add("items", arrayType)
+                      .add("lookup", new MapType(StringType.STRING, nestedType, false)),
+                  new StructType()
+                      .add("items", arrayType)
+                      .add("lookup", new MapType(StringType.STRING, reorderedNestedType, true)));
 
           invalidTargets.forEach(
               target ->
