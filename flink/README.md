@@ -13,6 +13,9 @@ Delta tests the latest patch release from each supported Flink minor line:
 
 | Flink line | Tested version |
 |------------|----------------|
+| 2.0        | 2.0.2          |
+| 2.1        | 2.1.3          |
+| 2.2        | 2.2.1          |
 | 2.3        | 2.3.0          |
 
 The default build uses Flink 2.3.0. To select a supported Flink version during development, set
