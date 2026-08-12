@@ -1275,6 +1275,10 @@ lazy val storage = (project in file("storage"))
       // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API
       // is not compatible with 3.3.2.
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
+
+      // Only needed at runtime when delta.enableFastGCSListFrom is enabled (GCSLogStoreUtil).
+      // Version aligned with what gcs-connector 4.0.4 pulls in (via libraries-bom 26.73.0).
+      "com.google.cloud" % "google-cloud-storage" % "2.61.0" % "provided",
       "io.unitycatalog" % "unitycatalog-client" % unityCatalogVersion excludeAll(
         ExclusionRule(organization = "org.openapitools"),
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
