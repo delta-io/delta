@@ -13,9 +13,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import re
 from typing import List, Optional
 
 from pyspark.sql import SparkSession
+
+
+def _python_to_maven_version(python_version: str) -> str:
+    """Convert a PEP 440 package version to Delta's Maven version format."""
+    match = re.fullmatch(r"(\d+\.\d+\.\d+)(rc\d+)?(\.dev\d+)?", python_version)
+    if match is None:
+        return python_version
+
+    release, release_candidate, snapshot = match.groups()
+    maven_version = release
+    if release_candidate:
+        maven_version += f"-{release_candidate}"
+    if snapshot:
+        maven_version += "-SNAPSHOT"
+    return maven_version
 
 
 def configure_spark_with_delta_pip(
@@ -90,7 +106,8 @@ See the online documentation for the correct usage of this function.
         # Fallback to artifact without suffix for backward compatibility
         artifact_name = f"delta-spark_{scala_version}"
 
-    maven_artifact = f"io.delta:{artifact_name}:{delta_version}"
+    maven_version = _python_to_maven_version(delta_version)
+    maven_artifact = f"io.delta:{artifact_name}:{maven_version}"
 
     extra_packages = extra_packages if extra_packages is not None else []
     all_artifacts = [maven_artifact] + extra_packages

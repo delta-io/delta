@@ -19,9 +19,39 @@ import shutil
 import tempfile
 import unittest
 from typing import List, Optional
+from unittest.mock import patch
 
 from pyspark.sql import SparkSession
 import delta
+from delta.pip_utils import _python_to_maven_version
+
+
+class PipUtilsVersionTests(unittest.TestCase):
+
+    def test_python_to_maven_version(self) -> None:
+        test_cases = {
+            "4.4.0": "4.4.0",
+            "4.4.0.dev0": "4.4.0-SNAPSHOT",
+            "4.4.0rc1": "4.4.0-rc1",
+            "4.4.0rc1.dev0": "4.4.0-rc1-SNAPSHOT",
+            "4.4.0rc1.dev1": "4.4.0-rc1-SNAPSHOT",
+            "4.4.0.post1": "4.4.0.post1",
+        }
+
+        for python_version, expected_maven_version in test_cases.items():
+            with self.subTest(python_version=python_version):
+                self.assertEqual(
+                    _python_to_maven_version(python_version),
+                    expected_maven_version)
+
+    @patch("importlib_metadata.version", return_value="4.4.0rc1.dev0")
+    @patch("pyspark.__version__", "4.2.0")
+    def test_configure_uses_maven_version(self, _) -> None:
+        builder = delta.configure_spark_with_delta_pip(SparkSession.builder)
+
+        self.assertEqual(
+            builder._options["spark.jars.packages"],
+            "io.delta:delta-spark_4.2_2.13:4.4.0-rc1-SNAPSHOT")
 
 
 class PipUtilsTests(unittest.TestCase):
