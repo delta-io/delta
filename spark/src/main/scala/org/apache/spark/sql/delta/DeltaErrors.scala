@@ -1271,14 +1271,14 @@ trait DeltaErrorsBase
   }
 
   def nonPartitionColumnAbsentException(colsDropped: Boolean): Throwable = {
-    val msg = if (colsDropped) {
-      " Columns which are of NullType have been dropped."
+    val errorClass = if (colsDropped) {
+      "DELTA_NON_PARTITION_COLUMN_ABSENT.NULL_TYPE_COLUMNS_DROPPED"
     } else {
-      ""
+      "DELTA_NON_PARTITION_COLUMN_ABSENT.ALL_PARTITION_COLUMNS"
     }
     new DeltaAnalysisException(
-      errorClass = "DELTA_NON_PARTITION_COLUMN_ABSENT",
-      messageParameters = Array(msg)
+      errorClass = errorClass,
+      messageParameters = Array.empty
     )
   }
 
