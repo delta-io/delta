@@ -22,7 +22,8 @@ import sbtrelease.ReleasePlugin.autoImport.ReleaseStep
 
 object CrossFlinkVersions extends AutoPlugin {
   private val defaultVersion = "2.3.0"
-  private val supportedVersions = Seq(defaultVersion)
+  private val supportedVersions =
+    Seq("2.0.2", "2.1.3", "2.2.1", "2.3.0", defaultVersion).distinct
 
   require(
     supportedVersions.map(compatibilityVersion).distinct.size == supportedVersions.size,

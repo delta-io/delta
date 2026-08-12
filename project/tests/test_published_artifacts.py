@@ -143,6 +143,17 @@ class PublishedArtifactsTest:
                     return line.split('"')[1]
         sys.exit("Error: Could not parse version from version.sbt")
 
+    def _get_flink_compatibility_versions(self) -> Set[str]:
+        """Reads Flink compatibility lines from the SBT source used by releases."""
+        if not self.run_sbt_command(
+            "Exporting supported Flink versions",
+            ["build/sbt", "exportFlinkVersionsJson"]
+        ):
+            return set()
+
+        with open(self.delta_root / "target" / "flink-versions.json", "r") as f:
+            return {spec["compatibilityVersion"] for spec in json.load(f)}
+
     def clean_maven_cache(self) -> None:
         """Clears Maven local cache for io.delta artifacts."""
         import shutil
@@ -275,13 +286,17 @@ class PublishedArtifactsTest:
         expected = substitute_xversion(spark_spec_no_suffix.all_jars, self.delta_version)
         return self.validate_jars(expected, "skipSparkSuffix=true (backward compat)")
 
-    def test_cross_spark_workflow(self) -> bool:
-        """Full cross-Spark workflow: backward-compat (no suffix) + all versions (with suffix)."""
+    def test_publish_workflow(self) -> bool:
+        """Full publish workflow: backward compatibility plus Spark and Flink cross-builds."""
         print("\n" + "="*70)
-        print("TEST: Cross-Spark Workflow (backward-compat + all non-master with suffix)")
+        print("TEST: Published Artifact Workflow")
         print("="*70)
 
         self.clean_maven_cache()
+
+        flink_versions = self._get_flink_compatibility_versions()
+        if not flink_versions:
+            return False
 
         # Step 1: Publish all modules WITHOUT suffix (backward compatibility)
         if not self.run_sbt_command(
@@ -302,10 +317,19 @@ class PublishedArtifactsTest:
             ):
                 return False
 
+        # Step 3: Publish the non-default Flink artifacts through the same implementation used by
+        # the release process. The default Flink artifact was published in Step 1.
+        if not self.run_sbt_command(
+            "Step 3: build/sbt \"publishAdditionalFlinkVersions publishM2\"",
+            ["build/sbt", "publishAdditionalFlinkVersions publishM2"]
+        ):
+            return False
+
         # Build expected JARs:
         # 1. All modules WITHOUT suffix (from Step 1 - backward compat)
         # 2. Spark-dependent modules WITH suffix for each non-master version (from Step 2)
         # 3. Iceberg/Hudi JARs for supported versions (no Spark suffix)
+        # 4. Flink JARs for every supported compatibility version
         expected = set()
 
         # Step 1: All modules without suffix (uses default Spark version's iceberg support)
@@ -322,7 +346,12 @@ class PublishedArtifactsTest:
             expected.update(substitute_xversion(spark_spec.iceberg_jars, self.delta_version))
             expected.update(substitute_xversion(spark_spec.hudi_jars, self.delta_version))
 
-        return self.validate_jars(expected, "Cross-Spark Workflow")
+        expected.update({
+            f"delta-flink_{version}-{self.delta_version}.jar"
+            for version in flink_versions
+        })
+
+        return self.validate_jars(expected, "Published Artifact Workflow")
 
     def validate_spark_versions(self) -> None:
         """
@@ -886,9 +915,9 @@ def main():
         script_test6c_passed = script_test.test_source_build_artifact_version_format()
         script_test7_passed = script_test.test_get_field()
 
-        # Test cross-Spark build workflow
+        # Test published artifact workflows
         print("\n" + "="*70)
-        print("PART 2: Cross-Spark Build Tests")
+        print("PART 2: Published Artifact Tests")
         print("="*70)
         build_test = PublishedArtifactsTest(delta_root)
         build_test.validate_spark_versions()
@@ -897,7 +926,7 @@ def main():
         build_test0_passed = build_test.test_rejects_unsupported_flink_version()
         build_test1_passed = build_test.test_default_publish()
         build_test2_passed = build_test.test_backward_compat_publish()
-        build_test3_passed = build_test.test_cross_spark_workflow()
+        build_test3_passed = build_test.test_publish_workflow()
 
         # Summary
         print("\n" + "="*70)
@@ -913,11 +942,11 @@ def main():
         print(f"  Source-Build Cache Key (non-block):   {'✓ PASSED' if script_test6b_passed else '✗ FAILED'}")
         print(f"  Source-Build Artifact Version:          {'✓ PASSED' if script_test6c_passed else '✗ FAILED'}")
         print(f"  Get Field Functionality:                {'✓ PASSED' if script_test7_passed else '✗ FAILED'}")
-        print("\nPart 2: Cross-Spark Build Tests")
+        print("\nPart 2: Published Artifact Tests")
         print(f"  Reject unsupported Flink version:       {'✓ PASSED' if build_test0_passed else '✗ FAILED'}")
         print(f"  Default publishM2 (with suffix):        {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")
         print(f"  skipSparkSuffix (backward compat):      {'✓ PASSED' if build_test2_passed else '✗ FAILED'}")
-        print(f"  Cross-Spark Workflow (both):            {'✓ PASSED' if build_test3_passed else '✗ FAILED'}")
+        print(f"  Full publish workflow:                  {'✓ PASSED' if build_test3_passed else '✗ FAILED'}")
         print("="*70)
 
         all_tests_passed = (
