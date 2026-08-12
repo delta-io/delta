@@ -18,7 +18,7 @@ package io.delta.sharing.spark
 
 import java.time.LocalDateTime
 
-import org.apache.spark.sql.delta.{DeltaIllegalStateException, DeltaLog}
+import org.apache.spark.sql.delta.{DeltaIllegalStateException, DeltaLog, DeltaTableFeatureException}
 import org.apache.spark.sql.delta.DeltaOptions.{
   IGNORE_CHANGES_OPTION,
   IGNORE_DELETES_OPTION,
@@ -154,6 +154,45 @@ class DeltaFormatSharingSourceSuite
     val offsetContent =
       s"v1\n$offsetMetadataJson\n$legacyOffsetJson"
         .getBytes(java.nio.charset.StandardCharsets.UTF_8)
+    val offsetPath = new Path(new Path(checkpointPath, offsetsDir), batchId.toString)
+    val offsetOut = fileManager.createAtomic(offsetPath, overwriteIfPossible = true)
+    offsetOut.write(offsetContent)
+    offsetOut.close()
+    val commitContent = s"v1\n${CommitMetadata(batchId).json}"
+      .getBytes(java.nio.charset.StandardCharsets.UTF_8)
+    val commitPath = new Path(new Path(checkpointPath, commitsDir), batchId.toString)
+    val commitOut = fileManager.createAtomic(commitPath, overwriteIfPossible = true)
+    commitOut.write(commitContent)
+    commitOut.close()
+  }
+
+  /**
+   * Write a (non-legacy) DeltaSourceOffset and its corresponding commit entry into a streaming
+   * checkpoint directory, so a stream started against that checkpoint resumes from the given offset
+   * instead of loading an initial snapshot. Uses the real DeltaSourceOffset serialization so the
+   * offset parses as delta-format (carrying reservoirId), exercising the incremental
+   * getFiles(startingVersion, endingVersion) path.
+   */
+  private def writeDeltaSourceOffsetAndCommit(
+      fileManager: CheckpointFileManager,
+      checkpointPath: Path,
+      batchId: Long,
+      tableId: String,
+      reservoirVersion: Long): Unit = {
+    val offsetMetadataJson =
+      """{"batchWatermarkMs":0,"batchTimestampMs":0,"conf":{},"sourceMetadataInfo":{}}"""
+    // index=BASE_INDEX, isInitialSnapshot=false => "consumed through reservoirVersion - 1, ready
+    // to start reservoirVersion", i.e. the resume fetches the incremental range from that version.
+    val offsetJson = DeltaSourceOffset(
+      reservoirId = tableId,
+      reservoirVersion = reservoirVersion,
+      index = DeltaSourceOffset.BASE_INDEX,
+      isInitialSnapshot = false
+    ).json
+    val offsetsDir = StreamingCheckpointConstants.DIR_NAME_OFFSETS
+    val commitsDir = StreamingCheckpointConstants.DIR_NAME_COMMITS
+    val offsetContent =
+      s"v1\n$offsetMetadataJson\n$offsetJson".getBytes(java.nio.charset.StandardCharsets.UTF_8)
     val offsetPath = new Path(new Path(checkpointPath, offsetsDir), batchId.toString)
     val offsetOut = fileManager.createAtomic(offsetPath, overwriteIfPossible = true)
     offsetOut.write(offsetContent)
@@ -1602,6 +1641,117 @@ class DeltaFormatSharingSourceSuite
             CheckAnswer(1, 2, 3)
           )
           assertBlocksAreCleanedUp()
+        }
+      }
+    }
+  }
+
+  // A resumed streaming query reads an incremental range that crosses a protocol upgrade: v2
+  // enables deletionVectors (protocol upgrade + metadata change, no DV file), v3 inserts a row.
+  // The resume takes the getFiles(startingVersion, endingVersion) path where the flag applies. The
+  // v2 Metadata is always streamed; the v2 Protocol only when the flag is on. Flag on -> the local
+  // delta log is a consistent (protocol, metadata) pair and the stream reads. Flag off -> the log
+  // has DV-enabled metadata on a stale protocol lacking the DV feature, rejected with
+  // DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH.
+  Seq(true, false).foreach { flagOn =>
+    test("DeltaFormatSharingSource streaming: protocol upgrade within incremental range " +
+      s"[historicalProtocol=$flagOn]") {
+      withTempDirs { (inputDir, outputDir, checkpointDir) =>
+        val deltaTableName = "delta_table_streaming_protocol_upgrade"
+        withTable(deltaTableName) {
+          // Create at writer=7 (via rowTracking) with no DV. writer=7 is required: the
+          // protocol/metadata consistency check is a no-op on writer<7. DV is off so enabling it
+          // later is a real protocol upgrade (the test env otherwise enables DV by default).
+          sql(s"""CREATE TABLE $deltaTableName (c1 INT) USING DELTA
+                 |TBLPROPERTIES (
+                 |  'delta.enableRowTracking' = 'true',
+                 |  'delta.enableDeletionVectors' = 'false'
+                 |)""".stripMargin)
+          // v1: pre-upgrade insert (already consumed by the seeded checkpoint).
+          sql(s"""INSERT INTO $deltaTableName VALUES (1), (2)""")
+
+          val tableId = DeltaLog.forTable(spark, new TableIdentifier(deltaTableName))
+            .update().metadata.id
+          val sharedTableName = "shared_streaming_protocol_upgrade"
+          // getMetadata is captured pre-upgrade, so the v2 upgrade reaches the local delta log only
+          // through the getFiles response.
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+
+          // v2: enable DV -> protocol upgrade + metadata change (no DV file). v3: plain insert.
+          sql(s"""ALTER TABLE $deltaTableName
+                 |SET TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')""".stripMargin)
+          sql(s"""INSERT INTO $deltaTableName VALUES (3)""")
+
+          // Sanity check: minReaderVersion is 1 before the upgrade and increases after it.
+          val log = DeltaLog.forTable(spark, new TableIdentifier(deltaTableName))
+          assert(log.getSnapshotAt(1).protocol.minReaderVersion == 1,
+            "Test setup expects minReaderVersion=1 before the deletionVectors upgrade.")
+          assert(log.getSnapshotAt(3).protocol.minReaderVersion > 1,
+            "Test setup expects minReaderVersion to increase after the deletionVectors upgrade.")
+
+          // Seed a checkpoint at v1 (isStartingVersion=false) so the resume skips the initial
+          // snapshot and fetches the incremental range from v2.
+          val (checkpointPath, fileManager) = initCheckpointDirs(checkpointDir)
+          writeDeltaSourceOffsetAndCommit(fileManager, checkpointPath,
+            batchId = 0, tableId, reservoirVersion = 1)
+
+          // Incremental response for [1, 3], carrying the v2 Protocol upgrade (gated by the flag)
+          // and the v2 DV-enabled metadata.
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, startingVersion = 1, endingVersion = 3)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+          val profileFile = prepareProfileFile(inputDir)
+          withSQLConf(
+            (getDeltaSharingClassesSQLConf ++ Map(
+              DeltaSQLConf.DELTA_SHARING_STREAMING_ENABLE_HISTORICAL_PROTOCOL.key -> flagOn.toString
+            )).toSeq: _*
+          ) {
+            val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+            def runStream(): Unit = {
+              val q = spark.readStream
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                // startingVersion pins the resume to the incremental path (no initial snapshot).
+                .option("startingVersion", "1")
+                // ignoreChanges lets the stream proceed past the metadata-only migration commit.
+                .option("ignoreChanges", "true")
+                .load(tablePath)
+                .select("c1")
+                .writeStream
+                .format("delta")
+                .option("checkpointLocation", checkpointDir.toString)
+                .start(outputDir.toString)
+              try {
+                q.processAllAvailable()
+              } finally {
+                q.stop()
+              }
+            }
+
+            if (flagOn) {
+              // Consistent (protocol, metadata) pair -> the stream reads.
+              runStream()
+              assert(spark.read.format("delta").load(outputDir.getCanonicalPath).count() >= 1)
+            } else {
+              // DV-enabled metadata on a stale protocol lacking the DV feature ->
+              // assertTableFeaturesMatchMetadata rejects the pair.
+              val e = intercept[Exception] {
+                runStream()
+              }
+              val rootMsg = Iterator
+                .iterate[Throwable](e)(_.getCause)
+                .takeWhile(_ != null)
+                .map(t => Option(t.getMessage).getOrElse(""))
+                .mkString(" | ")
+              assert(
+                rootMsg.contains("DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH"),
+                s"Expected DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH in error chain, got: $rootMsg")
+              assert(
+                rootMsg.contains("deletionVectors"),
+                s"Expected deletionVectors mentioned in error chain, got: $rootMsg")
+            }
+          }
         }
       }
     }
@@ -3522,5 +3672,84 @@ class DeltaFormatSharingSourceSuite
           Seq("a", "b", "c").toDF())
         assertBlocksAreCleanedUp()
     }
+  }
+
+  /**
+   * Runs a startingTimestamp streaming query over a version range with no file actions, and
+   * returns the JSON of the last offset it committed.
+   */
+  private def runEmptyRangeStartingTimestampQuery(
+      testName: String,
+      convertToVersion: Boolean): Option[String] = {
+    var offsetJson: Option[String] = None
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = s"delta_table_empty_range_$testName"
+      withTable(deltaTableName) {
+        createTableForStreaming(deltaTableName)
+        sql(s"INSERT INTO $deltaTableName VALUES ('a')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('b')")
+        // Version 3's actions all have dataChange = false, so [3, 3] has no file actions.
+        sql(s"OPTIMIZE $deltaTableName")
+
+        val sharedTableName = s"shared_empty_range_$testName"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        // The mocked client returns this version for any timestamp.
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName, Some(3L))
+        prepareMockedClientAndFileSystemResultForStreaming(
+          deltaTableName, sharedTableName, 3, 3)
+
+        val startingTimestamp = new java.sql.Timestamp(
+          getTimeStampForVersion(deltaTableName, 3L)).toInstant.toString
+
+        val profileFile = prepareProfileFile(inputDir)
+        val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+
+        withSQLConf(
+          (getDeltaSharingClassesSQLConf.toSeq :+
+            (DeltaSQLConf.DELTA_SHARING_STREAMING_CONVERT_STARTING_TIMESTAMP_TO_VERSION.key ->
+              convertToVersion.toString)): _*) {
+          val q = spark.readStream
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .option(SKIP_CHANGE_COMMITS_OPTION, "true")
+            .option("startingTimestamp", startingTimestamp)
+            .load(tablePath)
+            .writeStream
+            .format("delta")
+            .option("checkpointLocation", checkpointDir.toString)
+            .trigger(Trigger.Once())
+            .start(outputDir.toString)
+          try {
+            q.processAllAvailable()
+          } finally {
+            q.stop()
+          }
+
+          checkAnswer(spark.read.format("delta").load(outputDir.getCanonicalPath), Seq.empty[Row])
+
+          val offsetLog = new OffsetSeqLog(
+            spark, s"${checkpointDir.getCanonicalPath}/offsets")
+          offsetJson = offsetLog.getLatest().flatMap(_._2.offsets.head).map(_.json())
+        }
+      }
+    }
+    offsetJson
+  }
+
+  test("startingTimestamp with an empty first batch yields an empty batch and advances offset") {
+    val offsetJson = runEmptyRangeStartingTimestampQuery("fixed", convertToVersion = true)
+
+    assert(offsetJson.isDefined, "the query should have committed an offset")
+    assert(offsetJson.get.contains("\"reservoirVersion\":4"),
+      s"offset should have advanced past the empty range, but got ${offsetJson.get}")
+    assert(offsetJson.get.contains("\"isStartingVersion\":false"),
+      s"offset should not be in the initial snapshot, but got ${offsetJson.get}")
+  }
+
+  test("startingTimestamp with an empty first batch fails when the fix is disabled") {
+    val e = intercept[StreamingQueryException] {
+      runEmptyRangeStartingTimestampQuery("legacy", convertToVersion = false)
+    }
+    assert(e.getMessage.contains("DELTA_TIMESTAMP_GREATER_THAN_COMMIT"))
   }
 }

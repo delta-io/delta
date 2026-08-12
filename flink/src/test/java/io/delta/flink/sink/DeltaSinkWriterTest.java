@@ -153,6 +153,16 @@ class DeltaSinkWriterTest extends TestHelper {
   }
 
   @Test
+  void testPrepareCommitPropagatesAppendWriterFailure() {
+    assertPrepareCommitPropagatesWriterFailure(/* upsert= */ false);
+  }
+
+  @Test
+  void testPrepareCommitPropagatesUpsertWriterFailure() {
+    assertPrepareCommitPropagatesWriterFailure(/* upsert= */ true);
+  }
+
+  @Test
   void testWriteToEmptyTableUsingMultiplePartitions() {
     withTempDir(
         dir -> {
@@ -752,6 +762,31 @@ class DeltaSinkWriterTest extends TestHelper {
         .withConf(conf)
         .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
         .build();
+  }
+
+  private void assertPrepareCommitPropagatesWriterFailure(boolean upsert) {
+    withTempDir(
+        dir -> {
+          StructType schema =
+              new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
+          HadoopTable table =
+              new HadoopTable(
+                  URI.create(dir.getAbsolutePath()),
+                  Collections.emptyMap(),
+                  schema,
+                  Collections.emptyList());
+          table.open();
+
+          DeltaSinkConf conf =
+              upsert
+                  ? upsertConf(schema, new int[] {0})
+                  : new DeltaSinkConf(schema, Collections.emptyMap());
+          DeltaSinkWriter sinkWriter = newSinkWriter(table, conf);
+
+          // The missing string field is detected while the cached writer task is completed.
+          sinkWriter.write(GenericRowData.of(1), new TestSinkWriterContext(0, 0));
+          assertThrows(ArrayIndexOutOfBoundsException.class, sinkWriter::prepareCommit);
+        });
   }
 
   /**

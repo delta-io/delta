@@ -79,6 +79,12 @@ trait DeltaTimeTravelTestHelpers extends QueryTest
     // TODO: would be great to verify our logging metrics
   }
 
+  protected def identifierWithTimestamp(identifier: String, ts: Long): String = {
+    s"$identifier@${timeFormatter.format(new Date(ts))}"
+  }
+  protected def identifierWithVersion(identifier: String, v: Long): String = {
+    s"$identifier@v$v"
+  }
   protected def getTableLocation(table: String): String = {
     spark.sessionState.catalog.getTableMetadata(TableIdentifier(table)).location.toString
   }

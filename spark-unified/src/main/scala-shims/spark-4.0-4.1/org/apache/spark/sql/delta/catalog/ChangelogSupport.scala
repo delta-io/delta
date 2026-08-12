@@ -27,7 +27,7 @@ import org.apache.spark.sql.connector.catalog.TableCatalog
  * when building against Spark 4.2 (see `scala-shims/spark-4.2/...ChangelogSupport.scala`).
  *
  * <p>In 4.0/4.1 builds, mixing this empty trait into `DeltaCatalog` is a no-op: there is no
- * `loadChangelog` to override, and downstream read-time CDF classes (`DeltaChangelog`, etc.)
- * live in version-specific `java-shims/spark-4.2/` dirs and are not present here either.
+ * `loadChangelog` to override, and the downstream read-time CDF implementation lives in
+ * version-specific `java-shims/spark-4.2/` dirs and is not present here either.
  */
 trait ChangelogSupport extends TableCatalog

@@ -17,9 +17,14 @@
 package org.apache.spark.sql.delta.catalog;
 
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
+import io.delta.spark.internal.v2.exception.TableNotFoundException;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
+import io.delta.spark.internal.v2.utils.ScalaUtils;
+import org.apache.spark.sql.delta.DeltaTableUtils$;
+import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
 import org.apache.spark.sql.delta.DeltaV2Mode;
+import org.apache.spark.sql.delta.util.DateTimeUtils$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2ErrorInterop$;
 import java.util.HashMap;
 import java.util.function.Supplier;
@@ -103,9 +108,50 @@ public class DeltaCatalog extends AbstractDeltaCatalog implements ChangelogSuppo
   @Override
   public Table loadPathTable(Identifier ident) {
     return loadTableInternal(
-        // delta.`/path/to/table`, where ident.name() is `/path/to/table`
-        () -> new DeltaV2Table(ident, ident.name()),
+        // delta.`/path/to/table`, where ident.name() is `/path/to/table`.
+        () -> pinPathTable(ident),
         () -> super.loadPathTable(ident));
+  }
+
+  /**
+   * Builds a Kernel-backed V2 table for a path-based identifier, honoring an `@`-suffix time travel
+   * spec if present.
+   *
+   * <p>Reuses the V1
+   * {@link org.apache.spark.sql.delta.DeltaTableUtils#extractIfPathContainsTimeTravel} helper.
+   *
+   * @param ident The path identifier.
+   * @return A {@link DeltaV2Table} pinned to the requested version/timestamp, or the latest
+   *     snapshot.
+   */
+  private DeltaV2Table pinPathTable(Identifier ident) {
+    scala.Tuple2<String, scala.Option<DeltaTimeTravelSpec>> resolved =
+        DeltaTableUtils$.MODULE$.extractIfPathContainsTimeTravel(
+            spark(), ident.name(), ScalaUtils.toScalaMap(new HashMap<>()));
+    String realPath = resolved._1();
+    scala.Option<DeltaTimeTravelSpec> timeTravelByPath = resolved._2();
+    try {
+      DeltaV2Table table = new DeltaV2Table(ident, realPath);
+      if (timeTravelByPath.isEmpty()) {
+        return table;
+      }
+      DeltaTimeTravelSpec spec = timeTravelByPath.get();
+      if (spec.version().isDefined()) {
+        return table.withVersion((Long) spec.version().get());
+      }
+      long timestampMicros = DateTimeUtils$.MODULE$.fromJavaTimestamp(
+          spec.getTimestamp(spark().sessionState().conf()));
+      return table.withTimestamp(timestampMicros);
+    } catch (TableNotFoundException e) {
+      DeltaV2ErrorInterop$.MODULE$.throwAsDeltaError(e);
+      throw new IllegalStateException("unreachable");
+    } catch (VersionNotFoundException e) {
+      DeltaV2ErrorInterop$.MODULE$.throwAsDeltaError(e);
+      throw new IllegalStateException("unreachable");
+    } catch (TimestampOutOfRangeException e) {
+      DeltaV2ErrorInterop$.MODULE$.throwAsDeltaError(e);
+      throw new IllegalStateException("unreachable");
+    }
   }
 
   /**

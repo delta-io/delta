@@ -18,12 +18,14 @@ package org.apache.spark.sql.delta.amt
 
 import java.util.UUID
 
-import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, InMemoryLogReplay}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{StringType, StructField, StructType}
 
 /**
  * Shape, builder, invariant, and parquet round-trip tests for the AMT
@@ -87,7 +89,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       "content_type", "format_version", "location", "file_format", "tracking",
       "deletion_vector", "spec_id", "partition", "sort_order_id", "record_count",
       "file_size_in_bytes", "content_stats", "manifest_info", "key_metadata",
-      "split_offsets", "column_files"))
+      "split_offsets"))
   }
 
   test("closed constant sets match Iceberg V4 integer codes") {
@@ -126,7 +128,6 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(entry.manifest_info.contains(info))
     assert(entry.deletion_vector.isEmpty)
     assert(entry.sort_order_id.isEmpty)
-    assert(entry.column_files.isEmpty)
   }
 
   /** Builds a DATA entry, overriding individual fields to probe invariants. */
@@ -150,8 +151,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     content_stats = None,
     manifest_info = manifest_info,
     key_metadata = None,
-    split_offsets = None,
-    column_files = None)
+    split_offsets = None)
 
   private def assertRejected(substring: String)(build: => AMTSingleAction): Unit = {
     val ex = intercept[IllegalArgumentException](build)
@@ -270,8 +270,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       record_count = 10L,
       file_size_in_bytes = 100L,
       deletion_vector = Some(DeletionVector("dv", 0L, 8L, 3L)),
-      sort_order_id = Some(2),
-      column_files = Some(Seq(ColumnFile(Some("c0.parquet"))))),
+      sort_order_id = Some(2)),
     DataManifestEntry(
       location = "dm.parquet",
       file_format = AMTSingleAction.FileFormatParquet,
@@ -307,41 +306,31 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
   // Framing bytes that DeletionVectorStore adds around the raw bitmap on disk (length + checksum).
   private val dvFraming = DeletionVectorStore.getTotalSizeOfDVFieldsInFile(0)
 
-  test("DeletionVector.fromDescriptor maps a UUID-relative DV to an absolute location") {
+  test("DeletionVector.fromDescriptor maps a UUID-relative DV to an unencoded absolute location") {
     val id = UUID.randomUUID()
     val dv = DeletionVectorDescriptor.onDiskWithRelativePath(
-      id = id, sizeInBytes = 20, cardinality = 3L, offset = Some(8))
+      id = id,
+      randomPrefix = "test%dv%prefix-",
+      sizeInBytes = 20,
+      cardinality = 3L,
+      offset = Some(8))
     val amtDv = DeletionVector.fromDescriptor(dv, tableRoot)
-    // location is the absolute path the u-DV resolves to under the table root.
     assert(amtDv.location == dv.absolutePath(tableRoot).toString)
+    assert(amtDv.location.contains("test%dv%prefix-"))
     assert(amtDv.offset == 8L)
     assert(amtDv.cardinality == 3L)
     // size_in_bytes is the total on-disk size: raw bitmap plus framing.
     assert(amtDv.size_in_bytes == 20L + dvFraming)
-  }
 
-  test("DeletionVector round-trips a UUID-relative DV (matching uniqueId)") {
-    // Cover both a bare and a random-prefixed UUID-relative DV.
-    Seq("", "abc123").foreach { prefix =>
-      val dv = DeletionVectorDescriptor.onDiskWithRelativePath(
-        id = UUID.randomUUID(), randomPrefix = prefix,
-        sizeInBytes = 34, cardinality = 5L, offset = Some(16))
-      val roundTripped = DeletionVector.toDescriptor(
-        DeletionVector.fromDescriptor(dv, tableRoot), tableRoot)
-      assert(roundTripped.storageType == DeletionVectorDescriptor.UUID_DV_MARKER,
-        s"prefix='$prefix': expected a UUID-relative DV, got ${roundTripped.storageType}.")
-      // uniqueId (storageType + pathOrInlineDv + @offset) must survive the round-trip -- it is the
-      // (path, dv) dedup key state reconstruction relies on.
-      assert(roundTripped.uniqueId == dv.uniqueId,
-        s"prefix='$prefix': ${roundTripped.uniqueId} != ${dv.uniqueId}.")
-      assert(roundTripped.sizeInBytes == dv.sizeInBytes)
-      assert(roundTripped.cardinality == dv.cardinality)
-      assert(roundTripped.offset == dv.offset)
-    }
+    val roundTripped = DeletionVector.toDescriptor(amtDv, tableRoot)
+    assert(roundTripped.storageType == DeletionVectorDescriptor.PATH_DV_MARKER)
+    assert(roundTripped.pathOrInlineDv == dv.urlEncodedPath(tableRoot))
+    assert(roundTripped.pathOrInlineDv.contains("test%25dv%25prefix-"))
+    assert(roundTripped.absolutePath(tableRoot) == dv.absolutePath(tableRoot))
   }
 
   test("DeletionVector round-trips an absolute-path DV outside the table root") {
-    // An absolute DV whose path is not a Delta DV file under the table root stays `p`.
+    // An absolute DV whose path is outside the table root stays `p`.
     val dv = DeletionVectorDescriptor.onDiskWithAbsolutePath(
       path = "s3://other-bucket/dvs/custom.bin",
       sizeInBytes = 12, cardinality = 1L, offset = Some(4))
@@ -365,5 +354,114 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       id = UUID.randomUUID(), sizeInBytes = 10, cardinality = 1L, offset = None)
     val ex = intercept[IllegalArgumentException](DeletionVector.fromDescriptor(dv, tableRoot))
     assert(ex.getMessage.contains("missing an offset"))
+  }
+
+  /** A DATA entry carrying the AMT-native `spec_id` that has no Delta equivalent. */
+  private def entryWithPassthrough: DataEntry = DataEntry(
+    location = "f.parquet",
+    file_format = AMTSingleAction.FileFormatParquet,
+    tracking = addedTracking,
+    record_count = 10L,
+    file_size_in_bytes = 100L,
+    spec_id = Some(7))
+
+  test("toAddFile carries no passthrough for the default parquet/v4 entry") {
+    val add = DataEntry(
+      location = "f.parquet", file_format = AMTSingleAction.FileFormatParquet,
+      tracking = addedTracking, record_count = 10L, file_size_in_bytes = 100L).toAddFile(tableRoot)
+    assert(add.amtPassthrough.isEmpty, "a default entry must add no per-file passthrough")
+  }
+
+  test("DataEntry round-trips toAddFile -> fromAddFile") {
+    val add = entryWithPassthrough.toAddFile(tableRoot)
+    assert(add.amtPassthrough.isDefined, "a genuine passthrough must be carried")
+    val restored = DataEntry.fromAddFile(add, addedTracking, tableRoot)
+    assert(restored.spec_id.contains(7))
+    // file_format / format_version are not carried; they are reconstructed at the M1 defaults.
+    assert(restored.file_format == AMTSingleAction.FileFormatParquet)
+    assert(restored.format_version == AMTSingleAction.FormatVersionV4)
+  }
+
+  test("fromAddFile falls back to defaults with no passthrough") {
+    val restored = DataEntry.fromAddFile(sampleAddFile, addedTracking, tableRoot)
+    assert(restored.file_format == AMTSingleAction.FileFormatParquet)
+    assert(restored.spec_id.isEmpty)
+    assert(restored.format_version == AMTSingleAction.FormatVersionV4)
+  }
+
+  test("amtPassthrough round-trips through the commit JSON") {
+    val add = entryWithPassthrough.toAddFile(tableRoot)
+    assert(add.amtPassthrough.isDefined)
+    val json = add.json
+    assert(json.contains("amtPassthrough"), s"amtPassthrough must be serialized; got $json")
+    assert(json.contains("spec_id"), s"spec_id must be serialized; got $json")
+
+    val roundTripped = Action.fromJson(json) match {
+      case a: AddFile => a
+      case other => fail(s"expected an AddFile, got $other")
+    }
+    assert(roundTripped.amtPassthrough == add.amtPassthrough)
+    assert(roundTripped.amtPassthrough.flatMap(_.spec_id).contains(7))
+  }
+
+  test("an AddFile with no amtPassthrough keeps it out of the commit JSON") {
+    // Include.NON_ABSENT: non-AMT tables must not gain a new key in their commit JSON.
+    assert(sampleAddFile.amtPassthrough.isEmpty)
+    assert(!sampleAddFile.json.contains("amtPassthrough"))
+  }
+
+  test("amtPassthrough survives copy and InMemoryLogReplay state reconstruction") {
+    val add = entryWithPassthrough.toAddFile(tableRoot).copy(path = "f.parquet")
+    val passthrough = add.amtPassthrough
+    assert(passthrough.isDefined)
+    // Below simulates the real write path in [[writeIncrementalMaterialization]]
+    assert(add.copy(dataChange = false).amtPassthrough == passthrough)
+    val replay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = None, minSetTransactionRetentionTimestamp = None)
+    replay.append(0, Iterator(add))
+    val reconstructed = replay.allFiles
+    assert(reconstructed.length == 1)
+    // The passthrough survives replay and is still usable end-to-end.
+    assert(reconstructed.head.amtPassthrough == passthrough)
+    assert(DataEntry.fromAddFile(reconstructed.head, addedTracking, tableRoot).spec_id.contains(7))
+  }
+
+  test("amtPassthrough participates in AddFile equality") {
+    val base = sampleAddFile
+    val withA = base.copy(amtPassthrough = Some(AMTPassthrough(spec_id = Some(7))))
+    val withB = base.copy(amtPassthrough = Some(AMTPassthrough(spec_id = Some(7))))
+    assert(withA == withB && withA.hashCode == withB.hashCode,
+      "equal-content passthrough must compare equal")
+    val withC = base.copy(amtPassthrough = Some(AMTPassthrough(spec_id = Some(9))))
+    assert(withA != withC, "different passthrough content must compare unequal")
+    // Present vs absent -> unequal.
+    assert(withA != base && base != withA)
+  }
+
+  test("RowIndices.resolve returns None when the schema does not project amtPassthrough") {
+    val schema = StructType(Seq(StructField("path", StringType)))
+    assert(AMTPassthrough.RowIndices.resolve(schema).isEmpty)
+  }
+
+  test("RowIndices.resolve and fromRow read the passthrough positionally") {
+    val addSchema = Action.addFileSchema
+    val indices = AMTPassthrough.RowIndices.resolve(addSchema)
+      .getOrElse(fail("the AddFile schema must project amtPassthrough"))
+    assert(addSchema.fieldNames(indices.structIndex) == AMTPassthrough.FIELD_NAME)
+    assert(indices.numFields == AMTPassthrough.STRUCT_TYPE.fields.length)
+
+    // A row carrying spec_id -> read back; a row with a null struct -> None.
+    val withPassthrough = new GenericInternalRow(addSchema.fields.length)
+    withPassthrough.update(indices.structIndex, new GenericInternalRow(Array[Any](7)))
+    assert(AMTPassthrough.fromRow(withPassthrough, indices)
+      .contains(AMTPassthrough(spec_id = Some(7))))
+
+    val withoutPassthrough = new GenericInternalRow(addSchema.fields.length)
+    assert(AMTPassthrough.fromRow(withoutPassthrough, indices).isEmpty)
+
+    // A present struct whose own field is null -> present, but with no spec_id.
+    val nullSpecId = new GenericInternalRow(addSchema.fields.length)
+    nullSpecId.update(indices.structIndex, new GenericInternalRow(Array[Any](null)))
+    assert(AMTPassthrough.fromRow(nullSpecId, indices).contains(AMTPassthrough(spec_id = None)))
   }
 }

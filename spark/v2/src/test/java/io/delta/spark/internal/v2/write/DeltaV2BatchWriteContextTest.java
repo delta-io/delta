@@ -53,7 +53,13 @@ public class DeltaV2BatchWriteContextTest extends DeltaV2TestBase {
 
     DeltaV2BatchWriteContext context =
         DeltaV2BatchWriteContext.create(
-            engine, hadoopConf, path, snapshot, tableSchema, new TestLogicalWriteInfo(tableSchema));
+            engine,
+            hadoopConf,
+            path,
+            snapshot,
+            tableSchema,
+            new StructType(),
+            new TestLogicalWriteInfo(tableSchema));
 
     assertSame(engine, context.getEngine());
     assertNotNull(context.getTransaction());

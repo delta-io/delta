@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 
 class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
@@ -33,55 +33,37 @@ class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
   // Post commit snapshot
   ///////////////////////////
 
-  test("inline emission installs an AMTCheckpointProvider on the post-commit snapshot") {
-    withTable("amt_provider_install") {
-      val name = "amt_provider_install"
-      createAMTTable(name, checkpointInterval = 2)
-      sql(s"INSERT INTO $name VALUES (1)")
-      sql(s"INSERT INTO $name VALUES (2)") // v2: emit.
-
-      val deltaLog = deltaLogForName(name)
-      val snapshot = deltaLog.unsafeVolatileSnapshot
-      assert(snapshot.version == 2)
-      val provider = amtProvider(snapshot)
-      assert(provider.isDefined, "Post-emission snapshot must expose an AMTCheckpointProvider.")
-      assert(provider.get.checkpointVersion == 2)
-      assert(provider.get.checkpointAction.contentRoot.path ==
-        checkpointsAt(deltaLog, 2).head.contentRoot.path)
-      assert(provider.get.leaves.nonEmpty, "Provider must list the tree's leaves.")
-    }
+  testAcrossAMTCheckpointScenarios(
+      "emission installs an AMTCheckpointProvider on the post-commit snapshot",
+      "amt_provider_install")(
+      setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (2)"))) { context =>
+    // The harness checks the provider on the snapshot it re-read from the log. This test covers the
+    // post-commit path specifically: the emission must install the provider on the in-memory
+    // `unsafeVolatileSnapshot` the commit produced, without waiting for a fresh log read.
+    val postCommit = context.postCheckpointSnapshot.deltaLog.unsafeVolatileSnapshot
+    assert(postCommit.version == context.manifestCommitVersion,
+      s"The post-commit snapshot must be at v${context.manifestCommitVersion}; " +
+        s"got v${postCommit.version}.")
+    val provider = amtProvider(postCommit).getOrElse(
+      fail("The post-commit snapshot must expose an AMTCheckpointProvider."))
+    assert(provider.checkpointVersion == context.checkpoint.version,
+      s"The provider must describe v${context.checkpoint.version}; " +
+        s"got v${provider.checkpointVersion}.")
+    assert(provider.checkpointAction.contentRoot.path == context.checkpoint.contentRoot.path,
+      "The provider must point at the emitted checkpoint's root manifest.")
   }
 
-  test("post-commit LogSegment carries the AMT provider and only post-checkpoint deltas") {
-    withTable("amt_log_segment") {
-      val name = "amt_log_segment"
-      createAMTTable(name, checkpointInterval = 3)
-      // After each commit, the post-commit snapshot's log segment holds the deltas after the latest
-      // checkpoint. A checkpoint emits at every interval boundary (v3, v6); the provider persists
-      // across the intervening commits (deltaLog.update() is a no-op for AMT, so the cached
-      // post-commit snapshot is returned as-is). Expected (version -> delta count):
-      //   v0=1, v1=2, v2=3, v3=0 (checkpoint), v4=1, v5=2, v6=0 (checkpoint).
-      val expected = Seq(0L -> 1, 1L -> 2, 2L -> 3, 3L -> 0, 4L -> 1, 5L -> 2, 6L -> 0)
-      val deltaLog = deltaLogForName(name)
-
-      def assertSegment(snapshot: Snapshot, expectedVersion: Long, expectedDeltas: Int): Unit = {
-        assert(snapshot.version == expectedVersion)
-        assert(snapshot.logSegment.deltas.size == expectedDeltas,
-          s"v$expectedVersion: expected $expectedDeltas deltas, " +
-          s"got ${snapshot.logSegment.deltas.map(f => FileNames.deltaVersion(f))}.")
-        // A provider is installed exactly on the checkpoint-boundary commits (v3, v6).
-        val isBoundary = expectedVersion > 0 && expectedVersion % 3 == 0
-        if (isBoundary) {
-          assert(amtProvider(snapshot).exists(_.checkpointVersion == expectedVersion),
-            s"v$expectedVersion: expected an AMT provider at this checkpoint version.")
-        }
-      }
-
-      assertSegment(deltaLog.unsafeVolatileSnapshot, expected.head._1, expected.head._2)
-      expected.tail.foreach { case (version, deltas) =>
-        sql(s"INSERT INTO $name VALUES ($version)")
-        assertSegment(deltaLogForName(name).unsafeVolatileSnapshot, version, deltas)
-      }
-    }
+  testAcrossAMTCheckpointScenarios(
+      "an emitted AMT installs the provider and trims the log segment",
+      "amt_log_segment")(
+      setup = name => (1 to 2).foreach(i => sql(s"INSERT INTO $name VALUES ($i)")),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (3)"))) { context =>
+    val segmentDeltaVersions =
+      context.postCheckpointSnapshot.logSegment.deltas.map(f => FileNames.deltaVersion(f))
+    assert(segmentDeltaVersions.forall(_ > context.checkpoint.version),
+      s"Log segment must trim deltas up to the checkpoint version; got $segmentDeltaVersions.")
   }
 }

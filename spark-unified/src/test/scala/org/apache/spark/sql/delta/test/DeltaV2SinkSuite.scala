@@ -73,6 +73,10 @@ object DeltaV2SinkSuite {
     "partitioned writing and batch reading",
     "SPARK-21167: encode and decode path correctly",
     "throw exception when users are trying to write in batch with different partitioning",
+    // No NullType support, creating a table with void column fails.
+    "DeltaSink rejects streaming write to table with generated void column",
+    "DeltaSink allows streaming write to table with non-generated void column",
+    "DeltaSink rejects streaming write with NullType column in batch schema",
     // Kernel sink dropped the V1 NullType guard, so a UDT containing NullType is not rejected.
     "DeltaSink rejects DataFrame with UDT containing NullType",
     // Kernel commit does not set isBlindAppend=true in CommitInfo.

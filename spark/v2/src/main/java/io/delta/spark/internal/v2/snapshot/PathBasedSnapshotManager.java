@@ -21,25 +21,28 @@ import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import java.util.ArrayList;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 
-/** Implementation of DeltaSnapshotManager for managing Delta snapshots for Path-based Table. */
+/** Implementation of DeltaV2SnapshotManager for managing Delta snapshots for Path-based Table. */
 @Experimental
-public class PathBasedSnapshotManager implements DeltaSnapshotManager {
+public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
 
   private final String tablePath;
   private final Engine kernelEngine;
 
   public PathBasedSnapshotManager(String tablePath, Configuration hadoopConf) {
-    this(tablePath, DefaultEngine.create(requireNonNull(hadoopConf, "hadoopConf is null")));
+    this(
+        tablePath,
+        KernelEngineFactory.createDefaultEngine(requireNonNull(hadoopConf, "hadoopConf is null")));
   }
 
   public PathBasedSnapshotManager(String tablePath, Engine kernelEngine) {

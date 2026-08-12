@@ -1460,14 +1460,17 @@ trait SnapshotManagement { self: DeltaLog =>
    *                      tables. When present, it is installed in the underlying post-commit
    *                      snapshot as it must be the latest checkpoint in the commit range
    *                      [0, committedVersion]. None otherwise.
+   * @param isIdempotentRetry when true, this is an idempotent retry of a commit that already
+   *                          landed
    */
   def updateAfterCommit(
       committedVersion: Long,
-      commit: Commit,
+      commitOpt: Option[Commit],
       newChecksumOpt: Option[VersionChecksum],
       preCommitLogSegment: LogSegment,
       catalogTableOpt: Option[CatalogTable],
-      amtCheckpointOpt: Option[Checkpoint] = None): Snapshot = {
+      amtCheckpointOpt: Option[Checkpoint] = None,
+      isIdempotentRetry: Boolean = false): Snapshot = {
     var previousSnapshot: Snapshot = null
     recordDeltaOperation(this, "delta.log.updateAfterCommit") {
       val updatedSnapshot = withSnapshotLockInterruptibly {
@@ -1480,19 +1483,53 @@ trait SnapshotManagement { self: DeltaLog =>
         )
         val amtCheckpointProviderOpt =
           amtCheckpointOpt.map(cp => AMTCheckpointProvider.fromCheckpoint(spark, this, cp))
-        val segment = getLogSegmentAfterCommit(
-          committedVersion,
-          newChecksumOpt,
-          preCommitLogSegment,
-          commit,
-          commitCoordinatorOpt,
-          catalogTableOpt,
-          previousSnapshot.checkpointProvider,
-          amtCheckpointProviderOpt = amtCheckpointProviderOpt)
+        val segment = if (isIdempotentRetry) {
+          // The commit already landed and the preCommitLogSegment has been advanced to a
+          // segment at  >= committedVersion by conflict checking, so it is already the
+          // post-commit segment.
+          preCommitLogSegment
+        } else {
+          val commit = commitOpt.getOrElse {
+            throw new IllegalStateException(
+              "A Commit is required to build the post-commit log segment.")
+          }
+          // The listing can be stale for a few seconds after a commit due to an
+          // incident on the cloud provider side. Retry the operation a few times.
+          val maxRetries =
+            spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES)
+          var attempt = 0
+          def fetchSegment(): LogSegment = getLogSegmentAfterCommit(
+            committedVersion,
+            newChecksumOpt,
+            preCommitLogSegment,
+            commit,
+            commitCoordinatorOpt,
+            catalogTableOpt,
+            previousSnapshot.checkpointProvider,
+            amtCheckpointProviderOpt = amtCheckpointProviderOpt)
+          var fetched = fetchSegment()
+          while (attempt < maxRetries && fetched.version < committedVersion) {
+            val backoffMs = math.min(30.seconds.toMillis, 1000L << attempt)
+            logWarning(log"Stale log segment after commit: listed version " +
+              log"${MDC(DeltaLogKeys.VERSION, fetched.version)} < committed version " +
+              log"${MDC(DeltaLogKeys.VERSION2, committedVersion)}.")
+            Thread.sleep(backoffMs)
+            attempt += 1
+            fetched = fetchSegment()
+          }
+          if (attempt > 0 && fetched.version >= committedVersion) {
+            recordDeltaEvent(this, "delta.commit.mitigatedInconsistentList", data = Map(
+              "numRetries" -> attempt,
+              "committedVersion" -> committedVersion,
+              "currentVersion" -> fetched.version
+            ))
+          }
+          fetched
+        }
 
         // This likely implies a list-after-write inconsistency
         if (segment.version < committedVersion) {
-          recordDeltaEvent(this, "delta.commit.inconsistentList", data = Map(
+          recordDeltaEvent(this, "delta.assertions.commit.inconsistentList", data = Map(
             "committedVersion" -> committedVersion,
             "currentVersion" -> segment.version
           ))

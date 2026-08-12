@@ -3778,33 +3778,22 @@ trait DeltaErrorsBase
 
   def uniFormIcebergRequiresIcebergCompat(): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
-      messageParameters = Array(
-        UniversalFormat.ICEBERG_FORMAT,
-        "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) " +
-        "to be enabled on an existing table. Supported versions are IcebergCompatV1 and " +
-        "IcebergCompatV2."
-      )
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION.ICEBERG_COMPAT_REQUIRED",
+      messageParameters = Array(UniversalFormat.ICEBERG_FORMAT)
     )
   }
 
   def uniFormHudiDeleteVectorCompat(): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
-      messageParameters = Array(
-        UniversalFormat.HUDI_FORMAT,
-        "Requires delete vectors to be disabled."
-      )
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION.HUDI_DELETE_VECTORS_NOT_SUPPORTED",
+      messageParameters = Array(UniversalFormat.HUDI_FORMAT)
     )
   }
 
   def uniFormHudiSchemaCompat(unsupportedType: DataType): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
-      messageParameters = Array(
-        UniversalFormat.HUDI_FORMAT,
-        s"DataType: $unsupportedType is not currently supported."
-      )
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION.HUDI_UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(UniversalFormat.HUDI_FORMAT, unsupportedType.toString)
     )
   }
 

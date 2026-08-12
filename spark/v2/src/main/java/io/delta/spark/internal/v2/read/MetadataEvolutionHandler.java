@@ -37,7 +37,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
@@ -67,6 +66,7 @@ import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -102,7 +102,7 @@ public class MetadataEvolutionHandler {
   private final SparkSession spark;
   private final String tableId;
   private final String tablePath;
-  private final DeltaSnapshotManager snapshotManager;
+  private final DeltaV2SnapshotManager snapshotManager;
   private final Engine engine;
   private final DeltaOptions options;
   private final DeltaStreamUtils.SchemaReadOptions schemaReadOptions;
@@ -120,7 +120,7 @@ public class MetadataEvolutionHandler {
       SparkSession spark,
       String tableId,
       String tablePath,
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       Engine engine,
       DeltaOptions options,
       DeltaStreamUtils.SchemaReadOptions schemaReadOptions,
@@ -505,14 +505,14 @@ public class MetadataEvolutionHandler {
    * <p>The persisted metadata is the source of truth for the analyzed schema. With {@code
    * mergeConsecutiveSchemaChanges=true}, the merger folds consecutive metadata-only commits and
    * writes the merged entry back to the durable schema log; the execution-time {@link
-   * SparkMicroBatchStream} then re-reads the same merged entry via {@link
+   * DeltaV2MicroBatchStream} then re-reads the same merged entry via {@link
    * DeltaSourceMetadataTrackingLog#getCurrentTrackedMetadata}.
    */
   public static Optional<PersistedMetadata> getPersistedMetadataForMicroBatchStream(
       SparkSession spark,
       SnapshotImpl snapshot,
       Map<String, String> options,
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       Engine engine) {
     boolean mergeConsecutiveSchemaChanges =
         (boolean)
@@ -568,7 +568,7 @@ public class MetadataEvolutionHandler {
    * and {@code lazyCrcInfo} fields throw on access. Callers must only read {@code metadata}, {@code
    * protocol}, {@code schema}, {@code version}, and {@code dataPath} from the returned snapshot;
    * anything that triggers log replay (e.g. {@code getCurrentCrcInfo}, {@code getScanBuilder}) must
-   * call {@link DeltaSnapshotManager#loadSnapshotAt} instead.
+   * call {@link DeltaV2SnapshotManager#loadSnapshotAt} instead.
    */
   public static SnapshotImpl buildReadSnapshotFromPersistedMetadata(
       SnapshotImpl snapshotAtSourceInit, Engine engine, PersistedMetadata customMetadata) {
@@ -665,7 +665,7 @@ public class MetadataEvolutionHandler {
       SparkSession spark,
       SnapshotImpl snapshot,
       Map<String, String> options,
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       Engine engine,
       Option<String> sourceMetadataPathOpt,
       boolean mergeConsecutiveSchemaChanges) {
@@ -705,7 +705,7 @@ public class MetadataEvolutionHandler {
   /** V2 port of {@code DeltaSourceMetadataEvolutionSupport.getMergedConsecutiveMetadataChanges}. */
   public static Option<PersistedMetadata> getMergedConsecutiveMetadataChanges(
       PersistedMetadata currentMetadata,
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       Engine engine,
       String tablePath) {
     final long currentMetadataVersion = currentMetadata.deltaCommitVersion();
@@ -722,7 +722,7 @@ public class MetadataEvolutionHandler {
     try (CloseableIterator<CommitActions> commitsIter =
         // Always include CDC: the merger must stop on any file action
         StreamingHelper.getCommitActionsFromRangeUnsafe(
-            engine, commitRange, tablePath, SparkMicroBatchStream.CDC_ACTION_SET)) {
+            engine, commitRange, tablePath, DeltaV2MicroBatchStream.CDC_ACTION_SET)) {
       while (commitsIter.hasNext()) {
         try (CommitActions commit = commitsIter.next()) {
           long version = commit.getVersion();
