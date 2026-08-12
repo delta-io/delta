@@ -41,7 +41,7 @@ import org.apache.spark.util.SerializableConfiguration
  *                         carries the version, contentRoot, and inline non-file state.
  * @param leaves           The root's `DATA_MANIFEST` pointer entries, one per leaf reachable from
  *                         the root. Each entry's `location` is stored table-root-relative; use
- *                         [[leafManifestAbsolutePaths]] to resolve them against the table root.
+ *                         [[liveLeafManifestAbsolutePaths]] to resolve them against the table root.
  * @param tableRoot        The table's data path.
  */
 final class AMTCheckpointProvider(
@@ -59,14 +59,19 @@ final class AMTCheckpointProvider(
   /** Absolute [[Path]] to the root manifest parquet, resolved against the table root. */
   private val rootManifestAbsolutePath: Path = contentRoot.getAbsolutePath(tableRoot)
 
-  /** Absolute [[Path]]s to the leaf manifest parquet files, resolved against the table root. */
-  lazy val leafManifestAbsolutePaths: Seq[Path] = leaves.map(_.getAbsolutePath(tableRoot))
+  /** The live leaf pointers which must have all the live [[DataEntry]]s. */
+  private lazy val liveLeaves: Seq[DataManifestEntry] =
+    leaves.filter(l =>
+      AMTCheckpointProvider.liveDataManifestEntryStatuses.contains(l.tracking.status))
+
+  /** Absolute [[Path]]s to the live leaf manifest parquet files, resolved against the root. */
+  lazy val liveLeafManifestAbsolutePaths: Seq[Path] = liveLeaves.map(_.getAbsolutePath(tableRoot))
 
   /** The root manifest as a [[FileStatus]]. */
-  private lazy val rootStatus: FileStatus = contentRoot.toFileStatus(tableRoot)
+  private lazy val rootFile: FileStatus = contentRoot.toFileStatus(tableRoot)
 
-  /** The leaf manifests as [[FileStatus]]es. */
-  private lazy val leafStatuses: Seq[FileStatus] = leaves.map(_.toFileStatus(tableRoot))
+  /** Live leaf manifests as [[FileStatus]]es. */
+  private lazy val liveLeafFiles: Seq[FileStatus] = liveLeaves.map(_.toFileStatus(tableRoot))
 
   override def version: Long = checkpointAction.version
 
@@ -83,7 +88,7 @@ final class AMTCheckpointProvider(
   }
 
   override def effectiveCheckpointSizeInBytes(): Long =
-    contentRoot.sizeInBytes + leaves.map(_.file_size_in_bytes).sum
+    contentRoot.sizeInBytes + liveLeaves.map(_.file_size_in_bytes).sum
 
   override def checkpointPolicyForLogging: Option[CheckpointPolicy.Policy] = None
 
@@ -143,13 +148,13 @@ final class AMTCheckpointProvider(
     val encodedRootPath = SparkPath.fromPath(rootManifestAbsolutePath).urlEncoded
     val serializableConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
 
-    val files = rootStatus +: leafStatuses
+    val files = rootFile +: liveLeafFiles
     val fmt = DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET
     // Read every leaf row, then drop the MDV-marked (leaf, rowIndex) entries with a filter on
     // top, using a broadcast of each leaf's manifest DV bitmap bytes keyed by its `_metadata`
     // file path.
     val index = DeltaLogFileIndex(fmt, files.toArray)
-    val mdvByLeaf: Map[String, Array[Byte]] = leaves.flatMap { leaf =>
+    val mdvByLeaf: Map[String, Array[Byte]] = liveLeaves.flatMap { leaf =>
       leaf.manifestDV.map { case (dvBytes, _) =>
         SparkPath.fromPath(leaf.getAbsolutePath(localTableRoot)).urlEncoded -> dvBytes
       }
@@ -158,7 +163,7 @@ final class AMTCheckpointProvider(
     val dataEntries = AMTCheckpointProvider.loadEntriesWithLocation(spark, deltaLog, index)
       .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
       .where(col("entry.tracking.status").isin(
-        AMTCheckpointProvider.liveTrackingStatuses.toSeq: _*))
+        AMTCheckpointProvider.liveDataEntryStatuses.toSeq: _*))
       .filter { entryWithLoc =>
         mdvBroadcast.value.get(entryWithLoc.leafPath)
           .forall(bytes => !RoaringBitmapArray.readFrom(bytes).contains(entryWithLoc.pos))
@@ -253,9 +258,9 @@ object AMTCheckpointProvider {
       deltaLog: DeltaLog,
       checkpoint: Checkpoint): AMTCheckpointProvider = {
     val tableRoot = deltaLog.dataPath
-    val rootStatus = checkpoint.contentRoot.toFileStatus(tableRoot)
+    val rootFile = checkpoint.contentRoot.toFileStatus(tableRoot)
     val index =
-      DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootStatus))
+      DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
     // The root manifest is small (one row per leaf), so collect it to the driver to enumerate the
     // leaf pointers.
     val leaves = loadEntries(spark, deltaLog, index).collect().toSeq
@@ -265,8 +270,12 @@ object AMTCheckpointProvider {
   }
 
   /** Tracking Status representing the live [[DataEntry]] in an AMT. */
-  private[amt] val liveTrackingStatuses: Set[Int] =
+  private[amt] val liveDataEntryStatuses: Set[Int] =
     Set(Tracking.Status.Existing, Tracking.Status.Added)
+
+  /** All Tracking Status for leafs which may have any live files. */
+  private[amt] val liveDataManifestEntryStatuses: Set[Int] =
+    Set(Tracking.Status.Added, Tracking.Status.Existing, Tracking.Status.Modified)
 
   /** Reads the AMT root and returns the live [[DataEntry]]s tracked by root. */
   private[amt] def readLiveRootDataEntries(
@@ -274,13 +283,13 @@ object AMTCheckpointProvider {
       deltaLog: DeltaLog,
       checkpoint: Checkpoint): Seq[AddFile] = {
     val tableRoot = deltaLog.dataPath
-    val rootStatus = checkpoint.contentRoot.toFileStatus(tableRoot)
+    val rootFile = checkpoint.contentRoot.toFileStatus(tableRoot)
     val index =
-      DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootStatus))
+      DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
     loadEntries(spark, deltaLog, index).collect().toSeq
       .filter(_.content_type == AMTSingleAction.ContentType.Type.Data)
       .map(_.unwrap.asInstanceOf[DataEntry])
-      .filter(e => liveTrackingStatuses.contains(e.tracking.status))
+      .filter(e => liveDataEntryStatuses.contains(e.tracking.status))
       .map(_.toAddFile(tableRoot))
   }
 

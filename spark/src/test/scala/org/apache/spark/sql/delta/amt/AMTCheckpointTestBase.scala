@@ -467,7 +467,7 @@ trait AMTCheckpointTestBase
   protected def currentLeafDataEntries(snapshot: Snapshot): Long = {
     val provider = amtProvider(snapshot)
       .getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
-      provider.leafManifestAbsolutePaths.map { leafPath =>
+      provider.liveLeafManifestAbsolutePaths.map { leafPath =>
         spark.read.parquet(leafPath.toString)
           .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
           .count()

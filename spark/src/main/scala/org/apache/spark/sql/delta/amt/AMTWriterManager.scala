@@ -67,12 +67,19 @@ case class SingleAMTWriteMetrics(
 
 case class IncrementalAMTWriteMetrics(
     numIntermediateCommits: Int,
-    numExistingLeavesUpdated: Int,
-    numExistingLeavesUntouched: Int,
+    numOldLeavesUpdated: Int,
+    numOldLeavesUntouched: Int,
     numNewLeaves: Int,
     numRootLiveAdds: Int,
     numRootTombstones: Int,
-    numLeafMdvBitsAdded: Int)
+    numLeafMdvBitsAdded: Int,
+    // Per-status breakdown over all leaf pointers in the new tree (see [[Tracking.Status]]), plus
+    // the stale DELETED tombstones from the previous tree that this rewrite dropped.
+    numLeavesAddedStatus: Int = 0,
+    numLeavesExistingStatus: Int = 0,
+    numLeavesModifiedStatus: Int = 0,
+    numLeavesDeletedStatus: Int = 0,
+    numStaleDeletedLeavesDropped: Int = 0)
 
 /**
  * The outcome of an AMT write for a single commit attempt.
