@@ -60,13 +60,18 @@ public final class S3LogStoreUtil {
             Path parentPath) throws IOException {
         int maxKeys = S3AUtils.intOption(s3afs.getConf(), MAX_PAGING_KEYS, DEFAULT_MAX_PAGING_KEYS, 1);
         Listing listing = s3afs.getListing();
+        String parentKey = s3afs.pathToKey(parentPath);
+        if (!parentKey.isEmpty() && !parentKey.endsWith("/")) {
+            parentKey += "/";
+        }
         // List files lexicographically after resolvedPath inclusive within the same directory
         return listing.createFileStatusListingIterator(resolvedPath,
                 S3ListRequest.v2(
                     ListObjectsV2Request.builder()
                         .bucket(s3afs.getBucket())
                         .maxKeys(maxKeys)
-                        .prefix(s3afs.pathToKey(parentPath))
+                        .prefix(parentKey)
+                        .delimiter("/")
                         .startAfter(keyBefore(s3afs.pathToKey(resolvedPath)))
                         .build()
                 ), ACCEPT_ALL,
