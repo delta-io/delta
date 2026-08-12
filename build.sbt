@@ -65,8 +65,6 @@ val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
 val flinkVersion = FlinkVersionSpec.selectedVersion
-// Publish one artifact per compatible Flink minor line, for example delta-flink_2.0.
-val flinkCompatibilityVersion = FlinkVersionSpec.compatibilityVersion(flinkVersion)
 val gcsConnectorVersion = "4.0.4"
 
 // Optional kernel version override. See `project/KernelVersion.scala` for the
@@ -1638,7 +1636,8 @@ lazy val flink = (project in file("flink"))
   .dependsOn(kernelUnityCatalog)
   .settings(
     name := "delta-flink",
-    moduleName := s"delta-flink_$flinkCompatibilityVersion",
+    // Publish one artifact per compatible Flink minor line, for example delta-flink_2.0.
+    moduleName := s"delta-flink_${FlinkVersionSpec.compatibilityVersion(flinkVersion)}",
     commonSettings,
     releaseSettings,
     javafmtCheckSettings(),

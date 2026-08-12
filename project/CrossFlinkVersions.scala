@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
+import java.io.{File, PrintWriter}
+
 import sbt._
+import sbt.Keys._
 import sbtrelease.ReleasePlugin.autoImport.ReleaseStep
 
 object FlinkVersionSpec {
@@ -30,12 +33,16 @@ object FlinkVersionSpec {
 
   def compatibilityVersion(fullVersion: String): String = {
     val parts = fullVersion.split("\\.")
-    require(parts.length >= 2, s"Flink version must contain a major and minor version: $fullVersion")
+    require(
+      parts.length >= 2,
+      s"Flink version must contain a major and minor version: $fullVersion")
     parts.take(2).mkString(".")
   }
 }
 
-object CrossFlinkVersions {
+object CrossFlinkVersions extends AutoPlugin {
+  override def trigger = allRequirements
+
   /**
    * Adds release steps for every supported Flink version not already published by the initial
    * all-module release step.
@@ -59,4 +66,42 @@ object CrossFlinkVersions {
       }: ReleaseStep
     }
   }
+
+  override lazy val projectSettings = Seq(
+    commands += Command.args("publishAdditionalFlinkVersions", "<task>") { (state, args) =>
+      if (args.isEmpty) {
+        sys.error(
+          "Usage: publishAdditionalFlinkVersions <task>\n" +
+            "Example: build/sbt \"publishAdditionalFlinkVersions publishM2\"")
+      }
+      crossFlinkReleaseSteps(args.mkString(" ")).foldLeft(state) { (currentState, step) =>
+        step(currentState)
+      }
+    },
+    commands += Command.command("exportFlinkVersionsJson") { state =>
+      val extracted = Project.extract(state)
+      val baseDir = extracted.get(ThisBuild / Keys.baseDirectory)
+      val outputFile = new File(baseDir, "target/flink-versions.json")
+      outputFile.getParentFile.mkdirs()
+
+      val writer = new PrintWriter(outputFile)
+      try {
+        writer.println("[")
+        FlinkVersionSpec.SUPPORTED.zipWithIndex.foreach { case (version, index) =>
+          val comma = if (index < FlinkVersionSpec.SUPPORTED.size - 1) "," else ""
+          writer.println("  {")
+          writer.println(s"""    "fullVersion": "$version",""")
+          writer.println(
+            s"""    "compatibilityVersion": "${FlinkVersionSpec.compatibilityVersion(version)}",""")
+          writer.println(s"""    "isDefault": ${version == FlinkVersionSpec.DEFAULT}""")
+          writer.println(s"  }$comma")
+        }
+        writer.println("]")
+      } finally {
+        writer.close()
+      }
+
+      println(s"[info] Flink version information exported to: ${outputFile.getAbsolutePath}")
+      state
+    })
 }

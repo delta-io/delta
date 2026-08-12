@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Cross-Spark Version Build Testing
+Published Artifact Build Testing
 
-Tests the Delta Lake build system by validating JAR file names for:
+Tests the Delta Lake build system by validating published JAR file names for:
 1. Default publish (publishM2) - publishes ALL modules WITH Spark suffix
 2. Backward-compat publish (skipSparkSuffix=true) - publishes WITHOUT suffix
 3. Full cross-version workflow publishes both with and without suffix
 
 Usage:
-    python project/tests/test_cross_spark_publish.py
+    python project/tests/test_published_artifacts.py
 
 The script will:
 1. Test default publishM2 command publishes all modules WITH Spark suffix
@@ -127,8 +127,8 @@ def substitute_xversion(jar_templates: List[str], delta_version: str) -> Set[str
     return {jar.format(version=delta_version) for jar in jar_templates}
 
 
-class CrossSparkPublishTest:
-    """Tests cross-Spark version builds."""
+class PublishedArtifactsTest:
+    """Tests the artifacts produced by default and cross-version builds."""
 
     def __init__(self, delta_root: Path):
         self.delta_root = delta_root
@@ -850,7 +850,7 @@ def main():
             sys.exit(1)
 
         print("="*70)
-        print("Cross-Spark Build Test Suite")
+        print("Published Artifact Build Test Suite")
         print("="*70)
         print()
 
@@ -873,7 +873,7 @@ def main():
         print("\n" + "="*70)
         print("PART 2: Cross-Spark Build Tests")
         print("="*70)
-        build_test = CrossSparkPublishTest(delta_root)
+        build_test = PublishedArtifactsTest(delta_root)
         build_test.validate_spark_versions()
 
         # Run all build tests

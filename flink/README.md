@@ -19,7 +19,7 @@ The default build uses Flink 2.0.2. To test another Flink version during develop
 `flinkVersion` on the command line:
 
 ```bash
-sbt -DflinkVersion=2.0.2 flink/test
+build/sbt -DflinkVersion=2.0.2 flink/test
 ```
 
 ### Connector Overview

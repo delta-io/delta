@@ -32,14 +32,34 @@ env:
   SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
 
 jobs:
+  generate-matrix:
+    name: "Generate Flink versions matrix"
+    runs-on: ubuntu-24.04
+    outputs:
+      flink-versions: ${{ steps.versions.outputs.flink-versions }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Install Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Generate matrix
+        id: versions
+        run: |
+          build/sbt exportFlinkVersionsJson
+          versions="$(jq -c '[.[].fullVersion]' target/flink-versions.json)"
+          echo "flink-versions=$versions" >> "$GITHUB_OUTPUT"
+
   test:
     name: "DF: Flink ${{ matrix.flink }}"
+    needs: generate-matrix
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        flink:
-          - "2.0.2"
+        flink: ${{ fromJson(needs.generate-matrix.outputs.flink-versions) }}
     steps:
       - name: Show runner specs
         run: |
