@@ -583,6 +583,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     field.setAccessible(true);
     return (org.apache.spark.sql.catalyst.expressions.Expression[]) field.get(scan);
   }
+
   private static boolean getPlanned(DeltaV2Scan scan) throws Exception {
     Field field = DeltaV2Scan.class.getDeclaredField("planned");
     field.setAccessible(true);
@@ -1028,8 +1029,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
                 "spark.sql.cbo.planStats.enabled",
                 "false",
                 () -> {
-                  DeltaV2ScanBuilder builder =
-                      (DeltaV2ScanBuilder) table.newScanBuilder(options);
+                  DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
                   builder.pruneColumns(new StructType().add("name", DataTypes.StringType));
                   DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
@@ -1044,8 +1044,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
   @Test
   public void testStatisticsRequireSparkPostPushdownFilterAdjustment() {
-    DeltaV2Scan scan =
-        (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+    DeltaV2Scan scan = (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
     assertFalse(scan.reflectsFullyPushedDownFilters());
   }
 
@@ -1320,8 +1319,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     Statistics stats = scan.estimateStatistics();
 
     assertTrue(stats.numRows().isPresent(), "numRows should be present");
-    assertEquals(
-        999L, stats.numRows().getAsLong(), "numRows should come from catalog statistics");
+    assertEquals(999L, stats.numRows().getAsLong(), "numRows should come from catalog statistics");
     assertFalse(getPlanned(scan), "catalog full statistics should not plan Delta files");
   }
 

@@ -50,7 +50,6 @@ import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.execution.datasources.v2.DeltaV2FilterTranslator;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
-import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.Option;
@@ -347,7 +346,6 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     return pushedLimit.isPresent() && pushedLimit.getAsInt() == 0;
   }
 
-
   private Statistics statistics(
       OptionalLong sizeInBytes,
       OptionalLong numRows,
@@ -367,7 +365,6 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
       public Map<NamedReference, ColumnStatistics> columnStats() {
         return columnStats;
       }
-
     };
   }
 
@@ -386,7 +383,6 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   boolean reflectsFullyPushedDownFiltersInternal() {
     return false;
   }
-
 
   /**
    * Get the table path from the scan state.
@@ -468,7 +464,6 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
         totalRows = ((Number) scannedRows.get()).longValue();
       }
     }
-
   }
 
   /**
@@ -628,20 +623,18 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
 
   /**
    * Returns whether Delta should collect per-file row counts for scan metadata. The scan builder
-   * evaluates the same condition when deciding whether to ask {@code filesForScan} to retain
-   * record counts; the two must stay in sync.
+   * evaluates the same condition when deciding whether to ask {@code filesForScan} to retain record
+   * counts; the two must stay in sync.
    *
    * <p>This does not gate {@link #estimateStatistics()}. Spark's {@code
    * DataSourceV2ScanRelation.computeStats()} chooses between the full-statistics and size-only APIs
-   * based on CBO and plan-statistics settings. Once Spark calls either API, Delta returns that API's
-   * connector statistics independently of the planner-side gate.
+   * based on CBO and plan-statistics settings. Once Spark calls either API, Delta returns that
+   * API's connector statistics independently of the planner-side gate.
    */
   private boolean arePlanStatsEnabled() {
     return sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
   }
-  /**
-   * Returns whether the catalog-provided statistics include a numRows value.
-   */
+  /** Returns whether the catalog-provided statistics include a numRows value. */
   private boolean catalogHasNumRows() {
     return catalogStats.isPresent() && catalogStats.get().numRows().isPresent();
   }
