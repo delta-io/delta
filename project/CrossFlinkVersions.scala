@@ -29,8 +29,10 @@ object FlinkVersionSpec {
     SUPPORTED.map(compatibilityVersion).distinct.size == SUPPORTED.size,
     "Only one patch release can be published for each Flink compatibility line")
 
+  /** Selects the requested full Flink version, falling back to the default build version. */
   def selectedVersion: String = sys.props.getOrElse("flinkVersion", DEFAULT)
 
+  /** Returns the major.minor line used in the Maven artifact name. */
   def compatibilityVersion(fullVersion: String): String = {
     val parts = fullVersion.split("\\.")
     require(
@@ -68,6 +70,8 @@ object CrossFlinkVersions extends AutoPlugin {
   }
 
   override lazy val projectSettings = Seq(
+    // Runs the same non-default Flink publication steps used by releaseProcess. This command lets
+    // CI exercise the real release path with a non-releasing task such as publishM2.
     commands += Command.args("publishAdditionalFlinkVersions", "<task>") { (state, args) =>
       if (args.isEmpty) {
         sys.error(
@@ -78,6 +82,8 @@ object CrossFlinkVersions extends AutoPlugin {
         step(currentState)
       }
     },
+    // Exports the supported Flink versions so CI can build its test matrix from the SBT source of
+    // truth instead of maintaining a separate version list in the workflow.
     commands += Command.command("exportFlinkVersionsJson") { state =>
       val extracted = Project.extract(state)
       val baseDir = extracted.get(ThisBuild / Keys.baseDirectory)
