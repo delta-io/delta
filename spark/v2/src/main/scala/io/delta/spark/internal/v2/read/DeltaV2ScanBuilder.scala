@@ -156,10 +156,11 @@ private[read] class DeltaV2ScanBuilder(
     // running filesForScan until DeltaV2Scan actually plans a batch. A MicroBatchStream performs
     // its own snapshot and commit-range reads and never consumes batch-selected files.
     //
-    // Ask for per-file record counts exactly when DeltaV2Scan will consume numRows: this must stay
-    // in sync with DeltaV2Scan.arePlanStatsEnabled, which gates the reading side. Note this only
-    // affects the no-limit branch below -- V1's limit-aware filesForScan takes no keepNumRecords
-    // and always drops per-file stats, so there DeltaV2Scan falls back to DeltaScan.scanned.rows.
+    // Ask for per-file record counts exactly when DeltaV2Scan will consume them for scan metadata.
+    // This must stay in sync with DeltaV2Scan.arePlanStatsEnabled, which gates the reading side.
+    // Note this only affects the no-limit branch below -- V1's limit-aware filesForScan takes no
+    // keepNumRecords and always drops per-file stats, so DeltaV2Scan falls back to
+    // DeltaScan.scanned.rows there.
     val sparkSession = SparkSession.active
     val sqlConf = SQLConf.get
     val keepNumRecords = sqlConf.cboEnabled || sqlConf.planStatsEnabled
