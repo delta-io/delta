@@ -64,7 +64,9 @@ val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
-val flinkVersion = sys.props.getOrElse("flinkVersion", "2.3.0")
+val flinkVersion = FlinkVersionSpec.selectedVersion
+// Publish one artifact per compatible Flink minor line, for example delta-flink_2.0.
+val flinkCompatibilityVersion = FlinkVersionSpec.compatibilityVersion(flinkVersion)
 val gcsConnectorVersion = "4.0.4"
 
 // Optional kernel version override. See `project/KernelVersion.scala` for the
@@ -1636,12 +1638,13 @@ lazy val flink = (project in file("flink"))
   .dependsOn(kernelUnityCatalog)
   .settings(
     name := "delta-flink",
+    moduleName := s"delta-flink_$flinkCompatibilityVersion",
     commonSettings,
     releaseSettings,
     javafmtCheckSettings(),
     publishArtifact := scalaBinaryVersion.value == "2.13", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
-    assembly / assemblyJarName := s"delta-flink-$flinkVersion-${version.value}.jar",
+    assembly / assemblyJarName := s"${moduleName.value}-${version.value}.jar",
     assembly / assemblyMergeStrategy := {
       // Discard module-info.class files from Java 9+ modules and multi-release JARs
       case "module-info.class" => MergeStrategy.discard
@@ -1946,7 +1949,8 @@ releaseProcess := Seq[ReleaseStep](
   setReleaseVersion,
   commitReleaseVersion,
   tagRelease
-) ++ CrossSparkVersions.crossSparkReleaseSteps("publishSigned") ++ Seq[ReleaseStep](
+) ++ CrossSparkVersions.crossSparkReleaseSteps("publishSigned") ++
+  CrossFlinkVersions.crossFlinkReleaseSteps("publishSigned") ++ Seq[ReleaseStep](
 
   // Do NOT use `sonatypeBundleRelease` - it will actually release to Maven! We want to do that
   // manually.

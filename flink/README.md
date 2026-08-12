@@ -14,11 +14,8 @@ Delta tests the latest patch release from each supported Flink minor line:
 | Flink line | Tested version |
 |------------|----------------|
 | 2.0        | 2.0.2          |
-| 2.1        | 2.1.3          |
-| 2.2        | 2.2.1          |
-| 2.3        | 2.3.0          |
 
-The default build uses Flink 2.3.0. To build and test another supported version, set
+The default build uses Flink 2.0.2. To test another Flink version during development, set
 `flinkVersion` on the command line:
 
 ```bash
@@ -60,7 +57,7 @@ sbt flink/assembly
 #### Build Output
 
 After a successful build:
-- An **assembly JAR** will be generated
+- An assembly JAR named `delta-flink_<flink_line>-<delta_version>.jar` will be generated
 - The JAR already contains **Delta Kernel**
 - The JAR must be made available to Flink (see quick start below)
 
@@ -97,7 +94,7 @@ This repository includes a local Flink environment for quick testing via Docker 
 
    We provide two Flink version under `docker`
    ```bash
-   cp flink/target/delta-flink-<flink_version>-*.jar flink/docker/<flink_version>/usrlib
+   cp flink/target/delta-flink_<flink_line>-*.jar flink/docker/<flink_version>/usrlib
    ```
 3. **(Only the first time) Download Additional Jars**
    ```bash
