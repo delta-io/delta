@@ -46,13 +46,6 @@ import org.apache.spark.util.ThreadUtils
  */
 trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker =>
 
-  /**
-   * Paths of files whose "same physical file" conflict with the winning transaction was resolved at
-   * the row level by [[resolveRowLevelConflicts]] (deletion vectors merged). The file-level delete
-   * and append checks skip these paths, since they have already been reconciled.
-   */
-  protected val rowLevelResolvedPaths = mutable.Set.empty[String]
-
   /** Whether row-level concurrency resolution is enabled and applicable to this table. */
   protected lazy val rowLevelConcurrencyEnabled: Boolean =
     spark.conf.get(DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_ENABLED) &&
@@ -62,28 +55,6 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
   /** The operation name of the winning commit, if available. */
   protected lazy val winningOperationName: Option[String] =
     winningCommitSummary.commitInfo.map(_.operation)
-
-  /**
-   * Whether a file added by the winning transaction can be skipped in the added-files (append)
-   * conflict check thanks to row-level concurrency resolution.
-   *
-   * This is true only when the file's "same physical file" conflict was already reconciled by
-   * merging deletion vectors ([[resolveRowLevelConflicts]] recorded the path in
-   * [[rowLevelResolvedPaths]]). In that case the winner's re-added `AddFile(P)` carries the winning
-   * DV that we already folded into the current transaction's merged DV, so re-checking it would be
-   * a false conflict.
-   *
-   * We deliberately do NOT skip a rewrite-only DML winner's *new image* files here (an UPDATE
-   * writes updated row values to a fresh path). Those are ordinary non-blind changed-data files
-   * and can legitimately conflict: e.g. an UPDATE can move a row *into* the loser's predicate
-   * (winner `SET x = 15`, loser `DELETE WHERE x > 10`, row was `x = 5`), a genuine write-skew that
-   * the DV union cannot detect. They are arbitrated by the standard added-files check (and, when
-   * enabled, by conflict-time data skipping over their stats).
-   */
-  protected def canSkipAddedFileForRowLevelConcurrency(addFile: AddFile): Boolean = {
-    if (!rowLevelConcurrencyEnabled) return false
-    rowLevelResolvedPaths.contains(addFile.path)
-  }
 
   /**
    * Resolves "same physical file" conflicts with the winning transaction at the row level.
@@ -179,33 +150,61 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
           reconcileOnePath).flatten
 
       // Apply per-file results on the caller thread (no shared-state races across the pool).
-      val replacements = mutable.Map.empty[String, (AddFile, RemoveFile)]
-      for ((path, rebased) <- reconciled) {
-        replacements(path) = rebased
-        rowLevelResolvedPaths += path
-      }
-
+      val replacements = reconciled.toMap
       if (replacements.nonEmpty) {
+        val resolvedPaths = replacements.keySet
+
+        // Rewrite BOTH sides of the conflict so the residual is a plain no-conflict state that the
+        // file-level checks (unchanged from upstream) handle. Current txn: rebase each AddFile(P)
+        // onto the merged DV and each RemoveFile(P) onto the winner's post-image, and drop P from
+        // readFiles (it is no longer "read" for the delete-read check).
         val newActions = currentTransactionInfo.actions.map {
           case a: AddFile if replacements.contains(a.path) => replacements(a.path)._1
           case r: RemoveFile if replacements.contains(r.path) => replacements(r.path)._2
           case other => other
         }
-        // Resolved files are no longer "read" for the purposes of the delete-read check.
-        val newReadFiles = currentTransactionInfo.readFiles
-          .filterNot(f => rowLevelResolvedPaths.contains(f.path))
+        val newReadFiles =
+          currentTransactionInfo.readFiles.filterNot(f => resolvedPaths.contains(f.path))
         currentTransactionInfo =
           currentTransactionInfo.copy(actions = newActions, readFiles = newReadFiles)
+        // Winning side: drop the reconciled AddFile(P)/RemoveFile(P) pair from the summary, so no
+        // check sees P as a winner-side add or remove.
+        winningCommitSummary = pruneReconciledFiles(winningCommitSummary, resolvedPaths)
 
         recordDeltaEvent(
           deltaLog,
           opType = "delta.rowLevelConcurrency.deletionVectorsMerged",
           data = Map(
             "winningCommitVersion" -> winningCommitVersion,
-            "resolvedPaths" -> rowLevelResolvedPaths.size,
+            "resolvedPaths" -> resolvedPaths.size,
             "winningOperation" -> winningOperationName.getOrElse("UNKNOWN")))
       }
     }
+  }
+
+  /**
+   * Returns a copy of `summary` with the reconciled files removed: for each resolved path we drop
+   * the winner's `AddFile(P)` (its deletion vector was folded into the current transaction's merged
+   * DV) and its `RemoveFile(P)` (tombstone of the shared pre-image). Rebuilding from the filtered
+   * action list recomputes the derived views (`addedFiles`, `removedFiles`,
+   * `changedDataAddedFiles`, ...), so the file-level conflict checks see a winner that never
+   * touched these files.
+   *
+   * Only the same-path reconciled pair is pruned. A rewrite-only DML winner's *new image* files (an
+   * UPDATE writes updated row values to a fresh path) are left in the summary and arbitrated by the
+   * standard added-files check: an UPDATE can move a row *into* the loser's predicate (winner
+   * `SET x = 15`, loser `DELETE WHERE x > 10`, row was `x = 5`), a genuine write-skew the DV union
+   * cannot detect. All non-file actions (protocol, metadata, domain metadata) are preserved.
+   */
+  private def pruneReconciledFiles(
+      summary: WinningCommitSummary,
+      resolvedPaths: Set[String]): WinningCommitSummary = {
+    val prunedActions = summary.actions.filterNot {
+      case a: AddFile => resolvedPaths.contains(a.path)
+      case r: RemoveFile => resolvedPaths.contains(r.path)
+      case _ => false
+    }
+    new WinningCommitSummary(prunedActions, summary.fileStatus, summary.readTimeMs)
   }
 
   /**
