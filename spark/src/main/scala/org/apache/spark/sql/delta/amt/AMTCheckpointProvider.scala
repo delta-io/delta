@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
-import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, Metadata, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.util.DeltaEncoder
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -160,7 +160,8 @@ final class AMTCheckpointProvider(
       }
     }.toMap
     val mdvBroadcast = spark.sparkContext.broadcast(mdvByLeaf)
-    val dataEntries = AMTCheckpointProvider.loadEntriesWithLocation(spark, deltaLog, index)
+    val dataEntries = AMTCheckpointProvider.loadEntriesWithLocation(
+      deltaLog, index, checkpointAction.metaData)
       .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
       .where(col("entry.tracking.status").isin(
         AMTCheckpointProvider.liveDataEntryStatuses.toSeq: _*))
@@ -247,14 +248,12 @@ object AMTCheckpointProvider {
    * Builds a provider from an emitted [[Checkpoint]] action by reading the leaf pointers out of the
    * root manifest parquet.
    *
-   * @param spark      Active SparkSession used to read the root parquet.
    * @param deltaLog   The table's DeltaLog, used to read the root via `loadIndex` (which bypasses
    *                   the path-based Delta format check the root file under the table root would
    *                   otherwise trip).
    * @param checkpoint The inline-emitted checkpoint action carrying the `contentRoot`.
    */
   def fromCheckpoint(
-      spark: SparkSession,
       deltaLog: DeltaLog,
       checkpoint: Checkpoint): AMTCheckpointProvider = {
     val tableRoot = deltaLog.dataPath
@@ -263,7 +262,7 @@ object AMTCheckpointProvider {
       DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
     // The root manifest is small (one row per leaf), so collect it to the driver to enumerate the
     // leaf pointers.
-    val leaves = loadEntries(spark, deltaLog, index).collect().toSeq
+    val leaves = loadEntries(deltaLog, index, checkpoint.metaData).collect().toSeq
       .filter(_.content_type == AMTSingleAction.ContentType.Type.DataManifest)
       .map(_.unwrap.asInstanceOf[DataManifestEntry])
     new AMTCheckpointProvider(checkpointAction = checkpoint, leaves = leaves, tableRoot = tableRoot)
@@ -279,14 +278,13 @@ object AMTCheckpointProvider {
 
   /** Reads the AMT root and returns the live [[DataEntry]]s tracked by root. */
   private[amt] def readLiveRootDataEntries(
-      spark: SparkSession,
       deltaLog: DeltaLog,
       checkpoint: Checkpoint): Seq[AddFile] = {
     val tableRoot = deltaLog.dataPath
     val rootFile = checkpoint.contentRoot.toFileStatus(tableRoot)
     val index =
       DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
-    loadEntries(spark, deltaLog, index).collect().toSeq
+    loadEntries(deltaLog, index, checkpoint.metaData).collect().toSeq
       .filter(_.content_type == AMTSingleAction.ContentType.Type.Data)
       .map(_.unwrap.asInstanceOf[DataEntry])
       .filter(e => liveDataEntryStatuses.contains(e.tracking.status))
@@ -298,29 +296,42 @@ object AMTCheckpointProvider {
    * [[AMTSingleAction]].
    */
   private def loadEntries(
-      spark: SparkSession,
       deltaLog: DeltaLog,
-      index: DeltaLogFileIndex): Dataset[AMTSingleAction] = {
+      index: DeltaLogFileIndex,
+      metadata: Metadata): Dataset[AMTSingleAction] = {
     import org.apache.spark.sql.delta.implicits._
-    deltaLog.loadIndex(index, spark.emptyDataset[AMTSingleAction].schema).as[AMTSingleAction]
+    val persistedSchema = AMTSingleAction.persistedSchema(metadata.partitionSchema)
+    val persisted = deltaLog.loadIndex(index, persistedSchema)
+    AMTPartitionValues.forRead(persisted, metadata.partitionSchema)
+      .as[AMTSingleAction]
   }
 
   /**
    * Like [[loadEntries]], but also captures each row's physical read location.
    */
   private def loadEntriesWithLocation(
-      spark: SparkSession,
       deltaLog: DeltaLog,
-      index: DeltaLogFileIndex): Dataset[AMTDataEntryWithLocation] = {
+      index: DeltaLogFileIndex,
+      metadata: Metadata): Dataset[AMTDataEntryWithLocation] = {
     import org.apache.spark.sql.delta.implicits._
     implicit val entryLocEncoder: Encoder[AMTDataEntryWithLocation] =
       amtDataEntryWithLocationEncoder
-    val amtSchema = spark.emptyDataset[AMTSingleAction].schema
-    deltaLog.loadIndex(index, amtSchema)
+    val persistedSchema = AMTSingleAction.persistedSchema(metadata.partitionSchema)
+    val persisted = deltaLog.loadIndex(index, persistedSchema)
       .select(
-        struct(amtSchema.fieldNames.toIndexedSeq.map(col): _*).as("entry"),
-        col(s"$METADATA_NAME.$FILE_PATH").as("leafPath"),
-        col(s"$METADATA_NAME.${ParquetFileFormat.ROW_INDEX}").as("pos"))
+        persistedSchema.fieldNames.toIndexedSeq.map(col) :+
+          col(s"$METADATA_NAME.$FILE_PATH").as("leafPath") :+
+          col(s"$METADATA_NAME.${ParquetFileFormat.ROW_INDEX}").as("pos"): _*)
+    AMTPartitionValues.forRead(persisted, metadata.partitionSchema)
+      .select(
+        struct(
+          amtSingleActionEncoder
+            .schema
+            .fieldNames
+            .toIndexedSeq
+            .map(col): _*).as("entry"),
+        col("leafPath"),
+        col("pos"))
       .as[AMTDataEntryWithLocation]
   }
 }

@@ -52,12 +52,6 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
       }.toMap
   }
 
-  /**
-   * All live [[AddFile]]s of snapshot.
-   */
-  private def liveAddFiles(snapshot: Snapshot): Seq[AddFile] =
-    snapshot.allFiles.collect().toSeq
-
   /** All actions committed after `afterVersion`, up to the latest version. */
   private def actionsAfter(deltaLog: DeltaLog, afterVersion: Long): Seq[Action] = {
     val latest = deltaLog.update().version
