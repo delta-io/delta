@@ -5,7 +5,7 @@ This protocol change adds support for the `file` data type.
 The `file` data type stores a reference to a range of bytes that may be located inline in the value, elsewhere within the same data file, or in an external file.
 It is intended for use cases such as file inventories, manifests, and unstructured-data references (for example, images or audio stored in object storage), which are increasingly common with AI/ML workloads.
 
-The `file` data type is the Delta mapping of the Parquet [`FILE` logical type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) (introduced in [apache/parquet-format#585](https://github.com/apache/parquet-format/pull/585)). This RFC is aligned with that specification: the physical Parquet representation, the field set, and the byte-resolution rules defined here match the Parquet `FILE` type so that a Delta `file` column round-trips through Parquet without loss.
+The `file` data type is the Delta mapping of the Parquet [`FILE` logical type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) (introduced in [apache/parquet-format#585](https://github.com/apache/parquet-format/pull/585)). Delta follows that specification for the physical representation, field set, and byte-resolution rules; this RFC defines how the type is represented in the Delta schema and how it interacts with Delta features.
 
 --------
 
@@ -16,7 +16,7 @@ The `file` data type is the Delta mapping of the Parquet [`FILE` logical type](h
 This feature enables support for the `file` data type, which stores a reference to a range of bytes.
 A `file` value resolves to bytes that are located in one of three ways:
 - **inline** — the bytes are stored directly in the value,
-- **self-reference** — the bytes are stored within the same data file that holds this `file` value, addressed by a byte range (`offset` / `size`) with no `uri`. The bytes are written between column chunks and are not otherwise referenced by the Parquet footer, so a reader locates them within the current file rather than opening an external one. See [Byte Resolution](#byte-resolution).
+- **self-reference** — the bytes are stored within the same data file that holds this `file` value, addressed by a byte range with no `uri`, and
 - **external** — the bytes are stored in a separate file at a given `uri`.
 
 The schema serialization method is described in [Schema Serialization Format](#schema-serialization-format), and the physical encoding is described in [File data in Parquet](#file-data-in-parquet).
@@ -52,100 +52,22 @@ To support this feature:
 
 ## File data in Parquet
 
-The `file` data type is represented in Parquet as a group annotated with the Parquet `FILE` logical type, as specified in [Parquet LogicalTypes.md](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file).
-The group may contain the following fields, identified by name (matched case-sensitively, not by field order). Field IDs, if they exist, may also be used for projection. Every field is optional both in the schema and in the data: a writer may omit any field from the group definition, and any field that is present has repetition type `OPTIONAL`. A group need only define the fields it uses (for example, an inline-only column may define just `inline`, and a whole-file external reference may define just `uri`).
+Delta follows the Parquet `FILE` logical type. A `file` column is stored in Parquet as a group annotated with the `FILE` logical type, and its physical field set, the rules for resolving a value to bytes (inline, self-reference, or external file), the `checksum` encoding, compression, encryption restrictions, and validation are exactly as defined in the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file). This RFC does not restate those rules.
 
-A field is *set* when it is present in the group and its value is non-null (and, for string fields, non-empty). A field is *not set* when it is absent from the group, or is present but null or empty. (Implementations are not expected to treat empty strings as null.)
-
-Struct field name | Parquet primitive type | Description
--|-|-
-uri | binary (`STRING`) | A URI-reference as defined by [RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986), which may be absolute or relative (for example, `s3://bucket/file.jpg`). No additional encoding (such as URI encoding) is applied on top of the user-provided value. If `uri` is not set, the value refers to the current file (a self-reference).
-offset | int64 | The start of the byte range within the referenced data. Must not be negative. If not set, readers must treat it as 0; if set and non-zero, readers must seek to this offset. `offset` must be set for a self-reference (`uri` not set), and is optional for an external reference.
-size | int64 | The byte length of the referenced data. Must be zero or a positive integer if set; 0 indicates empty referenced data. `size` must be set whenever `offset` is set. It may be omitted only for a whole-file external reference (`uri` set, `offset` not set), in which case the range runs to the end of the referenced file.
-content_type | binary (`STRING`) | The media type (MIME type), as defined by [RFC 2046](https://datatracker.ietf.org/doc/html/rfc2046), of the resolved bytes, for example `image/png`. When not set, the type may be assumed to be `application/octet-stream`.
-checksum | binary (`STRING`) | A self-describing integrity token for the resolved bytes, of the form `<algorithm>:<digest>` (see [Checksum](#checksum)).
-inline | binary | The referenced bytes stored inline in the value. If `inline` is set, it supplies the bytes and any locator fields (`uri`, `offset`, `size`) that are set are provenance only.
-
-A value resolves to bytes determined by `inline` / `uri` / `offset` / `size`; `content_type` and `checksum` are metadata describing whatever is resolved. The resolution rules are given in [Byte Resolution](#byte-resolution).
-
-Because every field is optional, a group need only define the fields it uses. An example group that defines all fields:
-
-```
-optional group profile_image (FILE) {
-  optional binary uri (STRING);
-  optional int64 offset;
-  optional int64 size;
-  optional binary content_type (STRING);
-  optional binary checksum (STRING);
-  optional binary inline;
-}
-```
-
-A column whose values are always stored inline may define just `inline` (optionally with `content_type`):
-
-```
-optional group inline_file (FILE) {
-  optional binary inline;
-  optional binary content_type (STRING);
-}
-```
-
-### Checksum
-
-The `checksum` field is a self-describing token of the form `<algorithm>:<digest>`, where `<digest>` is encoded according to the `Encoding` column below. It generalizes the storage-system eTag. Readers should ignore unknown algorithms. The recognized algorithms are:
-
-Algorithm | Encoding | Notes
--|-|-
-`ETAG` | opaque | The object-store eTag, not recomputable.
-`MD5` | lowercase hex | As defined in [RFC 1321](https://datatracker.ietf.org/doc/html/rfc1321), represented as 32 hex characters.
-`CRC32` | lowercase hex | As defined in [RFC 2083](https://datatracker.ietf.org/doc/html/rfc2083), represented as 8 hex characters.
-`CRC32C` | lowercase hex | As defined in [RFC 3385](https://datatracker.ietf.org/doc/html/rfc3385), represented as 8 hex characters.
-`SHA-256` | lowercase hex | As defined in [RFC 6234](https://datatracker.ietf.org/doc/html/rfc6234), represented as 64 hex characters.
-
-The `<digest>` encodings are:
-- **lowercase hex**: the digest bytes rendered as lowercase hexadecimal, two characters per byte and no separators (for example, `MD5:d41d8cd98f00b204e9800998ecf8427e`).
-- **opaque**: the token supplied verbatim by the object store, used only for equality comparison and not otherwise interpreted.
-
-`checksum` applies to the resolved bytes, except for `ETAG`, which is the object-store eTag for the whole file referenced by `uri`.
-
-### Byte Resolution
-
-A value resolves to bytes based on which of `inline`, `uri`, `offset`, and `size` are set. `size` must be set whenever `offset` is set, so every offset-based read carries an explicit `size`; `size` may be omitted only for a whole-file external reference.
-
-`inline` | `uri` | `offset` | `size` | Resolves to
-:-:|:-:|:-:|:-:|-
-set | – | – | – | The `inline` bytes.
-– | set | – | – | The whole external file at `uri`.
-– | set | – | set | External `uri`, `[0, size)`.
-– | set | set | set | External `uri`, `[offset, offset + size)`.
-– | – | set | set | This file, `[offset, offset + size)` (self-reference).
-– | set | set | – | Invalid (`offset` set without `size`).
-– | – | set | – | Invalid (`offset` set without `size`).
-– | – | – | set | Invalid (`size` set without `uri` or `offset`).
-– | – | – | – | Nothing — invalid (use column nullability for a null value).
-
-A self-reference points within the same Parquet data file using `offset` and `size` (both required); the bytes are written between column chunks and are not otherwise referenced by the footer. A self-reference is the *absence* of `uri`, never an absolute path back to the current file, so a data file containing self-references is renamed or relocated as a single unit.
-
-The referenced bytes (both `inline` and self-reference regions) are compressed with the same `CompressionCodec` as the one configured for the `inline` column; `size` is therefore the length of the compressed region on disk. External referents (`uri` set) are opaque to Parquet and stored as-is.
-
-Parquet data files containing self-references must not use Parquet modular encryption: self-referenced byte ranges are not Parquet encryption modules and therefore cannot be encrypted or authenticated independently. Encryption of external files referenced by `uri` is outside the scope of the Parquet format (and thus of this feature).
+For reference, the `FILE` group may contain the following optional fields: `uri`, `offset`, `size`, `content_type`, `checksum`, and `inline`. A value resolves to bytes located inline in the value, within the same data file (a self-reference), or in an external file at a `uri`; `content_type` and `checksum` are metadata describing the resolved bytes. See the Parquet specification for the exact field semantics and resolution rules.
 
 ## Writer Requirements for File Data Type
 
 When File type is supported (`writerFeatures` field of a table's `protocol` action contains `fileType`), writers:
-- must write a column of type `file` to Parquet as a group annotated with the Parquet `FILE` logical type, whose fields are drawn from the set `uri`, `offset`, `size`, `content_type`, `checksum`, and `inline`, with the Parquet primitive types described in [File data in Parquet](#file-data-in-parquet). The group need only define the fields it uses; any field it does define must be optional.
-- must not rename the fields within a `FILE`-annotated group; the field names above are normative.
-- must write every value so that it resolves to a referent according to [Byte Resolution](#byte-resolution). In particular, `size` must be set whenever `offset` is set, and a self-reference (`uri` not set) must set `offset` (and therefore `size`). A value that does not resolve to any referent is invalid and must be represented as a column null instead.
-- must, when writing a `checksum`, use the `<algorithm>:<digest>` form with one of the recognized algorithms and its digest encoding in [Checksum](#checksum).
+- must write a column of type `file` to Parquet as a group annotated with the Parquet `FILE` logical type, conforming to the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) — including its field names and types, byte-resolution rules, `checksum` encoding, and validation. A value that does not resolve to any referent is invalid and must be represented as a column null instead.
 - must store additional metadata about a file (for example, a modification timestamp) adjacent to the `file` column, not inside the `FILE`-annotated group.
 
 ## Reader Requirements for File Data Type
 
 When File type is supported (`readerFeatures` field of a table's `protocol` action contains `fileType`), readers:
 - must recognize and tolerate a `file` data type in a Delta schema.
-- must use the correct physical schema (a Parquet `FILE`-annotated group with the optional fields described in [File data in Parquet](#file-data-in-parquet)) when reading a `file` data type from a file.
-- must resolve each value to bytes according to [Byte Resolution](#byte-resolution), including the self-reference case (locating the bytes within the same data file when `uri` is absent).
-- may return a `null` `file` value for a row whose reference is invalid (does not resolve to any referent per [Byte Resolution](#byte-resolution)).
+- must read the `file` column from its Parquet `FILE`-annotated group and resolve each value to bytes per the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file), including the self-reference case (locating the bytes within the same data file when `uri` is absent).
+- may return a `null` `file` value for a row whose reference is invalid (does not resolve to any referent).
 - must make the column available to the engine:
     - [Recommended] Expose and interpret the group as a single `file` value, resolving inline, self-reference, and external bytes on access.
     - [Alternate] Expose the raw physical group (the set of present fields), for example if the engine does not natively support the `file` type.
@@ -154,8 +76,8 @@ When File type is supported (`readerFeatures` field of a table's `protocol` acti
 
 Feature | Support for File Data Type
 -|-
-Partition Columns | **Supported:** A `file` column is allowed to be a non-partitioned column of a partitioned table. <br/> **Unsupported:** A `file` value is a group and cannot be serialized to a partition-value string, so a `file` column cannot be a partition column.
-Clustered Tables | **Supported:** A `file` column is allowed to be a non-clustering column of a clustered table. <br/> **Unsupported:** A `file` value is a group and is not a comparable data type as a whole, so a `file` column cannot be a clustering column.
+Partition Columns | A `file` column cannot be chosen as a partition column (a `file` value is a group and cannot be serialized to a partition-value string), but it can be used as a data column of a partitioned table.
+Clustered Tables | A `file` column cannot itself be chosen as a clustering column (a `file` value is a group and is not a comparable data type as a whole), but it can be used as a non-clustering data column of a clustered table. Its comparable leaf fields (for example, `size` or `content_type`) may be used as clustering columns, consistent with [Statistics for File Columns](#statistics-for-file-columns).
 Delta Column Statistics | **Supported:** A `file` column supports the `nullCount` statistic, and `minValues` / `maxValues` on its comparable leaf fields. See [Statistics for File Columns](#statistics-for-file-columns). <br/> **Unsupported:** The `file` column as a whole is not a comparable data type, and the `inline` field does not support `minValues` / `maxValues`.
 Generated Columns | **Supported:** A `file` column is allowed to be used as a source in a generated column expression. <br/> **Open question:** Whether `file` may be the *result* type of a generated column expression (for example, constructing a `file` reference from other columns) is left open for discussion on the associated issue, and is not specified by this RFC.
 Delta CHECK Constraints | **Supported:** A `file` column is allowed to be used for a CHECK constraint expression.
@@ -178,37 +100,18 @@ The set of columns for which statistics are collected is otherwise governed by t
 
 A `file` value is a reference, and it is stored in the table's data files like any other column value. Delta therefore time-travels and change-data-feeds the **reference**: querying a historical version of the table, or reading `file` columns through the Change Data Feed, returns the reference values exactly as they were written at that version.
 
-Delta makes **no guarantee about the referenced bytes**, because those bytes live outside the Delta transaction log:
+For **inline** and **self-reference** values, the referenced bytes are stored within the data file itself, so they are versioned and time-travel with the table like any other column data.
+
+For **external** references (a `uri` is set), Delta makes **no guarantee about the referenced bytes**, because those bytes live outside the Delta transaction log:
 
 - The bytes may be overwritten or deleted independently of the table, so dereferencing a reference read from a historical version (via time travel or Change Data Feed) may fail or may return different bytes than when the reference was written. The `checksum` field, when present, allows a reader to detect that the bytes have changed, but does not allow it to recover the original bytes.
-- Availability of the referenced bytes is orthogonal to which table version is queried: time travel of the reference does not imply time travel of the bytes.
-
-## Storage Mode
-
-A `file` column optionally carries a **storage mode** that records whether the referenced bytes are `managed` (their lifecycle is intended to be governed by the table/engine) or `external` (owned entirely outside the table), or leaves the column unqualified. The storage mode is a property of the *column*, not of an individual value, and it is stored in the column's [schema metadata](#schema-serialization-format) rather than inside the `file` value. This is intentional: the physical `file` value must round-trip through the Parquet `FILE` logical type (and equivalents such as Iceberg's file reference), whose field set is fixed, so a mode stored inside the value would not survive the round-trip. Keeping the mode in schema metadata also lets it propagate through the Delta transaction log unchanged.
-
-The storage mode is recorded in the `__FILE_TYPE_MODE` key of the metadata of the nearest ancestor [StructField](#struct-field), as a JSON object mapping a field path to one of `MANAGED`, `EXTERNAL`, or `UNKNOWN`. Nested maps and arrays are encoded using the same field-path convention as identifiers in [IcebergCompatV2](#writer-requirements-for-icebergcompatv2) (for example, `arr.element`). This mirrors the representation used for the [Collated String Type](#collated-string-type) (`__COLLATIONS`). A `file` column with no `__FILE_TYPE_MODE` entry is an unqualified `file` reference.
-
-This RFC standardizes only the **representation** of the storage mode, so that a mode set by one engine propagates through the log and is visible to others. It does **not** assign any behavioral difference to `MANAGED` versus `EXTERNAL` in Delta: byte lifecycle, garbage collection, and access brokering are out of scope (see [Non-Goals](#non-goals)). Engines may attach their own semantics to the mode, but must not assume that reading or writing a mode changes how Delta itself manages the referenced bytes.
-
-Example schema for `profile_image FILE MANAGED` (irrelevant fields stripped):
-
-```
-{
-  "name" : "profile_image",
-  "type" : "file",
-  "nullable" : true,
-  "metadata" : {
-    "__FILE_TYPE_MODE" : { "profile_image" : "MANAGED" }
-  }
-}
-```
+- Availability of the externally-referenced bytes is orthogonal to which table version is queried: time travel of the reference does not imply time travel of the external bytes.
 
 ## Non-Goals
 
 The following are out of scope for this RFC:
 
-- **Lifecycle and garbage collection of referenced bytes.** This RFC defines `file` as a reference only; it does not specify how, or whether, the referenced bytes are created, retained, or reclaimed. In particular, although the [Storage Mode](#storage-mode) may record that a column is `managed`, this RFC does not define any resulting behavior, nor any interaction with `VACUUM`. Referenced bytes are managed out-of-band by the writer or an external system.
+- **Lifecycle and garbage collection of referenced bytes.** This RFC defines `file` as a reference only; it does not specify how, or whether, the referenced bytes are created, retained, or reclaimed, nor any interaction with `VACUUM`. Referenced bytes are handled out-of-band by the writer or an external system.
 - **Access brokering and governance** of the referenced bytes (for example, catalog-vended credentials or signed URLs).
 
 --------
@@ -230,12 +133,6 @@ type | Always the string "file"
 Add the following row to the Primitive Types table:
 
 > file | A reference to a range of bytes located inline, elsewhere in the same data file, or in an external file. When stored in a Parquet file it is a group annotated with the Parquet `FILE` logical type. To use this type, a table must support the feature `fileType`. See section [File Data Type](#file-data-type).
-
---------
-
-> ***Add a row to the [Column Metadata](#column-metadata) table***
-
-> \_\_FILE\_TYPE\_MODE | The [storage mode](#storage-mode) (`MANAGED`, `EXTERNAL`, or `UNKNOWN`) of `file`-typed fields, or combinations of maps and arrays, stored in this field. Encoded as a JSON object mapping field path to mode. See [Storage Mode](#storage-mode) for details.
 
 --------
 
