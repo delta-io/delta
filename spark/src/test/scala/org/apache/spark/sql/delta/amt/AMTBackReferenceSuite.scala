@@ -42,7 +42,7 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
    */
   private def leafLocationByBackRef(snapshot: Snapshot): Map[(String, Long), String] = {
     val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
-      provider.leafManifestAbsolutePaths.flatMap { leafPath =>
+      provider.liveLeafManifestAbsolutePaths.flatMap { leafPath =>
         val relManifest = relativeManifest(snapshot, leafPath)
         spark.read.parquet(leafPath.toString)
           .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
@@ -51,12 +51,6 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
           .map(row => (relManifest, row.getLong(1)) -> row.getString(0))
       }.toMap
   }
-
-  /**
-   * All live [[AddFile]]s of snapshot.
-   */
-  private def liveAddFiles(snapshot: Snapshot): Seq[AddFile] =
-    snapshot.allFiles.collect().toSeq
 
   /** All actions committed after `afterVersion`, up to the latest version. */
   private def actionsAfter(deltaLog: DeltaLog, afterVersion: Long): Seq[Action] = {
@@ -131,7 +125,7 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
       s"All $leafPackedFiles inserted files must be reconstructed from the leaves, " +
         s"got ${adds.size}.")
 
-    val leafPaths = context.provider.leafManifestAbsolutePaths
+    val leafPaths = context.provider.liveLeafManifestAbsolutePaths
       .map(relativeManifest(context.postCheckpointSnapshot, _)).toSet
     adds.foreach { add =>
       val br = add.backReference.getOrElse(

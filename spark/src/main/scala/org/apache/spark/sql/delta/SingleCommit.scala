@@ -16,10 +16,10 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.actions.{Action, Checkpoint}
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.fs.FileStatus
 
 /**
  * A handle to a single commit in the Delta log, standing in for the raw commit log file that
@@ -44,19 +44,37 @@ class SingleCommit private (
     SingleCommit.createRewindableActionIterator(deltaLog, fileStatus, maxInMemoryFileSizeBytes)
 
   /**
-   * The modification time of this commit's log file. Delta internal only.
+   * Like [[getActionsIterator]], but asserts this commit is a log commit.
+   *
+   * @param maxInMemoryFileSizeBytes see [[getActionsIterator]].
+   */
+  private[delta] def getLogCommitActionsIteratorUnsafe(
+      maxInMemoryFileSizeBytes: Long = 0)
+      : ClosableIterator[Action] with SupportsRewinding[Action] = {
+    val underlying =
+      SingleCommit.createRewindableActionIterator(deltaLog, fileStatus, maxInMemoryFileSizeBytes)
+    new ClosableIterator[Action] with SupportsRewinding[Action] {
+      override def hasNext: Boolean = underlying.hasNext
+      override def next(): Action = underlying.next() match {
+        case _: Checkpoint =>
+          throw new IllegalStateException(
+            s"commit $version is a manifest commit and cannot be read as a log commit")
+        case action => action
+      }
+      override def close(): Unit = underlying.close()
+      override def rewind(): Unit = underlying.rewind()
+    }
+  }
+
+  /**
+   * The modification time of this commit's log file.
    */
   private[delta] def fileModificationTimestamp: Long = fileStatus.getModificationTime
 
   /**
-   * The size of this commit's log file, in bytes. Delta internal only.
+   * The size of this commit's log file, in bytes.
    */
-  private[delta] def sizeInBytes: Long = fileStatus.getLen
-
-  /**
-   * The commit log file's path. Should used by delta internal only.
-   */
-  private[delta] def path: Path = fileStatus.getPath
+  private[delta] def commitFileSizeInBytes: Long = fileStatus.getLen
 }
 
 object SingleCommit {

@@ -20,7 +20,6 @@ import static java.util.Objects.requireNonNull;
 import com.google.common.annotations.VisibleForTesting;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -36,6 +35,7 @@ import org.apache.spark.sql.connector.write.RequiresDistributionAndOrdering;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.streaming.StreamingWrite;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
@@ -80,7 +80,7 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
   private final Configuration hadoopConf;
   private final String tablePath;
   private final Snapshot initialSnapshot;
-  private final DeltaSnapshotManager snapshotManager;
+  private final DeltaV2SnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
   private final String queryId;
@@ -99,7 +99,7 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
       Configuration hadoopConf,
       String tablePath,
       Snapshot initialSnapshot,
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
       LogicalWriteInfo writeInfo) {

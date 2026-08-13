@@ -379,7 +379,7 @@ class SnapshotLastManifestCommitWithoutCRCSuite extends SnapshotLastManifestComm
       val checkpoint = checkpointAt(deltaLog, 4).getOrElse {
         fail("v4 must emit an inline AMT checkpoint action.")
       }
-      val provider = AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint)
+      val provider = AMTCheckpointProvider.fromCheckpoint(deltaLog, checkpoint)
       val coldSnapshot = freshSnapshotAt(name, 4)
       val segment = coldSnapshot.logSegment.copy(checkpointProvider = provider, deltas = Nil)
       val snapshot = new Snapshot(

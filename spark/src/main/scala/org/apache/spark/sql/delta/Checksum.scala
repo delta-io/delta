@@ -684,7 +684,9 @@ trait RecordChecksum extends DeltaLogging {
       .orElse {
         recordFrameProfile(
             "Delta", "VersionChecksum.incrementallyComputeAddFiles") {
-          oldSnapshot.map(_.allFiles.collect().toSeq)
+          // Reconstructing from the read snapshot can surface stale leaf back references when that
+          // snapshot's AMT tree still had leaf manifests so strip them here.
+          oldSnapshot.map(_.allFiles.collect().toSeq.map(_.copy(backReference = None)))
         }
       }
       .getOrElse { return None }
@@ -857,10 +859,23 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
    */
   def validateFileListAgainstCRC(checksum: VersionChecksum, contextOpt: Option[String]): Boolean = {
     val fileSortKey = (f: AddFile) => (f.path, f.modificationTime, f.size)
-    val filesFromCrc = checksum.allFiles.map(_.sortBy(fileSortKey)).getOrElse { return true }
-    val filesFromStateReconstruction = recordFrameProfile(
+    var filesFromCrc = checksum.allFiles.map(_.sortBy(fileSortKey)).getOrElse { return true }
+    var filesFromStateReconstruction = recordFrameProfile(
         "Delta", "snapshot.allFiles") {
       allFilesViaStateReconstruction.collect().toSeq.sortBy(fileSortKey)
+    }
+    // AMT manifest trees do not yet round-trip every AddFile field: `DataEntry.toAddFile` zeroes
+    // `modificationTime`, forces `dataChange = false`, drops `tags`, and reduces `stats` to
+    // `{"numRecords":n}`. Project both sides through that lossy lens before comparing.
+    if (protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+      def normalizeForAmtTreeRoundTrip(f: AddFile): AddFile = f.copy(
+        modificationTime = 0L,
+        dataChange = false,
+        tags = null,
+        stats = f.numPhysicalRecords.map(n => s"""{"numRecords":$n}""").getOrElse(null))
+      filesFromCrc = filesFromCrc.map(normalizeForAmtTreeRoundTrip).sortBy(fileSortKey)
+      filesFromStateReconstruction =
+        filesFromStateReconstruction.map(normalizeForAmtTreeRoundTrip).sortBy(fileSortKey)
     }
     if (filesFromCrc == filesFromStateReconstruction) return true
 

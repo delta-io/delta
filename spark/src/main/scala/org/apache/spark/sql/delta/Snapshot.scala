@@ -635,7 +635,8 @@ class Snapshot(
             col("add.baseRowId"),
             col("add.defaultRowCommitVersion"),
             col("add.clusteringProvider"),
-            col("add.backReference")
+            col("add.backReference"),
+            col("add.amtPassthrough")
           )))
         .withColumn("remove", when(
           col("remove.path").isNotNull,
@@ -954,7 +955,20 @@ object Snapshot extends DeltaLogging {
    * If the oldSnapshot itself is missing, we don't incrementally compute the checksum.
    */
   private[delta] def shouldIncludeAddFilesInCrc(
-      spark: SparkSession, snapshot: Snapshot, metadata: Metadata): Boolean = {
+      spark: SparkSession,
+      snapshot: Snapshot,
+      metadata: Metadata,
+      effectiveLatestAMTCheckpointAtCommitVersion: Option[Checkpoint] = None): Boolean = {
+    // An AMT table may carry AddFiles in the incremental CRC only when the manifest tree that will
+    // back the resulting snapshot is ROOT-ONLY (no leaf manifests). This is because the incremental
+    // AddFile-generation logic cannot handle back references (yet): it writes allFiles into the CRC
+    // without them. Only leaf-resident files carry a back reference, so a root-only tree yields a
+    // back-reference-free list that matches state reconstruction.
+    if (snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+      val rootOnly =
+        effectiveLatestAMTCheckpointAtCommitVersion.exists(_.contentRoot.numLeaves.contains(0L))
+      if (!rootOnly) return false
+    }
     allFilesInCrcWritePathEnabled(spark, snapshot) &&
       (snapshot.version == -1 || snapshot.metadata.schema == metadata.schema)
   }

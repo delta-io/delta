@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTestUtils, DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTestUtils, DeltaLog, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -52,6 +53,21 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   }
 
   testAcrossAMTCheckpointScenarios(
+      "plain AMT tables reconstruct AddFiles with no amtPassthrough",
+      "amt_passthrough_roundtrip")(
+      setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (2)"))) { context =>
+    // These are plain parquet/v4 files with no Iceberg passthrough, so `toAddFile` carries
+    // nothing (avoids per-file overhead).
+    val files = context.postCheckpointSnapshot.allFiles.collect()
+    assert(files.nonEmpty)
+    assert(files.forall(_.amtPassthrough.isEmpty),
+      s"plain AMT files must carry no passthrough; got " +
+        s"${files.map(_.amtPassthrough).mkString(", ")}")
+  }
+
+  testAcrossAMTCheckpointScenarios(
       "snapshot.allFiles matches leaves across insert/overwrite/delete before a checkpoint",
       "amt_overwrite")(
       setup = name => {
@@ -67,6 +83,291 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       "Only the surviving overwrite file should be live.")
     // The tree must capture exactly the surviving live files after overwrite + delete.
     assertReconstructsLiveFileSet(context)
+  }
+
+  // AMT inline or not should be irrelevant to test result.
+  testAcrossAMTCheckpointScenarios(
+    "amtPassthrough survives from one AMT into the next",
+    "amt_passthrough_amt_to_amt",
+    deferredScenarios = Seq.empty
+  )(
+    setup = name => {
+      sql(s"INSERT INTO $name VALUES (1)")
+      withSQLConf(
+        DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+          -> "1"
+      ) {
+        deltaLogForName(name)
+          .startTransaction()
+          .commit(
+            Seq(
+              createTestAddFile(encodedPath = "passthrough-file")
+                .copy(amtPassthrough = Some(fullPassthrough))
+            ),
+            DeltaOperations.ManualUpdate
+          )
+      }
+      // At this point tree should be materialized.
+      val seeded =
+        amtFilesInTree(deltaLogForName(name).update(), Some("passthrough-file"))
+      assert(
+        seeded.length == 1,
+        s"expected one tree entry for passthrough-file, got: $seeded."
+      )
+      assert(
+        seeded.head.amtPassthrough.contains(fullPassthrough),
+        "sanity: passthrough must be in the seeded AMT before the checkpoint."
+      )
+    },
+    inlineCheckpointTriggerActionsOrSQL =
+      Some(name => Right(s"INSERT INTO $name VALUES (100)"))
+  ) { context =>
+    val seededVersion = amtProvider(context.preCheckpointSnapshot)
+      .getOrElse(fail("the seed commit must have emitted an AMT"))
+      .version
+    assert(
+      context.provider.version > seededVersion,
+      s"a new AMT must have re-materialized past the seeded one at v$seededVersion; " +
+        s"got v${context.provider.version}."
+    )
+
+    // The passthrough survives into the re-materialized AMT and reconstructs on read.
+    val snapshot = context.postCheckpointSnapshot
+    val inTree = amtFilesInTree(snapshot, Some("passthrough-file"))
+    assert(
+      inTree.length == 1,
+      s"expected one tree entry for passthrough-file, got: $inTree."
+    )
+    assert(
+      inTree.head.amtPassthrough.contains(fullPassthrough),
+      s"passthrough must propagate into the re-materialized AMT; got " +
+        s"${inTree.head.amtPassthrough}."
+    )
+    val liveFile =
+      snapshot.allFiles.collect().filter(_.path == "passthrough-file")
+    assert(
+      liveFile.length == 1,
+      s"expected exactly one seeded file, got: ${liveFile.toSeq}."
+    )
+    assert(
+      liveFile.head.amtPassthrough.contains(fullPassthrough),
+      s"passthrough must reconstruct from the re-materialized AMT; got " +
+        s"${liveFile.head.amtPassthrough}."
+    )
+  }
+
+  // AMT inline or not should be irrelevant to test result.
+  testAcrossAMTCheckpointScenarios(
+    "amtPassthrough survives from one AMT, with in-place rewrite, into the next",
+    "amt_passthrough_inplace",
+    deferredScenarios = Seq.empty
+  )(
+    setup = name => {
+      sql(s"INSERT INTO $name VALUES (1)")
+      val log = deltaLogForName(name)
+      withSQLConf(
+        DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+          -> "1"
+      ) {
+        log
+          .startTransaction()
+          .commit(
+            Seq(
+              createTestAddFile(encodedPath = "passthrough-file")
+                .copy(
+                  amtPassthrough = Some(fullPassthrough),
+                  stats = """{"numRecords":1}"""
+                )
+            ),
+            DeltaOperations.ManualUpdate
+          )
+      }
+      val seedAMTVersion = amtProvider(log.update()).map(_.version)
+      // AMTPassthrough before the rewrite.
+      val seeded = amtFilesInTree(log.update(), Some("passthrough-file"))
+      assert(
+        seeded.length == 1,
+        s"expected one tree entry for passthrough-file, got: $seeded."
+      )
+      assert(
+        seeded.head.amtPassthrough.contains(fullPassthrough),
+        "passthrough seeded into the AMT."
+      )
+      val current = log
+        .update()
+        .allFiles
+        .collect()
+        .find(_.path == "passthrough-file")
+        .getOrElse(fail("passthrough-file must be live."))
+      assert(
+        current.amtPassthrough.contains(fullPassthrough),
+        s"the live file carries passthrough before the rewrite; got " +
+          s"${current.amtPassthrough}."
+      )
+
+      // The rewrite must land as a plain LOG commit.
+      withSQLConf(
+        DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+          -> Long.MaxValue.toString
+      ) {
+        log
+          .startTransaction()
+          .commit(
+            Seq(
+              current.copy(
+                stats = """{"numRecords":1,"probe":true}""",
+                dataChange = false
+              )
+            ),
+            DeltaOperations.ComputeStats(predicate = Nil)
+          )
+      }
+      // Verify that AMT checkpoint version stays the same.
+      val afterRewriteAMTVersion = amtProvider(log.update()).map(_.version)
+      assert(
+        afterRewriteAMTVersion == seedAMTVersion,
+        s"the in-place rewrite must NOT be committed into an AMT; the tree moved from " +
+          s"$seedAMTVersion to $afterRewriteAMTVersion."
+      )
+
+      // The reconstructed live file keeps its passthrough, and the stats update lands.
+      val afterRewrite =
+        log.update().allFiles.collect().filter(_.path == "passthrough-file")
+      assert(afterRewrite.length == 1)
+      assert(
+        afterRewrite.head.stats == """{"numRecords":1,"probe":true}""",
+        "the in-place stats update itself must land."
+      )
+      assert(
+        afterRewrite.head.amtPassthrough.contains(fullPassthrough),
+        s"passthrough must survive the in-place rewrite; got " +
+          s"${afterRewrite.head.amtPassthrough}."
+      )
+    },
+    inlineCheckpointTriggerActionsOrSQL =
+      Some(name => Right(s"INSERT INTO $name VALUES (100)"))
+  ) { context =>
+    // A new AMT re-materialized past the rewrite and still carries the passthrough.
+    val seededVersion = amtProvider(context.preCheckpointSnapshot)
+      .getOrElse(fail("the seed commit must have emitted an AMT"))
+      .version
+    assert(
+      context.provider.version > seededVersion,
+      s"a new AMT must have re-materialized past the rewrite; the tree is still at " +
+        s"v${context.provider.version} (seeded at v$seededVersion)."
+    )
+    val snapshot = context.postCheckpointSnapshot
+    val survived = amtFilesInTree(snapshot, Some("passthrough-file"))
+    assert(
+      survived.length == 1,
+      s"expected one tree entry for passthrough-file, got: $survived."
+    )
+    assert(
+      survived.head.amtPassthrough.contains(fullPassthrough),
+      s"passthrough must survive into the re-materialized AMT; got " +
+        s"${survived.head.amtPassthrough}."
+    )
+    val finalLive =
+      snapshot.allFiles.collect().filter(_.path == "passthrough-file")
+    assert(
+      finalLive.length == 1 &&
+        finalLive.head.amtPassthrough.contains(fullPassthrough),
+      s"passthrough must survive the rewrite + re-materialization; got " +
+        s"${finalLive.map(_.amtPassthrough).toSeq}."
+    )
+  }
+
+  // Bypasses `testAcrossAMTCheckpointScenarios`: this test needs the table to have NO AMT at all
+  // while the passthrough is seeded.
+  test("amtPassthrough from a log commit is carried into the next AMT") {
+    withSQLConf(
+      DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+        -> "1"
+    ) {
+      withTable("amt_passthrough_from_log_commit") {
+        val name = "amt_passthrough_from_log_commit"
+        createAMTTable(name, checkpointInterval = 10000)
+        val log = deltaLogForName(name)
+        assert(
+          amtProvider(log.update()).isEmpty,
+          "no AMT may exist before the first trigger."
+        )
+
+        // V1 is a LOG commit: the file's passthrough lives only in the commit JSON at this point.
+        val passthrough = fullPassthrough
+        val fileWithPassthrough = createTestAddFile(encodedPath = "passthrough-file")
+          .copy(amtPassthrough = Some(passthrough), stats = """{"numRecords":1}""")
+        log
+          .startTransaction()
+          .commit(Seq(fileWithPassthrough), DeltaOperations.ManualUpdate)
+        assert(
+          amtProvider(deltaLogForName(name).update()).isEmpty,
+          "the seeding commit must stay a LOG commit (no AMT yet)."
+        )
+        val fromLog = deltaLogForName(name)
+          .update()
+          .allFiles
+          .collect()
+          .filter(_.path == "passthrough-file")
+        assert(
+          fromLog.length == 1,
+          s"expected the seeded file to be live, got: ${fromLog.toSeq}."
+        )
+        assert(
+          fromLog.head.amtPassthrough.contains(passthrough),
+          s"the log-commit file must carry its passthrough; got " +
+            s"${fromLog.head.amtPassthrough}."
+        )
+
+        // Now trigger the table's first AMT.
+        sql(s"ALTER TABLE $name SET TBLPROPERTIES ('delta.checkpointInterval' = '2')")
+        sql(s"INSERT INTO $name VALUES (100)")
+        sql(s"INSERT INTO $name VALUES (101)")
+        val snapshot = deltaLogForName(name).update()
+        val amtVersion = amtProvider(snapshot).map(_.version)
+        assert(
+          amtVersion.contains(5L),
+          s"the first AMT must describe content version 5; got $amtVersion."
+        )
+
+        val inTree = amtFilesInTree(snapshot, Some("passthrough-file"))
+        assert(
+          inTree.length == 1,
+          s"expected one tree entry for passthrough-file, got: $inTree."
+        )
+        assert(
+          inTree.head.amtPassthrough.contains(passthrough),
+          s"the log commit's passthrough must be carried into the AMT; got " +
+            s"${inTree.head.amtPassthrough}."
+        )
+        val live = snapshot.allFiles.collect().filter(_.path == "passthrough-file")
+        assert(
+          live.length == 1 && live.head.amtPassthrough.contains(passthrough),
+          s"passthrough must reconstruct from the AMT; got " +
+            s"${live.map(_.amtPassthrough).toSeq}."
+        )
+      }
+    }
+  }
+
+  /**
+   * A passthrough with every [[AMTPassthrough]] field set, so tests use the whole carrier.
+   */
+  private def fullPassthrough: AMTPassthrough = AMTPassthrough(spec_id = Some(42))
+
+  /**
+   * The AMT-derived live [[AddFile]]s in the snapshot's current tree, optionally restricted to
+   * `path`.
+   */
+  private def amtFilesInTree(snapshot: Snapshot, path: Option[String] = None): Seq[AddFile] = {
+    val provider = amtProvider(snapshot).getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
+    val live = provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
+      .getOrElse(fail("AMT provider must contribute tree-derived file actions."))
+      .where("add is not null")
+      .select(col("add").as[AddFile])
+      .collect()
+      .toSeq
+    path.map(p => live.filter(_.path == p)).getOrElse(live)
   }
 
   testAcrossAMTCheckpointScenarios(
@@ -88,22 +389,22 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   }
 
   testAcrossAMTCheckpointScenarios(
-      "deletion vector round-trips through the leaves with a matching uniqueId",
+      "deletion vector round-trips through the leaves as an absolute-path DV",
       "amt_dv",
       sqlConfs = Seq(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false"))(
       setup = name => {
-        Seq(1, 2).toDF("id").coalesce(1)
-          .write.mode("append").insertInto(name) // one file, two rows.
+        Seq(10, 20, 30, 40, 50).toDF("id").coalesce(1)
+          .write.mode("append").insertInto(name)
         // Attach a persistent DV directly rather than relying on DELETE's rewrite heuristic.
         val log = deltaLogForName(name)
         val fileToDv = log.unsafeVolatileSnapshot.allFiles.collect()
-        assert(fileToDv.length == 1, "The two rows must land in a single file.")
-        val dvActions = writeFileWithDVOnDisk(log, fileToDv.head, RoaringBitmapArray(0L))
+        assert(fileToDv.length == 1, "The five rows must land in a single file.")
+        val dvActions = writeFileWithDVOnDisk(log, fileToDv.head, RoaringBitmapArray(0L, 2L, 4L))
         log.startTransaction().commit(dvActions, DeltaOperations.Delete(predicate = Seq.empty))
       }) { context =>
     val snapshot = context.postCheckpointSnapshot
     val provider = context.provider
-    checkAnswer(spark.read.table(context.tableName), Seq(Row(2)))
+    checkAnswer(spark.read.table(context.tableName), Seq(Row(20), Row(40)))
 
     // The one surviving live file must carry a deletion vector in committed state.
     val committed = snapshot.allFiles.collect()
@@ -111,14 +412,10 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     val committedFile = committed.head
     val committedDv = committedFile.deletionVector
     assert(committedDv != null, "The committed file must carry a deletion vector.")
-    // Two physical rows, one deleted by the DV -> one logical row.
-    assert(committedFile.numPhysicalRecords.contains(2L))
-    assert(committedFile.numLogicalRecords.contains(1L))
+    // Five physical rows, three deleted by the DV -> two logical rows.
+    assert(committedFile.numPhysicalRecords.contains(5L))
+    assert(committedFile.numLogicalRecords.contains(2L))
 
-    // The leaf-reconstructed AddFile must recover a DV with the SAME uniqueId, so the
-    // (path, deletionVectorUniqueId) dedup key matches the committed file exactly (no
-    // double-count in the reader path). uniqueId is
-    // storageType + pathOrInlineDv (+ "@offset"), so compare it from the reconstructed fields.
     val dvRow = provider
       .loadActionsForStateReconstruction(spark, snapshot.deltaLog)
       .getOrElse(fail("AMT provider must contribute leaf-derived file actions."))
@@ -133,9 +430,10 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       offset = Option(dvRow.head.get(2)).map(_ => dvRow.head.getInt(2)),
       sizeInBytes = committedDv.sizeInBytes,
       cardinality = committedDv.cardinality)
-    assert(reconstructedDv.uniqueId == committedDv.uniqueId,
-      s"Reconstructed DV uniqueId ${reconstructedDv.uniqueId} must equal committed " +
-        s"${committedDv.uniqueId}.")
+    val tableRoot = snapshot.deltaLog.dataPath
+    // Not comparing the uniqueId here as it will soon not be the identity of the DV.
+    assert(reconstructedDv.absolutePath(tableRoot) == committedDv.absolutePath(tableRoot))
+    assert(reconstructedDv.offset == committedDv.offset)
 
     // The leaf-reconstructed AddFile must recover the same physical/logical record counts as the
     // committed file: `numRecords` in stats is the physical count, so it must round-trip without
@@ -149,10 +447,147 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       .as[AddFile]
       .collect()
     assert(reconstructed.length == 1)
-    assert(reconstructed.head.numPhysicalRecords.contains(2L),
+    assert(reconstructed.head.numPhysicalRecords.contains(5L),
       "Reconstructed physical record count must match the committed file.")
-    assert(reconstructed.head.numLogicalRecords.contains(1L),
+    assert(reconstructed.head.numLogicalRecords.contains(2L),
       "Reconstructed logical record count must match the committed file.")
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "DV that fully deletes a file",
+      "amt_dv_full_delete",
+      sqlConfs = Seq(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false"))(
+      setup = name => {
+        Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(name)
+        val log = deltaLogForName(name)
+        val fileToDv = log.unsafeVolatileSnapshot.allFiles.collect()
+        assert(fileToDv.length == 1)
+        val dvActions = writeFileWithDVOnDisk(log, fileToDv.head, RoaringBitmapArray(0L, 1L))
+        log.startTransaction().commit(dvActions, DeltaOperations.Delete(predicate = Seq.empty))
+      }) { context =>
+    val snapshot = context.postCheckpointSnapshot
+    checkAnswer(spark.read.table(context.tableName), Seq.empty)
+
+    val committed = snapshot.allFiles.collect()
+    assert(committed.length == 1, "The fully-deleted file must stay live.")
+    assert(committed.head.numPhysicalRecords.contains(2L))
+    assert(committed.head.numLogicalRecords.contains(0L))
+
+    // The tree reconstructs the same file.
+    val reconstructed = amtFilesInTree(snapshot)
+    assert(reconstructed.length == 1, "The fully-deleted file must stay live.")
+    val dv = reconstructed.head.deletionVector
+    assert(dv != null)
+    assert(dv.cardinality == 2L)
+    assert(reconstructed.head.numPhysicalRecords.contains(2L))
+    assert(reconstructed.head.numLogicalRecords.contains(0L))
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "two files sharing one DV file on disk",
+      "amt_dv_shared_blob",
+      sqlConfs = Seq(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false"))(
+      setup = name => {
+        Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(name)
+        Seq(3, 4).toDF("id").coalesce(1).write.mode("append").insertInto(name)
+        val log = deltaLogForName(name)
+        val files = log.unsafeVolatileSnapshot.allFiles.collect()
+        assert(files.length == 2)
+        val dvActions = writeFilesWithDVsOnDisk(log, Seq(
+          files(0) -> RoaringBitmapArray(0L),
+          files(1) -> RoaringBitmapArray(0L)))
+        log.startTransaction().commit(dvActions, DeltaOperations.Delete(predicate = Seq.empty))
+      }) { context =>
+    val snapshot = context.postCheckpointSnapshot
+    // Each file drops its row 0 and the row-1 values (2 and 4) survive.
+    checkAnswer(spark.read.table(context.tableName), Seq(Row(2), Row(4)))
+
+    // Both DV'd files stay live, each with one logical row left.
+    val committed = snapshot.allFiles.collect()
+    assert(committed.length == 2, "Both DV'd files must remain live.")
+    assert(committed.forall(_.numLogicalRecords.contains(1L)))
+
+    // The tree reconstructs the same files.
+    val tableRoot = snapshot.deltaLog.dataPath
+    val reconstructed = amtFilesInTree(snapshot)
+    assert(reconstructed.length == 2)
+    val dvs = reconstructed.map(_.deletionVector)
+    assert(dvs.forall(dv => dv != null))
+    // Both AddFiles reference the same DV file on disk.
+    val blobPaths = dvs.map(_.absolutePath(tableRoot)).toSet
+    assert(blobPaths.size == 1)
+    // Offsets are still different.
+    val offsets = dvs.map(_.offset).toSet
+    assert(offsets.size == 2)
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "DVs on files across multiple leaf manifests",
+      "amt_dv_multi_leaf",
+      sqlConfs = Seq(
+        DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "2",
+        DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false"))(
+      setup = name => {
+        // Four two-row files
+        Seq((10, 11), (20, 21), (30, 31), (40, 41)).foreach { case (a, b) =>
+          Seq(a, b).toDF("id").coalesce(1).write.mode("append").insertInto(name)
+        }
+        val log = deltaLogForName(name)
+        val files = log.unsafeVolatileSnapshot.allFiles.collect()
+        assert(files.length == 4)
+        val dvActions = writeFilesWithDVsOnDisk(log, files.map(_ -> RoaringBitmapArray(0L)).toSeq)
+        log.startTransaction().commit(dvActions, DeltaOperations.Delete(predicate = Seq.empty))
+      }) { context =>
+    val snapshot = context.postCheckpointSnapshot
+    checkAnswer(spark.read.table(context.tableName), Seq(Row(11), Row(21), Row(31), Row(41)))
+
+    val committed = snapshot.allFiles.collect()
+    assert(committed.length == 4, "All four DV'd files remain live.")
+    assert(committed.forall(_.numLogicalRecords.contains(1L)))
+
+    // The tree reconstructs the same files.
+    val reconstructed = amtFilesInTree(snapshot)
+    assert(reconstructed.length == 4)
+    val filesWithDvs = reconstructed.filter(_.deletionVector != null)
+    assert(filesWithDvs.length == 4)
+  }
+
+  test("DV with shallow cloned table") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false") {
+      withTable("amt_dv_clone_src", "amt_dv_clone_tgt") {
+        val src = "amt_dv_clone_src"
+        // The source needs no AMT of its own, the clone reads its files.
+        createAMTTable(src, checkpointInterval = 100)
+        Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(src)
+        val srcLog = deltaLogForName(src)
+        val srcFile = srcLog.unsafeVolatileSnapshot.allFiles.collect()
+        assert(srcFile.length == 1, "The two rows must land in a single file.")
+        val dvActions = writeFileWithDVOnDisk(srcLog, srcFile.head, RoaringBitmapArray(0L))
+        srcLog.startTransaction().commit(dvActions, DeltaOperations.Delete(predicate = Seq.empty))
+
+        val tgt = "amt_dv_clone_tgt"
+        sql(s"CREATE TABLE $tgt SHALLOW CLONE $src")
+        // Materialize the target's AMT.
+        commitCheckpoint(deltaLogForName(tgt), incremental = false)
+
+        val tgtLog = deltaLogForName(tgt)
+        val snapshot = tgtLog.update()
+        amtProvider(snapshot).getOrElse(
+          fail("the clone target must have an AMTCheckpointProvider."))
+        checkAnswer(spark.read.table(tgt), Seq(Row(2)))
+
+        val reconstructed = amtFilesInTree(snapshot)
+        assert(reconstructed.length == 1)
+        val dv = reconstructed.head.deletionVector
+        assert(dv != null)
+        assert(dv.storageType == DeletionVectorDescriptor.PATH_DV_MARKER,
+          "An outside-root DV must reconstruct as a p DV")
+        // The DV blob physically lives outside the target's root.
+        val tgtRoot = tgtLog.dataPath
+        val dvPath = dv.absolutePath(tgtRoot).toString
+        assert(!dvPath.startsWith(tgtRoot.toString))
+      }
+    }
   }
 
   testAcrossAMTCheckpointScenarios(
@@ -237,7 +672,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       val checkpoint =
         checkpointWithSyntheticRoot(deltaLog, provider.checkpointAction, rootDataRows)
 
-      val rootProvider = AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint)
+      val rootProvider = AMTCheckpointProvider.fromCheckpoint(deltaLog, checkpoint)
       assert(rootProvider.leaves.isEmpty, "A DATA-only root must yield no leaf pointers.")
 
       val expected = rootAdds.map(_.path).toSet
@@ -498,8 +933,17 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     val rootFile = FileNames.newAMTRootManifestFile(metadataDir)
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
     val enc = org.apache.spark.sql.delta.implicits.amtSingleActionEncoder
-    val df = spark.createDataset(rows)(enc).toDF()
-    Checkpoints.writeAtomicCheckpointParquetFile(spark, df, rootFile, hadoopConf, useRename)
+    val metadata = base.metaData
+    val df = AMTPartitionValues.forWrite(
+      spark.createDataset(rows)(enc).toDF(), metadata.partitionSchema)
+    Checkpoints.writeAtomicCheckpointParquetFile(
+      spark,
+      df,
+      rootFile,
+      hadoopConf,
+      useRename,
+      outputSchema = Some(AMTSingleAction.persistedSchema(metadata.partitionSchema)),
+      useDeltaParquetWriteSupport = true)
     val size = rootFile.getFileSystem(hadoopConf).getFileStatus(rootFile).getLen
     base.copy(contentRoot = ContentRoot(path = rootFile.toString, sizeInBytes = size))
   }

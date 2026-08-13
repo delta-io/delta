@@ -63,15 +63,15 @@ object AMTUtils {
   }
 
   /**
-   * Returns a copy of the passed-in current transaction info with the AMT fields updated to reflect
-   * the winning commit.
+   * Returns a copy of the passed-in current transaction info folded onto the winning commit, ready
+   * for the next commit attempt.
    */
   def updateCurrentTransactionInfo(
       currentTransactionInfo: CurrentTransactionInfo,
       winningCommitSummary: WinningCommitSummary): CurrentTransactionInfo = {
     // If the winning commit emitted an inline AMT checkpoint, it is now the latest checkpoint
     // before the next commit attempt.
-    winningCommitSummary.amtCheckpoint.map { winningAMTCheckpoint =>
+    val withWinnerTree = winningCommitSummary.amtCheckpoint.map { winningAMTCheckpoint =>
       currentTransactionInfo.copy(
         // If the winning commit emitted an inline AMT checkpoint, it is now the latest checkpoint
         // before the next commit attempt.
@@ -83,6 +83,8 @@ object AMTUtils {
             contentRootVersion = winningAMTCheckpoint.version))))
       )
     }.getOrElse(currentTransactionInfo)
+    // Clear `currentCommitAttemptAMTCheckpointOpt` because it is stale once we rebase.
+    withWinnerTree.copy(currentCommitAttemptAMTCheckpointOpt = None)
   }
 
   // Serializes a Manifest Deletion Vector to the on-disk byte form carried in `manifest_info.dv`.

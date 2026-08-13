@@ -27,6 +27,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, Metadata, SidecarFile, SingleAction}
+import org.apache.spark.sql.delta.amt.AMTWriteResult
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -77,16 +78,17 @@ case class CheckpointInstance(
     fileName: Option[String] = None,
     numParts: Option[Int] = None) extends Ordered[CheckpointInstance] {
 
-  // Assert that numParts are present when checkpoint format is Format.WITH_PARTS.
+  import CheckpointInstance.Format
+
+  // Assert that numParts are present when checkpoint format is Format.WITH_PARTS or Format.AMT.
   // For other formats, numParts must be None.
-  require((format == CheckpointInstance.Format.WITH_PARTS) == numParts.isDefined,
-    s"numParts ($numParts) must be present for checkpoint format" +
-      s" ${CheckpointInstance.Format.WITH_PARTS.name}")
+  require(Set(Format.WITH_PARTS, Format.AMT).contains(format) == numParts.isDefined,
+    s"numParts ($numParts) must be present for checkpoint formats " +
+      s"${Format.WITH_PARTS.name} and ${Format.AMT.name}")
   // Assert that filePath is present only when checkpoint format is Format.V2.
   // For other formats, filePath must be None.
-  require((format == CheckpointInstance.Format.V2) == fileName.isDefined,
-    s"fileName ($fileName) must be present for checkpoint format" +
-      s" ${CheckpointInstance.Format.V2.name}")
+  require((format == Format.V2) == fileName.isDefined,
+    s"fileName ($fileName) must be present for checkpoint format ${Format.V2.name}")
 
   /**
    * Returns a [[CheckpointProvider]] which can tell the files corresponding to this
@@ -124,6 +126,9 @@ case class CheckpointInstance(
         }
       case CheckpointInstance.Format.WITH_PARTS =>
         PreloadedCheckpointProvider(cpFiles, lastCheckpointInfo)
+      case CheckpointInstance.Format.AMT =>
+        throw DeltaErrors.assertionFailedError(
+          s"checkpoint format ${CheckpointInstance.Format.AMT.name} is not readable yet")
       case CheckpointInstance.Format.SENTINEL =>
         throw DeltaErrors.assertionFailedError(
           s"invalid checkpoint format ${CheckpointInstance.Format.SENTINEL}")
@@ -134,6 +139,9 @@ case class CheckpointInstance(
                   filesForCheckpointConstruction: Seq[FileStatus]) : Seq[FileStatus] = {
     val logPath = deltaLog.logPath
     format match {
+      // An AMT checkpoint has no standalone checkpoint file to select from the listing; the
+      // manifest tree is reached through the inline Checkpoint action instead.
+      case CheckpointInstance.Format.AMT => Seq.empty
       // Treat Single File checkpoints also as V2 Checkpoints because we don't know if it is
       // actually a V2 checkpoint until we read it.
       case format if format.usesSidecars =>
@@ -197,6 +205,7 @@ object CheckpointInstance {
       case SINGLE.name => Some(SINGLE)
       case WITH_PARTS.name => Some(WITH_PARTS)
       case V2.name => Some(V2)
+      case AMT.name => Some(AMT)
       case _ => None
     }
 
@@ -206,6 +215,8 @@ object CheckpointInstance {
     object WITH_PARTS extends Format(1, "WITH_PARTS")
     /** V2 Checkpoint format */
     object V2 extends Format(2, "V2") with FormatUsesSidecars
+    /** AMT checkpoint format. */
+    object AMT extends Format(3, "AMT")
     /** Sentinel, for internal use only */
     object SENTINEL extends Format(Int.MaxValue, "SENTINEL")
   }
@@ -342,6 +353,15 @@ trait Checkpoints extends DeltaLogging {
     writeLastCheckpointFile(
       snapshotToCheckpoint.deltaLog, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
     doLogCleanup(snapshotToCheckpoint, catalogTableOpt)
+  }
+
+  /** Builds the LastCheckpointInfo for AMT and writes it to `_last_checkpoint` file. */
+  def writeLastCheckpointFileForAMT(
+      manifestCommitVersion: Long,
+      writeResult: AMTWriteResult): Unit = {
+    val lastCheckpointInfo = Checkpoints.buildLastCheckpointInfoForAMT(
+      manifestCommitVersion, writeResult)
+    writeLastCheckpointFile(this, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
   }
 
   protected[delta] def writeLastCheckpointFile(
@@ -658,6 +678,27 @@ object Checkpoints
     val checkpointSchemaSizeThreshold = spark.sessionState.conf.getConf(
       DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH)
     Some(schema).filter(s => JsonUtils.toJson(s).length <= checkpointSchemaSizeThreshold)
+  }
+
+  private[delta] def buildLastCheckpointInfoForAMT(
+      manifestCommitVersion: Long,
+      writeResult: AMTWriteResult): LastCheckpointInfo = {
+    val AMTWriteResult(contentRootVersion, checkpoint, leaves, _) = writeResult
+    val lastAMTCheckpoint = LastAMTCheckpoint(
+      manifestCommitVersion = manifestCommitVersion,
+      checkpoint = Some(checkpoint),
+      leaves = Some(leaves))
+    LastCheckpointInfo(
+      version = contentRootVersion,
+      // `size` (total action count) and `numOfAddFiles` are unavailable for AMT: the file actions
+      // live in the manifest tree, not in memory here.
+      size = -1,
+      parts = Some(leaves.size),
+      sizeInBytes = Some(checkpoint.contentRoot.sizeInBytes + leaves.map(_.file_size_in_bytes).sum),
+      numOfAddFiles = None,
+      checkpointSchema = None,
+      checkpointType = Some(LastCheckpointInfo.CheckpointType.AMT),
+      amtCheckpoint = Some(lastAMTCheckpoint))
   }
 
   /**
@@ -1287,6 +1328,8 @@ object Checkpoints
       additionalCols ++= partitionValues
       additionalCols ++= Checkpoints.extractStats(snapshot.statsSchema, "add.stats")
     }
+    // amtResidue and backReference are dropped on purpose here: V1/V2 checkpoints are incompatible
+    // with AMT, so these AMT-era extras do not belong in the checkpoint `add` struct.
     val withAdd = state.withColumn("add",
       when(col("add").isNotNull, struct(Seq(
         col("add.path"),

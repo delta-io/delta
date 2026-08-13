@@ -21,6 +21,7 @@ import java.util.UUID
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import org.apache.spark.sql.delta.amt.AMTPassthrough
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -142,6 +143,40 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     assert(add.removeWithTimestamp().backReference == backRef)
     // copy (the mechanism the superseding AddFile of removeRows relies on) preserves it.
     assert(add.copy(dataChange = false).backReference == backRef)
+  }
+
+  test("AddFile - amtPassthrough json serialization/deserialization") {
+    val withPassthrough = AddFile(
+      path = "a",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 2,
+      dataChange = false,
+      amtPassthrough = Some(AMTPassthrough(spec_id = Some(7))))
+    assert(withPassthrough.json.contains("\"amtPassthrough\":{\"spec_id\":7}"))
+    assert(Action.fromJson(withPassthrough.json) === withPassthrough)
+
+    // Absent (default None) -> omitted from the serialized action.
+    val withoutPassthrough = AddFile("a", Map.empty, 1, 2, dataChange = false)
+    assert(!withoutPassthrough.json.contains("amtPassthrough"))
+    assert(Action.fromJson(withoutPassthrough.json).asInstanceOf[AddFile].amtPassthrough.isEmpty)
+
+    // A present-but-empty passthrough keeps the struct, with its own field omitted.
+    val emptyPassthrough = AddFile(
+      "a", Map.empty, 1, 2, dataChange = false, amtPassthrough = Some(AMTPassthrough()))
+    assert(emptyPassthrough.json.contains("\"amtPassthrough\":{}"))
+    assert(Action.fromJson(emptyPassthrough.json) === emptyPassthrough)
+  }
+
+  test("AddFile amtPassthrough propagates to copy but not to removeWithTimestamp") {
+    val passthrough = Some(AMTPassthrough(spec_id = Some(7)))
+    val add = AddFile("a", Map.empty, 1, 2, dataChange = true, amtPassthrough = passthrough)
+    // copy (the mechanism the superseding AddFile of removeRows relies on) preserves it.
+    assert(add.copy(dataChange = false).amtPassthrough == passthrough)
+    // Unlike backReference, RemoveFile has no amtPassthrough field: the tombstone drops it. The
+    // surviving AddFile is what carries the AMT-native state forward.
+    assert(add.removeWithTimestamp().json.contains("\"remove\""))
+    assert(!add.removeWithTimestamp().json.contains("amtPassthrough"))
   }
 
   // This is the same test as "removefile" in OSS, but due to a Jackson library upgrade the behavior

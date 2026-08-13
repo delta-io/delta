@@ -1482,7 +1482,7 @@ trait SnapshotManagement { self: DeltaLog =>
           spark, catalogTableOpt, previousSnapshot
         )
         val amtCheckpointProviderOpt =
-          amtCheckpointOpt.map(cp => AMTCheckpointProvider.fromCheckpoint(spark, this, cp))
+          amtCheckpointOpt.map(cp => AMTCheckpointProvider.fromCheckpoint(this, cp))
         val segment = if (isIdempotentRetry) {
           // The commit already landed and the preCommitLogSegment has been advanced to a
           // segment at  >= committedVersion by conflict checking, so it is already the
@@ -1493,7 +1493,12 @@ trait SnapshotManagement { self: DeltaLog =>
             throw new IllegalStateException(
               "A Commit is required to build the post-commit log segment.")
           }
-          getLogSegmentAfterCommit(
+          // The listing can be stale for a few seconds after a commit due to an
+          // incident on the cloud provider side. Retry the operation a few times.
+          val maxRetries =
+            spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES)
+          var attempt = 0
+          def fetchSegment(): LogSegment = getLogSegmentAfterCommit(
             committedVersion,
             newChecksumOpt,
             preCommitLogSegment,
@@ -1502,11 +1507,29 @@ trait SnapshotManagement { self: DeltaLog =>
             catalogTableOpt,
             previousSnapshot.checkpointProvider,
             amtCheckpointProviderOpt = amtCheckpointProviderOpt)
+          var fetched = fetchSegment()
+          while (attempt < maxRetries && fetched.version < committedVersion) {
+            val backoffMs = math.min(30.seconds.toMillis, 1000L << attempt)
+            logWarning(log"Stale log segment after commit: listed version " +
+              log"${MDC(DeltaLogKeys.VERSION, fetched.version)} < committed version " +
+              log"${MDC(DeltaLogKeys.VERSION2, committedVersion)}.")
+            Thread.sleep(backoffMs)
+            attempt += 1
+            fetched = fetchSegment()
+          }
+          if (attempt > 0 && fetched.version >= committedVersion) {
+            recordDeltaEvent(this, "delta.commit.mitigatedInconsistentList", data = Map(
+              "numRetries" -> attempt,
+              "committedVersion" -> committedVersion,
+              "currentVersion" -> fetched.version
+            ))
+          }
+          fetched
         }
 
         // This likely implies a list-after-write inconsistency
         if (segment.version < committedVersion) {
-          recordDeltaEvent(this, "delta.commit.inconsistentList", data = Map(
+          recordDeltaEvent(this, "delta.assertions.commit.inconsistentList", data = Map(
             "committedVersion" -> committedVersion,
             "currentVersion" -> segment.version
           ))
