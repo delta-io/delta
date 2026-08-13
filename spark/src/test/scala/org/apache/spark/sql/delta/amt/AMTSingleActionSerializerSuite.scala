@@ -144,7 +144,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     tracking = tracking,
     deletion_vector = deletion_vector,
     spec_id = None,
-    partition = Partition(),
+    partition = None,
     sort_order_id = sort_order_id,
     record_count = 1L,
     file_size_in_bytes = 1L,

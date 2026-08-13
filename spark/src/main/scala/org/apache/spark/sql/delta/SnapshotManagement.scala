@@ -1482,7 +1482,7 @@ trait SnapshotManagement { self: DeltaLog =>
           spark, catalogTableOpt, previousSnapshot
         )
         val amtCheckpointProviderOpt =
-          amtCheckpointOpt.map(cp => AMTCheckpointProvider.fromCheckpoint(spark, this, cp))
+          amtCheckpointOpt.map(cp => AMTCheckpointProvider.fromCheckpoint(this, cp))
         val segment = if (isIdempotentRetry) {
           // The commit already landed and the preCommitLogSegment has been advanced to a
           // segment at  >= committedVersion by conflict checking, so it is already the

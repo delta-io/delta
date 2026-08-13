@@ -64,6 +64,7 @@ object AMTWriteHelper extends DeltaLogging {
       deltaLog = deltaLog,
       readSnapshot = readSnapshot,
       hadoopConf = hadoopConf,
+      metadata = readSnapshot.metadata,
       entriesPerLeaf = entriesPerLeaf)
     // A full rewrite of the read snapshot's live files; it carries no commit actions, so the tree
     // describes the read snapshot's version.
@@ -165,6 +166,7 @@ object AMTWriteHelper extends DeltaLogging {
       deltaLog: DeltaLog,
       readSnapshot: Snapshot,
       hadoopConf: Configuration,
+      metadata: Metadata,
       entriesPerLeaf: Int): (ContentRoot, Seq[DataManifestEntry]) = {
     require(entriesPerLeaf > 0, "entriesPerLeaf must be positive.")
     val tableRoot = deltaLog.dataPath
@@ -183,6 +185,7 @@ object AMTWriteHelper extends DeltaLogging {
       tableRoot = tableRoot,
       metadataDir = metadataDir,
       addFilesDf = addFilesDf,
+      metadata = metadata,
       desiredNumLeaves = desiredNumLeaves)
     leafEntries match {
       case Seq(onlyLeaf) =>
@@ -191,8 +194,8 @@ object AMTWriteHelper extends DeltaLogging {
           ContentRoot(path = onlyLeaf.location, sizeInBytes = onlyLeaf.file_size_in_bytes)
         (contentRoot, Seq.empty)
       case _ =>
-        val contentRoot =
-          writeRoot(spark, fs, hadoopConf, tableRoot, metadataDir, leafEntries.map(_.wrap))
+        val contentRoot = writeRoot(
+          spark, fs, hadoopConf, tableRoot, metadataDir, metadata, leafEntries.map(_.wrap))
         (contentRoot, leafEntries)
     }
   }
@@ -204,6 +207,7 @@ object AMTWriteHelper extends DeltaLogging {
       tableRoot: Path,
       metadataDir: Path,
       addFilesDf: DataFrame,
+      metadata: Metadata,
       desiredNumLeaves: Int): Seq[DataManifestEntry] = {
     import org.apache.spark.sql.delta.implicits._
     val addFilesDs = addFilesDf.as[AddFile]
@@ -217,7 +221,8 @@ object AMTWriteHelper extends DeltaLogging {
     val amtDs = addFilesDs.map { add =>
       DataEntry.fromAddFile(add, tracking, tableRootSparkPath.toPath).wrap
     }
-    val schema = AMTSingleAction.schemaWithFieldId
+    val amtDf = AMTPartitionValues.forWrite(amtDs.toDF(), metadata.partitionSchema)
+    val schema = AMTSingleAction.persistedSchema(metadata.partitionSchema)
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
@@ -228,7 +233,7 @@ object AMTWriteHelper extends DeltaLogging {
       (f, new SerializableConfiguration(job.getConfiguration))
     }
 
-    val qe = amtDs.queryExecution
+    val qe = amtDf.queryExecution
     SQLExecution.withNewExecutionId(qe, Some("AMT leaf checkpoint")) {
       qe.executedPlan.execute().mapPartitions { iter =>
         // Skip empty partitions (so the root never points at an empty leaf for a non-empty table).
@@ -360,19 +365,16 @@ object AMTWriteHelper extends DeltaLogging {
       hadoopConf: Configuration,
       tableRoot: Path,
       metadataDir: Path,
+      metadata: Metadata,
       batch: Seq[AddFile]): DataManifestEntry = {
     val leafFile = FileNames.newAMTLeafManifestFile(metadataDir)
     val rows: Seq[AMTSingleAction] =
       batch.map(add =>
         DataEntry
-          .fromAddFile(
-            add,
-            trackingWithStatus(Tracking.Status.Added),
-            tableRoot
-          )
+          .fromAddFile(add, trackingWithStatus(Tracking.Status.Added), tableRoot)
           .wrap
       )
-    writeAMTParquet(spark, hadoopConf, leafFile, rows)
+    writeAMTParquet(spark, hadoopConf, leafFile, metadata, rows)
     val status = fs.getFileStatus(leafFile)
     val (tracking, manifestInfo) = addedTrackingForLeaf(addedFilesCount = rows.size)
     DataManifestEntry(
@@ -395,9 +397,10 @@ object AMTWriteHelper extends DeltaLogging {
       hadoopConf: Configuration,
       tableRoot: Path,
       metadataDir: Path,
+      metadata: Metadata,
       rows: Seq[AMTSingleAction]): ContentRoot = {
     val rootFile = FileNames.newAMTRootManifestFile(metadataDir)
-    writeAMTParquet(spark, hadoopConf, rootFile, rows)
+    writeAMTParquet(spark, hadoopConf, rootFile, metadata, rows)
     val status = fs.getFileStatus(rootFile)
     ContentRoot(
       path = AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, rootFile),
@@ -438,16 +441,18 @@ object AMTWriteHelper extends DeltaLogging {
       spark: SparkSession,
       hadoopConf: Configuration,
       finalPath: Path,
+      metadata: Metadata,
       rows: Seq[AMTSingleAction]): Unit = {
     import org.apache.spark.sql.delta.implicits._
-    val df = spark.createDataset(rows).toDF()
+    val df = AMTPartitionValues.forWrite(
+      spark.createDataset(rows).toDF(), metadata.partitionSchema)
     Checkpoints.writeAtomicCheckpointParquetFile(
       spark = spark,
       df = df,
       finalPath = finalPath,
       hadoopConf = hadoopConf,
       useRename = false,
-      outputSchema = Some(AMTSingleAction.schemaWithFieldId),
+      outputSchema = Some(AMTSingleAction.persistedSchema(metadata.partitionSchema)),
       useDeltaParquetWriteSupport = true)
   }
 }

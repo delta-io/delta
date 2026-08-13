@@ -26,8 +26,11 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.types.StructType
 
 class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
@@ -81,6 +84,72 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
     // The promoted root alone must reconstruct exactly the table's live files.
     assertReconstructsLiveFileSet(context)
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "partition values use the typed Iceberg struct and round-trip",
+      "amt_typed_partition",
+      sqlConfs = leafPackingConfs,
+      tableSchema = ("id INT" +: allTypesPartitionColumns).mkString(", "),
+      partitionColumns = allTypesPartitionSchema.map(_.name))(
+      setup = name => appendRowsAsSeparateFiles(
+        name,
+        numRows = leafPackedFiles - 1,
+        columnExprs = "CAST(id AS INT)" +: allTypesPartitionExprs),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"""INSERT INTO $name
+           |SELECT ${("CAST(id AS INT)" +: allTypesPartitionExprs).mkString(", ")}
+           |FROM range(${leafPackedFiles - 1}, $leafPackedFiles)""".stripMargin))) { context =>
+    val leafDf = spark.read.parquet(
+      context.provider.liveLeafManifestAbsolutePaths.map(_.toString): _*)
+    val partitionSchema = context.postCheckpointSnapshot.metadata.partitionSchema
+    // The persisted struct carries the table's partition types under their logical names, with
+    // Iceberg partition-field ids from 1000 in partition-spec order.
+    val partition = leafDf.schema("partition")
+    assert(partition.nullable)
+    val fields = partition.dataType.asInstanceOf[StructType].fields
+    assert(fields.map(f => f.name -> f.dataType).toSeq ==
+      AMTPartitionValues.persistedSchema(partitionSchema).map(f => f.name -> f.dataType))
+    assert(fields.map(_.metadata.getLong(ParquetUtils.FIELD_ID_METADATA_KEY)).toSeq ==
+      fields.indices.map(1000L + _))
+    assert(leafDf.select("partition.p_int").collect().map(_.getInt(0)).toSet ==
+      (0 until leafPackedFiles).toSet)
+
+    // Every physical-name -> string entry must come back exactly as the log recorded it; a cast
+    // that disagrees with Delta's own serialization would corrupt these silently.
+    val restored = context.provider
+      .loadActionsForStateReconstruction(spark, context.postCheckpointSnapshot.deltaLog)
+      .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+      .where(col("add").isNotNull)
+      .select("add.partitionValues")
+      .collect()
+      .map(_.getMap[String, String](0).toMap)
+      .toSet
+    assert(restored == liveAddFiles(context.postCheckpointSnapshot).map(_.partitionValues).toSet)
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "an unpartitioned table writes no partition column at all",
+      "amt_unpartitioned",
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
+    // An unpartitioned table has no partition struct to persist, so `partition` is dropped from the
+    // schema rather than written as a null -- Iceberg field 102 is optional. Checking the parquet
+    // itself, since the reconstructed AddFile carries a `partition` either way (`forRead` adds one
+    // back as a null map).
+    val manifests =
+      (context.provider.topLevelFiles.map(_.getPath.toString) ++
+        context.provider.liveLeafManifestAbsolutePaths.map(_.toString))
+    assert(manifests.nonEmpty, "Expected at least a root manifest.")
+    manifests.foreach { manifest =>
+      val columns = {
+        spark.read.parquet(manifest).columns.toSeq
+      }
+      assert(!columns.contains("partition"),
+        s"an unpartitioned manifest must have no `partition` column; $manifest has $columns")
+    }
   }
 
   testAcrossAMTCheckpointScenarios(
@@ -203,8 +272,17 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       // contain spaces, storing raw table-root-relative pointers, to prove the pointer round-trips.
       def writeManifest(fileName: String, rows: Seq[AMTSingleAction]): (String, Long) = {
         val file = new Path(metadataDir, fileName)
-        val df = spark.createDataset(rows)(enc).toDF()
-        Checkpoints.writeAtomicCheckpointParquetFile(spark, df, file, hadoopConf, useRename = false)
+        val metadata = base.metaData
+        val df = AMTPartitionValues.forWrite(
+          spark.createDataset(rows)(enc).toDF(), metadata.partitionSchema)
+        Checkpoints.writeAtomicCheckpointParquetFile(
+          spark,
+          df,
+          file,
+          hadoopConf,
+          useRename = false,
+          outputSchema = Some(AMTSingleAction.persistedSchema(metadata.partitionSchema)),
+          useDeltaParquetWriteSupport = true)
         val relative = AMTUtils.relativizeManifestPathToTableRoot(
           file.getFileSystem(hadoopConf), dataPath, file)
         assert(relative == s"${FileNames.AMT_METADATA_DIR_NAME}/$fileName" &&
@@ -232,7 +310,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       assert(rootLoc.contains("root with space.parquet") && !rootLoc.contains("%20"))
       assert(leafLoc.contains("leaf with space.parquet") && !leafLoc.contains("%20"))
 
-      val provider = AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint)
+      val provider = AMTCheckpointProvider.fromCheckpoint(deltaLog, checkpoint)
       // The provider resolves the spaced pointers to absolute, raw paths under the table root.
       assert(provider.liveLeafManifestAbsolutePaths.forall(p =>
         p.isAbsolute && p.toString.contains("leaf with space.parquet") &&

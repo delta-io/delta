@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DeltaLog, SingleCommit}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, InMemoryLogReplay, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, InMemoryLogReplay, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.actions.InMemoryLogReplay.UniqueFileActionTuple
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -111,7 +111,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     // 1.a: old AMT root -- its live root-resident files, plus its inline non-content state
     // (protocol, metadata, setTxns, domainMetadata). Leaf-resident files are NOT read here.
     val fileActionsFromOldRoot = AMTCheckpointProvider.readLiveRootDataEntries(
-      spark, deltaLog, oldCheckpoint)
+      deltaLog, oldCheckpoint)
     val nonContentFromOldRoot: Iterator[Action] =
       Iterator(oldCheckpoint.protocol, oldCheckpoint.metaData) ++
         oldCheckpoint.txns.iterator ++ oldCheckpoint.domainMetadata.iterator
@@ -177,9 +177,13 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     val tombstoneEntries = buildTombstones(cdfNoBackrefRemoves, liveAdds, rootAndWindowAdds)
 
     // ---- Step 6: spill live adds into new leaves if the root would exceed the per-leaf cap. ----
+    // The post-commit metadata shapes the persisted manifest schema (the Iceberg partition struct),
+    // so every manifest written below needs it, as does the Checkpoint action in step 8.
+    val postCommitMetadata = replay.getMetadata.getOrElse(
+      throw new IllegalStateException("Replay produced no metadata for the incremental AMT."))
     val fixedRootCount = carriedLeafPointers.size + tombstoneEntries.size
     val (rootAdds, spilledLeafPointers) =
-      spillIfNeeded(liveAdds, fixedRootCount)
+      spillIfNeeded(liveAdds, fixedRootCount, postCommitMetadata)
 
     // ---- Step 7: write the new root. ----
     val addedTracking = AMTWriteHelper.addedTracking
@@ -187,8 +191,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       (carriedLeafPointers ++ spilledLeafPointers).map(_.wrap) ++
         rootAdds.map(add => DataEntry.fromAddFile(add, addedTracking, tableRoot).wrap) ++
         tombstoneEntries.map(_.wrap)
-    val contentRootBase =
-      AMTWriteHelper.writeRoot(spark, fs, hadoopConf, tableRoot, metadataDir, rootRows)
+    val contentRootBase = AMTWriteHelper.writeRoot(
+      spark, fs, hadoopConf, tableRoot, metadataDir, postCommitMetadata, rootRows)
 
     // ---- Step 8: generate the Checkpoint action. ----
     // The version the tree describes: an inline commit describes itself; a deferred OPTIMIZE
@@ -207,8 +211,6 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       numLeaves = allLeafPointers.size.toLong)
     val postCommitProtocol = replay.getProtocol.getOrElse(
       throw new IllegalStateException("Replay produced no protocol for the incremental AMT."))
-    val postCommitMetadata = replay.getMetadata.getOrElse(
-      throw new IllegalStateException("Replay produced no metadata for the incremental AMT."))
     val checkpoint = Checkpoint(
       version = contentStateVersion,
       contentRoot = contentRoot,
@@ -343,7 +345,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
    */
   private def spillIfNeeded(
       liveAdds: Seq[AddFile],
-      fixedRootCount: Int): (Seq[AddFile], Seq[DataManifestEntry]) = {
+      fixedRootCount: Int,
+      metadata: Metadata): (Seq[AddFile], Seq[DataManifestEntry]) = {
     var remaining = liveAdds
     val spilled = ArrayBuffer.empty[DataManifestEntry]
     // Each spill adds one leaf pointer to the fixed root count; keep spilling while the root would
@@ -351,7 +354,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     while (fixedRootCount + spilled.size + remaining.size > entriesPerLeaf && remaining.nonEmpty) {
       val (batch, rest) = remaining.splitAt(entriesPerLeaf)
       spilled += AMTWriteHelper.writeLeaf(
-        spark, fs, hadoopConf, tableRoot, metadataDir, batch)
+        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, batch)
       remaining = rest
     }
     (remaining, spilled.toSeq)
