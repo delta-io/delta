@@ -1310,10 +1310,16 @@ trait DeltaErrorsBase
       messageParameters = Array(input, name, explain))
   }
 
-  def invalidIdempotentWritesOptionsException(explain: String): Throwable = {
+  def invalidIdempotentWritesMissingWriteOptionsException(): Throwable = {
     new DeltaIllegalArgumentException(
-      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS",
-      messageParameters = Array(explain))
+      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS",
+      messageParameters = Array.empty)
+  }
+
+  def invalidIdempotentWritesMissingSessionConfsException(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS",
+      messageParameters = Array.empty)
   }
 
   def invalidInterval(interval: String): Throwable = {
