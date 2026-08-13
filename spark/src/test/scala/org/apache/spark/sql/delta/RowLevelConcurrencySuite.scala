@@ -167,6 +167,29 @@ class RowLevelConcurrencySuite extends QueryTest
     }
   }
 
+  test("Serializable: a MERGE matched-delete (read-then-modify) reconciles vs a concurrent DELETE") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
+      // The disjoint-DELETE Serializable test above already covers a delete-only loser. Here the
+      // loser is a MERGE, which *scans* the file to evaluate its ON condition, so the shared path
+      // enters the current txn's readFiles as a genuine read (not merely as a delete target). The
+      // winner's disjoint DELETE removes that same file, which under Serializable would trip the
+      // delete-read check -- unless row-level resolution drops the reconciled path from readFiles.
+      // This confirms that removal holds for a read-then-modify op under the stricter isolation.
+      val txnA = sqlTxn(mergeMatched(dir, 10, "DELETE"), rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+
+      assert(ids(dir) === (0L to 99L).filterNot(id => id == 10 || id == 20))
+      assert(deletionVectorCardinalities(log) === Seq(2L))
+    }
+  }
+
   test("overlapping concurrent DELETEs still conflict") {
     withTempDir { dir =>
       val log = createSingleFileTableWithDVs(dir)
@@ -419,6 +442,35 @@ class RowLevelConcurrencySuite extends QueryTest
       // Only B (id=20) and C (id=10) applied; A aborted cleanly on the id=10 overlap.
       assert(ids(dir) === (0L to 99L).filterNot(id => id == 10 || id == 20))
       assert(deletionVectorCardinalities(log) === Seq(2L))
+    }
+  }
+
+  test("three concurrent disjoint DELETEs reconcile on a file that already carries a base DV") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      // Establish a non-empty base DV before any concurrency: delete id=5 (file DV cardinality 1).
+      // All three concurrent txns read this DV as their common base, and the last one (A) then
+      // reconciles against a two-deep winner chain (B, then C) stacked on that base. This is the
+      // deepest chain the ordering helpers reach, and it combines the base-DV subtlety with the
+      // N-way induction: each step must subtract the *prior winner's* DV, not the read-time base,
+      // or the accumulated deletes would look like a false overlap.
+      sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 5")
+      assert(deletionVectorCardinalities(log) === Seq(1L))
+
+      val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
+      val txnC = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 30", rowLevelConcurrency = true)
+
+      // A starts; B commits; C commits (reading B's state); A commits last (reconciles vs B, C).
+      val (futureA, futureB, futureC) =
+        runTxnsWithOrder__A_Start__B__C__A_End(txnA, txnB, txnC)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      ThreadUtils.awaitResult(futureC, Duration.Inf)
+
+      assert(ids(dir) === (0L to 99L).filterNot(id => Set(5L, 10L, 20L, 30L).contains(id)))
+      // Base row 5 plus three disjoint concurrent deletes -> merged deletion vector cardinality 4.
+      assert(deletionVectorCardinalities(log) === Seq(4L))
     }
   }
 

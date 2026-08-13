@@ -227,16 +227,25 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
     val winningBitmap = bitmapOf(winningAdd.deletionVector)
     val currentBitmap = bitmapOf(currentAdd.deletionVector)
 
-    // `baseBitmap` is the DV of `P` at the current txn's read time (carried on its RemoveFile);
-    // for a 2-way conflict it equals the winner's pre-image too. Both `dv_win` and `dv_cur` are
-    // supersets of it (a DV only grows), so the newly-deleted rows are `dv \ base` on each side
-    // and their overlap is `(dv_win INTERSECT dv_cur) MINUS base`. If empty, the two txns
-    // touched disjoint rows and the schedule `current ; winner` is a valid serialization under
-    // both WriteSerializable and Serializable (the winner's rewrites/deletes are of rows the
-    // current txn did not touch), so merging is safe. If non-empty, the same row was touched by
-    // both -> genuine conflict, left for the standard checks. (For 3+ way chains `base` becomes
-    // previous winner's DV rather than the original pre-image; the merge stays correct and the
-    // overlap test stays conservative.)
+    // `baseBitmap` is the DV of `P` at the current txn's read time (carried on its RemoveFile).
+    // Both `dv_win` and `dv_cur` are supersets of it (a DV only grows), so each side's *newly*
+    // deleted rows are `dv \ base`, and their overlap is `(dv_win INTERSECT dv_cur) MINUS base`.
+    // Empty overlap => the two txns deleted disjoint rows, and `current ; winner` is a valid
+    // serialization under both WriteSerializable and Serializable (each deleted only rows the
+    // other did not touch), so the DV union is safe. Non-empty => the same row was deleted
+    // concurrently: a genuine conflict, left for the standard checks to abort.
+    //
+    // N-way: the current txn reconciles against a chain of winners, once per winning commit.
+    // Induction on the number of prior winners `k` already merged into the current txn:
+    //   k = 0 (first winner): `base` is P's read-time DV, so `dv_cur \ base` and `dv_win \ base`
+    //     are exactly the two txns' own new deletes -- the test is precise.
+    //   k -> k+1: merging winner k rebased the current RemoveFile onto winner k's AddFile (so now
+    //     `base = dv_win_k`) and the current AddFile onto the merged DV. Winner k+1 committed on
+    //     top of winner k, so `dv_win_k` is a subset of `dv_win_{k+1}`. The test
+    //     `(dv_win_{k+1} INTERSECT dv_cur) MINUS dv_win_k` then reduces to winner k+1's *own* new
+    //     deletes intersected with the current txn's own new deletes -- prior winners cancel out.
+    // Every step compares only the two operations' genuinely new rows, and the merged DV is a
+    // union of disjoint contributions, so the result is independent of winner order.
     val newlyDeletedOverlap = winningBitmap.copy()
     newlyDeletedOverlap.and(currentBitmap)
     newlyDeletedOverlap.andNot(baseBitmap)
