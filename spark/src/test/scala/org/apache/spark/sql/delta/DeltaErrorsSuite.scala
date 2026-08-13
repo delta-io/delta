@@ -1621,10 +1621,19 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.invalidIdempotentWritesOptionsException("someReason")
+        throw DeltaErrors.invalidIdempotentWritesMissingWriteOptionsException()
       }
-      checkError(e, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616",
-        Map("reason" -> "someReason"))
+      checkError(e,
+        "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+        Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.invalidIdempotentWritesMissingSessionConfsException()
+      }
+      checkError(e,
+        "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS", "42616",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {

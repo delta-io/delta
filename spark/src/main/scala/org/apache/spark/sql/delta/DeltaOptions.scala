@@ -154,8 +154,7 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
     // neither must be given. In all other cases, throw an exception.
     val numOptions = txnVersion.size + txnAppId.size
     if (numOptions != 0 && numOptions != 2) {
-      throw DeltaErrors.invalidIdempotentWritesOptionsException("Both txnVersion and txnAppId " +
-      "must be specified for idempotent data frame writes")
+      throw DeltaErrors.invalidIdempotentWritesMissingWriteOptionsException()
     }
   }
 

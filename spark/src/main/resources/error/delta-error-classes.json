@@ -1839,8 +1839,20 @@
   },
   "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS" : {
     "message" : [
-      "Invalid options for idempotent Dataframe writes: <reason>"
+      "Invalid options for idempotent DataFrame writes:"
     ],
+    "subClass" : {
+      "MISSING_DATAFRAME_WRITE_OPTIONS" : {
+        "message" : [
+          "Both txnVersion and txnAppId must be specified for idempotent DataFrame writes."
+        ]
+      },
+      "MISSING_SESSION_CONFS" : {
+        "message" : [
+          "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion must be specified for idempotent Delta writes."
+        ]
+      }
+    },
     "sqlState" : "42616"
   },
   "DELTA_INVALID_INTERVAL" : {
