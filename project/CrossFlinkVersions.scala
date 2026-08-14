@@ -20,17 +20,23 @@ import sbt._
 import sbt.Keys._
 import sbtrelease.ReleasePlugin.autoImport.ReleaseStep
 
-object FlinkVersionSpec {
-  val DEFAULT: String = "2.0.2"
-  val SUPPORTED: Seq[String] = Seq(DEFAULT)
+object CrossFlinkVersions extends AutoPlugin {
+  private val defaultVersion = "2.3.0"
+  private val supportedVersions = Seq(defaultVersion)
 
-  require(SUPPORTED.headOption.contains(DEFAULT), "The default Flink version must be supported")
   require(
-    SUPPORTED.map(compatibilityVersion).distinct.size == SUPPORTED.size,
+    supportedVersions.map(compatibilityVersion).distinct.size == supportedVersions.size,
     "Only one patch release can be published for each Flink compatibility line")
 
-  /** Selects the requested full Flink version, falling back to the default build version. */
-  def selectedVersion: String = sys.props.getOrElse("flinkVersion", DEFAULT)
+  /** Selects the requested supported Flink version, falling back to the default build version. */
+  def selectedVersion: String = {
+    val input = sys.props.getOrElse("flinkVersion", defaultVersion)
+    if (!supportedVersions.contains(input)) {
+      throw new IllegalArgumentException(
+        s"Invalid flinkVersion: $input. Valid values: ${supportedVersions.mkString(", ")}")
+    }
+    input
+  }
 
   /** Returns the major.minor line used in the Maven artifact name. */
   def compatibilityVersion(fullVersion: String): String = {
@@ -40,9 +46,6 @@ object FlinkVersionSpec {
       s"Flink version must contain a major and minor version: $fullVersion")
     parts.take(2).mkString(".")
   }
-}
-
-object CrossFlinkVersions extends AutoPlugin {
   override def trigger = allRequirements
 
   /**
@@ -50,7 +53,7 @@ object CrossFlinkVersions extends AutoPlugin {
    * all-module release step.
    */
   def crossFlinkReleaseSteps(task: String): Seq[ReleaseStep] = {
-    FlinkVersionSpec.SUPPORTED.filterNot(_ == FlinkVersionSpec.DEFAULT).map { version =>
+    supportedVersions.filterNot(_ == defaultVersion).map { version =>
       { (state: State) =>
         val extracted = Project.extract(state)
         val baseDir = extracted.get(ThisBuild / Keys.baseDirectory)
@@ -93,13 +96,13 @@ object CrossFlinkVersions extends AutoPlugin {
       val writer = new PrintWriter(outputFile)
       try {
         writer.println("[")
-        FlinkVersionSpec.SUPPORTED.zipWithIndex.foreach { case (version, index) =>
-          val comma = if (index < FlinkVersionSpec.SUPPORTED.size - 1) "," else ""
+        supportedVersions.zipWithIndex.foreach { case (version, index) =>
+          val comma = if (index < supportedVersions.size - 1) "," else ""
           writer.println("  {")
           writer.println(s"""    "fullVersion": "$version",""")
           writer.println(
-            s"""    "compatibilityVersion": "${FlinkVersionSpec.compatibilityVersion(version)}",""")
-          writer.println(s"""    "isDefault": ${version == FlinkVersionSpec.DEFAULT}""")
+            s"""    "compatibilityVersion": "${compatibilityVersion(version)}",""")
+          writer.println(s"""    "isDefault": ${version == defaultVersion}""")
           writer.println(s"  }$comma")
         }
         writer.println("]")

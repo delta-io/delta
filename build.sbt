@@ -64,7 +64,7 @@ val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
-val flinkVersion = FlinkVersionSpec.selectedVersion
+val flinkVersion = CrossFlinkVersions.selectedVersion
 val gcsConnectorVersion = "4.0.4"
 
 // Optional kernel version override. See `project/KernelVersion.scala` for the
@@ -1637,7 +1637,7 @@ lazy val flink = (project in file("flink"))
   .settings(
     name := "delta-flink",
     // Publish one artifact per compatible Flink minor line, for example delta-flink_2.0.
-    moduleName := s"delta-flink_${FlinkVersionSpec.compatibilityVersion(flinkVersion)}",
+    moduleName := s"delta-flink_${CrossFlinkVersions.compatibilityVersion(flinkVersion)}",
     commonSettings,
     releaseSettings,
     javafmtCheckSettings(),

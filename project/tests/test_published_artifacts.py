@@ -61,7 +61,7 @@ NON_SPARK_RELATED_JAR_TEMPLATES = [
     "delta-kernel-defaults-{version}.jar",
     "delta-storage-s3-dynamodb-{version}.jar",
     "delta-kernel-unitycatalog-{version}.jar",
-    "delta-flink_2.0-{version}.jar",
+    "delta-flink_2.3-{version}.jar",
     "delta-contribs_2.13-{version}.jar",
 ]
 
@@ -182,6 +182,23 @@ class PublishedArtifactsTest:
         except subprocess.CalledProcessError:
             print(f"  ✗ Command failed: {' '.join(command)}")
             return False
+
+    def test_rejects_unsupported_flink_version(self) -> bool:
+        """An unsupported Flink version should fail before any build tasks run."""
+        result = subprocess.run(
+            ["build/sbt", "-DflinkVersion=9.9.9", "show flink/name"],
+            cwd=self.delta_root,
+            capture_output=True,
+            text=True,
+        )
+        output = result.stdout + result.stderr
+        expected_error = "Invalid flinkVersion: 9.9.9."
+        if result.returncode == 0 or expected_error not in output:
+            print("  ✗ Unsupported Flink version was not rejected as expected")
+            return False
+
+        print("  ✓ Unsupported Flink version is rejected")
+        return True
 
     def validate_jars(self, expected: Set[str], test_name: str) -> bool:
         """Validates that found JARs match expected JARs exactly."""
@@ -877,6 +894,7 @@ def main():
         build_test.validate_spark_versions()
 
         # Run all build tests
+        build_test0_passed = build_test.test_rejects_unsupported_flink_version()
         build_test1_passed = build_test.test_default_publish()
         build_test2_passed = build_test.test_backward_compat_publish()
         build_test3_passed = build_test.test_cross_spark_workflow()
@@ -896,6 +914,7 @@ def main():
         print(f"  Source-Build Artifact Version:          {'✓ PASSED' if script_test6c_passed else '✗ FAILED'}")
         print(f"  Get Field Functionality:                {'✓ PASSED' if script_test7_passed else '✗ FAILED'}")
         print("\nPart 2: Cross-Spark Build Tests")
+        print(f"  Reject unsupported Flink version:       {'✓ PASSED' if build_test0_passed else '✗ FAILED'}")
         print(f"  Default publishM2 (with suffix):        {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")
         print(f"  skipSparkSuffix (backward compat):      {'✓ PASSED' if build_test2_passed else '✗ FAILED'}")
         print(f"  Cross-Spark Workflow (both):            {'✓ PASSED' if build_test3_passed else '✗ FAILED'}")
@@ -905,7 +924,7 @@ def main():
             script_test1_passed and script_test2_passed and script_test3_passed and script_test4_passed and
             script_test5_passed and script_test6_passed and script_test6b_passed and
             script_test6c_passed and script_test7_passed and
-            build_test1_passed and build_test2_passed and build_test3_passed
+            build_test0_passed and build_test1_passed and build_test2_passed and build_test3_passed
         )
 
         if all_tests_passed:

@@ -13,13 +13,13 @@ Delta tests the latest patch release from each supported Flink minor line:
 
 | Flink line | Tested version |
 |------------|----------------|
-| 2.0        | 2.0.2          |
+| 2.3        | 2.3.0          |
 
-The default build uses Flink 2.0.2. To test another Flink version during development, set
+The default build uses Flink 2.3.0. To select a supported Flink version during development, set
 `flinkVersion` on the command line:
 
 ```bash
-build/sbt -DflinkVersion=2.0.2 flink/test
+build/sbt -DflinkVersion=2.3.0 flink/test
 ```
 
 ### Connector Overview
