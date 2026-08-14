@@ -63,7 +63,7 @@ columnFiles | Array[[ColumnFileDescriptor Struct](#column-file-descriptor-struct
 
 # Column Updates
 
-Column Updates allow a logical file to obtain selected column values from one or more Parquet column files. The feature name is `columnUpdates`. This is a reader-writer feature. Column Updates require Column Mapping to be enabled for the stable column IDs.
+Column Updates allow a logical file to obtain selected column values from one or more Parquet column files. The feature name is `columnUpdates`. This is a reader-writer feature. Column Updates require Column Mapping to be enabled as Column Updates apply to physical columns, not logical column names.
 
 To support this feature:
 
@@ -77,7 +77,7 @@ using [Column File Descriptors](#column-file-descriptor-struct).
 
 ## Column File Format
 
-A column file is a Parquet file associated with exactly one base data file. Its columns are `_pos`, `_last_updated_sequence_number`, and a subset of columns of the base file with nullability on top (i.e. `INTEGER NOT NULL` in the base file becomes `INTEGER` in the column file). It has one row for each physical row in the base file.
+A column file is a Parquet file associated with exactly one base data file. Its columns are `_pos`, `_last_updated_sequence_number`, and a subset of columns of the base file with nullability on top (i.e. `INTEGER NOT NULL`/`Int` in the base file becomes `INTEGER`/`Option[Int]` in the column file). It has one row for each physical row in the base file.
 
 `_pos` is the physical offset of the corresponding row in the base file.
 
@@ -97,7 +97,7 @@ sizeInBytes | Long | The size of the column file in bytes. | required
 
 `fieldIds` must not be empty and must not contain duplicates. A field ID must occur in at most one `ColumnFileDescriptor` within a single `add`.
 
-`_pos` is not included in `fieldIds` as it is a metadata column that is always present. `_last_updated_sequence_number` might be included to indicate that the associated column file is the most recently written one.
+`_pos` does not get a field id is not included in `fieldIds` as it is a metadata column that is always present. `_last_updated_sequence_number` does get a field id (2147483539) and might be included to indicate that the associated column file is the most recently written one. This implies that for file actions that contain any amount of column files, there should be exactly one `ColumnFileDescriptor` that contains the field id for `_last_updated_sequence_number`.
 
 ## Column File Set Identity
 
@@ -107,35 +107,23 @@ The identity of a column file set is the sorted list of each descriptor's `path`
 
 During a read, if a field is present in `columnFiles[].fieldIds`, the reader must consider the corresponding values for that column in the base file as invalid and read them from the column file instead.
 
-The row-group boundaries of a column file and its base data file may differ. A reader
-must align records by physical row position, not by row-group number.
+The row-group boundaries of a column file and its base data file may differ. A reader must align column file rows with base data file rows using the `_pos` column. This version of the spec disallows row counts being different between column files and the base data file, so aligning using `_pos` is equivalent to aligning positionally.
 
 ## Writer Requirements for Column Updates
 
-During a write that replaces an `add` action with a new `add` action and a `remove`
-tombstone on the same `path`, without rewriting the base data file, the writer must
-carry over all `columnFiles` entries.
-
 During a write that uses the Column Updates feature, the writer must:
 
-- retain entries that do not contain a field ID written by the update;
-- remove the newly written field IDs from each overlapping entry;
-- remove an old entry if no field IDs remain; and
-- add an entry for the new column file and its newly written field IDs.
+1. copy over all previous `ColumnFileDescriptor`s;
+2. for each field id that contains changes in the current write, remove that field id from all `ColumnFileDescriptor`s;
+3. remove field id for `_last_updated_sequence_number` from any `ColumnFileDescriptor`s that contain it;
+4. add a new `ColumnFileDescriptor` that contains the newly written column file path, along with all field ids that contain changes in the current write and field id for `_last_updated_sequence_number`;
+5. remove all `ColumnFileDescriptor`s that contain no associated field ids as a result of step (2).
 
 ## Column File Cleanup
 
-Column files are table data. VACUUM must preserve all column files referenced by a
-retained `add` action, an unexpired `remove` action, or a retained historical table
-version. A column file may be deleted only when no retained descriptor references
-its path and the retention period has passed.
+Column files are table data. VACUUM must preserve all column files referenced by a retained file action. A column file may be deleted only when no retained file action references its path an the retention period has passed.
 
-OPTIMIZE must read the reconstructed logical rows and write replacement base data
-files without column files. CLONE must preserve or copy each referenced column file.
-RESTORE must restore the complete column file state for the selected snapshot.
-
-The `columnUpdates` feature must not be removed while any retained table version
-references a column file.
+The `columnUpdates` feature must not be removed while any retained table version references a column file.
 
 ## Column Updates Examples
 
