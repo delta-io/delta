@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{QueryTest, Row, SaveMode}
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, GreaterThanOrEqual, LessThan, Literal}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, GreaterThanOrEqual, LessThan, Literal, Remainder}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.LongType
@@ -66,11 +66,20 @@ class ConflictDataSkippingSuite extends QueryTest
       s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable'$extraProps)")
   }
 
-  /** A DELETE that runs under the given data-skipping setting (evaluated on its commit thread). */
-  private def deleteTxn(dir: File, condition: String, dataSkipping: Boolean): () => Array[Row] =
+  /**
+   * A DELETE that runs under the given conflict-time skipping settings (evaluated on its commit
+   * thread). `valueExact` enables the tier-2 actual-value scan on top of tier-1 stats skipping.
+   */
+  private def deleteTxn(
+      dir: File,
+      condition: String,
+      dataSkipping: Boolean,
+      valueExact: Boolean = false): () => Array[Row] =
     () => {
       withSQLConf(
-        DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_ENABLED.key -> dataSkipping.toString) {
+        DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_ENABLED.key -> dataSkipping.toString,
+        DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_VALUE_EXACT_ENABLED.key ->
+          valueExact.toString) {
         sql(s"DELETE FROM ${tableRef(dir)} WHERE $condition").collect()
       }
       Array.empty[Row]
@@ -81,6 +90,16 @@ class ConflictDataSkippingSuite extends QueryTest
       dir: File, start: Long, end: Long, partition: Option[Int] = None): () => Array[Row] =
     () => {
       var df = spark.range(start, end).toDF()
+      partition.foreach(p => df = df.withColumn("p", lit(p)))
+      df.write.format("delta").mode("append").save(dir.getAbsolutePath)
+      Array.empty[Row]
+    }
+
+  /** A blind append of the EVEN ids in [start, end), optionally into partition `p`. */
+  private def appendEvenTxn(
+      dir: File, start: Long, end: Long, partition: Option[Int] = None): () => Array[Row] =
+    () => {
+      var df = spark.range(start, end, step = 2).toDF()
       partition.foreach(p => df = df.withColumn("p", lit(p)))
       df.write.format("delta").mode("append").save(dir.getAbsolutePath)
       Array.empty[Row]
@@ -275,6 +294,161 @@ class ConflictDataSkippingSuite extends QueryTest
       val allKept = snapshot.filterFilesMatchingAnyReadPredicate(allFiles, Seq(read1, Seq.empty))
       assert(allKept.size == allFiles.size,
         s"a read with no predicate must keep all files, got ${allKept.size}")
+    }
+  }
+
+  test("value-exact: modulo predicate min/max cannot skip is reconciled by actual-value scan") {
+    withTempDir { dir =>
+      createTable(dir)
+      // A (loser) deletes ODD ids; B (winner) appends the all-EVEN ids in [1000,1100). The parities
+      // are disjoint, but the appended file's min/max [1000,1098] spans odd values, so tier-1 stats
+      // cannot prove `id % 2 = 1` unsatisfiable. Tier-2 value-exact reads the rows (all even) and
+      // finds zero matches -> no conflict.
+      val txnA = deleteTxn(dir, "id % 2 = 1", dataSkipping = true, valueExact = true)
+      val txnB = appendEvenTxn(dir, 1000, 1100)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+
+      // Both committed: odd ids in [0,1000) deleted; all-even [1000,1100) appended.
+      val expected =
+        ((0L until 1000L).filter(_ % 2 == 0) ++ (1000L until 1100L by 2)).map(Row(_))
+      checkAnswer(
+        spark.read.format("delta").load(dir.getAbsolutePath).select("id"), expected)
+    }
+  }
+
+  test("value-exact disabled: modulo predicate still conflicts (stats cannot skip)") {
+    // The gap value-exact closes: with only tier-1 stats, a modulo predicate the min/max cannot
+    // resolve keeps the added file as a conflict candidate, so the disjoint-parity append
+    // conflicts.
+    withTempDir { dir =>
+      createTable(dir)
+      val txnA = deleteTxn(dir, "id % 2 = 1", dataSkipping = true, valueExact = false)
+      val txnB = appendEvenTxn(dir, 1000, 1100)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      assertConcurrentAppend(e)
+    }
+  }
+
+  test("value-exact: a genuinely matching added file still conflicts (no over-skip)") {
+    withTempDir { dir =>
+      createTable(dir)
+      // Loser deletes EVEN ids; winner appends all-even [1000,1100). Every appended row matches
+      // `id % 2 = 0`, so value-exact must KEEP the file and the conflict must still stand.
+      val txnA = deleteTxn(dir, "id % 2 = 0", dataSkipping = true, valueExact = true)
+      val txnB = appendEvenTxn(dir, 1000, 1100)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      assertConcurrentAppend(e)
+    }
+  }
+
+  test("filterFilesByValueExactScan drops a file whose rows never match, keeps one that does") {
+    withTempDir { dir =>
+      // A single file of all-even ids in [0,100). min/max = [0,98] spans odd values, so min/max
+      // stats cannot prove `id % 2 = 1` unsatisfiable, but no row actually matches it.
+      spark.range(0, 100, step = 2).repartition(1)
+        .write.format("delta").mode("append").save(dir.getAbsolutePath)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val snapshot = log.update()
+      val allFiles = snapshot.allFiles.collect().toSeq
+      assert(allFiles.size == 1, s"expected a single file, got ${allFiles.size}")
+
+      val id = AttributeReference("id", LongType)()
+      val odd = EqualTo(Remainder(id, Literal(2L)), Literal(1L))
+      val even = EqualTo(Remainder(id, Literal(2L)), Literal(0L))
+
+      // Value-exact: no row is odd -> file dropped; every row is even -> file kept (no over-drop).
+      assert(snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq(odd))).isEmpty,
+        "all-even file must be dropped for id % 2 = 1")
+      assert(snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq(even))).size == 1,
+        "all-even file must be kept for id % 2 = 0")
+
+      // Contrast tier 1: min/max stats cannot resolve modulo, so it keeps the file regardless.
+      assert(snapshot.filterFilesByDataSkipping(allFiles, Seq(odd)).size == 1,
+        "stats skipping cannot resolve modulo -> keeps the file")
+
+      // A read with no eligible filter matches everything -> keep all (cannot prove non-match).
+      assert(snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq.empty)).size == 1,
+        "a read with no eligible filter must keep all files")
+    }
+  }
+
+  test("filterFilesByValueExactScan keeps all candidates if any matches, drops all if none do") {
+    withTempDir { dir =>
+      // Two single-row-group files: one all-odd, one all-even. The scan is an existence check, not
+      // per-file attribution -- the caller only needs a boolean -- so a predicate matched by EITHER
+      // file keeps BOTH, and a predicate no file matches drops both.
+      spark.range(1, 100, step = 2).repartition(1)
+        .write.format("delta").mode("append").save(dir.getAbsolutePath) // all-odd file
+      spark.range(0, 100, step = 2).repartition(1)
+        .write.format("delta").mode("append").save(dir.getAbsolutePath) // all-even file
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val snapshot = log.update()
+      val allFiles = snapshot.allFiles.collect().toSeq
+      assert(allFiles.size == 2, s"expected two files, got ${allFiles.size}")
+
+      val id = AttributeReference("id", LongType)()
+      val odd = EqualTo(Remainder(id, Literal(2L)), Literal(1L))
+      val even = EqualTo(Remainder(id, Literal(2L)), Literal(0L))
+      val noMatch = EqualTo(Remainder(id, Literal(2L)), Literal(5L)) // id % 2 is 0 or 1, never 5
+
+      // A row in either file matches -> keep every candidate.
+      assert(snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq(odd))).size == 2,
+        "the all-odd file matches -> keep both candidates")
+      assert(snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq(even))).size == 2,
+        "the all-even file matches -> keep both candidates")
+      // No file has a matching row -> drop every candidate (safe: nothing can conflict).
+      assert(snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq(noMatch))).isEmpty,
+        "no candidate matches -> drop all")
+    }
+  }
+
+  test("filterFilesByValueExactScan keeps all files when a predicate is unresolvable (fail-safe)") {
+    withTempDir { dir =>
+      createTable(dir)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val snapshot = log.update()
+      val allFiles = snapshot.allFiles.collect().toSeq
+      assert(allFiles.size == 10)
+
+      // A predicate on a column that is not in the table: rebinding throws, and the fail-safe must
+      // keep every file as a conflict candidate rather than let the scan failure abort a commit.
+      val ghost = EqualTo(AttributeReference("does_not_exist", LongType)(), Literal(1L))
+      val kept = snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq(ghost)))
+      assert(kept.size == allFiles.size,
+        s"an unresolvable predicate must keep all files (fail-safe), got ${kept.size}")
+    }
+  }
+
+  test("value-exact on a partitioned table: modulo predicate reconciled by actual-value scan") {
+    withTempDir { dir =>
+      // Partitioned by `p`; loser deletes ODD ids, winner appends all-EVEN ids into the same
+      // partition. The data predicate `id % 2 = 1` is non-partition, so stats cannot skip the
+      // appended file, but its rows are all even -> value-exact finds zero matches -> no conflict.
+      spark.range(start = 0, end = 1000, step = 1, numPartitions = 10).withColumn("p", lit(0))
+        .write.partitionBy("p").format("delta").mode("append").save(dir.getAbsolutePath)
+      sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
+
+      val txnA = deleteTxn(dir, "id % 2 = 1", dataSkipping = true, valueExact = true)
+      val txnB = appendEvenTxn(dir, 1000, 1100, partition = Some(0))
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+
+      val expected =
+        ((0L until 1000L).filter(_ % 2 == 0) ++ (1000L until 1100L by 2)).map(Row(_))
+      checkAnswer(
+        spark.read.format("delta").load(dir.getAbsolutePath).select("id"), expected)
     }
   }
 }
