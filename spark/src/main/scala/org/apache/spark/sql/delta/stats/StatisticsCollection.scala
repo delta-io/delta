@@ -46,7 +46,7 @@ import org.apache.spark.sql.catalyst.parser.{AbstractSqlParser, AstBuilder, Pars
 import org.apache.spark.sql.catalyst.parser.SqlBaseParser.MultipartIdentifierListContext
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.functions.lit
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.types._
 
 /**
@@ -243,6 +243,15 @@ trait StatisticsCollection extends DeltaLogging {
     val stringPrefix =
       spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
 
+    // Formatter used to serialize timestamp MIN/MAX statistics to JSON. Historically, Spark 3.3.2
+    // truncated historical timezone offsets down to minute precision when rendering timestamps,
+    // which could make the serialized stats differ from the true values by up to 59 seconds (see
+    // Delta issue 5249). To avoid that, we mirror Delta 4.0 and explicitly format timestamp stats
+    // using a pattern that preserves offset seconds: `yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX`.
+    val sessionTimeZoneId = spark.sessionState.conf.sessionLocalTimeZone
+    val timestampStatsFormatterUdf =
+      StatisticsCollection.timestampStatsFormatterUdf(sessionTimeZoneId)
+
     // On file initialization/stat recomputation TIGHT_BOUNDS is always set to true
     val tightBoundsColOpt =
       Option.when(deletionVectorsSupported &&
@@ -257,6 +266,10 @@ trait StatisticsCollection extends DeltaLogging {
         case (c, SkippingEligibleDataType(StringType), true) =>
           substring(min(c), 0, stringPrefix)
 
+        // Format timestamp min stats using a pattern that preserves offset seconds.
+        case (c, SkippingEligibleDataType(TimestampType), true) =>
+          timestampStatsFormatterUdf(min(c).cast(TimestampType))
+
         // Collect all numeric min values
         case (c, SkippingEligibleDataType(_), true) =>
           min(c)
@@ -267,6 +280,10 @@ trait StatisticsCollection extends DeltaLogging {
           val udfTruncateMax =
             DeltaUDF.stringFromString(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
           udfTruncateMax(max(c))
+
+        // Format timestamp max stats using a pattern that preserves offset seconds.
+        case (c, SkippingEligibleDataType(TimestampType), true) =>
+          timestampStatsFormatterUdf(max(c).cast(TimestampType))
 
         // Collect all numeric max values
         case (c, SkippingEligibleDataType(_), true) =>
@@ -408,6 +425,35 @@ object StatisticsCollection extends DeltaCommand {
   val ASCII_MAX_CHARACTER = '\u007F'
 
   val UTF8_MAX_CHARACTER = new String(Character.toChars(Character.MAX_CODE_POINT))
+
+  /**
+   * Builds a UDF for formatting timestamp statistics using a pattern that preserves offset seconds:
+   * `yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX`. This mirrors Delta 4.0 behavior so that new tables write
+   * precise timestamp stats, while older tables with truncated offsets are handled by the
+   * reader-side widening logic in `DataSkippingReader`.
+   */
+  private[delta] def timestampStatsFormatterUdf(
+      sessionTimeZoneId: String): UserDefinedFunction = {
+    val timeZone =
+      org.apache.spark.sql.delta.util.DateTimeUtils.getTimeZone(sessionTimeZoneId)
+    val formatter =
+      org.apache.spark.sql.delta.util.TimestampFormatter(
+        "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
+        timeZone)
+    val formatTimestamp =
+      (ts: java.sql.Timestamp) => {
+        if (ts == null) {
+          null
+        } else {
+          val micros =
+            org.apache.spark.sql.delta.util.DateTimeUtils.fromJavaTimestamp(ts)
+          org.apache.spark.sql.delta.util.DateTimeUtils.timestampToString(
+            formatter,
+            micros)
+        }
+      }
+    udf(formatTimestamp)
+  }
 
   /**
    * The SQL grammar already includes a `multipartIdentifierList` rule for parsing a string into a
