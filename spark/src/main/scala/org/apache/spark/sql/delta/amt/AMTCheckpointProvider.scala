@@ -200,17 +200,25 @@ final class AMTCheckpointProvider(
       spark: SparkSession,
       deltaLog: DeltaLog,
       committedActions: Seq[Action]): Unit = {
-    val committedFiles: Seq[(String, Option[BackReference])] = committedActions.collect {
-      case a: AddFile => a.path -> a.backReference
-      case r: RemoveFile => r.path -> r.backReference
-    }
-    if (committedFiles.isEmpty) return
+    val committedAdds = committedActions.collect { case a: AddFile => a }
+    val committedRemoves = committedActions.collect { case r: RemoveFile => r }
+    if (committedAdds.isEmpty && committedRemoves.isEmpty) return
 
     val expectedPathToBackreferenceMap: Map[String, Option[BackReference]] =
       liveAddSingleActions(spark, deltaLog)
         .collect()
         .map(sa => sa.add.path -> sa.add.backReference)
         .toMap
+
+    // A file superseded within this commit (by DV update for example) has its leaf entry masked
+    // by the RemoveFile's back reference, so the superseding AddFile is a net-new entry with
+    // a different DV and legitimately carries no back reference.
+    val supersededPaths = committedRemoves.filter(_.backReference.isDefined).map(_.path).toSet
+    val committedFiles: Seq[(String, Option[BackReference])] =
+      committedRemoves.map(r => r.path -> r.backReference) ++
+        committedAdds
+          .filterNot(a => a.backReference.isEmpty && supersededPaths.contains(a.path))
+          .map(a => a.path -> a.backReference)
 
     committedFiles.foreach { case (path, actual) =>
       expectedPathToBackreferenceMap.get(path) match {

@@ -966,8 +966,10 @@ case class AddFile(
       case Some(_) => deletionVector.copy(maxRowIndex = None)
       case _ => deletionVector
     }
-    var addFileWithNewDv =
-      this.copy(deletionVector = dvDescriptorWithoutMaxRowIndex, dataChange = dataChange)
+    var addFileWithNewDv = this.copy(
+      deletionVector = dvDescriptorWithoutMaxRowIndex,
+      dataChange = dataChange,
+      backReference = None)
     if (updateStats) {
       addFileWithNewDv = addFileWithNewDv.withoutTightBoundStats
     }
