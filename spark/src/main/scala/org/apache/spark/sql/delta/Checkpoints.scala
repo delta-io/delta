@@ -27,7 +27,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, Metadata, SidecarFile, SingleAction}
-import org.apache.spark.sql.delta.amt.AMTWriteResult
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTWriteResult}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -76,7 +76,8 @@ case class CheckpointInstance(
     version: Long,
     format: CheckpointInstance.Format,
     fileName: Option[String] = None,
-    numParts: Option[Int] = None) extends Ordered[CheckpointInstance] {
+    numParts: Option[Int] = None,
+    manifestCommitVersion: Option[Long] = None) extends Ordered[CheckpointInstance] {
 
   import CheckpointInstance.Format
 
@@ -89,6 +90,11 @@ case class CheckpointInstance(
   // For other formats, filePath must be None.
   require((format == Format.V2) == fileName.isDefined,
     s"fileName ($fileName) must be present for checkpoint format ${Format.V2.name}")
+  // Assert that lastManifestCommit is present only when checkpoint format is Format.AMT.
+  // For other formats, lastManifestCommit must be None.
+  require((format == CheckpointInstance.Format.AMT) == manifestCommitVersion.isDefined,
+    s"manifestCommitVersion ($manifestCommitVersion) must only be present for checkpoint format" +
+      s"${Format.AMT.name}")
 
   /**
    * Returns a [[CheckpointProvider]] which can tell the files corresponding to this
@@ -105,6 +111,19 @@ case class CheckpointInstance(
     val lastCheckpointInfo = lastCheckpointInfoHint.filter(cm => CheckpointInstance(cm) == this)
     val cpFiles = filterFiles(deltaLog, filesForCheckpointConstruction)
     format match {
+      case CheckpointInstance.Format.AMT =>
+        val lastAMTCheckpointInfo =
+          lastCheckpointInfo.flatMap(_.amtCheckpoint).getOrElse {
+          throw new IllegalStateException(
+            s"AMT checkpoint instance at version $version requires a LastCheckpointInfo with " +
+              s"an amtCheckpoint, but none was provided.")
+        }
+        val checkpointAction = lastAMTCheckpointInfo.checkpoint.getOrElse {
+          // When we omit the checkpoint action to prevent _last_checkpoint file from being too
+          // large, we need a fallback mechanism. For now, we expect it to be always present.
+          throw new IllegalStateException("AMT checkpoint action is expected to be always present.")
+        }
+        AMTCheckpointProvider.fromCheckpoint(deltaLog, checkpointAction)
       // Treat single file checkpoints also as V2 Checkpoints because we don't know if it is
       // actually a V2 checkpoint until we read it.
       case CheckpointInstance.Format.V2 | CheckpointInstance.Format.SINGLE =>
@@ -251,7 +270,8 @@ object CheckpointInstance {
       version = metadata.version,
       format = metadata.getFormatEnum(),
       fileName = metadata.v2Checkpoint.map(_.path),
-      numParts = metadata.parts)
+      numParts = metadata.parts,
+      manifestCommitVersion = metadata.amtCheckpoint.map(_.manifestCommitVersion))
   }
 
   val MaxValue: CheckpointInstance = sentinelValue(versionOpt = None)
@@ -362,6 +382,69 @@ trait Checkpoints extends DeltaLogging {
     val lastCheckpointInfo = Checkpoints.buildLastCheckpointInfoForAMT(
       manifestCommitVersion, writeResult)
     writeLastCheckpointFile(this, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
+  }
+
+  /** Resolves the AMT checkpoint instance from the last checkpoint hint. */
+  protected def resolveAMTCheckpointInstance(
+      lastCheckpointInfo: Option[LastCheckpointInfo]): Option[CheckpointInstance] = {
+    lastCheckpointInfo
+      .filter(_.amtCheckpoint.isDefined)
+      .map(CheckpointInstance.apply)
+  }
+
+  /**
+   * Verifies the AMT checkpoint provider (if any) of the log segment against LastManifestCommit.
+   * Throws on inconsistency.
+   */
+  protected def verifyAMTCheckpointProvider(
+      logSegment: LogSegment,
+      finalChecksumOpt: Option[VersionChecksum]): Unit = {
+    (logSegment.checkpointProvider, finalChecksumOpt) match {
+      case (amtCheckpointProvider: AMTCheckpointProvider, Some(checksum)) =>
+        val lastManifestCommit = checksum.lastManifestCommit.getOrElse {
+          throw new IllegalStateException(
+            s"An AMT checkpoint provider at version ${amtCheckpointProvider.version} was " +
+              s"discovered for table $logPath, but the checksum at version ${logSegment.version} " +
+              s"carries no lastManifestCommit. Refusing to trust the AMT checkpoint.")
+        }
+        if (amtCheckpointProvider.version == lastManifestCommit.contentRootVersion) {
+          // Happy-path: the versions match. Safe to use the initial AMT checkpoint provider.
+          return
+        } else if (amtCheckpointProvider.version < lastManifestCommit.contentRootVersion) {
+          // The initial AMT checkpoint provider is stale, which could happen during:
+          //  - `deltaLog.createSnapshotAtInit()` when _last_checkpoint is stale;
+          //  - `deltaLog.update()` when a manifest commit has landed after last cached snapshot.
+          //
+          // We must NOT use the stale AMT checkpoint provider, because:
+          //  - A newer content root version is discoverable at the target version, meaning that at
+          //    least one newer manifest commit has landed.
+          //  - If that newer manifest commit is an inline one, having it in the trailing deltas
+          //    would lead to missing file actions.
+          // TODO: replace the AMT checkpoint provider with the one specified in lastManifestCommit.
+          throw new IllegalStateException(
+            s"AMT checkpoint mismatch for table $logPath: the AMT checkpoint provider is at " +
+              s"version ${amtCheckpointProvider.version}, but the checksum's lastManifestCommit " +
+              s"describes content root version ${lastManifestCommit.contentRootVersion}."
+          )
+        } else if (amtCheckpointProvider.version > lastManifestCommit.contentRootVersion) {
+          // This should not happen.
+          throw new IllegalStateException(
+            s"AMT checkpoint mismatch for table $logPath: the AMT checkpoint provider is at " +
+              s"version ${amtCheckpointProvider.version}, but the checksum's lastManifestCommit " +
+              s"describes content root version ${lastManifestCommit.contentRootVersion}.")
+        }
+
+      case (amtCheckpointProvider: AMTCheckpointProvider, None) =>
+        throw new IllegalStateException(
+          s"An AMT checkpoint provider at version ${amtCheckpointProvider.version} was " +
+            s"discovered for table $logPath, but no checksum (CRC) file is available to " +
+            s"corroborate it. Refusing to trust the AMT checkpoint.")
+
+      case (others, Some(checksum)) if checksum.lastManifestCommit.isDefined =>
+        // TODO: replace with the AMT checkpoint provider specified in lastManifestCommit.
+
+      case _ => ()
+    }
   }
 
   protected[delta] def writeLastCheckpointFile(
@@ -603,6 +686,8 @@ trait Checkpoints extends DeltaLogging {
            assert(ci.numParts.nonEmpty, "Multi-Part Checkpoint must have non empty numParts")
            matchingCheckpointInstances.length == ci.numParts.get
          case CheckpointInstance.Format.V2 =>
+           matchingCheckpointInstances.length == 1
+         case CheckpointInstance.Format.AMT =>
            matchingCheckpointInstances.length == 1
          case CheckpointInstance.Format.SENTINEL =>
            false
