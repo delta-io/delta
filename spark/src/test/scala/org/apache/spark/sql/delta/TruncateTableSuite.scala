@@ -23,12 +23,13 @@ import org.apache.spark.sql.test.SharedSparkSession
 class TruncateTableSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
-  with DeltaTestUtilsForTempViews {
+  with DeltaTestUtilsForTempViews
+  with DeltaTableProvider {
 
 
   test("non-partitioned table") {
     withTable("t1") {
-      sql("CREATE TABLE t1 (a int) USING delta")
+      sql(createTableSQL("t1", "a int"))
       sql("INSERT into t1 VALUES (3)")
       sql("INSERT into t1 VALUES (4)")
 
@@ -44,7 +45,7 @@ class TruncateTableSuite extends QueryTest
 
   test("partitioned table") {
     withTable("t1") {
-      sql("CREATE TABLE t1 (a int, b int) USING delta partitioned by (b)")
+      sql(createTableSQL("t1", "a int, b int", partitionBy = "partitioned by (b)"))
       sql("INSERT into t1 VALUES (1, 1)")
       sql("INSERT into t1 VALUES (2, 2)")
 
@@ -63,7 +64,7 @@ class TruncateTableSuite extends QueryTest
       import testImplicits._
       val path = dir.getCanonicalPath
       Seq((1, 2)).toDF("key", "value")
-        .write.format("delta").partitionBy("key").save(path)
+        .write.format(writeFormat).partitionBy("key").save(path)
       sql(s"TRUNCATE TABLE delta.`$path`")
       checkAnswer(sql(s"select * from delta.`$path`"), Nil)
       val ae = intercept[AnalysisException] {
@@ -75,7 +76,7 @@ class TruncateTableSuite extends QueryTest
 
   test("truncate should refresh DF cache - table") {
     withTable("t1") {
-      sql("CREATE TABLE t1 (a int, b int) USING delta partitioned by (b)")
+      sql(createTableSQL("t1", "a int, b int", partitionBy = "partitioned by (b)"))
       sql("INSERT into t1 VALUES (1, 1)")
       sql("INSERT into t1 VALUES (2, 2)")
 
@@ -91,7 +92,7 @@ class TruncateTableSuite extends QueryTest
       import testImplicits._
       val path = dir.getCanonicalPath
       Seq((1, 2)).toDF("key", "value")
-        .write.format("delta").partitionBy("key").save(path)
+        .write.format(writeFormat).partitionBy("key").save(path)
       val df = sql(s"select * from delta.`$path`").cache()
       sql(s"TRUNCATE TABLE delta.`$path`")
       checkAnswer(df, Nil)
@@ -101,7 +102,7 @@ class TruncateTableSuite extends QueryTest
 
   testWithTempView("truncate on temp views") { isSQLTempView =>
     withTable("t1") {
-      sql("CREATE TABLE t1 (a int) USING delta")
+      sql(createTableSQL("t1", "a int"))
       sql("INSERT into t1 VALUES (3)")
       sql("INSERT into t1 VALUES (4)")
 

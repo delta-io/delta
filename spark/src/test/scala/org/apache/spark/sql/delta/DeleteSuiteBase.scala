@@ -53,7 +53,7 @@ trait DeleteBaseMixin
       expectedErrorClassForDataSetTempView: String = null): Unit = {
     testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
       withTable("tab") {
-        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        Seq((0, 3), (1, 2)).toDF("key", "value").write.format(writeFormat).saveAsTable("tab")
         if (isSQLTempView) {
           sql(s"CREATE TEMP VIEW v AS $text")
         } else {
@@ -91,13 +91,13 @@ trait DeleteBaseMixin
       expectResult: Seq[Row]): Unit = {
     testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
         withTable("tab") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format(writeFormat).saveAsTable("tab")
           createTempViewFromSelect(text, isSQLTempView)
           executeDelete(
             "v",
             "key >= 1 and value < 3"
           )
-          checkAnswer(spark.read.format("delta").table("v"), expectResult)
+          checkAnswer(spark.read.format(writeFormat).table("v"), expectResult)
         }
     }
   }
@@ -307,7 +307,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     withTempPath { tempDir =>
       val tempPath = tempDir.getCanonicalPath
       val df = Seq((2, 2), (3, 2)).toDF("key", "value")
-      df.write.format("delta").partitionBy("key").save(tempPath)
+      df.write.format(writeFormat).partitionBy("key").save(tempPath)
 
       val e = intercept[AnalysisException] {
         executeDelete(target = s"delta.`$tempPath/key=2`", where = "value = 2")
@@ -319,7 +319,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
   test("delete cached table by name") {
     withTable("cached_delta_table") {
       Seq((2, 2), (1, 4)).toDF("key", "value")
-        .write.format("delta").saveAsTable("cached_delta_table")
+        .write.format(writeFormat).saveAsTable("cached_delta_table")
 
       spark.table("cached_delta_table").cache()
       spark.table("cached_delta_table").collect()
@@ -552,7 +552,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       customErrorRegex: Option[String] = None) {
     test(s"$functionType functions in delete - expect exception: $expectException") {
       withTable("deltaTable") {
-        data.write.format("delta").saveAsTable("deltaTable")
+        data.write.format(writeFormat).saveAsTable("deltaTable")
 
         val expectedErrorRegex = "(?s).*(?i)unsupported.*(?i).*Invalid expressions.*"
 
@@ -575,7 +575,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
 
 
         if (catchException) {
-          val dataBeforeException = spark.read.format("delta").table("deltaTable").collect()
+          val dataBeforeException = spark.read.format(writeFormat).table("deltaTable").collect()
           val e = intercept[Exception] {
             executeDelete(target = "deltaTable", where = where)
           }
@@ -584,7 +584,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
           } else e.getMessage
           assert(message.matches(errorRegex),
             s"unexpected error in $functionType case: ${e.getClass.getName}: $message")
-          checkAnswer(spark.read.format("delta").table("deltaTable"), dataBeforeException)
+          checkAnswer(spark.read.format(writeFormat).table("deltaTable"), dataBeforeException)
         } else {
           executeDelete(target = "deltaTable", where = where)
         }
@@ -678,7 +678,7 @@ trait DeleteSubqueryBaseMixin extends DeleteBaseMixin {
         .toDF("c", "t1")
         .coalesce(1)
         .write
-        .format("delta")
+        .format(writeFormat)
         .mode("overwrite")
         .saveAsTable("target")
       if (source.nonEmpty) {
@@ -707,7 +707,7 @@ trait DeleteSubqueryBaseMixin extends DeleteBaseMixin {
       val partSpec = if (isPartitioned) "partitioned by (c)" else ""
       test(name + s" isPartitioned=$isPartitioned") {
         withTable("target") {
-          sql(s"CREATE TABLE target(c int, t1 string) USING delta $partSpec")
+          sql(s"CREATE TABLE target(c int, t1 string) USING $tableProvider $partSpec")
           body
         }
       }
@@ -833,7 +833,7 @@ trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
       .toDF("c", "t1")
       .coalesce(1)
       .write
-      .format("delta")
+      .format(writeFormat)
       .mode("overwrite")
       .saveAsTable("target")
     // Create an empty source view with the correct schema
@@ -859,7 +859,7 @@ trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
       .toDF("c", "t1")
       .repartition(4)
       .write
-      .format("delta")
+      .format(writeFormat)
       .mode("overwrite")
       .saveAsTable("target")
     Seq((3, "x"), (7, "y"), (15, "z"))
