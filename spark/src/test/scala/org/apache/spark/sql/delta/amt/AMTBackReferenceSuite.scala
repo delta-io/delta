@@ -89,23 +89,32 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
 
   /**
    * Asserts that every file action committed after `afterVersion` that reuses a pre-command
-   * leaf-derived file's path carries exactly that file's back reference.
+   * leaf-derived file's path carries exactly that file's back reference. A file superseded under
+   * the same path with a new DV is the one exception: the RemoveFile keeps the back reference
+   * and the superseding AddFile must carry none.
    */
   private def assertBackRefsPropagated(
       deltaLog: DeltaLog,
       afterVersion: Long,
       backRefByPath: Map[String, Option[BackReference]]): Int = {
+    val actions = actionsAfter(deltaLog, afterVersion)
+    val supersededPaths = actions.collect {
+      case r: RemoveFile if r.backReference.isDefined => r.path
+    }.toSet
     var matched = 0
-    actionsAfter(deltaLog, afterVersion).foreach {
+    actions.foreach {
       case r: RemoveFile if backRefByPath.contains(r.path) =>
         val expected = backRefByPath(r.path)
         assert(r.backReference == expected,
           s"RemoveFile ${r.path} back-ref ${r.backReference} must equal source $expected.")
         matched += 1
+      case a: AddFile if supersededPaths.contains(a.path) =>
+        assert(a.backReference.isEmpty,
+          s"Superseding AddFile ${a.path} must carry no back reference, was ${a.backReference}.")
       case a: AddFile if backRefByPath.contains(a.path) =>
         val expected = backRefByPath(a.path)
         assert(a.backReference == expected,
-          s"Superseding AddFile ${a.path} back-ref ${a.backReference} must equal source $expected.")
+          s"Re-added AddFile ${a.path} back-ref ${a.backReference} must equal source $expected.")
         matched += 1
       case _ => // A freshly written AddFile (new path) or a non-file action: nothing to inherit.
     }
@@ -222,7 +231,7 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
   }
 
   testAcrossAMTCheckpointScenarios(
-      "removeRows propagates the back reference to the superseding AddFile and the RemoveFile",
+      "removeRows keeps the back reference on the RemoveFile and drops it from the AddFile",
       "amt_back_ref_remove_rows",
       sqlConfs = leafPackingConfs)(
       setup = name => {
@@ -244,8 +253,8 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
       twoRowFile.removeRows(
         deletionVector = dv, updateStats = false)
 
-    assert(supersedingAdd.backReference == twoRowFile.backReference,
-      "The superseding AddFile (new DV) must inherit the source file's back reference.")
+    assert(supersedingAdd.backReference.isEmpty,
+      "The superseding AddFile (new DV) is a net-new root entry and must carry no back reference.")
     assert(removeFile.backReference == twoRowFile.backReference,
       "The paired RemoveFile must inherit the source file's back reference.")
   }
@@ -279,8 +288,8 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
       case r: RemoveFile if r.path == twoRowPath => r
     }.getOrElse(fail("expected a paired RemoveFile for the two-row file."))
     assert(supersedingAdd.deletionVector != null, "the superseding AddFile must carry the DV.")
-    assert(supersedingAdd.backReference == backRefByPath(twoRowPath),
-      "the superseding AddFile must inherit the source file's back reference.")
+    assert(supersedingAdd.backReference.isEmpty,
+      "the superseding AddFile must not claim the source file's leaf position.")
     assert(removed.backReference == backRefByPath(twoRowPath),
       "the paired RemoveFile must inherit the source file's back reference.")
   }
