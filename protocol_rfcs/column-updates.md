@@ -81,7 +81,9 @@ A column file is a Parquet file associated with exactly one base data file. Its 
 
 `_pos` is the physical offset of the corresponding row in the base file.
 
-`_last_updated_sequence_number` stores row lineage information for Iceberg V4 change detection. It contains either the sequence number of the update that last changed this row, or `NULL` to indicate that the most recent update changed this row.
+`_last_updated_sequence_number` stores row lineage information for Iceberg V4 change detection. In Delta, it contains either the commit version of the update that last changed this row, or `NULL` to indicate that the most recent update changed this row. The name mentions sequence numbers only for Iceberg compatibility, in Delta it still stores the Delta commit version.
+
+The rest is value columns that represent the current values for the associated base file columns. Values associated with base file rows that are already deleted by a DV might either contain stale values (so that we don't need to overwrite the column file with each DV update) or `NULL`s (so that we don't need to read the old values when writing new copy-on-write column files).
 
 For examples of column files see [Column Updates examples](#column-updates-examples).
 
@@ -95,9 +97,9 @@ fieldIds | Array[Integer] | The Column Mapping IDs of the table fields supplied 
 path | String | A relative path to a column file from the root of the table, or an absolute path to the column file. The path uses the same URI encoding as `add.path`. | required
 sizeInBytes | Long | The size of the column file in bytes. | required
 
-`fieldIds` must not be empty and must not contain duplicates. A field ID must occur in at most one `ColumnFileDescriptor` within a single `add`.
+`fieldIds` must not be empty and must not contain duplicates. A field ID must occur in at most one `ColumnFileDescriptor` within a single `add`. At the moment, only top-level fields are supported for Column Updates.
 
-`_pos` does not get a field id is not included in `fieldIds` as it is a metadata column that is always present. `_last_updated_sequence_number` does get a field id (2147483539) and might be included to indicate that the associated column file is the most recently written one. This implies that for file actions that contain any amount of column files, there should be exactly one `ColumnFileDescriptor` that contains the field id for `_last_updated_sequence_number`.
+`_pos` does not get a field id and is not included in `fieldIds` as it is a metadata column that is always present. `_last_updated_sequence_number` does get a field id (2147483539) and might be included to indicate that the associated column file is the most recently written one. This implies that for file actions that contain any amount of column files, there should be exactly one `ColumnFileDescriptor` that contains the field id for `_last_updated_sequence_number`.
 
 ## Column File Set Identity
 
@@ -121,7 +123,7 @@ During a write that uses the Column Updates feature, the writer must:
 
 ## Column File Cleanup
 
-Column files are table data. VACUUM must preserve all column files referenced by a retained file action. A column file may be deleted only when no retained file action references its path an the retention period has passed.
+Column files are table data. VACUUM must preserve all column files referenced by a retained file action. A column file may be deleted only when no retained file action references its path and the retention period has passed.
 
 The `columnUpdates` feature must not be removed while any retained table version references a column file.
 
