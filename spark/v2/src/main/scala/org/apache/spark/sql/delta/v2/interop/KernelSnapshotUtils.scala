@@ -19,15 +19,13 @@ package org.apache.spark.sql.delta.v2.interop
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.OptionConverters._
 
-import org.apache.spark.sql.delta.actions.{
-  AddFile,
-  DeletionVectorDescriptor => V1DeletionVectorDescriptor
-}
-import org.apache.spark.sql.delta.implicits._
 import io.delta.kernel.data.MapValue
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl}
-import io.delta.kernel.internal.actions.{AddFile => KernelAddFile}
+import io.delta.kernel.internal.actions.{AddFile => KernelAddFile, DeletionVectorDescriptor => KernelDeletionVectorDescriptor}
+
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor => V1DeletionVectorDescriptor}
+import org.apache.spark.sql.delta.implicits._
 
 import org.apache.spark.sql.{Dataset, SparkSession}
 
@@ -64,7 +62,7 @@ private[delta] object KernelSnapshotUtils {
       kernelSnapshot: SnapshotImpl,
       engine: Engine): Seq[AddFile] = {
     val scan = kernelSnapshot.getScanBuilder.build().asInstanceOf[ScanImpl]
-    val scanFileBatches = scan.getScanFiles(engine, true /* includeStats */)
+    val scanFileBatches = scan.getScanFiles(engine, true /* includeStats */ )
     try {
       val files = ArrayBuffer.empty[AddFile]
       while (scanFileBatches.hasNext) {
@@ -72,7 +70,7 @@ private[delta] object KernelSnapshotUtils {
         try {
           while (rows.hasNext) {
             val kernelAddFile = new KernelAddFile(
-              rows.next().getStruct(0 /* addFileColumnOrdinal */))
+              rows.next().getStruct(0 /* addFileColumnOrdinal */ ))
             files += toV1AddFile(kernelAddFile)
           }
         } finally {
@@ -115,19 +113,20 @@ private[delta] object KernelSnapshotUtils {
    * V1 AddFile uses null when a file has no deletion vector, so this method does the same.
    */
   private def toV1DeletionVectorDescriptor(
-      kernelAddFile: KernelAddFile): V1DeletionVectorDescriptor = {
-    val deletionVector = kernelAddFile.getDeletionVector
-    if (deletionVector.isPresent) {
-      val kernelDeletionVector = deletionVector.get
-      V1DeletionVectorDescriptor(
-        storageType = kernelDeletionVector.getStorageType,
-        pathOrInlineDv = kernelDeletionVector.getPathOrInlineDv,
-        offset = kernelDeletionVector.getOffset.toScala.map(_.intValue()),
-        sizeInBytes = kernelDeletionVector.getSizeInBytes,
-        cardinality = kernelDeletionVector.getCardinality)
-    } else {
-      null
-    }
+      kernelAddFile: KernelAddFile): V1DeletionVectorDescriptor =
+    kernelAddFile.getDeletionVector.toScala
+      .map(toV1DeletionVectorDescriptor)
+      .orNull
+
+  /** Converts one Kernel deletion-vector descriptor to Delta's V1 value type. */
+  private[v2] def toV1DeletionVectorDescriptor(
+      kernelDeletionVector: KernelDeletionVectorDescriptor): V1DeletionVectorDescriptor = {
+    V1DeletionVectorDescriptor(
+      storageType = kernelDeletionVector.getStorageType,
+      pathOrInlineDv = kernelDeletionVector.getPathOrInlineDv,
+      offset = kernelDeletionVector.getOffset.toScala.map(_.intValue()),
+      sizeInBytes = kernelDeletionVector.getSizeInBytes,
+      cardinality = kernelDeletionVector.getCardinality)
   }
 
   /**

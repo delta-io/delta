@@ -966,8 +966,10 @@ case class AddFile(
       case Some(_) => deletionVector.copy(maxRowIndex = None)
       case _ => deletionVector
     }
-    var addFileWithNewDv =
-      this.copy(deletionVector = dvDescriptorWithoutMaxRowIndex, dataChange = dataChange)
+    var addFileWithNewDv = this.copy(
+      deletionVector = dvDescriptorWithoutMaxRowIndex,
+      dataChange = dataChange,
+      backReference = None)
     if (updateStats) {
       addFileWithNewDv = addFileWithNewDv.withoutTightBoundStats
     }
@@ -1632,6 +1634,9 @@ case class ContentRoot(
   /** Whether this manifest tree was built incrementally, if recorded. */
   def isIncremental: Option[Boolean] = tag(ContentRoot.Tags.IS_INCREMENTAL).map(_.toBoolean)
 
+  /** Number of leaf manifests in this tree, if recorded; `0` means a root-only tree. */
+  def numLeaves: Option[Long] = tag(ContentRoot.Tags.NUM_LEAVES).map(_.toLong)
+
   /** The version of the most recent full (non-incremental) manifest rewrite, if recorded. */
   def lastManifestCommitWithFullRewrite: Option[Long] =
     tag(ContentRoot.Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE).map(_.toLong)
@@ -1661,14 +1666,16 @@ object ContentRoot {
       path: String,
       sizeInBytes: Long,
       isIncremental: Boolean,
-      lastManifestCommitWithFullRewrite: Long): ContentRoot = {
+      lastManifestCommitWithFullRewrite: Long,
+      numLeaves: Long): ContentRoot = {
     ContentRoot(
       path = path,
       sizeInBytes = sizeInBytes,
       tags = Map(
         Tags.IS_INCREMENTAL.name -> isIncremental.toString,
         Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE.name ->
-          lastManifestCommitWithFullRewrite.toString
+          lastManifestCommitWithFullRewrite.toString,
+        Tags.NUM_LEAVES.name -> numLeaves.toString
       )
     )
   }
@@ -1681,6 +1688,8 @@ object ContentRoot {
     /** The version of the most recent full (non-incremental) manifest rewrite. */
     object LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE
       extends KeyType("lastManifestCommitWithFullRewrite")
+    /** Number of leaf manifests in the tree; `0` means a root-only tree. */
+    object NUM_LEAVES extends KeyType("numLeaves")
   }
 }
 

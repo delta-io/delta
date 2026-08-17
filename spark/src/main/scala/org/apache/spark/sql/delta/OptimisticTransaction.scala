@@ -2931,6 +2931,15 @@ trait OptimisticTransactionImpl extends TransactionHelper
         updatedCurrentTransactionInfo.finalActionsToCommit :+ result.checkpoint
       case None => baseActions
     }
+    // Surface the AMT checkpoint that this commit emits inline (at `attemptVersion`) so the
+    // incremental CRC can tell whether the resulting tree is root-only. This is the current
+    // attempt's tree, not `preCommitLatestAMTCheckpointOpt` (which tracks [0, attemptVersion-1]).
+    val txnInfoForCommit = amtWriteResultOpt.map(_.checkpoint) match {
+      case Some(amtCheckpoint) =>
+        updatedCurrentTransactionInfo.copy(
+          currentCommitAttemptAMTCheckpointOpt = Some(amtCheckpoint))
+      case None => updatedCurrentTransactionInfo
+    }
     logInfo(
       log"Attempting to commit version ${MDC(DeltaLogKeys.VERSION, attemptVersion)} with " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, actions.size.toLong)} actions with " +
@@ -2953,7 +2962,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val jsonActions = actions.map(_.json)
 
     val (newChecksumOpt, commit, committedTransactionInfo) =
-      writeCommitFile(attemptVersion, jsonActions.toIterator, updatedCurrentTransactionInfo)
+      writeCommitFile(attemptVersion, jsonActions.toIterator, txnInfoForCommit)
 
     performPostCommitActions(
       attemptVersion,
@@ -3009,6 +3018,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // if needed.
       amtWriterManager.planMaintenance(attemptVersion, postCommitSnapshot)
     } else {
+      // The _last_checkpoint file must be updated here rather than the checkpoint hook, because the
+      // hook does not know about the new AMT checkpoint emitted in this commit.
+      amtWriteResultOpt.foreach { writeResult =>
+        deltaLog.writeLastCheckpointFileForAMT(manifestCommitVersion = attemptVersion, writeResult)
+      }
       // The AMT was written inline with this commit (always incremental). A full rewrite is never
       // inlined, so schedule a follow-up full OPTIMIZE CHECKPOINT commit when the full-rewrite
       // cadence is due -- otherwise a table whose commits consistently inline would never get a
@@ -3206,6 +3220,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected def incrementallyDeriveChecksum(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo): Option[VersionChecksum] = {
+    val effectiveLatestAMTCheckpointAtCommitVersion =
+      currentTransactionInfo.currentCommitAttemptAMTCheckpointOpt
+        .orElse(currentTransactionInfo.preCommitLatestAMTCheckpointOpt)
     incrementallyDeriveChecksum(
       spark,
       deltaLog,
@@ -3218,7 +3235,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       previousVersionState = scala.Left(snapshot),
       mustIncludeFileSizeHistogram =
         spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED),
-      includeAddFilesInCrc = Snapshot.shouldIncludeAddFilesInCrc(spark, snapshot, metadata)
+      includeAddFilesInCrc = Snapshot.shouldIncludeAddFilesInCrc(
+        spark, snapshot, metadata, effectiveLatestAMTCheckpointAtCommitVersion)
     ).toOption
   }
 

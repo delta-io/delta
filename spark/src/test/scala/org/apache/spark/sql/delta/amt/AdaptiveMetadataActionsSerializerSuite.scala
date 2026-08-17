@@ -85,18 +85,22 @@ class AdaptiveMetadataActionsSerializerSuite extends SparkFunSuite {
       path = "metadata/root-abc.parquet",
       sizeInBytes = 4096L,
       isIncremental = true,
-      lastManifestCommitWithFullRewrite = 7L)
+      lastManifestCommitWithFullRewrite = 7L,
+      numLeaves = 3L)
     assert(root.isIncremental === Some(true))
     assert(root.lastManifestCommitWithFullRewrite === Some(7L))
+    assert(root.numLeaves === Some(3L))
     val roundTripped = JsonUtils.fromJson[ContentRoot](JsonUtils.toJson(root))
     assert(roundTripped === root)
     assert(roundTripped.isIncremental === Some(true))
     assert(roundTripped.lastManifestCommitWithFullRewrite === Some(7L))
+    assert(roundTripped.numLeaves === Some(3L))
   }
 
   test("ContentRoot: accessors are None when tags are absent") {
     assert(sampleRoot.isIncremental.isEmpty)
     assert(sampleRoot.lastManifestCommitWithFullRewrite.isEmpty)
+    assert(sampleRoot.numLeaves.isEmpty)
   }
 
   // ============================================================================================

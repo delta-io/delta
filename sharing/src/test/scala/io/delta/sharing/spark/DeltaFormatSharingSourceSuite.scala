@@ -3673,4 +3673,83 @@ class DeltaFormatSharingSourceSuite
         assertBlocksAreCleanedUp()
     }
   }
+
+  /**
+   * Runs a startingTimestamp streaming query over a version range with no file actions, and
+   * returns the JSON of the last offset it committed.
+   */
+  private def runEmptyRangeStartingTimestampQuery(
+      testName: String,
+      convertToVersion: Boolean): Option[String] = {
+    var offsetJson: Option[String] = None
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = s"delta_table_empty_range_$testName"
+      withTable(deltaTableName) {
+        createTableForStreaming(deltaTableName)
+        sql(s"INSERT INTO $deltaTableName VALUES ('a')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('b')")
+        // Version 3's actions all have dataChange = false, so [3, 3] has no file actions.
+        sql(s"OPTIMIZE $deltaTableName")
+
+        val sharedTableName = s"shared_empty_range_$testName"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        // The mocked client returns this version for any timestamp.
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName, Some(3L))
+        prepareMockedClientAndFileSystemResultForStreaming(
+          deltaTableName, sharedTableName, 3, 3)
+
+        val startingTimestamp = new java.sql.Timestamp(
+          getTimeStampForVersion(deltaTableName, 3L)).toInstant.toString
+
+        val profileFile = prepareProfileFile(inputDir)
+        val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+
+        withSQLConf(
+          (getDeltaSharingClassesSQLConf.toSeq :+
+            (DeltaSQLConf.DELTA_SHARING_STREAMING_CONVERT_STARTING_TIMESTAMP_TO_VERSION.key ->
+              convertToVersion.toString)): _*) {
+          val q = spark.readStream
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .option(SKIP_CHANGE_COMMITS_OPTION, "true")
+            .option("startingTimestamp", startingTimestamp)
+            .load(tablePath)
+            .writeStream
+            .format("delta")
+            .option("checkpointLocation", checkpointDir.toString)
+            .trigger(Trigger.Once())
+            .start(outputDir.toString)
+          try {
+            q.processAllAvailable()
+          } finally {
+            q.stop()
+          }
+
+          checkAnswer(spark.read.format("delta").load(outputDir.getCanonicalPath), Seq.empty[Row])
+
+          val offsetLog = new OffsetSeqLog(
+            spark, s"${checkpointDir.getCanonicalPath}/offsets")
+          offsetJson = offsetLog.getLatest().flatMap(_._2.offsets.head).map(_.json())
+        }
+      }
+    }
+    offsetJson
+  }
+
+  test("startingTimestamp with an empty first batch yields an empty batch and advances offset") {
+    val offsetJson = runEmptyRangeStartingTimestampQuery("fixed", convertToVersion = true)
+
+    assert(offsetJson.isDefined, "the query should have committed an offset")
+    assert(offsetJson.get.contains("\"reservoirVersion\":4"),
+      s"offset should have advanced past the empty range, but got ${offsetJson.get}")
+    assert(offsetJson.get.contains("\"isStartingVersion\":false"),
+      s"offset should not be in the initial snapshot, but got ${offsetJson.get}")
+  }
+
+  test("startingTimestamp with an empty first batch fails when the fix is disabled") {
+    val e = intercept[StreamingQueryException] {
+      runEmptyRangeStartingTimestampQuery("legacy", convertToVersion = false)
+    }
+    assert(e.getMessage.contains("DELTA_TIMESTAMP_GREATER_THAN_COMMIT"))
+  }
 }

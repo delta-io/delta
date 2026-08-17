@@ -39,7 +39,8 @@ class TypeWideningAlterTableSuite
 
 trait TypeWideningAlterTableTests extends QueryTest
     with QueryErrorsBase
-    with TypeWideningTestCases {
+    with TypeWideningTestCases
+    with DeltaTableProvider {
   self: QueryTest with ParquetTest with TypeWideningTestMixin =>
 
   import testImplicits._
@@ -157,7 +158,7 @@ trait TypeWideningAlterTableTests extends QueryTest
   test(
     "widening Date -> TimestampNTZ rejected when TimestampNTZ feature isn't supported") {
     withTimestampNTZDisabled {
-      sql(s"CREATE TABLE $tableSQLIdentifier (a date) USING DELTA")
+      sql(createTableSQL(tableSQLIdentifier, "a date"))
       val currentProtocol = deltaLog.unsafeVolatileSnapshot.protocol
       val currentFeatures = currentProtocol.implicitlyAndExplicitlySupportedFeatures
         .map(_.name)
@@ -179,7 +180,7 @@ trait TypeWideningAlterTableTests extends QueryTest
   }
 
   test("type widening type change metrics") {
-    sql(s"CREATE TABLE $tableSQLIdentifier (a byte) USING DELTA")
+    sql(createTableSQL(tableSQLIdentifier, "a byte"))
     val usageLogs = Log4jUsageLogger.track {
       sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN a TYPE int")
     }
@@ -204,7 +205,7 @@ trait TypeWideningAlterTableTests extends QueryTest
   }
 
   test("type widening with null type in table") {
-    sql(s"CREATE TABLE $tableSQLIdentifier (a byte, n VOID) USING DELTA")
+    sql(createTableSQL(tableSQLIdentifier, "a byte, n VOID"))
     sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN a TYPE int")
   }
 }

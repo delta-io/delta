@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import java.util.Arrays;
 import java.util.List;
@@ -106,7 +106,7 @@ class DeltaV2ChangelogCatalogIntegrationTest extends DeltaV2ChangelogTestBase {
   private java.sql.Timestamp commitTimestamp(String tableLocation, long version) {
     // Reads through the kernel snapshot manager, so it works inside the STRICT block the test body
     // runs in. tableLocation is resolved by withHistoryTable before STRICT is set.
-    DeltaSnapshotManager snapshotManager =
+    DeltaV2SnapshotManager snapshotManager =
         SnapshotManagerFactory.create(tableLocation, defaultEngine, Optional.empty());
     long millis = snapshotManager.loadSnapshotAt(version).getTimestamp(defaultEngine);
     return new java.sql.Timestamp(millis);

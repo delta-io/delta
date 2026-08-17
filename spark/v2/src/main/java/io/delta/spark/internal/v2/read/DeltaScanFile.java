@@ -15,10 +15,10 @@
  */
 package io.delta.spark.internal.v2.read;
 
-import io.delta.kernel.data.MapValue;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
-import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.spark.internal.v2.utils.PartitionUtils;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -26,7 +26,7 @@ import java.util.Optional;
 public final class DeltaScanFile {
 
   private final String path;
-  private final MapValue partitionValues;
+  private final Map<String, String> partitionValuesMap;
   private final long size;
   private final long modificationTime;
   private final Optional<Long> baseRowId;
@@ -36,7 +36,7 @@ public final class DeltaScanFile {
   DeltaScanFile(AddFile addFile) {
     this(
         Objects.requireNonNull(addFile, "addFile is null").getPath(),
-        addFile.getPartitionValues(),
+        PartitionUtils.buildPartitionValuesMap(addFile.getPartitionValues()),
         addFile.getSize(),
         addFile.getModificationTime(),
         addFile.getBaseRowId(),
@@ -46,14 +46,14 @@ public final class DeltaScanFile {
 
   private DeltaScanFile(
       String path,
-      MapValue partitionValues,
+      Map<String, String> partitionValuesMap,
       long size,
       long modificationTime,
       Optional<Long> baseRowId,
       Optional<Long> defaultRowCommitVersion,
       Optional<DeletionVectorDescriptor> deletionVector) {
     this.path = path;
-    this.partitionValues = partitionValues;
+    this.partitionValuesMap = partitionValuesMap;
     this.size = size;
     this.modificationTime = modificationTime;
     this.baseRowId = baseRowId;
@@ -63,13 +63,13 @@ public final class DeltaScanFile {
 
   /**
    * Builds a descriptor from a V1 AddFile selected by V1 data skipping rather than Kernel's {@code
-   * getScanFiles}. The V1 fields are converted to the Kernel-typed representation this descriptor
-   * exposes, so its public getters stay stable for the row-level ReplaceData write path.
+   * getScanFiles}. The V1 fields are copied into the same durable representation used for
+   * Kernel-selected files.
    */
   static DeltaScanFile fromV1AddFile(org.apache.spark.sql.delta.actions.AddFile v1AddFile) {
     Objects.requireNonNull(v1AddFile, "v1AddFile is null");
-    MapValue partitionValues =
-        VectorUtils.stringStringMapValue(
+    Map<String, String> partitionValues =
+        PartitionUtils.buildPartitionValuesMap(
             scala.jdk.javaapi.CollectionConverters.asJava(v1AddFile.partitionValues()));
     Optional<DeletionVectorDescriptor> dv =
         Optional.ofNullable(v1AddFile.deletionVector())
@@ -103,8 +103,9 @@ public final class DeltaScanFile {
     return path;
   }
 
-  public MapValue getPartitionValues() {
-    return partitionValues;
+  /** Returns partition values copied out of the selected file action. */
+  public Map<String, String> getPartitionValuesMap() {
+    return partitionValuesMap;
   }
 
   public long getSize() {

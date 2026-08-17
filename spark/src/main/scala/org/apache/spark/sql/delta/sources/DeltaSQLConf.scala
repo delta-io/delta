@@ -200,6 +200,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(n => n >= 0, "must not be negative.")
       .createWithDefault(2)
 
+  val DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES =
+    buildConf("commit.inconsistentList.maxRetries")
+      .internal()
+      .doc("How many times to retry fetching the log segment after a commit when the listing " +
+        "returns a version lower than the committed version. The listing can be stale for a " +
+        "few seconds after a commit (in case of list-after-write storage inconsistency), and " +
+        "each retry waits with exponential backoff, capped at 30 seconds, before re-listing.")
+      .intConf
+      .checkValue(n => n >= 0 && n < 10, "must be between 0 (inclusive) and 10 (exclusive).")
+      .createWithDefault(3)
+
   val DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL =
     buildConf("snapshotCache.storageLevel")
       .internal()
@@ -3323,6 +3334,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "accurate across a mid-range protocol upgrade. When false, the client keeps the legacy " +
         "single-head-protocol behavior. Gates the CDF path independently from the non-CDF " +
         "streaming path controlled by spark.sql.delta.sharing.streamingEnableHistoricalProtocol.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_SHARING_STREAMING_CONVERT_STARTING_TIMESTAMP_TO_VERSION =
+    buildConf("spark.sql.delta.sharing.streamingConvertStartingTimestampToVersion")
+      .doc("When true, a Delta Sharing streaming query converts startingTimestamp to a version " +
+        "on the sharing server, passing that version to the wrapped DeltaSource. When false, the " +
+        "wrapped DeltaSource resolves the timestamp again on the local delta log, where an empty " +
+        "version range fails with DELTA_TIMESTAMP_GREATER_THAN_COMMIT.")
       .internal()
       .booleanConf
       .createWithDefault(false)
