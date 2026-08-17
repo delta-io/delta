@@ -49,6 +49,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.data.*;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
+import org.apache.flink.table.runtime.typeutils.RowDataSerializer;
 import org.apache.flink.table.types.logical.*;
 import org.apache.flink.table.types.logical.BinaryType;
 import org.apache.flink.table.types.logical.BooleanType;
@@ -439,7 +440,9 @@ public class DeltaSinkTest extends TestHelper {
                   .withPartitionColNames(List.of("part"))
                   .build();
 
-          assertNotNull(deltaSink.createWriter(new TestWriterInitContext(1, 1, 1)));
+          assertNotNull(
+              deltaSink.createWriter(
+                  new TestWriterInitContext(1, 1, 1, new RowDataSerializer(flinkSchema))));
           assertNotNull(deltaSink.createCommitter(new TestCommitterInitContext(1, 1, 1)));
         });
   }
