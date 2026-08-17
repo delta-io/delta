@@ -76,9 +76,11 @@ public final class GCSLogStoreUtil {
     }
 
     /**
-     * Overload taking an explicit {@link Storage} client, for tests.
+     * Overload taking an explicit {@link Storage} client. Visible for tests (e.g.
+     * GCSLogStoreUtilIntegrationTest instruments the client to observe list requests);
+     * the production entry point is {@link #gcsListFromArray(Path, Path)}.
      */
-    static FileStatus[] gcsListFrom(
+    public static FileStatus[] gcsListFrom(
             Storage storage,
             String bucket,
             Path resolvedPath,
