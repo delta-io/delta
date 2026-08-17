@@ -308,7 +308,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
 
   test("DeletionVector.fromDescriptor maps a UUID-relative DV to an unencoded absolute location") {
     val id = UUID.randomUUID()
-    val dv = DeletionVectorDescriptor.onDiskWithRelativePath(
+    val dv = DeletionVectorDescriptor.onDiskWithUuidRelativePath(
       id = id,
       randomPrefix = "test%dv%prefix-",
       sizeInBytes = 20,
@@ -350,7 +350,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
   }
 
   test("DeletionVector.fromDescriptor rejects an on-disk DV with no offset") {
-    val dv = DeletionVectorDescriptor.onDiskWithRelativePath(
+    val dv = DeletionVectorDescriptor.onDiskWithUuidRelativePath(
       id = UUID.randomUUID(), sizeInBytes = 10, cardinality = 1L, offset = None)
     val ex = intercept[IllegalArgumentException](DeletionVector.fromDescriptor(dv, tableRoot))
     assert(ex.getMessage.contains("missing an offset"))
