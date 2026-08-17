@@ -27,6 +27,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.TableChangesUtils;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.CloseableIterator;
@@ -89,7 +90,7 @@ public class CommitRangeImpl implements CommitRange {
     return endBoundaryOpt;
   }
 
-  @Override
+  @VisibleForTesting
   public List<FileStatus> getDeltaFiles() {
     return deltas.stream().map(ParsedDeltaData::getFileStatus).collect(Collectors.toList());
   }
