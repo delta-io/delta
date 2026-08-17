@@ -71,6 +71,17 @@ public class DeltaSinkTest extends TestHelper {
       SerializableFunction<Integer, String> supplier,
       SerializableFunction<String, RowData> parser)
       throws Exception {
+    runSink(sink, flinkSchema, rounds, supplier, parser, 2);
+  }
+
+  private static void runSink(
+      DeltaSink sink,
+      RowType flinkSchema,
+      int rounds,
+      SerializableFunction<Integer, String> supplier,
+      SerializableFunction<String, RowData> parser,
+      int completedCheckpointsBeforeFinish)
+      throws Exception {
     StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
     env.setParallelism(5);
     env.enableCheckpointing(100);
@@ -85,7 +96,7 @@ public class DeltaSinkTest extends TestHelper {
 
     DataStream<RowData> input =
         env.fromSource(
-                new DelayFinishTestSource<>(dataList, 2),
+                new DelayFinishTestSource<>(dataList, completedCheckpointsBeforeFinish),
                 WatermarkStrategy.noWatermarks(),
                 "source")
             .returns(String.class)
@@ -99,6 +110,43 @@ public class DeltaSinkTest extends TestHelper {
             .returns(rowDataTypeInfo);
     input.sinkTo(sink).uid("deltaSink");
     env.execute("DeltaSink integration test");
+  }
+
+  @Test
+  void testBoundedSourceCommitsFinalRows() {
+    withTempDir(
+        dir -> {
+          String tablePath = dir.getPath();
+          RowType flinkSchema = RowType.of(new LogicalType[] {new IntType()}, new String[] {"id"});
+          DeltaSink deltaSink =
+              DeltaSink.builder()
+                  .withTablePath(tablePath)
+                  .withFlinkSchema(flinkSchema)
+                  .withPartitionColNames(Collections.emptyList())
+                  .build();
+
+          int rounds = 10;
+          try {
+            runSink(
+                deltaSink,
+                flinkSchema,
+                rounds,
+                String::valueOf,
+                value -> GenericRowData.of(Integer.parseInt(value)),
+                0);
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+
+          verifyTableContent(
+              tablePath,
+              (version, actions, props) -> {
+                List<AddFile> actionList = new ArrayList<>();
+                actions.iterator().forEachRemaining(actionList::add);
+                assertEquals(
+                    rounds, actionList.stream().mapToLong(a -> a.getNumRecords().get()).sum());
+              });
+        });
   }
 
   @Test
