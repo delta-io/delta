@@ -214,7 +214,7 @@ object AMTWriteHelper extends DeltaLogging {
 
     // Capture values so the closures do not reach back into the object / non-serializable Path.
     // The rewritten files already exist in the table, so their leaf entries are EXISTING.
-    val tracking = trackingWithStatus(Tracking.Status.Existing)
+    val tracking = existingTrackingForDataEntry()
     val tableRootSparkPath = SparkPath.fromPath(tableRoot)
     val metadataDirSparkPath = SparkPath.fromPath(metadataDir)
 
@@ -260,7 +260,11 @@ object AMTWriteHelper extends DeltaLogging {
           // The root pointer to this leaf is newly ADDED, even though the leaf's own DATA
           // entries are EXISTING (the referenced data files already lived in the table).
           val (tracking, manifestInfo) =
-            addedTrackingForLeaf(existingFilesCount = entryCount.toInt)
+            addedTrackingForLeaf(
+              addedFilesCount = 0,
+              existingFilesCount = entryCount.toInt,
+              deletedFilesCount = 0,
+              replacedFilesCount = 0)
           Iterator.single(DataManifestEntry(
             location = AMTUtils.relativizeManifestPathToTableRoot(
               leafFs, tableRootSparkPath.toPath, leafFile),
@@ -274,8 +278,8 @@ object AMTWriteHelper extends DeltaLogging {
     }
   }
 
-  // Tracking envelope for a freshly written entry with the given status.
-  private def trackingWithStatus(status: Int): Tracking = Tracking(
+  // Initializes a tracking envelope for a freshly written entry with the given status.
+  private def initializeTracking(status: Int): Tracking = Tracking(
     status = status,
     snapshot_id = None,
     dv_snapshot_id = None,
@@ -285,24 +289,51 @@ object AMTWriteHelper extends DeltaLogging {
     deleted_positions = None,
     replaced_positions = None)
 
-  // Tracking envelope for a freshly written entry: ADDED.
-  private[amt] def addedTracking: Tracking = trackingWithStatus(Tracking.Status.Added)
+  /** Tracking helpers for [[DataEntry]] */
+  private[amt] def addedTrackingForDataEntry() = initializeTracking(Tracking.Status.Added)
+  private[amt] def existingTrackingForDataEntry() = initializeTracking(Tracking.Status.Existing)
+  private[amt] def modifiedTrackingForDataEntry() = initializeTracking(Tracking.Status.Modified)
+  private[amt] def removedTrackingForDataEntry() = initializeTracking(Tracking.Status.Deleted)
+  private[amt] def replacedTrackingForDataEntry() = initializeTracking(Tracking.Status.Replaced)
 
-  // Tracking envelope for a root-resident tombstone: REMOVED.
-  // `deletedPositions`, when present, is the within-file bitmap of rows this commit deleted
-  // (carried for CDF); it is left None for a whole-file removal.
-  private[amt] def removedTracking(deletedPositions: Option[Array[Byte]] = None): Tracking =
-    trackingWithStatus(Tracking.Status.Deleted).copy(deleted_positions = deletedPositions)
+  /** Tracking + ManifestInfo for a newly written leaf derived from its entries. */
+  private[amt] def addedTrackingForLeaf(entryStatuses: Seq[Int]): (Tracking, ManifestInfo) = {
+    val frequencies = entryStatuses.groupBy(identity).map { case (status, s) => status -> s.length }
+    def count(status: Int): Int = frequencies.getOrElse(status, 0)
+    addedTrackingForLeaf(
+      addedFilesCount = count(Tracking.Status.Added) + count(Tracking.Status.Modified),
+      existingFilesCount = count(Tracking.Status.Existing),
+      deletedFilesCount = count(Tracking.Status.Deleted),
+      replacedFilesCount = count(Tracking.Status.Replaced))
+  }
 
-  /** Tracking + ManifestInfo for a newly written leaf file: the root pointer to it is ADDED. */
+  /** Tracking + ManifestInfo for a newly written leaf from its file counts. */
   private[amt] def addedTrackingForLeaf(
-      addedFilesCount: Int = 0,
-      existingFilesCount: Int = 0): (Tracking, ManifestInfo) = {
-    val tracking = trackingWithStatus(Tracking.Status.Added)
+      addedFilesCount: Int,
+      existingFilesCount: Int,
+      deletedFilesCount: Int,
+      replacedFilesCount: Int): (Tracking, ManifestInfo) = {
+    val tracking = initializeTracking(Tracking.Status.Added)
     val manifestInfo = emptyManifestInfo.copy(
       added_files_count = addedFilesCount,
-      existing_files_count = existingFilesCount)
+      existing_files_count = existingFilesCount,
+      deleted_files_count = deletedFilesCount,
+      replaced_files_count = replacedFilesCount)
     (tracking, manifestInfo)
+  }
+
+  /**
+   * Tracking + ManifestInfo for a carried leaf that holds no live file (its live entries are all
+   * MDV-masked, or it only ever held tombstones): it decays to DELETED with its manifest_info kept
+   * and per-commit CDF positions cleared, so the next AMT drops it.
+   */
+  private[amt] def deletedTrackingForCarriedLeaf(
+      oldEntry: DataManifestEntry): (Tracking, ManifestInfo) = {
+    val newTracking = oldEntry.tracking.copy(
+      status = Tracking.Status.Deleted,
+      deleted_positions = None,
+      replaced_positions = None)
+    (newTracking, oldEntry.manifest_info)
   }
 
   /**
@@ -322,32 +353,39 @@ object AMTWriteHelper extends DeltaLogging {
 
   /**
    * Tracking + ManifestInfo for a carried leaf whose MDV grew this commit: MODIFIED, with
-   * `mdvPositions` accumulated into the cumulative MDV and `cdfPositions` recorded for CDF.
-   * If all the MDV bits are set, change the Tracking.Status from MODIFIED to DELETED.
+   * `mdvPositions` accumulated into the cumulative MDV, and this commit's `deletedPositions` /
+   * `replacedPositions` recorded for CDF. If all the MDV bits are set, the leaf decays to DELETED.
    */
   private[amt] def modifiedOrDeletedTrackingForLeaf(
       oldEntry: DataManifestEntry,
       mdvPositions: Seq[Long],
-      cdfPositions: Seq[Long]): (Tracking, ManifestInfo) = {
+      deletedPositions: Seq[Long],
+      replacedPositions: Seq[Long]): (Tracking, ManifestInfo) = {
     val cumulativeMdv = oldEntry.manifest_info.dv
       .map(AMTUtils.deserializeMdv).getOrElse(new RoaringBitmapArray)
     mdvPositions.foreach(cumulativeMdv.add)
-    val deletedPositions =
-      if (cdfPositions.isEmpty) None
-      else Some(AMTUtils.serializeMdv(RoaringBitmapArray(cdfPositions: _*)))
-    // A leaf's MDV masks positions within that leaf, so its cardinality can never exceed the
+    def bitmapOf(positions: Seq[Long]): Option[Array[Byte]] = {
+      if (positions.isEmpty) None
+      else Some(AMTUtils.serializeMdv(RoaringBitmapArray(positions: _*)))
+    }
+    // Every masked / CDF position indexes an entry within this leaf, so no count can exceed the
     // leaf's entry count; a larger value signals a corrupt bitmap or a double-counted position.
-    assert(cumulativeMdv.cardinality <= oldEntry.record_count,
-      s"leaf ${oldEntry.location}: MDV cardinality ${cumulativeMdv.cardinality} exceeds " +
-        s"record_count ${oldEntry.record_count}.")
-    // A leaf whose every entry is masked by the cumulative MDV holds no live file, so it decays to
-    // DELETED rather than MODIFIED.
-    val allEntriesMasked = cumulativeMdv.cardinality == oldEntry.record_count
-    val status = if (allEntriesMasked) Tracking.Status.Deleted else Tracking.Status.Modified
+    def assertWithinLeaf(count: Long, label: String): Unit =
+      assert(count <= oldEntry.record_count,
+        s"leaf ${oldEntry.location}: $label $count exceeds record_count ${oldEntry.record_count}.")
+    assertWithinLeaf(cumulativeMdv.cardinality, "MDV cardinality")
+    assertWithinLeaf(deletedPositions.size.toLong, "deleted_positions")
+    assertWithinLeaf(replacedPositions.size.toLong, "replaced_positions")
+    // A leaf whose every live entry is masked by the cumulative MDV holds no live file, so it
+    // decays to DELETED rather than MODIFIED.
+    val liveFileCount =
+      oldEntry.manifest_info.added_files_count + oldEntry.manifest_info.existing_files_count
+    val noActiveFiles = liveFileCount.toLong - cumulativeMdv.cardinality <= 0
+    val status = if (noActiveFiles) Tracking.Status.Deleted else Tracking.Status.Modified
     val newTracking = oldEntry.tracking.copy(
       status = status,
-      deleted_positions = deletedPositions,
-      replaced_positions = None)
+      deleted_positions = bitmapOf(deletedPositions),
+      replaced_positions = bitmapOf(replacedPositions))
     // manifest_info file/row counts are immutable; only the MDV (dv/dv_cardinality) grows to mask
     // the newly superseded positions. Live count is record_count - dv_cardinality, and this
     // commit's CDF positions live on the tracking, not in the counts.
@@ -366,24 +404,21 @@ object AMTWriteHelper extends DeltaLogging {
       tableRoot: Path,
       metadataDir: Path,
       metadata: Metadata,
-      batch: Seq[AddFile]): DataManifestEntry = {
+      entries: Seq[DataEntry]): DataManifestEntry = {
     val leafFile = FileNames.newAMTLeafManifestFile(metadataDir)
-    val rows: Seq[AMTSingleAction] =
-      batch.map(add =>
-        DataEntry
-          .fromAddFile(add, trackingWithStatus(Tracking.Status.Added), tableRoot)
-          .wrap
-      )
-    writeAMTParquet(spark, hadoopConf, leafFile, metadata, rows)
-    val status = fs.getFileStatus(leafFile)
-    val (tracking, manifestInfo) = addedTrackingForLeaf(addedFilesCount = rows.size)
+    writeAMTParquet(spark, hadoopConf, leafFile, metadata, entries.map(_.wrap))
+    val fileStatus = fs.getFileStatus(leafFile)
+    // A freshly written leaf is always ADDED -- even one holding only tombstones, whose
+    // manifest_info still counts the DELETED / REPLACED entries.
+    val statuses = entries.map(_.tracking.status)
+    val (tracking, manifestInfo) = addedTrackingForLeaf(statuses)
     DataManifestEntry(
       location = AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, leafFile),
       file_format = AMTSingleAction.FileFormatParquet,
       tracking = tracking,
       // Number of content entries the referenced leaf manifest holds.
-      record_count = manifestInfo.added_files_count.toLong,
-      file_size_in_bytes = status.getLen,
+      record_count = entries.size.toLong,
+      file_size_in_bytes = fileStatus.getLen,
       manifest_info = manifestInfo)
   }
 
