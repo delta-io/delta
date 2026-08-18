@@ -24,13 +24,14 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescri
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.shims.GridTestShim
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.functions.col
 
 /** Tests for AMT incremental write path */
-class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
+class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
 
   import testImplicits._
 
