@@ -36,31 +36,47 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
   import testImplicits._
 
-  testAcrossAMTCheckpointScenarios(
-      "checkpoint emission writes a manifest tree and carries the user action once",
-      "amt_emit",
-      sqlConfs = leafPackingConfs)(
-      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles),
-      inlineCheckpointTriggerActionsOrSQL = Some(_ => Left((
-        Seq(AddFile("missing-file.parquet", Map.empty, 0L, 0L, dataChange = true)
-          .removeWithTimestamp(1L)),
-        DeltaOperations.ManualUpdate)))) { context =>
-    val actionsFromCheckpointedCommit =
-      actionsAt(context.postCheckpointSnapshot.deltaLog, context.checkpoint.version)
-    assert(actionsFromCheckpointedCommit.exists {
-      case _: AddFile | _: RemoveFile => true
-      case _ => false
-    }, "The described business commit must carry the user file action.")
+  test("interval boundary emits a follow-up OPTIMIZE CHECKPOINT commit carrying the Checkpoint") {
+    withTable("amt_inline_emit") {
+      val name = "amt_inline_emit"
+      createAMTTable(name, checkpointInterval = 2)
+      sql(s"INSERT INTO $name VALUES (1)") // v1: not an interval boundary.
+      sql(s"INSERT INTO $name VALUES (2)") // v2: interval boundary -> schedule maintenance.
 
-    val path = tablePath(context.tableName)
-    val rootName = new File(context.checkpoint.contentRoot.path).getName
-    assert(isRootFileName(rootName),
-      s"a written tree's root must carry a root manifest name; got $rootName")
-    assert(rootFiles(path).exists(_.getName == rootName))
-    assertLeafCount(context.provider.leaves)
+      val deltaLog = deltaLogForName(name)
+      val path = tablePath(name)
+      val snapshot = deltaLog.update()
+      // The AMT is written by a follow-up OPTIMIZE CHECKPOINT commit at v3, not inline at v2.
+      assert(snapshot.version == 3, "A follow-up OPTIMIZE CHECKPOINT commit lands at v3.")
 
-    // The emitted tree must reconstruct exactly the table's live files.
-    assertReconstructsLiveFileSet(context)
+      // Note the leaf may be promoted to root -- in that case no file with root naming pattern
+      // will exist.
+      assert(rootFiles(path).size + leafFiles(path).size > 0,
+        "At least one root/leaf should be written")
+
+      // The v2 commit carries only the user AddFile, no Checkpoint.
+      val v2Actions = actionsAt(deltaLog, 2)
+      assert(v2Actions.exists(_.isInstanceOf[AddFile]), "v2 carries the user AddFile.")
+      assert(v2Actions.collect { case c: Checkpoint => c }.isEmpty,
+        s"v2 must not carry a Checkpoint action; got: $v2Actions")
+
+      // The v3 follow-up commit carries a single Checkpoint action and no user AddFile.
+      val v3Actions = actionsAt(deltaLog, 3)
+      val checkpoints = v3Actions.collect { case c: Checkpoint => c }
+      assert(checkpoints.size == 1, s"Expected one Checkpoint action at v3, got: $v3Actions")
+      assert(!v3Actions.exists(_.isInstanceOf[AddFile]), "v3 carries no user AddFile.")
+      // The Checkpoint describes state as of v2 (the version whose maintenance it fulfills).
+      assert(checkpoints.head.version == 2,
+        s"Checkpoint must describe state as of v2; got ${checkpoints.head.version}")
+
+      // The Checkpoint's contentRoot points at an on-disk manifest file. A single promoted leaf
+      // keeps its leaf-* name, so accept either a root or leaf manifest.
+      val rootName = new File(checkpoints.head.contentRoot.path).getName
+      assert(isRootFileName(rootName) || isLeafFileName(rootName),
+        "contentRoot must follow the given naming pattern")
+      assert((rootFiles(path) ++ leafFiles(path)).exists(_.getName == rootName),
+        s"contentRoot must reference an on-disk manifest; got $rootName")
+    }
   }
 
   testAcrossAMTCheckpointScenarios(

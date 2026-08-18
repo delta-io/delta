@@ -70,9 +70,15 @@ case class IncrementalAMTWriteMetrics(
     numOldLeavesUpdated: Int,
     numOldLeavesUntouched: Int,
     numNewLeaves: Int,
-    numRootLiveAdds: Int,
-    numRootTombstones: Int,
+    // Per-status breakdown over root-resident DATA entries (see [[Tracking.Status]]).
+    numRootEntriesAddedStatus: Int,
+    numRootEntriesExistingStatus: Int,
+    numRootEntriesModifiedStatus: Int,
+    numRootEntriesReplacedStatus: Int,
+    numRootEntriesDeletedStatus: Int,
     numLeafMdvBitsAdded: Int,
+    numLeafDeleteCDFBitsAdded: Int = 0,
+    numLeafReplaceCDFBitsAdded: Int = 0,
     // Per-status breakdown over all leaf pointers in the new tree (see [[Tracking.Status]]), plus
     // the stale DELETED tombstones from the previous tree that this rewrite dropped.
     numLeavesAddedStatus: Int = 0,

@@ -194,43 +194,63 @@ final class AMTCheckpointProvider(
   }
 
   /**
-   * Test-only invariant check for AMT back references.
+   * Test-only invariant: verify the AMT back references carried by the current proposed commit's
+   * file actions.
+   *
+   * On an AMT-backed table a leaf-resident file's AddFile / RemoveFile carries a [[BackReference]]
+   * to the (leaf manifest, row position) its entry occupies in the tree, so a later commit can mask
+   * or supersede that leaf slot; a root-resident file carries none. `committedActions` are the
+   * current proposed commit's actions; they are checked against the live set of the AMT checkpoint
+   * this (pre-commit) snapshot is backed by, keyed by (path, dv id):
+   *   - a file whose (path, dv) is live in the AMT checkpoint leaf must carry the back reference;
+   *   - a file whose (path, dv) is absent from the AMT checkpoint leaf must carry none -- a net-new
+   *     file, or the re-added copy of a same-path replace (re-added under a new dv).
+   * A (path, dv) that an intermediate commit (landed after the AMT checkpoint but before this one)
+   * already superseded is relaxed: this commit's later add/remove of it may omit backreference.
+   *
+   * Example: the AMT checkpoint is at version 10 and commits 11/12/13 sit on top of it while this
+   * commit is 14. File f1 lives at leaf-1 / pos-1 in the checkpoint. If commit 12 (say an
+   * ANALYZE TABLE COMPUTE STATS) already re-committed f1 -- carrying its back reference at that
+   * point -- then f1's add/remove in commit 14 need not carry a back reference.
    */
   private[delta] def verifyCommitBackReferences(
       spark: SparkSession,
       deltaLog: DeltaLog,
       committedActions: Seq[Action]): Unit = {
-    val committedAdds = committedActions.collect { case a: AddFile => a }
-    val committedRemoves = committedActions.collect { case r: RemoveFile => r }
-    if (committedAdds.isEmpty && committedRemoves.isEmpty) return
+    // Key by (path, dv) so a same-path replace is handled: the removed (path, oldDv) is checked
+    // against the AMT, while the re-added (path, newDv) is a distinct key absent from the tree.
+    val committedFiles = committedActions.collect {
+      case a: AddFile => (a.path, a.getDeletionVectorUniqueId) -> a.backReference
+      case r: RemoveFile => (r.path, r.getDeletionVectorUniqueId) -> r.backReference
+    }
+    if (committedFiles.isEmpty) return
 
-    val expectedPathToBackreferenceMap: Map[String, Option[BackReference]] =
+    val expectedKeyToBackreferenceMap =
       liveAddSingleActions(spark, deltaLog)
         .collect()
-        .map(sa => sa.add.path -> sa.add.backReference)
+        .map(sa => (sa.add.path, sa.add.getDeletionVectorUniqueId) -> sa.add.backReference)
         .toMap
 
-    // A file superseded within this commit (by DV update for example) has its leaf entry masked
-    // by the RemoveFile's back reference, so the superseding AddFile is a net-new entry with
-    // a different DV and legitimately carries no back reference.
-    val supersededPaths = committedRemoves.filter(_.backReference.isDefined).map(_.path).toSet
-    val committedFiles: Seq[(String, Option[BackReference])] =
-      committedRemoves.map(r => r.path -> r.backReference) ++
-        committedAdds
-          .filterNot(a => a.backReference.isEmpty && supersededPaths.contains(a.path))
-          .map(a => a.path -> a.backReference)
+    // Keys an intermediate commit (after this AMT) already re-committed. The first superseding
+    // add/remove must carry a back reference; a 2nd superseding one of the same key need not.
+    val intermediateCommittedKeys =
+      deltaLog.getChanges(checkpointVersion + 1).flatMap(_._2).collect {
+        case a: AddFile => (a.path, a.getDeletionVectorUniqueId)
+        case r: RemoveFile => (r.path, r.getDeletionVectorUniqueId)
+      }.toSet
 
-    committedFiles.foreach { case (path, actual) =>
-      expectedPathToBackreferenceMap.get(path) match {
-        case Some(expected) if actual != expected =>
+    committedFiles.foreach { case (key, actual) =>
+      expectedKeyToBackreferenceMap.get(key) match {
+        case Some(expected)
+            if actual != expected && !(intermediateCommittedKeys.contains(key) && actual.isEmpty) =>
           throw new IllegalStateException(
-            s"AMT back reference for file '$path' does not match the AMT. " +
+            s"AMT back reference for file '${key._1}' does not match the AMT. " +
             s"Expected $expected but the committed action carried $actual.")
         case None if actual.isDefined =>
           throw new IllegalStateException(
-            s"File '$path' carries a back reference $actual but is not present in the AMT " +
+            s"File '${key._1}' carries a back reference $actual but is not present in the AMT " +
             "tree, so it must not carry one.")
-        case _ => // Present and matching, or absent and empty: as expected.
+        case _ => // Matching, omitted after a window supersession, or absent+empty: as expected.
       }
     }
   }
@@ -278,7 +298,7 @@ object AMTCheckpointProvider {
 
   /** Tracking Status representing the live [[DataEntry]] in an AMT. */
   private[amt] val liveDataEntryStatuses: Set[Int] =
-    Set(Tracking.Status.Existing, Tracking.Status.Added)
+    Set(Tracking.Status.Existing, Tracking.Status.Added, Tracking.Status.Modified)
 
   /** All Tracking Status for leafs which may have any live files. */
   private[amt] val liveDataManifestEntryStatuses: Set[Int] =

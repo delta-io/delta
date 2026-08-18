@@ -499,17 +499,20 @@ trait AMTCheckpointTestBase
           s"reconstructed=${reconstructed.toSet}")
   }
 
+  /** Forces every write to inline its AMT incrementally (a low action-count threshold). */
+  protected def withInline[T](body: => T): T =
+    withSQLConf(
+      DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key -> "1") {
+      body
+    }
+
   /**
    * Runs the test with inline writes forced (a low action-count threshold).
    * AMT checkpoints will be emitted in every commit after the first full OPTIMIZE CHECKPOINT.
    */
   protected def testInline(testName: String)(body: => Unit): Unit = {
     test(s"$testName (inline)") {
-      withSQLConf(
-        DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
-          -> "1") {
-        body
-      }
+      withInline { body }
     }
   }
 
