@@ -65,7 +65,16 @@ import org.slf4j.LoggerFactory;
 class DeltaSinkWriterTest extends TestHelper {
 
   @Test
-  void testWriteCopiesReusedRowData() {
+  void testWriteCopiesReusedInsertRowData() {
+    assertWriteCopiesReusedRowData(false);
+  }
+
+  @Test
+  void testWriteCopiesReusedUpdateAfterRowData() {
+    assertWriteCopiesReusedRowData(true);
+  }
+
+  private void assertWriteCopiesReusedRowData(boolean upsert) {
     withTempDir(
         dir -> {
           StructType schema =
@@ -78,19 +87,26 @@ class DeltaSinkWriterTest extends TestHelper {
                   Collections.emptyList());
           table.open();
           DeltaSinkWriter sinkWriter =
-              newSinkWriter(table, new DeltaSinkConf(schema, Collections.emptyMap()));
+              newSinkWriter(
+                  table,
+                  upsert
+                      ? upsertConf(schema, new int[] {0})
+                      : new DeltaSinkConf(schema, Collections.emptyMap()));
 
           BinaryRowData reusedRow = new BinaryRowData(2);
+          RowKind rowKind = upsert ? RowKind.UPDATE_AFTER : RowKind.INSERT;
           BinaryRowWriter rowWriter = new BinaryRowWriter(reusedRow);
           rowWriter.writeInt(0, 100);
           rowWriter.writeString(1, StringData.fromString("Alice"));
           rowWriter.complete();
+          reusedRow.setRowKind(rowKind);
           sinkWriter.write(reusedRow, new TestSinkWriterContext(0, 0));
 
           rowWriter.reset();
           rowWriter.writeInt(0, 101);
           rowWriter.writeString(1, StringData.fromString("Bob"));
           rowWriter.complete();
+          reusedRow.setRowKind(rowKind);
           sinkWriter.write(reusedRow, new TestSinkWriterContext(0, 0));
 
           DeltaWriterResult result = sinkWriter.prepareCommit().iterator().next();
@@ -99,10 +115,11 @@ class DeltaSinkWriterTest extends TestHelper {
           List<Row> rows = readParquet(dir.toPath().resolve(addFile.getPath()), schema);
 
           assertEquals(2, rows.size());
-          assertEquals(100, rows.get(0).getInt(0));
-          assertEquals("Alice", rows.get(0).getString(1));
-          assertEquals(101, rows.get(1).getInt(0));
-          assertEquals("Bob", rows.get(1).getString(1));
+          assertEquals(
+              Set.of("100:Alice", "101:Bob"),
+              rows.stream()
+                  .map(row -> row.getInt(0) + ":" + row.getString(1))
+                  .collect(Collectors.toSet()));
         });
   }
 
