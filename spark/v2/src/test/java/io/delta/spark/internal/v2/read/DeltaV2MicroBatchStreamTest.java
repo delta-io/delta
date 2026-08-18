@@ -2060,10 +2060,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             partitionSchema,
             dataSchema,
             SchemaUtils.ddlOrderedOutputSchema(
-                io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-                    snapshotManager.loadLatestSnapshot().getSchema()),
-                dataSchema,
-                partitionSchema),
+                snapshotManager.loadLatestSnapshot().schema(), dataSchema, partitionSchema),
             new org.apache.spark.sql.sources.Filter[0],
             Map$.MODULE$.empty(),
             Option.empty(),
@@ -2248,10 +2245,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             partitionSchema,
             dataSchema,
             SchemaUtils.ddlOrderedOutputSchema(
-                io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-                    snapshotManager.loadLatestSnapshot().getSchema()),
-                dataSchema,
-                partitionSchema),
+                snapshotManager.loadLatestSnapshot().schema(), dataSchema, partitionSchema),
             new org.apache.spark.sql.sources.Filter[0],
             Map$.MODULE$.empty(),
             Option.empty(),
@@ -3362,9 +3356,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       assertPostChangeSchema.accept(evolved.dataSchema());
 
       // Restart with the post-change schema (same trackingLog: it now carries the evolved entry).
-      StructType postChangeSchema =
-          io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-              snapshotManager.loadLatestSnapshot().getSchema());
+      StructType postChangeSchema = snapshotManager.loadLatestSnapshot().schema();
       DeltaV2MicroBatchStream streamPostChange =
           createSchemaTrackingTestStream(
               snapshotManager,
@@ -3458,9 +3450,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
           createTrackingLog(snapshotManager, schemaTrackingLocation, checkpointLocation, optionMap);
 
       StructType preChangeSchema = loadSparkSchemaAtVersion(snapshotManager, startVersion);
-      StructType postChangeSchema =
-          io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-              snapshotManager.loadLatestSnapshot().getSchema());
+      StructType postChangeSchema = snapshotManager.loadLatestSnapshot().schema();
 
       // Round 1: post-change schema (analysis would bind to the latest snapshot since the log
       // is empty). First latestOffset runs eager-init and throws.
@@ -4292,11 +4282,9 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
   /** Helper method to create a DeltaV2MicroBatchStream with default values for testing. */
   private DeltaV2MicroBatchStream createTestStreamWithDefaults(
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
-    io.delta.kernel.Snapshot snapshot = snapshotManager.loadLatestSnapshot();
-    String tablePath = ((io.delta.kernel.internal.SnapshotImpl) snapshot).getPath();
-    StructType tableSchema =
-        io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-            snapshot.getSchema());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    String tablePath = snapshot.getTablePath();
+    StructType tableSchema = snapshot.schema();
     return new DeltaV2MicroBatchStream(
         snapshotManager,
         snapshot,
@@ -4322,7 +4310,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       StructType dataSchema,
       Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog,
       String metadataPath) {
-    io.delta.kernel.Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return new DeltaV2MicroBatchStream(
         snapshotManager,
         snapshot,
@@ -4334,10 +4322,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         /* partitionSchema= */ new StructType(),
         /* readDataSchema= */ dataSchema,
         SchemaUtils.ddlOrderedOutputSchema(
-            io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-                snapshotManager.loadLatestSnapshot().getSchema()),
-            dataSchema,
-            new StructType()),
+            snapshotManager.loadLatestSnapshot().schema(), dataSchema, new StructType()),
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
         /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty(),
         metadataTrackingLog,
@@ -4349,13 +4334,12 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       String schemaTrackingLocation,
       String checkpointLocation,
       java.util.Map<String, String> optionMap) {
-    io.delta.kernel.internal.SnapshotImpl snapshot =
-        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return DeltaSourceMetadataTrackingLog.create(
         spark,
         schemaTrackingLocation,
         snapshot.getMetadata().getId(),
-        snapshot.getPath(),
+        snapshot.getTablePath(),
         ScalaUtils.toScalaMap(optionMap),
         Option.apply(checkpointLocation),
         /* mergeConsecutiveSchemaChanges= */ false,
@@ -4365,8 +4349,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
   private StructType loadSparkSchemaAtVersion(
       PathBasedSnapshotManager snapshotManager, long version) {
-    return io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-        snapshotManager.loadSnapshotAt(version).getSchema());
+    return snapshotManager.loadSnapshotAt(version).schema();
   }
 
   private List<Integer> readIdsBetweenOffsets(

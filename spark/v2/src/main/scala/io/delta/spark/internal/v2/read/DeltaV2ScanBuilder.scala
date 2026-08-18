@@ -19,16 +19,14 @@ package io.delta.spark.internal.v2.read
 import java.util.{Locale, Objects, Optional, OptionalInt}
 import java.util.function.Supplier
 
-import io.delta.kernel.Snapshot
+import org.apache.spark.sql.delta.Snapshot
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.SnapshotImpl
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
 
 import org.apache.spark.sql.delta.stats.DeltaScan
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, ExprId}
 import org.apache.spark.sql.connector.expressions.filter.Predicate
@@ -161,7 +159,6 @@ private[read] class DeltaV2ScanBuilder(
     // Note this only affects the no-limit branch below -- V1's limit-aware filesForScan takes no
     // keepNumRecords and always drops per-file stats, so DeltaV2Scan falls back to
     // DeltaScan.scanned.rows there.
-    val sparkSession = SparkSession.active
     val sqlConf = SQLConf.get
     val keepNumRecords = sqlConf.cboEnabled || sqlConf.planStatsEnabled
     val partitionFiltersForScan = partitionCatalystFilters.toIndexedSeq
@@ -175,11 +172,7 @@ private[read] class DeltaV2ScanBuilder(
 
     val deltaScanSupplier = new Supplier[DeltaScan] {
       override def get(): DeltaScan = {
-        val snapshot =
-          new DeltaV2Snapshot(
-            initialSnapshot.asInstanceOf[SnapshotImpl],
-            sparkSession,
-            kernelEngine)
+        val snapshot = initialSnapshot.asInstanceOf[DeltaV2Snapshot]
 
         // When a limit is pushed, route selection through V1's limit-aware filesForScan. It
         // requires partition-only filters (guaranteed above) and prunes files by accumulating
@@ -198,9 +191,11 @@ private[read] class DeltaV2ScanBuilder(
       }
     }
 
-    new DeltaV2Scan(
+    val kernelSnapshot =
+      DeltaV2Snapshot.borrowKernelSnapshot(initialSnapshot)
+    val scan = new DeltaV2Scan(
       snapshotManager,
-      initialSnapshot,
+      kernelSnapshot,
       tableSchema,
       dataSchema,
       partitionSchema,
@@ -211,6 +206,7 @@ private[read] class DeltaV2ScanBuilder(
       catalogStats,
       options,
       effectiveLimit)
+    scan
   }
 
   private[read] def getOptions: CaseInsensitiveStringMap = options

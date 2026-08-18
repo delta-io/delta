@@ -32,6 +32,7 @@ import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.connector.write.streaming.StreamingDataWriterFactory;
 import org.apache.spark.sql.connector.write.streaming.StreamingWrite;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -110,8 +111,11 @@ class DeltaV2StreamingWrite implements StreamingWrite {
 
   @Override
   public void commit(long epochId, WriterCommitMessage[] messages) {
-    // Refresh so this epoch commits at latest+1.
-    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
+    // Kernel-only: needs SnapshotImpl.buildUpdateTableTransaction
+    // (TransactionBuilder) for the streaming commit, and
+    // getLatestTransactionVersion for the epoch-skip check.
+    SnapshotImpl latestSnapshot =
+        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadLatestSnapshot());
 
     // TODO(#7140): no implicit type cast and mergeSchema. Fail loudly on a concurrent
     // schema/protocol change.

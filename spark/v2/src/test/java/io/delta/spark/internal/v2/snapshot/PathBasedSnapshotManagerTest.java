@@ -17,10 +17,10 @@ package io.delta.spark.internal.v2.snapshot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
@@ -29,6 +29,7 @@ import java.sql.Timestamp;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
+import org.apache.spark.sql.delta.Snapshot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -81,6 +82,7 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
     assertEquals(deltaSnapshot.version(), updatedSnapshot.getVersion());
     assertEquals(1L, kernelcachedSnapshot.getVersion());
     assertEquals(cachedSnapshot.version(), kernelcachedSnapshot.getVersion());
+    assertNotSame(updatedSnapshot, kernelcachedSnapshot);
   }
 
   @Test

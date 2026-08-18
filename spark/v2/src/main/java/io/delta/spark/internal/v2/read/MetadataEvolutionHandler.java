@@ -66,6 +66,7 @@ import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.slf4j.Logger;
@@ -205,7 +206,10 @@ public class MetadataEvolutionHandler {
   public CloseableIterator<IndexedFile> getMetadataOrProtocolChangeIndexedFileIterator(
       @Nullable Metadata metadata, @Nullable Protocol protocol, long version) {
     if (shouldTrackMetadataChange()
-        && hasMetadataOrProtocolChangeComparedToStreamMetadata(metadata, protocol, version)) {
+        && hasMetadataOrProtocolChangeComparedToStreamMetadata(
+            metadata != null ? new KernelMetadataAdapter(metadata) : null,
+            protocol != null ? new KernelProtocolAdapter(protocol) : null,
+            version)) {
       return Utils.toCloseableIterator(
           Collections.singletonList(
                   IndexedFile.sentinel(version, DeltaSourceOffset.METADATA_CHANGE_INDEX()))
@@ -239,7 +243,9 @@ public class MetadataEvolutionHandler {
       Metadata metadata = collectMetadataAtVersion(previousOffset.reservoirVersion());
       Protocol protocol = collectProtocolAtVersion(previousOffset.reservoirVersion());
       if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
-          metadata, protocol, previousOffset.reservoirVersion())) {
+          metadata != null ? new KernelMetadataAdapter(metadata) : null,
+          protocol != null ? new KernelProtocolAdapter(protocol) : null,
+          previousOffset.reservoirVersion())) {
         return Optional.of(previousOffset);
       }
     }
@@ -287,7 +293,9 @@ public class MetadataEvolutionHandler {
   public void updateMetadataTrackingLogAndFailTheStreamIfNeeded(
       Metadata changedMetadata, Protocol changedProtocol, long version, boolean replace) {
     if (!hasMetadataOrProtocolChangeComparedToStreamMetadata(
-        changedMetadata, changedProtocol, version)) {
+        changedMetadata != null ? new KernelMetadataAdapter(changedMetadata) : null,
+        changedProtocol != null ? new KernelProtocolAdapter(changedProtocol) : null,
+        version)) {
       return;
     }
 
@@ -329,30 +337,26 @@ public class MetadataEvolutionHandler {
       @Nullable Long batchEndVersion,
       boolean alwaysFailUponLogInitialized) {
     long version;
-    Metadata metadata;
-    Protocol protocol;
+    AbstractMetadata metadata;
+    AbstractProtocol protocol;
 
     if (batchEndVersion != null) {
       // Validate no incompatible changes in the range, use the end version's metadata
       ValidatedMetadataAndProtocol validated =
           validateAndResolveMetadataForLogInitialization(batchStartVersion, batchEndVersion);
       version = batchEndVersion;
-      metadata = validated.metadata;
-      protocol = validated.protocol;
+      metadata = new KernelMetadataAdapter(validated.metadata);
+      protocol = new KernelProtocolAdapter(validated.protocol);
     } else {
-      SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(batchStartVersion);
+      org.apache.spark.sql.delta.Snapshot snapshot =
+          snapshotManager.loadSnapshotAt(batchStartVersion);
       version = snapshot.getVersion();
-      metadata = snapshot.getMetadata();
-      protocol = snapshot.getProtocol();
+      metadata = snapshot.metadata();
+      protocol = snapshot.protocol();
     }
 
     PersistedMetadata newMetadata =
-        PersistedMetadata.apply(
-            tableId,
-            version,
-            new KernelMetadataAdapter(metadata),
-            new KernelProtocolAdapter(protocol),
-            metadataPath);
+        PersistedMetadata.apply(tableId, version, metadata, protocol, metadataPath);
     metadataTrackingLog.get().writeNewMetadata(newMetadata, false);
 
     if (hasMetadataOrProtocolChangeComparedToStreamMetadata(metadata, protocol, version)
@@ -371,15 +375,13 @@ public class MetadataEvolutionHandler {
 
   /** Delegates to the shared static method in {@code DeltaSourceMetadataEvolutionSupport}. */
   private boolean hasMetadataOrProtocolChangeComparedToStreamMetadata(
-      @Nullable Metadata newMetadata, @Nullable Protocol newProtocol, long newSchemaVersion) {
+      @Nullable AbstractMetadata newMetadata,
+      @Nullable AbstractProtocol newProtocol,
+      long newSchemaVersion) {
     Option<AbstractMetadata> metadataOpt =
-        newMetadata != null
-            ? Option.apply((AbstractMetadata) new KernelMetadataAdapter(newMetadata))
-            : Option.empty();
+        newMetadata != null ? Option.apply(newMetadata) : Option.empty();
     Option<AbstractProtocol> protocolOpt =
-        newProtocol != null
-            ? Option.apply((AbstractProtocol) new KernelProtocolAdapter(newProtocol))
-            : Option.empty();
+        newProtocol != null ? Option.apply(newProtocol) : Option.empty();
     Option<PersistedMetadata> persistedOpt =
         persistedMetadataAtSourceInit != null
             ? Option.apply(persistedMetadataAtSourceInit)
@@ -425,11 +427,14 @@ public class MetadataEvolutionHandler {
    * <p>V2 port of V1's {@code
    * DeltaSourceMetadataEvolutionSupport.validateAndResolveMetadataForLogInitialization}.
    */
+  // TODO(kernel-table-manager): Remove borrowKernelSnapshot here once collectMetadataActions
+  // and collectProtocolActions return AbstractMetadata/AbstractProtocol instead of Kernel types.
   private ValidatedMetadataAndProtocol validateAndResolveMetadataForLogInitialization(
       long startVersion, long endVersion) {
     List<Metadata> metadataChanges =
         new ArrayList<>(collectMetadataActions(startVersion, endVersion).values());
-    SnapshotImpl startSnapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(startVersion);
+    SnapshotImpl startSnapshot =
+        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadSnapshotAt(startVersion));
     Metadata startMetadata = startSnapshot.getMetadata();
 
     // Try to find rename or drop columns in between, or nullability/datatype changes by using
@@ -510,7 +515,7 @@ public class MetadataEvolutionHandler {
    */
   public static Optional<PersistedMetadata> getPersistedMetadataForMicroBatchStream(
       SparkSession spark,
-      SnapshotImpl snapshot,
+      org.apache.spark.sql.delta.Snapshot snapshot,
       Map<String, String> options,
       DeltaV2SnapshotManager snapshotManager,
       Engine engine) {
@@ -663,7 +668,7 @@ public class MetadataEvolutionHandler {
    */
   public static Option<DeltaSourceMetadataTrackingLog> getMetadataTrackingLogForMicroBatchStream(
       SparkSession spark,
-      SnapshotImpl snapshot,
+      org.apache.spark.sql.delta.Snapshot snapshot,
       Map<String, String> options,
       DeltaV2SnapshotManager snapshotManager,
       Engine engine,
@@ -685,7 +690,7 @@ public class MetadataEvolutionHandler {
           "Schema tracking location is not supported for Delta streaming source");
     }
 
-    String tablePath = snapshot.getPath();
+    String tablePath = snapshot.getTablePath();
     return Option.apply(
         DeltaSourceMetadataTrackingLog.create(
             spark,

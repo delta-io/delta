@@ -30,6 +30,7 @@ import org.apache.spark.sql.connector.distributions.UnspecifiedDistribution;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.SortOrder;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -113,7 +114,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             defaultEngine,
             spark.sessionState().newHadoopConf(),
             path,
-            mgr.loadLatestSnapshot(),
+            DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(mgr.loadLatestSnapshot()),
             mgr,
             dataSchema,
             partitionSchema,
@@ -159,7 +160,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             defaultEngine,
             spark.sessionState().newHadoopConf(),
             path,
-            mgr.loadLatestSnapshot(),
+            DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(mgr.loadLatestSnapshot()),
             mgr,
             dataSchema,
             partitionSchema,
@@ -185,7 +186,8 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
   private DeltaV2Write newWrite(String path, CaseInsensitiveStringMap options) {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
-    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    Snapshot snapshot =
+        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadLatestSnapshot());
     LogicalWriteInfo info = WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, options);
     return new DeltaV2Write(
         defaultEngine,

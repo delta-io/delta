@@ -24,6 +24,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.utils.CloseableIterator;
@@ -46,6 +47,7 @@ import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -1035,10 +1037,10 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         ScalaUtils.toScalaMap(javaOptions);
     DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, spark.sessionState().conf());
 
-    io.delta.kernel.internal.SnapshotImpl latestSnapshot =
-        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadLatestSnapshot();
-    io.delta.kernel.internal.SnapshotImpl seededSnapshot =
-        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadSnapshotAt(seededVersion);
+    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
+    SnapshotImpl seededSnapshot =
+        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(
+            snapshotManager.loadSnapshotAt(seededVersion));
 
     org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog trackingLog =
         MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
@@ -1182,10 +1184,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
   private DeltaV2MicroBatchStream createTestStreamWithDefaults(
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
-    io.delta.kernel.Snapshot snapshot = snapshotManager.loadLatestSnapshot();
-    StructType tableSchema =
-        io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-            snapshot.getSchema());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    StructType tableSchema = snapshot.schema();
     return new DeltaV2MicroBatchStream(
         snapshotManager,
         snapshot,

@@ -32,6 +32,7 @@ import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.connector.write.streaming.StreamingDataWriterFactory;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -334,7 +335,8 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
   private DeltaV2StreamingWrite newWrite(String path) {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
-    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    Snapshot snapshot =
+        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadLatestSnapshot());
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
     DeltaV2Write write =
@@ -363,7 +365,8 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
   private DeltaV2StreamingWrite newPartitionedWrite(String path) {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
-    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    Snapshot snapshot =
+        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadLatestSnapshot());
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(PARTITIONED_FULL_SCHEMA, CaseInsensitiveStringMap.empty());
     DeltaV2Write write =
