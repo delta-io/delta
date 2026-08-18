@@ -2,10 +2,10 @@
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/7147**
 
 This protocol change adds support for the `file` data type.
-The `file` data type stores a reference to a range of bytes that may be located inline in the value, elsewhere within the same data file, or in an external file.
+The `file` data type stores a reference to a range of bytes, stored either inline in the value or in an external file.
 It is intended for use cases such as file inventories, manifests, and unstructured-data references (for example, images or audio stored in object storage), which are increasingly common with AI/ML workloads.
 
-The `file` data type is the Delta mapping of the Parquet [`FILE` logical type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) (introduced in [apache/parquet-format#585](https://github.com/apache/parquet-format/pull/585)). Delta follows that specification for the physical representation, field set, and byte-resolution rules; this RFC defines how the type is represented in the Delta schema and how it interacts with Delta features.
+The `file` data type is the Delta mapping of the Parquet [`FILE` logical type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) (introduced in [apache/parquet-format#585](https://github.com/apache/parquet-format/pull/585)). Delta follows that specification for the physical representation and field set, with two Delta-specific restrictions defined below — self-references are not permitted, and a `uri` must be absolute. This RFC also defines how the type is represented in the Delta schema and how it interacts with Delta features.
 
 --------
 
@@ -14,10 +14,11 @@ The `file` data type is the Delta mapping of the Parquet [`FILE` logical type](h
 # File Data Type
 
 This feature enables support for the `file` data type, which stores a reference to a range of bytes.
-A `file` value resolves to bytes that are located in one of three ways:
-- **inline** — the bytes are stored directly in the value,
-- **self-reference** — the bytes are stored within the same data file that holds this `file` value, addressed by a byte range with no `uri`, and
-- **external** — the bytes are stored in a separate file at a given `uri`.
+A `file` value resolves to bytes that are located in one of two ways:
+- **inline** — the bytes are stored directly in the value (the `inline` field), or
+- **external** — the bytes are stored in a separate file at an absolute `uri` (optionally a byte range within it, via `offset`/`size`).
+
+The Parquet `FILE` type additionally allows a *self-reference* — a byte range within the same data file, addressed by `offset`/`size` with no `uri`. Self-references are **not permitted** in Delta tables (see [Writer Requirements for File Data Type](#writer-requirements-for-file-data-type) for the rationale).
 
 The schema serialization method is described in [Schema Serialization Format](#schema-serialization-format), and the physical encoding is described in [File data in Parquet](#file-data-in-parquet).
 
@@ -52,24 +53,28 @@ To support this feature:
 
 ## File data in Parquet
 
-Delta follows the Parquet `FILE` logical type. A `file` column is stored in Parquet as a group annotated with the `FILE` logical type, and its physical field set, the rules for resolving a value to bytes (inline, self-reference, or external file), the `checksum` encoding, compression, encryption restrictions, and validation are exactly as defined in the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file). This RFC does not restate those rules.
+Delta follows the Parquet `FILE` logical type. A `file` column is stored in Parquet as a group annotated with the `FILE` logical type; its physical field set, the byte-resolution rules, the `checksum` encoding, compression, and validation are exactly as defined in the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file). This RFC does not restate those rules; it adds the two Delta-specific restrictions described below (no self-references, absolute `uri`).
 
-For reference, the `FILE` group may contain the following optional fields: `uri`, `offset`, `size`, `content_type`, `checksum`, and `inline`. A value resolves to bytes located inline in the value, within the same data file (a self-reference), or in an external file at a `uri`; `content_type` and `checksum` are metadata describing the resolved bytes. See the Parquet specification for the exact field semantics and resolution rules.
+For reference, the `FILE` group may contain the following optional fields: `uri`, `offset`, `size`, `content_type`, `checksum`, and `inline`. In a Delta table a value resolves to bytes either **inline** (the `inline` field) or from an **external** file at an absolute `uri` (optionally a byte range via `offset`/`size`); `content_type` and `checksum` are metadata describing the resolved bytes. See the Parquet specification for the exact field semantics.
 
 ## Writer Requirements for File Data Type
 
 When File type is supported (`writerFeatures` field of a table's `protocol` action contains `fileType`), writers:
-- must write a column of type `file` to Parquet as a group annotated with the Parquet `FILE` logical type, conforming to the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) — including its field names and types, byte-resolution rules, `checksum` encoding, and validation. A value that does not resolve to any referent is invalid and must be represented as a column null instead.
+- must write a column of type `file` to Parquet as a group annotated with the Parquet `FILE` logical type, conforming to the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) (field names and types, `checksum` encoding, and validation), subject to the Delta restrictions below.
+- must write an **absolute** `uri` ([RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986)) on every external reference. Relative URIs are not permitted in Delta tables, because a relative reference has no defined resolution base: `SHALLOW CLONE` leaves data files under the source table's directory, and `OPTIMIZE`/compaction and `DEEP CLONE` move rows into files under a different directory, so a relative `uri` would resolve differently after ordinary operations.
+- must **not** write a self-reference: every value must be either inline (`inline` set) or external (`uri` set). A value with `offset`/`size` but no `uri` must not be written. A self-reference's `offset` is only meaningful relative to the Parquet file that physically contains the row, but Delta operations that rewrite data files — `OPTIMIZE`/compaction, `MERGE`/`UPDATE`/`DELETE`, `REORG ... PURGE`, and writing `_change_data` files for Change Data Feed — relocate rows into new files without relocating the referenced byte ranges, which would silently repoint the value at unrelated bytes.
+- may write inline values (`inline` set); doing so is optional.
+- must represent a value that does not resolve to any referent as a column null.
 - must store additional metadata about a file (for example, a modification timestamp) adjacent to the `file` column, not inside the `FILE`-annotated group.
 
 ## Reader Requirements for File Data Type
 
 When File type is supported (`readerFeatures` field of a table's `protocol` action contains `fileType`), readers:
 - must recognize and tolerate a `file` data type in a Delta schema.
-- must read the `file` column from its Parquet `FILE`-annotated group and resolve each value to bytes per the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file), including the self-reference case (locating the bytes within the same data file when `uri` is absent).
-- may return a `null` `file` value for a row whose reference is invalid (does not resolve to any referent).
+- must read the `file` column from its Parquet `FILE`-annotated group and resolve each value to bytes per the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file), supporting both **inline** values (the `inline` field) and **external** references (including a byte range when `offset`/`size` are set). Note that although writers are not required to produce inline values, readers must support reading them.
+- must, for a row whose reference is invalid (does not resolve to any referent), either return a `null` `file` value or fail the read. A conforming writer never produces such a value, so this only arises from a non-conforming writer, and per-file statistics are not expected to account for it.
 - must make the column available to the engine:
-    - [Recommended] Expose and interpret the group as a single `file` value, resolving inline, self-reference, and external bytes on access.
+    - [Recommended] Expose and interpret the group as a single `file` value, resolving inline and external bytes on access.
     - [Alternate] Expose the raw physical group (the set of present fields), for example if the engine does not natively support the `file` type.
 
 ## Compatibility with other Delta Features
@@ -77,30 +82,63 @@ When File type is supported (`readerFeatures` field of a table's `protocol` acti
 Feature | Support for File Data Type
 -|-
 Partition Columns | A `file` column cannot be chosen as a partition column (a `file` value is a group and cannot be serialized to a partition-value string), but it can be used as a data column of a partitioned table.
-Clustered Tables | A `file` column cannot itself be chosen as a clustering column (a `file` value is a group and is not a comparable data type as a whole), but it can be used as a non-clustering data column of a clustered table. Its comparable leaf fields (for example, `size` or `content_type`) may be used as clustering columns, consistent with [Statistics for File Columns](#statistics-for-file-columns).
-Delta Column Statistics | **Supported:** A `file` column supports the `nullCount` statistic, and `minValues` / `maxValues` on its comparable leaf fields. See [Statistics for File Columns](#statistics-for-file-columns). <br/> **Unsupported:** The `file` column as a whole is not a comparable data type, and the `inline` field does not support `minValues` / `maxValues`.
-Generated Columns | **Supported:** A `file` column is allowed to be used as a source in a generated column expression. <br/> **Open question:** Whether `file` may be the *result* type of a generated column expression (for example, constructing a `file` reference from other columns) is left open for discussion on the associated issue, and is not specified by this RFC.
-Delta CHECK Constraints | **Supported:** A `file` column is allowed to be used for a CHECK constraint expression.
-Default Column Values | **Supported:** A `file` column is allowed to have a default column value.
-Change Data Feed | **Supported:** A table using the `file` data type is allowed to enable the Delta Change Data Feed. A `file` value is an ordinary column value, so it flows through Change Data Feed and time travel like any other column. See [Time Travel and Change Data Feed](#time-travel-and-change-data-feed) for the distinction between the reference and the referenced bytes.
+Clustered Tables | A `file` column cannot itself be chosen as a clustering column (a `file` value is a group and is not a comparable data type as a whole), but it can be used as a non-clustering data column of a clustered table. Its comparable leaf fields (for example, `size` or `content_type`) may be used as clustering columns, addressed by the leaf path defined in [Statistics for File Columns](#statistics-for-file-columns) (for example `<file column>.size`); the clustering-column name and its statistics key use that same path.
+Delta Column Statistics | **Supported:** `nullCount` on the `file` column's leaf fields, and `minValues` / `maxValues` on its comparable, skipping-useful leaf fields (`uri`, `offset`, `size`, `content_type`). See [Statistics for File Columns](#statistics-for-file-columns). <br/> **Unsupported:** The `file` value as a whole is not a comparable data type; and `minValues` / `maxValues` are not collected for `inline` or `checksum`.
+Generated Columns | **Supported:** A `file` column is allowed to be used as a source in a generated column expression (via its leaf fields). <br/> **Open question:** Whether `file` may be the *result* type of a generated column expression (for example, constructing a `file` reference from other columns) is left open for discussion on the associated issue, and is not specified by this RFC.
+Delta CHECK Constraints | A `file` column may be used in a CHECK constraint expression through its leaf fields (for example, `f.size > 0`), addressed by the leaf path defined in [Statistics for File Columns](#statistics-for-file-columns).
+Default Column Values | A `file` column must default to `NULL`. There is no Delta-defined way to construct a non-null `file` literal as a default expression, so `NULL` is the only permitted default (as with the Variant type).
+Change Data Feed | **Supported:** A table using the `file` data type is allowed to enable the Delta Change Data Feed. A `file` value flows through Change Data Feed and time travel like any other column value. See [Time Travel and Change Data Feed](#time-travel-and-change-data-feed) for the distinction between the reference and the referenced bytes.
+Iceberg Compatibility V1 / V2 | **Unsupported:** The [IcebergCompatV2](#writer-requirements-for-icebergcompatv2) type allow-list does not include `file`, so a `file` column cannot exist in an IcebergCompatV1 or IcebergCompatV2 table. Iceberg has no equivalent type today; interaction with the in-flight IcebergCompatV3 RFC is out of scope for this RFC.
+Type Widening | **Unsupported:** No type change to or from `file` is supported.
+Map Keys | **Unsupported:** A `file` value is not comparable, so `file` cannot be used as a map key type. `file` is allowed as an array element type and as a map value type (see the schema example above).
 
 ## Statistics for File Columns
 
-A `file` value is physically a group of leaf fields (see [File data in Parquet](#file-data-in-parquet)), and Delta's [Per-file Statistics](#per-file-statistics) are already encoded mirroring the schema of the data, descending into nested fields. Statistics for a `file` column follow that same per-leaf model, with one exception for the `inline` field:
+A `file` value is physically a group with the fixed leaf fields defined by the Parquet `FILE` type (`uri`, `offset`, `size`, `content_type`, `checksum`, `inline`). Although `file` is a single primitive type name in the Delta schema, for [Per-file Statistics](#per-file-statistics) it is treated as that physical group: statistics descend into the FILE leaf fields, exactly as they do for a struct column.
 
-- The `nullCount` statistic is collected for the `file` column itself (whether the whole `file` value is null), following the standard nested-field statistics encoding.
-- `minValues` and `maxValues` are collected per leaf field, for the comparable leaf fields only: `uri` (STRING), `offset` (INT64), `size` (INT64), `content_type` (STRING), and `checksum` (STRING). These follow the standard rules for their respective types (for example, STRING leaves such as `uri` are truncated to a fixed prefix length, as with any string column).
-- `minValues` and `maxValues` are **not** collected for the `inline` field, because it is binary content for which min/max provides no data-skipping value and may be large.
+**Leaf-addressing / stats key spelling.** The FILE group's inner field names are fixed literals and are **not** subject to [Column Mapping](#column-mapping) (the Parquet spec requires that they not be renamed, and they have no assigned physical name). A leaf statistic is therefore keyed by the file column's physical name followed by the literal FILE field name — for example `minValues.<physical name of the file column>.uri`. This same leaf path (`<file column>.<field>`) is used wherever a leaf is referenced elsewhere (clustering columns, CHECK constraints), so all of them agree on one spelling.
 
-Collecting `minValues` / `maxValues` on `uri` in particular enables data skipping on file-inventory and manifest tables that filter by URI (for example, an object-store prefix).
+The following statistics are collected per leaf:
+- `nullCount` — on each leaf field. (For example, `nullCount` on `uri` is the number of rows whose value is stored inline — i.e. has no `uri` — which is real data-skipping information.)
+- `minValues` / `maxValues` — on the comparable, skipping-useful leaves only: `uri` (STRING), `offset` (INT64), `size` (INT64), and `content_type` (STRING). Standard per-type rules apply (for example, STRING leaves such as `uri` are truncated to a fixed prefix length).
+- `minValues` / `maxValues` are **not** collected for `inline` (binary content — no skipping value, and potentially large) or `checksum` (a digest, or an opaque ETAG, is effectively uniformly distributed, so its min/max cannot skip anything).
 
-The set of columns for which statistics are collected is otherwise governed by the table's existing statistics configuration (for example, the number of indexed columns).
+Collecting `minValues` / `maxValues` on `uri` in particular enables data skipping on file-inventory and manifest tables that filter by URI prefix.
+
+**Indexed-column budget.** Each FILE leaf for which statistics are collected counts individually toward `delta.dataSkippingNumIndexedCols` (as with any nested leaf) — so a `file` column contributes up to four indexed leaves (`uri`, `offset`, `size`, `content_type`). Writers should account for this when a `file` column appears near the front of a wide schema, so it does not silently displace statistics for other columns.
+
+For a `file` column `f`, the per-file statistics therefore take the following shape (leaves without `minValues`/`maxValues` omitted from those structs):
+
+```
+|-- stats: struct
+|    |-- numRecords: long
+|    |-- nullCount: struct
+|    |    |-- f: struct
+|    |    |    |-- uri: long
+|    |    |    |-- offset: long
+|    |    |    |-- size: long
+|    |    |    |-- content_type: long
+|    |    |    |-- checksum: long
+|    |    |    |-- inline: long
+|    |-- minValues: struct
+|    |    |-- f: struct
+|    |    |    |-- uri: string
+|    |    |    |-- offset: long
+|    |    |    |-- size: long
+|    |    |    |-- content_type: string
+|    |-- maxValues: struct
+|    |    |-- f: struct
+|    |    |    |-- uri: string
+|    |    |    |-- offset: long
+|    |    |    |-- size: long
+|    |    |    |-- content_type: string
+```
 
 ## Time Travel and Change Data Feed
 
 A `file` value is a reference, and it is stored in the table's data files like any other column value. Delta therefore time-travels and change-data-feeds the **reference**: querying a historical version of the table, or reading `file` columns through the Change Data Feed, returns the reference values exactly as they were written at that version.
 
-For **inline** and **self-reference** values, the referenced bytes are stored within the data file itself, so they are versioned and time-travel with the table like any other column data.
+For **inline** values, the bytes are stored within the value itself, so they are versioned and time-travel with the table like any other column data.
 
 For **external** references (a `uri` is set), Delta makes **no guarantee about the referenced bytes**, because those bytes live outside the Delta transaction log:
 
@@ -132,7 +170,7 @@ type | Always the string "file"
 
 Add the following row to the Primitive Types table:
 
-> file | A reference to a range of bytes located inline, elsewhere in the same data file, or in an external file. When stored in a Parquet file it is a group annotated with the Parquet `FILE` logical type. To use this type, a table must support the feature `fileType`. See section [File Data Type](#file-data-type).
+> file | A reference to a range of bytes located inline in the value or in an external file. When stored in a Parquet file it is a group annotated with the Parquet `FILE` logical type. Self-references are not permitted and a `uri` must be absolute. To use this type, a table must support the feature `fileType`. See section [File Data Type](#file-data-type).
 
 --------
 
