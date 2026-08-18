@@ -529,7 +529,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10}}""")
 
   private def deletionVectorWithRelativePath: DeletionVectorDescriptor =
-    DeletionVectorDescriptor.onDiskWithRelativePath(
+    DeletionVectorDescriptor.onDiskWithUuidRelativePath(
       id = UUID.randomUUID(),
       randomPrefix = "a1",
       sizeInBytes = 10,

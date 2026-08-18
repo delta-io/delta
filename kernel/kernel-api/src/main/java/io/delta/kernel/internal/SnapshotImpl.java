@@ -351,17 +351,14 @@ public class SnapshotImpl implements Snapshot {
     return new ReplaceTableTransactionBuilderV2Impl(this, schema, engineInfo);
   }
 
-  @Override
   public Committer getCommitter() {
     return committer;
   }
 
-  @Override
   public Path getLogPath() {
     return logPath;
   }
 
-  @Override
   public Path getDataPath() {
     return dataPath;
   }
@@ -375,7 +372,6 @@ public class SnapshotImpl implements Snapshot {
     return wasBuiltAsLatest;
   }
 
-  @Override
   public Protocol getProtocol() {
     return protocol;
   }
@@ -423,17 +419,14 @@ public class SnapshotImpl implements Snapshot {
   }
 
   /** Returns the crc info for the current snapshot if the checksum file is read */
-  @Override
   public Optional<CRCInfo> getCurrentCrcInfo() {
     return logReplay.getCrcInfoAtSnapshotVersion();
   }
 
-  @Override
   public Metadata getMetadata() {
     return metadata;
   }
 
-  @Override
   public LogSegment getLogSegment() {
     return lazyLogSegment.get();
   }
@@ -443,7 +436,6 @@ public class SnapshotImpl implements Snapshot {
     return lazyLogSegment;
   }
 
-  @Override
   public CreateCheckpointIterator getCreateCheckpointIterator(Engine engine) {
     long minFileRetentionTimestampMillis =
         System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
@@ -452,14 +444,14 @@ public class SnapshotImpl implements Snapshot {
 
   /**
    * Get the latest transaction version for given <i>applicationId</i>. This information comes from
-   * the transactions identifiers stored in Delta transaction log.
+   * the transactions identifiers stored in Delta transaction log. This API is not a public API. For
+   * now keep this internal to enable Flink upgrade to use Kernel.
    *
    * @param applicationId Identifier of the application that put transaction identifiers in Delta
    *     transaction log
    * @return Last transaction version or {@link Optional#empty()} if no transaction identifier
    *     exists for this application.
    */
-  @Override
   public Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
     return logReplay.getLatestTransactionIdentifier(engine, applicationId);
   }

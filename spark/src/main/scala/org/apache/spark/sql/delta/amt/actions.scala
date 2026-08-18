@@ -16,6 +16,10 @@
 
 package org.apache.spark.sql.delta.amt
 
+import java.util.UUID
+
+import scala.util.Try
+
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.stats.DeltaStatistics
@@ -57,9 +61,9 @@ case class AMTSingleAction(
     location: String,                           // ID: 100, required.
     file_format: String,                        // ID: 101, required ("parquet" for now).
     tracking: Tracking,                         // ID: 147, required.
-    deletion_vector: Option[DeletionVector], // ID: 148, optional (only when content_type=0).
+    deletion_vector: Option[DeletionVector],    // ID: 148, optional (only when content_type=0).
     spec_id: Option[Int],                       // ID: 141, optional.
-    partition: Partition,                       // ID: 102, required.
+    partition: Option[Map[String, String]],     // ID: 102, optional.
     sort_order_id: Option[Int],                 // ID: 140, optional (only when content_type=0).
     record_count: Long,                         // ID: 103, required.
     file_size_in_bytes: Long,                   // ID: 104, required.
@@ -249,8 +253,6 @@ object AMTSingleAction {
 
   /** Iceberg V4 field id for the `split_offsets` list element. */
   private val SPLIT_OFFSETS_ELEMENT_FIELD_ID: Long = 133L
-  private val PARTITION_VALUES_KEY_PLACEHOLDER_ID: Long = 100002L
-  private val PARTITION_VALUES_VALUE_PLACEHOLDER_ID: Long = 100003L
 
   /** Top-level specs by name, for lookup during stamping. */
   private val topLevelFieldByName: Map[String, AMTFieldSpec] =
@@ -258,36 +260,31 @@ object AMTSingleAction {
 
   /**
    * Test-only Parquet field-id map for an AMT checkpoint schema, keyed by dotted path. Keys are the
-   * top-level field name (`content_type`), a nested-struct scalar (`tracking.status`), a list
-   * element (`split_offsets.element`), or a map key/value (`partition.values.key`,
-   * `partition.values.value`).
+   * top-level field name (`content_type`), a nested-struct scalar (`tracking.status`), or a list
+   * element (`split_offsets.element`).
    */
   private[amt] val allFieldIdByName: Map[String, Int] = {
-    val topLevel = topLevelFields.map(f => f.name -> f.id.toInt)
+    val topLevel = topLevelFields.filterNot(_.name == "partition").map(f => f.name -> f.id.toInt)
     val nested = nestedStructFields.flatMap { case (parent, children) =>
       children.map(f => s"$parent.${f.name}" -> f.id.toInt)
     }
     val nestedContainers = Map(
-      "split_offsets.element" -> SPLIT_OFFSETS_ELEMENT_FIELD_ID.toInt,
-      "partition.values.key" -> PARTITION_VALUES_KEY_PLACEHOLDER_ID.toInt,
-      "partition.values.value" -> PARTITION_VALUES_VALUE_PLACEHOLDER_ID.toInt)
+      "split_offsets.element" -> SPLIT_OFFSETS_ELEMENT_FIELD_ID.toInt)
     (topLevel ++ nested ++ nestedContainers).toMap
   }
 
-  /**
-   * The persisted [[AMTSingleAction]] schema with Iceberg field ids stamped onto its Parquet
-   * schema. Everything here is static, so it is computed once.
-   */
-  lazy val schemaWithFieldId: StructType = {
+  private lazy val staticStampedSchema: StructType = {
     import org.apache.spark.sql.delta.implicits._
-    val base = amtSingleActionEncoder.schema
-    StructType(base.map(stampFieldSpec))
+    StructType(amtSingleActionEncoder.schema.map(stampFieldSpec))
   }
 
   /**
    * Applies the Iceberg [[AMTFieldSpec]] to a single top-level [[AMTSingleAction]] field:
    * stamps the field id (and any nested element/map ids) and sets nullability from
    * `spec.required`.
+   *
+   * `partition` keeps the encoder's data type here; [[persistedSchema]] substitutes the table's
+   * typed partition struct, or drops the field, once the partition schema is known.
    */
   private def stampFieldSpec(field: StructField): StructField = {
     val spec = topLevelFieldByName.getOrElse(field.name,
@@ -307,16 +304,16 @@ object AMTSingleAction {
             elementId)
           .build())
     }
-    // Rewrite the field's data type: apply nested-struct field specs (id + nullability).
+    // Rewrite the field's data type by applying nested-struct field specs (id + nullability).
     val stampedDataType = field.dataType match {
       case struct: StructType =>
         nestedStructFields.get(field.name) match {
           case Some(specs) => stampNestedStructFieldSpecs(field.name, struct, specs)
           case None =>
-            assert(field.name == "partition" || field.name == "content_stats",
+            assert(field.name == "content_stats",
               s"Unexpected struct-typed AMTSingleAction field '${field.name}': expected a " +
-                "nested-id struct, partition, or content_stats.")
-            if (field.name == "partition") stampPartitionValuesNestedIds(struct) else struct
+                "nested-id struct or content_stats.")
+            struct
         }
       case other =>
         assert(!nestedStructFields.contains(field.name),
@@ -361,25 +358,18 @@ object AMTSingleAction {
     })
   }
 
-  /** Stamps placeholder map key/value ids onto the interim `partition.values` field. */
-  private def stampPartitionValuesNestedIds(struct: StructType): StructType =
-    StructType(struct.map { field =>
-      if (field.name == "values") {
-        val nestedIds = new MetadataBuilder()
-          .putLong(
-            Seq("values", DeltaColumnMapping.PARQUET_MAP_KEY_FIELD_NAME).mkString("."),
-            PARTITION_VALUES_KEY_PLACEHOLDER_ID)
-          .putLong(
-            Seq("values", DeltaColumnMapping.PARQUET_MAP_VALUE_FIELD_NAME).mkString("."),
-            PARTITION_VALUES_VALUE_PLACEHOLDER_ID)
-          .build()
-        field.copy(metadata = new MetadataBuilder()
-          .withMetadata(field.metadata)
-          .putMetadata(DeltaColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY, nestedIds)
-          .build())
-      } else {
-        field
-      }
+  /**
+   * The [[AMTSingleAction]] schema as written to disk, which differs from the encoder's in-memory
+   * schema in four ways: every mapped field carries its Iceberg field id, required/optional is
+   * driven by the field spec rather than the encoder, `partition` holds the table's typed partition
+   * struct instead of a string map, and `partition` is absent entirely for an unpartitioned table.
+   */
+  def persistedSchema(partitionSchema: StructType): StructType =
+    StructType(staticStampedSchema.flatMap {
+      case field if field.name == "partition" =>
+        if (partitionSchema.isEmpty) None
+        else Some(field.copy(dataType = AMTPartitionValues.persistedSchema(partitionSchema)))
+      case field => Some(field)
     })
 }
 
@@ -424,7 +414,7 @@ case class DataEntry(
     tracking: Tracking,
     record_count: Long,
     file_size_in_bytes: Long,
-    partition: Partition = Partition(),
+    partition: Option[Map[String, String]] = None,
     deletion_vector: Option[DeletionVector] = None,
     spec_id: Option[Int] = None,
     sort_order_id: Option[Int] = None,
@@ -460,7 +450,7 @@ case class DataEntry(
     val stats = s"""{"${DeltaStatistics.NUM_RECORDS}":$record_count}"""
     AddFile(
       path = location,
-      partitionValues = partition.values.getOrElse(Map.empty),
+      partitionValues = partition.getOrElse(Map.empty),
       size = file_size_in_bytes,
       modificationTime = 0L,
       dataChange = false,
@@ -490,7 +480,7 @@ object DataEntry {
         throw new IllegalArgumentException(
           s"Cannot build AMT entry: AddFile has no record count (missing stats): ${add.path}.")),
       file_size_in_bytes = add.size,
-      partition = Partition(Option(add.partitionValues).filter(_.nonEmpty)),
+      partition = Option(add.partitionValues).filter(_.nonEmpty),
       deletion_vector =
         Option(add.deletionVector).map(DeletionVector.fromDescriptor(_, tableRoot)),
       spec_id = passthrough.flatMap(_.spec_id),
@@ -588,7 +578,7 @@ case class DataManifestEntry(
     record_count: Long,
     file_size_in_bytes: Long,
     manifest_info: ManifestInfo,
-    partition: Partition = Partition(),
+    partition: Option[Map[String, String]] = None,
     spec_id: Option[Int] = None,
     content_stats: Option[ContentStats] = None,
     key_metadata: Option[Array[Byte]] = None,
@@ -697,20 +687,6 @@ object Tracking {
     val all: Set[Int] = Set(Existing, Added, Deleted, Replaced, Modified)
   }
 }
-
-/**
- * Partition-values carrier for [[AMTSingleAction]] (Iceberg V4 `partition`, field 102).
- *
- * Iceberg models `partition` as a per-table dynamic struct (one typed field per
- * partition column); that shape cannot be expressed statically here, so this PR carries
- * Delta's raw `AddFile.partitionValues`. The struct is present at field 102 (the spec
- * marks it required); binary interop with a strict V4 reader that expects the typed
- * per-column struct is deferred.
- *
- *
- * @param values Raw Delta partition values (column name to value); None when unpartitioned.
- */
-case class Partition(values: Option[Map[String, String]] = None)
 
 /**
  * Pointer to a deletion-vector blob, mirroring the Iceberg V4 `deletion_vector` struct.

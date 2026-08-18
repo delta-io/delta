@@ -1271,14 +1271,14 @@ trait DeltaErrorsBase
   }
 
   def nonPartitionColumnAbsentException(colsDropped: Boolean): Throwable = {
-    val msg = if (colsDropped) {
-      " Columns which are of NullType have been dropped."
+    val errorClass = if (colsDropped) {
+      "DELTA_NON_PARTITION_COLUMN_ABSENT.NULL_TYPE_COLUMNS_DROPPED"
     } else {
-      ""
+      "DELTA_NON_PARTITION_COLUMN_ABSENT.ALL_PARTITION_COLUMNS"
     }
     new DeltaAnalysisException(
-      errorClass = "DELTA_NON_PARTITION_COLUMN_ABSENT",
-      messageParameters = Array(msg)
+      errorClass = errorClass,
+      messageParameters = Array.empty
     )
   }
 
@@ -1310,10 +1310,16 @@ trait DeltaErrorsBase
       messageParameters = Array(input, name, explain))
   }
 
-  def invalidIdempotentWritesOptionsException(explain: String): Throwable = {
+  def invalidIdempotentWritesMissingWriteOptionsException(): Throwable = {
     new DeltaIllegalArgumentException(
-      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS",
-      messageParameters = Array(explain))
+      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS",
+      messageParameters = Array.empty)
+  }
+
+  def invalidIdempotentWritesMissingSessionConfsException(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS",
+      messageParameters = Array.empty)
   }
 
   def invalidInterval(interval: String): Throwable = {

@@ -672,7 +672,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       val checkpoint =
         checkpointWithSyntheticRoot(deltaLog, provider.checkpointAction, rootDataRows)
 
-      val rootProvider = AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint)
+      val rootProvider = AMTCheckpointProvider.fromCheckpoint(deltaLog, checkpoint)
       assert(rootProvider.leaves.isEmpty, "A DATA-only root must yield no leaf pointers.")
 
       val expected = rootAdds.map(_.path).toSet
@@ -933,8 +933,17 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     val rootFile = FileNames.newAMTRootManifestFile(metadataDir)
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
     val enc = org.apache.spark.sql.delta.implicits.amtSingleActionEncoder
-    val df = spark.createDataset(rows)(enc).toDF()
-    Checkpoints.writeAtomicCheckpointParquetFile(spark, df, rootFile, hadoopConf, useRename)
+    val metadata = base.metaData
+    val df = AMTPartitionValues.forWrite(
+      spark.createDataset(rows)(enc).toDF(), metadata.partitionSchema)
+    Checkpoints.writeAtomicCheckpointParquetFile(
+      spark,
+      df,
+      rootFile,
+      hadoopConf,
+      useRename,
+      outputSchema = Some(AMTSingleAction.persistedSchema(metadata.partitionSchema)),
+      useDeltaParquetWriteSupport = true)
     val size = rootFile.getFileSystem(hadoopConf).getFileStatus(rootFile).getLen
     base.copy(contentRoot = ContentRoot(path = rootFile.toString, sizeInBytes = size))
   }

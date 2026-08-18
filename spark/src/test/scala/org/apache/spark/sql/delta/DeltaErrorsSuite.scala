@@ -1339,14 +1339,15 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.nonPartitionColumnAbsentException(false)
       }
-      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT", "KD005", Map("details" -> ""))
+      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT.ALL_PARTITION_COLUMNS", "KD005",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.nonPartitionColumnAbsentException(true)
       }
-      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT", "KD005",
-        Map("details" -> " Columns which are of NullType have been dropped."))
+      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT.NULL_TYPE_COLUMNS_DROPPED", "KD005",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -1620,10 +1621,19 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.invalidIdempotentWritesOptionsException("someReason")
+        throw DeltaErrors.invalidIdempotentWritesMissingWriteOptionsException()
       }
-      checkError(e, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616",
-        Map("reason" -> "someReason"))
+      checkError(e,
+        "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+        Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.invalidIdempotentWritesMissingSessionConfsException()
+      }
+      checkError(e,
+        "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS", "42616",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {

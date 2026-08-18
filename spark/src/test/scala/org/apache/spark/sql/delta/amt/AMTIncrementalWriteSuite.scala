@@ -100,7 +100,7 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
   }
 
   /** DATA-entry tracking statuses that reconstruct as live files (added/existing). */
-  private val liveTrackingStatuses = Set(Tracking.Status.Existing, Tracking.Status.Added)
+  private val liveDataEntryStatuses = Set(Tracking.Status.Existing, Tracking.Status.Added)
 
   /** DATA-entry tracking statuses that mark a root-resident entry as a CDF tombstone. */
   private val tombstoneTrackingStatuses = Set(Tracking.Status.Deleted, Tracking.Status.Replaced)
@@ -162,7 +162,7 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
       trackingStatusToAddFileCountMap(
         provider.checkpointAction.contentRoot.getAbsolutePath(provider.tableRoot).toString)
     val liveAdds =
-      byStatus.filter { case (status, _) => liveTrackingStatuses.contains(status) }.values.sum
+      byStatus.filter { case (status, _) => liveDataEntryStatuses.contains(status) }.values.sum
     val tombstones = tombstoneTrackingStatuses.toSeq.map(byStatus.getOrElse(_, 0L)).sum
     (liveAdds, tombstones)
   }
@@ -190,8 +190,14 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
       amtDeltaLog: DeltaLog,
       expectedAMTWriteMetrics: IncrementalAMTWriteMetrics,
       expectedNumIntermediateCommits: Option[Int] = None): Unit = {
-    // Snapshot the OLD tree's leaf pointers (location -> MDV cardinality) before the write.
+    // Snapshot the OLD tree's leaf pointers before the write: their MDV cardinality (for the shape
+    // derivation), the full pointers (to assert manifest_info counts stay immutable), and the count
+    // of DELETED tombstone pointers this rewrite is expected to drop.
     val leafToLeafMDVCardinality = leafToLeafMDVCardinalityMap(amtDeltaLog)
+    val oldLeaves = leafPointers(amtDeltaLog.update())
+    val oldDeletedLeafCount = amtProvider(amtDeltaLog.update())
+      .getOrElse(fail("AMT table must be checkpoint-provider-backed."))
+      .leaves.count(_.tracking.status == Tracking.Status.Deleted)
 
     val actualIncrementalAMTWriteMetrics = commitCheckpoint(amtDeltaLog, incremental = true)
       .getOrElse(fail("An incremental checkpoint must log IncrementalAMTWriteMetrics."))
@@ -207,9 +213,34 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
     }
     // 2) Reported metrics match a structural derivation from old-tree -> new-tree on disk.
     assertMetricsMatchTreeDelta(
-      amtDeltaLog, leafToLeafMDVCardinality, actualIncrementalAMTWriteMetrics)
+      amtDeltaLog, leafToLeafMDVCardinality, oldDeletedLeafCount,
+      actualIncrementalAMTWriteMetrics)
     // 3) Differential live set + white-box tree invariants.
     assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
+    // 4) Carried-forward leaves keep their immutable manifest_info file counts.
+    assertCarriedLeafCountsImmutable(oldLeaves, amtDeltaLog)
+  }
+
+  /**
+   * Carried-forward leaves (present in both the old and new tree by location) keep their
+   * manifest_info file/row counts unchanged -- those counts describe the leaf as written and are
+   * immutable across trees; only the MDV and tracking evolve.
+   */
+  private def assertCarriedLeafCountsImmutable(
+      oldLeaves: Map[String, DataManifestEntry], amtDeltaLog: DeltaLog): Unit = {
+    def fileAndRowCounts(e: DataManifestEntry): (Int, Int, Int, Int, Long, Long, Long, Long) =
+      (e.manifest_info.added_files_count, e.manifest_info.existing_files_count,
+        e.manifest_info.deleted_files_count, e.manifest_info.replaced_files_count,
+        e.manifest_info.added_rows_count, e.manifest_info.existing_rows_count,
+        e.manifest_info.deleted_rows_count, e.manifest_info.replaced_rows_count)
+    val newLeaves = leafPointers(amtDeltaLog.update())
+    oldLeaves.foreach { case (location, oldLeaf) =>
+      newLeaves.get(location).foreach { newLeaf =>
+        assert(fileAndRowCounts(newLeaf) == fileAndRowCounts(oldLeaf),
+          s"Carried leaf $location: manifest_info file/row counts must be immutable; " +
+            s"old=${fileAndRowCounts(oldLeaf)} new=${fileAndRowCounts(newLeaf)}")
+      }
+    }
   }
 
 
@@ -238,6 +269,7 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
   private def assertMetricsMatchTreeDelta(
       amtDeltaLog: DeltaLog,
       oldAMTLeafToMDV: Map[String, Long],
+      oldDeletedLeafCount: Int,
       metrics: IncrementalAMTWriteMetrics): Unit = {
     val newAMTLeafToMDV = leafToLeafMDVCardinalityMap(amtDeltaLog)
     // Materialize the carried leaves once (a lazy key-view would give inconsistent re-traversals).
@@ -251,13 +283,25 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
     val mdvBitsAdded = perLeafBitsAdded.sum
     val (rootLiveAdds, rootTombstones) = liveAddsAndTombstonesCountInRoot(amtDeltaLog)
 
+    // Per-status breakdown over every leaf pointer in the new tree, derived independently of the
+    // writer's self-report; numStaleDeletedLeavesDropped is the old tree's DELETED tombstone count.
+    val newLeafPointers = amtProvider(amtDeltaLog.update())
+      .getOrElse(fail("AMT table must be checkpoint-provider-backed.")).leaves
+    val statusToLeafCountMapping =
+      newLeafPointers.groupBy(_.tracking.status).map { case (s, ps) => s -> ps.size }
+
     val derived = metrics.copy(
-      numExistingLeavesUpdated = updated,
-      numExistingLeavesUntouched = untouched,
+      numOldLeavesUpdated = updated,
+      numOldLeavesUntouched = untouched,
       numNewLeaves = newLeaves,
       numRootLiveAdds = rootLiveAdds.toInt,
       numRootTombstones = rootTombstones.toInt,
-      numLeafMdvBitsAdded = mdvBitsAdded.toInt)
+      numLeafMdvBitsAdded = mdvBitsAdded.toInt,
+      numLeavesAddedStatus = statusToLeafCountMapping.getOrElse(Tracking.Status.Added, 0),
+      numLeavesExistingStatus = statusToLeafCountMapping.getOrElse(Tracking.Status.Existing, 0),
+      numLeavesModifiedStatus = statusToLeafCountMapping.getOrElse(Tracking.Status.Modified, 0),
+      numLeavesDeletedStatus = statusToLeafCountMapping.getOrElse(Tracking.Status.Deleted, 0),
+      numStaleDeletedLeavesDropped = oldDeletedLeafCount)
     assert(metrics == derived,
       s"Reported metrics disagree with the old->new tree delta.\n" +
         s"  reported: $metrics\n  derived:  $derived\n" +
@@ -296,7 +340,7 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
     val statusToCountMap = trackingStatusToAddFileCountMap(rootPath)
     val rootLiveAdds =
       statusToCountMap
-        .filter { case (status, _) => liveTrackingStatuses.contains(status) }.values.sum
+        .filter { case (status, _) => liveDataEntryStatuses.contains(status) }.values.sum
 
     // Leaves: each pointer's MDV must be internally consistent, and the unmasked entries are the
     // leaf's live contribution to the reconstruction.
@@ -354,21 +398,33 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
   }
 
   /** Metrics with fields defaulted to 0; numIntermediateCommits is derived by the assertion. */
+  // scalastyle:off argcount
   private def createIncrementalAMTWriteMetrics(
-      numExistingLeavesUpdated: Int = 0,
-      numExistingLeavesUntouched: Int = 0,
+      numOldLeavesUpdated: Int = 0,
+      numOldLeavesUntouched: Int = 0,
       numNewLeaves: Int = 0,
       numRootLiveAdds: Int = 0,
       numRootTombstones: Int = 0,
-      numLeafMdvBitsAdded: Int = 0): IncrementalAMTWriteMetrics =
+      numLeafMdvBitsAdded: Int = 0,
+      numLeavesAddedStatus: Int = 0,
+      numLeavesExistingStatus: Int = 0,
+      numLeavesModifiedStatus: Int = 0,
+      numLeavesDeletedStatus: Int = 0,
+      numStaleDeletedLeavesDropped: Int = 0): IncrementalAMTWriteMetrics =
     IncrementalAMTWriteMetrics(
       numIntermediateCommits = 0,
-      numExistingLeavesUpdated = numExistingLeavesUpdated,
-      numExistingLeavesUntouched = numExistingLeavesUntouched,
+      numOldLeavesUpdated = numOldLeavesUpdated,
+      numOldLeavesUntouched = numOldLeavesUntouched,
       numNewLeaves = numNewLeaves,
       numRootLiveAdds = numRootLiveAdds,
       numRootTombstones = numRootTombstones,
-      numLeafMdvBitsAdded = numLeafMdvBitsAdded)
+      numLeafMdvBitsAdded = numLeafMdvBitsAdded,
+      numLeavesAddedStatus = numLeavesAddedStatus,
+      numLeavesExistingStatus = numLeavesExistingStatus,
+      numLeavesModifiedStatus = numLeavesModifiedStatus,
+      numLeavesDeletedStatus = numLeavesDeletedStatus,
+      numStaleDeletedLeavesDropped = numStaleDeletedLeavesDropped)
+  // scalastyle:on argcount
 
   /////////////////////////////////////////////////////////////
   // Section-A:                                              //
@@ -390,7 +446,8 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(fakeAdd(25)))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = 3, numRootLiveAdds = 1))
+          numOldLeavesUntouched = 3, numRootLiveAdds = 1,
+          numLeavesExistingStatus = 3))
       }
     }
   }
@@ -409,7 +466,8 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, (25 to 29).map(fakeAdd))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = 3, numRootLiveAdds = 5))
+          numOldLeavesUntouched = 3, numRootLiveAdds = 5,
+          numLeavesExistingStatus = 3))
       }
     }
   }
@@ -430,9 +488,11 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, (25 to 36).map(fakeAdd))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = 3,
+          numOldLeavesUntouched = 3,
           numNewLeaves = 1,
-          numRootLiveAdds = 4))
+          numRootLiveAdds = 4,
+          numLeavesExistingStatus = 3,
+          numLeavesAddedStatus = 1))
       }
     }
   }
@@ -453,7 +513,8 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(fakeAdd(25), fakeAdd(26), fakeAdd(27)))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = 3, numNewLeaves = 3, numRootLiveAdds = 0))
+          numOldLeavesUntouched = 3, numNewLeaves = 3, numRootLiveAdds = 0,
+          numLeavesExistingStatus = 3, numLeavesAddedStatus = 3))
       }
     }
   }
@@ -478,9 +539,11 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, (25 to 54).map(fakeAdd))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = 3,
+          numOldLeavesUntouched = 3,
           numNewLeaves = 4,
-          numRootLiveAdds = 0))
+          numRootLiveAdds = 0,
+          numLeavesExistingStatus = 3,
+          numLeavesAddedStatus = 4))
         // Every leaf this write SPILLED holds at most `cap` physical DATA entries, because
         // spillIfNeeded moves whole cap-sized batches. The bootstrap's own leaves are excluded: a
         // clustered full rewrite derives a leaf count from the cap but does not bound each leaf, so
@@ -520,12 +583,14 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(fakeAdd(7)))
         val actual = commitCheckpoint(amtDeltaLog, incremental = true)
           .getOrElse(fail("An incremental checkpoint must log metrics."))
-        assert(actual.numExistingLeavesUntouched == numLeafCountBefore,
+        assert(actual.numOldLeavesUntouched == numLeafCountBefore,
           s"All $numLeafCountBefore carried leaves must be untouched by an append; got " +
-            s"${actual.numExistingLeavesUntouched}.")
+            s"${actual.numOldLeavesUntouched}.")
         assert(actual.numRootLiveAdds + actual.numNewLeaves == 1,
           "The one appended file must land in exactly one place (root or a spilled leaf).")
-        assertMetricsMatchTreeDelta(amtDeltaLog, oldAMTLeafToMDV, actual)
+        // The old tree is a fresh full rewrite, so it carries no DELETED tombstones to drop.
+        assertMetricsMatchTreeDelta(amtDeltaLog, oldAMTLeafToMDV, oldDeletedLeafCount = 0,
+          metrics = actual)
         assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
       }
     }
@@ -549,7 +614,8 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(fakeAdd(28)))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = 3, numRootLiveAdds = 4),
+          numOldLeavesUntouched = 3, numRootLiveAdds = 4,
+          numLeavesExistingStatus = 3),
           expectedNumIntermediateCommits = Some(5))
       }
     }
@@ -615,7 +681,8 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, (2 to 9).map(fakeAdd))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numNewLeaves = 1, numRootLiveAdds = 1))
+          numNewLeaves = 1, numRootLiveAdds = 1,
+          numLeavesAddedStatus = 1))
       }
     }
   }
@@ -632,7 +699,8 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, (2 to 24).map(fakeAdd))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numNewLeaves = 3, numRootLiveAdds = 0))
+          numNewLeaves = 3, numRootLiveAdds = 0,
+          numLeavesAddedStatus = 3))
       }
     }
   }
@@ -702,9 +770,11 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(victim.remove))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = 1,
-          numExistingLeavesUntouched = leafCount - 1,
-          numLeafMdvBitsAdded = 1))
+          numOldLeavesUpdated = 1,
+          numOldLeavesUntouched = leafCount - 1,
+          numLeafMdvBitsAdded = 1,
+          numLeavesModifiedStatus = 1,
+          numLeavesExistingStatus = leafCount - 1))
       }
     }
   }
@@ -724,9 +794,11 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, victims.map(_.remove))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = 2,
-          numExistingLeavesUntouched = untouchedLeaves,
-          numLeafMdvBitsAdded = 2))
+          numOldLeavesUpdated = 2,
+          numOldLeavesUntouched = untouchedLeaves,
+          numLeafMdvBitsAdded = 2,
+          numLeavesModifiedStatus = 2,
+          numLeavesExistingStatus = untouchedLeaves))
       }
     }
   }
@@ -744,9 +816,11 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, files.take(2).map(_.remove))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = 1,
-          numExistingLeavesUntouched = untouchedLeaves,
-          numLeafMdvBitsAdded = 2))
+          numOldLeavesUpdated = 1,
+          numOldLeavesUntouched = untouchedLeaves,
+          numLeafMdvBitsAdded = 2,
+          numLeavesModifiedStatus = 1,
+          numLeavesExistingStatus = untouchedLeaves))
       }
     }
   }
@@ -770,9 +844,11 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(victimFromLeaf2.remove))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = 2,
-          numExistingLeavesUntouched = byLeaf.size - 2,
-          numLeafMdvBitsAdded = 2))
+          numOldLeavesUpdated = 2,
+          numOldLeavesUntouched = byLeaf.size - 2,
+          numLeafMdvBitsAdded = 2,
+          numLeavesModifiedStatus = 2,
+          numLeavesExistingStatus = byLeaf.size - 2))
       }
     }
   }
@@ -792,17 +868,21 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(victims.head.remove))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = 1,
-          numExistingLeavesUntouched = untouched,
-          numLeafMdvBitsAdded = 1))
+          numOldLeavesUpdated = 1,
+          numOldLeavesUntouched = untouched,
+          numLeafMdvBitsAdded = 1,
+          numLeavesModifiedStatus = 1,
+          numLeavesExistingStatus = untouched))
         // The second write adds only its own bit; the leaf's cumulative MDV covers both, checked
         // by the live-set baselineDeltaLog.
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(victims(1).remove))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = 1,
-          numExistingLeavesUntouched = untouched,
-          numLeafMdvBitsAdded = 1))
+          numOldLeavesUpdated = 1,
+          numOldLeavesUntouched = untouched,
+          numLeafMdvBitsAdded = 1,
+          numLeavesModifiedStatus = 1,
+          numLeavesExistingStatus = untouched))
       }
     }
   }
@@ -833,9 +913,11 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
           commitBoth(baselineDeltaLog, amtDeltaLog, Seq(victim.remove))
           createIncrementalAMTAndValidate(
             baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-            numExistingLeavesUpdated = 1,
-            numExistingLeavesUntouched = byLeaf.size - 1,
-            numLeafMdvBitsAdded = 1))
+            numOldLeavesUpdated = 1,
+            numOldLeavesUntouched = byLeaf.size - 1,
+            numLeafMdvBitsAdded = 1,
+            numLeavesModifiedStatus = 1,
+            numLeavesExistingStatus = byLeaf.size - 1))
         }
       }
     }
@@ -865,9 +947,11 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(victim.remove))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = 1,
-          numExistingLeavesUntouched = byLeaf.size - 1,
-          numLeafMdvBitsAdded = 1))
+          numOldLeavesUpdated = 1,
+          numOldLeavesUntouched = byLeaf.size - 1,
+          numLeafMdvBitsAdded = 1,
+          numLeavesModifiedStatus = 1,
+          numLeavesExistingStatus = byLeaf.size - 1))
         val after =
           leafFingerprints(amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT")))
         assert(after == before,
@@ -888,9 +972,11 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(victimFiles.head.remove))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = 1,
-          numExistingLeavesUntouched = byLeaf.size - 1,
-          numLeafMdvBitsAdded = 1))
+          numOldLeavesUpdated = 1,
+          numOldLeavesUntouched = byLeaf.size - 1,
+          numLeafMdvBitsAdded = 1,
+          numLeavesModifiedStatus = 1,
+          numLeavesExistingStatus = byLeaf.size - 1))
         val provider = amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT"))
         provider.leaves.foreach { leaf =>
           val card = leaf.manifest_info.dv_cardinality.getOrElse(0L)
@@ -904,12 +990,43 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
     }
   }
 
-  test("C9: deleting every leaf-resident file masks every leaf fully, leaving an empty tree") {
+  test("C9: a stale DELETED leaf is dropped by the next incremental rewrite") {
+    withSQLConf(leafPackingConfs: _*) {
+      withTables() { (baselineDeltaLog, amtDeltaLog) =>
+        // First reach the fully-masked state: every leaf carried as a DELETED tombstone.
+        commitBoth(baselineDeltaLog, amtDeltaLog, (1 to leafPackedFiles).map(fakeAdd))
+        commitCheckpoint(amtDeltaLog, incremental = false)
+        val leafCount = leafToAddFileMap(amtDeltaLog).size
+        assert(leafCount >= 2, s"Need a tree-shaped bootstrap; got $leafCount leaves.")
+        commitBoth(baselineDeltaLog, amtDeltaLog,
+          leafToAddFileMap(amtDeltaLog).values.flatten.toSeq.map(_.remove))
+        commitCheckpoint(amtDeltaLog, incremental = true)
+        assert(amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT"))
+          .leaves.count(_.tracking.status == Tracking.Status.Deleted) == leafCount,
+          "precondition: the first incremental rewrite must leave DELETED tombstones.")
+
+        // A second bare incremental rewrite carries nothing new, so it must drop the stale DELETED
+        // pointers and report them as numStaleDeletedLeavesDropped, leaving an empty tree.
+        val metrics = commitCheckpoint(amtDeltaLog, incremental = true)
+          .getOrElse(fail("An incremental checkpoint must log metrics."))
+        assert(metrics.numStaleDeletedLeavesDropped == leafCount,
+          s"All $leafCount stale DELETED leaves must be dropped; got " +
+            s"${metrics.numStaleDeletedLeavesDropped}.")
+        assert(amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT")).leaves.isEmpty,
+          "The stale DELETED pointers must be gone from the new tree.")
+        assert(livePathsInLatestAMTCheckpoint(amtDeltaLog).isEmpty,
+          "The AMT tree must reconstruct an empty live set.")
+      }
+    }
+  }
+
+  test("C10: deleting every leaf-resident file masks every leaf fully, marking each DELETED") {
     withSQLConf(leafPackingConfs: _*) {
       withTables() { (baselineDeltaLog, amtDeltaLog) =>
         // The extreme end of C1-C3: instead of masking one position on one leaf, mask EVERY
-        // position on EVERY leaf. The leaves must still be carried forward and fully MDV-masked
-        // rather than dropped, and the tree must reconstruct an empty live set off them.
+        // position on EVERY leaf. Each leaf's cumulative MDV then covers all its entries, so the
+        // pointer is carried this commit as a DELETED tombstone (the reader skips it), and the tree
+        // reconstructs an empty live set.
         commitBoth(baselineDeltaLog, amtDeltaLog, (1 to leafPackedFiles).map(fakeAdd))
         commitCheckpoint(amtDeltaLog, incremental = false)
         val byLeaf = leafToAddFileMap(amtDeltaLog)
@@ -918,12 +1035,29 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, allLeafFiles.map(_.remove))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = byLeaf.size,
-          numLeafMdvBitsAdded = allLeafFiles.size))
+          numOldLeavesUpdated = byLeaf.size,
+          numLeafMdvBitsAdded = allLeafFiles.size,
+          numLeavesDeletedStatus = byLeaf.size))
+        // Every carried leaf pointer is now a DELETED tombstone.
+        val statuses = amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT"))
+          .leaves.map(_.tracking.status)
+        assert(statuses.forall(_ == Tracking.Status.Deleted) && statuses.size == byLeaf.size,
+          s"Every fully-masked leaf must be DELETED; got $statuses.")
         assert(livePathsInLatestSnapshot(baselineDeltaLog).isEmpty,
           "The baseline table must have no live files.")
         assert(livePathsInLatestAMTCheckpoint(amtDeltaLog).isEmpty,
           "The AMT tree must reconstruct an empty live set.")
+
+        // The next incremental rewrite drops every DELETED tombstone, leaving a fully empty tree:
+        // no leaf pointers, and a root that holds no DATA entries.
+        commitCheckpoint(amtDeltaLog, incremental = true)
+        val provider = amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT"))
+        assert(provider.leaves.isEmpty,
+          s"The next rewrite must drop all DELETED leaves; got ${provider.leaves.size}.")
+        assert(liveAddsAndTombstonesCountInRoot(amtDeltaLog) == (0L, 0L),
+          "The new root must hold no DATA entries (no live adds, no tombstones).")
+        assert(livePathsInLatestAMTCheckpoint(amtDeltaLog).isEmpty,
+          "The fully empty tree must reconstruct an empty live set.")
       }
     }
   }
@@ -950,12 +1084,14 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(fakeAdd(leafPackedFiles + 1)))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = numLeafCountBefore, numRootLiveAdds = 1))
+          numOldLeavesUntouched = numLeafCountBefore, numRootLiveAdds = 1,
+          numLeavesExistingStatus = numLeafCountBefore))
         // Delete id=31 (root-resident): remove has NO backref -> dropped by replay, no MDV bit.
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(removeOf(amtDeltaLog, leafPackedFiles + 1)))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = numLeafCountBefore, numLeafMdvBitsAdded = 0))
+          numOldLeavesUntouched = numLeafCountBefore, numLeafMdvBitsAdded = 0,
+          numLeavesExistingStatus = numLeafCountBefore))
       }
     }
   }
@@ -975,7 +1111,8 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(removeOf(amtDeltaLog, leafPackedFiles + 1)))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = numLeafCountBefore, numLeafMdvBitsAdded = 0))
+          numOldLeavesUntouched = numLeafCountBefore, numLeafMdvBitsAdded = 0,
+          numLeavesExistingStatus = numLeafCountBefore))
       }
     }
   }
@@ -997,10 +1134,12 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(victim))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = 1,
-          numExistingLeavesUntouched = byLeaf.size - 1,
+          numOldLeavesUpdated = 1,
+          numOldLeavesUntouched = byLeaf.size - 1,
           numRootLiveAdds = 1,
-          numLeafMdvBitsAdded = 1))
+          numLeafMdvBitsAdded = 1,
+          numLeavesModifiedStatus = 1,
+          numLeavesExistingStatus = byLeaf.size - 1))
       }
     }
   }
@@ -1027,9 +1166,11 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         // derives the bits from the on-disk dv_cardinality delta.
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = 1,
-          numExistingLeavesUntouched = byLeaf.size - 1,
-          numLeafMdvBitsAdded = 1))
+          numOldLeavesUpdated = 1,
+          numOldLeavesUntouched = byLeaf.size - 1,
+          numLeafMdvBitsAdded = 1,
+          numLeavesModifiedStatus = 1,
+          numLeavesExistingStatus = byLeaf.size - 1))
         val maskedLeaf = leafPointers(amtDeltaLog.update()).getOrElse(victimLeaf,
           fail(s"Leaf $victimLeaf must still be carried forward."))
         assert(mdvCardinality(maskedLeaf) == 1L,
@@ -1053,10 +1194,12 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(fakeAdd(leafPackedFiles + 1)))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = 1,
-          numExistingLeavesUntouched = byLeaf.size - 1,
+          numOldLeavesUpdated = 1,
+          numOldLeavesUntouched = byLeaf.size - 1,
           numRootLiveAdds = 1,
-          numLeafMdvBitsAdded = 1))
+          numLeafMdvBitsAdded = 1,
+          numLeavesModifiedStatus = 1,
+          numLeavesExistingStatus = byLeaf.size - 1))
       }
     }
   }
@@ -1074,7 +1217,9 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         createIncrementalAMTAndValidate(
           baselineDeltaLog,
           amtDeltaLog,
-          createIncrementalAMTWriteMetrics(numExistingLeavesUntouched = numLeafCountBefore))
+          createIncrementalAMTWriteMetrics(
+            numOldLeavesUntouched = numLeafCountBefore,
+            numLeavesExistingStatus = numLeafCountBefore))
       }
     }
   }
@@ -1100,8 +1245,9 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
           baselineDeltaLog,
           amtDeltaLog,
           createIncrementalAMTWriteMetrics(
-            numExistingLeavesUntouched = numLeafCountBefore,
-            numRootLiveAdds = businessCommits),
+            numOldLeavesUntouched = numLeafCountBefore,
+            numRootLiveAdds = businessCommits,
+            numLeavesExistingStatus = numLeafCountBefore),
           expectedNumIntermediateCommits = Some(businessCommits + 1))
       }
     }
@@ -1147,7 +1293,8 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(fakeAdd(leafPackedFiles + 1)))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = numLeafCountBefore, numRootLiveAdds = 1))
+          numOldLeavesUntouched = numLeafCountBefore, numRootLiveAdds = 1,
+          numLeavesExistingStatus = numLeafCountBefore))
 
         // incr 2: delete a leaf-resident file -> its leaf gets one MDV bit. numRootLiveAdds is
         // still 1: the file appended by incr 1 must survive as a root-resident live add, which is
@@ -1156,10 +1303,12 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(victim.remove))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUpdated = 1,
-          numExistingLeavesUntouched = numLeafCountBefore - 1,
+          numOldLeavesUpdated = 1,
+          numOldLeavesUntouched = numLeafCountBefore - 1,
           numRootLiveAdds = 1,
-          numLeafMdvBitsAdded = 1))
+          numLeafMdvBitsAdded = 1,
+          numLeavesModifiedStatus = 1,
+          numLeavesExistingStatus = numLeafCountBefore - 1))
 
         // incr 3: append enough files to push the root past the cap, forcing a spill.
         commitBoth(
@@ -1203,10 +1352,12 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
           baselineDeltaLog,
           amtDeltaLog,
           createIncrementalAMTWriteMetrics(
-            numExistingLeavesUpdated = 2,
-            numExistingLeavesUntouched = byLeaf.size - 2,
+            numOldLeavesUpdated = 2,
+            numOldLeavesUntouched = byLeaf.size - 2,
             numRootLiveAdds = 4,
-            numLeafMdvBitsAdded = 2),
+            numLeafMdvBitsAdded = 2,
+            numLeavesModifiedStatus = 2,
+            numLeavesExistingStatus = byLeaf.size - 2),
           expectedNumIntermediateCommits = Some(8))
       }
     }
@@ -1230,7 +1381,8 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         val lastCommitted = amtDeltaLog.update().version
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = numLeafCountBefore, numRootLiveAdds = 1))
+          numOldLeavesUntouched = numLeafCountBefore, numRootLiveAdds = 1,
+          numLeavesExistingStatus = numLeafCountBefore))
         val provider = amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT"))
         // A deferred OPTIMIZE CHECKPOINT (no user actions) describes the last committed version,
         // i.e. attemptVersion - 1.
@@ -1264,18 +1416,200 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(fakeAdd(leafPackedFiles + 1)))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = numLeafCountBefore, numRootLiveAdds = 1))
+          numOldLeavesUntouched = numLeafCountBefore, numRootLiveAdds = 1,
+          numLeavesExistingStatus = numLeafCountBefore))
         assertCheckpointDescribesVersion(amtDeltaLog, expectedVersion = 3L)
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(fakeAdd(leafPackedFiles + 2)))
         createIncrementalAMTAndValidate(
           baselineDeltaLog, amtDeltaLog, createIncrementalAMTWriteMetrics(
-          numExistingLeavesUntouched = numLeafCountBefore, numRootLiveAdds = 2))
+          numOldLeavesUntouched = numLeafCountBefore, numRootLiveAdds = 2,
+          numLeavesExistingStatus = numLeafCountBefore))
         assertCheckpointDescribesVersion(amtDeltaLog, expectedVersion = 5L)
         val marker = amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT"))
           .checkpointAction.contentRoot.lastManifestCommitWithFullRewrite
         assert(marker == fullMarker,
           s"Incrementals must carry the full-rewrite marker forward unchanged: " +
             s"full=$fullMarker incr=$marker.")
+      }
+    }
+  }
+
+  /////////////////////////////////////////////////////////////
+  // Section-F:                                              //
+  //     Leaf-pointer tracking.status transition chains      //
+  //      followed across a sequence of incremental rewrites //
+  /////////////////////////////////////////////////////////////
+
+  /** Human-readable [[Tracking.Status]] name, used in transition-failure messages. */
+  private def statusName(status: Int): String = status match {
+    case Tracking.Status.Added => "ADDED"
+    case Tracking.Status.Existing => "EXISTING"
+    case Tracking.Status.Modified => "MODIFIED"
+    case Tracking.Status.Deleted => "DELETED"
+    case Tracking.Status.Replaced => "REPLACED"
+    case other => s"status($other)"
+  }
+
+  /** The leaf pointer's tracking.status at `location`, or None if it is no longer listed. */
+  private def leafStatusAt(amtDeltaLog: DeltaLog, location: String): Option[Int] =
+    amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT"))
+      .leaves.find(_.location == location).map(_.tracking.status)
+
+  /** The leaf at `location` must currently carry `expected`; `step` labels the transition edge. */
+  private def assertLeafStatus(
+      amtDeltaLog: DeltaLog, location: String, expected: Int, step: String): Unit = {
+    val actual = leafStatusAt(amtDeltaLog, location)
+    assert(actual.contains(expected),
+      s"$step: leaf $location must be ${statusName(expected)}; " +
+        s"got ${actual.map(statusName).getOrElse("<dropped>")}.")
+  }
+
+  /** The leaf's still-live files (read via back reference), sorted by path. */
+  private def liveLeafFiles(amtDeltaLog: DeltaLog, location: String): Seq[AddFile] =
+    leafToAddFileMap(amtDeltaLog).getOrElse(location, Seq.empty).sortBy(_.path)
+
+  /**
+   * Bootstraps a multi-leaf full AMT ([[leafPackedFiles]] files) and returns the location of its
+   * largest leaf, asserting that leaf starts ADDED. The largest leaf packs at least
+   * `ceil(leafPackedFiles / numLeaves)` files -- headroom to mask across several commits before it
+   * empties. Every transition chain below begins from this freshly written ADDED leaf.
+   */
+  private def bootstrapTargetLeaf(baselineDeltaLog: DeltaLog, amtDeltaLog: DeltaLog): String = {
+    commitBoth(baselineDeltaLog, amtDeltaLog, (1 to leafPackedFiles).map(fakeAdd))
+    commitCheckpoint(amtDeltaLog, incremental = false)
+    val byLeaf = leafToAddFileMap(amtDeltaLog)
+    assert(byLeaf.size >= 2, s"Need a tree-shaped bootstrap; got ${byLeaf.size} leaves.")
+    val target = byLeaf.toSeq.sortBy { case (loc, files) => (-files.size, loc) }.head._1
+    assertLeafStatus(amtDeltaLog, target, Tracking.Status.Added, "bootstrap")
+    target
+  }
+
+  /** Removes `files` from both tables, then lands one incremental AMT checkpoint. */
+  private def removeFilesAndCheckpoint(
+      baselineDeltaLog: DeltaLog, amtDeltaLog: DeltaLog, files: Seq[AddFile]): Unit = {
+    commitBoth(baselineDeltaLog, amtDeltaLog, files.map(_.remove))
+    commitCheckpoint(amtDeltaLog, incremental = true)
+  }
+
+  test("F1: ADDED -> EXISTING (a freshly written leaf carried untouched)") {
+    withSQLConf(leafPackingConfs: _*) {
+      withTables() { (baselineDeltaLog, amtDeltaLog) =>
+        val leaf = bootstrapTargetLeaf(baselineDeltaLog, amtDeltaLog)
+        // A bare incremental rewrite carries the leaf forward with no new masking.
+        commitCheckpoint(amtDeltaLog, incremental = true)
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Existing, "ADDED -> EXISTING")
+        assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
+      }
+    }
+  }
+
+  test("F2: ADDED -> DELETED -> removed (fully masked, then dropped)") {
+    withSQLConf(leafPackingConfs: _*) {
+      withTables() { (baselineDeltaLog, amtDeltaLog) =>
+        val leaf = bootstrapTargetLeaf(baselineDeltaLog, amtDeltaLog)
+        // Mask every entry of the leaf: its cumulative MDV covers the whole leaf -> DELETED.
+        removeFilesAndCheckpoint(baselineDeltaLog, amtDeltaLog, liveLeafFiles(amtDeltaLog, leaf))
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Deleted, "ADDED -> DELETED")
+        // The next rewrite drops the stale DELETED tombstone.
+        commitCheckpoint(amtDeltaLog, incremental = true)
+        assert(leafStatusAt(amtDeltaLog, leaf).isEmpty,
+          s"DELETED -> removed: leaf $leaf must be dropped by the next rewrite.")
+        assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
+      }
+    }
+  }
+
+  test("F3: ADDED -> MODIFIED (a freshly written leaf partially masked)") {
+    withSQLConf(leafPackingConfs: _*) {
+      withTables() { (baselineDeltaLog, amtDeltaLog) =>
+        val leaf = bootstrapTargetLeaf(baselineDeltaLog, amtDeltaLog)
+        // Mask one entry: some live, some masked -> MODIFIED.
+        removeFilesAndCheckpoint(
+          baselineDeltaLog, amtDeltaLog, Seq(liveLeafFiles(amtDeltaLog, leaf).head))
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Modified, "ADDED -> MODIFIED")
+        assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
+      }
+    }
+  }
+
+  test("F4: ADDED -> EXISTING -> EXISTING (carried untouched twice)") {
+    withSQLConf(leafPackingConfs: _*) {
+      withTables() { (baselineDeltaLog, amtDeltaLog) =>
+        val leaf = bootstrapTargetLeaf(baselineDeltaLog, amtDeltaLog)
+        commitCheckpoint(amtDeltaLog, incremental = true)
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Existing, "ADDED -> EXISTING")
+        commitCheckpoint(amtDeltaLog, incremental = true)
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Existing, "EXISTING -> EXISTING")
+        assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
+      }
+    }
+  }
+
+  test("F5: ADDED -> EXISTING -> DELETED -> removed") {
+    withSQLConf(leafPackingConfs: _*) {
+      withTables() { (baselineDeltaLog, amtDeltaLog) =>
+        val leaf = bootstrapTargetLeaf(baselineDeltaLog, amtDeltaLog)
+        commitCheckpoint(amtDeltaLog, incremental = true)
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Existing, "ADDED -> EXISTING")
+        // Mask every entry of the carried leaf -> DELETED.
+        removeFilesAndCheckpoint(baselineDeltaLog, amtDeltaLog, liveLeafFiles(amtDeltaLog, leaf))
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Deleted, "EXISTING -> DELETED")
+        commitCheckpoint(amtDeltaLog, incremental = true)
+        assert(leafStatusAt(amtDeltaLog, leaf).isEmpty,
+          s"DELETED -> removed: leaf $leaf must be dropped by the next rewrite.")
+        assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
+      }
+    }
+  }
+
+  test("F6: ADDED -> EXISTING -> MODIFIED -> EXISTING") {
+    withSQLConf(leafPackingConfs: _*) {
+      withTables() { (baselineDeltaLog, amtDeltaLog) =>
+        val leaf = bootstrapTargetLeaf(baselineDeltaLog, amtDeltaLog)
+        commitCheckpoint(amtDeltaLog, incremental = true)
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Existing, "ADDED -> EXISTING")
+        removeFilesAndCheckpoint(
+          baselineDeltaLog, amtDeltaLog, Seq(liveLeafFiles(amtDeltaLog, leaf).head))
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Modified, "EXISTING -> MODIFIED")
+        // A carried leaf whose MDV does not grow this commit falls back to EXISTING.
+        commitCheckpoint(amtDeltaLog, incremental = true)
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Existing, "MODIFIED -> EXISTING")
+        assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
+      }
+    }
+  }
+
+  test("F7: ADDED -> EXISTING -> MODIFIED -> MODIFIED") {
+    withSQLConf(leafPackingConfs: _*) {
+      withTables() { (baselineDeltaLog, amtDeltaLog) =>
+        val leaf = bootstrapTargetLeaf(baselineDeltaLog, amtDeltaLog)
+        commitCheckpoint(amtDeltaLog, incremental = true)
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Existing, "ADDED -> EXISTING")
+        removeFilesAndCheckpoint(
+          baselineDeltaLog, amtDeltaLog, Seq(liveLeafFiles(amtDeltaLog, leaf).head))
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Modified, "EXISTING -> MODIFIED")
+        // Mask one more still-live entry: the MDV grows again but some entries remain live.
+        removeFilesAndCheckpoint(
+          baselineDeltaLog, amtDeltaLog, Seq(liveLeafFiles(amtDeltaLog, leaf).head))
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Modified, "MODIFIED -> MODIFIED")
+        assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
+      }
+    }
+  }
+
+  test("F8: ADDED -> EXISTING -> MODIFIED -> DELETED") {
+    withSQLConf(leafPackingConfs: _*) {
+      withTables() { (baselineDeltaLog, amtDeltaLog) =>
+        val leaf = bootstrapTargetLeaf(baselineDeltaLog, amtDeltaLog)
+        commitCheckpoint(amtDeltaLog, incremental = true)
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Existing, "ADDED -> EXISTING")
+        removeFilesAndCheckpoint(
+          baselineDeltaLog, amtDeltaLog, Seq(liveLeafFiles(amtDeltaLog, leaf).head))
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Modified, "EXISTING -> MODIFIED")
+        // Mask every remaining live entry: the cumulative MDV now covers the whole leaf -> DELETED.
+        removeFilesAndCheckpoint(baselineDeltaLog, amtDeltaLog, liveLeafFiles(amtDeltaLog, leaf))
+        assertLeafStatus(amtDeltaLog, leaf, Tracking.Status.Deleted, "MODIFIED -> DELETED")
+        assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
       }
     }
   }

@@ -25,12 +25,14 @@ class CheckpointInstanceSuite extends SparkFunSuite {
   test("checkpoint instance comparisons") {
     val ci1_single_1 = CheckpointInstance(1, Format.SINGLE, numParts = None)
     val ci1_withparts_2 = CheckpointInstance(1, Format.WITH_PARTS, numParts = Some(2))
-    val ci1_amt_2 = CheckpointInstance(1, Format.AMT, numParts = Some(2))
+    val ci1_amt_2 = CheckpointInstance(
+      1, Format.AMT, numParts = Some(2), manifestCommitVersion = Some(1))
     val ci1_sentinel = CheckpointInstance.sentinelValue(Some(1))
 
     val ci2_single_1 = CheckpointInstance(2, Format.SINGLE, numParts = None)
     val ci2_withparts_4 = CheckpointInstance(2, Format.WITH_PARTS, numParts = Some(4))
-    val ci2_amt_3 = CheckpointInstance(2, Format.AMT, numParts = Some(3))
+    val ci2_amt_3 = CheckpointInstance(
+      2, Format.AMT, numParts = Some(3), manifestCommitVersion = Some(2))
     val ci2_sentinel = CheckpointInstance.sentinelValue(Some(2))
 
     val ci3_single_1 = CheckpointInstance(3, Format.SINGLE, numParts = None)

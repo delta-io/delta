@@ -26,8 +26,11 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.types.StructType
 
 class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
@@ -84,6 +87,72 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
   }
 
   testAcrossAMTCheckpointScenarios(
+      "partition values use the typed Iceberg struct and round-trip",
+      "amt_typed_partition",
+      sqlConfs = leafPackingConfs,
+      tableSchema = ("id INT" +: allTypesPartitionColumns).mkString(", "),
+      partitionColumns = allTypesPartitionSchema.map(_.name))(
+      setup = name => appendRowsAsSeparateFiles(
+        name,
+        numRows = leafPackedFiles - 1,
+        columnExprs = "CAST(id AS INT)" +: allTypesPartitionExprs),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"""INSERT INTO $name
+           |SELECT ${("CAST(id AS INT)" +: allTypesPartitionExprs).mkString(", ")}
+           |FROM range(${leafPackedFiles - 1}, $leafPackedFiles)""".stripMargin))) { context =>
+    val leafDf = spark.read.parquet(
+      context.provider.liveLeafManifestAbsolutePaths.map(_.toString): _*)
+    val partitionSchema = context.postCheckpointSnapshot.metadata.partitionSchema
+    // The persisted struct carries the table's partition types under their logical names, with
+    // Iceberg partition-field ids from 1000 in partition-spec order.
+    val partition = leafDf.schema("partition")
+    assert(partition.nullable)
+    val fields = partition.dataType.asInstanceOf[StructType].fields
+    assert(fields.map(f => f.name -> f.dataType).toSeq ==
+      AMTPartitionValues.persistedSchema(partitionSchema).map(f => f.name -> f.dataType))
+    assert(fields.map(_.metadata.getLong(ParquetUtils.FIELD_ID_METADATA_KEY)).toSeq ==
+      fields.indices.map(1000L + _))
+    assert(leafDf.select("partition.p_int").collect().map(_.getInt(0)).toSet ==
+      (0 until leafPackedFiles).toSet)
+
+    // Every physical-name -> string entry must come back exactly as the log recorded it; a cast
+    // that disagrees with Delta's own serialization would corrupt these silently.
+    val restored = context.provider
+      .loadActionsForStateReconstruction(spark, context.postCheckpointSnapshot.deltaLog)
+      .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+      .where(col("add").isNotNull)
+      .select("add.partitionValues")
+      .collect()
+      .map(_.getMap[String, String](0).toMap)
+      .toSet
+    assert(restored == liveAddFiles(context.postCheckpointSnapshot).map(_.partitionValues).toSet)
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "an unpartitioned table writes no partition column at all",
+      "amt_unpartitioned",
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
+    // An unpartitioned table has no partition struct to persist, so `partition` is dropped from the
+    // schema rather than written as a null -- Iceberg field 102 is optional. Checking the parquet
+    // itself, since the reconstructed AddFile carries a `partition` either way (`forRead` adds one
+    // back as a null map).
+    val manifests =
+      (context.provider.topLevelFiles.map(_.getPath.toString) ++
+        context.provider.liveLeafManifestAbsolutePaths.map(_.toString))
+    assert(manifests.nonEmpty, "Expected at least a root manifest.")
+    manifests.foreach { manifest =>
+      val columns = {
+        spark.read.parquet(manifest).columns.toSeq
+      }
+      assert(!columns.contains("partition"),
+        s"an unpartitioned manifest must have no `partition` column; $manifest has $columns")
+    }
+  }
+
+  testAcrossAMTCheckpointScenarios(
       "manifest pointers are stored relative to the table root",
       "amt_relative_pointers",
       // The leaf packing keeps several leaf pointers in the root to check, rather than the single
@@ -121,14 +190,15 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     }
 
     // The pointers are stored relative on disk; the provider re-absolutizes them via
-    // `leafManifestAbsolutePaths`, and reconstruction driven off the manifest tree (root +
+    // `liveLeafManifestAbsolutePaths`, and reconstruction driven off the manifest tree (root +
     // leaves, both stored relative) surfaces exactly the committed data files.
     val leafLocs = provider.leaves.map(_.location)
     assert(leafLocs.forall(loc =>
       loc == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(loc).getName}"),
       s"leaf pointer locations must be table-root-relative; got $leafLocs")
-    assert(provider.leafManifestAbsolutePaths.forall(_.isAbsolute),
-      s"resolved leaf manifest paths must be absolute; got ${provider.leafManifestAbsolutePaths}")
+    assert(provider.liveLeafManifestAbsolutePaths.forall(_.isAbsolute),
+      "resolved leaf manifest paths must be absolute; got " +
+        s"${provider.liveLeafManifestAbsolutePaths}")
     assertReconstructsLiveFileSet(context)
     // `setup` writes one file per id, and the trigger adds the last one.
     checkAnswer(spark.table(name), (0 until leafPackedFiles).map(Row(_)))
@@ -165,7 +235,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
           s"contentRoot.path must be table-root-relative; got $rootPointer")
         // The provider re-absolutizes leaf pointers to paths that live under the spaced root and
         // are not percent-encoded.
-        provider.leafManifestAbsolutePaths.foreach { leafPath =>
+        provider.liveLeafManifestAbsolutePaths.foreach { leafPath =>
           assert(leafPath.isAbsolute && leafPath.toString.contains("amt table with spaces"),
             s"resolved leaf path must live under the spaced table root; got $leafPath")
           assert(!leafPath.toString.contains("%20"),
@@ -202,8 +272,17 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       // contain spaces, storing raw table-root-relative pointers, to prove the pointer round-trips.
       def writeManifest(fileName: String, rows: Seq[AMTSingleAction]): (String, Long) = {
         val file = new Path(metadataDir, fileName)
-        val df = spark.createDataset(rows)(enc).toDF()
-        Checkpoints.writeAtomicCheckpointParquetFile(spark, df, file, hadoopConf, useRename = false)
+        val metadata = base.metaData
+        val df = AMTPartitionValues.forWrite(
+          spark.createDataset(rows)(enc).toDF(), metadata.partitionSchema)
+        Checkpoints.writeAtomicCheckpointParquetFile(
+          spark,
+          df,
+          file,
+          hadoopConf,
+          useRename = false,
+          outputSchema = Some(AMTSingleAction.persistedSchema(metadata.partitionSchema)),
+          useDeltaParquetWriteSupport = true)
         val relative = AMTUtils.relativizeManifestPathToTableRoot(
           file.getFileSystem(hadoopConf), dataPath, file)
         assert(relative == s"${FileNames.AMT_METADATA_DIR_NAME}/$fileName" &&
@@ -231,12 +310,12 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       assert(rootLoc.contains("root with space.parquet") && !rootLoc.contains("%20"))
       assert(leafLoc.contains("leaf with space.parquet") && !leafLoc.contains("%20"))
 
-      val provider = AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint)
+      val provider = AMTCheckpointProvider.fromCheckpoint(deltaLog, checkpoint)
       // The provider resolves the spaced pointers to absolute, raw paths under the table root.
-      assert(provider.leafManifestAbsolutePaths.forall(p =>
+      assert(provider.liveLeafManifestAbsolutePaths.forall(p =>
         p.isAbsolute && p.toString.contains("leaf with space.parquet") &&
           !p.toString.contains("%20")),
-        s"resolved leaf paths must stay raw; got ${provider.leafManifestAbsolutePaths}")
+        s"resolved leaf paths must stay raw; got ${provider.liveLeafManifestAbsolutePaths}")
 
       // Reconstruction reads the DATA entry back through the spaced leaf path.
       val reconstructed = provider.loadActionsForStateReconstruction(spark, deltaLog)
@@ -290,8 +369,35 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       s"Expected 21 live files, got ${context.postCheckpointSnapshot.allFiles.count()}.")
     assert(context.provider.leaves.size == 3,
       s"21 files at entriesPerLeaf=7 must pack into 3 leaves; got ${context.provider.leaves.size}.")
-    assert(context.provider.leaves.forall(_.record_count <= 7),
-      s"Every leaf must respect entriesPerLeaf=7: ${context.provider.leaves}")
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "full rewrite records each distributed leaf's entry count",
+      "amt_leaf_counts",
+      deferredScenarios = Seq(AMTCheckpointScenario.DeferredFull),
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles)) { context =>
+    val leaves = context.provider.leaves
+    assertLeafCount(leaves)
+    val totalLiveFiles = context.postCheckpointSnapshot.allFiles.count()
+    leaves.foreach { leaf =>
+      val mi = leaf.manifest_info
+      // The distributed writer counts the rows it flushes into each leaf and reports that count
+      // as record_count and existing_files_count (the data files already lived in the table, so
+      // they are EXISTING, not ADDED). Both fields were left 0 before this fix.
+      assert(leaf.record_count > 0L,
+        s"A full-rewrite leaf must report a non-zero record_count; got $leaf.")
+      assert(mi.existing_files_count.toLong == leaf.record_count,
+        s"existing_files_count must equal record_count; got $mi vs ${leaf.record_count}.")
+      assert(mi.added_files_count == 0 && mi.deleted_files_count == 0 &&
+        mi.replaced_files_count == 0,
+        s"A fresh full-rewrite leaf counts only existing files; got $mi.")
+    }
+    // Conservation: the per-leaf counts account for every live file (a multi-leaf tree keeps no
+    // root-resident data entries).
+    assert(leaves.map(_.record_count).sum == totalLiveFiles,
+      s"Leaf record_counts must sum to $totalLiveFiles; got ${leaves.map(_.record_count)}.")
+    assertReconstructsLiveFileSet(context)
   }
 
   /** Parses the `delta.commit.stats` [[CommitStats]] logged for `version`, or fails. */

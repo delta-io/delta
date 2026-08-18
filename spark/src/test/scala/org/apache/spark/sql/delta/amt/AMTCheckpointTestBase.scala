@@ -32,6 +32,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.types.{BinaryType, BooleanType, ByteType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
 
 /**
  * Shared fixtures for AMT (`adaptiveMetadata-preview`) test suites: table creation, manifest-tree
@@ -81,11 +82,17 @@ trait AMTCheckpointTestBase
   protected def createAMTTable(
       tableName: String,
       checkpointInterval: Int = 2,
-      location: Option[String] = None): Unit = {
+      location: Option[String] = None,
+      tableSchema: String = "id INT",
+      partitionColumns: Seq[String] = Seq.empty): Unit = {
     val locationClause = location.map(l => s"LOCATION '$l'").getOrElse("")
+    val partitionClause =
+      if (partitionColumns.isEmpty) ""
+      else s"PARTITIONED BY (${partitionColumns.mkString(", ")})"
     sql(
-      s"""CREATE TABLE $tableName (id INT) USING DELTA
+      s"""CREATE TABLE $tableName ($tableSchema) USING DELTA
          |$locationClause
+         |$partitionClause
          |TBLPROPERTIES (
          |  '${propertyKey(AdaptiveMetadataTableFeature)}' = '$FEATURE_PROP_SUPPORTED',
          |  'delta.columnMapping.mode' = 'id',
@@ -96,15 +103,95 @@ trait AMTCheckpointTestBase
   /**
    * Appends `numRows` rows (ids `startId` until `startId + numRows`) to `tableName` as `numRows`
    * separate data files in a single commit. `startId` lets successive calls append disjoint id
-   * ranges.
+   * ranges. `columnExprs` is the projection over `range`'s `id`, one expression per table column;
+   * a partitioned table passes its partition columns here too.
    */
   protected def appendRowsAsSeparateFiles(
-      tableName: String, numRows: Int, startId: Int = 0): Unit = {
+      tableName: String,
+      numRows: Int,
+      startId: Int = 0,
+      columnExprs: Seq[String] = Seq("CAST(id AS INT)")): Unit = {
     withSQLConf(
         "spark.sql.files.maxRecordsPerFile" -> "1",
         DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false") {
       sql(
-        s"INSERT INTO $tableName SELECT CAST(id AS INT) FROM range($startId, ${startId + numRows})")
+        s"""INSERT INTO $tableName
+           |SELECT ${columnExprs.mkString(", ")} FROM range($startId, ${startId + numRows})"""
+          .stripMargin)
+    }
+  }
+
+  /** All live [[AddFile]]s of `snapshot`. */
+  protected def liveAddFiles(snapshot: Snapshot): Seq[AddFile] =
+    snapshot.allFiles.collect().toSeq
+
+  /**
+   * Partition spec covering one column per partition type Delta supports.
+   */
+  protected val allTypesPartitionSchema: StructType = StructType(Seq(
+    StructField("p_int", IntegerType),
+    StructField("p_long", LongType),
+    StructField("p_short", ShortType),
+    StructField("p_byte", ByteType),
+    StructField("p_str", StringType),
+    StructField("p_date", DateType),
+    StructField("p_ts", TimestampType),
+    StructField("p_ts_ntz", TimestampNTZType),
+    StructField("p_dec", DecimalType(9, 3)),
+    StructField("p_bool", BooleanType),
+    StructField("p_float", FloatType),
+    StructField("p_double", DoubleType),
+    StructField("p_binary", BinaryType)))
+
+  /** `allTypesPartitionSchema` as SQL column definitions, for a `CREATE TABLE` schema. */
+  protected def allTypesPartitionColumns: Seq[String] =
+    allTypesPartitionSchema.map(f => s"${f.name} ${f.dataType.sql}")
+
+  /**
+   * One projection over `range`'s `id` per column of [[allTypesPartitionSchema]], giving each row a
+   * distinct value in every partition column.
+   */
+  protected def allTypesPartitionExprs: Seq[String] = allTypesPartitionSchema.map { field =>
+    field.dataType match {
+      case StringType => "CONCAT('r', CAST(id AS STRING))"
+      case DateType => "DATE '2026-07-25' + CAST(id AS INT)"
+      case TimestampType =>
+        "TIMESTAMP '2026-07-25 01:02:03.456' + MAKE_INTERVAL(0, 0, 0, CAST(id AS INT))"
+      case TimestampNTZType =>
+        "CAST(TIMESTAMP_NTZ '2026-07-25 01:02:03.456' + " +
+          "MAKE_INTERVAL(0, 0, 0, CAST(id AS INT)) AS TIMESTAMP_NTZ)"
+      case BooleanType => "CAST(id % 2 AS BOOLEAN)"
+      case BinaryType => "CAST(CONCAT('b', CAST(id AS STRING)) AS BINARY)"
+      case d: DecimalType => s"CAST(id AS ${d.sql}) / 8"
+      case other => s"CAST(id AS ${other.sql})"
+    }
+  }
+
+  /**
+   * Creates an AMT table partitioned by every column of [[allTypesPartitionSchema]] and appends
+   * `numFiles` single-row files, one distinct partition value per row per column, then runs `body`
+   * with the table's [[DeltaLog]]. No checkpoint is committed -- the caller decides which
+   * checkpoint shape it needs.
+   */
+  protected def withAllPartitionTypesTable(
+      tableName: String,
+      numFiles: Int,
+      maxEntriesPerLeaf: Int)(body: DeltaLog => Unit): Unit = {
+    val dataColumns = Seq("d_int INT", "d_str STRING")
+    withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> maxEntriesPerLeaf.toString) {
+      withTable(tableName) {
+        createAMTTable(
+          tableName,
+          checkpointInterval = Int.MaxValue,
+          tableSchema = (dataColumns ++ allTypesPartitionColumns).mkString(", "),
+          partitionColumns = allTypesPartitionSchema.map(_.name))
+        appendRowsAsSeparateFiles(
+          tableName,
+          numRows = numFiles,
+          columnExprs =
+            Seq("CAST(id AS INT)", "CONCAT('d', CAST(id AS STRING))") ++ allTypesPartitionExprs)
+        body(deltaLogForName(tableName))
+      }
     }
   }
 
@@ -219,7 +306,9 @@ trait AMTCheckpointTestBase
       deferredScenarios: Seq[AMTCheckpointScenario] = Seq(
         AMTCheckpointScenario.DeferredIncremental,
         AMTCheckpointScenario.DeferredFull),
-      sqlConfs: Seq[(String, String)] = Seq.empty)(
+      sqlConfs: Seq[(String, String)] = Seq.empty,
+      tableSchema: String = "id INT",
+      partitionColumns: Seq[String] = Seq.empty)(
       setup: String => Unit = _ => (),
       inlineCheckpointTriggerActionsOrSQL: Option[AMTCheckpointTrigger] = None)(
       body: AMTCheckpointScenarioContext => Unit): Unit = {
@@ -237,7 +326,11 @@ trait AMTCheckpointTestBase
         val scenarioTable = s"${tableName}_${scenario.name.replace(' ', '_')}"
         withSQLConf(sqlConfs: _*) {
           withTable(scenarioTable) {
-            createAMTTable(scenarioTable, checkpointInterval = Int.MaxValue)
+            createAMTTable(
+              scenarioTable,
+              checkpointInterval = Int.MaxValue,
+              tableSchema = tableSchema,
+              partitionColumns = partitionColumns)
             // Incremental checkpoints require an existing full checkpoint.
             commitCheckpoint(deltaLogForName(scenarioTable), incremental = false)
             setup(scenarioTable)
@@ -467,7 +560,7 @@ trait AMTCheckpointTestBase
   protected def currentLeafDataEntries(snapshot: Snapshot): Long = {
     val provider = amtProvider(snapshot)
       .getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
-      provider.leafManifestAbsolutePaths.map { leafPath =>
+      provider.liveLeafManifestAbsolutePaths.map { leafPath =>
         spark.read.parquet(leafPath.toString)
           .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
           .count()
