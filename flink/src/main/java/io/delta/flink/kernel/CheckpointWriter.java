@@ -66,16 +66,15 @@ import org.slf4j.LoggerFactory;
  * most efficient when used for incremental checkpoint creation on Flink sink tables.
  *
  * <p>Because the Flink sink performs blind appends, the writer generates a new sidecar file
- * containing all {@code AddFile} and {@code SetTransaction} actions in the range {@code
- * (previousCheckpointVersion + 1, currentSnapshotVersion]}. It then writes a new singular v2
- * checkpoint that includes:
+ * containing all {@code AddFile} actions in the range {@code (previousCheckpointVersion + 1,
+ * currentSnapshotVersion]}. It then writes a new singular v2 checkpoint that includes:
  *
  * <ul>
  *   <li>protocol, metadata, and checkpointMetadata actions
  *   <li>the newly generated sidecar file
  *   <li>all sidecars referenced by the previous checkpoint, if that checkpoint was written by this
  *       class
- *   <li>aggregated {@code SetTransaction} actions computed from commits in the version range
+ *   <li>reconciled {@code SetTransaction} and {@code DomainMetadata} actions
  * </ul>
  *
  * If the writer detects that the number of existing sidecar files exceeds a threshold, it will
@@ -94,9 +93,6 @@ import org.slf4j.LoggerFactory;
  *
  * We choose to not support reading checkpoints written by other writers assuming that the case is
  * rare. The support can be added in the future if being requested.
- *
- * <p>## Limitations This writer does not support tables with domain metadata feature. The support
- * will be added in the future.
  */
 public class CheckpointWriter {
 
@@ -106,6 +102,9 @@ public class CheckpointWriter {
   public static final String TAG_DELTASINK_CHECKPOINT = "io.delta.flink.sink.checkpoint";
 
   public static final String TAG_SIDECAR_COUNT = "io.delta.flink.num_sidecar";
+
+  public static final String TAG_LAST_CHECKPOINT_SIZE_IN_ACTIONS =
+      "io.delta.flink.lastCheckpointSizeInActions";
 
   private static final Logger LOG = LoggerFactory.getLogger(CheckpointWriter.class);
 
@@ -124,6 +123,7 @@ public class CheckpointWriter {
 
   private final CheckpointMetaData lastCheckpointMeta;
   private final boolean lastCheckpointByMe;
+  private final boolean lastCheckpointSizeInActions;
   private final int lastCheckpointSidecarCount;
   private int carriedSidecarCount;
   /** Guard to prevent reusing a single writer instance. */
@@ -163,6 +163,9 @@ public class CheckpointWriter {
     lastCheckpointByMe =
         Boolean.parseBoolean(
             lastCheckpointMeta.tags.getOrDefault(TAG_DELTASINK_CHECKPOINT, "false"));
+    lastCheckpointSizeInActions =
+        Boolean.parseBoolean(
+            lastCheckpointMeta.tags.getOrDefault(TAG_LAST_CHECKPOINT_SIZE_IN_ACTIONS, "false"));
     int parsedSidecarCount = 0;
     try {
       parsedSidecarCount =
@@ -212,11 +215,13 @@ public class CheckpointWriter {
     // ===========
     // Use _last_checkpoint as baseCheckpoint when
     // 1. It is written by this writer
-    // 2. _last_checkpoint version is smaller than this snapshot version
-    // Otherwise assume there's no baseCheckpoint
+    // 2. _last_checkpoint uses the protocol-defined action count for size
+    // 3. _last_checkpoint version is smaller than this snapshot version
+    // Otherwise assume there's no baseCheckpoint. Checkpoints from older versions of this writer
+    // did not use the action-count semantics, so rebuild them once before resuming incrementally.
     // ====================================================================
     Optional<CheckpointMetaData> baseCheckpointMeta =
-        (lastCheckpointByMe && lastCheckpointMeta.version < version)
+        (lastCheckpointByMe && lastCheckpointSizeInActions && lastCheckpointMeta.version < version)
             ? Optional.of(lastCheckpointMeta)
             : Optional.empty();
     long baseVersion = baseCheckpointMeta.map(m -> m.version).orElse(-1L);
@@ -245,11 +250,10 @@ public class CheckpointWriter {
     SidecarFile newSidecar;
     CloseableIterator<FilteredColumnarBatch> existingSidecars = EMPTY_ITERATOR();
     if (baseCheckpointMeta.isPresent()) {
-      // When there's no remove files, read existing sidecars from the base checkpoint if it
-      // exists. Materialize existing sidecars and their selection vectors before scanning
-      // incremental actions, so it triggers the computation of txnId/domainMetadata from the base
-      // checkpoint first.
-      existingSidecars = materialize(sidecarsFromCheckpoint(baseCheckpointPath));
+      // Materialize the selected sidecar rows before scanning incremental actions. This both
+      // collects the base txn/domainMetadata state and prevents those side effects from being
+      // replayed when the sidecar rows are written to the new checkpoint.
+      existingSidecars = materializeSelectedRows(sidecarsFromCheckpoint(baseCheckpointPath));
     }
     int prevTxnCount = transactionIds.size();
     int prevDomainMetadataCount = domainMetadatas.size();
@@ -334,7 +338,9 @@ public class CheckpointWriter {
                               TAG_DELTASINK_CHECKPOINT,
                               "true",
                               TAG_SIDECAR_COUNT,
-                              String.valueOf(newSidecarCount)))
+                              String.valueOf(newSidecarCount),
+                              TAG_LAST_CHECKPOINT_SIZE_IN_ACTIONS,
+                              "true"))
                       .toRow()),
               true /* overwrite */);
     }
@@ -417,13 +423,12 @@ public class CheckpointWriter {
     return existingSidecars;
   }
 
-  private CloseableIterator<FilteredColumnarBatch> materialize(
+  private CloseableIterator<FilteredColumnarBatch> materializeSelectedRows(
       CloseableIterator<FilteredColumnarBatch> iterator) {
-    List<FilteredColumnarBatch> batches = iterator.toInMemoryList();
-    for (FilteredColumnarBatch batch : batches) {
-      batch.getRows().toInMemoryList();
-    }
-    return toCloseableIterator(batches.iterator());
+    List<Row> rows = iterator.flatMap(FilteredColumnarBatch::getRows).toInMemoryList();
+    return singletonCloseableIterator(
+        new FilteredColumnarBatch(
+            new DefaultRowBasedColumnarBatch(CHECKPOINT_SCHEMA, rows), Optional.empty()));
   }
 
   private void accumulateNonFileActions(ColumnarBatch columnarBatch, int rowId) {

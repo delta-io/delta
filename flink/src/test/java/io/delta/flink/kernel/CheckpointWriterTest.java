@@ -40,6 +40,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.DataFileStatus;
 import io.delta.kernel.utils.FileStatus;
+import java.io.IOException;
 import java.net.URI;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -133,9 +134,12 @@ class CheckpointWriterTest extends TestHelper {
 
   private Optional<Snapshot> writeDomainMetadata(
       Engine engine, String tablePath, String domain, String conf) {
+    return writeDomainMetadata(engine, tablePath, domain, conf, false);
+  }
 
-    // Prepare some dummy AddFile
-    DomainMetadata dm = new DomainMetadata(domain, conf, false);
+  private Optional<Snapshot> writeDomainMetadata(
+      Engine engine, String tablePath, String domain, String conf, boolean removed) {
+    DomainMetadata dm = new DomainMetadata(domain, conf, removed);
 
     var txn =
         TableManager.loadSnapshot(tablePath)
@@ -283,6 +287,11 @@ class CheckpointWriterTest extends TestHelper {
           Boolean.parseBoolean(
               metadata.tags.getOrDefault(CheckpointWriter.TAG_DELTASINK_CHECKPOINT, "false")),
           "Expected TAG_DELTASINK_CHECKPOINT to be true in _last_checkpoint");
+      assertTrue(
+          Boolean.parseBoolean(
+              metadata.tags.getOrDefault(
+                  CheckpointWriter.TAG_LAST_CHECKPOINT_SIZE_IN_ACTIONS, "false")),
+          "Expected _last_checkpoint.size to use action-count semantics");
 
       // Verify number of sidecars tracked by the Flink checkpoint writer.
       if (expectedNumSidecars >= 0) {
@@ -294,6 +303,27 @@ class CheckpointWriterTest extends TestHelper {
     } catch (Exception e) {
       throw new AssertionError("Failed to read or verify _last_checkpoint", e);
     }
+  }
+
+  private void writeLegacyLastCheckpointFile(
+      Engine engine, Snapshot snapshot, int size, int numSidecars) throws IOException {
+    String lastCheckpointPath = snapshot.getPath() + "/_delta_log/_last_checkpoint";
+    engine
+        .getJsonHandler()
+        .writeJsonFileAtomically(
+            lastCheckpointPath,
+            singletonCloseableIterator(
+                new CheckpointMetaData(
+                        snapshot.getVersion(),
+                        size,
+                        Optional.empty(),
+                        Map.of(
+                            CheckpointWriter.TAG_DELTASINK_CHECKPOINT,
+                            "true",
+                            TAG_SIDECAR_COUNT,
+                            String.valueOf(numSidecars)))
+                    .toRow()),
+            true /* overwrite */);
   }
 
   @Test
@@ -506,6 +536,59 @@ class CheckpointWriterTest extends TestHelper {
           // + carried txn + 2 carried domainMetadata actions.
           assertLastCheckpointFile(
               engine, snapshot.get(), /* version */ 5, /* numSidecar */ 2, /* size */ 11);
+        });
+  }
+
+  @Test
+  void testIncrementalCheckpointPreservesDomainMetadataRemoval() {
+    withTempDir(
+        dir -> {
+          String tablePath = dir.getAbsolutePath();
+          Engine engine = DefaultEngine.create(new Configuration());
+          StructType schema = new StructType().add("id", IntegerType.INTEGER);
+          Map<String, String> properties =
+              Map.of(
+                  "delta.feature.v2Checkpoint", "supported",
+                  "delta.feature.domainMetadata", "supported");
+          createNonEmptyTable(engine, tablePath, schema, List.of(), properties);
+
+          Optional<Snapshot> snapshot = writeDomainMetadata(engine, tablePath, "domain1", "conf1");
+          new CheckpointWriter(engine, snapshot.get()).write();
+
+          snapshot = writeDomainMetadata(engine, tablePath, "domain1", "", true);
+          new CheckpointWriter(engine, snapshot.get()).write();
+
+          SnapshotImpl snapshotAfter =
+              (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
+          assertTrue(snapshotAfter.getDomainMetadata("domain1").isEmpty());
+
+          // 1 AddFile in a sidecar + protocol + metadata + checkpointMetadata + 2 sidecars.
+          assertLastCheckpointFile(
+              engine, snapshot.get(), /* version */ 2, /* numSidecar */ 2, /* size */ 6);
+        });
+  }
+
+  @Test
+  void testRebuildsLegacyCheckpointWithFileCountSize() {
+    withTempDir(
+        dir -> {
+          String tablePath = dir.getAbsolutePath();
+          Engine engine = DefaultEngine.create(new Configuration());
+          StructType schema = new StructType().add("id", IntegerType.INTEGER);
+          Map<String, String> properties = Map.of("delta.feature.v2Checkpoint", "supported");
+          Snapshot initialSnapshot =
+              createNonEmptyTable(engine, tablePath, schema, List.of(), properties).get();
+
+          new CheckpointWriter(engine, initialSnapshot).write();
+          writeLegacyLastCheckpointFile(engine, initialSnapshot, /* size */ 1, /* numSidecars */ 1);
+
+          Snapshot latestSnapshot = writeTable(engine, tablePath, schema).get();
+          new CheckpointWriter(engine, latestSnapshot).write();
+
+          assertSnapshotRead(engine, tablePath, /* version */ 1, /* numSidecars */ 1, 2);
+          // 2 AddFiles in one sidecar + protocol + metadata + checkpointMetadata + the sidecar.
+          assertLastCheckpointFile(
+              engine, latestSnapshot, /* version */ 1, /* numSidecars */ 1, /* size */ 6);
         });
   }
 }
