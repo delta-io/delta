@@ -19,7 +19,11 @@ package org.apache.spark.sql.delta.typewidening
 import java.io.File
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaIllegalStateException
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.DeltaOptions
+import org.apache.spark.sql.delta.DeltaRuntimeException
+import org.apache.spark.sql.delta.DeltaStreamingNonAdditiveSchemaIncompatibleException
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.util.ScalaExtensions._

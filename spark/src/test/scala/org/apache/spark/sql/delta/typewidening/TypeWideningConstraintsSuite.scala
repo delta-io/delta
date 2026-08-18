@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta.typewidening
 
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaAnalysisException
+import org.apache.spark.sql.delta.DeltaDMLTestUtilsNameBased
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{QueryTest, Row}

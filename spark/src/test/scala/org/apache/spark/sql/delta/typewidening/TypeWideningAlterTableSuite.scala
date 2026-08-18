@@ -17,7 +17,11 @@
 package org.apache.spark.sql.delta.typewidening
 
 import com.databricks.spark.util.Log4jUsageLogger
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaAnalysisException
+import org.apache.spark.sql.delta.DeltaDMLTestUtilsNameBased
+import org.apache.spark.sql.delta.DeltaTableFeatureException
+import org.apache.spark.sql.delta.TimestampNTZTableFeature
+import org.apache.spark.sql.delta.TypeWidening
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.util.JsonUtils
 

@@ -19,7 +19,20 @@ package org.apache.spark.sql.delta.typewidening
 import java.io.File
 import java.util.UUID
 
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaColumnMapping
+import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.DeltaDMLTestUtils
+import org.apache.spark.sql.delta.DeltaDMLTestUtilsNameBased
+import org.apache.spark.sql.delta.DeltaDMLTestUtilsPathBased
+import org.apache.spark.sql.delta.DeltaDSv2TestMixin
+import org.apache.spark.sql.delta.DeltaTableFeatureException
+import org.apache.spark.sql.delta.DeltaTableIdentifier
+import org.apache.spark.sql.delta.TableFeature
+import org.apache.spark.sql.delta.TimestampNTZTableFeature
+import org.apache.spark.sql.delta.TypeChange
+import org.apache.spark.sql.delta.TypeWidening
+import org.apache.spark.sql.delta.TypeWideningMetadata
+import org.apache.spark.sql.delta.TypeWideningTableFeature
 import org.apache.spark.sql.delta.actions.{RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand

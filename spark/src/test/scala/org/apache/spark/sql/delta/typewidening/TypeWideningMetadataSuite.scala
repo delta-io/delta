@@ -18,7 +18,13 @@ package org.apache.spark.sql.delta.typewidening
 
 import java.io.File
 
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.OptimisticTransaction
+import org.apache.spark.sql.delta.TypeChange
+import org.apache.spark.sql.delta.TypeWideningMetadata
+import org.apache.spark.sql.delta.TypeWideningPreviewTableFeature
+import org.apache.spark.sql.delta.TypeWideningTableFeature
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils

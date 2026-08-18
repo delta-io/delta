@@ -16,7 +16,11 @@
 
 package org.apache.spark.sql.delta.typewidening
 
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.DeltaDMLTestUtils
+import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
+import org.apache.spark.sql.delta.IdMapping
+import org.apache.spark.sql.delta.NameMapping
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._

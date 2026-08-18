@@ -16,7 +16,12 @@
 
 package org.apache.spark.sql.delta.typewidening
 
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaDMLTestUtils
+import org.apache.spark.sql.delta.DeltaTable
+import org.apache.spark.sql.delta.MergeIntoSchemaEvolutionMixin
+import org.apache.spark.sql.delta.MergeIntoSQLTestUtils
+import org.apache.spark.sql.delta.MetadataChangedException
+import org.apache.spark.sql.delta.NameBasedAccessIncompatible
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf

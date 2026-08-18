@@ -19,8 +19,15 @@ package org.apache.spark.sql.delta.typewidening
 import java.io.PrintWriter
 
 import com.databricks.spark.util.Log4jUsageLogger
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.DeltaIllegalStateException
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaTableFeatureException
+import org.apache.spark.sql.delta.TypeWidening
+import org.apache.spark.sql.delta.TypeWideningPreviewTableFeature
+import org.apache.spark.sql.delta.TypeWideningTableFeature
+import org.apache.spark.sql.delta.TypeWideningTableFeatureBase
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
