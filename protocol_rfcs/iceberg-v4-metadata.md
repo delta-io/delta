@@ -45,7 +45,7 @@ This design enables:
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the existing leaf-manifest entry that this add supersedes (e.g., stats backfill, DV update). Null when the file has no leaf-manifest entry to supersede — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
+| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the leaf-manifest entry this add supersedes in place, without a paired `remove` (e.g., a stats backfill). Null otherwise, including a DV update, where the backreference is on the paired `remove`. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
 
 ### Remove File
 
@@ -211,6 +211,14 @@ When `adaptiveMetadata` is enabled, `remove` and `add` actions carry a `backRefe
 
 A backreference is therefore non-null only when the file has a live entry in a leaf manifest. It is null when the file has no manifest entry (it exists only in the Delta log) or when its entry is inline in the root manifest.
 
+The action that invalidates the existing tree entry carries the backreference:
+
+- **Pure delete**: the `remove` carries it; the old entry becomes `DELETED`.
+- **DV update**: expressed as a `remove` of the file with its old DV plus an `add` of the same file with the new DV. The `remove` carries the backreference (old entry becomes `REPLACED`); the new `add` carries none.
+- **Re-add** (e.g., a stats backfill): there is no paired `remove`, so the `add` re-adds the file in place and carries the backreference (old entry becomes `REPLACED`).
+
+An `add` thus carries a backreference only when it re-adds a file with no paired `remove`.
+
 A backreference is meaningful only relative to the tree it was computed from, identified by that tree's `contentRoot.version`. A commit's backreferences are valid only if they target the current `contentRoot.version`; if a concurrent manifest commit has advanced the tree (e.g., compaction moved entries between manifests), they are stale and must be recomputed against the new tree before the commit can proceed (see [Conflict Resolution](#conflict-resolution)).
 
 Backreferences enable efficient [Manifest Deletion Vector (MDV)](#manifest-deletion-vectors-mdvs) creation during manifest commits: writers can directly construct MDVs from backreferences without scanning leaf manifests. The engine must propagate (manifest, position) metadata through the planning pipeline so it is available at commit time.
@@ -239,7 +247,7 @@ Backreferences enable efficient [Manifest Deletion Vector (MDV)](#manifest-delet
 
 ### Add with Backreference (Re-add)
 
-When an `add` supersedes an existing manifest entry (e.g., `OPTIMIZE` backfilling stats on a file), the backreference points to the old entry:
+When an `add` re-adds a file in place with no paired `remove` (e.g., `OPTIMIZE` backfilling stats on a file), the backreference points to the old entry. (A DV update instead carries the backreference on its `remove`.)
 
 ```json
 {
@@ -571,13 +579,15 @@ When `adaptiveMetadata` is supported and active, writers must:
 2. Collect all log commits since previous checkpointMetadata.version
 3. For removes and re-adds with backreferences:
    - Group by manifest path
-   - Add positions to manifest_info.dv bitmap (accumulates all
-     deletions/replacements)
-   - For removes: add position to tracking.deleted_positions
-     bitmap (this commit only)
-   - For re-adds: add position to tracking.replaced_positions
-     bitmap (this commit only)
-   - Add new DATA entries with updated info for re-added files
+   - Add each superseded position to the manifest_info.dv bitmap
+     (cumulative; readers use it to skip invalidated entries)
+   - Set a per-commit CDF tracking bitmap only for data changes:
+     tracking.deleted_positions for a pure delete (remove with no
+     paired add), tracking.replaced_positions for a DV update (remove
+     + add). A stats backfill (add with no paired remove) is not a
+     data change and sets neither.
+   - For re-adds (DV update, or stats backfill), add the new DATA
+     entry with the updated info
 4. For adds from preceding log commits (versions <=
    checkpointMetadata.version): set status=EXISTING with explicit
    snapshot_id and sequence numbers. These files are already
