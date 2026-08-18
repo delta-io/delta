@@ -122,7 +122,7 @@ trait DeltaErrorsSuiteBase
     "concurrentTransactionException" ->
       DeltaErrors.concurrentTransactionException(None),
     "metadataChangedException" ->
-      DeltaErrors.metadataChangedException(None),
+      DeltaErrors.metadataChangedException("test_table", None),
     "protocolChangedException" ->
       DeltaErrors.protocolChangedException(None)
   )
@@ -1339,14 +1339,15 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.nonPartitionColumnAbsentException(false)
       }
-      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT", "KD005", Map("details" -> ""))
+      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT.ALL_PARTITION_COLUMNS", "KD005",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.nonPartitionColumnAbsentException(true)
       }
-      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT", "KD005",
-        Map("details" -> " Columns which are of NullType have been dropped."))
+      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT.NULL_TYPE_COLUMNS_DROPPED", "KD005",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -1456,7 +1457,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.failOnDataLossException(12, 10)
       }
-      checkError(e, "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "XXKDS",
+      checkError(e, "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "42K03",
         Map("startVersion" -> "12", "earliestVersion" -> "10", "option" -> "failOnDataLoss"))
     }
     {
@@ -1516,7 +1517,7 @@ trait DeltaErrorsSuiteBase
       }
       checkError(e, "DELTA_TIMESTAMP_GREATER_THAN_COMMIT", "42816", Map(
         "providedTimestamp" -> "2022-02-28 10:30:00.0",
-        "tableName" -> "2022-02-28 10:00:00.0",
+        "lastCommitTimestamp" -> "2022-02-28 10:00:00.0",
         "maximumTimestamp" -> "2022-02-28 10:00:00"))
     }
     {
@@ -1620,10 +1621,19 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.invalidIdempotentWritesOptionsException("someReason")
+        throw DeltaErrors.invalidIdempotentWritesMissingWriteOptionsException()
       }
-      checkError(e, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616",
-        Map("reason" -> "someReason"))
+      checkError(e,
+        "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+        Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.invalidIdempotentWritesMissingSessionConfsException()
+      }
+      checkError(e,
+        "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS", "42616",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2429,7 +2439,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cannotSetLocationMultipleTimes(locations)
       }
       checkError(e, "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES", "XXKDS",
-        Map("location" -> "List(location1, location2)"))
+        Map("locations" -> "location1, location2"))
     }
     {
       val e = intercept[DeltaIllegalStateException] {
@@ -2909,11 +2919,14 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[io.delta.exceptions.MetadataChangedException] {
-        throw org.apache.spark.sql.delta.DeltaErrors.metadataChangedException(None)
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .metadataChangedException("test_table", None)
       }
-      checkError(e, "DELTA_METADATA_CHANGED", "2D521", Map.empty[String, String])
-      assert(e.getMessage.contains("The metadata of the Delta table has been changed by a " +
-        "concurrent update."))
+      checkError(e, "DELTA_METADATA_CHANGED", "2D521",
+        Map(
+          "tableName" -> "test_table",
+          "conflictingCommit" -> "",
+          "docLink" -> generateDocsLink("/concurrency-control.html")))
     }
     {
       val e = intercept[DeltaAnalysisException] {

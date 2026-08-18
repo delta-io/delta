@@ -53,6 +53,7 @@ import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
@@ -139,7 +140,14 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   protected final DeltaCatalog catalog;
   protected String tableId;
-  protected String tableUUID;
+
+  /**
+   * @deprecated The UC Delta API no longer requires a table UUID for credential lookup. This field
+   *     is retained for remaining Kernel and metrics call sites and should be removed after they
+   *     are migrated.
+   */
+  @Deprecated protected String tableUUID;
+
   protected URI tablePath;
   protected final TableConf conf;
   /*
@@ -207,6 +215,16 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return schema;
   }
 
+  /**
+   * Returns the physical schema of the table, i.e. the logical schema with each field renamed to
+   * its physical name according to the table's column mapping mode. The schema is produced by
+   * Kernel from the transaction state, so it honors the actual column mapping mode (including id
+   * mode metadata) instead of re-deriving the mapping in the connector.
+   */
+  public StructType getPhysicalSchema() {
+    return TransactionStateRow.getPhysicalSchema(tableState);
+  }
+
   @Override
   public List<String> getPartitionColumns() {
     return partitionColumns;
@@ -258,6 +276,68 @@ public abstract class AbstractKernelTable implements DeltaTable {
   @Override
   public void refresh() {
     refresh(null);
+  }
+
+  /** Internal primitive for committing an append-only schema update. */
+  final void updateSchema(StructType targetSchema) {
+    Objects.requireNonNull(targetSchema, "targetSchema cannot be null");
+    if (refreshThreadPool == null) {
+      throw new IllegalStateException("DeltaTable must be opened before updating its schema");
+    }
+    AtomicReference<StructType> initialSchema = new AtomicReference<>();
+
+    withTiming(
+        "updateSchema",
+        () ->
+            withRetry(
+                () -> {
+                  updateSchemaFromLatestSnapshot(targetSchema, initialSchema);
+                  return null;
+                }));
+  }
+
+  private void updateSchemaFromLatestSnapshot(
+      StructType targetSchema, AtomicReference<StructType> initialSchema) {
+    Snapshot latestSnapshot =
+        snapshot().orElseThrow(() -> new IllegalStateException("Snapshot should exist"));
+    StructType latestSchema = latestSnapshot.getSchema();
+    StructType schemaAtFirstAttempt = initialSchema.get();
+    if (schemaAtFirstAttempt == null) {
+      initialSchema.set(latestSchema);
+    } else if (!SchemaEvolutionUtils.logicallyEqual(schemaAtFirstAttempt, latestSchema)
+        && !SchemaEvolutionUtils.logicallyEqual(latestSchema, targetSchema)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Target schema is stale: table schema changed concurrently from %s to %s",
+              schemaAtFirstAttempt, latestSchema));
+    }
+    Optional<StructType> updatedSchema =
+        SchemaEvolutionUtils.buildAdditiveSchema(latestSchema, targetSchema);
+
+    if (updatedSchema.isEmpty()) {
+      refresh(latestSnapshot);
+      return;
+    }
+
+    Engine localEngine = getEngine();
+    Transaction txn =
+        latestSnapshot
+            .buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE)
+            .withUpdatedSchema(updatedSchema.get())
+            .build(localEngine);
+    TransactionCommitResult result =
+        withTiming(
+            "updateSchema.txn", () -> txn.commit(localEngine, CloseableIterable.emptyIterable()));
+    Snapshot committedSnapshot =
+        result
+            .getPostCommitSnapshot()
+            .orElseGet(
+                () ->
+                    snapshot()
+                        .orElseThrow(
+                            () -> new IllegalStateException("Snapshot should exist after commit")));
+    refresh(committedSnapshot);
+    onPostCommit(committedSnapshot, result.getTransactionReport());
   }
 
   @Override
@@ -451,6 +531,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
       info = catalog.getTable(tableId);
       tableUUID = info.uuid;
       tablePath = normalize(info.tablePath);
+      credentialManager.initializeCredentials(info.getStorageProperties());
     } catch (ExceptionUtils.ResourceNotFoundException notFound) {
       catalog.createTable(
           tableId,
@@ -458,8 +539,10 @@ public abstract class AbstractKernelTable implements DeltaTable {
           partitionColumns,
           conf.catalogConf(),
           tableDesc -> {
+            this.conf.update(tableDesc.requiredProperties);
             this.tablePath = normalize(tableDesc.tablePath);
             this.tableUUID = tableDesc.uuid;
+            credentialManager.initializeCredentials(tableDesc.getStorageProperties());
             createDeltaTable();
           });
     }
@@ -522,7 +605,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
     this.conf.engineConf().forEach(conf::set);
     Map<String, String> creds = this.credentialManager.getCredentials();
     creds.forEach(conf::set);
-    applyAzureSasTokenIfPresent(conf, creds);
 
     // Explicitly load external conf files
     // TODO this is because Flink does not auto load this file in Docker
@@ -564,40 +646,13 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return Map.of();
   }
 
-  /**
-   * Remaps the generic Azure SAS token key to an account-scoped key derived from the table path.
-   * Azure ABFS requires the SAS token to be configured per storage account, e.g., {@code
-   * fs.azure.sas.fixed.token.<account>.dfs.core.windows.net}.
-   */
-  private void applyAzureSasTokenIfPresent(Configuration conf, Map<String, String> creds) {
-    String sasToken = creds.get(UnityCatalog.AZURE_SAS_TOKEN_KEY);
-    if (sasToken == null || tablePath == null) {
-      return;
-    }
-    String host = tablePath.getHost();
-    if (host != null && host.endsWith(".dfs.core.windows.net")) {
-      conf.set("fs.azure.account.auth.type." + host, "SAS");
-      conf.set("fs.azure.sas.fixed.token." + host, sasToken);
-    }
-  }
-
   private CredentialManager createCredentialManager() {
-    String source = this.conf.getCredentialSource();
-    if (source.equalsIgnoreCase("ambient")) {
+    if (!conf.shouldFetchCredentialsFromCatalog()) {
       // Do not fetch credentials from Unity Catalog; rely on the ambient environment
       // (workload identity, instance profile, ADC, or core-site.xml) to supply them.
       return new CredentialManager.AmbientCredentialManager();
-    } else if (source.equalsIgnoreCase("uc")) {
-      return new CredentialManager(
-          () -> catalog.getCredentials(this.getTableUUID()), this::refreshCredential);
-    } else {
-      throw new IllegalArgumentException(
-          "Unsupported "
-              + TableConf.CREDENTIALS_SOURCE.key()
-              + " '"
-              + source
-              + "'. Supported values: 'uc' (default), 'ambient'.");
     }
+    return new CredentialManager(() -> catalog.getCredentials(tableId), this::refreshCredential);
   }
 
   /**

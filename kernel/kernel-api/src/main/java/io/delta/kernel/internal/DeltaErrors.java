@@ -493,6 +493,18 @@ public final class DeltaErrors {
     return new ConcurrentWriteException(message);
   }
 
+  public static ConcurrentWriteException concurrentDeleteDeleteException(
+      String filePath, long attemptVersion) {
+    String message =
+        String.format(
+            "A concurrent transaction removed (or updated the deletion vector of) file %s that "
+                + "this transaction (attempting version %d) also removes. Letting both commits "
+                + "through would leave two active entries for the same data file. Retry the "
+                + "operation against the latest table state.",
+            filePath, attemptVersion);
+    return new ConcurrentWriteException(message);
+  }
+
   public static KernelException missingNumRecordsStatsForRowTracking() {
     return new KernelException(
         "Cannot write to a rowTracking-supported table without 'numRecords' statistics. "

@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaOptions}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaOptions, TableFeature}
 import org.apache.spark.sql.delta.{DeltaTestUtilsBase, DeltaThrowable, NoMapping}
 import org.apache.spark.sql.delta.v2.interop.{AbstractMetadata, AbstractProtocol}
 
@@ -694,6 +694,7 @@ class DeltaSourceMetadataEvolutionSupportSuite
       override def minWriterVersion: Int = writerV
       override def readerFeatures: Option[Set[String]] = readerFs
       override def writerFeatures: Option[Set[String]] = writerFs
+      override def isFeatureSupported(feature: TableFeature): Boolean = false
     }
 
     val readMetadata = mkMetadata()

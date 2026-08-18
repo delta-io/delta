@@ -56,10 +56,11 @@ import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, DateFormatClass, Expression, Literal}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types._
+import org.apache.spark.util.Utils
 
 /**
  * This file is forked from [[org.apache.spark.sql.execution.datasources.PartitioningUtils]].
@@ -120,7 +121,9 @@ object PartitionSpec {
 private[delta] object PartitionUtils {
 
   lazy val timestampPartitionPattern = s"yyyy-MM-dd HH:mm:ss${precisionMatchPatterns(6)}"
-  lazy val utcFormatter = TimestampFormatter(s"yyyy-MM-dd'T'HH:mm:ss.SSSSSSz", ZoneId.of("Z"))
+  private val utcZoneId: ZoneId = ZoneId.of("Z")
+  private val utcTimestampPartitionFormat = s"yyyy-MM-dd'T'HH:mm:ss.SSSSSSz"
+  lazy val utcFormatter = TimestampFormatter(utcTimestampPartitionFormat, utcZoneId)
 
   private def precisionMatchPatterns(maxDigits: Int): String =
     (maxDigits to 1 by -1)
@@ -760,6 +763,13 @@ private[delta] object PartitionUtils {
 
   /**
    * Converts a typed literal to a normalized string representation for correct comparisons.
+   * This must be kept in sync with [[expressionToNormalizedString]].
+   *
+   * TODO(v4amt): make this delegate to [[expressionToNormalizedString]] so the two cannot drift.
+   *   The duplication is what makes drift possible at all: a partition value written through the
+   *   literal path and read back through the expression path has to render identically, and only
+   *   the two implementations agreeing enforces that today.
+   *
    * @param literal The Literal to convert to a string. Must have the correct type set.
    * @param timeZoneId Optional timezone ID for timestamp types.
    * @param useUtcNormalizedTimestamp If true, formats timestamp types into UTC ISO 8601 format.
@@ -776,13 +786,52 @@ private[delta] object PartitionUtils {
     literal.dataType match {
       case TimestampType if useUtcNormalizedTimestamp =>
         // Format timestamp in UTC ISO 8601 format: "2000-01-01T12:00:00.000000Z"
-        utcFormatter.format(literal.value.asInstanceOf[Long])
+        val normalized = utcFormatter.format(literal.value.asInstanceOf[Long])
+        if (Utils.isTesting) {
+          val fromExpression = expressionToNormalizedString(
+            value = literal,
+            dataType = literal.dataType,
+            timeZoneId = timeZoneId,
+            useUtcNormalizedTimestamp = useUtcNormalizedTimestamp).eval()
+          assert(Option(fromExpression).map(_.toString).orNull == normalized,
+            s"literalToNormalizedString and expressionToNormalizedString disagree on " +
+              s"${literal.dataType}: '$normalized' vs '$fromExpression'.")
+        }
+        normalized
 
       case _ =>
         // All other types can safely be converted to a string.
         val castedValue = Cast(literal, StringType, timeZoneId, ansiEnabled = false).eval()
         Option(castedValue).map(_.toString).orNull
     }
+  }
+
+  /**
+   * Converts a typed value to a normalized string representation for correct comparisons.
+   * This must be kept in sync with [[literalToNormalizedString]].
+   * @param value The value expression to convert to a string.
+   * @param dataType The data type of the value.
+   * @param timeZoneId Optional timezone ID for timestamp types.
+   * @param useUtcNormalizedTimestamp If true, formats timestamp types into UTC ISO 8601 format.
+   * @return The string representation of the value as an expression.
+   */
+  def expressionToNormalizedString(
+      value: Expression,
+      dataType: DataType,
+      timeZoneId: Option[String] = None,
+      useUtcNormalizedTimestamp: Boolean = false): Expression = dataType match {
+    // TODO(v4amt): follow the Iceberg rule for timestamps that carry a zone. Per the spec such a
+    //   value "represents a point in time: values are stored as UTC and do not retain a source time
+    //   zone", so `2017-11-16 17:10:34 PST` and `2017-11-17 01:10:34 UTC` are the same value. The
+    //   UTC normalization below gives that for a TimestampType read through this path, but the rule
+    //   has to hold for every path that compares partition values, not just this one.
+    case TimestampType if useUtcNormalizedTimestamp =>
+      // Format timestamp in UTC ISO 8601 format: "2000-01-01T12:00:00.000000Z"
+      DateFormatClass(value, Literal(utcTimestampPartitionFormat), Some(utcZoneId.getId))
+
+    case _ =>
+      // All other types can safely be converted to a string.
+      Cast(value, StringType, timeZoneId, ansiEnabled = false)
   }
 
   /**

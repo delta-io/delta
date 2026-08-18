@@ -28,7 +28,6 @@ import java.util.Collections;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.catalog.Identifier;
-import org.apache.spark.sql.connector.catalog.SupportsRowLevelOperations;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
@@ -46,20 +45,11 @@ import org.junit.jupiter.api.io.TempDir;
 public class DeltaRowLevelOperationBuilderTest extends DeltaV2TestBase {
 
   @Test
-  public void regularTableDoesNotExposeRowLevelOperations(@TempDir File tempDir) {
-    DeltaV2Table table = createBaseTable(tempDir);
-
-    assertFalse(table instanceof SupportsRowLevelOperations);
-  }
-
-  @Test
   public void tableExposesRowLevelOperationBuilder(@TempDir File tempDir) {
     DeltaV2Table table = createRowLevelTable(tempDir);
 
-    assertTrue(table instanceof SupportsRowLevelOperations);
     RowLevelOperationBuilder builder =
-        ((SupportsRowLevelOperations) table)
-            .newRowLevelOperationBuilder(testInfo(RowLevelOperation.Command.DELETE));
+        table.newRowLevelOperationBuilder(testInfo(RowLevelOperation.Command.DELETE));
     assertTrue(builder instanceof DeltaRowLevelOperationBuilder);
   }
 
@@ -88,7 +78,7 @@ public class DeltaRowLevelOperationBuilderTest extends DeltaV2TestBase {
     Scan scan = scanBuilder.build();
 
     assertNotNull(scan);
-    assertTrue(scan instanceof io.delta.spark.internal.v2.read.SparkScan);
+    assertEquals("DeltaV2Scan", scan.getClass().getSimpleName());
   }
 
   @Test
@@ -136,18 +126,11 @@ public class DeltaRowLevelOperationBuilderTest extends DeltaV2TestBase {
         () -> new DeltaRowLevelOperationBuilder(table, engine, hadoopConf, snapshot, null));
   }
 
-  private DeltaV2Table createBaseTable(File tableDir) {
-    String path = tableDir.getAbsolutePath();
-    String tableName = "delta_row_level_" + System.nanoTime();
-    createEmptyTestTable(path, tableName);
-    return new DeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
-  }
-
   private DeltaV2Table createRowLevelTable(File tableDir) {
     String path = tableDir.getAbsolutePath();
     String tableName = "delta_row_level_" + System.nanoTime();
     createEmptyTestTable(path, tableName);
-    return new RowLevelDeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
+    return new DeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
   }
 
   private DeltaRowLevelOperationBuilder createBuilder(
@@ -159,13 +142,6 @@ public class DeltaRowLevelOperationBuilderTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(table.getTablePath().toString(), engine).loadLatestSnapshot();
     return new DeltaRowLevelOperationBuilder(
         table, engine, hadoopConf, snapshot, testInfo(command));
-  }
-
-  private static class RowLevelDeltaV2Table extends DeltaV2Table
-      implements SupportsRowLevelOperations {
-    RowLevelDeltaV2Table(Identifier identifier, String tablePath) {
-      super(identifier, tablePath);
-    }
   }
 
   private static StructType tableSchema() {

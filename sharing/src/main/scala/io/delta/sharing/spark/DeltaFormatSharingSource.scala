@@ -17,7 +17,7 @@
 package io.delta.sharing.spark
 
 import java.lang.ref.WeakReference
-import java.util.UUID
+import java.util.{Locale, UUID}
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.{
@@ -134,7 +134,7 @@ case class DeltaFormatSharingSource(
       spark = spark,
       deltaLog = localDeltaLog,
       catalogTableOpt = None,
-      options = new DeltaOptions(parameters, sqlConf),
+      options = new DeltaOptions(parametersForDeltaSource, sqlConf),
       snapshotAtSourceInit = snapshotDescriptor,
       metadataPath = metadataPath,
       metadataTrackingLog = schemaTrackingLogOpt
@@ -844,18 +844,26 @@ case class DeltaFormatSharingSource(
     } else {
       // If isStartingVersion is false, it means to fetch files for data changes since fromVersion,
       // not including files from previous versions.
+      // includeHistoricalProtocol requests a Protocol action for each protocol change inside the
+      // version range, so a mid-range protocol upgrade (e.g. enabling deletionVectors) is reflected
+      // in the local delta log instead of leaving the client on a stale head protocol. Gated by a
+      // default-off flag; when off the client keeps the legacy single-head-protocol behavior.
+      val includeHistoricalProtocol =
+        sqlConf.getConf(DeltaSQLConf.DELTA_SHARING_STREAMING_ENABLE_HISTORICAL_PROTOCOL)
       val tableFiles = client.getFiles(
         table = table,
         startingVersion = startingOffset.reservoirVersion,
         endingVersion = Some(endingVersionForQuery),
-        fileIdHash = fileIdHash
+        fileIdHash = fileIdHash,
+        includeHistoricalProtocol = includeHistoricalProtocol
       )
       val refreshFunc = DeltaSharingUtils.getRefresherForGetFilesWithStartingVersion(
         client = client,
         table = table,
         startingVersion = startingOffset.reservoirVersion,
         endingVersion = Some(endingVersionForQuery),
-        fileIdHash = fileIdHash
+        fileIdHash = fileIdHash,
+        includeHistoricalProtocol = includeHistoricalProtocol
       )
       logInfo(
         s"Fetched ${tableFiles.lines.size} lines from startingVersion " +
@@ -895,19 +903,26 @@ case class DeltaFormatSharingSource(
       DeltaSharingOptions.CDF_START_VERSION -> startingOffset.reservoirVersion.toString,
       DeltaSharingOptions.CDF_END_VERSION -> endingVersionForQuery.toString
     )
+    // Requests a Protocol action for each protocol change in the range, so a mid-range protocol
+    // upgrade is reflected in the local delta log instead of a stale head protocol. Gated by a
+    // default-off flag; when off the client keeps the legacy single-head-protocol behavior.
+    val includeHistoricalProtocol =
+      sqlConf.getConf(DeltaSQLConf.DELTA_SHARING_CDF_ENABLE_HISTORICAL_PROTOCOL)
     val tableFiles = client.getCDFFiles(
       table = table,
       cdfOptions = cdfOptions,
       // Requests Metadata actions for schema-changing versions in the range so DeltaSource
       // can detect both backward-compatible and non-backward-compatible schema changes.
       includeHistoricalMetadata = true,
-      fileIdHash = fileIdHash
+      fileIdHash = fileIdHash,
+      includeHistoricalProtocol = includeHistoricalProtocol
     )
     val refreshFunc = DeltaSharingUtils.getRefresherForGetCDFFiles(
       client = client,
       table = table,
       cdfOptions = cdfOptions,
-      fileIdHash = fileIdHash
+      fileIdHash = fileIdHash,
+      includeHistoricalProtocol = includeHistoricalProtocol
     )
     logInfo(
       s"Fetched ${tableFiles.lines.size} CDF lines from startingVersion " +
@@ -1070,6 +1085,38 @@ case class DeltaFormatSharingSource(
       Some(client.getTableVersion(table, options.startingTimestamp))
     } else {
       None
+    }
+  }
+
+  /**
+   * The parameters for the wrapped DeltaSource, with startingTimestamp replaced by the version
+   * [[getStartingVersion]] resolved it to. Otherwise the wrapped DeltaSource resolves it again on
+   * the local delta log, where commits with no file actions have a modificationTime of 0 and an
+   * empty version range fails with DELTA_TIMESTAMP_GREATER_THAN_COMMIT. Replaced rather than
+   * dropped, since without a starting option it would read a snapshot of the latest version.
+   */
+  private def parametersForDeltaSource: Map[String, String] = {
+    val convertStartingTimestamp = sqlConf.getConf(
+      DeltaSQLConf.DELTA_SHARING_STREAMING_CONVERT_STARTING_TIMESTAMP_TO_VERSION)
+    if (!convertStartingTimestamp || options.startingTimestamp.isEmpty) {
+      return parameters
+    }
+    getStartingVersion match {
+      case Some(version) =>
+        logInfo(s"Replacing startingTimestamp with the resolved startingVersion($version) for " +
+          "the wrapped DeltaSource," + getTableInfoForLogging)
+        // `parameters` keeps the user's casing, so drop the key case-insensitively.
+        val startingTimestampKey =
+          DeltaOptions.STARTING_TIMESTAMP_OPTION.toLowerCase(Locale.ROOT)
+        parameters.filterNot {
+          case (key, _) => key.toLowerCase(Locale.ROOT) == startingTimestampKey
+        } + (DeltaOptions.STARTING_VERSION_OPTION -> version.toString)
+      case None =>
+        // Unreachable unless code changes: getStartingVersion always resolves a defined
+        // startingTimestamp to Some. Log and fall back to the original parameters.
+        logWarning("getStartingVersion returned None despite startingTimestamp being defined," +
+          getTableInfoForLogging)
+        parameters
     }
   }
 

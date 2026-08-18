@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.ValidateCheckConstraintsMode
+import org.apache.spark.sql.delta.v2.interop.AbstractMetadata
 
 import org.apache.spark.SparkThrowable
 import org.apache.spark.internal.MDC
@@ -117,7 +118,7 @@ object Constraints extends DeltaLogging {
   def findDependentConstraints(
       sparkSession: SparkSession,
       columnName: Seq[String],
-      metadata: Metadata): Map[String, String] = {
+      metadata: AbstractMetadata): Map[String, String] = {
     metadata.configuration.filter {
       case (key, constraint) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
         SchemaUtils.containsDependentExpression(

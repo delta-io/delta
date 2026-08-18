@@ -21,6 +21,7 @@ import java.util.TimeZone
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils._
+import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -362,6 +363,36 @@ class ChecksumSuite
         }
       }
     }
+  }
+
+  test("VersionChecksum round-trips lastManifestCommit and omits it when None") {
+    val lmc = LastManifestCommit(contentRootVersion = 41, version = 43)
+    val base = VersionChecksum(
+      txnId = None,
+      tableSizeBytes = 100,
+      numFiles = 1,
+      numDeletedRecordsOpt = None,
+      numDeletionVectorsOpt = None,
+      numMetadata = 1,
+      numProtocol = 1,
+      inCommitTimestampOpt = None,
+      setTransactions = None,
+      domainMetadata = None,
+      metadata = Metadata(),
+      protocol = Protocol(),
+      fileSizeHistogram = None,
+      deletedRecordCountsHistogramOpt = None,
+      allFiles = None,
+      lastManifestCommit = Some(lmc))
+
+    val json = JsonUtils.toJson(base)
+    assert(JsonUtils.fromJson[VersionChecksum](json).lastManifestCommit.contains(lmc))
+
+    // None serializes as absent (mapper uses Include.NON_ABSENT), so existing CRCs stay unchanged.
+    val jsonWithoutLmc = JsonUtils.toJson(base.copy(lastManifestCommit = None))
+    assert(!jsonWithoutLmc.contains("lastManifestCommit"))
+    // A CRC written before this field existed deserializes to None.
+    assert(JsonUtils.fromJson[VersionChecksum](jsonWithoutLmc).lastManifestCommit.isEmpty)
   }
 }
 

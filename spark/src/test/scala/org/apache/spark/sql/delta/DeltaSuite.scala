@@ -2108,7 +2108,8 @@ class DeltaSuite extends QueryTest
     // Now make a commit that comes from an "external" writer that deletes existing data and
     // changes the schema
     val actions = Seq(Action.supportedProtocolVersion(
-      featuresToExclude = Seq(CatalogOwnedTableFeature)), newMetadata) ++ files.map(_.remove)
+      featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+      newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
@@ -2794,10 +2795,8 @@ class DeltaSuite extends QueryTest
       val e1 = intercept[DeltaIllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (4, 0)")
       }
-      checkError(e1, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616", Map("reason" -> (
-        "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
-          "must be specified for idempotent Delta writes")
-      ))
+      checkError(e1, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS", "42616",
+        Map.empty[String, String])
       // this write should succeed as it's using a newer version than the latest
       spark.conf.set("spark.databricks.delta.write.txnVersion", "10")
       spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (2, 0)")
@@ -2805,10 +2804,8 @@ class DeltaSuite extends QueryTest
       val e2 = intercept[DeltaIllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (3, 0)")
       }
-      checkError(e2, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616", Map("reason" -> (
-        "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
-          "must be specified for idempotent Delta writes")
-      ))
+      checkError(e2, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS", "42616",
+        Map.empty[String, String])
 
       val res = spark.sql(s"SELECT col1 FROM $tableName")
         .orderBy(asc("col1"))
@@ -2880,7 +2877,7 @@ class DeltaSuite extends QueryTest
               idempotentWrite(mode, appId2, df, path, name, 5, 12, 4, isSaveAsTable)
 
               // Verify that specifying only one of the options -- either appId or version -- fails.
-              val e1 = intercept[Exception] {
+              val e1 = intercept[DeltaIllegalArgumentException] {
                 val stage = df.write.format("delta").option(DeltaOptions.TXN_APP_ID, 1).mode(mode)
                 if (isSaveAsTable) {
                   stage.option("path", path).saveAsTable(name)
@@ -2888,8 +2885,10 @@ class DeltaSuite extends QueryTest
                   stage.save(path)
                 }
               }
-              assert(e1.getMessage.contains("Invalid options for idempotent Dataframe writes"))
-              val e2 = intercept[Exception] {
+              checkError(e1,
+                "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+                Map.empty[String, String])
+              val e2 = intercept[DeltaIllegalArgumentException] {
                 val stage = df.write.format("delta").option(DeltaOptions.TXN_VERSION, 1).mode(mode)
                 if (isSaveAsTable) {
                   stage.option("path", path).saveAsTable(name)
@@ -2897,7 +2896,9 @@ class DeltaSuite extends QueryTest
                   stage.save(path)
                 }
               }
-              assert(e2.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+              checkError(e2,
+                "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+                Map.empty[String, String])
             }
           }
         }
@@ -2926,16 +2927,20 @@ class DeltaSuite extends QueryTest
             idempotentWrite(mode, appId2, df, path, name, 5, 3, 4, isSaveAsTable)
 
             // Verify that specifying only one of the options -- either appId or version -- fails.
-            val e1 = intercept[Exception] {
+            val e1 = intercept[DeltaIllegalArgumentException] {
               val stage = df.write.format("delta").option(DeltaOptions.TXN_APP_ID, 1).mode(mode)
               if (isSaveAsTable) stage.option("path", path).saveAsTable(name) else stage.save(path)
             }
-            assert(e1.getMessage.contains("Invalid options for idempotent Dataframe writes"))
-            val e2 = intercept[Exception] {
+            checkError(e1,
+              "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+              Map.empty[String, String])
+            val e2 = intercept[DeltaIllegalArgumentException] {
               val stage = df.write.format("delta").option(DeltaOptions.TXN_VERSION, 1).mode(mode)
               if (isSaveAsTable) stage.option("path", path).saveAsTable(name) else stage.save(path)
             }
-            assert(e2.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+            checkError(e2,
+              "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+              Map.empty[String, String])
           }
         }
       }

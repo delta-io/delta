@@ -47,7 +47,8 @@ class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = Some(Map("k1" -> "v1")),
-      txnId = Some("123")
+      txnId = Some("123"),
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
     ).copy(engineInfo = None)
 
     val inMemoryCommitInfo = commitInfo.copy(operationParameters = operation.jsonEncodedValues)
@@ -172,6 +173,8 @@ class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
       auto = true,
       clusterBy = Some(Seq("col3")),
       isFull = false)),
+    "OptimizeCheckpoint" -> (() =>
+      DeltaOperations.OptimizeCheckpoint(incremental = false, triggerName = "CHECKPOINT_INTERVAL")),
     "Clone" -> (() => DeltaOperations.Clone(
       source = "s3://bucket/path/to/table",
       sourceVersion = 10L)),
@@ -218,6 +221,36 @@ class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
     )
   }
 
+  private def createEmptyCommitInfo(): CommitInfo = {
+    CommitInfo(
+      version = None,
+      time = 0L,
+      operation = null,
+      inCommitTimestamp = None,
+      operationParameters = Map.empty,
+      commandContext = Map.empty,
+      readVersion = None,
+      isolationLevel = None,
+      isBlindAppend = None,
+      operationMetrics = None,
+      userMetadata = None,
+      tags = None,
+      txnId = None,
+      lastManifestCommit = None)
+  }
+
+  test("CommitInfo round-trips lastManifestCommit and omits it when None") {
+    val base = createEmptyCommitInfo()
+    val lmf = LastManifestCommit(version = 43, contentRootVersion = 41)
+
+    assert(!base.json.contains("lastManifestCommit"))
+    val roundTrippedCommitInfo = Action.fromJson(base.json).asInstanceOf[CommitInfo]
+    assert(roundTrippedCommitInfo.lastManifestCommit.isEmpty)
+
+    val baseWithLmf = base.copy(lastManifestCommit = Some(lmf))
+    val roundTrippedCommitInfoWithLmf = Action.fromJson(baseWithLmf.json).asInstanceOf[CommitInfo]
+    assert(roundTrippedCommitInfoWithLmf.lastManifestCommit.contains(lmf))
+  }
 }
 
 /**

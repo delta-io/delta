@@ -241,8 +241,8 @@ public class V2StreamingReadTest extends V2TestBase {
    * thread. If that thread is blocked inside Kernel's {@code DefaultJsonHandler} reading delta log
    * JSON files via NIO channels, the interrupt causes a {@link
    * java.nio.channels.ClosedByInterruptException} wrapped in a {@code KernelEngineException}. The
-   * fix in {@code SparkMicroBatchStream.latestOffset()} and {@code
-   * SparkMicroBatchStream.planInputPartitions()} re-wraps this as an {@link
+   * fix in {@code DeltaV2MicroBatchStream.latestOffset()} and {@code
+   * DeltaV2MicroBatchStream.planInputPartitions()} re-wraps this as an {@link
    * java.io.UncheckedIOException} so Spark's {@code isInterruptedByStop} recognizes it as a clean
    * shutdown.
    */

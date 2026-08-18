@@ -192,6 +192,7 @@ class UCDeltaCatalogClientImplMetricsSuite extends QueryTest
       readVersion = None, isolationLevel = None,
       isBlindAppend = Some(false),
       operationMetrics = operationMetrics,
-      userMetadata = None, tags = None, engineInfo = None, txnId = None)
+      userMetadata = None, tags = None, engineInfo = None, txnId = None,
+      lastManifestCommit = None)
   }
 }

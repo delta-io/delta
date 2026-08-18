@@ -30,10 +30,11 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.amt.{AMTPassthrough, AMTUtils}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.{DeltaEncoder, DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.PartitionUtils
 import com.fasterxml.jackson.annotation._
@@ -915,7 +916,9 @@ case class AddFile(
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
-    clusteringProvider: Option[String] = None
+    clusteringProvider: Option[String] = None,
+    backReference: Option[BackReference] = None,
+    amtPassthrough: Option[AMTPassthrough] = None
 ) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 
@@ -935,7 +938,8 @@ case class AddFile(
       deletionVector = deletionVector,
       baseRowId = baseRowId,
       defaultRowCommitVersion = defaultRowCommitVersion,
-      stats = stats
+      stats = stats,
+      backReference = backReference
     )
     // scalastyle:on
   }
@@ -962,8 +966,10 @@ case class AddFile(
       case Some(_) => deletionVector.copy(maxRowIndex = None)
       case _ => deletionVector
     }
-    var addFileWithNewDv =
-      this.copy(deletionVector = dvDescriptorWithoutMaxRowIndex, dataChange = dataChange)
+    var addFileWithNewDv = this.copy(
+      deletionVector = dvDescriptorWithoutMaxRowIndex,
+      dataChange = dataChange,
+      backReference = None)
     if (updateStats) {
       addFileWithNewDv = addFileWithNewDv.withoutTightBoundStats
     }
@@ -1126,6 +1132,30 @@ object AddFile {
 }
 
 /**
+ * A back reference points a file action at the exact location of its source entry inside an
+ * Adaptive Metadata Tree (AMT) leaf manifest.
+ *
+ * @param manifest The AMT leaf manifest that held the source entry, stored exactly like the leaf's
+ *                 tree `location`: a raw (non-URL-encoded) path relative to the table root. This
+ *                 differs from [[AddFile.path]], which is URL-encoded.
+ * @param pos      The 0-based position of the entry within that leaf. This equals the parquet
+ *                 `_metadata.row_index` of the leaf row, which is the same ordinal the MDV bitmap
+ *                 indexes.
+ */
+case class BackReference(
+    manifest: String,
+    pos: Long)
+
+object BackReference {
+
+  final lazy val STRUCT_TYPE: StructType =
+    Action.addFileSchema("backReference").dataType.asInstanceOf[StructType]
+
+  private lazy val _encoder = new DeltaEncoder[BackReference]
+  implicit def encoder: Encoder[BackReference] = _encoder.get
+}
+
+/**
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is
  * deleted permanently.
  *
@@ -1155,7 +1185,8 @@ case class RemoveFile(
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
-    override val stats: String = null
+    override val stats: String = null,
+    backReference: Option[BackReference] = None
 ) extends FileAction with HasNumRecords {
   override def wrap: SingleAction = SingleAction(remove = this)
 
@@ -1381,6 +1412,7 @@ trait CommitMarker {
  * @param engineInfo The information for the engine that makes the commit.
  *                   If a commit is made by Delta Lake 1.1.0 or above, it will be
  *                   `Apache-Spark/x.y.z Delta-Lake/x.y.z`.
+ * @param lastManifestCommit Info of the last AMT manifest commit up to this version.
  */
 case class CommitInfo(
     // The commit version should be left unfilled during commit(). When reading a delta file, we can
@@ -1407,7 +1439,8 @@ case class CommitInfo(
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
     engineInfo: Option[String],
-    txnId: Option[String])
+    txnId: Option[String],
+    lastManifestCommit: Option[LastManifestCommit])
   extends Action with CommitMarker with SparkAbstractCommitInfo with StorageAbstractCommitInfo {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
@@ -1464,7 +1497,7 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, None, null, None, None, null, null, None, None,
-      None, None, None, None, None, None, None, None, None)
+      None, None, None, None, None, None, None, None, None, None)
   }
 
   // scalastyle:off argcount
@@ -1481,9 +1514,23 @@ object CommitInfo {
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
-      txnId: Option[String]): CommitInfo = {
-    apply(None, time, operation, inCommitTimestamp, operationParameters, commandContext,
-      readVersion, isolationLevel, isBlindAppend, operationMetrics, userMetadata, tags, txnId)
+      txnId: Option[String],
+      lastManifestCommit: Option[LastManifestCommit]): CommitInfo = {
+    apply(
+      version = None,
+      time,
+      operation,
+      inCommitTimestamp,
+      operationParameters,
+      commandContext,
+      readVersion,
+      isolationLevel,
+      isBlindAppend,
+      operationMetrics,
+      userMetadata,
+      tags,
+      txnId,
+      lastManifestCommit)
   }
 
   def apply(
@@ -1499,7 +1546,8 @@ object CommitInfo {
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
-      txnId: Option[String]): CommitInfo = {
+      txnId: Option[String],
+      lastManifestCommit: Option[LastManifestCommit]): CommitInfo = {
 
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
@@ -1524,7 +1572,8 @@ object CommitInfo {
       userMetadata,
       tags,
       getEngineInfo,
-      txnId)
+      txnId,
+      lastManifestCommit)
   }
   // scalastyle:on argcount
 
@@ -1572,10 +1621,77 @@ sealed trait CheckpointOnlyAction extends Action
  *
  * @param path        root manifest path, relative to the table root.
  * @param sizeInBytes size of the root manifest file in bytes.
+ * @param tags        additional metadata about the AMT. See [[ContentRoot.Tags]] for known keys.
  */
 case class ContentRoot(
     path: String,
-    sizeInBytes: Long)
+    sizeInBytes: Long,
+    tags: Map[String, String] = null) {
+
+  private def tag(key: ContentRoot.Tags.KeyType): Option[String] =
+    Option(tags).flatMap(_.get(key.name))
+
+  /** Whether this manifest tree was built incrementally, if recorded. */
+  def isIncremental: Option[Boolean] = tag(ContentRoot.Tags.IS_INCREMENTAL).map(_.toBoolean)
+
+  /** Number of leaf manifests in this tree, if recorded; `0` means a root-only tree. */
+  def numLeaves: Option[Long] = tag(ContentRoot.Tags.NUM_LEAVES).map(_.toLong)
+
+  /** The version of the most recent full (non-incremental) manifest rewrite, if recorded. */
+  def lastManifestCommitWithFullRewrite: Option[Long] =
+    tag(ContentRoot.Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE).map(_.toLong)
+
+  /** Absolute [[Path]] to the root manifest, resolving `path` against `tableRoot`. */
+  @JsonIgnore
+  def getAbsolutePath(tableRoot: Path): Path =
+    AMTUtils.absolutePathForManifestFile(tableRoot, path)
+
+  /** The root manifest as a Hadoop [[FileStatus]] carrying its path and size. */
+  @JsonIgnore
+  def toFileStatus(tableRoot: Path): FileStatus = {
+    new FileStatus(
+      /* length = */ sizeInBytes,
+      /* isdir = */ false,
+      /* block_replication = */ 0,
+      /* blocksize = */ 1L,
+      // modificationTime is not tracked on the ContentRoot, so report 0.
+      /* modification_time = */ 0L,
+      getAbsolutePath(tableRoot))
+  }
+}
+
+object ContentRoot {
+
+  def apply(
+      path: String,
+      sizeInBytes: Long,
+      isIncremental: Boolean,
+      lastManifestCommitWithFullRewrite: Long,
+      numLeaves: Long): ContentRoot = {
+    ContentRoot(
+      path = path,
+      sizeInBytes = sizeInBytes,
+      tags = Map(
+        Tags.IS_INCREMENTAL.name -> isIncremental.toString,
+        Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE.name ->
+          lastManifestCommitWithFullRewrite.toString,
+        Tags.NUM_LEAVES.name -> numLeaves.toString
+      )
+    )
+  }
+
+  object Tags {
+    sealed abstract class KeyType(val name: String)
+
+    /** Whether the tree was built incrementally (`"true"`/`"false"`). */
+    object IS_INCREMENTAL extends KeyType("isIncremental")
+    /** The version of the most recent full (non-incremental) manifest rewrite. */
+    object LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE
+      extends KeyType("lastManifestCommitWithFullRewrite")
+    /** Number of leaf manifests in the tree; `0` means a root-only tree. */
+    object NUM_LEAVES extends KeyType("numLeaves")
+  }
+}
 
 /**
  * Closed set of values for [[SidecarFile.sidecarType]] under the `adaptiveMetadata-preview`
@@ -1643,6 +1759,17 @@ case class Checkpoint(
 
   override def wrap: SingleAction = SingleAction(checkpoint = this)
 }
+
+/**
+ * Info of last AMT manifest commit. Persisted in every [[CommitInfo]] and [[VersionChecksum]]
+ * as the source-of-truth of the last manifest commit up to the current commit version.
+ *
+ * @param version version of the manifest commit
+ * @param contentRootVersion version of the content root recorded in the manifest commit
+ */
+case class LastManifestCommit(
+    version: Long,
+    contentRootVersion: Long)
 
 /**
  * An [[Action]] containing the information about a sidecar file.

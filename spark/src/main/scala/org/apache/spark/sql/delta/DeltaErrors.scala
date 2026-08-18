@@ -1271,14 +1271,14 @@ trait DeltaErrorsBase
   }
 
   def nonPartitionColumnAbsentException(colsDropped: Boolean): Throwable = {
-    val msg = if (colsDropped) {
-      " Columns which are of NullType have been dropped."
+    val errorClass = if (colsDropped) {
+      "DELTA_NON_PARTITION_COLUMN_ABSENT.NULL_TYPE_COLUMNS_DROPPED"
     } else {
-      ""
+      "DELTA_NON_PARTITION_COLUMN_ABSENT.ALL_PARTITION_COLUMNS"
     }
     new DeltaAnalysisException(
-      errorClass = "DELTA_NON_PARTITION_COLUMN_ABSENT",
-      messageParameters = Array(msg)
+      errorClass = errorClass,
+      messageParameters = Array.empty
     )
   }
 
@@ -1310,10 +1310,16 @@ trait DeltaErrorsBase
       messageParameters = Array(input, name, explain))
   }
 
-  def invalidIdempotentWritesOptionsException(explain: String): Throwable = {
+  def invalidIdempotentWritesMissingWriteOptionsException(): Throwable = {
     new DeltaIllegalArgumentException(
-      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS",
-      messageParameters = Array(explain))
+      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS",
+      messageParameters = Array.empty)
+  }
+
+  def invalidIdempotentWritesMissingSessionConfsException(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS",
+      messageParameters = Array.empty)
   }
 
   def invalidInterval(interval: String): Throwable = {
@@ -2005,7 +2011,7 @@ trait DeltaErrorsBase
   def cannotSetLocationMultipleTimes(locations : Seq[String]) : Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES",
-      messageParameters = Array(s"${locations}")
+      messageParameters = Array(locations.mkString(", "))
     )
   }
 
@@ -2484,6 +2490,32 @@ trait DeltaErrorsBase
     )
   }
 
+  def adaptiveMetadataRequiresColumnMappingIdMode(
+      featureName: String, actualMode: String): Throwable = {
+    val key = DeltaConfigs.COLUMN_MAPPING_MODE.key
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ADAPTIVE_METADATA_REQUIRES_COLUMN_MAPPING_ID_MODE",
+      // Template order: <feature>, <prop>, <mode>, <prop>.
+      messageParameters = Array(featureName, key, actualMode, key)
+    )
+  }
+
+  def adaptiveMetadataRequiresDependentFeatureEnabled(
+      featureName: String, propertyKey: String, actualValue: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ADAPTIVE_METADATA_REQUIRES_DEPENDENT_FEATURE_ENABLED",
+      // Template order: <feature>, <prop>, <value>, <prop>.
+      messageParameters = Array(featureName, propertyKey, actualValue, propertyKey)
+    )
+  }
+
+  def adaptiveMetadataUpgradeNotSupported(featureName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ADAPTIVE_METADATA_UPGRADE_NOT_SUPPORTED",
+      messageParameters = Array(featureName)
+    )
+  }
+
   def maxColumnIdNotSetCorrectly(tableMax: Long, fieldMax: Long): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY",
@@ -2647,9 +2679,11 @@ trait DeltaErrorsBase
   }
 
   def metadataChangedException(
+      table: String,
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.MetadataChangedException = {
     new io.delta.exceptions.MetadataChangedException(
       Array(
+        table,
         conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
         DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
     )
@@ -3750,33 +3784,22 @@ trait DeltaErrorsBase
 
   def uniFormIcebergRequiresIcebergCompat(): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
-      messageParameters = Array(
-        UniversalFormat.ICEBERG_FORMAT,
-        "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) " +
-        "to be enabled on an existing table. Supported versions are IcebergCompatV1 and " +
-        "IcebergCompatV2."
-      )
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION.ICEBERG_COMPAT_REQUIRED",
+      messageParameters = Array(UniversalFormat.ICEBERG_FORMAT)
     )
   }
 
   def uniFormHudiDeleteVectorCompat(): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
-      messageParameters = Array(
-        UniversalFormat.HUDI_FORMAT,
-        "Requires delete vectors to be disabled."
-      )
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION.HUDI_DELETE_VECTORS_NOT_SUPPORTED",
+      messageParameters = Array(UniversalFormat.HUDI_FORMAT)
     )
   }
 
   def uniFormHudiSchemaCompat(unsupportedType: DataType): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
-      messageParameters = Array(
-        UniversalFormat.HUDI_FORMAT,
-        s"DataType: $unsupportedType is not currently supported."
-      )
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION.HUDI_UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(UniversalFormat.HUDI_FORMAT, unsupportedType.toString)
     )
   }
 

@@ -17,6 +17,8 @@ package io.delta.spark.internal.v2.adapters;
 
 import io.delta.kernel.internal.actions.Protocol;
 import java.util.Objects;
+import org.apache.spark.sql.delta.TableFeature;
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import scala.Option;
 import scala.collection.immutable.Set;
@@ -68,5 +70,28 @@ public class KernelProtocolAdapter implements AbstractProtocol {
               : Option.empty();
     }
     return cachedWriterFeatures;
+  }
+
+  /**
+   * Check if a {@code feature} is supported by this protocol. This means either (a) the protocol
+   * does not support table features but implicitly supports the feature, or (b) the protocol
+   * supports table features and explicitly references the feature.
+   */
+  @Override
+  public boolean isFeatureSupported(TableFeature feature) {
+    boolean supportsReaderFeatures =
+        minReaderVersion() >= TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION();
+    boolean supportsWriterFeatures =
+        minWriterVersion() >= TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION();
+    boolean explicitlySupported =
+        (!readerFeatures().isEmpty() && readerFeatures().get().contains(feature.name()))
+            || (!writerFeatures().isEmpty() && writerFeatures().get().contains(feature.name()));
+    boolean implicitlySupported =
+        feature.isLegacyFeature()
+            && !supportsReaderFeatures
+            && minReaderVersion() >= feature.minReaderVersion()
+            && !supportsWriterFeatures
+            && minWriterVersion() >= feature.minWriterVersion();
+    return explicitlySupported || implicitlySupported;
   }
 }
