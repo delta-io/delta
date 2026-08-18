@@ -60,6 +60,7 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.MetadataColumn;
 import org.apache.spark.sql.connector.catalog.SupportsMetadataColumns;
 import org.apache.spark.sql.connector.catalog.SupportsRead;
+import org.apache.spark.sql.connector.catalog.SupportsRowLevelOperations;
 import org.apache.spark.sql.connector.catalog.SupportsWrite;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCapability;
@@ -90,7 +91,12 @@ import scala.jdk.javaapi.CollectionConverters;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
 public class DeltaV2Table extends DeltaV2TableShims
-    implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns, DeltaV2TableMarker {
+    implements Table,
+        SupportsRead,
+        SupportsWrite,
+        SupportsMetadataColumns,
+        SupportsRowLevelOperations,
+        DeltaV2TableMarker {
   private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
   private static final String ROW_ID_METADATA_FIELD_NAME = RowId$.MODULE$.ROW_ID();
   private static final String ROW_COMMIT_VERSION_METADATA_FIELD_NAME =
@@ -364,6 +370,19 @@ public class DeltaV2Table extends DeltaV2TableShims
     return new KernelMetadataAdapter(((SnapshotImpl) initialSnapshot).getMetadata());
   }
 
+  /** Inputs exposed to the Spark-version shim for metadata-only DELETE. */
+  protected Engine kernelEngine() {
+    return kernelEngine;
+  }
+
+  protected SnapshotImpl initialSnapshot() {
+    return (SnapshotImpl) initialSnapshot;
+  }
+
+  protected Optional<CatalogTable> catalogTable() {
+    return catalogTable;
+  }
+
   /** Returns a copy of this table pinned to {@code version}. */
   public DeltaV2Table withVersion(long version) {
     return catalogTable.isPresent()
@@ -569,6 +588,7 @@ public class DeltaV2Table extends DeltaV2TableShims
    * Delta's copy-on-write operation shell; the concrete ReplaceData write path is introduced in a
    * follow-up PR.
    */
+  @Override
   public RowLevelOperationBuilder newRowLevelOperationBuilder(RowLevelOperationInfo info) {
     requireNonNull(info, "row-level operation info is null");
     return new DeltaRowLevelOperationBuilder(this, kernelEngine, hadoopConf, initialSnapshot, info);

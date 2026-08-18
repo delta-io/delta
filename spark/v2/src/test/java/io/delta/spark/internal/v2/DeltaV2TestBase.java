@@ -18,6 +18,7 @@ package io.delta.spark.internal.v2;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.read.DeltaV2ScanBuilder;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Collections;
 import org.apache.spark.sql.SparkSession;
@@ -64,6 +65,17 @@ public abstract class DeltaV2TestBase {
       spark.stop();
       spark = null;
     }
+  }
+
+  /** Returns a fresh, unique table directory path under the JVM temp dir. */
+  protected static String newTablePath(String prefix) {
+    return Paths.get(System.getProperty("java.io.tmpdir"), prefix + "-" + System.nanoTime())
+        .toString();
+  }
+
+  /** Returns the DSv2-catalog table reference for a path-based Delta table. */
+  protected static String dsv2Table(String tablePath) {
+    return String.format("dsv2.delta.`%s`", tablePath);
   }
 
   protected void createTestTableWithData(String path, String tableName) {
