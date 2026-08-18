@@ -22,6 +22,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.internal.v2.exception.NoRecreatableHistoryException;
 import io.delta.spark.internal.v2.exception.TableNotFoundException;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
@@ -383,7 +384,7 @@ public class DeltaV2Table extends DeltaV2TableShims
   }
 
   protected SnapshotImpl initialSnapshot() {
-    return (SnapshotImpl) initialSnapshot;
+    return DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(initialSnapshot);
   }
 
   protected Optional<CatalogTable> catalogTable() {
