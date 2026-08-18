@@ -107,7 +107,7 @@ case class DeletionVectorDescriptor(
   protected[delta] def isInline: Boolean = storageType == INLINE_DV_MARKER
 
   @JsonIgnore
-  protected[delta] def isRelative: Boolean = storageType == UUID_DV_MARKER
+  protected[delta] def isUuidRelative: Boolean = storageType == UUID_DV_MARKER
 
   @JsonIgnore
   protected[delta] def isUnencodedRelative: Boolean = storageType == RELATIVE_DV_MARKER
@@ -144,7 +144,7 @@ case class DeletionVectorDescriptor(
    * If the DV path is outside the table directory, returns None.
    */
   def urlEncodedRelativePathIfExists(tablePath: Path): Option[String] = {
-    if (isRelative) {
+    if (isUuidRelative) {
       return Some(SparkPath.fromPath(absolutePath(new Path("."))).urlEncoded)
     }
 
@@ -194,7 +194,7 @@ case class DeletionVectorDescriptor(
    *
    * If the DV already has a relative path or is inline, then this is just a normal copy.
    */
-  def copyWithNewRelativePath(id: UUID, randomPrefix: String): DeletionVectorDescriptor = {
+  def copyWithNewUuidRelativePath(id: UUID, randomPrefix: String): DeletionVectorDescriptor = {
     storageType match {
       case PATH_DV_MARKER =>
         this.copy(storageType = UUID_DV_MARKER, pathOrInlineDv = encodeUUID(id, randomPrefix))
@@ -281,7 +281,7 @@ object DeletionVectorDescriptor {
   implicit def encoder: Encoder[DeletionVectorDescriptor] = _encoder.get
 
   /** Utility method to create an on-disk [[DeletionVectorDescriptor]] */
-  def onDiskWithRelativePath(
+  def onDiskWithUuidRelativePath(
       id: UUID,
       randomPrefix: String = "",
       sizeInBytes: Int,

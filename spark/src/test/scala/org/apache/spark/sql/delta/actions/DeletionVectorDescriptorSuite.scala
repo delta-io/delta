@@ -57,7 +57,7 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
     // expect the returned DV is same as input, since this is inline
     // so paths are irrelevant.
     assert(dv.copyWithAbsolutePath(testTablePath) === dv)
-    assert(dv.copyWithNewRelativePath(UUID.randomUUID(), "predix2") === dv)
+    assert(dv.copyWithNewUuidRelativePath(UUID.randomUUID(), "predix2") === dv)
   }
 
   for (offset <- Seq(None, Some(25))) {
@@ -87,17 +87,17 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
 
       // Copy DV as a relative path DV
       val uuid = UUID.randomUUID()
-      val dvCopyWithRelativePath = dv.copyWithNewRelativePath(uuid, "prefix")
-      assert(dvCopyWithRelativePath.isRelative)
-      assert(dvCopyWithRelativePath.isOnDisk)
-      assert(dvCopyWithRelativePath.pathOrInlineDv === encodeUUID(uuid, "prefix"))
+      val dvCopyWithUuidRelativePath = dv.copyWithNewUuidRelativePath(uuid, "prefix")
+      assert(dvCopyWithUuidRelativePath.isUuidRelative)
+      assert(dvCopyWithUuidRelativePath.isOnDisk)
+      assert(dvCopyWithUuidRelativePath.pathOrInlineDv === encodeUUID(uuid, "prefix"))
     }
   }
 
   for (offset <- Seq(None, Some(25))) {
     test(s"On-disk DV with relative path with offset=$offset") {
       val uuid = UUID.randomUUID()
-      val dv = onDiskWithRelativePath(
+      val dv = onDiskWithUuidRelativePath(
         uuid, randomPrefix = "prefix", sizeInBytes = 15, cardinality = 25, offset)
 
       // Make sure the metadata (type, size etc.) in the DV is as expected
@@ -131,7 +131,7 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
 
       // Copy DV as a relative path DV - expect to return the same DV as the current
       // DV already contains relative path.
-      assert(dv.copyWithNewRelativePath(UUID.randomUUID(), "predix2") === dv)
+      assert(dv.copyWithNewUuidRelativePath(UUID.randomUUID(), "predix2") === dv)
     }
   }
 
@@ -145,7 +145,7 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
       assertCardinality(dv, 7)
 
       assert(dv.isUnencodedRelative)
-      assert(!dv.isRelative)
+      assert(!dv.isUuidRelative)
       assert(!dv.isAbsolute)
       // It carries no UUID, so there is no prefix/UUID pair to recover.
       assert(dv.getRandomPrefixAndUuid.isEmpty)
@@ -189,7 +189,8 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
       (PATH_DV_MARKER,
         onDiskWithAbsolutePath(absolutePath, sizeInBytes = 15, cardinality = 10)),
       (UUID_DV_MARKER,
-        onDiskWithRelativePath(uuid, randomPrefix = "dv dir", sizeInBytes = 15, cardinality = 10)),
+        onDiskWithUuidRelativePath(
+          uuid, randomPrefix = "dv dir", sizeInBytes = 15, cardinality = 10)),
       (RELATIVE_DV_MARKER,
         createRelativePathDVDescriptor(relativePath, sizeInBytes = 15, cardinality = 10)))
 
@@ -230,7 +231,7 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
   } {
     test(s"base64 round-trip for $label DV with offset=$offset") {
       val dv = label match {
-        case "uuid relative path" => onDiskWithRelativePath(
+        case "uuid relative path" => onDiskWithUuidRelativePath(
           UUID.randomUUID(), randomPrefix = "prefix", sizeInBytes = 15, cardinality = 25, offset)
         case "absolute path" => onDiskWithAbsolutePath(
           testDVAbsPath, sizeInBytes = 15, cardinality = 10, offset)
