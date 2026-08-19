@@ -5,7 +5,7 @@ This protocol change adds support for the `file` data type.
 The `file` data type stores a reference to a range of bytes, stored either inline in the value or in an external file.
 It is intended for use cases such as file inventories, manifests, and unstructured-data references (for example, images or audio stored in object storage), which are increasingly common with AI/ML workloads.
 
-The `file` data type is the Delta mapping of the Parquet [`FILE` logical type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) (introduced in [apache/parquet-format#585](https://github.com/apache/parquet-format/pull/585)). Delta follows that specification for the physical representation and field set, with two Delta-specific restrictions defined below — self-references are not permitted, and a `uri` must be absolute. This RFC also defines how the type is represented in the Delta schema and how it interacts with Delta features.
+The `file` data type is the Delta mapping of the Parquet [`FILE` logical type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) (introduced in [apache/parquet-format#585](https://github.com/apache/parquet-format/pull/585)). Delta follows that specification for the physical representation and field set, with one Delta-specific restriction defined below — a `uri` must be absolute. This RFC also defines how the type is represented in the Delta schema and how it interacts with Delta features.
 
 --------
 
@@ -18,7 +18,7 @@ A `file` value resolves to bytes that are located in one of two ways:
 - **inline** — the bytes are stored directly in the value (the `inline` field), or
 - **external** — the bytes are stored in a separate file at an absolute `uri` (optionally a byte range within it, via `offset`/`size`).
 
-The Parquet `FILE` type additionally allows a *self-reference* — a byte range within the same data file, addressed by `offset`/`size` with no `uri`. Self-references are **not permitted** in Delta tables (see [Writer Requirements for File Data Type](#writer-requirements-for-file-data-type) for the rationale).
+These are the only two forms the Parquet `FILE` type provides: `offset`/`size` designate a byte range **within the file referenced by `uri`**, and there is no form that addresses a byte range in the data file that physically contains the value. (An earlier revision of the Parquet type allowed such a *self-reference*; it is being removed from the specification — see [apache/parquet-format#603](https://github.com/apache/parquet-format/pull/603).)
 
 The schema serialization method is described in [Schema Serialization Format](#schema-serialization-format), and the physical encoding is described in [File data in Parquet](#file-data-in-parquet).
 
@@ -53,7 +53,7 @@ To support this feature:
 
 ## File data in Parquet
 
-Delta follows the Parquet `FILE` logical type. A `file` column is stored in Parquet as a group annotated with the `FILE` logical type; its physical field set, the byte-resolution rules, the `checksum` encoding, compression, and validation are exactly as defined in the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file). This RFC does not restate those rules; it adds the two Delta-specific restrictions described below (no self-references, absolute `uri`).
+Delta follows the Parquet `FILE` logical type. A `file` column is stored in Parquet as a group annotated with the `FILE` logical type; its physical field set, the byte-resolution rules, the `checksum` encoding, and validation are exactly as defined in the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file). This RFC does not restate those rules; it adds the one Delta-specific restriction described below (an absolute `uri`).
 
 For reference, the `FILE` group may contain the following optional fields: `uri`, `offset`, `size`, `content_type`, `checksum`, and `inline`. In a Delta table a value resolves to bytes either **inline** (the `inline` field) or from an **external** file at an absolute `uri` (optionally a byte range via `offset`/`size`); `content_type` and `checksum` are metadata describing the resolved bytes. See the Parquet specification for the exact field semantics.
 
@@ -62,8 +62,8 @@ For reference, the `FILE` group may contain the following optional fields: `uri`
 When File type is supported (`writerFeatures` field of a table's `protocol` action contains `fileType`), writers:
 - must write a column of type `file` to Parquet as a group annotated with the Parquet `FILE` logical type, conforming to the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) (field names and types, `checksum` encoding, and validation), subject to the Delta restrictions below.
 - must write an **absolute** `uri` ([RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986)) on every external reference (a value with `inline` not set and `uri` set). Relative URIs are not permitted in Delta tables, because a relative reference has no defined resolution base: `SHALLOW CLONE` leaves data files under the source table's directory, and `OPTIMIZE`/compaction and `DEEP CLONE` move rows into files under a different directory, so a relative `uri` would resolve differently after ordinary operations.
-- must **not** write a self-reference — that is, a value in which neither `inline` nor `uri` is set (bytes addressed only by `offset`/`size` within the data file that physically contains the row). A self-reference's `offset` is only meaningful relative to that file, but Delta operations that rewrite data files — `OPTIMIZE`/compaction, `MERGE`/`UPDATE`/`DELETE`, `REORG ... PURGE`, and writing `_change_data` files for Change Data Feed — relocate rows into new files without relocating the referenced byte ranges, which would silently repoint the value at unrelated bytes. Every value must therefore be either **inline** (`inline` set) or **external** (`uri` set).
-- may write inline values (`inline` set); doing so is optional. An inline value may additionally carry `uri`/`offset`/`size` locator fields, which per the Parquet specification are *provenance only* — they record where the bytes originally came from and are not used for resolution. Delta does not interpret them, and the absolute-`uri` requirement above does not apply to such a provenance `uri` (it applies only to a `uri` used to resolve an external reference).
+- must produce only **inline** (`inline` set) or **external** (`uri` set) values, per the Parquet `FILE` resolution rules. `offset`/`size` are meaningful only together with a `uri` (they designate a byte range within the referenced file); the Parquet type provides no form that addresses a byte range in the containing data file, so no such value can be written.
+- may write inline values (`inline` set); doing so is optional. An inline value may additionally carry `uri`/`offset`/`size` locator fields, which per the Parquet specification are *provenance only* — they record where the bytes came from, must denote the same bytes as the inline value, and are not used for resolution. Delta does not interpret them, and the absolute-`uri` requirement above does not apply to such a provenance `uri` (it applies only to a `uri` used to resolve an external reference).
 - must represent a value that does not resolve to any referent as a column null.
 - must store additional metadata about a file (for example, a modification timestamp) adjacent to the `file` column, not inside the `FILE`-annotated group.
 
@@ -72,7 +72,7 @@ When File type is supported (`writerFeatures` field of a table's `protocol` acti
 When File type is supported (`readerFeatures` field of a table's `protocol` action contains `fileType`), readers:
 - must recognize and tolerate a `file` data type in a Delta schema.
 - must read the `file` column from its Parquet `FILE`-annotated group and resolve each value to bytes per the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file), supporting both **inline** values (the `inline` field) and **external** references (including a byte range when `offset`/`size` are set). Note that although writers are not required to produce inline values, readers must support reading them.
-- must, for a row whose reference is invalid (does not resolve to any referent) or is a **self-reference** (`inline` not set and `uri` not set — a form Delta does not permit; see [Writer Requirements for File Data Type](#writer-requirements-for-file-data-type)), either return a `null` `file` value or fail the read. A conforming writer never produces either, so these only arise from a non-conforming writer, and per-file statistics are not expected to account for them.
+- must, for a row whose value does not resolve to any referent (an invalid value per the Parquet resolution rules — for example neither `inline` nor `uri` set, or `offset` set without `uri`), either return a `null` `file` value or fail the read. A conforming writer never produces such a value, so this only arises from a non-conforming writer, and per-file statistics are not expected to account for it.
 - must make the column available to the engine:
     - [Recommended] Expose and interpret the group as a single `file` value, resolving inline and external bytes on access.
     - [Alternate] Expose the raw physical group (the set of present fields), for example if the engine does not natively support the `file` type.
@@ -176,7 +176,7 @@ type | Always the string "file"
 
 Add the following row to the Primitive Types table:
 
-> file | A reference to a range of bytes located inline in the value or in an external file. When stored in a Parquet file it is a group annotated with the Parquet `FILE` logical type. Self-references are not permitted and a `uri` must be absolute. To use this type, a table must support the feature `fileType`. See section [File Data Type](#file-data-type).
+> file | A reference to a range of bytes located inline in the value or in an external file. When stored in a Parquet file it is a group annotated with the Parquet `FILE` logical type. A `uri` must be absolute. To use this type, a table must support the feature `fileType`. See section [File Data Type](#file-data-type).
 
 --------
 
