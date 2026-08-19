@@ -84,18 +84,84 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     DeltaV2ScanBuilder builder =
         newScanBuilder(tableName, path, dataSchema, partitionSchema, tableSchema);
 
-    StructType expectedSparkSchema =
+    StructType requiredSparkSchema =
         DataTypes.createStructType(
             new StructField[] {
               DataTypes.createStructField("id", DataTypes.IntegerType, true /*nullable*/),
               DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
             });
+    StructType expectedScanSchema = tableSchema;
 
-    builder.pruneColumns(expectedSparkSchema);
+    builder.pruneColumns(new StructType());
+    assertEquals(expectedScanSchema, builder.build().readSchema());
+
+    builder.pruneColumns(tableSchema);
+    assertEquals(expectedScanSchema, builder.build().readSchema());
+
+    builder.pruneColumns(requiredSparkSchema);
     Scan scan = builder.build();
 
     assertTrue(scan instanceof DeltaV2Scan);
-    assertEquals(expectedSparkSchema, scan.readSchema());
+    assertEquals(expectedScanSchema, scan.readSchema());
+  }
+
+  @Test
+  public void testPruneColumns_prunesNestedFieldsAndRetainsRootColumns(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "scan_builder_nested_pruning_test";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, payload STRUCT<a: INT, b: STRING>, unused STRING, p INT) "
+                + "USING delta PARTITIONED BY (p) LOCATION '%s'",
+            tableName, path));
+
+    StructType fullPayload =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("a", DataTypes.IntegerType, true),
+              DataTypes.createStructField("b", DataTypes.StringType, true)
+            });
+    StructType prunedPayload =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("b", DataTypes.StringType, true)});
+    StructType dataSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("payload", fullPayload, true),
+              DataTypes.createStructField("unused", DataTypes.StringType, true)
+            });
+    StructType partitionSchema =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("p", DataTypes.IntegerType, true)});
+    StructType tableSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("payload", fullPayload, true),
+              DataTypes.createStructField("unused", DataTypes.StringType, true),
+              DataTypes.createStructField("p", DataTypes.IntegerType, true)
+            });
+    StructType requiredSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("payload", prunedPayload, true),
+              DataTypes.createStructField("p", DataTypes.IntegerType, true)
+            });
+    StructType expectedScanSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("payload", prunedPayload, true),
+              DataTypes.createStructField("unused", DataTypes.StringType, true),
+              DataTypes.createStructField("p", DataTypes.IntegerType, true)
+            });
+
+    DeltaV2ScanBuilder builder =
+        newScanBuilder(tableName, path, dataSchema, partitionSchema, tableSchema);
+    builder.pruneColumns(requiredSchema);
+
+    assertEquals(expectedScanSchema, builder.build().readSchema());
   }
 
   @Test
@@ -248,15 +314,15 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testPruneColumnsRetainsFullyPushedFilterColumn(@TempDir File tempDir)
-      throws Exception {
+  public void testPruneColumnsRetainsAllRootColumns(@TempDir File tempDir) throws Exception {
     DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
     pushFilters(builder, new EqualTo("dep_id", 1));
     builder.pruneColumns(new StructType().add("id", DataTypes.IntegerType, true /* nullable */));
 
     Scan scan = builder.build();
     assertEquals(
-        Arrays.asList("id", "dep_id", "dep_name"), Arrays.asList(scan.readSchema().fieldNames()));
+        Arrays.asList("id", "name", "dep_id", "dep_name"),
+        Arrays.asList(scan.readSchema().fieldNames()));
   }
 
   @Test
