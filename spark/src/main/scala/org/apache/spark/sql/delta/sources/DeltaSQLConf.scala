@@ -793,6 +793,20 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "parallelDelete.parallelism must be positive")
       .createOptional
 
+  val DELTA_VACUUM_LIST_CHANGE_DATA_DIR_SEPARATELY =
+    buildConf("vacuum.listing.changeDataDirSeparately.enabled")
+      .internal()
+      .doc("When true, VACUUM lists the table's `_change_data` directory as a separate listing " +
+        "branch instead of recursing into it inline as one of the table root's first-level " +
+        "directories. Because `_change_data` mirrors the table's partitioning (or is a single " +
+        "large flat directory), recursing it inline leaves one task listing the entire " +
+        "change-data subtree while the rest of the cluster is idle. Listing it separately " +
+        "spreads its sub-directories across tasks and lets its listing run concurrently with " +
+        "the main table listing. The set of files considered by VACUUM is unchanged; only the " +
+        "listing parallelism differs.")
+      .booleanConf
+      .createWithDefault(true)
+
   val ENFORCE_DELETED_FILE_AND_LOG_RETENTION_DURATION_COMPATIBILITY =
     buildConf("vacuum.enforceDeletedFileAndLogRetentionDurationCompatibility")
       .internal()
