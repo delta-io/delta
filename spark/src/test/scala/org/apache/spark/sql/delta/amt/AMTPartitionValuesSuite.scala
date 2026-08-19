@@ -131,13 +131,14 @@ class AMTPartitionValuesSuite extends AMTCheckpointTestBase {
   }
 
   /**
-   * The physical-name partition-value maps `forRead` reconstructs from `leaves`' DATA entries.
+   * The physical-name partition-value maps `forRead` reconstructs from the manifest tree's DATA
+   * entries.
    */
   private def reconstructPartitionValues(
-      leaves: Seq[String],
+      manifests: Seq[String],
       partitionSchema: StructType): Set[Map[String, String]] =
     allowReadWithinDeltaLog {
-      val entries = spark.read.parquet(leaves: _*)
+      val entries = spark.read.parquet(manifests: _*)
         .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
       AMTPartitionValues.forRead(entries, partitionSchema)
         .select(col("partition"))
@@ -154,8 +155,11 @@ class AMTPartitionValuesSuite extends AMTCheckpointTestBase {
       val snapshot = deltaLog.update()
       val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
       val partitionSchema = snapshot.metadata.partitionSchema
-      val leaves = provider.liveLeafManifestAbsolutePaths.map(_.toString)
-      assert(leaves.nonEmpty, "Expected at least one leaf manifest.")
+      // A full rewrite can hash every file into one Spark partition. In that valid representation,
+      // the sole leaf is promoted to the root and there are no leaf pointers to read.
+      val manifests = provider.topLevelFiles.map(_.getPath.toString) ++
+        provider.liveLeafManifestAbsolutePaths.map(_.toString)
+      assert(manifests.nonEmpty, "Expected at least a root manifest.")
 
       // Read the commit json directly rather than going through the snapshot: an AMT snapshot
       // reconstructs its AddFiles through `forRead`, so comparing against it would compare
@@ -172,7 +176,7 @@ class AMTPartitionValuesSuite extends AMTCheckpointTestBase {
         .toSet
       assert(logged.size == numFiles, s"Expected one logged add per file, got ${logged.size}.")
 
-      val reconstructed = reconstructPartitionValues(leaves, partitionSchema)
+      val reconstructed = reconstructPartitionValues(manifests, partitionSchema)
       assert(reconstructed == logged,
         s"forRead did not reproduce the logged partition values.\n" +
           s"  logged=$logged\n  reconstructed=$reconstructed")
