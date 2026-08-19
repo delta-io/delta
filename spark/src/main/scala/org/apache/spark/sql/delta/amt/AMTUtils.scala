@@ -31,6 +31,70 @@ import org.apache.hadoop.fs.{FileSystem, Path}
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
 object AMTUtils {
+  private val PathSeparator = "/"
+
+  /**
+   * Returns true if the location contains a URI scheme, per RFC 3986 section 3.1.
+   * https://datatracker.ietf.org/doc/html/rfc3986#section-3.1
+   */
+  private[amt] def hasScheme(location: String): Boolean = {
+    var i = 0
+    while (i < location.length) {
+      val ch = location.charAt(i)
+      if (ch == ':') {
+        return i > 0
+      }
+      if (!isSchemeChar(ch, i)) {
+        return false
+      }
+      i += 1
+    }
+    false
+  }
+
+  private def isSchemeChar(ch: Char, position: Int): Boolean = {
+    (ch >= 'a' && ch <= 'z') ||
+      (ch >= 'A' && ch <= 'Z') ||
+      (position > 0 && ((ch >= '0' && ch <= '9') || ch == '+' || ch == '-' || ch == '.'))
+  }
+
+  /**
+   * Returns true if a location is absolute.
+   * NOTE: This is not the same implementation as Hadoop [[Path.isAbsolute]].
+   */
+  def isAbsoluteLocation(location: String): Boolean = {
+    hasScheme(location) || location.startsWith(PathSeparator)
+  }
+
+  /**
+   * Relativizes a location against a table location. A trailing slash on `tableLocation` is
+   * ignored. If `location` starts with the normalized table location immediately followed by `/`,
+   * the prefix and separator are removed. Otherwise, `location` is returned as-is.
+   * This is a lightweight string manipulation compared to [[DeltaFileOperations.tryRelativizePath]]
+   * and should be preferred in hot paths.
+   *
+   * Because the relativization is prefix matching based, callers are expected to pass locations in
+   * the same format and encoding. No such checks are performed here.
+   */
+  def relativizeLocation(tableLocation: String, location: String): String = {
+    // Strip trailing slash from tableLocation if present.
+    val normalizedTableLocation =
+      if (tableLocation.length > PathSeparator.length && tableLocation.endsWith(PathSeparator)) {
+        tableLocation.dropRight(PathSeparator.length)
+      } else {
+        tableLocation
+      }
+
+    // Prefix matching based location relativization
+    val prefixLength = normalizedTableLocation.length
+    if (location.length > prefixLength &&
+        location.startsWith(PathSeparator, prefixLength) &&
+        location.startsWith(normalizedTableLocation)) {
+      location.substring(prefixLength + PathSeparator.length)
+    } else {
+      location
+    }
+  }
 
   /**
    * Relativizes an AMT manifest file `path` against `tableRoot`, returning the raw
