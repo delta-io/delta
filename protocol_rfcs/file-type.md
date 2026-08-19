@@ -18,7 +18,7 @@ A `file` value resolves to bytes that are located in one of two ways:
 - **inline** — the bytes are stored directly in the value (the `inline` field), or
 - **external** — the bytes are stored in a separate file at an absolute `uri` (optionally a byte range within it, via `offset`/`size`).
 
-These are the only two forms the Parquet `FILE` type provides: `offset`/`size` designate a byte range **within the file referenced by `uri`**, and there is no form that addresses a byte range in the data file that physically contains the value. (An earlier revision of the Parquet type allowed such a *self-reference*; it is being removed from the specification — see [apache/parquet-format#603](https://github.com/apache/parquet-format/pull/603).)
+These are the only two forms the Parquet `FILE` type provides: `offset`/`size` designate a byte range **within the file referenced by `uri`**, and there is no form that addresses a byte range in the data file that physically contains the value. (An earlier revision of the Parquet type allowed such a *self-reference*; it was removed from the specification in [apache/parquet-format#603](https://github.com/apache/parquet-format/pull/603).)
 
 The schema serialization method is described in [Schema Serialization Format](#schema-serialization-format), and the physical encoding is described in [File data in Parquet](#file-data-in-parquet).
 
