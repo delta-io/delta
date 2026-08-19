@@ -1058,7 +1058,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.createTableWithDifferentSchemaException(path, specifiedSchema, existingSchema, diffs)
       }
-      checkError(e, "DELTA_CREATE_TABLE_SCHEME_MISMATCH", "42KD7", Map(
+      checkError(e, "DELTA_CREATE_TABLE_SCHEMA_MISMATCH", "42KD7", Map(
         "path" -> path.toString,
         "specifiedSchema" -> specifiedSchema.treeString,
         "existingSchema" -> existingSchema.treeString,

@@ -1724,7 +1724,7 @@ trait DeltaErrorsBase
       existingSchema: StructType,
       diffs: Seq[String]): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_CREATE_TABLE_SCHEME_MISMATCH",
+      errorClass = "DELTA_CREATE_TABLE_SCHEMA_MISMATCH",
       messageParameters = Array(path.toString,
         specifiedSchema.treeString, existingSchema.treeString,
         diffs.map("\n".r.replaceAllIn(_, "\n  ")).mkString("- ", "\n- ", "")))
