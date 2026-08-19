@@ -548,6 +548,31 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CONFLICT_DETECTION_DATA_SKIPPING_ENABLED =
+    buildConf("conflictDetection.dataSkipping.enabled")
+      .internal()
+      .doc(
+        """When enabled, conflict detection uses column-statistics data skipping to exclude
+          |concurrently-added files whose stats prove they cannot match the current transaction's
+          |read predicates, reducing unnecessary conflicts (especially on unpartitioned tables).
+          |One-way safe: a file is excluded only when its stats prove no match.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_CONFLICT_DETECTION_DATA_SKIPPING_VALUE_EXACT_ENABLED =
+    buildConf("conflictDetection.dataSkipping.valueExact.enabled")
+      .internal()
+      .doc(
+        """When enabled (together with conflictDetection.dataSkipping.enabled), conflict detection
+          |reads the actual data of concurrently-added files that column-statistics skipping could
+          |not rule out, and excludes those whose rows do not actually match the current
+          |transaction's read predicates. This resolves predicates min/max stats cannot skip (e.g.
+          |modulo or other non-range expressions), at the cost of reading the (already stats-
+          |narrowed) added files during commit. One-way safe: a file is excluded only when an actual
+          |scan proves no row matches.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
     buildConf("properties.defaults.minWriterVersion")
       .doc("The default writer protocol version to create new tables with, unless a feature " +
