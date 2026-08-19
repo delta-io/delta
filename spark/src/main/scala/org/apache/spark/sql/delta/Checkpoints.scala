@@ -26,13 +26,13 @@ import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, Metadata, SidecarFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, Checkpoint, CheckpointMetadata, LastManifestCommit, Metadata, SidecarFile, SingleAction}
 import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTWriteResult}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
-import org.apache.spark.sql.delta.util.{DeltaFileOperations, DeltaLogGroupingIterator, FileNames}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, DeltaFileOperations, DeltaLogGroupingIterator, FileNames}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -394,11 +394,11 @@ trait Checkpoints extends DeltaLogging {
 
   /**
    * Verifies the AMT checkpoint provider (if any) of the log segment against LastManifestCommit.
-   * Throws on inconsistency.
+   * Updates the log segment with the correct AMT if possible; throws otherwise.
    */
-  protected def verifyAMTCheckpointProvider(
+  protected def reconcileAMTCheckpointProvider(
       logSegment: LogSegment,
-      finalChecksumOpt: Option[VersionChecksum]): Unit = {
+      finalChecksumOpt: Option[VersionChecksum]): LogSegment = {
     (logSegment.checkpointProvider, finalChecksumOpt) match {
       case (amtCheckpointProvider: AMTCheckpointProvider, Some(checksum)) =>
         val lastManifestCommit = checksum.lastManifestCommit.getOrElse {
@@ -409,7 +409,7 @@ trait Checkpoints extends DeltaLogging {
         }
         if (amtCheckpointProvider.version == lastManifestCommit.contentRootVersion) {
           // Happy-path: the versions match. Safe to use the initial AMT checkpoint provider.
-          return
+          return logSegment
         } else if (amtCheckpointProvider.version < lastManifestCommit.contentRootVersion) {
           // The initial AMT checkpoint provider is stale, which could happen during:
           //  - `deltaLog.createSnapshotAtInit()` when _last_checkpoint is stale;
@@ -420,12 +420,7 @@ trait Checkpoints extends DeltaLogging {
           //    least one newer manifest commit has landed.
           //  - If that newer manifest commit is an inline one, having it in the trailing deltas
           //    would lead to missing file actions.
-          // TODO: replace the AMT checkpoint provider with the one specified in lastManifestCommit.
-          throw new IllegalStateException(
-            s"AMT checkpoint mismatch for table $logPath: the AMT checkpoint provider is at " +
-              s"version ${amtCheckpointProvider.version}, but the checksum's lastManifestCommit " +
-              s"describes content root version ${lastManifestCommit.contentRootVersion}."
-          )
+          return readManifestCommitAndUpdateAMTCheckpointProvider(logSegment, lastManifestCommit)
         } else if (amtCheckpointProvider.version > lastManifestCommit.contentRootVersion) {
           // This should not happen.
           throw new IllegalStateException(
@@ -440,11 +435,74 @@ trait Checkpoints extends DeltaLogging {
             s"discovered for table $logPath, but no checksum (CRC) file is available to " +
             s"corroborate it. Refusing to trust the AMT checkpoint.")
 
-      case (others, Some(checksum)) if checksum.lastManifestCommit.isDefined =>
-        // TODO: replace with the AMT checkpoint provider specified in lastManifestCommit.
+      case (otherCheckpointProvider, Some(checksum)) if checksum.lastManifestCommit.isDefined =>
+        // Treat the LastManifestCommit as the source of truth for the AMT checkpoint provider,
+        // even the initial log segment has a non-AMT or empty checkpoint provider.
+        checksum.lastManifestCommit.foreach { lastManifestCommit =>
+          if (otherCheckpointProvider.version <= lastManifestCommit.contentRootVersion) {
+            // We have all the deltas needed after the accurate content root version, so we update.
+            return readManifestCommitAndUpdateAMTCheckpointProvider(logSegment, lastManifestCommit)
+          } else {
+            // The initial log segment somehow has a non-AMT provider, while the lastManifestCommit
+            // claims that there is some AMT content root available describing an earlier version.
+            // This might happen across upgrade/downgrade code paths. Throw until we support them.
+            throw new IllegalStateException(
+              s"The LastManifestCommit of version ${logSegment.version} carries a content root " +
+                s"version ${lastManifestCommit.contentRootVersion} that is ahead of the initial " +
+                s"non-AMT checkpoint version ${otherCheckpointProvider.version}. Refusing to " +
+                s"trust the checkpoint.")
+          }
+        }
 
       case _ => ()
     }
+
+    // No changes needed.
+    logSegment
+  }
+
+  /**
+   * Reads the Checkpoint action from the manifest commit and builds the AMT checkpoint provider.
+   * Returns the updated log segment with the new AMT checkpoint provider and trimmed deltas.
+   *
+   * One I/O is performed.
+   */
+  private def readManifestCommitAndUpdateAMTCheckpointProvider(
+      logSegment: LogSegment,
+      lastManifestCommit: LastManifestCommit): LogSegment = {
+    recordDeltaOperation(this, "delta.v4amt.readManifestCommitAndUpdateAMTCheckpointProvider") {
+      // The initial log segment must have all the deltas after the content root version.
+      require(logSegment.checkpointProvider.version <= lastManifestCommit.contentRootVersion)
+      val checkpoint = readCheckpointActionFromCommit(logSegment, lastManifestCommit)
+      val newCheckpointProvider = AMTCheckpointProvider.fromCheckpoint(this, checkpoint)
+      logSegment.copy(
+        checkpointProvider = newCheckpointProvider,
+        deltas = logSegment.deltas.filter(f => deltaVersion(f) > newCheckpointProvider.version))
+    }
+  }
+
+  /** Reads the [[actions.Checkpoint]] action from the manifest commit. */
+  private def readCheckpointActionFromCommit(
+      logSegment: LogSegment,
+      lastManifestCommit: LastManifestCommit): Checkpoint = {
+    val LastManifestCommit(manifestCommitVersion, contentRootVersion) = lastManifestCommit
+    val commitFile = DeltaCommitFileProvider(logPath, logSegment).deltaFile(manifestCommitVersion)
+    val actions = store.readAsIterator(commitFile, newDeltaHadoopConf())
+    val checkpoint = try {
+      actions
+        .map(Action.fromJson)
+        .collectFirst { case cp: Checkpoint => cp }
+        .getOrElse {
+          throw new IllegalStateException(
+            s"The checksum at version ${logSegment.version} names manifest commit version " +
+              s"${manifestCommitVersion} as the source of content root version " +
+              s"${contentRootVersion}, but that commit carries no Checkpoint action.")
+        }
+    } finally {
+      actions.close()
+    }
+    assert(checkpoint.version == contentRootVersion)
+    checkpoint
   }
 
   protected[delta] def writeLastCheckpointFile(
