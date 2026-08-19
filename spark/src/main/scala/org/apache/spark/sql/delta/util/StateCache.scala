@@ -46,7 +46,7 @@ trait StateCache extends DeltaLogging {
   /** Method to expose the value of _isCached for testing. */
   private[delta] def isCached: Boolean = _isCached
 
-  private val storageLevel = StorageLevel.fromString(
+  private lazy val storageLevel = StorageLevel.fromString(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL))
 
   class CachedDS[A] private[StateCache](ds: Dataset[A], name: String) {

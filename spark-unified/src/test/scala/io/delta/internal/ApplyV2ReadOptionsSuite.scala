@@ -21,7 +21,6 @@ import java.util.{HashMap => JHashMap}
 
 import scala.jdk.CollectionConverters._
 
-import io.delta.kernel.internal.SnapshotImpl
 import io.delta.spark.internal.v2.catalog.DeltaV2Table
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
@@ -272,8 +271,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     val snapshotManager =
       new PathBasedSnapshotManager(tablePath, deltaLog.newDeltaHadoopConf())
-    val tableId =
-      snapshotManager.loadLatestSnapshot.asInstanceOf[SnapshotImpl].getMetadata.getId
+    val tableId = snapshotManager.loadLatestSnapshot.metadata.id
     val trackingLog = DeltaSourceMetadataTrackingLog.create(
       spark, schemaLogPath, tableId, tablePath, parameters = Map.empty[String, String])
     val customSchemaJson =
