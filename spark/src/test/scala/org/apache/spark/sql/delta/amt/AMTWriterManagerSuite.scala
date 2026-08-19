@@ -59,7 +59,7 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       val name = "amt_optimize_ckpt"
       createAMTTable(name, checkpointInterval = 2)
       withSQLConf(leafPackingConfs: _*) {
-        appendRowsAsSeparateFiles(name, numRows = leafPackedFiles)
+        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles)
 
         val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint(
           incremental = false, triggerName = AMTTriggerMode.CheckpointIntervalFull.name))

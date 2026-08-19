@@ -76,10 +76,12 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     existing_files_count = 0,
     deleted_files_count = 0,
     replaced_files_count = 0,
+    modified_files_count = 5,
     added_rows_count = 42L,
     existing_rows_count = 0L,
     deleted_rows_count = 0L,
     replaced_rows_count = 0L,
+    modified_rows_count = 7L,
     min_sequence_number = 3L,
     dv = None,
     dv_cardinality = None)

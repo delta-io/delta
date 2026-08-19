@@ -110,7 +110,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       partitionColumns = allTypesPartitionSchema.map(_.name))(
       setup = name => appendRowsAsSeparateFiles(
         name,
-        numRows = leafPackedFiles - 1,
+        numFiles = leafPackedFiles - 1,
         columnExprs = "CAST(id AS INT)" +: allTypesPartitionExprs),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"""INSERT INTO $name
@@ -148,7 +148,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       "an unpartitioned table writes no partition column at all",
       "amt_unpartitioned",
       sqlConfs = leafPackingConfs)(
-      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
+      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     // An unpartitioned table has no partition struct to persist, so `partition` is dropped from the
@@ -174,7 +174,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       // The leaf packing keeps several leaf pointers in the root to check, rather than the single
       // manifest a small table would promote.
       sqlConfs = leafPackingConfs)(
-      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
+      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val name = context.tableName
@@ -392,27 +392,46 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       "amt_leaf_counts",
       deferredScenarios = Seq(AMTCheckpointScenario.DeferredFull),
       sqlConfs = leafPackingConfs)(
-      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles)) { context =>
+      setup = name => {
+        // Half the files carry 2 rows and half carry 4, so a leaf's existing_rows_count reflects
+        // the summed physical rows of its files rather than just its entry count.
+        val filesPerRowGroup = leafPackedFiles / 2
+        appendRowsAsSeparateFiles(name, numFiles = filesPerRowGroup, rowsPerFile = 2)
+        appendRowsAsSeparateFiles(name, numFiles = filesPerRowGroup, rowsPerFile = 4,
+          startId = filesPerRowGroup * 2)
+      }) { context =>
     val leaves = context.provider.leaves
     assertLeafCount(leaves)
     val totalLiveFiles = context.postCheckpointSnapshot.allFiles.count()
+    val filesPerRowGroup = leafPackedFiles / 2
+    val expectedTotalRows = filesPerRowGroup * 2 + filesPerRowGroup * 4
     leaves.foreach { leaf =>
       val mi = leaf.manifest_info
-      // The distributed writer counts the rows it flushes into each leaf and reports that count
-      // as record_count and existing_files_count (the data files already lived in the table, so
-      // they are EXISTING, not ADDED). Both fields were left 0 before this fix.
+      // The distributed writer flushes files that already lived in the table, so they are EXISTING
+      // (not ADDED).
       assert(leaf.record_count > 0L,
         s"A full-rewrite leaf must report a non-zero record_count; got $leaf.")
       assert(mi.existing_files_count.toLong == leaf.record_count,
         s"existing_files_count must equal record_count; got $mi vs ${leaf.record_count}.")
+      // A leaf holds a data-dependent mix of 2- and 4-row files (every file has at least 2 rows),
+      // so per-leaf existing_rows_count is at least twice its entry count; the exact total is
+      // asserted in aggregate below.
+      assert(mi.existing_rows_count >= 2 * leaf.record_count,
+        s"existing_rows_count must be at least 2x record_count; got $mi vs ${leaf.record_count}.")
+      assert(mi.added_rows_count == 0L && mi.deleted_rows_count == 0L &&
+        mi.replaced_rows_count == 0L && mi.modified_rows_count == 0L,
+        s"A fresh full-rewrite leaf counts only existing rows; got $mi.")
       assert(mi.added_files_count == 0 && mi.deleted_files_count == 0 &&
-        mi.replaced_files_count == 0,
+        mi.replaced_files_count == 0 && mi.modified_files_count == 0,
         s"A fresh full-rewrite leaf counts only existing files; got $mi.")
     }
-    // Conservation: the per-leaf counts account for every live file (a multi-leaf tree keeps no
-    // root-resident data entries).
+    // Conservation: the per-leaf counts account for every live file and row (a multi-leaf tree
+    // keeps no root-resident data entries).
     assert(leaves.map(_.record_count).sum == totalLiveFiles,
       s"Leaf record_counts must sum to $totalLiveFiles; got ${leaves.map(_.record_count)}.")
+    assert(leaves.map(_.manifest_info.existing_rows_count).sum == expectedTotalRows,
+      s"Leaf existing_rows_counts must sum to $expectedTotalRows; got " +
+        s"${leaves.map(_.manifest_info.existing_rows_count)}.")
     assertReconstructsLiveFileSet(context)
   }
 
@@ -558,10 +577,12 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     existing_files_count = 0,
     deleted_files_count = 0,
     replaced_files_count = 0,
+    modified_files_count = 0,
     added_rows_count = 0L,
     existing_rows_count = 0L,
     deleted_rows_count = 0L,
     replaced_rows_count = 0L,
+    modified_rows_count = 0L,
     min_sequence_number = 0L,
     dv = None,
     dv_cardinality = None)

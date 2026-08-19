@@ -692,7 +692,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       "manifest deletion vector drops superseded leaf entries during reconstruction",
       "amt_mdv_drop",
       sqlConfs = leafPackingConfs)(
-      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
+      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val snapshot = context.postCheckpointSnapshot
@@ -810,7 +810,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         log.startTransaction().commit(dvActions, DeltaOperations.Delete(predicate = Seq.empty))
         // DV-less siblings, so the tree packs multi-entry leaves around file A. File A and the
         // trigger's file make up the rest of the packed count.
-        appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 2, startId = 10)
+        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 2, startId = 10)
       },
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (3)"))) { context =>
@@ -872,7 +872,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       "a manifest DV with only one of dv/dv_cardinality set is rejected",
       "amt_mdv_malformed",
       sqlConfs = leafPackingConfs)(
-      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
+      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val base = context.provider
