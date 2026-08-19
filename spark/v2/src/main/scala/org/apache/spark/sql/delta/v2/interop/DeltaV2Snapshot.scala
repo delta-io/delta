@@ -57,6 +57,12 @@ class DeltaV2Snapshot(
       deltaLog = null,
       checksumOpt = None) {
 
+  private[this] var prebuiltAllFiles: Option[Dataset[AddFile]] = None
+
+  private def this(kernelSnapshot: KernelSnapshot, prebuiltAllFiles: Dataset[AddFile]) = {
+    this(kernelSnapshot)
+    this.prebuiltAllFiles = Some(prebuiltAllFiles)
+  }
 
   // scalastyle:off deltahadoopconfiguration
   private def kernelEngine: Engine =
@@ -72,6 +78,10 @@ class DeltaV2Snapshot(
   // Opt out of the base Snapshot invariant that requires a non-null logSegment/deltaLog: a
   // DeltaV2Snapshot has neither (see class doc).
   override protected def allowNullLogSegmentAndDeltaLog: Boolean = true
+
+  // A Kernel-backed facade may be constructed for metadata access without an active SparkSession.
+  // Cache configuration remains validated when the cache-backed state is first used.
+  override protected def eagerlyInitializeStorageLevel: Boolean = false
 
   // Kernel already validated protocol + feature support when it loaded the snapshot, so the V1
   // init() re-validation (which derefs the null deltaLog) is redundant and skipped.
@@ -159,8 +169,18 @@ class DeltaV2Snapshot(
 
   // --- Files surfaced via Kernel scan ---------------------------------------------------------
 
-  override lazy val allFiles: Dataset[AddFile] =
-    KernelSnapshotUtils.buildAllFiles(kernelSnapshot, spark, kernelEngine)
+  override lazy val allFiles: Dataset[AddFile] = prebuiltAllFiles.getOrElse(
+    KernelSnapshotUtils.buildAllFiles(kernelSnapshot, spark, kernelEngine))
+
+  /**
+   * Returns an equivalent facade whose V1 file state was built using the caller's engine.
+   *
+   * The resulting Dataset may evaluate lazily.
+   */
+  private[v2] def withPrebuiltAllFiles(engine: Engine): DeltaV2Snapshot =
+    new DeltaV2Snapshot(
+      kernelSnapshot,
+      KernelSnapshotUtils.buildAllFiles(kernelSnapshot, spark, engine))
 
   // --- StatisticsCollection ------------------------------------------------------------------
 
@@ -199,6 +219,23 @@ object DeltaV2Snapshot {
     }
     snapshot match {
       case deltaV2Snapshot: DeltaV2Snapshot => deltaV2Snapshot.kernelSnapshot
+      case other =>
+        throw new IllegalStateException(
+          s"Expected a DeltaV2Snapshot, but found ${other.getClass.getName}")
+    }
+  }
+
+  /**
+   * Returns a facade whose V1 file state was built using the caller's engine.
+   *
+   * The resulting Dataset may evaluate lazily.
+   */
+  private[v2] def withPrebuiltAllFiles(snapshot: Snapshot, engine: Engine): Snapshot = {
+    if (snapshot == null) {
+      throw new NullPointerException("snapshot is null")
+    }
+    snapshot match {
+      case deltaV2Snapshot: DeltaV2Snapshot => deltaV2Snapshot.withPrebuiltAllFiles(engine)
       case other =>
         throw new IllegalStateException(
           s"Expected a DeltaV2Snapshot, but found ${other.getClass.getName}")

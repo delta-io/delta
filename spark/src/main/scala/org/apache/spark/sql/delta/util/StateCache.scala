@@ -49,6 +49,17 @@ trait StateCache extends DeltaLogging {
   private lazy val storageLevel = StorageLevel.fromString(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL))
 
+  /**
+   * Whether StateCache initialization should validate the configured snapshot cache storage level.
+   *
+   * The Kernel-backed facade defers StateCache initialization until it accesses cache state.
+   */
+  protected def eagerlyInitializeStorageLevel: Boolean = true
+
+  if (eagerlyInitializeStorageLevel) {
+    storageLevel
+  }
+
   class CachedDS[A] private[StateCache](ds: Dataset[A], name: String) {
     // While we cache RDD to avoid re-computation in different spark sessions, `Dataset` can only be
     // reused by the session that created it to avoid session pollution. So we use `DatasetRefCache`

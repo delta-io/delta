@@ -23,6 +23,7 @@ import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.StructType;
@@ -34,6 +35,15 @@ import scala.collection.Iterator;
 public final class DeltaV2ScanUtils {
 
   private DeltaV2ScanUtils() {}
+
+  /**
+   * Builds a Kernel-backed snapshot's V1 file state using a caller-owned engine.
+   *
+   * <p>The resulting Dataset may evaluate lazily.
+   */
+  public static Snapshot withPrebuiltAllFiles(Snapshot snapshot, Engine engine) {
+    return DeltaV2Snapshot$.MODULE$.withPrebuiltAllFiles(snapshot, engine);
+  }
 
   public static PartitionReaderFactory newReaderFactory(
       Function1<PartitionedFile, Iterator<InternalRow>> readFunc, boolean supportsColumnar) {
