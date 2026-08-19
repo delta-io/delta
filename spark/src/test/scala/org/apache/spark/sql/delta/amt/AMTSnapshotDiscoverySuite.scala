@@ -221,6 +221,12 @@ class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
     try out.write(bytes) finally out.close()
   }
 
+  /** Deletes the `_last_checkpoint` file (used to simulate a missing hint). */
+  private def deleteLastCheckpoint(tableName: String): Unit = {
+    val (fs, path) = lastCheckpointFsAndPath(tableName)
+    assert(fs.delete(path, false), s"failed to delete $path")
+  }
+
   test("[cold init] refuses any AMT checkpoint provider without a CRC to cross-verify") {
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
       val name = "amt_no_crc_refused"
@@ -240,8 +246,8 @@ class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
     }
   }
 
-  test("[cold init] refuses the stale provider from stale _last_checkpoint") {
-    val name = "amt_stale_provider_refused"
+  test("[cold init] updates to the correct provider when _last_checkpoint is stale") {
+    val name = "amt_stale_last_checkpoint"
     withTable(name) {
       createAMTTable(name, checkpointInterval = 2)
       // Reach the first deferred checkpoint (content root 2, recorded at v3) and capture its hint.
@@ -255,14 +261,42 @@ class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
       assert(deltaLogForName(name).unsafeVolatileSnapshot.version == 5,
         "The second deferred AMT must land at v5.")
 
-      // Plant the stale hint: it points to content root 2 while the CRC at v5 records content
-      // root 4. A cold read installs the provider at content root 2, then refuses it because the
-      // CRC's manifest commit is ahead.
+      // Plant the stale hint: it points to content root 2 while the table is at content root 4.
       overwriteLastCheckpoint(name, staleHint)
-      val e = intercept[IllegalStateException](coldLoad(name))
-      assert(
-        e.getMessage.contains("AMT checkpoint mismatch") && e.getMessage.contains("root version 4"),
-        s"expected the stale-provider refusal, got: ${e.getMessage}")
+      val lmcAtV5 = LastManifestCommit(version = 5, contentRootVersion = 4)
+      assertColdSnapshotStates(
+        tableName = name,
+        version = 5,
+        amtCheckpointVersion = Some(4),
+        trailingDeltas = Seq(5L),
+        lastManifestCommit = Some(lmcAtV5))
+    }
+  }
+
+  test("[cold init] builds the correct provider when _last_checkpoint is absent") {
+    withTable("amt_absent_last_checkpoint") {
+      val name = "amt_absent_last_checkpoint"
+      createAMTTable(name, checkpointInterval = 2)
+      // Same timeline as the deferred cold test: 2 INSERTs land the v2 tree, recorded at v3.
+      (1 to 2).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+      val lmcAtV3 = LastManifestCommit(version = 3, contentRootVersion = 2)
+
+      // Baseline: the fresh cold read resolves the v2 tree via the hint.
+      assertColdSnapshotStates(
+        tableName = name,
+        version = 3,
+        amtCheckpointVersion = Some(2),
+        trailingDeltas = Seq(3L),
+        lastManifestCommit = Some(lmcAtV3))
+
+      // Delete the hint; the cold read must resolve the same state, rebuilt from the CRC.
+      deleteLastCheckpoint(name)
+      assertColdSnapshotStates(
+        tableName = name,
+        version = 3,
+        amtCheckpointVersion = Some(2),
+        trailingDeltas = Seq(3L),
+        lastManifestCommit = Some(lmcAtV3))
     }
   }
 

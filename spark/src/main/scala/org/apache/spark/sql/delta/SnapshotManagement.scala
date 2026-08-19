@@ -747,7 +747,7 @@ trait SnapshotManagement { self: DeltaLog =>
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
       checksumOpt: Option[VersionChecksum],
-      shouldVerifyAMTCheckpointProvider: Boolean = true): Snapshot = {
+      shouldReconcileAMTCheckpointProvider: Boolean = true): Snapshot = {
     val startingFrom = if (!initSegment.checkpointProvider.isEmpty) {
       log" starting from checkpoint version " +
       log"${MDC(DeltaLogKeys.START_VERSION, initSegment.checkpointProvider.version)}."
@@ -758,13 +758,15 @@ trait SnapshotManagement { self: DeltaLog =>
         initSegment, tableCommitCoordinatorClientOpt, catalogTableOpt) { segment =>
       val checksumOptAfterRead = checksumOpt.orElse(
         readChecksum(segment.version, lastSeenChecksumFileStatusOpt))
-      if (shouldVerifyAMTCheckpointProvider) {
-        verifyAMTCheckpointProvider(segment, checksumOptAfterRead)
+      val finalLogSegment = if (shouldReconcileAMTCheckpointProvider) {
+        reconcileAMTCheckpointProvider(segment, checksumOptAfterRead)
+      } else {
+        segment
       }
       new Snapshot(
         path = logPath,
         version = segment.version,
-        logSegment = segment,
+        logSegment = finalLogSegment,
         deltaLog = this,
         checksumOpt = checksumOptAfterRead
       )
@@ -1416,7 +1418,7 @@ trait SnapshotManagement { self: DeltaLog =>
         catalogTableOpt,
         checksumOpt,
         // The AMT checkpoint provider installed here comes from the commit and is authoritative.
-        shouldVerifyAMTCheckpointProvider = false)
+        shouldReconcileAMTCheckpointProvider = false)
     }
 
     var newSnapshot = createSnapshotWithCrc(snapChecksumOpt)
