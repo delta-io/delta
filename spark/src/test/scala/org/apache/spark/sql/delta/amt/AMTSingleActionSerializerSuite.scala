@@ -337,7 +337,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     val roundTripped = DeletionVector.toDescriptor(
       DeletionVector.fromDescriptor(dv, tableRoot), tableRoot)
     assert(roundTripped.storageType == DeletionVectorDescriptor.PATH_DV_MARKER)
-    assert(roundTripped.uniqueId == dv.uniqueId)
+    assert(roundTripped.legacyUniqueId == dv.legacyUniqueId)
     assert(roundTripped.sizeInBytes == dv.sizeInBytes)
     assert(roundTripped.offset == dv.offset)
   }

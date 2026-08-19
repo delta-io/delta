@@ -476,14 +476,14 @@ class OptimizeExecutor(
         // Note: When checking if the candidate set is the same, we need to consider (Path, DV)
         //       as the key.
         val candidateSetOld = filesToProcess.
-          map(f => UniqueFileActionTuple(f.pathAsUri, f.getDeletionVectorUniqueId)).toSet
+          map(f => UniqueFileActionTuple(f.pathAsUri, f.getLegacyDeletionVectorUniqueId)).toSet
 
         // We specifically don't list the files through the transaction since we are potentially
         // only processing a subset of them below. If the transaction is still valid, we will
         // register the files and predicate below
         val candidateSetNew =
           newTxn.snapshot.filesForScan(partitionPredicate).files
-            .map(f => UniqueFileActionTuple(f.pathAsUri, f.getDeletionVectorUniqueId)).toSet
+            .map(f => UniqueFileActionTuple(f.pathAsUri, f.getLegacyDeletionVectorUniqueId)).toSet
 
         // As long as all of the files that we compacted are still part of the table,
         // and the partitioning has not changed it is valid to continue to try

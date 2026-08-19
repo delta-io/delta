@@ -1624,7 +1624,7 @@ private[delta] object ConflictChecker extends DeltaLogging {
     actions.map { action =>
       action match {
         case add: AddFile =>
-          val dvId = add.getDeletionVectorUniqueId
+          val dvId = add.getLegacyDeletionVectorUniqueId
           addPaths.put(add.path, dvId).foreach { existingDVId =>
             failDuplicate("add", add.path, dvId, existingDVId)
           }
@@ -1635,7 +1635,7 @@ private[delta] object ConflictChecker extends DeltaLogging {
             }
           }
         case remove: RemoveFile =>
-          val dvId = remove.getDeletionVectorUniqueId
+          val dvId = remove.getLegacyDeletionVectorUniqueId
           removePaths.put(remove.path, dvId).foreach { existingDVId =>
             failDuplicate("remove", remove.path, dvId, existingDVId)
           }
