@@ -58,13 +58,6 @@ class DeltaV2Snapshot(
       deltaLog = null,
       checksumOpt = None) {
 
-  private[this] var prebuiltAllFiles: Option[Dataset[AddFile]] = None
-
-  private def this(kernelSnapshot: KernelSnapshot, prebuiltAllFiles: Dataset[AddFile]) = {
-    this(kernelSnapshot)
-    this.prebuiltAllFiles = Some(prebuiltAllFiles)
-  }
-
   private[this] var resolvedCatalogTableOpt: Option[CatalogTable] = None
 
   def this(
@@ -179,18 +172,8 @@ class DeltaV2Snapshot(
 
   // --- Files surfaced via Kernel scan ---------------------------------------------------------
 
-  override lazy val allFiles: Dataset[AddFile] = prebuiltAllFiles.getOrElse(
-    KernelSnapshotUtils.buildAllFiles(kernelSnapshot, spark, kernelEngine))
-
-  /**
-   * Returns an equivalent facade whose V1 file state was built using the caller's engine.
-   *
-   * The resulting Dataset may evaluate lazily.
-   */
-  private[v2] def withPrebuiltAllFiles(engine: Engine): DeltaV2Snapshot =
-    new DeltaV2Snapshot(
-      kernelSnapshot,
-      KernelSnapshotUtils.buildAllFiles(kernelSnapshot, spark, engine))
+  override lazy val allFiles: Dataset[AddFile] =
+    KernelSnapshotUtils.buildAllFiles(kernelSnapshot, spark, kernelEngine)
 
   // --- StatisticsCollection ------------------------------------------------------------------
 
@@ -235,20 +218,4 @@ object DeltaV2Snapshot {
     }
   }
 
-  /**
-   * Returns a facade whose V1 file state was built using the caller's engine.
-   *
-   * The resulting Dataset may evaluate lazily.
-   */
-  private[v2] def withPrebuiltAllFiles(snapshot: Snapshot, engine: Engine): Snapshot = {
-    if (snapshot == null) {
-      throw new NullPointerException("snapshot is null")
-    }
-    snapshot match {
-      case deltaV2Snapshot: DeltaV2Snapshot => deltaV2Snapshot.withPrebuiltAllFiles(engine)
-      case other =>
-        throw new IllegalStateException(
-          s"Expected a DeltaV2Snapshot, but found ${other.getClass.getName}")
-    }
-  }
 }
