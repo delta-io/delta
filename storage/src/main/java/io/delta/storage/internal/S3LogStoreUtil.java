@@ -27,6 +27,7 @@ import java.util.HashSet;
 import static org.apache.hadoop.fs.s3a.Constants.DEFAULT_MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.Constants.MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
+import static org.apache.hadoop.fs.s3a.S3AUtils.maybeAddTrailingSlash;
 
 
 /**
@@ -63,15 +64,39 @@ public final class S3LogStoreUtil {
         // List files lexicographically after resolvedPath inclusive within the same directory
         return listing.createFileStatusListingIterator(resolvedPath,
                 S3ListRequest.v2(
-                    ListObjectsV2Request.builder()
-                        .bucket(s3afs.getBucket())
-                        .maxKeys(maxKeys)
-                        .prefix(s3afs.pathToKey(parentPath))
-                        .startAfter(keyBefore(s3afs.pathToKey(resolvedPath)))
-                        .build()
+                    buildListObjectsV2Request(
+                        s3afs.getBucket(),
+                        s3afs.pathToKey(parentPath),
+                        s3afs.pathToKey(resolvedPath),
+                        maxKeys)
                 ), ACCEPT_ALL,
                 new Listing.AcceptAllButSelfAndS3nDirs(parentPath),
                 s3afs.getActiveAuditSpan());
+    }
+
+    /**
+     * Builds the {@link ListObjectsV2Request} for the fast {@code listFrom} path.
+     *
+     * <p>{@code delimiter="/"} keeps the listing to the immediate children of {@code parentPath}
+     * (matching {@code FileSystem.listStatus}); without it ListObjectsV2 recurses and surfaces
+     * {@code _staged_commits/} files as if they were commits. The delimiter only groups
+     * subdirectories when the prefix ends in {@code "/"}, so we re-add the trailing slash that
+     * {@code pathToKey} strips via {@code maybeAddTrailingSlash}.
+     *
+     * <p>Package-private for unit testing.
+     */
+    static ListObjectsV2Request buildListObjectsV2Request(
+            String bucket,
+            String parentKey,
+            String resolvedKey,
+            int maxKeys) {
+        return ListObjectsV2Request.builder()
+            .bucket(bucket)
+            .maxKeys(maxKeys)
+            .prefix(maybeAddTrailingSlash(parentKey))
+            .delimiter("/")
+            .startAfter(keyBefore(resolvedKey))
+            .build();
     }
 
     /**
