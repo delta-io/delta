@@ -220,23 +220,23 @@ final class AMTCheckpointProvider(
     // Key by (path, dv) so a same-path replace is handled: the removed (path, oldDv) is checked
     // against the AMT, while the re-added (path, newDv) is a distinct key absent from the tree.
     val committedFiles = committedActions.collect {
-      case a: AddFile => (a.path, a.getDeletionVectorUniqueId) -> a.backReference
-      case r: RemoveFile => (r.path, r.getDeletionVectorUniqueId) -> r.backReference
+      case a: AddFile => (a.path, a.getLegacyDeletionVectorUniqueId) -> a.backReference
+      case r: RemoveFile => (r.path, r.getLegacyDeletionVectorUniqueId) -> r.backReference
     }
     if (committedFiles.isEmpty) return
 
     val expectedKeyToBackreferenceMap =
       liveAddSingleActions(spark, deltaLog)
         .collect()
-        .map(sa => (sa.add.path, sa.add.getDeletionVectorUniqueId) -> sa.add.backReference)
+        .map(sa => (sa.add.path, sa.add.getLegacyDeletionVectorUniqueId) -> sa.add.backReference)
         .toMap
 
     // Keys an intermediate commit (after this AMT) already re-committed. The first superseding
     // add/remove must carry a back reference; a 2nd superseding one of the same key need not.
     val intermediateCommittedKeys =
       deltaLog.getChanges(checkpointVersion + 1).flatMap(_._2).collect {
-        case a: AddFile => (a.path, a.getDeletionVectorUniqueId)
-        case r: RemoveFile => (r.path, r.getDeletionVectorUniqueId)
+        case a: AddFile => (a.path, a.getLegacyDeletionVectorUniqueId)
+        case r: RemoveFile => (r.path, r.getLegacyDeletionVectorUniqueId)
       }.toSet
 
     committedFiles.foreach { case (key, actual) =>

@@ -2969,6 +2969,20 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT =
+    buildConf("deletionVectors.useObjectIdentityForNonAMTTables")
+      .internal()
+      .doc(
+        """When true, Delta compares deletion vectors by their normalized object identity instead
+          |of their legacy descriptor identity for non-AMT tables (AMT tables always use object
+          |identity). The legacy identity is based on the serialized descriptor fields,
+          |so equivalent `u`, `r`, and in-table `p` descriptors compare as different DVs.
+          |The object identity is based on the table-relative DV object location and offset
+          |when possible, so those equivalent descriptors compare as the same DV.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELETION_VECTOR_PACKING_TARGET_SIZE =
     buildConf("deletionVectors.packing.targetSize")
       .internal()

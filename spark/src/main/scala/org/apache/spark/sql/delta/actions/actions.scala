@@ -984,13 +984,27 @@ case class AddFile(
   }
 
   /**
-   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   * Return the legacy unique id of the deletion vector, if present, or `None` if there's no DV.
    *
-   * The unique id differentiates DVs, even if there are multiple in the same file
+   * The legacy unique id differentiates DVs, even if there are multiple in the same file
    * or the DV is stored inline.
    */
   @JsonIgnore
-  def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
+  def getLegacyDeletionVectorUniqueId: Option[String] =
+    Option(deletionVector).map(_.legacyUniqueId)
+
+  /**
+   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   *
+   * This overload allows callers to use object identity for comparisons. Prefer this
+   * if possible. See document of [[DeletionVectorDescriptor.uniqueId]] for more details.
+   */
+  @JsonIgnore
+  def getDeletionVectorUniqueId(
+      tableRoot: Path,
+      useObjectIdentity: Boolean): Option[String] = {
+    Option(deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity))
+  }
 
   /** Update stats to have tightBounds = false, if file has any stats. */
   def withoutTightBoundStats: AddFile = {
@@ -1194,13 +1208,27 @@ case class RemoveFile(
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
 
   /**
-   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   * Return the legacy unique id of the deletion vector, if present, or `None` if there's no DV.
    *
-   * The unique id differentiates DVs, even if there are multiple in the same file
+   * The legacy unique id differentiates DVs, even if there are multiple in the same file
    * or the DV is stored inline.
    */
   @JsonIgnore
-  def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
+  def getLegacyDeletionVectorUniqueId: Option[String] =
+    Option(deletionVector).map(_.legacyUniqueId)
+
+  /**
+   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   *
+   * This overload allows callers to use object identity for comparisons. Prefer this
+   * if possible. See document of [[DeletionVectorDescriptor.uniqueId]] for more details.
+   */
+  @JsonIgnore
+  def getDeletionVectorUniqueId(
+      tableRoot: Path,
+      useObjectIdentity: Boolean): Option[String] = {
+    Option(deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity))
+  }
 
   /**
    * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.

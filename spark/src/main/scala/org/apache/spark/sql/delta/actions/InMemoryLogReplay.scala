@@ -72,14 +72,15 @@ class InMemoryLogReplay(
       case a: Protocol =>
         currentProtocolVersion = a
       case add: AddFile =>
-        val uniquePath = UniqueFileActionTuple(add.pathAsUri, add.getDeletionVectorUniqueId)
+        val uniquePath = UniqueFileActionTuple(add.pathAsUri, add.getLegacyDeletionVectorUniqueId)
         activeFiles(uniquePath) = add.copy(dataChange = false)
         // Remove the tombstone to make sure we only output one `FileAction`.
         cancelledRemoveFiles.remove(uniquePath)
         // Remove from activeRemoveFiles to handle commits that add a previously-removed file
         activeRemoveFiles.remove(uniquePath)
       case remove: RemoveFile =>
-        val uniquePath = UniqueFileActionTuple(remove.pathAsUri, remove.getDeletionVectorUniqueId)
+        val uniquePath =
+          UniqueFileActionTuple(remove.pathAsUri, remove.getLegacyDeletionVectorUniqueId)
         activeFiles.remove(uniquePath) match {
           case Some(_) => cancelledRemoveFiles(uniquePath) = remove
           case None => activeRemoveFiles(uniquePath) = remove
@@ -142,11 +143,11 @@ object InMemoryLogReplay{
 
   implicit class UniqueAddFileTuple(a: AddFile) {
     def toUniqueFileActionTuple: UniqueFileActionTuple =
-      UniqueFileActionTuple(a.pathAsUri, a.getDeletionVectorUniqueId)
+      UniqueFileActionTuple(a.pathAsUri, a.getLegacyDeletionVectorUniqueId)
   }
 
   implicit class UniqueRemoveFileTuple(r: RemoveFile) {
     def toUniqueFileActionTuple: UniqueFileActionTuple =
-      UniqueFileActionTuple(r.pathAsUri, r.getDeletionVectorUniqueId)
+      UniqueFileActionTuple(r.pathAsUri, r.getLegacyDeletionVectorUniqueId)
   }
 }

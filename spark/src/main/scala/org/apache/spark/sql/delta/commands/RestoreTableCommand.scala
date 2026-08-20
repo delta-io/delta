@@ -144,7 +144,7 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           if (mayHaveDVs) {
             normalizedDf.withColumn(
               dvIdColumnName,
-              DeletionVectorDescriptor.uniqueIdExpression(dvAccessColumn))
+              DeletionVectorDescriptor.legacyUniqueIdExpression(dvAccessColumn))
           } else {
             normalizedDf.withColumn(dvIdColumnName, lit(null))
           }
