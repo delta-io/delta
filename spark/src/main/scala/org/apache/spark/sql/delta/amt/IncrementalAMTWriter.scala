@@ -303,15 +303,14 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       MDVAndCDFPositions(newMDVPositionsByLeaf, deletedPositionsByLeaf, replacedPositionsByLeaf))
   }
 
-  private def carryForwardOneLeaf(
+  // Visible for testing.
+  private[amt] def carryForwardOneLeaf(
       pointer: DataManifestEntry,
       newMdvPositions: Seq[Long],
       deletedPositions: Seq[Long],
       replacedPositions: Seq[Long]): DataManifestEntry = {
-    val liveFileCount =
-      pointer.manifest_info.added_files_count + pointer.manifest_info.existing_files_count
-    val tombstoneFileCount =
-      pointer.manifest_info.deleted_files_count + pointer.manifest_info.replaced_files_count
+    val liveFileCount = pointer.manifest_info.liveFilesCount
+    val tombstoneFileCount = pointer.manifest_info.tombstoneFilesCount
     if (liveFileCount > 0 && tombstoneFileCount > 0) {
       throw new IllegalStateException(
         "Leaves having mix of live files and tombstones are not supported yet")

@@ -223,6 +223,7 @@ object AMTWriteHelper extends DeltaLogging {
     }
     val amtDf = AMTPartitionValues.forWrite(amtDs.toDF(), metadata.partitionSchema)
     val schema = AMTSingleAction.persistedSchema(metadata.partitionSchema)
+    val recordCountIdx = amtDf.schema.fieldIndex("record_count")
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
@@ -243,8 +244,13 @@ object AMTWriteHelper extends DeltaLogging {
           val conf = serConf.value
           val leafFile = FileNames.newAMTLeafManifestFile(metadataDirSparkPath.toPath)
 
-          var entryCount = 0L
-          val countingRows = iter.map { row => entryCount += 1; row }
+          var entryCount = 0
+          var entryRows = 0L
+          val countingRows = iter.map { row =>
+            entryCount += 1
+            entryRows += row.getLong(recordCountIdx)
+            row
+          }
           val status = Checkpoints.writeSingleFileOnExecutor(
             conf = conf,
             factory = factory,
@@ -257,14 +263,15 @@ object AMTWriteHelper extends DeltaLogging {
             rows = countingRows
           )
           val leafFs = leafFile.getFileSystem(conf)
-          // The root pointer to this leaf is newly ADDED, even though the leaf's own DATA
-          // entries are EXISTING (the referenced data files already lived in the table).
-          val (tracking, manifestInfo) =
-            addedTrackingForLeaf(
-              addedFilesCount = 0,
-              existingFilesCount = entryCount.toInt,
-              deletedFilesCount = 0,
-              replacedFilesCount = 0)
+          // The root pointer to this leaf is newly ADDED, even though the leaf's own DATA entries
+          // are EXISTING (the referenced data files already lived in the table), so manifest_info
+          // counts every entry and its rows as EXISTING.
+          val (tracking, manifestInfo) = addedTrackingForLeaf(
+            addedFileAndRowCount = emptyFileRowCount,
+            existingFileAndRowCount = FileRowCount(entryCount, entryRows),
+            deletedFileAndRowCount = emptyFileRowCount,
+            replacedFileAndRowCount = emptyFileRowCount,
+            modifiedFileAndRowCount = emptyFileRowCount)
           Iterator.single(DataManifestEntry(
             location = AMTUtils.relativizeManifestPathToTableRoot(
               leafFs, tableRootSparkPath.toPath, leafFile),
@@ -296,29 +303,70 @@ object AMTWriteHelper extends DeltaLogging {
   private[amt] def removedTrackingForDataEntry() = initializeTracking(Tracking.Status.Deleted)
   private[amt] def replacedTrackingForDataEntry() = initializeTracking(Tracking.Status.Replaced)
 
-  /** Tracking + ManifestInfo for a newly written leaf derived from its entries. */
-  private[amt] def addedTrackingForLeaf(entryStatuses: Seq[Int]): (Tracking, ManifestInfo) = {
-    val frequencies = entryStatuses.groupBy(identity).map { case (status, s) => status -> s.length }
-    def count(status: Int): Int = frequencies.getOrElse(status, 0)
+  /** Paired file and row tallies for a leaf's entries in one tracking-status group. */
+  private[amt] case class FileRowCount(fileCount: Int, rowCount: Long)
+  private[amt] val emptyFileRowCount = FileRowCount(0, 0L)
+
+  /**
+   * Tallies a freshly written leaf's entries into per-status file and row counts in a single pass,
+   * then builds its `(Tracking, ManifestInfo)`. Each entry contributes one file and its physical
+   * `record_count` rows to the count group for its tracking status (ADDED, EXISTING, DELETED,
+   * REPLACED, or MODIFIED).
+   */
+  private[amt] def addedTrackingForLeaf(entries: Seq[DataEntry]): (Tracking, ManifestInfo) = {
+    // Accumulate per-status file and row counts in a single pass. Plain Long accumulators avoid
+    // allocating an intermediate object per entry.
+    var addedFiles, existingFiles, deletedFiles, replacedFiles, modifiedFiles = 0
+    var addedRows, existingRows, deletedRows, replacedRows, modifiedRows = 0L
+    entries.foreach { entry =>
+      val rows = entry.record_count
+      entry.tracking.status match {
+        case Tracking.Status.Added =>
+          addedFiles += 1
+          addedRows += rows
+        case Tracking.Status.Existing =>
+          existingFiles += 1
+          existingRows += rows
+        case Tracking.Status.Deleted =>
+          deletedFiles += 1
+          deletedRows += rows
+        case Tracking.Status.Replaced =>
+          replacedFiles += 1
+          replacedRows += rows
+        case Tracking.Status.Modified =>
+          modifiedFiles += 1
+          modifiedRows += rows
+        case other =>
+          throw new IllegalStateException(s"Unexpected leaf entry tracking status: $other.")
+      }
+    }
     addedTrackingForLeaf(
-      addedFilesCount = count(Tracking.Status.Added) + count(Tracking.Status.Modified),
-      existingFilesCount = count(Tracking.Status.Existing),
-      deletedFilesCount = count(Tracking.Status.Deleted),
-      replacedFilesCount = count(Tracking.Status.Replaced))
+      addedFileAndRowCount = FileRowCount(addedFiles, addedRows),
+      existingFileAndRowCount = FileRowCount(existingFiles, existingRows),
+      deletedFileAndRowCount = FileRowCount(deletedFiles, deletedRows),
+      replacedFileAndRowCount = FileRowCount(replacedFiles, replacedRows),
+      modifiedFileAndRowCount = FileRowCount(modifiedFiles, modifiedRows))
   }
 
-  /** Tracking + ManifestInfo for a newly written leaf from its file counts. */
+  /** Tracking + ManifestInfo for a freshly written leaf from its per-status file and row counts. */
   private[amt] def addedTrackingForLeaf(
-      addedFilesCount: Int,
-      existingFilesCount: Int,
-      deletedFilesCount: Int,
-      replacedFilesCount: Int): (Tracking, ManifestInfo) = {
+      addedFileAndRowCount: FileRowCount,
+      existingFileAndRowCount: FileRowCount,
+      deletedFileAndRowCount: FileRowCount,
+      replacedFileAndRowCount: FileRowCount,
+      modifiedFileAndRowCount: FileRowCount): (Tracking, ManifestInfo) = {
     val tracking = initializeTracking(Tracking.Status.Added)
     val manifestInfo = emptyManifestInfo.copy(
-      added_files_count = addedFilesCount,
-      existing_files_count = existingFilesCount,
-      deleted_files_count = deletedFilesCount,
-      replaced_files_count = replacedFilesCount)
+      added_files_count = addedFileAndRowCount.fileCount,
+      existing_files_count = existingFileAndRowCount.fileCount,
+      deleted_files_count = deletedFileAndRowCount.fileCount,
+      replaced_files_count = replacedFileAndRowCount.fileCount,
+      modified_files_count = modifiedFileAndRowCount.fileCount,
+      added_rows_count = addedFileAndRowCount.rowCount,
+      existing_rows_count = existingFileAndRowCount.rowCount,
+      deleted_rows_count = deletedFileAndRowCount.rowCount,
+      replaced_rows_count = replacedFileAndRowCount.rowCount,
+      modified_rows_count = modifiedFileAndRowCount.rowCount)
     (tracking, manifestInfo)
   }
 
@@ -331,6 +379,8 @@ object AMTWriteHelper extends DeltaLogging {
       oldEntry: DataManifestEntry): (Tracking, ManifestInfo) = {
     val newTracking = oldEntry.tracking.copy(
       status = Tracking.Status.Deleted,
+      // Clear the per-commit CDF positions: the leaf is being dropped, not changed this commit, so
+      // it must not contribute any deleted/replaced rows to this commit's Change Data Feed.
       deleted_positions = None,
       replaced_positions = None)
     (newTracking, oldEntry.manifest_info)
@@ -378,9 +428,8 @@ object AMTWriteHelper extends DeltaLogging {
     assertWithinLeaf(replacedPositions.size.toLong, "replaced_positions")
     // A leaf whose every live entry is masked by the cumulative MDV holds no live file, so it
     // decays to DELETED rather than MODIFIED.
-    val liveFileCount =
-      oldEntry.manifest_info.added_files_count + oldEntry.manifest_info.existing_files_count
-    val noActiveFiles = liveFileCount.toLong - cumulativeMdv.cardinality <= 0
+    val noActiveFiles =
+      oldEntry.manifest_info.liveFilesCount.toLong - cumulativeMdv.cardinality <= 0
     val status = if (noActiveFiles) Tracking.Status.Deleted else Tracking.Status.Modified
     val newTracking = oldEntry.tracking.copy(
       status = status,
@@ -409,9 +458,8 @@ object AMTWriteHelper extends DeltaLogging {
     writeAMTParquet(spark, hadoopConf, leafFile, metadata, entries.map(_.wrap))
     val fileStatus = fs.getFileStatus(leafFile)
     // A freshly written leaf is always ADDED -- even one holding only tombstones, whose
-    // manifest_info still counts the DELETED / REPLACED entries.
-    val statuses = entries.map(_.tracking.status)
-    val (tracking, manifestInfo) = addedTrackingForLeaf(statuses)
+    // manifest_info still counts the DELETED / REPLACED entries and their rows.
+    val (tracking, manifestInfo) = addedTrackingForLeaf(entries)
     DataManifestEntry(
       location = AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, leafFile),
       file_format = AMTSingleAction.FileFormatParquet,
@@ -460,10 +508,12 @@ object AMTWriteHelper extends DeltaLogging {
       existing_files_count = 0,
       deleted_files_count = 0,
       replaced_files_count = 0,
+      modified_files_count = 0,
       added_rows_count = 0L,
       existing_rows_count = 0L,
       deleted_rows_count = 0L,
       replaced_rows_count = 0L,
+      modified_rows_count = 0L,
       // No data sequence numbers are assigned yet; 0 is the conventional "unset" minimum.
       min_sequence_number = 0L,
       dv = None,

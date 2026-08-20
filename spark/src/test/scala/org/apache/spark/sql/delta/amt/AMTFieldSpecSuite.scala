@@ -145,7 +145,7 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
       "writes stamp field ids on every leaf and root field",
       "amt_fieldid_write",
       sqlConfs = leafPackingConfs)(
-      setup = name => appendRowsAsSeparateFiles(name, numRows = leafPackedFiles - 1),
+      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val hadoopConf = context.postCheckpointSnapshot.deltaLog.newDeltaHadoopConf()

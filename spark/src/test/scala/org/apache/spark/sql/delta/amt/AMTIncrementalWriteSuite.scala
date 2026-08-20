@@ -44,14 +44,14 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
   /** A deterministic fake data file. Paths are unique per id so live sets are easy to reason on. */
   private def fakeAdd(fileID: Int): AddFile = fakeAdd(fileID, dataChange = true)
 
-  private def fakeAdd(fileID: Int, dataChange: Boolean): AddFile =
+  private def fakeAdd(fileID: Int, dataChange: Boolean, numRecords: Long = 1L): AddFile =
     AddFile(
       path = f"part-$fileID%05d.parquet",
       partitionValues = Map.empty,
       size = 100L + fileID,
       modificationTime = 1000L + fileID,
       dataChange = dataChange,
-      stats = s"""{"numRecords":1}""")
+      stats = s"""{"numRecords":$numRecords}""")
 
   /** Creates the non-AMT never-checkpointed baseline table and the AMT-backed subject table. */
   private def createTables(
@@ -327,11 +327,14 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
    */
   private def assertCarriedLeafCountsImmutable(
       oldLeaves: Map[String, DataManifestEntry], amtDeltaLog: DeltaLog): Unit = {
-    def fileAndRowCounts(e: DataManifestEntry): (Int, Int, Int, Int, Long, Long, Long, Long) =
+    def fileAndRowCounts(
+        e: DataManifestEntry): (Int, Int, Int, Int, Int, Long, Long, Long, Long, Long) =
       (e.manifest_info.added_files_count, e.manifest_info.existing_files_count,
         e.manifest_info.deleted_files_count, e.manifest_info.replaced_files_count,
+        e.manifest_info.modified_files_count,
         e.manifest_info.added_rows_count, e.manifest_info.existing_rows_count,
-        e.manifest_info.deleted_rows_count, e.manifest_info.replaced_rows_count)
+        e.manifest_info.deleted_rows_count, e.manifest_info.replaced_rows_count,
+        e.manifest_info.modified_rows_count)
     val newLeaves = leafPointers(amtDeltaLog.update())
     oldLeaves.foreach { case (location, oldLeaf) =>
       newLeaves.get(location).foreach { newLeaf =>
@@ -566,7 +569,8 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
       amtDeltaLog: DeltaLog,
       entriesPerLeaf: Int,
       initialIdRangeInLeaf: Range,
-      initialIdRangeInRoot: Range = Range(0, 0)): Seq[DataManifestEntry] = {
+      initialIdRangeInRoot: Range = Range(0, 0),
+      rowCountPerDataEntry: Long = 1L): Seq[DataManifestEntry] = {
     require(initialIdRangeInLeaf.size > entriesPerLeaf,
       s"initialIdRangeInLeaf (${initialIdRangeInLeaf.size}) must exceed entriesPerLeaf " +
         s"($entriesPerLeaf).")
@@ -575,12 +579,14 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
       s"initialIdRangeInRoot (${initialIdRangeInRoot.size}) must be <= " +
         s"${entriesPerLeaf - numLeaves} (entriesPerLeaf minus $numLeaves leaf pointers) so the " +
         "root-resident adds do not spill.")
-    commitBoth(baselineDeltaLog, amtDeltaLog, initialIdRangeInLeaf.map(fakeAdd))
+    def adds(ids: Range): Seq[AddFile] =
+      ids.map(id => fakeAdd(id, dataChange = true, numRecords = rowCountPerDataEntry))
+    commitBoth(baselineDeltaLog, amtDeltaLog, adds(initialIdRangeInLeaf))
     commitCheckpoint(amtDeltaLog, incremental = false)
     assert(leafPointers(amtDeltaLog.update()).size == numLeaves,
       s"the full checkpoint must pack $numLeaves leaves.")
     if (initialIdRangeInRoot.nonEmpty) {
-      commitBoth(baselineDeltaLog, amtDeltaLog, initialIdRangeInRoot.map(fakeAdd))
+      commitBoth(baselineDeltaLog, amtDeltaLog, adds(initialIdRangeInRoot))
       commitCheckpoint(amtDeltaLog, incremental = true)
       assert(leafPointers(amtDeltaLog.update()).size == numLeaves,
         "the root-resident adds must not spill any leaf.")
@@ -2199,14 +2205,16 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
         // Old tree: 5 root-resident DATA entries over 2 leaves (files 1..20 packed into 2 whole
         // leaves, then files 21..25 appended root-resident under the cap of 10).
         val oldLeafLocations = setup(baselineDeltaLog, amtDeltaLog, entriesPerLeaf = 10,
-          initialIdRangeInLeaf = 1 to 20, initialIdRangeInRoot = 21 to 25).map(_.location).toSet
+          initialIdRangeInLeaf = 1 to 20, initialIdRangeInRoot = 21 to 25,
+          rowCountPerDataEntry = 20).map(_.location).toSet
         assert(rootDataEntryStatusToCount(amtDeltaLog).values.sum == 5,
           "the old root must hold exactly the 5 root-resident DATA entries.")
 
-        // A deferred (window) log commit appends files 26..28; not checkpointed, so they enter the
-        // next incremental write as intermediate window commits.
+        // A deferred (window) log commit appends files 26..28 (10 rows each); not checkpointed, so
+        // they enter the next incremental write as intermediate window commits.
         val windowIds = 26 to 28
-        commitBoth(baselineDeltaLog, amtDeltaLog, windowIds.map(fakeAdd))
+        commitBoth(baselineDeltaLog, amtDeltaLog,
+          windowIds.map(id => fakeAdd(id, dataChange = true, numRecords = 10L)))
 
         // One inline commit exercising every live-status class:
         //   - REPLACE 3 root files (remove + re-add under a new DV): 3 REPLACED + 3 MODIFIED.
@@ -2226,7 +2234,7 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
           Seq(26, 27).flatMap(id => removeAndReAddWithDV(amtDeltaLog, Left(id)))
         // File 1 is leaf-resident (one of the 20 files packed into the 2 full-rewrite leaves).
         val replaceLeaf = removeAndReAddWithDV(amtDeltaLog, Left(1))
-        val netNewAdd = Seq(fakeAdd(29))
+        val netNewAdd = Seq(fakeAdd(29, dataChange = true, numRecords = 30L))
         val inlineActions =
           replaceRoots ++ deleteRoot ++ replaceWindows ++ replaceLeaf ++ netNewAdd
 
@@ -2267,15 +2275,26 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
           Tracking.Status.Existing -> 2L),
           s"leaf entries must be 1 ADDED + 6 MODIFIED + 2 EXISTING; got $leafStatusToCount.")
 
-        // manifest_info collapses ADDED + MODIFIED into added_files_count; EXISTING stands alone,
-        // and a live spilled leaf carries no tombstone counts.
+        // manifest_info counts each status separately: 1 ADDED, 6 MODIFIED, 2 EXISTING, and a live
+        // spilled leaf carries no tombstone counts.
         val mi = spilledLeaf.manifest_info
-        assert(mi.added_files_count == 7 && mi.existing_files_count == 2 &&
+        assert(mi.added_files_count == 1 && mi.modified_files_count == 6 &&
+          mi.existing_files_count == 2 &&
           mi.deleted_files_count == 0 && mi.replaced_files_count == 0,
-          s"leaf manifest_info must be added=7 (1 ADDED + 6 MODIFIED), existing=2, no " +
-            s"tombstones; got $mi.")
-        assert(mi.added_files_count + mi.existing_files_count == spilledLeaf.record_count.toInt,
-          s"added + existing must partition the leaf's ${spilledLeaf.record_count} entries.")
+          s"leaf manifest_info must be added=1, modified=6, existing=2, no tombstones; got $mi.")
+        assert(
+          mi.added_files_count + mi.modified_files_count + mi.existing_files_count ==
+            spilledLeaf.record_count.toInt,
+          s"added + modified + existing must partition the leaf's ${spilledLeaf.record_count} " +
+            s"entries; got $mi.")
+
+        // Row counts sum physical records, so they diverge from the file counts here. ADDED rows =
+        // the 30-row net-new file 29; MODIFIED rows = 6 single-row re-adds; EXISTING rows = the
+        // 20-row root file 25 + the 10-row window file 28 = 30; no tombstone rows.
+        assert(mi.added_rows_count == 30L && mi.modified_rows_count == 6L &&
+          mi.existing_rows_count == 30L &&
+          mi.deleted_rows_count == 0L && mi.replaced_rows_count == 0L,
+          s"leaf row counts must be added=30, modified=6, existing=30, no tombstones; got $mi.")
       }
     }
   }
@@ -2322,7 +2341,11 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
     withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10") {
       withTables() { (baselineDeltaLog, amtDeltaLog) =>
         setup(baselineDeltaLog, amtDeltaLog, entriesPerLeaf = 10,
-          initialIdRangeInLeaf = 1 to 30, initialIdRangeInRoot = 31 to 37)
+          initialIdRangeInLeaf = 1 to 30, initialIdRangeInRoot = 31 to 36,
+          rowCountPerDataEntry = 10)
+        // File 37 arrives as a separate (uncheckpointed) log commit carrying 20 rows.
+        commitBoth(baselineDeltaLog, amtDeltaLog,
+          Seq(fakeAdd(37, dataChange = true, numRecords = 20L)))
         // Inline: delete every root-resident file (no-backref -> DELETED tombstones) and append
         // enough net-new files that the live adds spill into new leaves; the extra pointers push
         // the tombstones past the cap, so they spill into their own leaf.
@@ -2341,8 +2364,18 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
         assert(tombstoneLeaf.tracking.status == Tracking.Status.Added,
           s"a freshly spilled tombstone leaf is born ADDED; got ${tombstoneLeaf.tracking.status}.")
         assert(tombstoneLeaf.manifest_info.added_files_count == 0 &&
-          tombstoneLeaf.manifest_info.existing_files_count == 0,
+          tombstoneLeaf.manifest_info.existing_files_count == 0 &&
+          tombstoneLeaf.manifest_info.modified_files_count == 0,
           s"the tombstone leaf holds no live entries; got ${tombstoneLeaf.manifest_info}.")
+        // The 7 DELETED tombstones carry their files' physical rows: six 10-row root files plus the
+        // 20-row window file 37 = 80 deleted rows, versus 7 deleted files, and no live rows.
+        val tombstoneMi = tombstoneLeaf.manifest_info
+        assert(tombstoneMi.deleted_files_count == 7 && tombstoneMi.deleted_rows_count == 80L &&
+          tombstoneMi.replaced_rows_count == 0L,
+          s"tombstone leaf must count 7 deleted files and 80 deleted rows; got $tombstoneMi.")
+        assert(tombstoneMi.added_rows_count == 0L && tombstoneMi.existing_rows_count == 0L &&
+          tombstoneMi.modified_rows_count == 0L,
+          s"the tombstone leaf holds no live rows; got $tombstoneMi.")
         assert(!bornLeaves.values.exists(_.tracking.status == Tracking.Status.Deleted),
           "no leaf is DELETED on the commit that spills the tombstone leaf.")
         assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
@@ -2366,7 +2399,11 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
     withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10") {
       withTables() { (baselineDeltaLog, amtDeltaLog) =>
         setup(baselineDeltaLog, amtDeltaLog, entriesPerLeaf = 10,
-          initialIdRangeInLeaf = 1 to 30, initialIdRangeInRoot = 31 to 37)
+          initialIdRangeInLeaf = 1 to 30, initialIdRangeInRoot = 31 to 36,
+          rowCountPerDataEntry = 10)
+        // File 37 arrives as a separate (uncheckpointed) log commit carrying 20 rows.
+        commitBoth(baselineDeltaLog, amtDeltaLog,
+          Seq(fakeAdd(37, dataChange = true, numRecords = 20L)))
         // Inline: DELETE 3 root-resident files (31..33) and REPLACE the other 4 (34..37, remove +
         // re-add with a new DV), plus append net-new files so the tombstones overflow into a
         // spilled leaf.
@@ -2386,8 +2423,17 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
           s"a freshly spilled tombstone leaf is born ADDED; got ${tombstoneLeaves.head.tracking}.")
         assert(mi.deleted_files_count == 3 && mi.replaced_files_count == 4,
           s"the tombstone leaf must count 3 DELETED + 4 REPLACED entries; got $mi.")
-        assert(mi.added_files_count == 0 && mi.existing_files_count == 0,
+        assert(mi.added_files_count == 0 && mi.existing_files_count == 0 &&
+          mi.modified_files_count == 0,
           s"the tombstone leaf holds no live entries; got $mi.")
+        // Row counts sum physical records, diverging from the file counts: the 3 DELETED tombstones
+        // are 10-row root files (30 rows); the 4 REPLACED tombstones are three 10-row root files
+        // plus the 20-row window file 37 (50 rows).
+        assert(mi.deleted_rows_count == 30L && mi.replaced_rows_count == 50L,
+          s"tombstone row counts must be 30 deleted + 50 replaced; got $mi.")
+        assert(mi.added_rows_count == 0L && mi.existing_rows_count == 0L &&
+          mi.modified_rows_count == 0L,
+          s"the tombstone leaf holds no live rows; got $mi.")
         assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
       }
     }
@@ -2884,6 +2930,62 @@ class AMTIncrementalWriteSuite extends AMTCheckpointTestBase with GridTestShim {
       oldRootAdds = Seq(fakeAdd(1)),
       actionsToCommit = Seq(fakeAdd(1, dataChange = false)))
     assert(refresh.reCommittedLiveAdd.isDefined)
+  }
+
+  /** A carried leaf pointer whose manifest_info carries the given per-status file counts. */
+  private def carriedLeafPointer(
+      addedFiles: Int = 0,
+      existingFiles: Int = 0,
+      deletedFiles: Int = 0,
+      replacedFiles: Int = 0,
+      modifiedFiles: Int = 0): DataManifestEntry =
+    DataManifestEntry(
+      location = "metadata/leaf-guard.parquet",
+      file_format = AMTSingleAction.FileFormatParquet,
+      tracking = Tracking(
+        status = Tracking.Status.Existing,
+        snapshot_id = None, dv_snapshot_id = None, sequence_number = None,
+        file_sequence_number = None, first_row_id = None,
+        deleted_positions = None, replaced_positions = None),
+      record_count =
+        (addedFiles + existingFiles + deletedFiles + replacedFiles + modifiedFiles).toLong,
+      file_size_in_bytes = 100L,
+      manifest_info = ManifestInfo(
+        added_files_count = addedFiles, existing_files_count = existingFiles,
+        deleted_files_count = deletedFiles, replaced_files_count = replacedFiles,
+        modified_files_count = modifiedFiles,
+        added_rows_count = 0L, existing_rows_count = 0L,
+        deleted_rows_count = 0L, replaced_rows_count = 0L, modified_rows_count = 0L,
+        min_sequence_number = 0L, dv = None, dv_cardinality = None))
+
+  test("H8: carryForwardOneLeaf rejects a carried leaf mixing live files and tombstones") {
+    withTables() { (_, amtDeltaLog) =>
+      val writer = new IncrementalAMTWriter(spark, amtDeltaLog)
+      // A carried leaf whose manifest_info counts both a live file and a tombstone is a corrupt
+      // shape the writer does not support.
+      val mixed = carriedLeafPointer(existingFiles = 2, deletedFiles = 1)
+      val ex = intercept[IllegalStateException] {
+        writer.carryForwardOneLeaf(mixed, newMdvPositions = Seq.empty,
+          deletedPositions = Seq.empty, replacedPositions = Seq.empty)
+      }
+      assert(ex.getMessage.contains("mix of live files and tombstones"),
+        s"expected the live+tombstone-mix invariant; got: ${ex.getMessage}")
+    }
+  }
+
+  test("H9: carryForwardOneLeaf rejects new MDV positions on a leaf with no live file") {
+    withTables() { (_, amtDeltaLog) =>
+      val writer = new IncrementalAMTWriter(spark, amtDeltaLog)
+      // A tombstone-only carried leaf holds no live entry, so it cannot gain new MDV positions --
+      // there is nothing left to mask.
+      val tombstoneOnly = carriedLeafPointer(deletedFiles = 3)
+      val ex = intercept[IllegalStateException] {
+        writer.carryForwardOneLeaf(tombstoneOnly, newMdvPositions = Seq(0L),
+          deletedPositions = Seq.empty, replacedPositions = Seq.empty)
+      }
+      assert(ex.getMessage.contains("no live file but gained new MDV positions"),
+        s"expected the dead-leaf-MDV invariant; got: ${ex.getMessage}")
+    }
   }
 
 }

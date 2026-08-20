@@ -237,10 +237,12 @@ object AMTSingleAction {
     required(505L, "existing_files_count"),
     required(506L, "deleted_files_count"),
     required(520L, "replaced_files_count"),
+    required(524L, "modified_files_count"),
     required(512L, "added_rows_count"),
     required(513L, "existing_rows_count"),
     required(514L, "deleted_rows_count"),
     required(521L, "replaced_rows_count"),
+    required(525L, "modified_rows_count"),
     required(516L, "min_sequence_number"),
     optional(522L, "dv"),
     optional(523L, "dv_cardinality"))
@@ -748,10 +750,12 @@ object DeletionVector {
  * @param existing_files_count Count of EXISTING file entries.
  * @param deleted_files_count Count of DELETED file entries.
  * @param replaced_files_count Count of REPLACED file entries.
+ * @param modified_files_count Count of MODIFIED file entries.
  * @param added_rows_count Rows across ADDED files.
  * @param existing_rows_count Rows across EXISTING files.
  * @param deleted_rows_count Rows across DELETED files.
  * @param replaced_rows_count Rows across REPLACED files.
+ * @param modified_rows_count Rows across MODIFIED files.
  * @param min_sequence_number Minimum data sequence number across the manifest's entries.
  * @param dv Inline manifest deletion-vector bitmap over leaf row positions.
  * @param dv_cardinality Number of positions the inline manifest DV marks.
@@ -761,13 +765,22 @@ case class ManifestInfo(
     existing_files_count: Int,        // ID: 505, required.
     deleted_files_count: Int,         // ID: 506, required.
     replaced_files_count: Int,        // ID: 520, required.
+    modified_files_count: Int,        // ID: 524, required.
     added_rows_count: Long,           // ID: 512, required.
     existing_rows_count: Long,        // ID: 513, required.
     deleted_rows_count: Long,         // ID: 514, required.
     replaced_rows_count: Long,        // ID: 521, required.
+    modified_rows_count: Long,        // ID: 525, required.
     min_sequence_number: Long,        // ID: 516, required.
     dv: Option[Array[Byte]],          // ID: 522, optional (inline manifest DV bitmap).
-    dv_cardinality: Option[Long])     // ID: 523, optional.
+    dv_cardinality: Option[Long]) {   // ID: 523, optional.
+
+  /** Live (non-tombstone) file entries: ADDED, EXISTING and MODIFIED are all live. */
+  def liveFilesCount: Int = added_files_count + existing_files_count + modified_files_count
+
+  /** Tombstone file entries: DELETED and REPLACED. */
+  def tombstoneFilesCount: Int = deleted_files_count + replaced_files_count
+}
 
 /**
  * Column-level statistics carrier. Iceberg V4 leaves the inner shape

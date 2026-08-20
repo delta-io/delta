@@ -101,23 +101,32 @@ trait AMTCheckpointTestBase
   }
 
   /**
-   * Appends `numRows` rows (ids `startId` until `startId + numRows`) to `tableName` as `numRows`
-   * separate data files in a single commit. `startId` lets successive calls append disjoint id
-   * ranges. `columnExprs` is the projection over `range`'s `id`, one expression per table column;
-   * a partitioned table passes its partition columns here too.
+   * Appends `numFiles` separate data files to `tableName` in a single commit, each holding
+   * `rowsPerFile` rows (so `numFiles * rowsPerFile` rows total, ids `startId` until
+   * `startId + numFiles * rowsPerFile`). `startId` lets successive calls append disjoint id ranges.
+   * `columnExprs` is the projection over `range`'s `id`, one expression per table column; a
+   * partitioned table passes its partition columns here too. The rows are generated in a single
+   * partition and capped at `rowsPerFile` per file, so exactly `numFiles` files are written with
+   * deterministic names.
    */
   protected def appendRowsAsSeparateFiles(
       tableName: String,
-      numRows: Int,
+      numFiles: Int,
+      rowsPerFile: Int = 1,
       startId: Int = 0,
       columnExprs: Seq[String] = Seq("CAST(id AS INT)")): Unit = {
+    require(numFiles > 0 && rowsPerFile > 0,
+      s"numFiles ($numFiles) and rowsPerFile ($rowsPerFile) must be positive.")
+    val numRows = numFiles * rowsPerFile
+    require(numRows % rowsPerFile == 0,
+      s"numRows ($numRows) must be divisible by rowsPerFile ($rowsPerFile).")
     withSQLConf(
-        "spark.sql.files.maxRecordsPerFile" -> "1",
+        "spark.sql.files.maxRecordsPerFile" -> rowsPerFile.toString,
         DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false") {
       sql(
         s"""INSERT INTO $tableName
-           |SELECT ${columnExprs.mkString(", ")} FROM range($startId, ${startId + numRows})"""
-          .stripMargin)
+           |SELECT ${columnExprs.mkString(", ")}
+           |FROM range($startId, ${startId + numRows}, 1, 1)""".stripMargin)
     }
   }
 
@@ -187,7 +196,7 @@ trait AMTCheckpointTestBase
           partitionColumns = allTypesPartitionSchema.map(_.name))
         appendRowsAsSeparateFiles(
           tableName,
-          numRows = numFiles,
+          numFiles = numFiles,
           columnExprs =
             Seq("CAST(id AS INT)", "CONCAT('d', CAST(id AS STRING))") ++ allTypesPartitionExprs)
         body(deltaLogForName(tableName))
