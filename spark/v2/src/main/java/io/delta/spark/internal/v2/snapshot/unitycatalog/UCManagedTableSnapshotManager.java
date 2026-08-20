@@ -99,7 +99,9 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
   }
 
   private Snapshot wrapKernelSnapshot(SnapshotImpl kernelSnapshot) {
-    return new DeltaV2Snapshot(kernelSnapshot);
+    scala.Option<CatalogTable> scalaOpt =
+        catalogTable.isPresent() ? scala.Some.apply(catalogTable.get()) : scala.Option.empty();
+    return new DeltaV2Snapshot(kernelSnapshot, scalaOpt);
   }
 
   /**

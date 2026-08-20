@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.write;
 
 import static io.delta.spark.internal.v2.utils.ScalaUtils.toJavaMap;
 import static io.delta.spark.internal.v2.utils.ScalaUtils.toScalaList;
+import static io.delta.spark.internal.v2.utils.ScalaUtils.toScalaOption;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Operation;
@@ -90,7 +91,7 @@ public final class DeltaMetadataOnlyDeleteExecutor {
       SnapshotImpl initialSnapshot,
       Optional<CatalogTable> catalogTable,
       Predicate[] predicates) {
-    DeltaV2Snapshot snapshot = new DeltaV2Snapshot(initialSnapshot);
+    DeltaV2Snapshot snapshot = new DeltaV2Snapshot(initialSnapshot, toScalaOption(catalogTable));
 
     List<Expression> catalystFilters = new ArrayList<>(predicates.length);
     for (Predicate predicate : predicates) {

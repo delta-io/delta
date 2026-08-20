@@ -29,6 +29,7 @@ import com.databricks.spark.util.TagDefinition
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, Dataset}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * A [[Snapshot]] backed by a Delta Kernel snapshot, for the v2 Connector. It extends the V1
@@ -62,6 +63,15 @@ class DeltaV2Snapshot(
   private def this(kernelSnapshot: KernelSnapshot, prebuiltAllFiles: Dataset[AddFile]) = {
     this(kernelSnapshot)
     this.prebuiltAllFiles = Some(prebuiltAllFiles)
+  }
+
+  private[this] var resolvedCatalogTableOpt: Option[CatalogTable] = None
+
+  def this(
+      kernelSnapshot: KernelSnapshot,
+      catalogTableOpt: Option[CatalogTable]) = {
+    this(kernelSnapshot)
+    resolvedCatalogTableOpt = catalogTableOpt
   }
 
   // scalastyle:off deltahadoopconfiguration
