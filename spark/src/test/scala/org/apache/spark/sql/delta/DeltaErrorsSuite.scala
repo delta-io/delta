@@ -27,7 +27,7 @@ import scala.sys.process.Process
 // scalastyle:off import.ordering.noEmptyLine
 // scalastyle:off line.size.limit
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
@@ -2913,9 +2913,23 @@ trait DeltaErrorsSuiteBase
       val e = intercept[io.delta.exceptions.ProtocolChangedException] {
         throw org.apache.spark.sql.delta.DeltaErrors.protocolChangedException(None)
       }
-      checkError(e, "DELTA_PROTOCOL_CHANGED", "2D521", Map.empty[String, String])
+      checkError(e, "DELTA_PROTOCOL_CHANGED.GENERIC", "2D521", Map.empty[String, String])
       assert(e.getMessage.contains("The protocol version of the Delta table has been changed " +
         "by a concurrent update."))
+    }
+    {
+      // A conflicting commit at version 0 selects the WRITE_TO_EMPTY_DIRECTORY subclass. The
+      // commit is serialized into the message, so it needs a non-null timestamp and parameters.
+      val conflictingCommit = CommitInfo.empty(version = Some(0))
+        .copy(timestamp = new Timestamp(0), operationParameters = Map.empty)
+      val e = intercept[io.delta.exceptions.ProtocolChangedException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .protocolChangedException(Some(conflictingCommit))
+      }
+      checkError(e, "DELTA_PROTOCOL_CHANGED.WRITE_TO_EMPTY_DIRECTORY", "2D521",
+        Map.empty[String, String])
+      assert(e.getMessage.contains(
+        "This happens when multiple writers are writing to an empty directory."))
     }
     {
       val e = intercept[io.delta.exceptions.MetadataChangedException] {

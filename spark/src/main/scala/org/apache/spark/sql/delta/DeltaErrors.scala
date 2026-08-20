@@ -2697,17 +2697,17 @@ trait DeltaErrorsBase
 
   def protocolChangedException(
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ProtocolChangedException = {
-    val additionalInfo = conflictingCommit.map { v =>
-      if (v.version.getOrElse(-1) == 0) {
-        "This happens when multiple writers are writing to an empty directory. " +
-          "Creating the table ahead of time will avoid this conflict. "
-      } else {
-        ""
-      }
-    }.getOrElse("")
-    new io.delta.exceptions.ProtocolChangedException(
+    // A conflicting commit at version 0 means the table was created by a concurrent writer while
+    // this transaction was writing to an empty directory. That case gets a dedicated subclass with
+    // a more specific hint; everything else uses the generic subclass.
+    val subClass = if (conflictingCommit.exists(_.version.getOrElse(-1L) == 0)) {
+      "WRITE_TO_EMPTY_DIRECTORY"
+    } else {
+      "GENERIC"
+    }
+    io.delta.exceptions.ProtocolChangedException(
+      subClass,
       Array(
-        additionalInfo,
         conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
         DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
       )

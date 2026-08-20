@@ -2581,8 +2581,20 @@
   },
   "DELTA_PROTOCOL_CHANGED" : {
     "message" : [
-      "ProtocolChangedException: The protocol version of the Delta table has been changed by a concurrent update. <additionalInfo><conflictingCommit>\nRefer to <docLink> for more details."
+      "ProtocolChangedException: The protocol version of the Delta table has been changed by a concurrent update."
     ],
+    "subClass" : {
+      "GENERIC" : {
+        "message" : [
+          "<conflictingCommit>\nRefer to <docLink> for more details."
+        ]
+      },
+      "WRITE_TO_EMPTY_DIRECTORY" : {
+        "message" : [
+          "This happens when multiple writers are writing to an empty directory. Creating the table ahead of time will avoid this conflict. <conflictingCommit>\nRefer to <docLink> for more details."
+        ]
+      }
+    },
     "sqlState" : "2D521"
   },
   "DELTA_PROTOCOL_PROPERTY_NOT_INT" : {

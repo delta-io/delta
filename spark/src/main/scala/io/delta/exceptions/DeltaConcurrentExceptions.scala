@@ -88,14 +88,29 @@ class MetadataChangedException private (
  * @since 1.0.0
  */
 @Evolving
-class ProtocolChangedException(message: String)
+class ProtocolChangedException private (
+    errorClass: String,
+    message: String,
+    messageParameters: Array[String] = Array.empty)
   extends org.apache.spark.sql.delta.ProtocolChangedException(message)
     with DeltaThrowable {
+  def this(message: String) = this("DELTA_PROTOCOL_CHANGED.GENERIC", message, Array.empty)
   def this(messageParameters: Array[String]) = {
-    this(DeltaThrowableHelper.getMessage("DELTA_PROTOCOL_CHANGED", messageParameters))
+    this(
+      "DELTA_PROTOCOL_CHANGED.GENERIC",
+      DeltaThrowableHelper.getMessage("DELTA_PROTOCOL_CHANGED.GENERIC", messageParameters),
+      messageParameters)
   }
-  override def getErrorClass: String = "DELTA_PROTOCOL_CHANGED"
+  override def getErrorClass: String = errorClass
   override def getMessage: String = message
+}
+
+object ProtocolChangedException {
+  def apply(subClass: String, messageParameters: Array[String]): ProtocolChangedException = {
+    val errorClass = s"DELTA_PROTOCOL_CHANGED.$subClass"
+    val message = DeltaThrowableHelper.getMessage(errorClass, messageParameters)
+    new ProtocolChangedException(errorClass, message, messageParameters)
+  }
 }
 
 /**
