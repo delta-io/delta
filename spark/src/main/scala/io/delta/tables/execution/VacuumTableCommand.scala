@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.commands.VacuumCommand.getDeltaTable
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.StringType
 
 /**
@@ -44,6 +45,8 @@ case class VacuumTableCommand(
     inventoryQuery: Option[String],
     dryRun: Boolean,
     vacuumType: Option[String]) extends RunnableCommand with UnaryNode with DeltaCommand {
+
+  override lazy val metrics: Map[String, SQLMetric] = VacuumCommand.metrics
 
   override val output: Seq[Attribute] =
     Seq(AttributeReference("path", StringType, nullable = true)())
