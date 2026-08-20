@@ -250,51 +250,45 @@ public class DeltaV2Table extends DeltaV2TableShims
 
     this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    Engine createdEngine = null;
+    this.kernelEngine = KernelEngineFactory.createDefaultEngine(this.hadoopConf);
+    this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     try {
-      createdEngine = KernelEngineFactory.createDefaultEngine(this.hadoopConf);
-      this.kernelEngine = createdEngine;
-      this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
-      try {
-        this.initialSnapshot =
-            timeTravelVersion.isPresent()
-                ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
-                : snapshotManager.loadLatestSnapshot();
-      } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
-        // Rethrow as the Delta-module wrapper so catalog/interop layer never names a Kernel type.
-        throw new TableNotFoundException(tablePath);
-      } catch (io.delta.kernel.exceptions.KernelException e) {
-        // Missing earliest commit file surfaces as a base KernelException, so match on its message.
-        String reason = e.getMessage();
-        if (reason != null && reason.contains("Missing delta file")) {
-          throw new NoRecreatableHistoryException(tablePath);
-        }
-        throw e;
+      this.initialSnapshot =
+          timeTravelVersion.isPresent()
+              ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
+              : snapshotManager.loadLatestSnapshot();
+    } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
+      // Rethrow as the Delta-module wrapper so catalog/interop layer never names a Kernel type.
+      throw new TableNotFoundException(tablePath);
+    } catch (io.delta.kernel.exceptions.KernelException e) {
+      // Missing earliest commit file surfaces as a base KernelException, so match on its message.
+      String reason = e.getMessage();
+      if (reason != null && reason.contains("Missing delta file")) {
+        throw new NoRecreatableHistoryException(tablePath);
       }
-
-      this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
-      this.isTimeTravel = timeTravelVersion.isPresent();
-
-      Optional<PersistedMetadata> persistedMetadata =
-          MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-              SparkSession.active(), initialSnapshot, options, snapshotManager, kernelEngine);
-
-      StructType rawSchema;
-      List<String> partitionColumnNames;
-      if (persistedMetadata.isPresent()) {
-        PersistedMetadata persisted = persistedMetadata.get();
-        rawSchema = persisted.dataSchema();
-        partitionColumnNames = Arrays.asList(persisted.partitionSchema().fieldNames());
-      } else {
-        rawSchema = initialSnapshot.schema();
-        partitionColumnNames = new ArrayList<>(initialSnapshot.getPartitionColumnNames());
-      }
-      // Schema-related metadata is lazily computed on first access within SchemaProvider
-      this.schemaProvider =
-          new SchemaProvider(SparkSession.active(), rawSchema, partitionColumnNames);
-    } catch (RuntimeException | Error exception) {
-      throw exception;
+      throw e;
     }
+
+    this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
+    this.isTimeTravel = timeTravelVersion.isPresent();
+
+    Optional<PersistedMetadata> persistedMetadata =
+        MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
+            SparkSession.active(), initialSnapshot, options, snapshotManager, kernelEngine);
+
+    StructType rawSchema;
+    List<String> partitionColumnNames;
+    if (persistedMetadata.isPresent()) {
+      PersistedMetadata persisted = persistedMetadata.get();
+      rawSchema = persisted.dataSchema();
+      partitionColumnNames = Arrays.asList(persisted.partitionSchema().fieldNames());
+    } else {
+      rawSchema = initialSnapshot.schema();
+      partitionColumnNames = new ArrayList<>(initialSnapshot.getPartitionColumnNames());
+    }
+    // Schema-related metadata is lazily computed on first access within SchemaProvider
+    this.schemaProvider =
+        new SchemaProvider(SparkSession.active(), rawSchema, partitionColumnNames);
   }
 
   /**
