@@ -428,6 +428,8 @@ public class MetadataEvolutionHandler {
    * <p>V2 port of V1's {@code
    * DeltaSourceMetadataEvolutionSupport.validateAndResolveMetadataForLogInitialization}.
    */
+  // TODO(kernel-table-manager): Remove borrowKernelSnapshot here once collectMetadataActions
+  // and collectProtocolActions return AbstractMetadata/AbstractProtocol instead of Kernel types.
   private ValidatedMetadataAndProtocol validateAndResolveMetadataForLogInitialization(
       long startVersion, long endVersion) {
     List<Metadata> metadataChanges =

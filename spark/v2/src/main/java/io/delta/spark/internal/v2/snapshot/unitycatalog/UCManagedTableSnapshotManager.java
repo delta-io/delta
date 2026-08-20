@@ -27,6 +27,7 @@ import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import java.util.List;
 import java.util.Optional;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
@@ -44,6 +45,7 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
   private final String tablePath;
   private final UCTableIdentifier tableIdentifier;
   private final Engine engine;
+  private final Optional<CatalogTable> catalogTable;
 
   /**
    * Creates a new UCManagedTableSnapshotManager.
@@ -54,7 +56,10 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
    * @param catalogTable the Spark catalog table, if available
    */
   public UCManagedTableSnapshotManager(
-      UCCatalogManagedClient ucCatalogManagedClient, UCTableInfo tableInfo, Engine engine) {
+      UCCatalogManagedClient ucCatalogManagedClient,
+      UCTableInfo tableInfo,
+      Engine engine,
+      Optional<CatalogTable> catalogTable) {
     this.ucCatalogManagedClient =
         requireNonNull(ucCatalogManagedClient, "ucCatalogManagedClient is null");
     requireNonNull(tableInfo, "tableInfo is null");
@@ -62,6 +67,7 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
     this.tablePath = tableInfo.getTablePath();
     this.tableIdentifier = tableInfo.getTableIdentifier();
     this.engine = requireNonNull(engine, "engine is null");
+    this.catalogTable = requireNonNull(catalogTable, "catalogTable is null");
   }
 
   /**

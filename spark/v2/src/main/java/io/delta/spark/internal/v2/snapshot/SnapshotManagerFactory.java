@@ -62,7 +62,7 @@ public final class SnapshotManagerFactory {
       Optional<UCTableInfo> ucTableInfo =
           UCUtils.extractTableInfo(catalogTable.get(), SparkSession.active());
       if (ucTableInfo.isPresent()) {
-        return createUCManagedSnapshotManager(ucTableInfo.get(), kernelEngine);
+        return createUCManagedSnapshotManager(ucTableInfo.get(), kernelEngine, catalogTable);
       }
       // Catalog table without UC metadata falls back to path-based handling.
     }
@@ -72,12 +72,13 @@ public final class SnapshotManagerFactory {
   }
 
   private static UCManagedTableSnapshotManager createUCManagedSnapshotManager(
-      UCTableInfo tableInfo, Engine kernelEngine) {
+      UCTableInfo tableInfo, Engine kernelEngine, Optional<CatalogTable> catalogTable) {
     Map<String, String> ucConfig = new HashMap<>(tableInfo.toUcConfig());
     ucConfig.put("appVersions.Kernel", Meta.KERNEL_VERSION);
     ucConfig.put("appVersions.Delta V2 connector", "true");
     UCClient ucClient = UCTokenBasedRestClientFactory$.MODULE$.createUCClient(ucConfig);
     UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
-    return new UCManagedTableSnapshotManager(ucCatalogClient, tableInfo, kernelEngine);
+    return new UCManagedTableSnapshotManager(
+        ucCatalogClient, tableInfo, kernelEngine, catalogTable);
   }
 }

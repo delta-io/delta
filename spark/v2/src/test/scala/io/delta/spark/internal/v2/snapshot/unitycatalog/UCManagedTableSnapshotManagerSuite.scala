@@ -43,7 +43,9 @@ class UCManagedTableSnapshotManagerSuite
     val client = new UCCatalogManagedClient(ucClient)
     val tableInfo =
       new UCTableInfo(testUcTableId, tablePath, testTableIdentifier, testUcUri, testUcAuthConfig)
-    new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
+    new UCManagedTableSnapshotManager(
+      client, tableInfo, defaultEngine,
+      java.util.Optional.empty())
   }
 
   // ==================== Constructor ====================
@@ -59,20 +61,28 @@ class UCManagedTableSnapshotManagerSuite
         testUcUri,
         testUcAuthConfig)
 
+    val noCatalog = java.util.Optional.empty[
+      org.apache.spark.sql.catalyst.catalog.CatalogTable]()
+
     val ex1 = intercept[NullPointerException] {
-      new UCManagedTableSnapshotManager(null, tableInfo, defaultEngine)
+      new UCManagedTableSnapshotManager(null, tableInfo, defaultEngine, noCatalog)
     }
     assert(ex1.getMessage == "ucCatalogManagedClient is null")
 
     val ex2 = intercept[NullPointerException] {
-      new UCManagedTableSnapshotManager(client, null, defaultEngine)
+      new UCManagedTableSnapshotManager(client, null, defaultEngine, noCatalog)
     }
     assert(ex2.getMessage == "tableInfo is null")
 
     val ex3 = intercept[NullPointerException] {
-      new UCManagedTableSnapshotManager(client, tableInfo, null)
+      new UCManagedTableSnapshotManager(client, tableInfo, null, noCatalog)
     }
     assert(ex3.getMessage == "engine is null")
+
+    val ex4 = intercept[NullPointerException] {
+      new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine, null)
+    }
+    assert(ex4.getMessage == "catalogTable is null")
   }
 
   // ==================== loadLatestSnapshot ====================
@@ -98,7 +108,9 @@ class UCManagedTableSnapshotManagerSuite
       testUcUri,
       testUcAuthConfig)
     val client = new UCCatalogManagedClient(ucClient)
-    val manager = new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
+    val manager = new UCManagedTableSnapshotManager(
+      client, tableInfo, defaultEngine,
+      java.util.Optional.empty())
 
     val ex = intercept[RuntimeException] {
       manager.loadLatestSnapshot()
@@ -318,7 +330,9 @@ class UCManagedTableSnapshotManagerSuite
       testUcUri,
       testUcAuthConfig)
     val client = new UCCatalogManagedClient(ucClient)
-    val manager = new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
+    val manager = new UCManagedTableSnapshotManager(
+      client, tableInfo, defaultEngine,
+      java.util.Optional.empty())
 
     val ex1 = intercept[RuntimeException] { manager.loadLatestSnapshot() }
     assert(ex1.getCause.isInstanceOf[InvalidTargetTableException])
