@@ -1686,11 +1686,11 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED =
     buildConf("readSnapshotStateFromChecksum.enabled")
       .internal()
-      .doc("If enabled, delta log snapshot will read the SnapshotState (file/record counts, " +
-        "set transactions, domain metadata, and histograms) from the checksum file and use " +
-        "those to avoid a spark job aggregating over the state reconstruction. The fast path " +
-        "is only taken when the checksum file is present and contains all the fields required " +
-        "to construct a complete SnapshotState; otherwise it falls back to state reconstruction.")
+      .doc("If enabled, snapshot state fields (file/record counts, set transactions, domain " +
+        "metadata, and histograms) are read from the checksum file when it contains them, " +
+        "avoiding a spark job aggregating over the state reconstruction. Fields the checksum " +
+        "does not carry, and snapshots without a checksum file, fall back to state " +
+        "reconstruction.")
       .booleanConf
       .createWithDefault(true)
 
