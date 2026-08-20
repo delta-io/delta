@@ -327,13 +327,11 @@ class HudiConverter
                                        metaClient: HoodieTableMetaClient): Map[String, String] = {
     try {
       if (instant.getAction == HoodieTimeline.REPLACE_COMMIT_ACTION) {
-        HoodieReplaceCommitMetadata.fromBytes(
-          metaClient.getActiveTimeline.getInstantDetails(instant).get,
-          classOf[HoodieReplaceCommitMetadata]).getExtraMetadata.asScala.toMap
+        metaClient.getActiveTimeline.readReplaceCommitMetadata(instant)
+          .getExtraMetadata.asScala.toMap
       } else {
-        HoodieCommitMetadata.fromBytes(
-          metaClient.getActiveTimeline.getInstantDetails(instant).get,
-          classOf[HoodieCommitMetadata]).getExtraMetadata.asScala.toMap
+        metaClient.getActiveTimeline.readCommitMetadata(instant)
+          .getExtraMetadata.asScala.toMap
       }
     } catch {
       case ex: IOException =>
