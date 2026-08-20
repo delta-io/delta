@@ -2705,11 +2705,11 @@ The corresponding human-readable form is:
 
 ## Partition Value Serialization
 
-Partition values are stored as strings, using the following formats. An empty string for any type translates to a `null` partition value.
+Partition values are stored as strings, using the following formats. An empty string for any type except `string` deserialize to `null`.
 
 Type | Serialization Format
 -|-
-string | No translation required
+string | No translation required, except an empty string translates to `null`
 numeric types | The string representation of the number
 date | Encoded as `{year}-{month}-{day}`. For example, `1970-01-01`
 timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}`. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`. Timestamps may also be encoded as an ISO8601 formatted timestamp adjusted to UTC timestamp such as `1970-01-01T00:00:00.123456Z`
