@@ -426,7 +426,7 @@ trait RecordChecksum extends DeltaLogging {
 
       case _: RemoveFile if ignoreRemoveFiles => ()
 
-      // extendedFileMetadata == true implies fields partitionValues, size, and tags are present
+      // extendedFileMetadata == true implies fields partitionValues and size are present
       case r: RemoveFile if r.extendedFileMetadata == Some(true) =>
         val size = r.size.get
         tableSizeBytes -= size
