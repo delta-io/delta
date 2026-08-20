@@ -293,15 +293,7 @@ public class DeltaV2Table extends DeltaV2TableShims
       this.schemaProvider =
           new SchemaProvider(SparkSession.active(), rawSchema, partitionColumnNames);
     } catch (RuntimeException | Error exception) {
-      closeEngineAfterFailure(createdEngine, exception);
       throw exception;
-    } finally {
-    }
-  }
-
-  private static void closeEngineAfterFailure(Engine engine, Throwable failure) {
-    if (engine == null) {
-      return;
     }
   }
 
