@@ -82,10 +82,6 @@ class DeltaV2Snapshot(
   // DeltaV2Snapshot has neither (see class doc).
   override protected def allowNullLogSegmentAndDeltaLog: Boolean = true
 
-  // A Kernel-backed facade may be constructed for metadata access without an active SparkSession.
-  // Cache configuration remains validated when the cache-backed state is first used.
-  override protected def eagerlyInitializeStorageLevel: Boolean = false
-
   // Kernel already validated protocol + feature support when it loaded the snapshot, so the V1
   // init() re-validation (which derefs the null deltaLog) is redundant and skipped.
   override protected def init(): Unit = ()

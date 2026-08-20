@@ -24,12 +24,16 @@ import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, U
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
+import org.scalatest.Outcome
 import org.scalatest.funsuite.AnyFunSuite
 
 /** Integration tests for [[UCManagedTableSnapshotManager]]. */
 class UCManagedTableSnapshotManagerSuite
     extends AnyFunSuite
     with UCCatalogManagedTestUtils {
+
+  override protected def withFixture(test: NoArgTest): Outcome =
+    spark.withActive(super.withFixture(test))
 
   private val testUcTableId = "testUcTableId"
   private val testTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
