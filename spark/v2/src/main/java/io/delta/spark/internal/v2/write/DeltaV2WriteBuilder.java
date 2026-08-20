@@ -18,10 +18,7 @@ package io.delta.spark.internal.v2.write;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.Write;
@@ -88,18 +85,20 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   @Override
   public Write build() {
     validateDataSchema(initialSnapshot, writeInfo.schema());
-    SnapshotImpl kernelSnapshot = DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(initialSnapshot);
 
     // TODO: support partitioned IcebergCompat / materializePartitionColumns writes.
     if (!partitionSchema.isEmpty()) {
-      Metadata metadata = kernelSnapshot.getMetadata();
-      Protocol protocol = kernelSnapshot.getProtocol();
       boolean icebergCompat =
-          TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata)
-              || TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(initialSnapshot.getTableProperties())
+              || TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(
+                  initialSnapshot.getTableProperties());
       // Detect the materializePartitionColumns writer feature by its protocol name.
       boolean materializePartitionColumns =
-          protocol.getWriterFeatures().contains("materializePartitionColumns");
+          initialSnapshot.protocol().getWriterFeatures() != null
+              && initialSnapshot
+                  .protocol()
+                  .getWriterFeatures()
+                  .contains("materializePartitionColumns");
       if (icebergCompat || materializePartitionColumns) {
         throw new UnsupportedOperationException(
             "DSv2 partitioned writes are not supported on tables that materialize partition "
@@ -115,7 +114,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         engine,
         hadoopConf,
         tablePath,
-        kernelSnapshot,
+        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(initialSnapshot),
         snapshotManager,
         dataSchema,
         partitionSchema,

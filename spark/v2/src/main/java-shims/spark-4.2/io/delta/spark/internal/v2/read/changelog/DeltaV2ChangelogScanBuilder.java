@@ -67,10 +67,10 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
     SnapshotImpl startSnapshotImpl = DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(startSnapshot);
     Snapshot endSnapshot = snapshotManager.loadSnapshotAt(endVersion);
     StructType endSchema = endSnapshot.schema();
-    if (!RowTracking$.MODULE$.isEnabled(endSnapshot.protocol(), endSnapshot.metadata())) {
+    if (!RowTracking$.MODULE$.isEnabled(endSnapshot.protocol(), endSnapshot.getMetadata())) {
       DeltaErrors.throwChangelogRequiresRowTracking(deltaV2Table.name());
     }
-    if (!RowTracking$.MODULE$.isEnabled(startSnapshot.protocol(), startSnapshot.metadata())) {
+    if (!RowTracking$.MODULE$.isEnabled(startSnapshot.protocol(), startSnapshot.getMetadata())) {
       DeltaErrors.throwChangelogRowTrackingDisabledInRange(startVersion);
     }
 

@@ -390,8 +390,8 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
    * @return the table path with trailing slash
    */
   public String getTablePath() {
-    // PartitionUtils passes the resolved path to SparkPath.fromUrlString,
-    // so the table root must be URL-encoded (spaces, literal '%', etc.).
+    // PartitionUtils passes the resolved path to SparkPath.fromUrlString, so the table root must be
+    // URL-encoded (for example, spaces and literal '%' characters).
     final String tableRoot =
         new Path(((SnapshotImpl) initialSnapshot).getDataPath().toString()).toUri().toString();
     return tableRoot.endsWith("/") ? tableRoot : tableRoot + "/";

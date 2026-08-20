@@ -206,10 +206,7 @@ public class MetadataEvolutionHandler {
   public CloseableIterator<IndexedFile> getMetadataOrProtocolChangeIndexedFileIterator(
       @Nullable Metadata metadata, @Nullable Protocol protocol, long version) {
     if (shouldTrackMetadataChange()
-        && hasMetadataOrProtocolChangeComparedToStreamMetadata(
-            metadata != null ? new KernelMetadataAdapter(metadata) : null,
-            protocol != null ? new KernelProtocolAdapter(protocol) : null,
-            version)) {
+        && hasMetadataOrProtocolChangeComparedToStreamMetadata(metadata, protocol, version)) {
       return Utils.toCloseableIterator(
           Collections.singletonList(
                   IndexedFile.sentinel(version, DeltaSourceOffset.METADATA_CHANGE_INDEX()))
@@ -243,9 +240,7 @@ public class MetadataEvolutionHandler {
       Metadata metadata = collectMetadataAtVersion(previousOffset.reservoirVersion());
       Protocol protocol = collectProtocolAtVersion(previousOffset.reservoirVersion());
       if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
-          metadata != null ? new KernelMetadataAdapter(metadata) : null,
-          protocol != null ? new KernelProtocolAdapter(protocol) : null,
-          previousOffset.reservoirVersion())) {
+          metadata, protocol, previousOffset.reservoirVersion())) {
         return Optional.of(previousOffset);
       }
     }
@@ -293,9 +288,7 @@ public class MetadataEvolutionHandler {
   public void updateMetadataTrackingLogAndFailTheStreamIfNeeded(
       Metadata changedMetadata, Protocol changedProtocol, long version, boolean replace) {
     if (!hasMetadataOrProtocolChangeComparedToStreamMetadata(
-        changedMetadata != null ? new KernelMetadataAdapter(changedMetadata) : null,
-        changedProtocol != null ? new KernelProtocolAdapter(changedProtocol) : null,
-        version)) {
+        changedMetadata, changedProtocol, version)) {
       return;
     }
 
@@ -337,26 +330,32 @@ public class MetadataEvolutionHandler {
       @Nullable Long batchEndVersion,
       boolean alwaysFailUponLogInitialized) {
     long version;
-    AbstractMetadata metadata;
-    AbstractProtocol protocol;
+    Metadata metadata;
+    Protocol protocol;
 
     if (batchEndVersion != null) {
       // Validate no incompatible changes in the range, use the end version's metadata
       ValidatedMetadataAndProtocol validated =
           validateAndResolveMetadataForLogInitialization(batchStartVersion, batchEndVersion);
       version = batchEndVersion;
-      metadata = new KernelMetadataAdapter(validated.metadata);
-      protocol = new KernelProtocolAdapter(validated.protocol);
+      metadata = validated.metadata;
+      protocol = validated.protocol;
     } else {
-      org.apache.spark.sql.delta.Snapshot snapshot =
-          snapshotManager.loadSnapshotAt(batchStartVersion);
+      SnapshotImpl snapshot =
+          DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(
+              snapshotManager.loadSnapshotAt(batchStartVersion));
       version = snapshot.getVersion();
-      metadata = snapshot.metadata();
-      protocol = snapshot.protocol();
+      metadata = snapshot.getMetadata();
+      protocol = snapshot.getProtocol();
     }
 
     PersistedMetadata newMetadata =
-        PersistedMetadata.apply(tableId, version, metadata, protocol, metadataPath);
+        PersistedMetadata.apply(
+            tableId,
+            version,
+            new KernelMetadataAdapter(metadata),
+            new KernelProtocolAdapter(protocol),
+            metadataPath);
     metadataTrackingLog.get().writeNewMetadata(newMetadata, false);
 
     if (hasMetadataOrProtocolChangeComparedToStreamMetadata(metadata, protocol, version)
@@ -375,13 +374,15 @@ public class MetadataEvolutionHandler {
 
   /** Delegates to the shared static method in {@code DeltaSourceMetadataEvolutionSupport}. */
   private boolean hasMetadataOrProtocolChangeComparedToStreamMetadata(
-      @Nullable AbstractMetadata newMetadata,
-      @Nullable AbstractProtocol newProtocol,
-      long newSchemaVersion) {
+      @Nullable Metadata newMetadata, @Nullable Protocol newProtocol, long newSchemaVersion) {
     Option<AbstractMetadata> metadataOpt =
-        newMetadata != null ? Option.apply(newMetadata) : Option.empty();
+        newMetadata != null
+            ? Option.apply((AbstractMetadata) new KernelMetadataAdapter(newMetadata))
+            : Option.empty();
     Option<AbstractProtocol> protocolOpt =
-        newProtocol != null ? Option.apply(newProtocol) : Option.empty();
+        newProtocol != null
+            ? Option.apply((AbstractProtocol) new KernelProtocolAdapter(newProtocol))
+            : Option.empty();
     Option<PersistedMetadata> persistedOpt =
         persistedMetadataAtSourceInit != null
             ? Option.apply(persistedMetadataAtSourceInit)
@@ -427,8 +428,6 @@ public class MetadataEvolutionHandler {
    * <p>V2 port of V1's {@code
    * DeltaSourceMetadataEvolutionSupport.validateAndResolveMetadataForLogInitialization}.
    */
-  // TODO(kernel-table-manager): Remove borrowKernelSnapshot here once collectMetadataActions
-  // and collectProtocolActions return AbstractMetadata/AbstractProtocol instead of Kernel types.
   private ValidatedMetadataAndProtocol validateAndResolveMetadataForLogInitialization(
       long startVersion, long endVersion) {
     List<Metadata> metadataChanges =

@@ -169,13 +169,6 @@ class Snapshot(
   override def dataPath: Path = deltaLog.dataPath
   override def logPath: Path = deltaLog.logPath
 
-  override def getLatestTransactionVersion(
-      appId: String): java.util.OptionalLong = {
-    val v = transactions.get(appId)
-    if (v.isDefined) java.util.OptionalLong.of(v.get)
-    else java.util.OptionalLong.empty()
-  }
-
   protected def spark = SparkSession.active
 
   /** Snapshot to scan by the DeltaScanGenerator for metadata query optimizations */
@@ -533,6 +526,13 @@ class Snapshot(
   override def metadata: Metadata = _reconstructedProtocolMetadataICTAndLMC.metadata
 
   override def protocol: Protocol = _reconstructedProtocolMetadataICTAndLMC.protocol
+
+  override def getLatestTransactionVersion(
+      appId: String): java.util.OptionalLong = {
+    val v = transactions.get(appId)
+    if (v.isDefined) java.util.OptionalLong.of(v.get)
+    else java.util.OptionalLong.empty()
+  }
 
   /**
    * Tries to retrieve the protocol, metadata, and in-commit-timestamp (if needed) from the
