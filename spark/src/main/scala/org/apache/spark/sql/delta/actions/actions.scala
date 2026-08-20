@@ -1156,10 +1156,10 @@ object BackReference {
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is
  * deleted permanently.
  *
- * Note that for protocol compatibility reasons, the fields `partitionValues`, `size`, and `tags`
- * are only present when the extendedFileMetadata flag is true. New writers should generally be
- * setting this flag, but old writers (and FSCK) won't, so readers must check this flag before
- * attempting to consume those values.
+ * Note that for protocol compatibility reasons, the fields `partitionValues` and `size` are only
+ * present when the extendedFileMetadata flag is true. New writers should generally be setting this
+ * flag, but old writers (and FSCK) won't, so readers must check this flag before attempting to
+ * consume those values.
  *
  * Since old tables would not have `extendedFileMetadata` and `size` field, we should make them
  * nullable by setting their type Option.
