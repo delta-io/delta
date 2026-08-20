@@ -16,12 +16,11 @@
 package io.delta.kernel.defaults
 
 import scala.collection.immutable.Seq
-import scala.language.implicitConversions
 
 import io.delta.kernel.{Transaction, TransactionCommitResult}
 import io.delta.kernel.Snapshot.ChecksumWriteMode
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.{TestRow, WriteUtils}
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, TestRow, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable
@@ -29,11 +28,11 @@ import io.delta.kernel.utils.CloseableIterable
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
- * Trait to mixin into a test suite that extends [[WriteUtils]] to run all the tests
+ * Trait to mixin into a test suite that extends [[AbstractWriteUtils]] to run all the tests
  * with CRC file written after each commit and verify the written CRC files are valid.
  * Note, this requires the test suite uses [[commitTransaction]] and [[verifyWrittenContent]].
  */
-trait WriteUtilsWithCrc extends AnyFunSuite with WriteUtils {
+trait WriteUtilsWithCrc extends AnyFunSuite with AbstractWriteUtils {
   override def commitTransaction(
       txn: Transaction,
       engine: Engine,
@@ -56,7 +55,7 @@ trait WriteUtilsWithCrc extends AnyFunSuite with WriteUtils {
  * SIMPLE and uses the post-commit snapshot's writeChecksumSimple method. Note, this requires the
  * test suite uses [[commitTransaction]] and [[verifyWrittenContent]].
  */
-trait WriteUtilsWithPostCommitSnapshotCrcSimpleWrite extends AnyFunSuite with WriteUtils {
+trait WriteUtilsWithPostCommitSnapshotCrcSimpleWrite extends AnyFunSuite with AbstractWriteUtils {
 
   override def commitTransaction(
       txn: Transaction,
@@ -86,7 +85,7 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite
     with WriteUtilsWithCrc {}
 
 class DeltaReplaceTableWithCrcSuite extends DeltaReplaceTableSuite
-    with WriteUtilsWithCrc {}
+    with WriteUtils with WriteUtilsWithCrc {}
 
 class DeltaTableWriteWithPostCommitSnapshotCrcSimpleSuite extends DeltaTableWritesSuite
     with WriteUtilsWithPostCommitSnapshotCrcSimpleWrite {
@@ -114,4 +113,42 @@ class DeltaTableWriteWithPostCommitSnapshotCrcSimpleSuite extends DeltaTableWrit
 }
 
 class DeltaReplaceTableWithPostCommitSnapshotCrcSimpleSuite extends DeltaReplaceTableSuite
-    with WriteUtilsWithPostCommitSnapshotCrcSimpleWrite {}
+    with WriteUtils with WriteUtilsWithPostCommitSnapshotCrcSimpleWrite {}
+
+// V2 builder variants of the above suites
+
+class DeltaTableWriteWithCrcTransactionBuilderV2Suite extends DeltaTableWritesSuite
+    with WriteUtilsWithV2Builders with WriteUtilsWithCrc {}
+
+class DeltaReplaceTableWithCrcTransactionBuilderV2Suite extends DeltaReplaceTableSuite
+    with WriteUtilsWithV2Builders with WriteUtilsWithCrc {}
+
+class DeltaTableWriteWithPostCommitSnapshotCrcSimpleTransactionBuilderV2Suite
+    extends DeltaTableWritesSuite
+    with WriteUtilsWithV2Builders with WriteUtilsWithPostCommitSnapshotCrcSimpleWrite {
+
+  // Tests to skip due to known limitation: post-commit snapshots are not yet built after
+  // conflicts, so we cannot write CRC files in those cases.
+  // See TransactionImpl.buildPostCommitSnapshotOpt.
+  lazy val testsToSkip = Set(
+    "create table and configure properties with retries",
+    "insert into table - idempotent writes",
+    "conflicts - concurrent data append (1) after the losing txn has started",
+    "conflicts - concurrent data append (5) after the losing txn has started",
+    "conflicts - concurrent data append (12) after the losing txn has started")
+
+  override protected def test(
+      testName: String,
+      testTags: org.scalatest.Tag*)(
+      testFun: => Any)(implicit pos: org.scalactic.source.Position): Unit = {
+    if (testsToSkip.contains(testName)) {
+      ignore(testName, testTags: _*)(testFun)(pos)
+    } else {
+      super.test(testName, testTags: _*)(testFun)(pos)
+    }
+  }
+}
+
+class DeltaReplaceTableWithPostCommitSnapshotCrcSimpleTransactionBuilderV2Suite
+    extends DeltaReplaceTableSuite
+    with WriteUtilsWithV2Builders with WriteUtilsWithPostCommitSnapshotCrcSimpleWrite {}
