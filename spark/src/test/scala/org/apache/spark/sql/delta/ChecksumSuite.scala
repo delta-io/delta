@@ -516,6 +516,41 @@ class ChecksumSuite
     }
   }
 
+  test("DV metrics are only served from the CRC when the aggregation would have computed them") {
+    withCrcTable { tableName =>
+      // Table with deletion vectors enabled, so the CRC carries the DV metrics.
+      sql(s"CREATE TABLE $tableName (id LONG) USING delta " +
+        s"TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')")
+      sql(s"INSERT INTO $tableName SELECT * FROM range(10)")
+      sql(s"DELETE FROM $tableName WHERE id = 1")
+
+      withSQLConf(DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true") {
+        val s = freshSnapshot(tableName)
+        assert(s.checksumOpt.flatMap(_.numDeletedRecordsOpt).contains(1L),
+          "test setup should produce a CRC carrying the DV metrics")
+        assert(s.numDeletedRecordsOpt.contains(1L))
+        assert(s.numDeletionVectorsOpt.contains(1L))
+        assert(!s.stateReconstructionTriggered,
+          "DV metrics present in the CRC must not trigger state reconstruction")
+      }
+
+      // Disabling DV creation makes the aggregation stop computing the DV metrics (it gates on
+      // deletionVectorsWritable). The accessors must follow the aggregation rather than the
+      // still-populated CRC, otherwise the fast path would change the returned value.
+      sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.enableDeletionVectors' = 'false')")
+      withSQLConf(DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true") {
+        val s = freshSnapshot(tableName)
+        val fromCrc = withSQLConf(
+          DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "false") {
+          val baseline = freshSnapshot(tableName)
+          (baseline.numDeletedRecordsOpt, baseline.numDeletionVectorsOpt)
+        }
+        assert(s.numDeletedRecordsOpt == fromCrc._1)
+        assert(s.numDeletionVectorsOpt == fromCrc._2)
+      }
+    }
+  }
+
   test("validateChecksum still compares the CRC against state reconstruction") {
     withSQLConf(
       DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",

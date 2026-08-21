@@ -83,6 +83,24 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   protected def fileSizeHistogramEnabled: Boolean =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)
 
+  protected def deletedRecordCountsHistogramEnabled: Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)
+
+  /**
+   * Whether [[aggregationsToComputeState]] computes the deletion vector metrics
+   * (`numDeletedRecordsOpt` / `numDeletionVectorsOpt`, and with
+   * [[deletedRecordCountsHistogramEnabled]] also `deletedRecordCountsHistogramOpt`); when it does
+   * not, those aggregates are `null` and the corresponding fields end up as [[None]].
+   *
+   * The accessors that read these fields from the checksum gate on this very same predicate, so
+   * that a value served from the checksum is exactly the value the aggregation would have
+   * produced. Note this is deliberately the *writable* predicate used by the aggregation, which
+   * is stricter than the *readable* one used when deciding what to persist into the checksum.
+   */
+  protected def checksumDVMetricsComputed: Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED) &&
+      DeletionVectorUtils.deletionVectorsWritable(this)
+
   /** Whether computedState is already computed or not */
   @volatile protected var _computedStateTriggered: Boolean = false
 
@@ -157,15 +175,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    * A Map of alias to aggregations which needs to be done to calculate the `computedState`
    */
   protected def aggregationsToComputeState: Map[String, Column] = {
-    val checksumDVMetricsEnabled =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED)
-    val deletedRecordCountsHistogramEnabled =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)
-    lazy val persistentDVsOnTableSupported =
-      DeletionVectorUtils.deletionVectorsWritable(this)
-
-    val computeChecksumDVMetrics = checksumDVMetricsEnabled &&
-      persistentDVsOnTableSupported
+    val computeChecksumDVMetrics = checksumDVMetricsComputed
     val persistentDVsAggs =
       if (computeChecksumDVMetrics) {
         Map(
@@ -243,15 +253,15 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] = Some(domainMetadata)
   def numDeletedRecordsOpt: Option[Long] =
     fetchFromChecksumIfAvailable { checksum =>
-      Option.when(deletionVectorsReadableAndMetricsEnabled)(checksum.numDeletedRecordsOpt).flatten
+      Option.when(checksumDVMetricsComputed)(checksum.numDeletedRecordsOpt).flatten
     }.orElse(computedState.numDeletedRecordsOpt)
   def numDeletionVectorsOpt: Option[Long] =
     fetchFromChecksumIfAvailable { checksum =>
-      Option.when(deletionVectorsReadableAndMetricsEnabled)(checksum.numDeletionVectorsOpt).flatten
+      Option.when(checksumDVMetricsComputed)(checksum.numDeletionVectorsOpt).flatten
     }.orElse(computedState.numDeletionVectorsOpt)
   def deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram] =
     fetchFromChecksumIfAvailable { checksum =>
-      Option.when(deletionVectorsReadableAndHistogramEnabled)(
+      Option.when(checksumDVMetricsComputed && deletedRecordCountsHistogramEnabled)(
         checksum.deletedRecordCountsHistogramOpt).flatten
     }.orElse(computedState.deletedRecordCountsHistogramOpt)
 
@@ -301,8 +311,6 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   }
 
   protected def deletionVectorsReadableAndHistogramEnabled: Boolean = {
-    val deletedRecordCountsHistogramEnabled =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)
     deletionVectorsReadableAndMetricsEnabled && deletedRecordCountsHistogramEnabled
   }
 
