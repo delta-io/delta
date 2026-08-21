@@ -90,7 +90,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.jdk.javaapi.CollectionConverters;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class DeltaV2Table extends DeltaV2TableShims
+public class DeltaV2Table extends DeltaV2TableLogging
     implements Table,
         SupportsRead,
         SupportsWrite,
@@ -255,10 +255,14 @@ public class DeltaV2Table extends DeltaV2TableShims
     this.kernelEngine = KernelEngineFactory.createDefaultEngine(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     try {
-      this.initialSnapshot =
-          timeTravelVersion.isPresent()
-              ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
-              : snapshotManager.loadLatestSnapshot();
+      if (timeTravelVersion.isPresent()) {
+        this.initialSnapshot =
+            loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong());
+      } else {
+        this.initialSnapshot =
+            recordFrameProfileValue(
+                "Delta", "DeltaV2.snapshot.loadLatest", snapshotManager::loadLatestSnapshot);
+      }
     } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
       // Rethrow as the Delta-module wrapper so catalog/interop layer never names a Kernel type.
       throw new TableNotFoundException(tablePath);
@@ -562,11 +566,11 @@ public class DeltaV2Table extends DeltaV2TableShims
   /**
    * Validates that {@code version} exists in the Delta log, then loads the snapshot pinned to it.
    */
-  private static Snapshot loadSnapshotAtCheckedVersion(
-      DeltaV2SnapshotManager manager, long version) {
+  private Snapshot loadSnapshotAtCheckedVersion(DeltaV2SnapshotManager manager, long version) {
     manager.checkVersionExists(
         version, /* mustBeRecreatable = */ true, /* allowOutOfRange = */ false);
-    return manager.loadSnapshotAt(version);
+    return recordFrameProfileValue(
+        "Delta", "DeltaV2.snapshot.loadAtVersion", () -> manager.loadSnapshotAt(version));
   }
 
   @Override

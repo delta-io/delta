@@ -24,6 +24,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
 
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.stats.DeltaScan
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
@@ -75,7 +76,8 @@ private[read] class DeltaV2ScanBuilder(
     extends ScanBuilder
     with SupportsPushDownRequiredColumns
     with SupportsPushDownCatalystFilters
-    with SupportsPushDownLimit {
+    with SupportsPushDownLimit
+    with DeltaLogging {
 
   // Use Objects.requireNonNull (throws NullPointerException) rather than Scala's require (throws
   // IllegalArgumentException) to preserve the exact null-check behavior of the original Java class.
@@ -103,30 +105,32 @@ private[read] class DeltaV2ScanBuilder(
   private var hasPostScanResidualFilters: Boolean = false
   private var pushedLimit: OptionalInt = OptionalInt.empty()
 
-  override def pushFilters(filters: Seq[Expression]): Seq[Expression] = {
-    val (partitionFilters, dataFilters) =
-      DataSourceUtils.getPartitionFiltersAndDataFilters(partitionSchema, filters)
-    partitionCatalystFilters = partitionFilters.toArray
-    dataCatalystFilters = dataFilters.toArray
-    // Data filters need post-scan evaluation (min/max skipping is not row-exact); partition
-    // filters are exact and need no re-evaluation. ScanBuilder mutations can be cumulative, so a
-    // later pushFilters call must not make an earlier residual safe to ignore.
-    hasPostScanResidualFilters |= dataFilters.nonEmpty
-    dataFilters
-  }
+  override def pushFilters(filters: Seq[Expression]): Seq[Expression] =
+    recordFrameProfile("Delta", "DeltaV2.scanBuilder.pushFilters") {
+      val (partitionFilters, dataFilters) =
+        DataSourceUtils.getPartitionFiltersAndDataFilters(partitionSchema, filters)
+      partitionCatalystFilters = partitionFilters.toArray
+      dataCatalystFilters = dataFilters.toArray
+      // Data filters need post-scan evaluation (min/max skipping is not row-exact); partition
+      // filters are exact and need no re-evaluation. ScanBuilder mutations can be cumulative, so a
+      // later pushFilters call must not make an earlier residual safe to ignore.
+      hasPostScanResidualFilters |= dataFilters.nonEmpty
+      dataFilters
+    }
 
   // Filters are kept as Catalyst expressions and are not translated to data source predicates.
   override def pushedFilters: Array[Predicate] = Array.empty
 
-  override def pruneColumns(requiredSchema: StructType): Unit = {
-    Objects.requireNonNull(requiredSchema, "requiredSchema is null")
-    // CDC columns are injected later by CDCReadFunction, so strip them here.
-    requiredDataSchema = new StructType(
-      requiredSchema.fields.filter { f =>
-        val name = f.name.toLowerCase(Locale.ROOT)
-        !partitionColumnSet.contains(name) && !CDCSchemaContext.isCDCColumn(name)
-      })
-  }
+  override def pruneColumns(requiredSchema: StructType): Unit =
+    recordFrameProfile("Delta", "DeltaV2.scanBuilder.pruneColumns") {
+      Objects.requireNonNull(requiredSchema, "requiredSchema is null")
+      // CDC columns are injected later by CDCReadFunction, so strip them here.
+      requiredDataSchema = new StructType(
+        requiredSchema.fields.filter { f =>
+          val name = f.name.toLowerCase(Locale.ROOT)
+          !partitionColumnSet.contains(name) && !CDCSchemaContext.isCDCColumn(name)
+        })
+    }
 
   /**
    * Accepts a LIMIT hint from Spark's optimizer.
@@ -151,7 +155,8 @@ private[read] class DeltaV2ScanBuilder(
   // isPartiallyPushed() intentionally uses the interface default (true). Because pruning happens at
   // file granularity, the scan may produce more rows than requested, so Spark must reapply LIMIT.
 
-  override def build(): Scan = {
+  override def build(): Scan =
+    recordFrameProfile("Delta", "DeltaV2.scanBuilder.build") {
     // Capture the planning inputs here, but defer constructing the Kernel-backed V1 snapshot and
     // running filesForScan until DeltaV2Scan actually plans a batch. A MicroBatchStream performs
     // its own snapshot and commit-range reads and never consumes batch-selected files.
