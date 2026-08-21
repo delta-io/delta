@@ -119,6 +119,18 @@ This design enables:
 
 <ins>Files not in the reachable set may be deleted once past the retention period. Reachability is derived from the live tree, not from `remove` tombstones, so no tombstone tracking is required (see [Remove File](#remove-file)).</ins>
 
+### Commit Provenance Information
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#commit-provenance-information)***
+
+<ins>The `commitInfo` action supports a `dataChange` field that summarizes, at the commit level, whether the commit changed the data of the table:</ins>
+
+| Field Name | Data Type | Description |
+| - | - | - |
+| <ins>dataChange</ins> | <ins>Boolean</ins> | <ins>Whether this commit changed the data of the table. Must be `true` if any `add` or `remove` action in the commit sets `dataChange` to `true`, and `false` otherwise. A commit with no `add` or `remove` action records `false`; `cdc` actions never affect the value because their `dataChange` is always `false`. **Required when the `adaptiveMetadata` table feature is enabled**; optional otherwise, in which case readers fall back to the `dataChange` flags of the individual [file actions](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file) when it is absent.</ins> |
+
+<ins>When the `adaptiveMetadata` table feature is enabled, writers must include the `dataChange` field in the `commitInfo` action of every commit, and readers must treat it as the source of truth for whether the commit changed data. The field is required — rather than optional as in the base protocol — because a manifest commit records its file bookkeeping in the metadata tree (as re-adds, backreferences, and MDVs) rather than as `add` / `remove` actions in the Delta log, so a reader tailing the log cannot recover the answer from per-file `dataChange` flags. Metadata-only commits — manifest commits that only reorganize the tree, compaction, stats backfills, and MDV creation — set `dataChange` to `false`. This lets a reader building a [change data feed](#tracking) or deciding whether a commit is worth expanding skip such commits by reading a single field, without inspecting the tree. The value is consistent with the per-commit CDF tracking bitmaps: a commit whose `dataChange` is `false` sets neither `tracking.deleted_positions` nor `tracking.replaced_positions` (see [Manifest Commit Procedure](#manifest-commit-procedure)).</ins>
+
 --------
 
 > ***Add a new section at the [Table Features](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#table-features) section***
@@ -573,6 +585,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
+- Include the `dataChange` field in the `commitInfo` action of every commit (see [Commit Provenance Information](#commit-provenance-information)).
 
 ### Manifest Commit Procedure
 
