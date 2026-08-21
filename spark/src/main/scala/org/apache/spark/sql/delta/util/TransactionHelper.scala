@@ -55,6 +55,13 @@ trait TransactionHelper extends DeltaLogging {
   /** The Hadoop [[Configuration]] used to access the Delta log. */
   def newDeltaHadoopConf(): Configuration = deltaLog.newDeltaHadoopConf()
 
+  // Commit-stats telemetry seams. These are meaningful only when a V1 [[DeltaLog]] exists
+  private def commitLogStoreClassName: String =
+    Option(deltaLog).map(_.store.getClass.getCanonicalName).getOrElse("")
+  // Value used for the `TAG_LOG_STORE_CLASS` operation tag
+  private[delta] def commitLogStoreClassNameForTag: String =
+    Option(deltaLog).map(_.store.getClass.getName).getOrElse("")
+
   def catalogTable: Option[CatalogTable]
   def snapshot: Snapshot
 

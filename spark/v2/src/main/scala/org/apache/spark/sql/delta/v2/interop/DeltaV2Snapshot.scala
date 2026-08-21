@@ -16,14 +16,17 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
+import scala.collection.JavaConverters._
+import scala.jdk.OptionConverters._
+
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 
 import org.apache.spark.sql.delta.{CheckpointProvider, DeltaColumnMappingMode, DeltaLogFileIndex, Snapshot, VersionChecksum}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
-import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, StatisticsCollection}
+import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, FileSizeHistogram, FileSizeHistogramUtils, StatisticsCollection}
 
 import com.databricks.spark.util.TagDefinition
 import org.apache.hadoop.fs.Path
@@ -43,7 +46,7 @@ class DeltaV2Snapshot(
     // `Snapshot` interface: the decoded data path is only exposed on SnapshotImpl in the
     // OSS-published Kernel. The public io.delta.kernel.Snapshot has no `getDataPath`, and its
     // `getPath` is URL-encoded, which breaks Hadoop `Path` for table roots containing spaces.
-    kernelSnapshot: KernelSnapshot,
+    val kernelSnapshot: KernelSnapshot,
     sparkSession: SparkSession,
     // Kernel engine for reading scan files and the commit timestamp -- owned and passed by the
     // connector. The secondary constructor below builds a default one for callers without a Kernel
@@ -168,6 +171,50 @@ class DeltaV2Snapshot(
 
   override lazy val statsColumnSpec: DeltaStatsColumnSpec =
     StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
+
+  // Both members below are read off the post-commit snapshot when the commit path emits commit
+  // stats.
+
+  private lazy val activeFiles: Array[AddFile] = allFiles.collect()
+
+  // Sum the Kernel scan files.
+  override lazy val sizeInBytes: Long =
+    sizeInBytesIfKnown.getOrElse(activeFiles.map(_.size).sum)
+
+  // Bin the Kernel scan files into V1's DEFAULT_BINS.
+  override lazy val fileSizeHistogram: Option[FileSizeHistogram] =
+    if (fileSizeHistogramEnabled) {
+      kernelFileSizeHistogram.orElse {
+        val histogram = FileSizeHistogramUtils.emptyHistogram
+        activeFiles.foreach(file => histogram.insert(file.size))
+        Some(histogram)
+      }
+    } else {
+      None
+    }
+
+  /**
+   * The checksum-sourced file-size histogram, when Kernel has one for this snapshot.
+   *
+   * Empty when the table has no CRC at this version, or when the CRC carries no histogram.
+   * Callers fall back to binning the scan files.
+   */
+  private def kernelFileSizeHistogram: Option[FileSizeHistogram] =
+    kernelSnapshot.getCurrentCrcInfo.toScala
+      .flatMap(_.getFileSizeHistogram.toScala)
+      .map { bins =>
+        val result = bins.captureFileSizeHistogramResult()
+        FileSizeHistogram(
+          sortedBinBoundaries = result.getSortedBinBoundaries.toIndexedSeq,
+          fileCounts = result.getFileCounts,
+          totalBytes = result.getTotalBytes)
+      }
+
+  // Get the domain metadata from Kernel.
+  override lazy val domainMetadata: Seq[DomainMetadata] =
+    kernelSnapshot.getActiveDomainMetadataMap.asScala.map { case (domain, kernelDomainMetadata) =>
+      DomainMetadata(domain, kernelDomainMetadata.getConfiguration, kernelDomainMetadata.isRemoved)
+    }.toSeq
 
   // --- ValidateChecksum: Kernel has no V1 checksum to validate; no-op ------------------------
   override def validateChecksum(contextInfo: Map[String, String]): Boolean = true
