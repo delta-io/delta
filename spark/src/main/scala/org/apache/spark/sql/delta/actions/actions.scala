@@ -1437,6 +1437,7 @@ trait CommitMarker {
  *                          epoch in milliseconds when the commit write was started. This should
  *                          only be set when the feature inCommitTimestamps is enabled.
  * @param isBlindAppend Whether this commit has blindly appended without caring about existing files
+ * @param dataChange Whether this commit changes the data of the table logically.
  * @param engineInfo The information for the engine that makes the commit.
  *                   If a commit is made by Delta Lake 1.1.0 or above, it will be
  *                   `Apache-Spark/x.y.z Delta-Lake/x.y.z`.
@@ -1463,6 +1464,7 @@ case class CommitInfo(
     readVersion: Option[Long],
     isolationLevel: Option[String],
     isBlindAppend: Option[Boolean],
+    dataChange: Option[Boolean],
     operationMetrics: Option[Map[String, String]],
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
@@ -1525,7 +1527,17 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, None, null, None, None, null, null, None, None,
-      None, None, None, None, None, None, None, None, None, None)
+      None, None, None, None, None, None, None, None, None, None, None)
+  }
+
+  /**
+   * Derives the commit-level `dataChange` summary stored in [[CommitInfo.dataChange]] from the
+   * actions of a commit: a commit changes data if and only if at least one of its file actions
+   * does.
+   */
+  def dataChangeFromActions(actions: Iterable[Action]): Boolean = actions.exists {
+    case f: FileAction => f.dataChange
+    case _ => false
   }
 
   // scalastyle:off argcount
@@ -1539,6 +1551,7 @@ object CommitInfo {
       readVersion: Option[Long],
       isolationLevel: Option[String],
       isBlindAppend: Option[Boolean],
+      dataChange: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
@@ -1554,6 +1567,7 @@ object CommitInfo {
       readVersion,
       isolationLevel,
       isBlindAppend,
+      dataChange,
       operationMetrics,
       userMetadata,
       tags,
@@ -1571,6 +1585,7 @@ object CommitInfo {
       readVersion: Option[Long],
       isolationLevel: Option[String],
       isBlindAppend: Option[Boolean],
+      dataChange: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
@@ -1596,6 +1611,7 @@ object CommitInfo {
       readVersion,
       isolationLevel,
       isBlindAppend,
+      dataChange,
       operationMetrics,
       userMetadata,
       tags,
