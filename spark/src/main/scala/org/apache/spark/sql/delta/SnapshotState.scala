@@ -96,6 +96,9 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    * that a value served from the checksum is exactly the value the aggregation would have
    * produced. Note this is deliberately the *writable* predicate used by the aggregation, which
    * is stricter than the *readable* one used when deciding what to persist into the checksum.
+   * That divergence is tracked by https://github.com/delta-io/delta/issues/7507; when it is
+   * resolved, this single definition has to keep covering both the aggregation and the accessors
+   * so the two cannot disagree again.
    */
   protected def checksumDVMetricsComputed: Boolean =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED) &&

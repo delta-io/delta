@@ -553,6 +553,16 @@ class ChecksumSuite
         }
         assert(s.numDeletedRecordsOpt == fromCrc._1)
         assert(s.numDeletionVectorsOpt == fromCrc._2)
+
+        // Canary. Today these accessors reach the value through state reconstruction, because
+        // the aggregation does not compute the DV metrics while DV creation is disabled. If the
+        // readable/writable divergence is ever reconciled
+        // (https://github.com/delta-io/delta/issues/7507), the CRC becomes able to serve them
+        // and this assertion starts failing. When that happens, update `checksumDVMetricsComputed`
+        // along with the aggregation so these fields are served from the CRC again instead of
+        // silently falling back to state reconstruction forever.
+        assert(s.stateReconstructionTriggered,
+          "DV metrics currently fall back to state reconstruction when DV creation is disabled")
       }
     }
   }
