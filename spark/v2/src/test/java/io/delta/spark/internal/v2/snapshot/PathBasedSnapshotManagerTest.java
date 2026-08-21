@@ -55,7 +55,7 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
     spark.sql(String.format("INSERT INTO %s VALUES (4, 'David')", testTableName));
 
     assertEquals(0L, deltaSnapshot.version());
-    assertEquals(deltaSnapshot.version(), kernelSnapshot.getVersion());
+    assertEquals(deltaSnapshot.version(), kernelSnapshot.version());
   }
 
   @Test
@@ -68,7 +68,7 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
 
     Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
-    assertEquals(0L, initialSnapshot.getVersion());
+    assertEquals(0L, initialSnapshot.version());
 
     spark.sql(String.format("INSERT INTO %s VALUES (4, 'David')", testTableName));
 
@@ -78,10 +78,10 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
     org.apache.spark.sql.delta.Snapshot cachedSnapshot = deltaLog.unsafeVolatileSnapshot();
     Snapshot kernelcachedSnapshot = snapshotManager.loadLatestSnapshot();
 
-    assertEquals(1L, updatedSnapshot.getVersion());
-    assertEquals(deltaSnapshot.version(), updatedSnapshot.getVersion());
-    assertEquals(1L, kernelcachedSnapshot.getVersion());
-    assertEquals(cachedSnapshot.version(), kernelcachedSnapshot.getVersion());
+    assertEquals(1L, updatedSnapshot.version());
+    assertEquals(deltaSnapshot.version(), updatedSnapshot.version());
+    assertEquals(1L, kernelcachedSnapshot.version());
+    assertEquals(cachedSnapshot.version(), kernelcachedSnapshot.version());
     assertNotSame(updatedSnapshot, kernelcachedSnapshot);
   }
 
@@ -95,7 +95,7 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
 
-    assertEquals(0L, snapshotManager.loadLatestSnapshot().getVersion());
+    assertEquals(0L, snapshotManager.loadLatestSnapshot().version());
 
     for (int i = 0; i < 3; i++) {
       spark.sql(
@@ -107,7 +107,7 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
 
       long expectedVersion = i + 1;
       assertEquals(expectedVersion, deltaSnapshot.version());
-      assertEquals(expectedVersion, kernelSnapshot.getVersion());
+      assertEquals(expectedVersion, kernelSnapshot.version());
     }
   }
 
@@ -127,16 +127,16 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
 
     // Load specific versions
     Snapshot snapshot0 = snapshotManager.loadSnapshotAt(0L);
-    assertEquals(0L, snapshot0.getVersion());
+    assertEquals(0L, snapshot0.version());
 
     Snapshot snapshot1 = snapshotManager.loadSnapshotAt(1L);
-    assertEquals(1L, snapshot1.getVersion());
+    assertEquals(1L, snapshot1.version());
 
     Snapshot snapshot2 = snapshotManager.loadSnapshotAt(2L);
-    assertEquals(2L, snapshot2.getVersion());
+    assertEquals(2L, snapshot2.version());
 
     Snapshot snapshot3 = snapshotManager.loadSnapshotAt(3L);
-    assertEquals(3L, snapshot3.getVersion());
+    assertEquals(3L, snapshot3.version());
 
     // Note: loadSnapshotAt does not update the cached snapshot
   }

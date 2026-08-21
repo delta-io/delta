@@ -97,7 +97,7 @@ class UCManagedTableSnapshotManagerSuite
 
       val snapshot = manager.loadLatestSnapshot()
 
-      assert(snapshot.getVersion == maxRatifiedVersion)
+      assert(snapshot.version == maxRatifiedVersion)
       assert(ucClient.getLastGetCommitsTableIdentifier.getNamespace.toSeq == Seq("cat", "sch"))
       assert(ucClient.getLastGetCommitsTableIdentifier.getName == "tbl")
     }
@@ -128,8 +128,8 @@ class UCManagedTableSnapshotManagerSuite
     withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
       val manager = createManager(ucClient, tablePath)
 
-      assert(manager.loadSnapshotAt(0L).getVersion == 0L)
-      assert(manager.loadSnapshotAt(1L).getVersion == 1L)
+      assert(manager.loadSnapshotAt(0L).version == 0L)
+      assert(manager.loadSnapshotAt(1L).version == 1L)
 
       intercept[IllegalArgumentException] { manager.loadSnapshotAt(-1L) }
       intercept[IllegalArgumentException] { manager.loadSnapshotAt(maxRatifiedVersion + 10) }

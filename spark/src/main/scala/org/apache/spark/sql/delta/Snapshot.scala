@@ -68,25 +68,6 @@ trait SnapshotDescriptor extends DeltaLoggingProvider {
 
   def schema: StructType = metadata.schema
 
-  // Java-friendly accessors mirroring Kernel's Snapshot interface so that
-  // Java consumers (DeltaV2Table, DeltaRtmTable, etc.) use identical call
-  // sites regardless of whether they hold a DSv1 or DeltaV2Snapshot.
-  def getVersion: Long = version
-  def getMetadata: Metadata = metadata
-  def getPartitionColumnNames: java.util.List[String] =
-    metadata.getPartitionColumns
-  def getTableProperties: java.util.Map[String, String] =
-    metadata.getConfiguration
-  def getTablePath: String = dataPath.toString
-  def getLatestTransactionVersion(
-      appId: String): java.util.OptionalLong =
-    java.util.OptionalLong.empty()
-  def getNumOfFilesIfKnown: java.util.OptionalLong =
-    numOfFilesIfKnown match {
-      case Some(n) => java.util.OptionalLong.of(n)
-      case None => java.util.OptionalLong.empty()
-    }
-
   def dataPath: Path =
     throw new UnsupportedOperationException("dataPath is not implemented for this descriptor")
   def logPath: Path
@@ -527,12 +508,6 @@ class Snapshot(
 
   override def protocol: Protocol = _reconstructedProtocolMetadataICTAndLMC.protocol
 
-  override def getLatestTransactionVersion(
-      appId: String): java.util.OptionalLong = {
-    val v = transactions.get(appId)
-    if (v.isDefined) java.util.OptionalLong.of(v.get)
-    else java.util.OptionalLong.empty()
-  }
 
   /**
    * Tries to retrieve the protocol, metadata, and in-commit-timestamp (if needed) from the

@@ -3565,8 +3565,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     String schemaTrackingLocation = new File(tempDir, "schema_tracking").getAbsolutePath();
     String checkpointLocation = new File(tempDir, "checkpoint").getAbsolutePath();
     StructType schema =
-        loadSparkSchemaAtVersion(
-            snapshotManager, snapshotManager.loadLatestSnapshot().getVersion());
+        loadSparkSchemaAtVersion(snapshotManager, snapshotManager.loadLatestSnapshot().version());
     DeltaSourceMetadataTrackingLog trackingLog =
         createTrackingLog(
             snapshotManager, schemaTrackingLocation, checkpointLocation, Collections.emptyMap());
@@ -4283,7 +4282,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
   private DeltaV2MicroBatchStream createTestStreamWithDefaults(
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
-    String tablePath = snapshot.getTablePath();
+    String tablePath = snapshot.dataPath().toString();
     StructType tableSchema = snapshot.schema();
     return new DeltaV2MicroBatchStream(
         snapshotManager,
@@ -4338,8 +4337,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     return DeltaSourceMetadataTrackingLog.create(
         spark,
         schemaTrackingLocation,
-        snapshot.getMetadata().getId(),
-        snapshot.getTablePath(),
+        snapshot.metadata().getId(),
+        snapshot.dataPath().toString(),
         ScalaUtils.toScalaMap(optionMap),
         Option.apply(checkpointLocation),
         /* mergeConsecutiveSchemaChanges= */ false,
@@ -4925,7 +4924,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
-      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long version = snapshotManager.loadLatestSnapshot().version();
       long fromIndex = DeltaSourceOffset.BASE_INDEX();
       boolean isInitialSnapshot = true;
 
@@ -4987,7 +4986,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
-      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long version = snapshotManager.loadLatestSnapshot().version();
       long fromIndex = DeltaSourceOffset.BASE_INDEX();
       boolean isInitialSnapshot = true;
 
@@ -5067,7 +5066,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
-      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long version = snapshotManager.loadLatestSnapshot().version();
 
       // Access the internal AtomicReference via reflection
       java.lang.reflect.Field cacheField =
@@ -5120,7 +5119,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
-      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long version = snapshotManager.loadLatestSnapshot().version();
       long fromIndex = DeltaSourceOffset.BASE_INDEX();
       boolean isInitialSnapshot = true;
 

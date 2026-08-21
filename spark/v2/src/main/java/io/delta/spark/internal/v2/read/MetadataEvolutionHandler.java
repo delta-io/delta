@@ -691,12 +691,12 @@ public class MetadataEvolutionHandler {
           "Schema tracking location is not supported for Delta streaming source");
     }
 
-    String tablePath = snapshot.getTablePath();
+    String tablePath = snapshot.dataPath().toString();
     return Option.apply(
         DeltaSourceMetadataTrackingLog.create(
             spark,
             location,
-            snapshot.getMetadata().getId(),
+            snapshot.metadata().getId(),
             tablePath,
             ScalaUtils.toScalaMap(options),
             sourceMetadataPathOpt,

@@ -113,7 +113,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
-    long initVersion = snapshotManager.loadLatestSnapshot().getVersion();
+    long initVersion = snapshotManager.loadLatestSnapshot().version();
     assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(initVersion));
   }
 
@@ -154,7 +154,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
-    long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+    long latestVersion = snapshotManager.loadLatestSnapshot().version();
 
     // startingVersion=latest resolves to latest+1, which is not materialized. The KernelException
     // is swallowed and the validator returns without throwing.
@@ -1039,8 +1039,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
     SnapshotImpl seededSnapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-            snapshotManager.loadSnapshotAt(seededVersion));
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(seededVersion));
 
     org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog trackingLog =
         MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(

@@ -284,7 +284,7 @@ public class DeltaV2Table extends DeltaV2TableShims
       partitionColumnNames = Arrays.asList(persisted.partitionSchema().fieldNames());
     } else {
       rawSchema = initialSnapshot.schema();
-      partitionColumnNames = new ArrayList<>(initialSnapshot.getPartitionColumnNames());
+      partitionColumnNames = new ArrayList<>(initialSnapshot.metadata().getPartitionColumns());
     }
     // Schema-related metadata is lazily computed on first access within SchemaProvider
     this.schemaProvider =
@@ -405,7 +405,7 @@ public class DeltaV2Table extends DeltaV2TableShims
             /* canReturnLastCommit = */ true,
             /* mustBeRecreatable = */ true,
             /* canReturnEarliestCommit = */ true);
-    long latestVersion = manager.loadLatestSnapshot().getVersion();
+    long latestVersion = manager.loadLatestSnapshot().version();
     if (commit.getTimestamp() > timeMillis) {
       // The earliest available commit is younger than the requested time.
       throw new TimestampOutOfRangeException(timeMillis, commit.getTimestamp(), false);
@@ -450,7 +450,7 @@ public class DeltaV2Table extends DeltaV2TableShims
 
   @Override
   public Map<String, String> properties() {
-    Map<String, String> props = new HashMap<>(initialSnapshot.getTableProperties());
+    Map<String, String> props = new HashMap<>(initialSnapshot.metadata().getConfiguration());
     return Collections.unmodifiableMap(props);
   }
 
@@ -467,7 +467,7 @@ public class DeltaV2Table extends DeltaV2TableShims
    * <p>Add {@code @Override} annotation eventually: TODO(#7128)
    */
   public String version() {
-    return Long.toString(initialSnapshot.getVersion());
+    return Long.toString(initialSnapshot.version());
   }
 
   /**
@@ -610,10 +610,11 @@ public class DeltaV2Table extends DeltaV2TableShims
         && Objects.equals(tablePath, that.tablePath)
         && Objects.equals(options, that.options)
         && Objects.equals(catalogTable, that.catalogTable)
-        && Objects.equals(initialSnapshot.getTablePath(), that.initialSnapshot.getTablePath())
-        && initialSnapshot.getVersion() == that.initialSnapshot.getVersion()
         && Objects.equals(
-            initialSnapshot.getMetadata().getId(), that.initialSnapshot.getMetadata().getId());
+            initialSnapshot.dataPath().toString(), that.initialSnapshot.dataPath().toString())
+        && initialSnapshot.version() == that.initialSnapshot.version()
+        && Objects.equals(
+            initialSnapshot.metadata().getId(), that.initialSnapshot.metadata().getId());
   }
 
   @Override
@@ -623,9 +624,9 @@ public class DeltaV2Table extends DeltaV2TableShims
         tablePath,
         options,
         catalogTable,
-        initialSnapshot.getTablePath(),
-        initialSnapshot.getVersion(),
-        initialSnapshot.getMetadata().getId());
+        initialSnapshot.dataPath().toString(),
+        initialSnapshot.version(),
+        initialSnapshot.metadata().getId());
   }
 
   /**

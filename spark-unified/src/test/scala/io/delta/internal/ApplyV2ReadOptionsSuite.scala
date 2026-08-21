@@ -271,7 +271,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     val snapshotManager =
       new PathBasedSnapshotManager(tablePath, deltaLog.newDeltaHadoopConf())
-    val tableId = snapshotManager.loadLatestSnapshot.getMetadata.getId
+    val tableId = snapshotManager.loadLatestSnapshot.metadata.getId
     val trackingLog = DeltaSourceMetadataTrackingLog.create(
       spark, schemaLogPath, tableId, tablePath, parameters = Map.empty[String, String])
     val customSchemaJson =

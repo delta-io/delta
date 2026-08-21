@@ -89,9 +89,10 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
     // TODO: support partitioned IcebergCompat / materializePartitionColumns writes.
     if (!partitionSchema.isEmpty()) {
       boolean icebergCompat =
-          TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(initialSnapshot.getTableProperties())
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(
+                  initialSnapshot.metadata().getConfiguration())
               || TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(
-                  initialSnapshot.getTableProperties());
+                  initialSnapshot.metadata().getConfiguration());
       // Detect the materializePartitionColumns writer feature by its protocol name.
       boolean materializePartitionColumns =
           initialSnapshot.protocol().getWriterFeatures() != null

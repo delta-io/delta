@@ -810,7 +810,7 @@ class DeltaV2MicroBatchStream
       if (startingVersion instanceof StartingVersionLatest$) {
         Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
         // "latest": start reading from the next commit
-        cachedStartingVersion = Optional.of(latestSnapshot.getVersion() + 1);
+        cachedStartingVersion = Optional.of(latestSnapshot.version() + 1);
         return cachedStartingVersion;
       } else if (startingVersion instanceof StartingVersion) {
         long version = ((StartingVersion) startingVersion).version();
@@ -866,7 +866,7 @@ class DeltaV2MicroBatchStream
             /* canReturnLastCommit= */ true,
             /* mustBeRecreatable= */ false,
             /* canReturnEarliestCommit= */ true);
-    long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+    long latestVersion = snapshotManager.loadLatestSnapshot().version();
     long startingVersion =
         DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp(
             /* timeZone= */ spark.sessionState().conf().sessionLocalTimeZone(),
@@ -1195,7 +1195,7 @@ class DeltaV2MicroBatchStream
         // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
         // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
         // TODO(#5318): kernel should ideally relax this constraint.
-        endVersionOpt = Optional.of(snapshotManager.loadLatestSnapshot().getVersion());
+        endVersionOpt = Optional.of(snapshotManager.loadLatestSnapshot().version());
       }
 
       // After capping, check if startVersion is beyond the endVersion.
@@ -1208,7 +1208,7 @@ class DeltaV2MicroBatchStream
       // When endOffset is empty (offset discovery), check if startVersion exceeds the current
       // latest version. We must load the current latest (not snapshotAtSourceInit) because new
       // commits may have arrived since stream initialization.
-      long currentLatestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+      long currentLatestVersion = snapshotManager.loadLatestSnapshot().version();
       if (startVersion > currentLatestVersion) {
         return Utils.toCloseableIterator(Collections.emptyIterator());
       }

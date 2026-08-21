@@ -155,7 +155,7 @@ class DeltaV2Snapshot(
   // which a DeltaV2Snapshot cannot use directly because it has no V1 LogSegment.
   override def timestamp: Long = kernelSnapshot.getTimestamp(kernelEngine)
 
-  override def getLatestTransactionVersion(
+  def getLatestTransactionVersion(
       appId: String): java.util.OptionalLong = {
     val result = kernelSnapshot
       .getLatestTransactionVersion(kernelEngine, appId)
