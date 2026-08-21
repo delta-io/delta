@@ -16,52 +16,30 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.util.Clock
 
 /**
- * Interface for accessing and managing a Delta table. Mirrors DeltaLog's role as the entry
- * point for all Delta table operations.
+ * Composite contract for a process-cached Delta table
+ * manager.
  *
- * Two implementations:
- *  - [[DeltaLog]] (existing): reads the Delta protocol via log replay
- *  - KernelTableManager (future): reads the Delta protocol via Kernel
+ * The composite holds an engine-free kernel snapshot
+ * that is safe to cache across requests. Per-request
+ * context (Hadoop conf) enters at operation time via
+ * [[snapshotManager]], which builds a fresh Kernel
+ * Engine scoped to the caller's credentials.
  *
- * Commands, OptimisticTransaction, and other business logic code against this interface
- * so they work with either backend.
+ * Table identity (path, catalog table) is seeded at
+ * construction and determines cache-key affinity.
  */
 trait DeltaV2TableManager {
 
-  /** The path of the Delta log directory. */
-  def logPath: Path
-
-  /** The path of the data directory of the Delta table. */
-  def dataPath: Path
-
-  /** Clock used for timestamping operations. */
-  def clock: Clock
-
-  /** Hadoop configuration options for this table. */
-  def options: Map[String, String]
-
-  /** Create a new Hadoop Configuration for this table. */
-  def newDeltaHadoopConf(): Configuration
-
-  /** Get the current snapshot of the table, updating if necessary. */
-  def snapshot: Snapshot
-
-  /** Get the latest snapshot without checking for updates. */
-  def unsafeVolatileSnapshot: Snapshot
-
-  /** Whether the table exists (version >= 0). */
-  def tableExists: Boolean
-
-  /** A unique identifier for this table. */
-  def tableId: String
-
-  /** Create the log directories if they do not exist. */
-  def createLogDirectoriesIfNotExists(): Unit
+  /**
+   * Idempotently prevents future acquisitions and
+   * releases exclusively owned state when safe.
+   *
+   * Default no-op: the trait is package-private with a
+   * single production implementation that overrides
+   * this. Test stubs inherit the no-op safely.
+   */
+  def retire(): Unit = {}
 }
