@@ -25,7 +25,9 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.SnapshotImpl
 
-class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
+import org.apache.spark.sql.catalyst.SQLConfHelper
+
+class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest with SQLConfHelper {
 
   // scalastyle:off deltahadoopconfiguration
   private def engine: Engine =
