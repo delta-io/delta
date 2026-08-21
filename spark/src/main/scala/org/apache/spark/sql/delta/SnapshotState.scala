@@ -227,7 +227,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   def sizeInBytes: Long =
     fetchFromChecksumIfAvailable(c => Some(c.tableSizeBytes)).getOrElse(computedState.sizeInBytes)
   def numOfSetTransactions: Long =
-    fetchFromChecksumIfAvailable(setTransactionsFromChecksum(_).map(_.length.toLong))
+    fetchFromChecksumIfAvailable(_.setTransactions.map(_.length.toLong))
       .getOrElse(computedState.numOfSetTransactions)
   def numOfFiles: Long =
     fetchFromChecksumIfAvailable(c => Some(c.numFiles)).getOrElse(computedState.numOfFiles)
@@ -239,8 +239,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   def numOfProtocol: Long =
     fetchFromChecksumIfAvailable(c => Some(c.numProtocol)).getOrElse(computedState.numOfProtocol)
   def setTransactions: Seq[SetTransaction] =
-    fetchFromChecksumIfAvailable(setTransactionsFromChecksum)
-      .getOrElse(computedState.setTransactions)
+    fetchFromChecksumIfAvailable(_.setTransactions).getOrElse(computedState.setTransactions)
   def fileSizeHistogram: Option[FileSizeHistogram] =
     fetchFromChecksumIfAvailable { checksum =>
       Option.when(fileSizeHistogramEnabled)(checksum.fileSizeHistogram).flatten
@@ -276,10 +275,6 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    * checksum, or when `field` finds no usable value in it (e.g. a checksum written by an older
    * writer that did not persist the field). Callers therefore keep their previous behavior
    * whenever the checksum cannot answer.
-   *
-   * Note that [[computedState]] itself intentionally remains a pure state reconstruction result:
-   * [[ValidateChecksum.validateChecksum]] compares the checksum against it, and that comparison
-   * must not degrade into comparing the checksum with itself.
    */
   private def fetchFromChecksumIfAvailable[T](field: VersionChecksum => Option[T]): Option[T] = {
     if (!spark.sessionState.conf.getConf(
@@ -287,20 +282,6 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       return None
     }
     checksumOpt.flatMap(field)
-  }
-
-  /**
-   * The [[SetTransaction]]s recorded in `checksum`, but only when they are known to match what
-   * the state reconstruction would produce.
-   *
-   * The checksum is written with unfiltered [[SetTransaction]]s and only while no retention
-   * period is configured (see `incrementallyComputeSetTransactions`). If a retention period was
-   * configured after the checksum was written, the persisted list may still contain expired
-   * entries that the state reconstruction would drop, so the checksum must not be used.
-   */
-  private def setTransactionsFromChecksum(
-      checksum: VersionChecksum): Option[Seq[SetTransaction]] = {
-    Option.when(minSetTransactionRetentionTimestamp.isEmpty)(checksum.setTransactions).flatten
   }
 
   protected def deletionVectorsReadableAndMetricsEnabled: Boolean = {

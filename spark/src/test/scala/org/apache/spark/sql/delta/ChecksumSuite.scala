@@ -494,7 +494,7 @@ class ChecksumSuite
     }
   }
 
-  test("setTransactions are not served from the CRC when a retention period is configured") {
+  test("setTransactions are dropped from the CRC once a retention period is configured") {
     withCrcTable { tableName =>
       spark.range(5).write.format("delta").saveAsTable(tableName)
       sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
@@ -504,14 +504,20 @@ class ChecksumSuite
         val s = freshSnapshot(tableName)
         assert(s.minSetTransactionRetentionTimestamp.isDefined)
 
+        // The write path stops recording setTransactions in the CRC as soon as a retention
+        // period is configured, so a CRC can never hand out entries that state reconstruction
+        // would have filtered out and no extra guard is needed when reading.
+        assert(s.checksumOpt.get.setTransactions.isEmpty,
+          "the CRC must not carry setTransactions once a retention period is configured")
+
         // Other fields are still served from the CRC.
         assert(s.numOfFiles == s.checksumOpt.get.numFiles)
         assert(!s.stateReconstructionTriggered)
 
-        // The CRC's setTransactions are unfiltered, so they must not be used here.
+        // setTransactions therefore falls back to state reconstruction.
         assert(s.setTransactions.isEmpty)
         assert(s.stateReconstructionTriggered,
-          "setTransactions must fall back when a retention period is configured")
+          "setTransactions should fall back when the CRC does not carry them")
       }
     }
   }
