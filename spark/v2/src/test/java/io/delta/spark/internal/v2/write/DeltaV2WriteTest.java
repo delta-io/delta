@@ -114,7 +114,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             defaultEngine,
             spark.sessionState().newHadoopConf(),
             path,
-            DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(mgr.loadLatestSnapshot()),
+            DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
             mgr,
             dataSchema,
             partitionSchema,
@@ -160,7 +160,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             defaultEngine,
             spark.sessionState().newHadoopConf(),
             path,
-            DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(mgr.loadLatestSnapshot()),
+            DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
             mgr,
             dataSchema,
             partitionSchema,
@@ -187,7 +187,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
     Snapshot snapshot =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadLatestSnapshot());
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
     LogicalWriteInfo info = WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, options);
     return new DeltaV2Write(
         defaultEngine,

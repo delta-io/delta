@@ -336,7 +336,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
     Snapshot snapshot =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadLatestSnapshot());
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
     DeltaV2Write write =
@@ -366,7 +366,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
     Snapshot snapshot =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadLatestSnapshot());
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(PARTITIONED_FULL_SCHEMA, CaseInsensitiveStringMap.empty());
     DeltaV2Write write =

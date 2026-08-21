@@ -342,7 +342,7 @@ public class MetadataEvolutionHandler {
       protocol = validated.protocol;
     } else {
       SnapshotImpl snapshot =
-          DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(
+          DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
               snapshotManager.loadSnapshotAt(batchStartVersion));
       version = snapshot.getVersion();
       metadata = snapshot.getMetadata();
@@ -428,14 +428,14 @@ public class MetadataEvolutionHandler {
    * <p>V2 port of V1's {@code
    * DeltaSourceMetadataEvolutionSupport.validateAndResolveMetadataForLogInitialization}.
    */
-  // TODO(kernel-table-manager): Remove borrowKernelSnapshot here once collectMetadataActions
+  // TODO(kernel-table-manager): Remove getKernelSnapshot here once collectMetadataActions
   // and collectProtocolActions return AbstractMetadata/AbstractProtocol instead of Kernel types.
   private ValidatedMetadataAndProtocol validateAndResolveMetadataForLogInitialization(
       long startVersion, long endVersion) {
     List<Metadata> metadataChanges =
         new ArrayList<>(collectMetadataActions(startVersion, endVersion).values());
     SnapshotImpl startSnapshot =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadSnapshotAt(startVersion));
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(startVersion));
     Metadata startMetadata = startSnapshot.getMetadata();
 
     // Try to find rename or drop columns in between, or nullability/datatype changes by using

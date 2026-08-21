@@ -114,7 +114,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         engine,
         hadoopConf,
         tablePath,
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(initialSnapshot),
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
         snapshotManager,
         dataSchema,
         partitionSchema,

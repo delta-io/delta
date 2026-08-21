@@ -197,12 +197,12 @@ class DeltaV2Snapshot(
 object DeltaV2Snapshot {
 
   /**
-   * Returns the Kernel snapshot borrowed by a Kernel-backed V1 snapshot facade.
+   * Returns the Kernel snapshot wrapped by a Kernel-backed V1 snapshot facade.
    *
-   * The returned snapshot remains owned by `snapshot`: callers must not close it or retain it
-   * beyond the request or wrapper lifetime.
+   * Temporary: this accessor exists for code paths that still consume Kernel's SnapshotImpl
+   * directly and will be removed once those consumers are migrated to DSv1-level APIs.
    */
-  def borrowKernelSnapshot(snapshot: Snapshot): KernelSnapshot = {
+  def getKernelSnapshot(snapshot: Snapshot): KernelSnapshot = {
     if (snapshot == null) {
       throw new NullPointerException("snapshot is null")
     }

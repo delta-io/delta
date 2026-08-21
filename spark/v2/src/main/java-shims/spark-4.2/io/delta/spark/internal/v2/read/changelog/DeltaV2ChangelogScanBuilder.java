@@ -64,7 +64,7 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
     // but the start does not, the toggle happened within the range -- emit
     // DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE with the offending start version.
     Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
-    SnapshotImpl startSnapshotImpl = DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(startSnapshot);
+    SnapshotImpl startSnapshotImpl = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(startSnapshot);
     Snapshot endSnapshot = snapshotManager.loadSnapshotAt(endVersion);
     StructType endSchema = endSnapshot.schema();
     if (!RowTracking$.MODULE$.isEnabled(endSnapshot.protocol(), endSnapshot.getMetadata())) {

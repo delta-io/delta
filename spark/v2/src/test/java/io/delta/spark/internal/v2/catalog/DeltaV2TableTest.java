@@ -789,7 +789,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
     SnapshotImpl snapshotV0 =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadSnapshotAt(0L));
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(0L));
     Metadata metadataV0 = snapshotV0.getMetadata();
     Protocol protocolV0 = snapshotV0.getProtocol();
     String tableId = metadataV0.getId();

@@ -108,7 +108,7 @@ public class DeltaRowLevelOperationBuilderTest extends DeltaV2TestBase {
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     Engine engine = DefaultEngine.create(hadoopConf);
     Snapshot snapshot =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
             new PathBasedSnapshotManager(tempDir.getAbsolutePath(), engine).loadLatestSnapshot());
 
     assertThrows(
@@ -141,7 +141,7 @@ public class DeltaRowLevelOperationBuilderTest extends DeltaV2TestBase {
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     Engine engine = DefaultEngine.create(hadoopConf);
     Snapshot snapshot =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
             new PathBasedSnapshotManager(table.getTablePath().toString(), engine)
                 .loadLatestSnapshot());
     return new DeltaRowLevelOperationBuilder(

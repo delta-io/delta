@@ -115,7 +115,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     // (TransactionBuilder) for the streaming commit, and
     // getLatestTransactionVersion for the epoch-skip check.
     SnapshotImpl latestSnapshot =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadLatestSnapshot());
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
 
     // TODO(#7140): no implicit type cast and mergeSchema. Fail loudly on a concurrent
     // schema/protocol change.

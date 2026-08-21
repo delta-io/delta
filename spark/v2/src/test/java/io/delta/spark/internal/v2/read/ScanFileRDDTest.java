@@ -43,7 +43,7 @@ public class ScanFileRDDTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(mgr.loadLatestSnapshot());
+    SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot());
 
     SerializableReadOnlySnapshot serializable =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
@@ -68,7 +68,7 @@ public class ScanFileRDDTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(mgr.loadLatestSnapshot());
+    SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot());
 
     SerializableReadOnlySnapshot serializable =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);

@@ -1039,7 +1039,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
     SnapshotImpl seededSnapshot =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
             snapshotManager.loadSnapshotAt(seededVersion));
 
     org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog trackingLog =

@@ -370,7 +370,7 @@ public class DeltaV2Table extends DeltaV2TableShims
   }
 
   protected SnapshotImpl initialSnapshot() {
-    return DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(initialSnapshot);
+    return DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot);
   }
 
   protected Optional<CatalogTable> catalogTable() {
@@ -588,7 +588,7 @@ public class DeltaV2Table extends DeltaV2TableShims
         this,
         kernelEngine,
         hadoopConf,
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(initialSnapshot),
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
         info);
   }
 

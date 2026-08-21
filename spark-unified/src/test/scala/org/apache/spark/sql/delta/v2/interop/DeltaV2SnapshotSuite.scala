@@ -177,34 +177,34 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
     }
   }
 
-  test("borrowKernelSnapshot returns the wrapped Kernel snapshot") {
+  test("getKernelSnapshot returns the wrapped Kernel snapshot") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       spark.range(1).write.format("delta").save(path)
       val kernelSnapshot = loadKernelSnapshot(path)
       val snapshot = new DeltaV2Snapshot(kernelSnapshot)
 
-      assert(DeltaV2Snapshot.borrowKernelSnapshot(snapshot) eq kernelSnapshot)
+      assert(DeltaV2Snapshot.getKernelSnapshot(snapshot) eq kernelSnapshot)
     }
   }
 
-  test("borrowKernelSnapshot rejects a non-Kernel-backed V1 snapshot") {
+  test("getKernelSnapshot rejects a non-Kernel-backed V1 snapshot") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       spark.range(1).write.format("delta").save(path)
       val snapshot = DeltaLog.forTable(spark, path).update()
 
       val error = intercept[IllegalStateException] {
-        DeltaV2Snapshot.borrowKernelSnapshot(snapshot)
+        DeltaV2Snapshot.getKernelSnapshot(snapshot)
       }
       assert(error.getMessage.contains("Expected a DeltaV2Snapshot"))
       assert(error.getMessage.contains(snapshot.getClass.getName))
     }
   }
 
-  test("borrowKernelSnapshot rejects null") {
+  test("getKernelSnapshot rejects null") {
     val error = intercept[NullPointerException] {
-      DeltaV2Snapshot.borrowKernelSnapshot(null)
+      DeltaV2Snapshot.getKernelSnapshot(null)
     }
     assert(error.getMessage === "snapshot is null")
   }

@@ -274,7 +274,7 @@ class DeltaV2MicroBatchStream
     this.sqlConf = SQLConf.get();
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
 
-    this.snapshotAtSourceInit = DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotAtSourceInit);
+    this.snapshotAtSourceInit = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotAtSourceInit);
     this.tableId = this.snapshotAtSourceInit.getMetadata().getId();
 
     // The effective snapshot for reading, mirroring v1's readSnapshotDescriptor. When schema
@@ -1132,7 +1132,7 @@ class DeltaV2MicroBatchStream
     } else {
       try {
         startSnapshot =
-            DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(
+            DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
                 snapshotManager.loadSnapshotAt(startVersion));
       } catch (io.delta.kernel.exceptions.KernelException e) {
         // startVersion may not yet exist (e.g. startingVersion=latest resolves to latest+1).
@@ -1702,7 +1702,7 @@ class DeltaV2MicroBatchStream
     Exception err = null;
     try {
       startVersionSnapshot =
-          DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(
+          DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
               snapshotManager.loadSnapshotAt(batchStartVersion));
     } catch (Exception e) {
       err = e;
@@ -1876,7 +1876,7 @@ class DeltaV2MicroBatchStream
     // May differ from snapshotAtSourceInit on checkpoint restart. loadSnapshotAt is
     // metadata-only on driver; log replay runs on executors via ScanFileRDD.
     SnapshotImpl snapshot =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadSnapshotAt(version));
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(version));
     SerializableReadOnlySnapshot serSnapshot =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
 
@@ -1958,7 +1958,7 @@ class DeltaV2MicroBatchStream
   /** Loads snapshot files at the specified version. */
   private InitialSnapshotCache loadAndValidateSnapshot(long version) {
     SnapshotImpl snapshot =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadSnapshotAt(version));
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(version));
     // If schema tracking is already active and the initial snapshot has advanced since the tracked
     // read snapshot, replace the tracked metadata/protocol before reading snapshot files.
     if (metadataEvolutionHandler.shouldTrackMetadataChange()

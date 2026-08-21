@@ -409,7 +409,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                     defaultEngine,
                     spark.sessionState().newHadoopConf(),
                     path,
-                    DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(mgr.loadLatestSnapshot()),
+                    DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
                     mgr,
                     data,
                     part,
@@ -502,7 +502,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 defaultEngine,
                 spark.sessionState().newHadoopConf(),
                 path,
-                DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(mgr.loadLatestSnapshot()),
+                DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
                 mgr,
                 data,
                 part,
@@ -544,7 +544,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 defaultEngine,
                 spark.sessionState().newHadoopConf(),
                 path,
-                DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(mgr.loadLatestSnapshot()),
+                DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
                 mgr,
                 data,
                 part,
@@ -566,7 +566,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
     Snapshot snapshot =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(snapshotManager.loadLatestSnapshot());
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(PARTITIONED_FULL_SCHEMA, CaseInsensitiveStringMap.empty());
     DeltaV2Write write =
@@ -665,7 +665,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
 
   private DeltaV2BatchWrite newWrite(String path) {
     Snapshot snapshot =
-        DeltaV2Snapshot$.MODULE$.borrowKernelSnapshot(
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
             new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf())
                 .loadLatestSnapshot());
     LogicalWriteInfo info =
