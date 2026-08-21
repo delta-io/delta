@@ -20,13 +20,14 @@ import io.delta.flink.sink.mergestrategy.AppendOnly;
 import io.delta.flink.sink.mergestrategy.MoRUpsert;
 import io.delta.flink.sink.mergestrategy.Upsert;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.io.Serializable;
 import java.util.Locale;
 import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
@@ -392,44 +393,80 @@ public class DeltaSinkConf implements Serializable {
     boolean allowEvolve(StructType tableSchema, StructType sinkSchema);
   }
 
-  /** Disallows any schema change. Table schema must be equivalent to sink schema. */
+  /** Disallows any schema change. Logical field names, types, order, and nullability must match. */
   static class NoEvolution implements SchemaEvolutionPolicy {
     @Override
     public boolean allowEvolve(StructType tableSchema, StructType sinkSchema) {
-      return tableSchema.equivalent(sinkSchema);
+      return sameLogicalType(tableSchema, sinkSchema);
     }
   }
 
   /**
    * Allows adding new columns in the table schema only.
    *
-   * <p>All fields in the sink schema must exist in the table schema with:
+   * <p>All fields in the sink schema must be the leading fields in the table schema with:
    *
    * <ul>
    *   <li>same name
    *   <li>equivalent data type
    *   <li>same nullability
+   *   <li>same order
    * </ul>
    *
-   * <p>This means the table schema may contain extra fields that the sink does not write yet.
+   * <p>This means the table schema may contain extra nullable trailing fields that the sink does
+   * not write yet. Reordering existing fields is rejected because writer, partition, and upsert
+   * rows use the sink schema's ordinals.
    */
   static class NewColumnEvolution implements SchemaEvolutionPolicy {
     @Override
     public boolean allowEvolve(StructType tableSchema, StructType sinkSchema) {
-      Map<String, StructField> tableFields =
-          tableSchema.fields().stream()
-              .collect(Collectors.toMap(StructField::getName, Function.identity()));
-
-      // Every field of sink schema must exist in table schema with same definition.
-      return sinkSchema.fields().stream()
-          .allMatch(
-              field -> {
-                StructField tableField = tableFields.getOrDefault(field.getName(), null);
-                return tableField != null
-                    && tableField.getDataType().equivalent(field.getDataType())
-                    && tableField.isNullable() == field.isNullable();
-              });
+      if (tableSchema.length() < sinkSchema.length()) {
+        return false;
+      }
+      for (int i = 0; i < sinkSchema.length(); i++) {
+        if (!sameLogicalField(tableSchema.at(i), sinkSchema.at(i))) {
+          return false;
+        }
+      }
+      for (int i = sinkSchema.length(); i < tableSchema.length(); i++) {
+        if (!tableSchema.at(i).isNullable()) {
+          return false;
+        }
+      }
+      return true;
     }
+  }
+
+  private static boolean sameLogicalField(StructField tableField, StructField sinkField) {
+    return tableField.getName().equals(sinkField.getName())
+        && tableField.isNullable() == sinkField.isNullable()
+        && sameLogicalType(tableField.getDataType(), sinkField.getDataType());
+  }
+
+  private static boolean sameLogicalType(DataType tableType, DataType sinkType) {
+    if (!tableType.equivalent(sinkType)) {
+      return false;
+    }
+    if (tableType instanceof StructType) {
+      StructType tableStruct = (StructType) tableType;
+      StructType sinkStruct = (StructType) sinkType;
+      for (int i = 0; i < tableStruct.length(); i++) {
+        if (!sameLogicalField(tableStruct.at(i), sinkStruct.at(i))) {
+          return false;
+        }
+      }
+    } else if (tableType instanceof ArrayType) {
+      ArrayType tableArray = (ArrayType) tableType;
+      ArrayType sinkArray = (ArrayType) sinkType;
+      return tableArray.containsNull() == sinkArray.containsNull()
+          && sameLogicalType(tableArray.getElementType(), sinkArray.getElementType());
+    } else if (tableType instanceof MapType) {
+      MapType tableMap = (MapType) tableType;
+      MapType sinkMap = (MapType) sinkType;
+      return sameLogicalType(tableMap.getKeyType(), sinkMap.getKeyType())
+          && sameLogicalType(tableMap.getValueType(), sinkMap.getValueType());
+    }
+    return true;
   }
 
   // ----------------------------------------------------------------------
