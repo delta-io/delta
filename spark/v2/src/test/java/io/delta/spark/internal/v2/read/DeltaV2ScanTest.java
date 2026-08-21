@@ -343,7 +343,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testGetReadDataSchemaWithColumnPruning() {
+  public void testGetReadDataSchemaRetainsRootColumns() {
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
 
     StructType prunedSchema =
@@ -361,10 +361,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
     assertEquals(2, dataSchema.fields().length, "dataSchema should still have 2 fields");
     assertEquals(
-        1,
-        readDataSchema.fields().length,
-        "readDataSchema should have 1 field (name) after pruning cnt");
-    assertEquals("name", readDataSchema.fields()[0].name());
+        dataSchema, readDataSchema, "logical readDataSchema should retain all root data columns");
   }
 
   @Test
@@ -797,8 +794,8 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testPruneColumns_cdcRead_filtersCDCColumns() {
     // pruneColumns should filter out partition and CDC columns from the data schema, since
     // partition columns are read separately and CDC columns are injected by CDCReadFunction.
-    // The remaining data columns are honored - pruning a data column ("cnt") shrinks the
-    // underlying parquet read.
+    // Root data columns are retained to match V1 logical pruning. Partition and CDC fields are
+    // still handled separately.
     Map<String, String> cdcOptions = new HashMap<>();
     cdcOptions.put("readChangeFeed", "true");
     CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
@@ -815,10 +812,11 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
-    // readDataSchema reflects pruning: only "name" remains (cnt dropped, partition + CDC filtered)
+    // readDataSchema retains both root data columns; partition + CDC fields are filtered here.
     StructType readDataSchema = scan.getReadDataSchema();
-    assertEquals(1, readDataSchema.fields().length);
+    assertEquals(2, readDataSchema.fields().length);
     assertEquals("name", readDataSchema.fields()[0].name());
+    assertEquals("cnt", readDataSchema.fields()[1].name());
 
     // readSchema = readDataSchema + partition + CDC
     StructType readSchema = scan.readSchema();
@@ -827,8 +825,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     assertTrue(readSchema.fieldIndex("_change_type") >= 0);
     assertTrue(readSchema.fieldIndex("_commit_version") >= 0);
     assertTrue(readSchema.fieldIndex("_commit_timestamp") >= 0);
-    // Pruned column "cnt" should not appear.
-    assertThrows(IllegalArgumentException.class, () -> readSchema.fieldIndex("cnt"));
+    assertTrue(readSchema.fieldIndex("cnt") >= 0);
   }
 
   @Test

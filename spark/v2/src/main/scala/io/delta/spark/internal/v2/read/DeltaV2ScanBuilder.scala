@@ -121,11 +121,16 @@ private[read] class DeltaV2ScanBuilder(
   override def pruneColumns(requiredSchema: StructType): Unit = {
     Objects.requireNonNull(requiredSchema, "requiredSchema is null")
     // CDC columns are injected later by CDCReadFunction, so strip them here.
-    requiredDataSchema = new StructType(
+    val requestedDataSchema = new StructType(
       requiredSchema.fields.filter { f =>
         val name = f.name.toLowerCase(Locale.ROOT)
         !partitionColumnSet.contains(name) && !CDCSchemaContext.isCDCColumn(name)
       })
+
+    // Match the V1 LogicalRelation behavior: retain every root-level data column while applying
+    // Spark's pruning inside requested roots.
+    requiredDataSchema = DeltaV2SchemaPruningUtils.retainRootColumns(
+      dataSchema, requestedDataSchema, SQLConf.get.resolver)
   }
 
   /**
@@ -266,8 +271,8 @@ private[read] object DeltaV2ScanBuilder {
    * Rather than duplicate the DeltaScan-production logic (which must construct the `private[v2]`
    * [[DeltaV2Snapshot]] and run the V1 data-skipping path), this reuses the normal build path with
    * no pushed filters: an empty filter set makes `filesForScan` take its no-filter fast path and
-   * return a full-table [[DeltaScan]]. Column pruning is applied so the returned scan reads only
-   * `requiredSchema`.
+   * return a full-table [[DeltaScan]]. Column pruning narrows requested nested fields while
+   * retaining every logical root.
    *
    * @param tableName the table name (used only for identification)
    * @param snapshot the Kernel snapshot to read
