@@ -407,7 +407,8 @@ class SnapshotLastManifestCommitWithoutCRCSuite extends SnapshotLastManifestComm
       val checkpoint = checkpointAt(deltaLog, 4).getOrElse {
         fail("v4 must emit an inline AMT checkpoint action.")
       }
-      val provider = AMTCheckpointProvider.fromCheckpoint(deltaLog, checkpoint)
+      val provider = AMTCheckpointProvider.fromCheckpoint(
+        deltaLog, checkpoint, manifestCommitVersion = 4L)
       val baseSnapshot = deltaLog.unsafeVolatileSnapshot
       assert(baseSnapshot.version == 4,
         s"Expected volatile snapshot at v4, got ${baseSnapshot.version}.")

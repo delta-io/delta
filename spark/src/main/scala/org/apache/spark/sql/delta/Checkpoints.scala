@@ -123,7 +123,8 @@ case class CheckpointInstance(
           // large, we need a fallback mechanism. For now, we expect it to be always present.
           throw new IllegalStateException("AMT checkpoint action is expected to be always present.")
         }
-        AMTCheckpointProvider.fromCheckpoint(deltaLog, checkpointAction)
+        AMTCheckpointProvider.fromCheckpoint(
+          deltaLog, checkpointAction, lastAMTCheckpointInfo.manifestCommitVersion)
       // Treat single file checkpoints also as V2 Checkpoints because we don't know if it is
       // actually a V2 checkpoint until we read it.
       case CheckpointInstance.Format.V2 | CheckpointInstance.Format.SINGLE =>
@@ -274,6 +275,15 @@ object CheckpointInstance {
       manifestCommitVersion = metadata.amtCheckpoint.map(_.manifestCommitVersion))
   }
 
+  def apply(amtCheckpointProvider: AMTCheckpointProvider): CheckpointInstance = {
+    CheckpointInstance(
+      version = amtCheckpointProvider.version,
+      format = Format.AMT,
+      fileName = None,
+      numParts = Some(amtCheckpointProvider.leaves.size),
+      manifestCommitVersion = Some(amtCheckpointProvider.manifestCommitVersion))
+  }
+
   val MaxValue: CheckpointInstance = sentinelValue(versionOpt = None)
 
   def sentinelValue(versionOpt: Option[Long]): CheckpointInstance = {
@@ -384,12 +394,27 @@ trait Checkpoints extends DeltaLogging {
     writeLastCheckpointFile(this, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
   }
 
-  /** Resolves the AMT checkpoint instance from the last checkpoint hint. */
-  protected def resolveAMTCheckpointInstance(
-      lastCheckpointInfo: Option[LastCheckpointInfo]): Option[CheckpointInstance] = {
-    lastCheckpointInfo
+  /**
+   * Resolves the AMT checkpoint instances from the last checkpoint info and old checkpoint
+   * provider.
+   */
+  protected def resolveAMTCheckpointInstances(
+      lastCheckpointInfo: Option[LastCheckpointInfo],
+      oldCheckpointProviderOpt: Option[UninitializedCheckpointProvider])
+    : Seq[CheckpointInstance] = {
+    val instanceFromLastCheckpointInfo = lastCheckpointInfo
       .filter(_.amtCheckpoint.isDefined)
       .map(CheckpointInstance.apply)
+    val instanceFromOldCheckpointProvider = oldCheckpointProviderOpt.collect {
+      case amt: AMTCheckpointProvider => CheckpointInstance.apply(amt)
+    }
+    // If the hint and the old provider describe the same AMT checkpoint, they'll both be discarded
+    // in `getLatestCompleteCheckpointFromList`. Dedup so a single instance survives. Prioritize the
+    // old checkpoint provider instance for better semantics, as we will reuse the old checkpoint
+    // provider in `getLogSegmentForVersion` if the version matches.
+    instanceFromLastCheckpointInfo
+      .filterNot(info => instanceFromOldCheckpointProvider.exists(_.version == info.version))
+      .toSeq ++ instanceFromOldCheckpointProvider
   }
 
   /**
@@ -471,10 +496,12 @@ trait Checkpoints extends DeltaLogging {
       logSegment: LogSegment,
       lastManifestCommit: LastManifestCommit): LogSegment = {
     recordDeltaOperation(this, "delta.v4amt.readManifestCommitAndUpdateAMTCheckpointProvider") {
+      val LastManifestCommit(manifestCommitVersion, contentRootVersion) = lastManifestCommit
       // The initial log segment must have all the deltas after the content root version.
-      require(logSegment.checkpointProvider.version <= lastManifestCommit.contentRootVersion)
+      require(logSegment.checkpointProvider.version <= contentRootVersion)
       val checkpoint = readCheckpointActionFromCommit(logSegment, lastManifestCommit)
-      val newCheckpointProvider = AMTCheckpointProvider.fromCheckpoint(this, checkpoint)
+      val newCheckpointProvider = AMTCheckpointProvider.fromCheckpoint(
+        this, checkpoint, manifestCommitVersion)
       logSegment.copy(
         checkpointProvider = newCheckpointProvider,
         deltas = logSegment.deltas.filter(f => deltaVersion(f) > newCheckpointProvider.version))
