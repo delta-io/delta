@@ -17,7 +17,13 @@
 package org.apache.spark.sql.delta.typewidening
 
 import com.databricks.spark.util.Log4jUsageLogger
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DataFrameUtils
+import org.apache.spark.sql.delta.DeltaAnalysisException
+import org.apache.spark.sql.delta.DeltaDMLTestUtils
+import org.apache.spark.sql.delta.DeltaInsertIntoTest
+import org.apache.spark.sql.delta.DSv2TemporarilyIncompatible
+import org.apache.spark.sql.delta.NameBasedAccessIncompatible
+import org.apache.spark.sql.delta.TypeWideningMode
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path

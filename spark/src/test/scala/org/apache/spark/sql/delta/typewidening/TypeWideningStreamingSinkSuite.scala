@@ -16,7 +16,10 @@
 
 package org.apache.spark.sql.delta.typewidening
 
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.DeltaOptions
+import org.apache.spark.sql.delta.DeltaSinkImplicitCastSuiteBase
 import org.apache.spark.sql.delta.Relocated.StreamExecution
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 
