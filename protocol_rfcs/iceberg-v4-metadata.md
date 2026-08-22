@@ -119,6 +119,18 @@ This design enables:
 
 <ins>Files not in the reachable set may be deleted once past the retention period. Reachability is derived from the live tree, not from `remove` tombstones, so no tombstone tracking is required (see [Remove File](#remove-file)).</ins>
 
+### Commit Provenance Information
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#commit-provenance-information)***
+
+<ins>The `commitInfo` action supports a `dataChange` field that summarizes, at the commit level, whether the commit changed the data of the table:</ins>
+
+| Field Name | Data Type | Description |
+| - | - | - |
+| <ins>dataChange</ins> | <ins>Boolean</ins> | <ins>Whether this commit changed the data of the table. Must be `true` if any `add` or `remove` action in the commit sets `dataChange` to `true`, and `false` otherwise. A commit with no `add` or `remove` action records `false`; `cdc` actions never affect the value because their `dataChange` is always `false`. **Required when the `adaptiveMetadata` table feature is enabled**; optional otherwise, in which case readers fall back to the `dataChange` flags of the individual [file actions](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file) when it is absent.</ins> |
+
+<ins>When the `adaptiveMetadata` table feature is enabled, writers must include the `dataChange` field in the `commitInfo` action of every commit, and readers must treat it as the source of truth for whether the commit changed data.</ins>
+
 --------
 
 > ***Add a new section at the [Table Features](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#table-features) section***
@@ -175,7 +187,7 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
 {
   "checkpoint": [
     { "checkpointMetadata": { "version": 42 } },
-    { "contentRoot": { "path": "metadata/a3d1f7e2-v42.parquet", "sizeInBytes": 1024, "version": 42 } },
+    { "contentRoot": { "path": "metadata/a3d1f7e2-v42.parquet", "sizeInBytes": 1024, "version": 42, "tags": { "isIncremental": "true", "numLeaves": "4", "lastManifestCommitWithFullRewrite": "40" } } },
     { "protocol": { "minReaderVersion": 3, "minWriterVersion": 7, "readerFeatures": ["columnMapping", "deletionVectors", "adaptiveMetadata"], "writerFeatures": ["columnMapping", "deletionVectors", "domainMetadata", "rowTracking", "adaptiveMetadata"] } },
     { "metaData": { "id": "af23c9d7-fff1-4a5a-a2c8-55c59bd782aa", "name": "my_table", "schemaString": "{...}", "partitionColumns": [], "configuration": {}, "createdTime": 1234567890000 } },
     { "domainMetadata": { "domain": "delta.rowTracking", "configuration": "{\"rowIdHighWaterMark\": 1000000}", "removed": false } },
@@ -194,7 +206,7 @@ The `checkpoint` action is an array of action entries. Each entry is one of:
 | Action | Description |
 |--------|-------------|
 | `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log. |
-| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, and `version` — the table version the root reflects. `version` must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). |
+| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). `tags` records metadata about the manifest tree; there are 3 optional fields in `tags`, each value string-encoded: `isIncremental` (Boolean) — whether the tree was rebuilt incrementally; `numLeaves` (Long) — the number of leaf manifests; and `lastManifestCommitWithFullRewrite` (Long) — the table version of the most recent full (non-incremental) manifest rewrite. |
 | `protocol` | The Protocol action at this checkpoint version. |
 | `metaData` | The Metadata action at this checkpoint version. |
 | `domainMetadata` | A DomainMetadata action. System domains (keys prefixed with `delta.`) must appear here; user domains may appear here or in a sidecar. |
@@ -573,6 +585,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
+- Include the `dataChange` field in the `commitInfo` action of every commit (see [Commit Provenance Information](#commit-provenance-information)).
 
 ### Manifest Commit Procedure
 
