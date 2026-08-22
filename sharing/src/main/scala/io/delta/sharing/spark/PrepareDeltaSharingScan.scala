@@ -17,6 +17,7 @@
 package io.delta.sharing.spark
 
 import org.apache.spark.sql.delta.{DeltaTableUtils => SqlDeltaTableUtils}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{PreparedDeltaFileIndex, PrepareDeltaScan}
 import io.delta.sharing.client.util.ConfUtils
@@ -25,6 +26,7 @@ import io.delta.sharing.spark.DeltaSharingFileIndex
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
 /**
  * Before query planning, we prepare any scans over delta sharing tables by pushing
@@ -32,6 +34,29 @@ import org.apache.spark.sql.catalyst.plans.logical._
  * files and gather more accurate statistics for CBO and metering.
  */
 class PrepareDeltaSharingScan(override val spark: SparkSession) extends PrepareDeltaScan(spark) {
+
+  /**
+   * Only skip DataSourceV2 writes that target a Delta table.
+   *
+   * [[PrepareDeltaScan]] skips every V2 write because a Delta target is re-planned through a V1
+   * fallback, which runs this rule again inside the transaction. That reasoning is about the
+   * *sink*, not the source: when a Delta Sharing scan feeds a non-Delta V2 sink (e.g. Iceberg)
+   * nothing ever re-plans the query, so skipping here means the scan is never prepared at all.
+   * The [[DeltaSharingFileIndex]] then survives into planning instead of being replaced by a
+   * [[PreparedDeltaFileIndex]], and because the rule that injects the deletion vector filter only
+   * matches a `TahoeFileIndex`, rows marked deleted are silently returned. See delta-io/delta#6719.
+   *
+   * Delta targets are still skipped so we do not issue a second, redundant RPC to the sharing
+   * server for a scan the V1 fallback is about to prepare again.
+   */
+  override protected def shouldSkipV2WritePlan(plan: LogicalPlan): Boolean = plan match {
+    case w: V2WriteCommand =>
+      w.table match {
+        case r: DataSourceV2Relation => r.table.isInstanceOf[DeltaTableV2]
+        case _ => false
+      }
+    case _ => false
+  }
 
   /**
    * Prepares delta sharing scans sequentially.
