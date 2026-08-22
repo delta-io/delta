@@ -3012,7 +3012,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       newChecksumOpt,
       preCommitLogSegment,
       catalogTableForPostCommitSnapshot,
-      amtCheckpointOpt = amtWriteResultOpt.map(_.checkpoint),
+      amtCheckpointWrittenInCommitOpt = amtWriteResultOpt.map(_.checkpoint),
       isIdempotentRetry = isIdempotentRetry)
     val postCommitReconstructionTime = System.nanoTime()
     maintenanceOperation = if (
