@@ -42,9 +42,9 @@ import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.catalyst.plans.logical.SupportsSubquery
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.execution.datasources.FileFormat.FILE_PATH
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
-import org.apache.spark.sql.functions.input_file_name
 import org.apache.spark.sql.types.LongType
 
 trait DeleteCommandMetrics { self: LeafRunnableCommand =>
@@ -314,19 +314,24 @@ case class DeleteCommand(
             // Keep everything from the resolved target except a new TahoeFileIndex
             // that only involves the affected files instead of all files.
             val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
-            val data = DataFrameUtils.ofRows(sparkSession, newTarget)
+            val (newTargetWithFileMetadata, fileMetadataCol) =
+              DeltaTableUtils.addFileMetadataColumn(newTarget)
+            val data = DataFrameUtils.ofRows(sparkSession, newTargetWithFileMetadata)
             val incrDeletedCountExpr = IncrementMetric(TrueLiteral, metrics("numDeletedRows"))
             val filesToRewrite =
               withStatusCode("DELTA", FINDING_TOUCHED_FILES_MSG) {
                 if (candidateFiles.isEmpty) {
                   Array.empty[String]
                 } else {
-                  data.filter(Column(cond))
-                    .select(input_file_name())
-                    .filter(Column(incrDeletedCountExpr))
-                    .distinct()
-                    .as[String]
-                    .collect()
+                  DeltaTableUtils.withNestedSchemaPruningDisabledForVariant(
+                      sparkSession, cond) {
+                    data.filter(Column(cond))
+                      .select(Column(fileMetadataCol).getField(FILE_PATH))
+                      .filter(Column(incrDeletedCountExpr))
+                      .distinct()
+                      .as[String]
+                      .collect()
+                  }
                 }
               }
 
