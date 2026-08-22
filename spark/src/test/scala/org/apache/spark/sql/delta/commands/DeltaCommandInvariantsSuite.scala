@@ -28,7 +28,10 @@ import org.apache.spark.sql.delta.DeltaOperations.EmptyCommit
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 
-class DeltaCommandInvariantsSuite extends SparkFunSuite with DeltaSQLCommandTest {
+import org.apache.spark.sql.catalyst.SQLConfHelper
+
+class DeltaCommandInvariantsSuite extends SparkFunSuite with DeltaSQLCommandTest
+  with org.apache.spark.sql.catalyst.SQLConfHelper {
 
   for {
     shouldSucceed <- BOOLEAN_DOMAIN

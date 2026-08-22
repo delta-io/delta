@@ -43,7 +43,8 @@ import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
  * }
  * }}}
  */
-trait V2ForceTest extends DeltaSQLCommandTest with AdaptiveSparkPlanHelper {
+trait V2ForceTest extends DeltaSQLCommandTest with AdaptiveSparkPlanHelper
+  with org.apache.spark.sql.catalyst.SQLConfHelper {
 
   private val testsRun: mutable.Set[String] = mutable.Set.empty
 
@@ -127,7 +128,7 @@ trait V2ForceTest extends DeltaSQLCommandTest with AdaptiveSparkPlanHelper {
   /** Run a SQL statement through the V1 connector. */
   protected def executeInV1Mode(sqlText: String): Unit = inV1Mode(sql(sqlText))
 
-  override def afterAll(): Unit = {
+  override protected def afterAll(): Unit = {
     super.afterAll()
   }
 }

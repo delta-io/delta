@@ -47,6 +47,8 @@ import org.scalatest.{BeforeAndAfterEach, Tag}
 import org.apache.spark.{SparkConf, SparkContext, SparkFunSuite, SparkThrowable}
 import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, DataFrame, DataFrameWriter, SparkSession}
+import org.apache.spark.sql.SparkSessionBinder
+import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -81,7 +83,8 @@ trait CDCTestMixin extends SharedSparkSession {
   }
 }
 
-trait ChangelogV2CDCUtilMixin extends CDCTestMixin with ChangelogSyntaxSupportedShim {
+trait ChangelogV2CDCUtilMixin extends CDCTestMixin with ChangelogSyntaxSupportedShim
+  with SQLConfHelper {
 
   // Tests skipped on the V2 changelog read path.
   protected def excludedV2Exact: Set[String] = Set(
@@ -812,7 +815,6 @@ trait DeltaDMLTestUtils
   with DeltaTableProvider
   with BeforeAndAfterEach
   with CDCTestMixin {
-  self: SharedSparkSession =>
 
   import testImplicits._
 
@@ -903,11 +905,11 @@ trait DeltaDMLTestUtils
       spark.read
         .schema(schema)
         .option("mode", FailFastMode.name)
-        .json(data.toDS)
+        .json(spark.createDataset(data))
     } else {
       spark.read
         .option("mode", FailFastMode.name)
-        .json(data.toDS)
+        .json(spark.createDataset(data))
     }
   }
 
@@ -1032,7 +1034,6 @@ trait DeltaDMLInMemoryTestUtils
 }
 
 trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
-  self: SharedSparkSession =>
 
   protected var tempDir: File = _
 
@@ -1065,8 +1066,7 @@ trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
  */
 case object NameBasedAccessIncompatible extends Tag("NameBasedAccessIncompatible")
 
-trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
-  self: SharedSparkSession =>
+trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils with SharedSparkSession {
 
   override protected def test(testName: String, testTags: Tag*)(testFun: => Any)(
       implicit pos: Position): Unit = {
