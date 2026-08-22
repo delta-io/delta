@@ -393,6 +393,48 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
     assert(statsSchema == expectedStatsSchema)
   }
 
+  test("column lookups are case-insensitive when schema has mixed-case column names") {
+    // Schema columns use upper-case names; predicates typically arrive in lower-case.
+    // Without case-insensitive map keys the lookup silently misses and data skipping is disabled.
+    val dataSchema = new StructType()
+      .add("Value", IntegerType.INTEGER)
+      .add("Count", LongType.LONG)
+      .add("Label", StringType.STRING)
+
+    val helper = new StatsSchemaHelper(dataSchema)
+
+    // Lower-case lookups must succeed (the common failure mode from the bug)
+    assert(helper.isSkippingEligibleMinMaxColumn(new io.delta.kernel.expressions.Column("value")))
+    assert(helper.isSkippingEligibleNullCountColumn(new io.delta.kernel.expressions.Column("value")))
+    assert(helper.isSkippingEligibleMinMaxColumn(new io.delta.kernel.expressions.Column("count")))
+    assert(helper.isSkippingEligibleNullCountColumn(new io.delta.kernel.expressions.Column("count")))
+    assert(helper.isSkippingEligibleMinMaxColumn(new io.delta.kernel.expressions.Column("label")))
+    assert(helper.isSkippingEligibleNullCountColumn(new io.delta.kernel.expressions.Column("label")))
+
+    // Upper-case (original schema case) must still work
+    assert(helper.isSkippingEligibleMinMaxColumn(new io.delta.kernel.expressions.Column("Value")))
+    assert(helper.isSkippingEligibleNullCountColumn(new io.delta.kernel.expressions.Column("Value")))
+
+    // Mixed-case must also work
+    assert(helper.isSkippingEligibleMinMaxColumn(new io.delta.kernel.expressions.Column("VALUE")))
+    assert(helper.isSkippingEligibleNullCountColumn(new io.delta.kernel.expressions.Column("COUNT")))
+  }
+
+  test("case-insensitive column lookups work for nested struct columns") {
+    val dataSchema = new StructType()
+      .add("Parent", new StructType().add("Child", LongType.LONG))
+
+    val helper = new StatsSchemaHelper(dataSchema)
+
+    // All case variants of the nested path must resolve correctly
+    assert(helper.isSkippingEligibleMinMaxColumn(
+      new io.delta.kernel.expressions.Column(Array("parent", "child"))))
+    assert(helper.isSkippingEligibleMinMaxColumn(
+      new io.delta.kernel.expressions.Column(Array("PARENT", "CHILD"))))
+    assert(helper.isSkippingEligibleMinMaxColumn(
+      new io.delta.kernel.expressions.Column(Array("Parent", "Child"))))
+  }
+
   test("check getStatsSchema with collations - no eligible string columns") {
     val dataSchema = new StructType()
       .add("a", IntegerType.INTEGER)
