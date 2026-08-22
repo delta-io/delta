@@ -26,6 +26,7 @@ import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
 
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.stats.DeltaScan
+import org.apache.spark.sql.delta.stats.DeltaStaticFileSelection
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 
@@ -191,11 +192,15 @@ private[read] class DeltaV2ScanBuilder(
         // record counts until the limit is satisfied.
         def selectFiles(): DeltaScan =
           if (effectiveLimit.isPresent) {
-            snapshot.filesForScan(
-              effectiveLimit.getAsInt.toLong,
-              partitionFiltersForScan)
+            DeltaStaticFileSelection.record {
+              snapshot.filesForScan(
+                effectiveLimit.getAsInt.toLong,
+                partitionFiltersForScan)
+            }
           } else {
-            snapshot.filesForScan(catalystFilters, keepNumRecords)
+            DeltaStaticFileSelection.record {
+              snapshot.filesForScan(catalystFilters, keepNumRecords)
+            }
           }
 
         // Select files inline on this path.
