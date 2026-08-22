@@ -187,11 +187,18 @@ public final class FieldMetadata {
   public int hashCode() {
     return metadata.entrySet().stream()
         .mapToInt(
-            entry ->
-                (entry.getValue().getClass().isArray()
-                    ? (entry.getKey() == null ? 0 : entry.getKey().hashCode())
-                        ^ Arrays.hashCode((Object[]) entry.getValue())
-                    : entry.hashCode()))
+            entry -> {
+              Object value = entry.getValue();
+              int valueHash;
+              if (value == null) {
+                valueHash = 0;
+              } else if (value.getClass().isArray()) {
+                valueHash = Arrays.deepHashCode((Object[]) value);
+              } else {
+                valueHash = value.hashCode();
+              }
+              return Objects.hashCode(entry.getKey()) ^ valueHash;
+            })
         .sum();
   }
 
