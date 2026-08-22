@@ -508,6 +508,7 @@ class Snapshot(
 
   override def protocol: Protocol = _reconstructedProtocolMetadataICTAndLMC.protocol
 
+
   /**
    * Tries to retrieve the protocol, metadata, and in-commit-timestamp (if needed) from the
    * checksum file. If the checksum file is not present or if the protocol or metadata is missing

@@ -247,7 +247,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     // checks. DeltaV2Scan's initialSnapshot is from analysis time and may be stale by stream
     // start/restart.
     // Matches V1's DeltaDataSource.createSource() behavior.
-    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
+    org.apache.spark.sql.delta.Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
     SparkSession spark = SparkSession.active();
 
     // Create metadata tracking log for non-additive schema evolution support.
@@ -256,7 +256,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog =
         MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
             spark,
-            (io.delta.kernel.internal.SnapshotImpl) latestSnapshot,
+            latestSnapshot,
             options,
             snapshotManager,
             KernelEngineFactory.createDefaultEngine(hadoopConf),

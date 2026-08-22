@@ -20,8 +20,8 @@ import java.io.File
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.kernel.Table
-import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.internal.SnapshotImpl
 
 import org.apache.spark.sql.QueryTest
@@ -43,13 +43,13 @@ class DeltaV2OptimisticTransactionSuite
   private def startKernelTxn(dir: File): DeltaV2OptimisticTransaction = {
     // scalastyle:off deltahadoopconfiguration
     // No DeltaLog here (the snapshot is loaded via Kernel), so use the session Hadoop conf.
-    val engine = DefaultEngine.create(spark.sessionState.newHadoopConf())
+    val engine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
     val kernelSnap = Table
       .forPath(engine, dir.getCanonicalPath)
       .getLatestSnapshot(engine)
       .asInstanceOf[SnapshotImpl]
-    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap, spark)
+    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap)
     new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot)
   }
 

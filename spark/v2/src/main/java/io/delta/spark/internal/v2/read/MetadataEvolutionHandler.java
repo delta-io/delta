@@ -66,6 +66,7 @@ import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.slf4j.Logger;
@@ -340,7 +341,9 @@ public class MetadataEvolutionHandler {
       metadata = validated.metadata;
       protocol = validated.protocol;
     } else {
-      SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(batchStartVersion);
+      SnapshotImpl snapshot =
+          DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
+              snapshotManager.loadSnapshotAt(batchStartVersion));
       version = snapshot.getVersion();
       metadata = snapshot.getMetadata();
       protocol = snapshot.getProtocol();
@@ -425,11 +428,14 @@ public class MetadataEvolutionHandler {
    * <p>V2 port of V1's {@code
    * DeltaSourceMetadataEvolutionSupport.validateAndResolveMetadataForLogInitialization}.
    */
+  // TODO(kernel-table-manager): Remove getKernelSnapshot here once collectMetadataActions
+  // and collectProtocolActions return AbstractMetadata/AbstractProtocol instead of Kernel types.
   private ValidatedMetadataAndProtocol validateAndResolveMetadataForLogInitialization(
       long startVersion, long endVersion) {
     List<Metadata> metadataChanges =
         new ArrayList<>(collectMetadataActions(startVersion, endVersion).values());
-    SnapshotImpl startSnapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(startVersion);
+    SnapshotImpl startSnapshot =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(startVersion));
     Metadata startMetadata = startSnapshot.getMetadata();
 
     // Try to find rename or drop columns in between, or nullability/datatype changes by using
@@ -510,7 +516,7 @@ public class MetadataEvolutionHandler {
    */
   public static Optional<PersistedMetadata> getPersistedMetadataForMicroBatchStream(
       SparkSession spark,
-      SnapshotImpl snapshot,
+      org.apache.spark.sql.delta.Snapshot snapshot,
       Map<String, String> options,
       DeltaV2SnapshotManager snapshotManager,
       Engine engine) {
@@ -663,7 +669,7 @@ public class MetadataEvolutionHandler {
    */
   public static Option<DeltaSourceMetadataTrackingLog> getMetadataTrackingLogForMicroBatchStream(
       SparkSession spark,
-      SnapshotImpl snapshot,
+      org.apache.spark.sql.delta.Snapshot snapshot,
       Map<String, String> options,
       DeltaV2SnapshotManager snapshotManager,
       Engine engine,
@@ -685,12 +691,12 @@ public class MetadataEvolutionHandler {
           "Schema tracking location is not supported for Delta streaming source");
     }
 
-    String tablePath = snapshot.getPath();
+    String tablePath = snapshot.dataPath().toString();
     return Option.apply(
         DeltaSourceMetadataTrackingLog.create(
             spark,
             location,
-            snapshot.getMetadata().getId(),
+            snapshot.metadata().getId(),
             tablePath,
             ScalaUtils.toScalaMap(options),
             sourceMetadataPathOpt,

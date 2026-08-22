@@ -27,7 +27,9 @@ import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, StatisticsCollect
 
 import com.databricks.spark.util.TagDefinition
 import org.apache.hadoop.fs.Path
-import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+
+import org.apache.spark.sql.{DataFrame, Dataset}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * A [[Snapshot]] backed by a Delta Kernel snapshot, for the v2 Connector. It extends the V1
@@ -43,15 +45,7 @@ class DeltaV2Snapshot(
     // `Snapshot` interface: the decoded data path is only exposed on SnapshotImpl in the
     // OSS-published Kernel. The public io.delta.kernel.Snapshot has no `getDataPath`, and its
     // `getPath` is URL-encoded, which breaks Hadoop `Path` for table roots containing spaces.
-    kernelSnapshot: KernelSnapshot,
-    sparkSession: SparkSession,
-    // Kernel engine for reading scan files and the commit timestamp -- owned and passed by the
-    // connector. The secondary constructor below builds a default one for callers without a Kernel
-    // engine of their own.
-    // The separating comma lives inside the edge block: it is only needed when the edge-only
-    // catalogTableOpt parameter follows. Without it, the OSS export would strip catalogTableOpt and
-    // leave a trailing comma that scalac accepts but scalastyle's parser rejects.
-    kernelEngine: Engine)
+    private val kernelSnapshot: KernelSnapshot)
     extends Snapshot(
       // toString keeps this compiling across Kernel versions: getDataPath returns String in the
       // currently pinned Kernel and io.delta.kernel.internal.fs.Path in newer Kernels.
@@ -64,16 +58,18 @@ class DeltaV2Snapshot(
       deltaLog = null,
       checksumOpt = None) {
 
-  override protected def spark: SparkSession = sparkSession
+  private[this] var resolvedCatalogTableOpt: Option[CatalogTable] = None
 
-  /** Convenience for callers without their own Kernel engine: builds a fresh DefaultEngine. */
+  def this(
+      kernelSnapshot: KernelSnapshot,
+      catalogTableOpt: Option[CatalogTable]) = {
+    this(kernelSnapshot)
+    resolvedCatalogTableOpt = catalogTableOpt
+  }
+
   // scalastyle:off deltahadoopconfiguration
-  // No DeltaLog to source a Hadoop conf from, so use the session Hadoop conf for the engine.
-  def this(kernelSnapshot: KernelSnapshot, sparkSession: SparkSession) =
-    this(
-      kernelSnapshot,
-      sparkSession,
-      KernelEngineFactory.createDefaultEngine(sparkSession.sessionState.newHadoopConf()))
+  private def kernelEngine: Engine =
+    KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
   // scalastyle:on deltahadoopconfiguration
 
   // --- logSegment/deltaLog = null guardrail: construction-path overrides ----------------------
@@ -159,10 +155,21 @@ class DeltaV2Snapshot(
   // which a DeltaV2Snapshot cannot use directly because it has no V1 LogSegment.
   override def timestamp: Long = kernelSnapshot.getTimestamp(kernelEngine)
 
+  def getLatestTransactionVersion(
+      appId: String): java.util.OptionalLong = {
+    val result = kernelSnapshot
+      .getLatestTransactionVersion(kernelEngine, appId)
+    if (result.isPresent) {
+      java.util.OptionalLong.of(result.get)
+    } else {
+      java.util.OptionalLong.empty()
+    }
+  }
+
   // --- Files surfaced via Kernel scan ---------------------------------------------------------
 
   override lazy val allFiles: Dataset[AddFile] =
-    KernelSnapshotUtils.buildAllFiles(kernelSnapshot, sparkSession, kernelEngine)
+    KernelSnapshotUtils.buildAllFiles(kernelSnapshot, spark, kernelEngine)
 
   // --- StatisticsCollection ------------------------------------------------------------------
 
@@ -185,4 +192,26 @@ class DeltaV2Snapshot(
   private def unimplemented: Nothing =
     throw new UnsupportedOperationException(
       "This member is not yet supported on a Kernel-backed DeltaV2Snapshot")
+}
+
+object DeltaV2Snapshot {
+
+  /**
+   * Returns the Kernel snapshot wrapped by a Kernel-backed V1 snapshot facade.
+   *
+   * Temporary: this accessor exists for code paths that still consume Kernel's SnapshotImpl
+   * directly and will be removed once those consumers are migrated to DSv1-level APIs.
+   */
+  def getKernelSnapshot(snapshot: Snapshot): KernelSnapshot = {
+    if (snapshot == null) {
+      throw new NullPointerException("snapshot is null")
+    }
+    snapshot match {
+      case deltaV2Snapshot: DeltaV2Snapshot => deltaV2Snapshot.kernelSnapshot
+      case other =>
+        throw new IllegalStateException(
+          s"Expected a DeltaV2Snapshot, but found ${other.getClass.getName}")
+    }
+  }
+
 }

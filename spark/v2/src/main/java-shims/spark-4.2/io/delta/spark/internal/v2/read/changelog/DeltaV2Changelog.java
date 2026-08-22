@@ -1,6 +1,6 @@
 package io.delta.spark.internal.v2.read.changelog;
 
-import io.delta.kernel.Snapshot;
+import org.apache.spark.sql.delta.Snapshot;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import io.delta.spark.internal.v2.shims.CatalogV2UtilShims;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
@@ -63,7 +63,7 @@ public class DeltaV2Changelog implements Changelog {
     // Resolve lazily so catalog construction stays side-effect free. The scan path validates
     // each per-commit Metadata against this same end-version schema.
     Snapshot endSnapshot = deltaV2Table.getSnapshotManager().loadSnapshotAt(endVersion);
-    StructType endSchema = SchemaUtils.convertKernelSchemaToSparkSchema(endSnapshot.getSchema());
+    StructType endSchema = endSnapshot.schema();
     StructType cdcSchema =
         endSchema
             .add(METADATA_COLUMN, METADATA_STRUCT, false)
