@@ -17,17 +17,23 @@
 package io.delta.storage;
 
 import com.google.common.base.Throwables;
+import io.delta.storage.internal.GCSLogStoreUtil;
 import io.delta.storage.internal.ThreadUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.RawLocalFileSystem;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.concurrent.Callable;
 
@@ -60,8 +66,48 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
 
     final String preconditionFailedExceptionMessage = "412 Precondition Failed";
 
+    /**
+     * Enables a faster implementation of listFrom by setting the startOffset parameter in GCS
+     * list requests, so that only keys lexicographically equal to or after the requested path
+     * are listed — instead of the entire parent directory. The feature is enabled by setting
+     * the property delta.enableFastGCSListFrom in the Hadoop configuration.
+     *
+     * This feature requires com.google.cloud:google-cloud-storage on the classpath and
+     * authenticates via Application Default Credentials.
+     */
+    private final boolean enableFastListFrom
+            = initHadoopConf().getBoolean("delta.enableFastGCSListFrom", false);
+
     public GCSLogStore(Configuration hadoopConf) {
         super(hadoopConf);
+    }
+
+    @Override
+    public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
+        final FileSystem fs = path.getFileSystem(hadoopConf);
+        // LocalFileSystem and RawLocalFileSystem checks are needed for tests to pass
+        if (fs instanceof LocalFileSystem || fs instanceof RawLocalFileSystem
+                || !enableFastListFrom) {
+            return super.listFrom(path, hadoopConf);
+        }
+
+        final Path resolvedPath = fs.makeQualified(path);
+        final Path parentPath = resolvedPath.getParent();
+        // The fast list path returns an empty result (rather than throwing) for a missing
+        // directory, which is indistinguishable from listing past the latest version, so an
+        // explicit exists() probe is needed to preserve listFrom's documented
+        // FileNotFoundException contract.
+        if (!fs.exists(parentPath)) {
+            throw new FileNotFoundException(
+                String.format("No such file or directory: %s", parentPath)
+            );
+        }
+        final FileStatus[] statuses = GCSLogStoreUtil.gcsListFromArray(resolvedPath, parentPath);
+        return Arrays
+            .stream(statuses)
+            .filter(s -> s.getPath().getName().compareTo(resolvedPath.getName()) >= 0)
+            .sorted(Comparator.comparing(a -> a.getPath().getName()))
+            .iterator();
     }
 
     @Override
