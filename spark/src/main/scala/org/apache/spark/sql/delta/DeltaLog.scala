@@ -1060,9 +1060,7 @@ object DeltaLog extends DeltaLogging {
       spark: SparkSession,
       options: Map[String, String],
       rootPath: Path): Path = {
-    val fileSystemOptions =
-      DeltaFileSystemOptions.fileSystemOptionsFromDataFrameOptions(
-        spark, options)
+    val fileSystemOptions = DeltaFileSystemOptions.buildFsOptions(spark, options)
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
     // scalastyle:on deltahadoopconfiguration
@@ -1095,8 +1093,7 @@ object DeltaLog extends DeltaLogging {
       clock: Clock
   ): DeltaLog = {
     val fileSystemOptions =
-      DeltaFileSystemOptions.fileSystemOptionsFromDataFrameOptions(
-        spark, options, initialCatalogTable)
+      DeltaFileSystemOptions.buildFsOptions(spark, options, initialCatalogTable)
 
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
