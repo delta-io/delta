@@ -1156,7 +1156,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
     Test / unmanagedJars += (kernelApi / Test / packageBin).value,
 
-    libraryDependencies ++= Seq(
+    libraryDependencies ++= junit5TestDependencies ++ Seq(
       "org.assertj" % "assertj-core" % "3.26.3" % Test,
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
