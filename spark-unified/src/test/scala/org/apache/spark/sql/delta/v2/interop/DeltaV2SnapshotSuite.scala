@@ -16,7 +16,10 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, NoMapping, Snapshot}
+import org.apache.spark.sql.delta.actions.DomainMetadata
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 import io.delta.kernel.TableManager
@@ -91,6 +94,10 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
     def fileKeys(s: Snapshot) =
       s.allFiles.collect().map(f => (f.path, f.size, f.partitionValues)).toSet
     assert(fileKeys(v2) === fileKeys(v1))
+
+    // Both bin the same file sizes with the same default bins, so the histograms agree.
+    assert(v2.sizeInBytes === v1.sizeInBytes)
+    assert(v2.fileSizeHistogram === v1.fileSizeHistogram)
   }
 
   /**
@@ -159,6 +166,118 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       intercept[UnsupportedOperationException](snapshot.stateDS)
       intercept[UnsupportedOperationException](snapshot.tombstones)
       intercept[UnsupportedOperationException](snapshot.computeChecksum)
+      intercept[UnsupportedOperationException](snapshot.deltaFileIndexOpt)
+      intercept[UnsupportedOperationException](snapshot.checkpointProvider)
+
+      assert(snapshot.deltaFileSizeInBytes() === -1L)
+      assert(snapshot.checkpointSizeInBytes() === -1L)
+    }
+  }
+
+  test("domainMetadata is served correctly") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.sql(
+        s"CREATE TABLE delta.`$path` (id LONG) USING delta " +
+          "TBLPROPERTIES ('delta.feature.domainMetadata' = 'supported')")
+
+      // Use DeltaLog to create a domain metadata easier for DeltaV2Snapshot read testing.
+      DeltaLog.forTable(spark, path).startTransaction().commit(
+        DomainMetadata("test.userDomain", """{"key":"value"}""", removed = false) :: Nil,
+        DeltaOperations.ManualUpdate)
+
+      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+
+      val userDomain = snapshot.domainMetadata.find(_.domain == "test.userDomain")
+        .getOrElse(fail("expected the test.userDomain domain"))
+      assert(!userDomain.removed)
+      assert(userDomain.configuration === """{"key":"value"}""")
+      // Inherited from SnapshotStateManager (not overridden here): Kernel serves domain metadata
+      // without V1 state reconstruction, so it is always "known".
+      assert(snapshot.domainMetadatasIfKnown.contains(snapshot.domainMetadata))
+    }
+  }
+
+  test("fileSizeHistogram is served from the checksum when one exists") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(0, 1000).write.format("delta").save(path)
+      spark.range(0, 5).write.format("delta").mode("append").save(path)
+      val kernelSnapshot = loadKernelSnapshot(path)
+      assert(kernelSnapshot.getCurrentCrcInfo.get().getFileSizeHistogram.isPresent)
+      val snapshot = new DeltaV2Snapshot(kernelSnapshot, spark)
+
+      assert(snapshot.fileSizeHistogram.nonEmpty)
+      assert(
+        snapshot.fileSizeHistogram.get.sortedBinBoundaries ===
+        FileSizeHistogramUtils.DEFAULT_BINS)
+      assert(
+        snapshot.fileSizeHistogram.get.fileCounts.sum === snapshot.numOfFiles
+      )
+      assert(
+        snapshot.fileSizeHistogram.get.totalBytes.sum === snapshot.sizeInBytes
+      )
+    }
+  }
+
+  test("fileSizeHistogram is None when the checksum has none") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
+        spark.range(0, 1000).write.format("delta").save(path)
+      }
+      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+      assert(snapshot.fileSizeHistogram.isEmpty)
+    }
+  }
+
+  test("sizeInBytes is served from the checksum when one exists") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(0, 1000).write.format("delta").save(path)
+
+      val kernelSnapshot = loadKernelSnapshot(path)
+      assert(kernelSnapshot.getCurrentCrcInfo.isPresent)
+
+      val snapshot = new DeltaV2Snapshot(kernelSnapshot, spark)
+      assert(snapshot.sizeInBytesIfKnown.nonEmpty)
+      assert(
+        snapshot.sizeInBytes === snapshot.allFiles.collect().map(_.size).sum
+      )
+    }
+  }
+
+  test("sizeInBytes is -1 when the checksum has none") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
+        spark.range(0, 1000).write.format("delta").save(path)
+      }
+
+      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+      assert(snapshot.sizeInBytesIfKnown.isEmpty)
+      assert(snapshot.sizeInBytes === -1L)
+    }
+  }
+
+  test("fileSizeHistogram is None when the histogram config is disabled") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(5).write.format("delta").save(path)
+
+      withSQLConf(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> "false") {
+        assert(new DeltaV2Snapshot(loadKernelSnapshot(path), spark).fileSizeHistogram.isEmpty)
+      }
+    }
+  }
+
+  test("domainMetadata is empty for a table with no domains") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(1).write.format("delta").save(path)
+
+      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+      assert(snapshot.domainMetadata.isEmpty)
     }
   }
 

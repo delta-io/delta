@@ -16,14 +16,17 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
+import scala.collection.JavaConverters._
+import scala.jdk.OptionConverters._
+
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 
 import org.apache.spark.sql.delta.{CheckpointProvider, DeltaColumnMappingMode, DeltaLogFileIndex, Snapshot, VersionChecksum}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
-import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, StatisticsCollection}
+import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, FileSizeHistogram, StatisticsCollection}
 
 import com.databricks.spark.util.TagDefinition
 import org.apache.hadoop.fs.Path
@@ -139,15 +142,24 @@ class DeltaV2Snapshot(
     None
   }
 
-  // Kernel does not surface a cheap total table size, so report None; the data-skipping path
-  // derives the scanned size from per-file sizes instead.
-  override protected[delta] def sizeInBytesIfKnown: Option[Long] = None
+  /**
+   * Table size in bytes from CRC when present; None otherwise.
+   */
+  override protected[delta] def sizeInBytesIfKnown: Option[Long] =
+    kernelSnapshot.getCurrentCrcInfo.toScala.map(_.getTableSizeBytes)
 
   // No V1 commit-file index; not used by the Kernel scan path.
   override protected[delta] lazy val deltaFileIndexOpt: Option[DeltaLogFileIndex] = unimplemented
 
   // No V1 checkpoint provider; not used by the Kernel scan path.
   override lazy val checkpointProvider: CheckpointProvider = unimplemented
+
+  /**
+   * No V1 commit-file index or checkpoint provider, so these V1 commit-file/checkpoint sizes are
+   * not applicable. -1 is the "did not collect this stat" sentinel.
+   */
+  override def deltaFileSizeInBytes(): Long = -1L
+  override def checkpointSizeInBytes(): Long = -1L
 
   // V1 reads these from logSegment; report zero.
   override def numDeltaFiles: Long = 0L
@@ -168,6 +180,37 @@ class DeltaV2Snapshot(
 
   override lazy val statsColumnSpec: DeltaStatsColumnSpec =
     StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
+
+  /**
+   * Table size in bytes, served from the Kernel CRC when known. Returns the -1 "did not collect
+   * this stat" sentinel.
+   */
+  override lazy val sizeInBytes: Long = sizeInBytesIfKnown.getOrElse(-1L)
+
+  /**
+   * File-size histogram, served from the Kernel CRC when known and gated by
+   * [[fileSizeHistogramEnabled]]. Returns None when the config is disabled or the CRC has no
+   * histogram.
+   */
+  override lazy val fileSizeHistogram: Option[FileSizeHistogram] =
+    if (fileSizeHistogramEnabled) {
+      kernelSnapshot.getCurrentCrcInfo.toScala
+        .flatMap(_.getFileSizeHistogram.toScala)
+        .map { bins =>
+          val result = bins.captureFileSizeHistogramResult()
+          FileSizeHistogram(
+            sortedBinBoundaries = result.getSortedBinBoundaries.toIndexedSeq,
+            fileCounts = result.getFileCounts,
+            totalBytes = result.getTotalBytes)
+        }
+    } else {
+      None
+    }
+
+  override lazy val domainMetadata: Seq[DomainMetadata] =
+    kernelSnapshot.getActiveDomainMetadataMap.asScala.map { case (domain, kernelDomainMetadata) =>
+      DomainMetadata(domain, kernelDomainMetadata.getConfiguration, kernelDomainMetadata.isRemoved)
+    }.toSeq
 
   // --- ValidateChecksum: Kernel has no V1 checksum to validate; no-op ------------------------
   override def validateChecksum(contextInfo: Map[String, String]): Boolean = true
