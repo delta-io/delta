@@ -86,7 +86,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import org.apache.hadoop.conf.Configuration;
@@ -184,13 +186,36 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     return colon > 0 ? location.substring(0, colon) : "";
   }
 
+  // Full names of tables whose READ_WRITE credential request was denied, so intent-less loads
+  // (SELECT resolution) skip the doomed round-trip on every query. An entry is cleared when a
+  // declared write for the table succeeds.
+  private final Set<String> writeDeniedTables = ConcurrentHashMap.newKeySet();
+
   private Map<String, String> fetchTableCredentials(
-      String catalog, String schema, String table, String location) throws ApiException {
+      String catalog, String schema, String table, String location, boolean writeIntent)
+      throws ApiException {
     UCCredentialHadoopConfs.Builder b = newCredBuilder(schemeOf(location));
+    String fullName = catalog + "." + schema + "." + table;
     try {
-      return b.buildForTable(catalog, schema, table, TableOperation.READ_WRITE, location);
-    } catch (ApiException rw) {
-      return b.buildForTable(catalog, schema, table, TableOperation.READ, location);
+      if (writeIntent) {
+        // Declared write: READ credentials would only defer the same denial to the storage
+        // layer mid-job, so let it surface now.
+        Map<String, String> props =
+            b.buildForTable(catalog, schema, table, TableOperation.READ_WRITE, location);
+        writeDeniedTables.remove(fullName);
+        return props;
+      }
+      if (writeDeniedTables.contains(fullName)) {
+        return b.buildForTable(catalog, schema, table, TableOperation.READ, location);
+      }
+      // Intent-less loads still try READ_WRITE first: some write paths (e.g. OPTIMIZE) resolve
+      // through the intent-less overload.
+      try {
+        return b.buildForTable(catalog, schema, table, TableOperation.READ_WRITE, location);
+      } catch (ApiException rw) {
+        writeDeniedTables.add(fullName);
+        return b.buildForTable(catalog, schema, table, TableOperation.READ, location);
+      }
     } catch (IllegalArgumentException malformed) {
       // UC Hadoop's response validator (DeltaStorageCredentialUtil.requireSingleCloudConfig)
       // throws when the scheme has no cloud cred (e.g. file://). Treat as no creds.
@@ -445,13 +470,19 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
   @Override
   public TableInfo loadTable(TableIdentifier tableIdentifier) throws IOException {
+    return loadTable(tableIdentifier, false);
+  }
+
+  @Override
+  public TableInfo loadTable(TableIdentifier tableIdentifier, boolean writeIntent)
+      throws IOException {
     ensureOpen();
     ResolvedTableName name = requireThreePartName(tableIdentifier);
 
     try {
       return toTableInfo(
           deltaTablesApi.loadTable(name.catalog, name.schema, name.table),
-          name.catalog, name.schema, name.table);
+          name.catalog, name.schema, name.table, writeIntent);
     } catch (ApiException e) {
       if (e.getCode() == HTTP_NOT_FOUND) {
         throw new NoSuchTableException(
@@ -540,7 +571,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           deltaTablesApi.createTable(name.catalog, name.schema, sdkRequest),
           name.catalog,
           name.schema,
-          name.table);
+          name.table,
+          /* writeIntent= */ true);
     } catch (ApiException e) {
       throw new IOException(
           String.format("Failed to create table %s (HTTP %s): %s",
@@ -598,7 +630,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   // ===========================
 
   private TableInfo toTableInfo(
-      DeltaLoadTableResponse response, String catalog, String schema, String name)
+      DeltaLoadTableResponse response, String catalog, String schema, String name,
+      boolean writeIntent)
       throws IOException {
     DeltaTableMetadata m = response.getMetadata();
     String location = m.getLocation();
@@ -623,7 +656,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     }
     Map<String, String> storageProps;
     try {
-      storageProps = fetchTableCredentials(catalog, schema, name, location);
+      storageProps = fetchTableCredentials(catalog, schema, name, location, writeIntent);
     } catch (ApiException e) {
       // Surface as a typed failure so callers with a fallback (e.g. server-side planning) can
       // recover. The exception carries the catalog-side TableInfo (with empty storageProperties)

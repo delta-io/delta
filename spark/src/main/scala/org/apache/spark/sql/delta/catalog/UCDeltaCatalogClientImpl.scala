@@ -90,11 +90,13 @@ private[catalog] class UCDeltaCatalogClientImpl(
   // DeltaCatalogClient: loadTable
   // -------------------------------------------------------------------------
 
-  override def loadTable(ident: Identifier): Table = {
+  override def loadTable(ident: Identifier): Table = loadTable(ident, writeIntent = false)
+
+  override def loadTable(ident: Identifier, writeIntent: Boolean): Table = {
     UCDeltaCatalogClientImpl.loadTableInvocationsCounter.incrementAndGet()
     val tid = toStorageTableIdent(ident)
     val info =
-      try ucClient.loadTable(tid)
+      try ucClient.loadTable(tid, writeIntent)
       catch {
         case _: StorageNoSuchTableException => throw new NoSuchTableException(ident)
         case e: UnsupportedTableFormatException =>

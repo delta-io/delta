@@ -182,6 +182,27 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     m
   }
 
+  test("loadTable passes the declared write intent to the UC client") {
+    val recordedIntents = scala.collection.mutable.ArrayBuffer.empty[Boolean]
+    val stub = new ThrowingUCDeltaClient {
+      override def loadTable(
+          tableIdentifier: StorageTableIdentifier, writeIntent: Boolean): TableInfo = {
+        recordedIntents += writeIntent
+        throw new StorageNoSuchTableException("sentinel: metadata fetch not under test")
+      }
+    }
+    val client = new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = stub)
+    val ident = Identifier.of(Array("sch"), "tbl")
+
+    intercept[org.apache.spark.sql.catalyst.analysis.NoSuchTableException] {
+      client.loadTable(ident)
+    }
+    intercept[org.apache.spark.sql.catalyst.analysis.NoSuchTableException] {
+      client.loadTable(ident, writeIntent = true)
+    }
+    assert(recordedIntents.toList === List(false, true))
+  }
+
   test("createStagingTable: managed Delta create on the new path stages + augments props") {
     val (client, stub) = newRecordingClient()
     val ident = Identifier.of(Array("sch"), "tbl")
