@@ -203,6 +203,26 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     assert(recordedIntents.toList === List(false, true))
   }
 
+  test("the server-side-planning fallback never serves a declared write") {
+    val info = existingDeltaTableInfo()
+    val stub = new ThrowingUCDeltaClient {
+      override def loadTable(
+          tableIdentifier: StorageTableIdentifier, writeIntent: Boolean): TableInfo =
+        throw new CredentialFetchFailedException("denied", null, info)
+    }
+    val client = new UCDeltaCatalogClientImpl(
+      catalogName = "main", ucClient = stub, serverSidePlanningEnabled = true)
+    val ident = Identifier.of(Array("sch"), "tbl")
+
+    // SSP tables are read-only, so a declared write must surface the credential denial instead
+    // of being handed a table that fails later with "does not support writes".
+    intercept[CredentialFetchFailedException] {
+      client.loadTable(ident, writeIntent = true)
+    }
+    // The intent-less load keeps the SSP fallback.
+    assert(client.loadTable(ident) != null)
+  }
+
   test("createStagingTable: managed Delta create on the new path stages + augments props") {
     val (client, stub) = newRecordingClient()
     val ident = Identifier.of(Array("sch"), "tbl")

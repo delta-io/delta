@@ -104,7 +104,9 @@ private[catalog] class UCDeltaCatalogClientImpl(
             log"UCDeltaClient; falling back to the legacy catalog path. Cause: " +
             log"${MDC(DeltaLogKeys.EXCEPTION, e.getMessage)}")
           return fallbackLoadTableFunc(ident)
-        case e: CredentialFetchFailedException if serverSidePlanningEnabled =>
+        // Server-side planning is read-only; a declared write must surface the denial rather
+        // than be handed a read-only SSP table that fails later with "does not support writes".
+        case e: CredentialFetchFailedException if serverSidePlanningEnabled && !writeIntent =>
           logWarning(log"Credential fetch failed for " +
             log"${MDC(DeltaLogKeys.TABLE_NAME, fullQualifiedTableName(ident))}; enabling " +
             log"server-side planning fallback. Cause: " +
