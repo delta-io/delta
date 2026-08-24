@@ -109,13 +109,11 @@ This design enables:
 | - | - | - | - |
 | <ins>`u`</ins> | <ins>base85-encoded random prefix + UUID</ins> | <ins>base85</ins> | <ins>Under table root</ins> |
 | <ins>`p`</ins> | <ins>absolute URI</ins> | <ins>URL-encoded</ins> | <ins>Outside table root</ins> |
-| <ins>`r`</ins> | <ins>raw path relative to the table root</ins> | <ins>none (un-encoded)</ins> | <ins>Under table root</ins> |
+| <ins>`r`</ins> | <ins>raw path relative to the table root</ins> | <ins>none</ins> | <ins>Under table root</ins> |
 
-<ins>`r` is permitted only while `adaptiveMetadata` is enabled. Under this feature the storage type is determined by location: a DV under the table root uses `u` or `r`, and `p` is reserved for a DV blob that physically lives outside the table root (e.g., a shallow clone whose DV still resides in the source table). When writing a content entry's `deletion_vector.location`, writers resolve the descriptor to that path — decoding a `u` UUID to its `.bin` path, using an `r` path as-is, or storing an out-of-table `p` as an absolute URI.</ins>
+<ins>`r` is permitted only while `adaptiveMetadata` is enabled. When writing a content entry's `deletion_vector.location`, writers resolve the descriptor to that path, either decoding a `u` UUID to its `.bin` path, using an `r` path as-is, or storing an out-of-table `p` as an absolute URI. When surfacing it as a Delta [Deletion Vector Descriptor](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#deletion-vector-descriptor-schema), a `location` that resolves under the current table root becomes an `r` descriptor, and a `location` outside the table root becomes a `p` descriptor.</ins>
 
-<ins>**Reading DVs from the tree.** The `deletion_vector` field of a content entry stores the DV as a file reference (`location` relative to the table root, or an absolute URI). When surfacing it as a Delta `DeletionVectorDescriptor`, a `location` that resolves under the current table root becomes an `r` descriptor; a `location` outside the table root becomes a `p` descriptor.</ins>
-
-<ins>**Reconciliation by object identity.** The same physical DV blob may be serialized differently depending on where it originates — as `u` or in-table `p` in a log commit, or as `r` when surfaced from the tree. [Action Reconciliation](#action-reconciliation) must therefore match a `remove` against its `add` by the DV's normalized object identity, rather than by the serialized descriptor string. Normalization must resolve all storage types correctly, regardless of the presence of a path scheme or encoding.</ins>
+<ins>The same physical DV blob may be serialized differently depending on where it originates. [Action Reconciliation](#action-reconciliation) must therefore match a `remove` against its `add` by the DV's normalized object identity, rather than by the serialized descriptor string. Normalization must resolve all storage types correctly, regardless of the presence of a path scheme or encoding.</ins>
 
 ### Metadata Cleanup
 
