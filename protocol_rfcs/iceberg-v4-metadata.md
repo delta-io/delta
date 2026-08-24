@@ -95,13 +95,27 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#action-reconciliation)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, `remove` actions are not carried through reconciliation. A `remove` is applied during replay to cancel its matching `add` (or to mark the referenced tree entry deleted) and is then dropped. The reconstructed table state and any checkpoint produced from it contain only live entries; they do not retain removes. Scans never consumed tombstones, and tree-reachability cleanup replaces the VACUUM use of tombstones, so removes have no remaining role in reconciled state.</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, `remove` actions are not carried through reconciliation. A `remove` is applied during replay to cancel its matching `add` (or to mark the referenced tree entry deleted) and is then dropped. The reconstructed table state and any checkpoint produced from it contain only live entries; they do not retain removes. Scans never consumed tombstones, and tree-reachability cleanup replaces the VACUUM use of tombstones, so removes have no remaining role in reconciled state. A `remove` is matched to the `add` it cancels by normalized deletion vector object identity, not by the serialized key string `(path, deletionVector.uniqueId)`, whose `uniqueId` baked in the DV's storage type, path, and offset, so the same physical DV blob reconciles even when the two actions encode it as different storage types (see [Deletion Vectors](#deletion-vectors)).</ins>
 
 ### Deletion Vectors
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#deletion-vectors)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, inline deletion vectors (storage type `i`) are forbidden. The content entry represents deletion vectors as file references (`location`, `offset`, `size_in_bytes`, `cardinality`) with no field for inline bytes. Storage types `u` (UUID-relative) and `p` (absolute path) are supported since both resolve to file paths. When writing manifest entries, writers must resolve the `u` encoding to a relative path (e.g., `data/deletion_vector_<uuid>.bin`) for the DV `location` field. Existing inline DVs must be converted to file-based DVs before or during feature enablement.</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, inline deletion vectors (storage type `i`) are forbidden. The content entry represents deletion vectors as file references (`location`, `offset`, `size_in_bytes`, `cardinality`) with no field for inline bytes. Existing inline DVs must be converted to file-based DVs before or during feature enablement.</ins>
+
+<ins>Iceberg V4 stores DV blobs as un-encoded paths relative to the table root and does not constrain their filename or location. A DV blob need not be a UUID-named `.bin` file and may sit in any subdirectory. To represent such DVs losslessly in Delta `add` and `remove` actions, this feature introduces a new deletion vector storage type **`r` (relative)** alongside the existing `u` and `p`:</ins>
+
+| <ins>Storage Type</ins> | <ins>`pathOrInlineDv`</ins> | <ins>Encoding</ins> | <ins>Location</ins> |
+| - | - | - | - |
+| <ins>`u`</ins> | <ins>base85-encoded random prefix + UUID</ins> | <ins>base85</ins> | <ins>Under table root</ins> |
+| <ins>`p`</ins> | <ins>absolute URI</ins> | <ins>URL-encoded</ins> | <ins>Outside table root</ins> |
+| <ins>`r`</ins> | <ins>raw path relative to the table root</ins> | <ins>none (un-encoded)</ins> | <ins>Under table root</ins> |
+
+<ins>`r` is permitted only while `adaptiveMetadata` is enabled. Under this feature the storage type is determined by location: a DV under the table root uses `u` or `r`, and `p` is reserved for a DV blob that physically lives outside the table root (e.g., a shallow clone whose DV still resides in the source table). When writing a content entry's `deletion_vector.location`, writers resolve the descriptor to that path — decoding a `u` UUID to its `.bin` path, using an `r` path as-is, or storing an out-of-table `p` as an absolute URI.</ins>
+
+<ins>**Reading DVs from the tree.** The `deletion_vector` field of a content entry stores the DV as a file reference (`location` relative to the table root, or an absolute URI). When surfacing it as a Delta `DeletionVectorDescriptor`, a `location` that resolves under the current table root becomes an `r` descriptor; a `location` outside the table root becomes a `p` descriptor.</ins>
+
+<ins>**Reconciliation by object identity.** The same physical DV blob may be serialized differently depending on where it originates — as `u` or in-table `p` in a log commit, or as `r` when surfaced from the tree. [Action Reconciliation](#action-reconciliation) must therefore match a `remove` against its `add` by the DV's normalized object identity, rather than by the serialized descriptor string. Normalization must resolve all storage types correctly, regardless of the presence of a path scheme or encoding.</ins>
 
 ### Metadata Cleanup
 
@@ -358,7 +372,7 @@ Tracks where a DV blob can be read. Only for `content_type` = DATA entries.
 
 | Field ID | Field Name | Delta Type | Required | Description |
 |----------|------------|------------|----------|-------------|
-| 155 | `location` | String | Required | Path to file containing the DV |
+| 155 | `location` | String | Required | Path to the file containing the DV, relative to the table root when possible. |
 | 144 | `offset` | Long | Required | Offset in the file where DV content starts |
 | 145 | `size_in_bytes` | Long | Required | Length of DV content in the file |
 | 156 | `cardinality` | Long | Required | Number of set bits (deleted rows) in the vector |
@@ -708,7 +722,7 @@ When `adaptiveMetadata` is added to `readerFeatures` and `writerFeatures`, the r
 
 ## Feature Removal
 
-When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint must be produced from the current metadata tree state so that the table can be read without adaptiveMetadata support. Manifest files that are no longer referenced may be cleaned up.
+When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint must be produced from the current metadata tree state so that the table can be read without adaptiveMetadata support. Deletion vectors stored with storage type `r` must be rewritten as `u` (in-table) or `p` (out-of-table) descriptors, since `r` is only valid while the feature is enabled. Manifest files that are no longer referenced may be cleaned up.
 
 ## Compatibility Notes
 
