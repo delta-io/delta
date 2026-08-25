@@ -323,6 +323,54 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
       base.copy(offset = Some(9)).uniqueId(testTablePath, useObjectIdentity = true))
   }
 
+  test("log replay keeps descriptor identity when object identity is disabled") {
+    val uuid = UUID.randomUUID()
+    val uDv = onDiskWithUuidRelativePath(
+      uuid, randomPrefix = "prefix", sizeInBytes = 15, cardinality = 25)
+    val rDv = rFormOf(uuid, "prefix", offset = None)
+    val replay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = None,
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = testTablePath,
+      useDeletionVectorObjectIdentity = false)
+
+    replay.append(0, Iterator(addFileWithDv(uDv)))
+    replay.append(1, Iterator(removeFileWithDv(rDv)))
+
+    assert(replay.allFiles.map(_.deletionVector) === Seq(uDv))
+  }
+
+  test("log replay uses object identity when enabled") {
+    val uuid = UUID.randomUUID()
+    val uDv = onDiskWithUuidRelativePath(
+      uuid, randomPrefix = "prefix", sizeInBytes = 15, cardinality = 25)
+    val rDv = rFormOf(uuid, "prefix", offset = None)
+    val replay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = None,
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = testTablePath,
+      useDeletionVectorObjectIdentity = true)
+
+    replay.append(0, Iterator(addFileWithDv(uDv)))
+    replay.append(1, Iterator(removeFileWithDv(rDv)))
+
+    assert(replay.allFiles.isEmpty)
+  }
+
+  private def addFileWithDv(dv: DeletionVectorDescriptor): AddFile = {
+    AddFile(
+      path = "part-000.parquet",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 1,
+      dataChange = true,
+      deletionVector = dv)
+  }
+
+  private def removeFileWithDv(dv: DeletionVectorDescriptor): RemoveFile = {
+    addFileWithDv(dv).removeWithTimestamp(timestamp = 2L)
+  }
+
   private def assertCardinality(dv: DeletionVectorDescriptor, expSize: Int): Unit = {
     if (expSize == 0) {
       assert(dv.isEmpty, s"Expected DV to be empty: $dv")

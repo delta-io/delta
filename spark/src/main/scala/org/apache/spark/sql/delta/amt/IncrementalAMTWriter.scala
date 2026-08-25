@@ -22,11 +22,11 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DeltaLog, SingleCommit}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, DomainMetadata, FileAction, InMemoryLogReplay, Metadata, Protocol, RemoveFile, SetTransaction}
-import org.apache.spark.sql.delta.actions.InMemoryLogReplay.{UniqueAddFileTuple, UniqueFileActionTuple, UniqueRemoveFileTuple}
+import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.hadoop.fs.FileStatus
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.SparkSession
 
@@ -82,6 +82,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
 
   private val hadoopConf = deltaLog.newDeltaHadoopConf()
   private val tableRoot = deltaLog.dataPath
+  // Always use object identity for AMT tables here.
+  private val useDeletionVectorObjectIdentity = true
   private val fs = tableRoot.getFileSystem(hadoopConf)
   private val metadataDir = FileNames.amtMetadataDirPath(tableRoot)
 
@@ -137,7 +139,9 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       windowCommits = windowCommits,
       windowCommitActions = actionsFromDeltas,
       attemptVersion = attemptVersion,
-      actionsToCommit = actionsToCommit)
+      actionsToCommit = actionsToCommit,
+      tableRoot = tableRoot,
+      useDeletionVectorObjectIdentity = useDeletionVectorObjectIdentity)
 
     // ---- Step 2: carry the old leaf pointers forward, patching MDV + CDF positions. ----
     val (carriedLeafPointers, leafPositions) =
@@ -161,7 +165,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       if (processedActions.replacedPaths.contains(add.path)) {
         AMTWriteHelper.modifiedTrackingForDataEntry()
       } else if (add.backReference.isDefined ||
-          processedActions.preCommitLiveKeys.contains(add.toUniqueFileActionTuple)) {
+          processedActions.preCommitLiveKeys.contains(
+            add.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity))) {
         AMTWriteHelper.existingTrackingForDataEntry()
       } else {
         AMTWriteHelper.addedTrackingForDataEntry()
@@ -363,13 +368,17 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       commitAddedPaths: Set[String]): Seq[DataEntry] = {
     if (withoutBackrefRemoves.isEmpty) return Seq.empty
     val liveKeys: Set[UniqueFileActionTuple] =
-      liveAdds.iterator.map(_.toUniqueFileActionTuple).toSet
+      liveAdds.iterator
+        .map(_.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity))
+        .toSet
     // AddFile lookup from root + window: the removed file's add predates this commit (a replace
     // re-adds the same path under a new DV -- a distinct key -- so this still finds the prior add).
     val addByKey: Map[UniqueFileActionTuple, AddFile] =
-      rootAndWindowAdds.map(a => a.toUniqueFileActionTuple -> a).toMap
+      rootAndWindowAdds
+        .map(a => a.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity) -> a)
+        .toMap
     withoutBackrefRemoves.map { r =>
-      val removeKey = r.toUniqueFileActionTuple
+      val removeKey = r.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity)
       // Two invariants a no-backref remove must satisfy (it targets a root-resident or
       // window-added file, never a leaf); violating either means a corrupt tree:
       //   - it is net-removed, so its (path, dv) is absent from the live set (a still-live key
@@ -452,10 +461,14 @@ private class ProcessedActions(
     windowCommits: Seq[SingleCommit],
     windowCommitActions: Seq[Seq[Action]],
     attemptVersion: Long,
-    actionsToCommit: Seq[Action]) {
-
+    actionsToCommit: Seq[Action],
+    tableRoot: Path,
+    useDeletionVectorObjectIdentity: Boolean) {
   private val replay = new InMemoryLogReplay(
-    minFileRetentionTimestamp = None, minSetTransactionRetentionTimestamp = None)
+    minFileRetentionTimestamp = None,
+    minSetTransactionRetentionTimestamp = None,
+    tableRoot = tableRoot,
+    useDeletionVectorObjectIdentity = useDeletionVectorObjectIdentity)
   private val rootAndWindowAddsBuf = ArrayBuffer.empty[AddFile]
   private val mdvSupersededBuf = ArrayBuffer.empty[BackReference]
   // This commit's own file actions, split out for CDF and re-add classification.
@@ -470,7 +483,9 @@ private class ProcessedActions(
   // Keys of files live in the {old root + window}'s replay BEFORE this commit's actions; a
   // live add already here (or carrying a leaf back reference) is EXISTING, not ADDED.
   val preCommitLiveKeys: Set[UniqueFileActionTuple] =
-    replay.allFiles.iterator.map(_.toUniqueFileActionTuple).toSet
+    replay.allFiles.iterator
+      .map(_.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity))
+      .toSet
   replay.append(attemptVersion, actionsToCommit.iterator)
 
   // One more pass over part-1/2/3 to initialize the auxiliary buffers above.
@@ -546,9 +561,12 @@ private class ProcessedActions(
   // True if `add` re-commits a file already live before this commit (its key is in the pre-commit
   // live set, or it carries a back reference to an existing leaf slot) and is not a replace (a
   // replace changes the DV, a distinct key). Such a re-add is a metadata-only refresh.
-  private def isReCommittedLiveAdd(add: AddFile): Boolean =
+  private def isReCommittedLiveAdd(add: AddFile): Boolean = {
+    val preCommitLiveKeysContainAddFile = preCommitLiveKeys.contains(
+      add.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity))
     !replacedPaths.contains(add.path) &&
-      (add.backReference.isDefined || preCommitLiveKeys.contains(add.toUniqueFileActionTuple))
+      (add.backReference.isDefined || preCommitLiveKeysContainAddFile)
+  }
   val reCommittedLiveAdd: Option[AddFile] = commitAddsBuf.find(isReCommittedLiveAdd)
   if (dataChange) {
     // (1) A data-changing commit must not re-add a file already live before it: a same-key re-add

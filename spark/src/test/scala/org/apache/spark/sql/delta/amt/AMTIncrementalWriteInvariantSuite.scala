@@ -33,7 +33,9 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
       windowCommits = Nil,
       windowCommitActions = Nil,
       attemptVersion = 1L,
-      actionsToCommit = actionsToCommit)
+      actionsToCommit = actionsToCommit,
+      tableRoot = new org.apache.hadoop.fs.Path("s3://bucket/prefix/amt_test_table"),
+      useDeletionVectorObjectIdentity = true)
 
   test("writeIncremental rejects intermediate commits with a hole up to attemptVersion") {
     withSQLConf(leafPackingConfs: _*) {
