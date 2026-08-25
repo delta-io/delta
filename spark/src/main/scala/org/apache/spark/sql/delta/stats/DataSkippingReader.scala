@@ -752,6 +752,31 @@ trait DataSkippingReaderBase
         (Nil, dataFilters.map(f => (f, None)))
       }
 
+      // Always attempt to recover file skipping for filters that Spark's implicit type coercion
+      // made ineligible for the primary data skipping path above by wrapping a skipping-eligible
+      // column reference in a Cast (most commonly: comparing a STRING column against an unquoted
+      // numeric literal). This is safe and cheap to run unconditionally -- unlike the general
+      // partition-like data skipping below, it only ever fires for filters that contain such a
+      // Cast, so it adds no overhead to ordinary queries. See
+      // DataFiltersBuilder.constructImplicitCastSkippingFilter for the correctness argument.
+      if (useStats && unusedFilters.nonEmpty) {
+        val constructImplicitCastFilters = new DataFiltersBuilder(
+          spark = spark,
+          dataSkippingType = dataSkippingType,
+          getStatsColumnOpt = (s: StatsColumn) => getStatsColumnOpt(s),
+          additionalPartitionLikeFilterSupportedExpressions =
+            additionalPartitionLikeFilterSupportedExpressions,
+          limitPartitionLikeFiltersToClusteringColumns =
+            limitPartitionLikeFiltersToClusteringColumns)
+        val (recoveredFilters, stillUnusedFilters) = unusedFilters
+          .map { case (expr, _) =>
+            (expr, constructImplicitCastFilters.constructImplicitCastSkippingFilter(expr))
+          }
+          .partition(_._2.isDefined)
+        skippingFilters = skippingFilters ++ recoveredFilters
+        unusedFilters = stillUnusedFilters
+      }
+
       // If enabled, rewrite unused data filters to use partition-like data skipping for clustered
       // tables. Only rewrite filters if the table is expected to benefit from partition-like
       // data skipping:
@@ -764,7 +789,9 @@ trait DataSkippingReaderBase
       val shouldRewriteDataFiltersAsPartitionLike =
         useStats &&
           spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
-          ClusteredTableUtils.isSupported(snapshotToScan.protocol) &&
+          (ClusteredTableUtils.isSupported(snapshotToScan.protocol) ||
+            !spark.conf.get(
+              DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_REQUIRE_CLUSTERING)) &&
           snapshotToScan.numOfFilesIfKnown.exists(_ >=
             spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD)) &&
           unusedFilters.nonEmpty
