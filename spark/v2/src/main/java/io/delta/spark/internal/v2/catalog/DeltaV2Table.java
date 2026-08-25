@@ -36,6 +36,7 @@ import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.shims.CatalogV2UtilShims;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
+import io.delta.spark.internal.v2.snapshot.WorkloadType;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.write.DeltaRowLevelOperationBuilder;
 import io.delta.spark.internal.v2.write.DeltaV2WriteBuilder;
@@ -139,7 +140,13 @@ public class DeltaV2Table extends DeltaV2TableShims
    * @throws NullPointerException if identifier or tablePath is null
    */
   public DeltaV2Table(Identifier identifier, String tablePath) {
-    this(identifier, tablePath, Collections.emptyMap(), Optional.empty(), OptionalLong.empty());
+    this(
+        identifier,
+        tablePath,
+        Collections.emptyMap(),
+        Optional.empty(),
+        OptionalLong.empty(),
+        WorkloadType.BATCH);
   }
 
   /**
@@ -151,7 +158,8 @@ public class DeltaV2Table extends DeltaV2TableShims
    * @throws NullPointerException if identifier or tablePath is null
    */
   public DeltaV2Table(Identifier identifier, String tablePath, Map<String, String> options) {
-    this(identifier, tablePath, options, Optional.empty(), OptionalLong.empty());
+    this(
+        identifier, tablePath, options, Optional.empty(), OptionalLong.empty(), WorkloadType.BATCH);
   }
 
   /**
@@ -167,7 +175,7 @@ public class DeltaV2Table extends DeltaV2TableShims
       String tablePath,
       Map<String, String> options,
       OptionalLong timeTravelVersion) {
-    this(identifier, tablePath, options, Optional.empty(), timeTravelVersion);
+    this(identifier, tablePath, options, Optional.empty(), timeTravelVersion, WorkloadType.BATCH);
   }
 
   /**
@@ -202,7 +210,32 @@ public class DeltaV2Table extends DeltaV2TableShims
         getDecodedPath(requireNonNull(catalogTable, "catalogTable is null").location()),
         options,
         Optional.of(catalogTable),
-        timeTravelVersion);
+        timeTravelVersion,
+        WorkloadType.BATCH);
+  }
+
+  /**
+   * Catalog-table constructor that records the {@link WorkloadType} the table serves. Used by the
+   * streaming analyzer rules so the UC client built for a Structured Streaming read advertises the
+   * streaming workload in its User-Agent.
+   *
+   * @param identifier logical table identifier used by Spark's catalog
+   * @param catalogTable the Spark CatalogTable containing table metadata including location
+   * @param options user-provided options to override catalog properties
+   * @param workloadType the workload this table serves
+   */
+  public DeltaV2Table(
+      Identifier identifier,
+      CatalogTable catalogTable,
+      Map<String, String> options,
+      WorkloadType workloadType) {
+    this(
+        identifier,
+        getDecodedPath(requireNonNull(catalogTable, "catalogTable is null").location()),
+        options,
+        Optional.of(catalogTable),
+        OptionalLong.empty(),
+        workloadType);
   }
 
   /**
@@ -222,7 +255,8 @@ public class DeltaV2Table extends DeltaV2TableShims
       String tablePath,
       Map<String, String> userOptions,
       Optional<CatalogTable> catalogTable,
-      OptionalLong timeTravelVersion) {
+      OptionalLong timeTravelVersion,
+      WorkloadType workloadType) {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.catalogTable = catalogTable;
@@ -247,7 +281,8 @@ public class DeltaV2Table extends DeltaV2TableShims
     this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     this.kernelEngine = KernelEngineFactory.createDefaultEngine(this.hadoopConf);
-    this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
+    this.snapshotManager =
+        SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable, workloadType);
     try {
       this.initialSnapshot =
           timeTravelVersion.isPresent()
@@ -553,12 +588,19 @@ public class DeltaV2Table extends DeltaV2TableShims
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     requireNonNull(info, "write info is null");
+    // The write path's snapshot manager is consumed only by the streaming write (which reloads the
+    // latest snapshot and commits through it per epoch); the batch write commits off
+    // initialSnapshot and never touches it. Tag it STREAMING so the streaming write's catalog
+    // requests are attributed to a streaming workload via the client User-Agent.
+    DeltaV2SnapshotManager streamingSnapshotManager =
+        SnapshotManagerFactory.create(
+            tablePath, kernelEngine, catalogTable, WorkloadType.STREAMING);
     return new DeltaV2WriteBuilder(
         kernelEngine,
         tablePath,
         hadoopConf,
         initialSnapshot,
-        snapshotManager,
+        streamingSnapshotManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
         info);

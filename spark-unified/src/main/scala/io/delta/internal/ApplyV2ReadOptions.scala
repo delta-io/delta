@@ -19,6 +19,7 @@ package io.delta.internal
 import io.delta.spark.internal.v2.catalog.DeltaV2Table
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
+import io.delta.spark.internal.v2.snapshot.WorkloadType
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -42,8 +43,12 @@ class ApplyV2ReadOptions extends Rule[LogicalPlan] {
       val merged = new java.util.HashMap[String, String]()
       merged.putAll(table.getOptions)
       merged.putAll(extraOptions.asCaseSensitiveMap())
+      // This rule only rewrites streaming relations, so the rebuilt table serves a streaming read.
+      // Tag the UC client accordingly on the catalog path; path-based tables issue no catalog
+      // requests, so there is no User-Agent to tag.
       val rebuilt = if (table.getCatalogTable.isPresent) {
-        new DeltaV2Table(table.getIdentifier, table.getCatalogTable.get, merged)
+        new DeltaV2Table(
+          table.getIdentifier, table.getCatalogTable.get, merged, WorkloadType.STREAMING)
       } else {
         new DeltaV2Table(table.getIdentifier, table.getTablePath.toString, merged)
       }
