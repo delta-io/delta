@@ -48,7 +48,7 @@ public final class SnapshotManagerFactory {
   private SnapshotManagerFactory() {}
 
   /**
-   * Creates a snapshot manager for the given table.
+   * Creates a batch snapshot manager for the given table.
    *
    * @param tablePath the filesystem path to the Delta table
    * @param kernelEngine the pre-configured Kernel {@link Engine} to use for table operations
@@ -57,27 +57,61 @@ public final class SnapshotManagerFactory {
    */
   public static DeltaV2SnapshotManager create(
       String tablePath, Engine kernelEngine, Optional<CatalogTable> catalogTable) {
+    return create(tablePath, kernelEngine, catalogTable, WorkloadType.BATCH);
+  }
+
+  /**
+   * Creates a snapshot manager for the given table and workload.
+   *
+   * @param tablePath the filesystem path to the Delta table
+   * @param kernelEngine the pre-configured Kernel {@link Engine} to use for table operations
+   * @param catalogTable optional Spark catalog table metadata
+   * @param workloadType the workload the manager serves; for a UC-managed table it is advertised in
+   *     the catalog client's User-Agent (see {@link #connectorAppVersions})
+   * @return a {@link DeltaV2SnapshotManager} appropriate for the table type
+   */
+  public static DeltaV2SnapshotManager create(
+      String tablePath,
+      Engine kernelEngine,
+      Optional<CatalogTable> catalogTable,
+      WorkloadType workloadType) {
 
     if (catalogTable.isPresent()) {
       Optional<UCTableInfo> ucTableInfo =
           UCUtils.extractTableInfo(catalogTable.get(), SparkSession.active());
       if (ucTableInfo.isPresent()) {
-        return createUCManagedSnapshotManager(ucTableInfo.get(), kernelEngine);
+        return createUCManagedSnapshotManager(ucTableInfo.get(), kernelEngine, workloadType);
       }
       // Catalog table without UC metadata falls back to path-based handling.
     }
 
-    // Default: path-based snapshot manager for non-UC tables
+    // Default: path-based snapshot manager for non-UC tables. Path-based tables issue no catalog
+    // requests, so there is no User-Agent to tag and the workload type is not threaded here.
     return new PathBasedSnapshotManager(tablePath, kernelEngine);
   }
 
   private static UCManagedTableSnapshotManager createUCManagedSnapshotManager(
-      UCTableInfo tableInfo, Engine kernelEngine) {
+      UCTableInfo tableInfo, Engine kernelEngine, WorkloadType workloadType) {
     Map<String, String> ucConfig = new HashMap<>(tableInfo.toUcConfig());
-    ucConfig.put("appVersions.Kernel", Meta.KERNEL_VERSION);
-    ucConfig.put("appVersions.Delta V2 connector", "true");
+    ucConfig.putAll(connectorAppVersions(workloadType));
     UCClient ucClient = UCTokenBasedRestClientFactory$.MODULE$.createUCClient(ucConfig);
     UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
     return new UCManagedTableSnapshotManager(ucCatalogClient, tableInfo, kernelEngine);
+  }
+
+  /**
+   * The {@code appVersions.*} entries the V2 connector contributes to the UC client's User-Agent.
+   * Always advertises the Kernel version and the V2 connector marker; for a streaming workload it
+   * also adds a {@code Streaming} marker so the catalog can tell a Structured Streaming read/write
+   * apart from a batch one. Package-private for testing.
+   */
+  static Map<String, String> connectorAppVersions(WorkloadType workloadType) {
+    Map<String, String> appVersions = new HashMap<>();
+    appVersions.put("appVersions.Kernel", Meta.KERNEL_VERSION);
+    appVersions.put("appVersions.Delta V2 connector", "true");
+    if (workloadType == WorkloadType.STREAMING) {
+      appVersions.put("appVersions.Streaming", "true");
+    }
+    return appVersions;
   }
 }

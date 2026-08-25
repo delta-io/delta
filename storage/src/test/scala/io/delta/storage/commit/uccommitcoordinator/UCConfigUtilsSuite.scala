@@ -73,8 +73,10 @@ class UCConfigUtilsSuite extends AnyFunSuite {
     val versions = UCConfigUtils.extractAppVersions(config(
       "uri" -> "https://uc.example.com",
       "appVersions.Kernel" -> "0.7.0",
-      "appVersions.Delta V2 connector" -> "true"))
-    assert(versions.asScala === Map("Kernel" -> "0.7.0", "Delta V2 connector" -> "true"))
+      "appVersions.Delta V2 connector" -> "true",
+      "appVersions.Streaming" -> "true"))
+    assert(versions.asScala === Map(
+      "Kernel" -> "0.7.0", "Delta V2 connector" -> "true", "Streaming" -> "true"))
   }
 
   test("isDeltaRestApiEnabled defaults to true and honors explicit values") {

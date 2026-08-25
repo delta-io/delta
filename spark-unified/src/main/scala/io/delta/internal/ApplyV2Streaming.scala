@@ -20,6 +20,7 @@ import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._
 
 import io.delta.spark.internal.v2.catalog.DeltaV2Table
+import io.delta.spark.internal.v2.snapshot.WorkloadType
 import io.delta.spark.internal.v2.utils.ScalaUtils
 import org.apache.spark.sql.delta.DeltaV2Mode
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
@@ -84,7 +85,9 @@ class ApplyV2Streaming(
           catalogTable,
           // Use user-specified streaming options to override catalog storage properties.
           // DeltaV2Table handles merging catalogTable storage props internally.
-          ScalaUtils.toJavaMap(s.dataSource.options))
+          ScalaUtils.toJavaMap(s.dataSource.options),
+          // Tag the UC client's User-Agent so the catalog can tell this is a streaming read.
+          WorkloadType.STREAMING)
       val catalog = catalogTable.identifier.catalog.map(
         session.sessionState.catalogManager.catalog)
 
