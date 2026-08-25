@@ -38,8 +38,7 @@ written to the Delta log; the Iceberg V4 metadata tree carries all content metad
 <ins>`cdc` actions must not be written to the Delta log while `icebergNativeV4` is enabled.
 `changeDataFeed` is the only producer of `cdc` actions and is an
 [incompatible feature](#incompatible-table-features) under `icebergNativeV4`, so no `cdc` actions
-are produced. The Iceberg V4 content entry schema has no content type for change data files, so they
-have no place in the tree either.</ins>
+are produced.
 
 ### Checkpoints
 
