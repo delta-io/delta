@@ -98,6 +98,8 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
   }
 
   override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
+    if (txn.postCommitSnapshot.isCatalogOwned) return
+
     val conf = spark.sessionState.conf
     val autoCompactTypeOpt = getAutoCompactType(conf, txn.postCommitSnapshot.metadata)
     // Skip Auto Compact if current transaction is not qualified or the table is not qualified

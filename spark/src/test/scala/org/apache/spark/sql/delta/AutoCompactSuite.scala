@@ -239,6 +239,24 @@ class AutoCompactExecutionSuite extends
     checkAutoCompactionWorks(dir, spark.range(10).toDF("id"))
   }
 
+  test("auto compact should not run for a catalog-managed table") {
+    withCatalogManagedTable() { tableName =>
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val versionBeforeWrite = deltaLog.update().version
+
+      withSQLConf(
+          DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "0") {
+        spark.range(10).repartition(2).selectExpr("cast(id as int) AS id")
+          .write.mode("append").insertInto(tableName)
+      }
+
+      val snapshot = deltaLog.update()
+      assert(snapshot.version === versionBeforeWrite + 1)
+      assert(snapshot.numOfFiles === 2)
+    }
+  }
+
   test("variant auto compact kicks in when enabled - table config") {
     withTempDir { dir =>
       withSQLConf(
@@ -386,4 +404,3 @@ class AutoCompactExecutionNameColumnMappingSuite extends AutoCompactExecutionSui
   with DeltaColumnMappingEnableNameMode {
   override def runAllTests: Boolean = true
 }
-

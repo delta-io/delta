@@ -30,6 +30,27 @@ import org.apache.spark.sql.catalyst.TableIdentifier
  */
 class RemoveColumnMappingSuite extends RemoveColumnMappingSuiteUtils {
 
+  test("column mapping removal is blocked for a catalog-managed table") {
+    withCatalogManagedTable(createTable = false) { tableName =>
+      sql(
+        s"""CREATE TABLE $tableName (id INT)
+           |USING delta
+           |TBLPROPERTIES (
+           |  'delta.feature.catalogManaged' = 'supported',
+           |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name')
+           |""".stripMargin)
+
+      checkError(
+        intercept[DeltaUnsupportedOperationException] {
+          sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+            s"('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'none')")
+        },
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "DATA_REORGANIZATION")
+      )
+    }
+  }
+
   test("column mapping cannot be removed without the feature flag") {
     withSQLConf(ALLOW_COLUMN_MAPPING_REMOVAL.key -> "false") {
       sql(s"""CREATE TABLE $testTableName

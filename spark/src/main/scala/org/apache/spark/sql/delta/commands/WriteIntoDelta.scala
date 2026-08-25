@@ -158,6 +158,9 @@ case class WriteIntoDelta(
         clusterBySpecOpt
       }
     val rearrangeOnly = options.rearrangeOnly
+    if (rearrangeOnly && txn.snapshot.isCatalogOwned) {
+      throw DeltaErrors.operationBlockedOnCatalogManagedTable("DATA_REORGANIZATION")
+    }
     val charPadding = sparkSession.conf.get(SQLConf.READ_SIDE_CHAR_PADDING)
     val charAsVarchar = sparkSession.conf.get(SQLConf.CHAR_AS_VARCHAR)
     val dataSchema = if (!charAsVarchar && charPadding) {
