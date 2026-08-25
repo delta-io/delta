@@ -308,7 +308,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
   // Framing bytes that DeletionVectorStore adds around the raw bitmap on disk (length + checksum).
   private val dvFraming = DeletionVectorStore.getTotalSizeOfDVFieldsInFile(0)
 
-  test("DeletionVector.fromDescriptor maps a UUID-relative DV to an unencoded absolute location") {
+  test("u DV round trip") {
     val id = UUID.randomUUID()
     val dv = DeletionVectorDescriptor.onDiskWithUuidRelativePath(
       id = id,
@@ -325,9 +325,8 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(amtDv.size_in_bytes == 20L + dvFraming)
 
     val roundTripped = DeletionVector.toDescriptor(amtDv, tableRoot)
-    assert(roundTripped.storageType == DeletionVectorDescriptor.PATH_DV_MARKER)
-    assert(roundTripped.pathOrInlineDv == dv.urlEncodedPath(tableRoot))
-    assert(roundTripped.pathOrInlineDv.contains("test%25dv%25prefix-"))
+    assert(roundTripped.storageType == DeletionVectorDescriptor.RELATIVE_DV_MARKER)
+    assert(roundTripped.pathOrInlineDv.contains("test%dv%prefix-"))
     assert(roundTripped.absolutePath(tableRoot) == dv.absolutePath(tableRoot))
   }
 
@@ -419,7 +418,10 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     // Below simulates the real write path in [[writeIncrementalMaterialization]]
     assert(add.copy(dataChange = false).amtPassthrough == passthrough)
     val replay = new InMemoryLogReplay(
-      minFileRetentionTimestamp = None, minSetTransactionRetentionTimestamp = None)
+      minFileRetentionTimestamp = None,
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = tableRoot,
+      useDeletionVectorObjectIdentity = true)
     replay.append(0, Iterator(add))
     val reconstructed = replay.allFiles
     assert(reconstructed.length == 1)

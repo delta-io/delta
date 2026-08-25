@@ -825,6 +825,37 @@ sealed trait FileAction extends Action {
   }
 }
 
+object FileAction {
+  /** The path unique tuple in delta log actions: (parquet file, deletion vector id). */
+  final case class UniqueFileActionTuple private (fileURI: URI, deletionVectorId: Option[String])
+
+  /**
+   * Whether deletion vectors should be reconciled by their normalized object identity for the
+   * given table (see [[DeletionVectorDescriptor.uniqueId]]).
+   *
+   * @param protocol the table protocol.
+   */
+  def useDeletionVectorObjectIdentity(
+      protocol: Protocol,
+      spark: SparkSession): Boolean =
+    protocol.isFeatureSupported(AdaptiveMetadataTableFeature) ||
+      spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT)
+
+  /**
+   * The unique tuple `(parquet file, deletion vector id)` of a file action, as a method on
+   * [[AddFile]] / [[RemoveFile]]. See [[DeletionVectorDescriptor.uniqueId]] for the
+   * `useObjectIdentity` semantics.
+   */
+  implicit class FileActionUniqueTupleOps(val action: FileAction) {
+    def toUniqueFileActionTuple(
+        tableRoot: Path,
+        useObjectIdentity: Boolean): UniqueFileActionTuple =
+      UniqueFileActionTuple(
+        action.pathAsUri,
+        Option(action.deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity)))
+  }
+}
+
 case class ParsedStatsFields(
   numLogicalRecords: Option[Long],
   tightBounds: Option[Boolean])

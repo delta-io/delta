@@ -705,7 +705,6 @@ case class DeletionVector(
     cardinality: Long)        // ID: 156, required.
 
 object DeletionVector {
-
   /** Maps a Delta on-disk [[DeletionVectorDescriptor]] onto the AMT sub-struct; rejects inline. */
   def fromDescriptor(dv: DeletionVectorDescriptor, tableRoot: Path): DeletionVector = {
     require(dv.isOnDisk,
@@ -729,11 +728,20 @@ object DeletionVector {
     // AMT stored paths are unencoded.
     val absolutePath = DeletionVectorStore.unescapedStringToPath(dv.location)
     require(absolutePath.isAbsolute)
-    DeletionVectorDescriptor.onDiskWithAbsolutePath(
-      path = DeletionVectorStore.pathToEscapedString(absolutePath),
-      sizeInBytes = rawSize,
-      cardinality = dv.cardinality,
-      offset = Some(dv.offset.toInt))
+    val relativePath = AMTUtils.relativizeLocation(tableRoot.toString, absolutePath.toString)
+    if (AMTUtils.isAbsoluteLocation(relativePath)) {
+      DeletionVectorDescriptor.onDiskWithAbsolutePath(
+        path = DeletionVectorStore.pathToEscapedString(absolutePath),
+        sizeInBytes = rawSize,
+        cardinality = dv.cardinality,
+        offset = Some(dv.offset.toInt))
+    } else {
+      DeletionVectorDescriptor.createRelativePathDVDescriptor(
+        relativePath = relativePath,
+        sizeInBytes = rawSize,
+        cardinality = dv.cardinality,
+        offset = Some(dv.offset.toInt))
+    }
   }
 }
 
