@@ -86,17 +86,20 @@ absent from the protocol or its table property (`delta.enableIcebergCompatV1`,
 Since IcebergCompatV3 must be inactive, its rules are instead **incorporated by reference**: every
 requirement in
 [Writer Requirements for IcebergCompatV3](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-compat-v3.md#writer-requirements-for-icebergcompatv3)
-applies as though restated here, with modifications:
+applies as though restated here, with modifications. IcebergCompatV3 governs only Delta-to-Iceberg
+conversion; because the tree here may also be written by an external Iceberg engine, a few
+constraints beyond IcebergCompatV3 are added:
 
 - The requirement that IcebergCompatV1 and IcebergCompatV2 be inactive is broadened to include IcebergCompatV3, as stated above.
 - IcebergCompatV3 permits Column Mapping in `name` or `id` mode; here only `id` mode is permitted, because an external Iceberg writer resolves columns by field ID and does not honor Delta's physical column names.
-
-The type allow-list carries over as written, since Iceberg V4 supports every type Iceberg V3 does.
+- The type allow-list carries over **except `byte` and `short`, which are removed**: Iceberg has no 8- or 16-bit integer type, so an external Iceberg writer would store such a column as a 32-bit integer, and reading those values back as `byte` or `short` could overflow. The allowed types are therefore: [`integer`, `long`, `float`, `double`, `decimal`, `string`, `binary`, `boolean`, `timestamp`, `timestampNTZ`, `date`, `array`, `map`, `struct`, `variant`, `geometry`, `geography`].
+- Any schema change to a `struct` used as a `map` key must be blocked (changes to the map value are allowed), matching Iceberg, which does not permit evolving map-key types.
 
 All other IcebergCompatV3 requirements apply unchanged: Row
 Tracking with the reserved materialized column field IDs, nested field identifiers for `ArrayType`
 and `MapType`, materialized partition column values, int64 timestamps, the partition spec
-replacement restriction, the Type Widening allow-list, and literal-only column write defaults.
+replacement restriction, the Type Widening allow-list (its `byte` and `short` source rows are
+unreachable once those types are disallowed), and literal-only column write defaults.
 
 ## Incompatible Table Features
 
@@ -117,12 +120,31 @@ IcebergCompatV3), with its values materialized in the tree entries. These restri
 revisited if a future Iceberg spec version gains equivalent support (e.g. constraints,
 generated/identity columns, or collations).
 
+## Allowed Table Features
+
+The list above blocks features known to be incompatible today, but it cannot anticipate features
+defined in the future, some of which may also break the guarantee that the tree is a complete,
+externally writable record. To stay forward-safe, writers must additionally verify that every
+feature present in `writerFeatures` appears in the following allow-list. A feature not on this list
+must not be present at all; enabling `icebergNativeV4` on a table that carries an unlisted feature
+must be rejected until that feature's interaction with this one has been reviewed and the list
+updated.
+
+The allowed features are:
+
+- `icebergNativeV4`, `adaptiveMetadata`, and every feature `adaptiveMetadata` transitively requires (including `columnMapping`, `deletionVectors`, and `rowTracking`).
+- `domainMetadata`, `vacuumProtocolCheck`, `inCommitTimestamp`, `clustering`, `timestampNtz`, `typeWidening`, `variantType`, `variantShredding`, `geometry`, `geography`, `catalogManaged`, `checkpointProtection`. `catalogManaged` only coordinates how commits are published, and `checkpointProtection` only constrains checkpoint removal during history cleanup; neither affects the content tree.
+- The features named under [Incompatible Table Features](#incompatible-table-features), which may be present only as inactive legacy carry-overs and only while the not-active checks in that section hold.
+- The Iceberg compatibility features `icebergCompatV1`, `icebergCompatV2`, `icebergCompatV3`, and `icebergWriterCompatV1` (which itself requires `icebergCompatV2` be present), which — per [Relationship to Iceberg Compatibility V1, V2, and V3](#relationship-to-iceberg-compatibility-v1-v2-and-v3) — may be present only while inactive.
+
+Because `icebergNativeV4` is a writer feature, this allow-list governs `writerFeatures`; a reader-only feature (one absent from `writerFeatures`) is out of its scope.
+
 ## Writer Requirements for IcebergNativeV4
 
 When this feature is supported and enabled, writers must additionally:
 
 - Write every commit that adds or removes files as a *manifest commit*, as defined by [Adaptive Metadata](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md#commit-types). Equivalently: `add` and `remove` actions must never be written to the Delta log.
-- Keep the tree complete as of `checkpointMetadata.version`. `adaptiveMetadata` allows `contentRoot.version` to lag and covers the gap with inline file actions; with no file actions in the log there is nothing to cover a gap with, so every version in the gap must have changed no files. A commit that adds or removes files must therefore set `contentRoot.version` equal to `checkpointMetadata.version`.
+- Keep the tree complete as of `checkpointMetadata.version`. `adaptiveMetadata` allows `contentRoot.version` to lag and covers the gap with inline file actions; with no file actions in the log there is nothing to cover a gap with, so every version in the gap must have changed no files. A commit that adds or removes files must therefore set `contentRoot.version` equal to both `checkpointMetadata.version` and the commit version.
 - Continue to write non-file actions (`metaData`, `protocol`, `txn`, `domainMetadata`, `commitInfo`) to the Delta log, as `adaptiveMetadata` already requires. The tree does not store them.
 - Reject inline deletion vectors (storage type `i`) on every commit (`adaptiveMetadata` already forbids them).
 
@@ -130,8 +152,9 @@ When this feature is supported and enabled, writers must additionally:
 ### Enablement
 
 This feature may be enabled at table creation, or on an existing table via `ALTER TABLE`. Enablement
-must be rejected if any [incompatible feature](#incompatible-table-features) is active; such features
-must be disabled first.
+must be rejected if any [incompatible feature](#incompatible-table-features) is active, or if any
+feature outside the [allow-list](#allowed-table-features) is present; such features must be disabled
+or removed first.
 
 An existing table's log may contain historical `add` and `remove` actions. The first commit after
 enablement must be a manifest commit that folds all pre-existing state into the tree, so the tree is
