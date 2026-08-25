@@ -331,6 +331,23 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("dataChange false is blocked for a catalog-managed table") {
+    withCatalogManagedTable() { tableName =>
+      checkError(
+        intercept[DeltaUnsupportedOperationException] {
+          spark.table(tableName)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option("dataChange", "false")
+            .saveAsTable(tableName)
+        },
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "DATA_REORGANIZATION")
+      )
+    }
+  }
+
   test("replaceWhere with rearrangeOnly") {
     withTempDir { dir =>
       Seq(1, 2, 3, 4).toDF()
