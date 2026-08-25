@@ -33,6 +33,7 @@ import org.apache.hadoop.fs.{FileStatus, FileSystem, Path, RawLocalFileSystem}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.util.ManualClock
 
 // scalastyle:off: removeFile
@@ -53,6 +54,41 @@ class DeltaRetentionSuite extends QueryTest
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       startTxnWithManualLogCleanup(log).commit(Nil, testOp)
       assert(!log.enableExpiredLogCleanup())
+    }
+  }
+
+  test("metadata cleanup is blocked only for catalog-managed tables") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      startTxnWithManualLogCleanup(log).commit(Nil, testOp)
+      log.cleanUpExpiredLogs(log.update())
+    }
+
+    withCatalogManagedTable() { tableName =>
+      val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      checkError(
+        intercept[DeltaUnsupportedOperationException] {
+          log.cleanUpExpiredLogs(log.update())
+        },
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "METADATA_CLEANUP")
+      )
+    }
+  }
+
+  test("checkpoint does not clean up catalog-managed table metadata") {
+    withCatalogManagedTable() { tableName =>
+      spark.sql(s"INSERT INTO $tableName VALUES (1)")
+      val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val snapshot = log.update()
+      val firstCommit = FileNames.unsafeDeltaFile(log.logPath, 0)
+      val fs = firstCommit.getFileSystem(log.newDeltaHadoopConf())
+      assert(fs.exists(firstCommit))
+      fs.setTimes(firstCommit, 0L, -1L)
+
+      log.checkpoint(snapshot)
+      assert(log.readLastCheckpointFile().exists(_.version == snapshot.version))
+      assert(fs.exists(firstCommit))
     }
   }
 
