@@ -2,7 +2,7 @@
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/7373**
 
 This protocol change introduces a compatibility flag, which ensures that a Delta table can be safely
-read as an Apache Iceberg™ V4 format table, similar to
+read as an Apache Iceberg V4 format table or accept an new Adaptive Metadata Tree from an Iceberg writer, similar to
 [IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1),
 [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v2),
 and [IcebergCompatV3](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-compat-v3.md).
