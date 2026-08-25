@@ -353,7 +353,11 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   /**
    * A passthrough with every [[AMTPassthrough]] field set, so tests use the whole carrier.
    */
-  private def fullPassthrough: AMTPassthrough = AMTPassthrough(spec_id = Some(42))
+  private def fullPassthrough: AMTPassthrough = AMTPassthrough(
+    spec_id = Some(42),
+    sort_order_id = Some(7),
+    key_metadata = Some(Array[Byte](1, 2, 3)),
+    split_offsets = Some(Seq(0L, 128L, 256L)))
 
   /**
    * The AMT-derived live [[AddFile]]s in the snapshot's current tree, optionally restricted to
