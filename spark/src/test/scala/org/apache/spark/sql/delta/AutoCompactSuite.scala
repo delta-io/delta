@@ -162,6 +162,29 @@ class AutoCompactExecutionSuite extends
 
   import testImplicits._
 
+  test("auto compact is skipped for a catalog-managed table") {
+    withCatalogManagedTable() { tableName =>
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val versionBefore = deltaLog.update().version
+
+      val usageLogs = withSQLConf(
+          DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "0") {
+        captureOptimizeLogs(AutoCompact.OP_TYPE) {
+          spark.range(10)
+            .selectExpr("CAST(id AS INT) AS id")
+            .write
+            .mode("append")
+            .insertInto(tableName)
+        }
+      }
+
+      assert(usageLogs.isEmpty)
+      assert(deltaLog.update().version === versionBefore + 1)
+      assert(spark.table(tableName).count() === 10)
+    }
+  }
+
   test("auto compact event log: inline AC") {
     withTempDir { dir =>
       withSQLConf(
