@@ -242,7 +242,7 @@ class LastCheckpointInfoSuite extends SharedSparkSession
       rootPath: String = "metadata/root-abc.parquet",
       rootSizeInBytes: Long = 4096L): Checkpoint = Checkpoint(
     version = version,
-    contentRoot = ContentRoot(path = rootPath, sizeInBytes = rootSizeInBytes),
+    contentRoot = ContentRoot(path = rootPath, sizeInBytes = rootSizeInBytes, version = version),
     protocol = Protocol(minReaderVersion = 3, minWriterVersion = 7),
     metaData = Metadata(id = "metadata-id", name = "t"),
     domainMetadata = Nil,

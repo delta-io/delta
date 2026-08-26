@@ -182,7 +182,7 @@ class AMTWriterManager(
     }
     val (result, singleMetric) =
       if (incremental && amtProviderOpt.isDefined) {
-        val oldAMTVersion = amtProviderOpt.get.checkpointAction.version
+        val oldAMTVersion = amtProviderOpt.get.checkpointAction.contentRoot.version
         // The commits written after the old AMT, up to the last committed version.
         val intermediateLogCommits = preCommitLogSegment.deltas
           .filter(f => FileNames.getFileVersion(f) > oldAMTVersion)

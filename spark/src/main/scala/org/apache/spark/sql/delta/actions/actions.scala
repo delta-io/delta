@@ -1696,11 +1696,16 @@ sealed trait CheckpointOnlyAction extends Action
  *
  * @param path        root manifest path, relative to the table root.
  * @param sizeInBytes size of the root manifest file in bytes.
+ * @param version     table version this root reflects. Must be `<=` the enclosing
+ *                    [[Checkpoint.version]]; equal in a manifest commit, and less
+ *                    or equal in a standalone checkpoint (the gap is covered by
+ *                    inline file actions).
  * @param tags        additional metadata about the AMT. See [[ContentRoot.Tags]] for known keys.
  */
 case class ContentRoot(
     path: String,
     sizeInBytes: Long,
+    version: Long,
     tags: Map[String, String] = null) {
 
   private def tag(key: ContentRoot.Tags.KeyType): Option[String] =
@@ -1740,12 +1745,14 @@ object ContentRoot {
   def apply(
       path: String,
       sizeInBytes: Long,
+      version: Long,
       isIncremental: Boolean,
       lastManifestCommitWithFullRewrite: Long,
       numLeaves: Long): ContentRoot = {
     ContentRoot(
       path = path,
       sizeInBytes = sizeInBytes,
+      version = version,
       tags = Map(
         Tags.IS_INCREMENTAL.name -> isIncremental.toString,
         Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE.name ->
@@ -1806,7 +1813,8 @@ object SidecarType {
  *
  * @param version        version at which this checkpoint is valid. May belong to a previous
  *                       commit (the checkpoint can lag the enclosing commit).
- * @param contentRoot    pointer to the Iceberg v4 root manifest.
+ * @param contentRoot    pointer to the Iceberg v4 root manifest. `contentRoot.version` is
+ *                       the table version the tree reflects.
  * @param protocol       protocol snapshot at `version`. Must be non null.
  * @param metaData       metadata snapshot at `version`. Must be non null.
  * @param domainMetadata all [[DomainMetadata]] entries carried inline. An empty list means
@@ -1831,6 +1839,9 @@ case class Checkpoint(
   // AMT checkpoint sidecars must always declare their type.
   require(sidecars.forall(_.sidecarType.isDefined),
     "All sidecars in a Checkpoint must have a sidecarType.")
+  require(
+    contentRoot.version <= version,
+    s"contentRoot.version (${contentRoot.version}) must be <= checkpoint version ($version).")
 
   override def wrap: SingleAction = SingleAction(checkpoint = this)
 }

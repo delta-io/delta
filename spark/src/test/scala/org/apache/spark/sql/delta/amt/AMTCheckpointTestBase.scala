@@ -461,6 +461,9 @@ trait AMTCheckpointTestBase
     assert(checkpoint.contentRoot.lastManifestCommitWithFullRewrite.contains(expectedLastFull),
       s"${scenario.name}: wrong last-full marker " +
         checkpoint.contentRoot.lastManifestCommitWithFullRewrite)
+    assert(checkpoint.contentRoot.version == checkpoint.version,
+      s"${scenario.name}: contentRoot.version ${checkpoint.contentRoot.version} must equal " +
+        s"checkpoint.version ${checkpoint.version}")
     assert(context.provider.checkpointVersion == checkpoint.version)
     assert(context.provider.checkpointAction == checkpoint)
     assert(context.postCheckpointSnapshot.version == context.manifestCommitVersion)
