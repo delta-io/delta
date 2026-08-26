@@ -82,7 +82,7 @@ This design enables:
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>manifestCommitVersion</ins> | <ins>Long</ins> | <ins>The `checkpointMetadata.version` of the latest [`checkpoint` action](#checkpoint-action). Distinct from `contentRoot.version`.</ins> |
+| <ins>manifestCommitVersion</ins> | <ins>Long</ins> | <ins>The version of the commit that emitted the latest [`checkpoint` action](#checkpoint-action). Distinct from the checkpoint's `contentRoot.version`.</ins> |
 | <ins>checkpoint</ins> | <ins>Struct</ins> | <ins>Optional. The embedded [`checkpoint` action](#checkpoint-action) for that manifest commit, for prefetch. May be omitted (see below).</ins> |
 | <ins>leaves</ins> | <ins>Array</ins> | <ins>Optional. The checkpoint's embedded [content entries](#content-entry-schema), prefetched alongside `checkpoint`.</ins> |
 
@@ -90,7 +90,7 @@ This design enables:
 
 <ins>`amtCheckpoint` and `v2Checkpoint` are mutually exclusive, as are the `adaptiveMetadata` and `v2Checkpoint` features.</ins>
 
-<ins>The embedded `checkpoint` and `leaves` are a prefetch optimization only; readers must not require them. When absent or stale (`manifestCommitVersion` older than a `checkpoint` action found in the log), the reader seeks to the latest `checkpoint` action in the log via `manifestCommitVersion`, or falls back to log replay.</ins>
+<ins>The embedded `checkpoint` and `leaves` are a prefetch optimization only; readers must not require them. When absent, the reader reads the `checkpoint` action from the commit at `manifestCommitVersion` (superseded by any newer `checkpoint` action in the log), or falls back to log replay.</ins>
 
 <ins>`_last_checkpoint` is overwritten non-atomically on some object stores, so it must stay small. Writers bound it — as V2 checkpoints trim their inline caches above a threshold — omitting `checkpoint` and `leaves` (while still writing `checkpointType` and `manifestCommitVersion`) when they would exceed that threshold.</ins>
 
