@@ -170,7 +170,7 @@ private[v2] class DeltaV2OptimisticTransaction(
       kernelPostCommitSnapshot.getVersion >= committedVersion,
       s"Kernel reload returned version ${kernelPostCommitSnapshot.getVersion}, older than the " +
         s"just-committed version $committedVersion")
-    new DeltaV2Snapshot(kernelPostCommitSnapshot, spark, kernelEngine)
+    new DeltaV2Snapshot(kernelPostCommitSnapshot)
   }
 
   /**

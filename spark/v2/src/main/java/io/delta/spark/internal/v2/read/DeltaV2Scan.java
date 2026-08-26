@@ -17,7 +17,6 @@ package io.delta.spark.internal.v2.read;
 
 import static io.delta.spark.internal.v2.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
@@ -42,6 +41,7 @@ import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.stats.DeltaScan;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
@@ -63,7 +63,7 @@ import scala.Option;
 class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
   private final DeltaV2SnapshotManager snapshotManager;
-  private final Snapshot initialSnapshot;
+  private final io.delta.kernel.Snapshot initialSnapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -112,7 +112,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   // TODO(#6743): bundle scan-level schemas into a single ScanSchemaContext.
   public DeltaV2Scan(
       DeltaV2SnapshotManager snapshotManager,
-      Snapshot initialSnapshot,
+      io.delta.kernel.Snapshot initialSnapshot,
       StructType tableSchema,
       StructType dataSchema,
       StructType partitionSchema,
@@ -256,7 +256,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog =
         MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
             spark,
-            (io.delta.kernel.internal.SnapshotImpl) latestSnapshot,
+            latestSnapshot,
             options,
             snapshotManager,
             KernelEngineFactory.createDefaultEngine(hadoopConf),

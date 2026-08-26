@@ -57,7 +57,7 @@ class DeltaV2OptimisticTransactionSuite
       .forPath(engine, dir.getCanonicalPath)
       .getLatestSnapshot(engine)
       .asInstanceOf[SnapshotImpl]
-    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap, spark, engine)
+    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap)
     new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot, engine)
   }
 
@@ -69,7 +69,7 @@ class DeltaV2OptimisticTransactionSuite
       .forPath(engine, dir.getCanonicalPath)
       .getLatestSnapshot(engine)
       .asInstanceOf[SnapshotImpl]
-    new DeltaV2Snapshot(kernelSnap, spark, engine)
+    new DeltaV2Snapshot(kernelSnap)
   }
 
   /** Seeds a simple (unpartitioned) V1 Delta table at `dir`. */
