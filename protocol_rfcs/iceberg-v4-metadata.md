@@ -95,25 +95,42 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#action-reconciliation)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, `remove` actions are not carried through reconciliation. A `remove` is applied during replay to cancel its matching `add` (or to mark the referenced tree entry deleted) and is then dropped. The reconstructed table state and any checkpoint produced from it contain only live entries; they do not retain removes. Scans never consumed tombstones, and tree-reachability cleanup replaces the VACUUM use of tombstones, so removes have no remaining role in reconciled state. A `remove` is matched to the `add` it cancels by normalized deletion vector object identity, not by the serialized key string `(path, deletionVector.uniqueId)`, whose `uniqueId` baked in the DV's storage type, path, and offset, so the same physical DV blob reconciles even when the two actions encode it as different storage types (see [Deletion Vectors](#deletion-vectors)).</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, `remove` actions are not carried through reconciliation. A `remove` is applied during replay to cancel its matching `add` (or to mark the referenced tree entry deleted) and is then dropped. The reconstructed table state and any checkpoint produced from it contain only live entries; they do not retain removes. Scans never consumed tombstones, and tree-reachability cleanup replaces the VACUUM use of tombstones, so removes have no remaining role in reconciled state. A `remove` still cancels the `add` sharing its `(path, deletionVector.uniqueId)` primary key, but what changes under `adaptiveMetadata` is only how `uniqueId` is computed. The normalized object identity defined in [Derived Fields](#derived-fields) rather than the legacy descriptor string is used, so the same physical DV blob matches even when the `add` and `remove` encode it under different storage types.</ins>
 
 ### Deletion Vectors
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#deletion-vectors)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, inline deletion vectors (storage type `i`) are forbidden. The content entry represents deletion vectors as file references (`location`, `offset`, `size_in_bytes`, `cardinality`) with no field for inline bytes. Existing inline DVs must be converted to file-based DVs before or during feature enablement.</ins>
+<ins>Under `adaptiveMetadata`, deletion vectors have two separate representations, and the feature converts between them at the log / tree boundary.</ins>
 
-<ins>Iceberg V4 stores DV blobs as un-encoded paths relative to the table root and does not constrain their filename or location. A DV blob need not be a UUID-named `.bin` file and may sit in any subdirectory. To represent such DVs losslessly in Delta `add` and `remove` actions, this feature introduces a new deletion vector storage type **`r` (relative)** alongside the existing `u` and `p`:</ins>
+<ins>In the Delta log, `add` and `remove` actions carry a [`DeletionVectorDescriptor`](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#deletion-vector-descriptor-schema) whose `storageType` selects how `pathOrInlineDv` is encoded. Inline deletion vectors (storage type `i`) are forbidden when the `adaptiveMetadata` table feature is enabled, and existing inline DVs must be converted to file-based DVs before or during feature enablement. A new storage type `r` (relative) is also allowed — the raw, unencoded, table-relative DV type, following the [Iceberg V4 path spec](https://iceberg.apache.org/spec/#paths-in-metadata). The descriptor storage types are:</ins>
 
-| <ins>Storage Type</ins> | <ins>`pathOrInlineDv`</ins> | <ins>Encoding</ins> | <ins>Location</ins> |
+| <ins>Storage Type</ins> | <ins>`pathOrInlineDv`</ins> | <ins>Encoding</ins> | <ins>Under table root?</ins> |
 | - | - | - | - |
-| <ins>`u`</ins> | <ins>base85-encoded random prefix + UUID</ins> | <ins>base85</ins> | <ins>Under table root</ins> |
-| <ins>`p`</ins> | <ins>absolute URI</ins> | <ins>URL-encoded</ins> | <ins>Outside table root</ins> |
-| <ins>`r`</ins> | <ins>raw path relative to the table root</ins> | <ins>none</ins> | <ins>Under table root</ins> |
+| <ins>`u`</ins> | <ins>base85-encoded random prefix + UUID</ins> | <ins>base85</ins> | <ins>Yes</ins> |
+| <ins>`p`</ins> | <ins>absolute URI</ins> | <ins>[URI-encoded](https://www.rfc-editor.org/rfc/rfc2396.txt)</ins> | <ins>No</ins> |
+| <ins>`r`</ins> | <ins>raw path relative to the table root</ins> | <ins>none</ins> | <ins>Yes</ins> |
 
-<ins>`r` is permitted only while `adaptiveMetadata` is enabled. When writing a content entry's `deletion_vector.location`, writers resolve the descriptor to that path, either decoding a `u` UUID to its `.bin` path, using an `r` path as-is, or storing an out-of-table `p` as an absolute URI. When surfacing it as a Delta [Deletion Vector Descriptor](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#deletion-vector-descriptor-schema), a `location` that resolves under the current table root becomes an `r` descriptor, and a `location` outside the table root becomes a `p` descriptor.</ins>
+<ins>In the adaptive metadata tree, a content entry stores its DV as a `deletion_vector` struct (`location`, `offset`, `size_in_bytes`, `cardinality`). `location` is a bare path relative to the table root when possible, otherwise an absolute URI.</ins>
 
-<ins>The same physical DV blob may be serialized differently depending on where it originates. [Action Reconciliation](#action-reconciliation) must therefore match a `remove` against its `add` by the DV's normalized object identity, rather than by the serialized descriptor string. Normalization must resolve all storage types correctly, regardless of the presence of a path scheme or encoding.</ins>
+<ins>When writing a content entry's `deletion_vector.location`, writers resolve the descriptor to that path: a `u` UUID decodes to its `.bin` path, an `r` path is used as-is, and an out-of-table `p` is stored as an absolute URI. When surfacing that `location` back as a `DeletionVectorDescriptor`, a path under the current table root becomes an `r` descriptor and a path outside it becomes a `p` descriptor.</ins>
+
+<ins>The same physical DV blob may be serialized under different storage types depending on where it originates, so a `remove` and its matching `add` need not agree on storage type for one blob. [Action Reconciliation](#action-reconciliation) must therefore match them by the DV's normalized object identity, which is the new `adaptiveMetadata` form of `uniqueId` defined in [Derived Fields](#derived-fields).</ins>
+
+### Derived Fields
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#derived-fields)***
+
+<ins>When `adaptiveMetadata` is enabled, the `uniqueId` derived field is computed as a normalized object identity that names the physical DV blob independent of its storage-type encoding, instead of the existing descriptor-string computation. It is formed as `<marker><path>@<offset>` (the `@<offset>` suffix omitted when `offset` is absent), resolving each storage type as follows:</ins>
+
+| <ins>Storage Type</ins> | <ins>Marker</ins> | <ins>Path</ins> |
+| - | - | - |
+| <ins>`u`</ins> | <ins>`r`</ins> | <ins>Decode the random prefix and base85 UUID to the file name, giving the table-relative path `<prefix>/deletion_vector_<uuid>.bin`.</ins> |
+| <ins>`r`</ins> | <ins>`r`</ins> | <ins>The raw relative path, as-is.</ins> |
+| <ins>`p`</ins> | <ins>`r` if it resolves under the table root, else `p`</ins> | <ins>URI-decode the path. If it resolves under the table root, relativize it, otherwise keep the absolute path.</ins> |
+| <ins>`i`</ins> | <ins>`i`</ins> | <ins>`pathOrInlineDv`, unchanged.</ins> |
+
+<ins>The `offset` is always part of the identity when present, because a single file may pack multiple DVs at different offsets.</ins>
 
 ### Metadata Cleanup
 
@@ -720,7 +737,7 @@ When `adaptiveMetadata` is added to `readerFeatures` and `writerFeatures`, the r
 
 ## Feature Removal
 
-When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint must be produced from the current metadata tree state so that the table can be read without adaptiveMetadata support. Deletion vectors stored with storage type `r` must be rewritten as `u` (in-table) or `p` (out-of-table) descriptors, since `r` is only valid while the feature is enabled. Manifest files that are no longer referenced may be cleaned up.
+When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint must be produced from the current metadata tree state so that the table can be read without adaptiveMetadata support. Deletion vectors stored with storage type `r` must be rewritten as `u` or `p` descriptors, since `r` is only valid while the feature is enabled. Both are metadata-only rewrites and the DV blob is not moved. When the DV file already follows the `u` layout — a `deletion_vector_<uuid>.bin` file relative to the table root, optionally under a random-prefix directory — it is re-encoded as a `u` descriptor, recognized by that name pattern. Otherwise the relative path is resolved to an absolute URI and stored as a `p` descriptor, since a file that does not match the `u` name pattern cannot be expressed as `u` without physically rewriting the blob. Manifest files that are no longer referenced may be cleaned up.
 
 ## Compatibility Notes
 
