@@ -4177,6 +4177,15 @@ trait DeltaErrorsBase
       messageParameters = Array(operation))
   }
 
+  def checkCatalogManagedTableOperationAllowed(
+      operation: String,
+      snapshot: SnapshotDescriptor,
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    if (snapshot.isCatalogOwned) {
+      throw operationBlockedOnCatalogManagedTable(operation)
+    }
+  }
+
   def deltaCannotCreateCatalogManagedTable(): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_CREATION",
