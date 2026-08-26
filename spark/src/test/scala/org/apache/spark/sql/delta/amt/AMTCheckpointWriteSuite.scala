@@ -68,6 +68,8 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       // The Checkpoint describes state as of v2 (the version whose maintenance it fulfills).
       assert(checkpoints.head.version == 2,
         s"Checkpoint must describe state as of v2; got ${checkpoints.head.version}")
+      assert(checkpoints.head.contentRoot.version == 2,
+        s"contentRoot.version must be v2; got ${checkpoints.head.contentRoot.version}")
 
       // The Checkpoint's contentRoot points at an on-disk manifest file. A single promoted leaf
       // keeps its leaf-* name, so accept either a root or leaf manifest.
@@ -320,13 +322,15 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
         file_size_in_bytes = leafSize,
         manifest_info = emptyManifestInfo.copy(added_files_count = 1))
       val (rootLoc, rootSize) = writeManifest("root with space.parquet", Seq(leafPointer.wrap))
-      val checkpoint = base.copy(contentRoot = ContentRoot(path = rootLoc, sizeInBytes = rootSize))
+      val checkpoint = base.copy(
+        contentRoot = ContentRoot(path = rootLoc, sizeInBytes = rootSize, version = base.version))
 
       // The synthesized pointers really do carry spaces and are not URL-encoded.
       assert(rootLoc.contains("root with space.parquet") && !rootLoc.contains("%20"))
       assert(leafLoc.contains("leaf with space.parquet") && !leafLoc.contains("%20"))
 
-      val provider = AMTCheckpointProvider.fromCheckpoint(deltaLog, checkpoint)
+      val provider = AMTCheckpointProvider.fromCheckpoint(
+        deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
       // The provider resolves the spaced pointers to absolute, raw paths under the table root.
       assert(provider.liveLeafManifestAbsolutePaths.forall(p =>
         p.isAbsolute && p.toString.contains("leaf with space.parquet") &&
@@ -496,8 +500,8 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     }
 
     // `version` names the tree's content-root version, and `parts` the leaf count.
-    assert(info.version == context.checkpoint.version,
-      s"Expected content root v${context.checkpoint.version}, got v${info.version}.")
+    assert(info.version == context.checkpoint.contentRoot.version,
+      s"Expected content root v${context.checkpoint.contentRoot.version}, got v${info.version}.")
     assert(info.parts.contains(context.provider.leaves.size),
       s"Expected ${context.provider.leaves.size} leaves, got ${info.parts}.")
     assert(info.sizeInBytes.exists(_ > 0L), "The AMT size in bytes must be recorded.")

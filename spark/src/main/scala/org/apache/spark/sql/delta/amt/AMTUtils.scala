@@ -144,7 +144,7 @@ object AMTUtils {
         commitInfo = currentTransactionInfo.commitInfo.map(_.copy(
           lastManifestCommit = Some(LastManifestCommit(
             version = winningCommitSummary.commitVersion,
-            contentRootVersion = winningAMTCheckpoint.version))))
+            contentRootVersion = winningAMTCheckpoint.contentRoot.version))))
       )
     }.getOrElse(currentTransactionInfo)
     // Clear `currentCommitAttemptAMTCheckpointOpt` because it is stale once we rebase.

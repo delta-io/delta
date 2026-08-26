@@ -37,6 +37,7 @@ import org.apache.spark.util.SerializableConfiguration
  * This provider is only for inline manifest-commit checkpoints, and this is not intended for
  * standalone checkpoint which also refers to an AMT.
  *
+ * @param manifestCommitVersion The version of the manifest commit that wrote this checkpoint.
  * @param checkpointAction The inline-emitted Checkpoint action this tree was committed with;
  *                         carries the version, contentRoot, and inline non-file state.
  * @param leaves           The root's `DATA_MANIFEST` pointer entries, one per leaf reachable from
@@ -45,6 +46,7 @@ import org.apache.spark.util.SerializableConfiguration
  * @param tableRoot        The table's data path.
  */
 final class AMTCheckpointProvider(
+    val manifestCommitVersion: Long,
     val checkpointAction: Checkpoint,
     val leaves: Seq[DataManifestEntry],
     val tableRoot: Path)
@@ -283,7 +285,8 @@ object AMTCheckpointProvider {
    */
   def fromCheckpoint(
       deltaLog: DeltaLog,
-      checkpoint: Checkpoint): AMTCheckpointProvider = {
+      checkpoint: Checkpoint,
+      manifestCommitVersion: Long): AMTCheckpointProvider = {
     val tableRoot = deltaLog.dataPath
     val rootFile = checkpoint.contentRoot.toFileStatus(tableRoot)
     val index =
@@ -293,7 +296,11 @@ object AMTCheckpointProvider {
     val leaves = loadEntries(deltaLog, index, checkpoint.metaData).collect().toSeq
       .filter(_.content_type == AMTSingleAction.ContentType.Type.DataManifest)
       .map(_.unwrap.asInstanceOf[DataManifestEntry])
-    new AMTCheckpointProvider(checkpointAction = checkpoint, leaves = leaves, tableRoot = tableRoot)
+    new AMTCheckpointProvider(
+      manifestCommitVersion = manifestCommitVersion,
+      checkpointAction = checkpoint,
+      leaves = leaves,
+      tableRoot = tableRoot)
   }
 
   /** Tracking Status representing the live [[DataEntry]] in an AMT. */

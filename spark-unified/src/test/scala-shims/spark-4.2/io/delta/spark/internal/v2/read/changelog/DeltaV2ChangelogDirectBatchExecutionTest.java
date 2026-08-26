@@ -79,7 +79,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           DeltaV2SnapshotManager snapshotManager =
               SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
           StructType dataSchema = spark.table(tableName).schema();
-          long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+          long latestVersion = snapshotManager.loadLatestSnapshot().version();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
           DeltaV2Changelog changeLog =
@@ -151,7 +151,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           DeltaV2SnapshotManager snapshotManager =
               SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
           StructType dataSchema = spark.table(tableName).schema();
-          long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+          long latestVersion = snapshotManager.loadLatestSnapshot().version();
 
           DeltaV2Changelog changeLog =
               new DeltaV2Changelog(
@@ -202,7 +202,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           DeltaV2SnapshotManager snapshotManager =
               SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
           StructType dataSchema = spark.table(tableName).schema();
-          long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+          long latestVersion = snapshotManager.loadLatestSnapshot().version();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
           DeltaV2Changelog changeLog =
@@ -343,7 +343,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
 
           DeltaV2SnapshotManager snapshotManager =
               SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
-          long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+          long latestVersion = snapshotManager.loadLatestSnapshot().version();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
           DeltaV2Changelog changelog =
@@ -408,7 +408,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
 
           DeltaV2SnapshotManager snapshotManager =
               SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
-          long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+          long latestVersion = snapshotManager.loadLatestSnapshot().version();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
           DeltaV2Changelog changelog =

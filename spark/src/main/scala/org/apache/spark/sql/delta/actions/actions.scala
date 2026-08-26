@@ -825,6 +825,37 @@ sealed trait FileAction extends Action {
   }
 }
 
+object FileAction {
+  /** The path unique tuple in delta log actions: (parquet file, deletion vector id). */
+  final case class UniqueFileActionTuple private (fileURI: URI, deletionVectorId: Option[String])
+
+  /**
+   * Whether deletion vectors should be reconciled by their normalized object identity for the
+   * given table (see [[DeletionVectorDescriptor.uniqueId]]).
+   *
+   * @param protocol the table protocol.
+   */
+  def useDeletionVectorObjectIdentity(
+      protocol: Protocol,
+      spark: SparkSession): Boolean =
+    protocol.isFeatureSupported(AdaptiveMetadataTableFeature) ||
+      spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT)
+
+  /**
+   * The unique tuple `(parquet file, deletion vector id)` of a file action, as a method on
+   * [[AddFile]] / [[RemoveFile]]. See [[DeletionVectorDescriptor.uniqueId]] for the
+   * `useObjectIdentity` semantics.
+   */
+  implicit class FileActionUniqueTupleOps(val action: FileAction) {
+    def toUniqueFileActionTuple(
+        tableRoot: Path,
+        useObjectIdentity: Boolean): UniqueFileActionTuple =
+      UniqueFileActionTuple(
+        action.pathAsUri,
+        Option(action.deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity)))
+  }
+}
+
 case class ParsedStatsFields(
   numLogicalRecords: Option[Long],
   tightBounds: Option[Boolean])
@@ -1437,6 +1468,7 @@ trait CommitMarker {
  *                          epoch in milliseconds when the commit write was started. This should
  *                          only be set when the feature inCommitTimestamps is enabled.
  * @param isBlindAppend Whether this commit has blindly appended without caring about existing files
+ * @param dataChange Whether this commit changes the data of the table logically.
  * @param engineInfo The information for the engine that makes the commit.
  *                   If a commit is made by Delta Lake 1.1.0 or above, it will be
  *                   `Apache-Spark/x.y.z Delta-Lake/x.y.z`.
@@ -1463,6 +1495,7 @@ case class CommitInfo(
     readVersion: Option[Long],
     isolationLevel: Option[String],
     isBlindAppend: Option[Boolean],
+    dataChange: Option[Boolean],
     operationMetrics: Option[Map[String, String]],
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
@@ -1525,7 +1558,17 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, None, null, None, None, null, null, None, None,
-      None, None, None, None, None, None, None, None, None, None)
+      None, None, None, None, None, None, None, None, None, None, None)
+  }
+
+  /**
+   * Derives the commit-level `dataChange` summary stored in [[CommitInfo.dataChange]] from the
+   * actions of a commit: a commit changes data if and only if at least one of its file actions
+   * does.
+   */
+  def dataChangeFromActions(actions: Iterable[Action]): Boolean = actions.exists {
+    case f: FileAction => f.dataChange
+    case _ => false
   }
 
   // scalastyle:off argcount
@@ -1539,6 +1582,7 @@ object CommitInfo {
       readVersion: Option[Long],
       isolationLevel: Option[String],
       isBlindAppend: Option[Boolean],
+      dataChange: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
@@ -1554,6 +1598,7 @@ object CommitInfo {
       readVersion,
       isolationLevel,
       isBlindAppend,
+      dataChange,
       operationMetrics,
       userMetadata,
       tags,
@@ -1571,6 +1616,7 @@ object CommitInfo {
       readVersion: Option[Long],
       isolationLevel: Option[String],
       isBlindAppend: Option[Boolean],
+      dataChange: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
@@ -1596,6 +1642,7 @@ object CommitInfo {
       readVersion,
       isolationLevel,
       isBlindAppend,
+      dataChange,
       operationMetrics,
       userMetadata,
       tags,
@@ -1649,11 +1696,16 @@ sealed trait CheckpointOnlyAction extends Action
  *
  * @param path        root manifest path, relative to the table root.
  * @param sizeInBytes size of the root manifest file in bytes.
+ * @param version     table version this root reflects. Must be `<=` the enclosing
+ *                    [[Checkpoint.version]]; equal in a manifest commit, and less
+ *                    or equal in a standalone checkpoint (the gap is covered by
+ *                    inline file actions).
  * @param tags        additional metadata about the AMT. See [[ContentRoot.Tags]] for known keys.
  */
 case class ContentRoot(
     path: String,
     sizeInBytes: Long,
+    version: Long,
     tags: Map[String, String] = null) {
 
   private def tag(key: ContentRoot.Tags.KeyType): Option[String] =
@@ -1693,12 +1745,14 @@ object ContentRoot {
   def apply(
       path: String,
       sizeInBytes: Long,
+      version: Long,
       isIncremental: Boolean,
       lastManifestCommitWithFullRewrite: Long,
       numLeaves: Long): ContentRoot = {
     ContentRoot(
       path = path,
       sizeInBytes = sizeInBytes,
+      version = version,
       tags = Map(
         Tags.IS_INCREMENTAL.name -> isIncremental.toString,
         Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE.name ->
@@ -1759,7 +1813,8 @@ object SidecarType {
  *
  * @param version        version at which this checkpoint is valid. May belong to a previous
  *                       commit (the checkpoint can lag the enclosing commit).
- * @param contentRoot    pointer to the Iceberg v4 root manifest.
+ * @param contentRoot    pointer to the Iceberg v4 root manifest. `contentRoot.version` is
+ *                       the table version the tree reflects.
  * @param protocol       protocol snapshot at `version`. Must be non null.
  * @param metaData       metadata snapshot at `version`. Must be non null.
  * @param domainMetadata all [[DomainMetadata]] entries carried inline. An empty list means
@@ -1784,6 +1839,9 @@ case class Checkpoint(
   // AMT checkpoint sidecars must always declare their type.
   require(sidecars.forall(_.sidecarType.isDefined),
     "All sidecars in a Checkpoint must have a sidecarType.")
+  require(
+    contentRoot.version <= version,
+    s"contentRoot.version (${contentRoot.version}) must be <= checkpoint version ($version).")
 
   override def wrap: SingleAction = SingleAction(checkpoint = this)
 }
