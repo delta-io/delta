@@ -541,6 +541,29 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
     }
   }
 
+  test("V1 saveAsTable overwrite keeps deletion vectors disabled on a UniForm table") {
+    withTempTableAndDir { case (id, _) =>
+      // Create with DVs on so the deletionVectors feature stays in the protocol, then disable DVs
+      // and enable UniForm. The feature remains supported while the property is false.
+      executeSql(s"""CREATE TABLE $id (id INT, name STRING) USING DELTA CLUSTER BY (id)
+        TBLPROPERTIES (
+          'delta.columnMapping.mode' = 'name', 'delta.enableDeletionVectors' = 'true')""")
+      executeSql(s"INSERT INTO $id VALUES (1, 'a')")
+      executeSql(s"ALTER TABLE $id SET TBLPROPERTIES ('delta.enableDeletionVectors' = 'false')")
+      executeSql(s"""ALTER TABLE $id SET TBLPROPERTIES (
+        'delta.enableIcebergCompatV2' = 'true',
+        'delta.universalFormat.enabledFormats' = 'iceberg')""")
+
+      // With DVs enabled by default at the session level, the overwrite must keep the table's
+      // disabled setting rather than adopt the default.
+      withSQLConf("spark.databricks.delta.properties.defaults.enableDeletionVectors" -> "true") {
+        spark.sql("SELECT 2 AS id, 'b' AS name").write
+          .format("delta").mode("overwrite").clusterBy("id").saveAsTable(id)
+      }
+      assert(getProperties(id).get("delta.enableDeletionVectors") === Some("false"))
+    }
+  }
+
   test("UniForm config validation") {
     Seq("ICEBERG", "iceberg,iceberg", "iceber", "paimon").foreach { invalidConf =>
       withTempTableAndDir { case (id, loc) =>
