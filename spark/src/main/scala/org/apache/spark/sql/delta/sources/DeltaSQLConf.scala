@@ -554,10 +554,26 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |not rule out, and excludes those whose rows do not actually match the current
           |transaction's read predicates. This resolves predicates min/max stats cannot skip (e.g.
           |modulo or other non-range expressions), at the cost of reading the (already stats-
-          |narrowed) added files during commit. One-way safe: a file is excluded only when an actual
-          |scan proves no row matches.""".stripMargin)
+          |narrowed) added files during commit. The scan runs synchronously on the committing thread
+          |inside the conflict-retry loop and is bounded by
+          |conflictDetection.dataSkipping.valueExact.maxBytes. One-way safe: a file is excluded only
+          |when an actual scan proves no row matches.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_CONFLICT_DETECTION_DATA_SKIPPING_VALUE_EXACT_MAX_BYTES =
+    buildConf("conflictDetection.dataSkipping.valueExact.maxBytes")
+      .internal()
+      .doc(
+        """The maximum total size, in bytes, of the stats-narrowed added files that value-exact
+          |conflict-time data skipping (conflictDetection.dataSkipping.valueExact.enabled) will scan
+          |during a commit. Because the scan runs synchronously on the committing thread inside the
+          |conflict-retry loop, this bounds the commit-time I/O it can add: when the candidate files
+          |exceed this size the scan is skipped and every candidate is kept as a conflict candidate
+          |(the same one-way-safe fallback as when the feature is off). Set to a non-positive value
+          |to disable the bound.""".stripMargin)
+      .longConf
+      .createWithDefault(1L << 30) // 1 GiB
 
   val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
     buildConf("properties.defaults.minWriterVersion")

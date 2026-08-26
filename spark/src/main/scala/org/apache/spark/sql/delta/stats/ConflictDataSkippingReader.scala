@@ -68,7 +68,7 @@ trait ConflictDataSkippingReader extends DeltaLogging { self: DataSkippingReader
    * deterministic, no metadata attributes. Mirrors [[filesForScan]] eligibility so we never build a
    * predicate (stats or value-exact) that could wrongly exclude a matching file. Shared by the
    * stats tier ([[buildDataSkippingPredicate]]) and the value-exact tier
-   * ([[filterFilesByValueExactScan]]).
+   * ([[anyAddedRowMatchesReadPredicate]]).
    */
   private def eligibleSkippingFilters(dataFilters: Seq[Expression]): Seq[Expression] = {
     import DeltaTableUtils._
@@ -131,25 +131,29 @@ trait ConflictDataSkippingReader extends DeltaLogging { self: DataSkippingReader
    * all `files`, since skipping is a pure optimization over correct conservative detection):
    *   1. [[filterFilesByStatsSkipping]] -- column min/max stats, no data I/O (always on with the
    *      feature). Cannot resolve predicates min/max does not model (modulo, non-range exprs).
-   *   2. [[filterFilesByValueExactScan]] -- opt-in via
+   *   2. [[anyAddedRowMatchesReadPredicate]] -- opt-in via
    *      [[DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_VALUE_EXACT_ENABLED]]: for the files
-   *      tier 1 could not rule out, reads their actual rows and evaluates the real predicates,
-   *      dropping any file with zero matching rows. Resolves the stats-inconclusive cases at the
-   *      cost of reading the (already narrowed) added files during commit.
+   *      tier 1 could not rule out, reads their actual rows and evaluates the real predicates; when
+   *      none of them matches, all candidates are dropped. Resolves the stats-inconclusive cases at
+   *      the cost of reading the (already narrowed) added files during commit.
    */
   private[delta] def filterFilesMatchingAnyReadPredicate(
       files: Seq[AddFile],
       dataFiltersPerRead: Seq[Seq[Expression]]): Seq[AddFile] = {
     // Tier 1 (cheap, no data I/O): column min/max stats skipping.
     val statsSurvivors = filterFilesByStatsSkipping(files, dataFiltersPerRead)
-    // Tier 2 (opt-in, reads data): for files stats could NOT rule out, evaluate the real read
-    // predicates against their actual rows. Resolves predicates min/max cannot skip (e.g. modulo).
+    // Tier 2 (opt-in, reads data): a SECOND Spark job, so only run it when tier 1 left survivors
+    // and the feature is enabled. For the files stats could NOT rule out, evaluate the real read
+    // predicates against their actual rows (resolves predicates min/max cannot skip, e.g. modulo):
+    // if no surviving file holds a matching row, none can conflict, so drop them all.
     if (statsSurvivors.isEmpty ||
         !spark.sessionState.conf.getConf(
           DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_VALUE_EXACT_ENABLED)) {
       statsSurvivors
+    } else if (anyAddedRowMatchesReadPredicate(statsSurvivors, dataFiltersPerRead)) {
+      statsSurvivors
     } else {
-      filterFilesByValueExactScan(statsSurvivors, dataFiltersPerRead)
+      Nil
     }
   }
 
@@ -210,77 +214,139 @@ trait ConflictDataSkippingReader extends DeltaLogging { self: DataSkippingReader
   /**
    * Tier 2 -- value-exact scan (see [[filterFilesMatchingAnyReadPredicate]]). For the `files` that
    * tier 1 stats skipping could not rule out, read their ACTUAL data and evaluate the real read
-   * predicates, keeping only files that genuinely have >= 1 matching row. This resolves predicates
+   * predicates, returning whether ANY of them still holds a matching row. This resolves predicates
    * column min/max cannot skip (e.g. `a % 2 = 1`, other non-range expressions): a file whose stats
-   * range spans the predicate but whose values never satisfy it is dropped here, avoiding an
-   * unnecessary conflict.
+   * range spans the predicate but whose values never satisfy it contributes no match, so when
+   * nothing matches the caller can drop every candidate and avoid an unnecessary conflict.
    *
    * Reads are OR-combined, AND within a read -- the same semantics tier 1 approximates. A read with
    * no eligible (deterministic, subquery-free, non-metadata) filter matches everything, so we
-   * cannot prove non-match and keep all `files`. Using only the eligible filters is a sound
+   * cannot prove non-match and return true. Using only the eligible filters is a sound
    * over-approximation of the true read predicate (dropping a conjunct only makes it match more),
    * so a real conflict is never a false negative.
    *
    * Runs a SINGLE, short-circuiting Spark job over the (already stats-narrowed) files: does ANY of
-   * them still hold a row matching the read predicates? If so, keep them ALL as conflict
-   * candidates; if not, drop them all. That is exactly what the caller
+   * them still hold a row matching the read predicates? That boolean is exactly what the caller
    * ([[org.apache.spark.sql.delta.ConflictChecker]]) consumes -- an unpartitioned table collapses
-   * the survivors to `headOption`, and a partitioned table runs this before its partition filter,
-   * so in both cases only "can anything still match?" matters, never which file. Deliberately an
-   * existence check rather than per-file attribution: we never map a scanned row back to its
-   * [[AddFile]], so there is no `_metadata.file_path` distinct/collect and no chance that a
-   * path-canonicalization mismatch drops a genuinely-matching file (which would be a missed
-   * conflict). One-way safe: dropping all files is sound only because the scan proved no candidate
-   * has a matching row. Any failure falls back to keeping all `files`.
+   * its survivors to `headOption`, and a partitioned table runs this before its partition filter,
+   * so only "can anything still match?" matters, never which file. NOTE the flip side on a
+   * partitioned table: a match in ANY partition returns true and keeps EVERY candidate, so the
+   * cross-partition skip is left entirely to the downstream partition filter; tier 2 only helps
+   * when no file in any partition matches. Deliberately an existence check rather than per-file
+   * attribution: we never map a scanned row back to its [[AddFile]], so there is no
+   * `_metadata.file_path` distinct/collect and no chance that a path-canonicalization mismatch
+   * drops a genuinely-matching file (which would be a missed conflict).
+   *
+   * One-way safe: returns false (no conflict) only when the scan PROVES no candidate has a matching
+   * row. It returns true whenever it cannot prove that -- an ineligible read, a scan skipped
+   * because the candidates exceed
+   * [[DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_VALUE_EXACT_MAX_BYTES]], or any error --
+   * so a real conflict is never a false negative.
    */
-  private[delta] def filterFilesByValueExactScan(
+  private[delta] def anyAddedRowMatchesReadPredicate(
       files: Seq[AddFile],
-      dataFiltersPerRead: Seq[Seq[Expression]]): Seq[AddFile] = {
-    if (files.isEmpty || dataFiltersPerRead.isEmpty || schema.isEmpty) return files
+      dataFiltersPerRead: Seq[Seq[Expression]]): Boolean = {
+    if (files.isEmpty) return false
+    if (dataFiltersPerRead.isEmpty || schema.isEmpty) return true
     try {
       // AND within a read over its eligible filters; a read with none matches everything, so we
-      // cannot prove any file fails it -> keep all files (no job).
+      // cannot prove any file fails it -> conservative match (keep all candidates, no job).
       val perReadEligible = dataFiltersPerRead.map(eligibleSkippingFilters)
-      if (perReadEligible.exists(_.isEmpty)) return files
+      if (perReadEligible.exists(_.isEmpty)) return true
+      // Bound the commit-time I/O: the scan runs synchronously on the committing thread inside the
+      // conflict-retry loop, so above the configured size skip it and conservatively report a match
+      // (keeping every candidate), the same one-way-safe fallback as the feature being off.
+      val maxBytes = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_VALUE_EXACT_MAX_BYTES)
+      if (maxBytes > 0 && files.map(_.size).sum > maxBytes) {
+        logWarning(log"Conflict-time value-exact scan skipped: candidate files exceed the " +
+          log"configured value-exact scan byte bound; keeping all as conflict candidates")
+        return true
+      }
       val snapshot = snapshotToScan
+      // Reads the winner's already-committed added files under the current transaction's snapshot
+      // schema. A concurrent schema change is caught earlier as a metadata conflict, so the
+      // winner's files and this schema agree by the time we get here.
       val df = snapshot.deltaLog.createDataFrame(
-        snapshot, files, actionTypeOpt = Some("conflictDetectionValueExact"))
+        snapshot, files, actionTypeOpt = Some(ConflictDataSkippingReader.VALUE_EXACT_ACTION_TYPE))
       // Rebind each filter's attributes to the fresh DataFrame's columns by name, AND within a
       // read, OR across reads -- a file matches if any read's predicate matches any of its rows.
       val condition = perReadEligible
         .map(filters => filters.map(f => rebindToDataFrame(f, df)).reduce(_ && _))
         .reduce(_ || _)
       // The caller only needs a boolean (see the scaladoc), so run one short-circuiting existence
-      // check instead of attributing rows back to files: keep all candidates if any row matches,
-      // else drop them all.
+      // check instead of attributing rows back to files.
       val sc = spark.sparkContext
       val prevJobDesc = sc.getLocalProperty(SparkContext.SPARK_JOB_DESCRIPTION)
-      val anyRowMatches =
-        try {
-          sc.setJobDescription("Delta conflict detection: value-exact data skipping")
-          recordFrameProfile("Delta", "DataSkippingReader.filterFilesByValueExactScan") {
-            !df.where(condition).isEmpty
-          }
-        } finally {
-          sc.setJobDescription(prevJobDesc)
+      try {
+        sc.setJobDescription("Delta conflict detection: value-exact data skipping")
+        recordFrameProfile("Delta", "DataSkippingReader.anyAddedRowMatchesReadPredicate") {
+          !df.where(condition).isEmpty
         }
-      if (anyRowMatches) files else Nil
+      } finally {
+        sc.setJobDescription(prevJobDesc)
+      }
     } catch {
       case NonFatal(e) =>
         // Optimization only: never let a value-exact scan failure abort a commit. Fall back to
-        // keeping every stats-surviving file as a conflict candidate.
+        // treating every stats-surviving file as a conflict candidate.
         logWarning(log"Conflict-time value-exact scan failed to evaluate; falling back to " +
           log"keeping all stats-surviving files as conflict candidates", e)
-        files
+        true
     }
   }
 
   /**
-   * Rebinds `e`'s attribute references to `df`'s output columns by name, so a read predicate
+   * Rebinds `e`'s attribute references to `df`'s output columns BY NAME, so a read predicate
    * resolved against the transaction's plan can be evaluated on a freshly built DataFrame. Nested
-   * accesses (`GetStructField` over a top-level struct column) are preserved. If a referenced name
-   * is not a column of `df`, `df.col` throws and the caller's fail-safe keeps all files.
+   * struct accesses are resolved by their field NAMES too (via a back-tick-quoted dotted path), not
+   * by the resolved plan's ordinals, so a struct whose fields are laid out in a different order in
+   * `df` is still read correctly rather than silently reading the wrong field (which could drop a
+   * genuinely-matching file). A `GetStructField` without a field name falls back to preserving its
+   * ordinal over the rebound leaf attribute; any referenced name that is not a column of `df` makes
+   * `df.col` throw, and the caller's fail-safe keeps all files.
    */
-  private def rebindToDataFrame(e: Expression, df: DataFrame): Column =
-    Column(e.transform { case a: AttributeReference => df.col(a.name).expr })
+  private def rebindToDataFrame(e: Expression, df: DataFrame): Column = {
+    // transformUp, not transformDown: a matched node is rewritten to a resolved `df` column, which
+    // is itself a `GetStructField`/`AttributeReference`. transformDown would re-descend into that
+    // replacement and re-match forever; transformUp rewrites children first and never revisits the
+    // rule's own output, so a replacement that looks like its input cannot loop.
+    Column(e.transformUp {
+      case g: GetStructField => rebindStructField(g, df)
+      case a: AttributeReference => df.col(quoteColumnName(a.name)).expr
+    })
+  }
+
+  /**
+   * Resolves a `GetStructField`'s whole nested access by name; if it is not a pure named chain,
+   * leaves the node in place (its leaf attribute is still rebound by [[rebindToDataFrame]],
+   * preserving the ordinal fallback). Kept a named method rather than an inline `case` body so the
+   * pattern-bound path does not close over the enclosing `transformUp` function.
+   */
+  private def rebindStructField(g: GetStructField, df: DataFrame): Expression =
+    columnPathOf(g) match {
+      case Some(path) => df.col(path.mkString(".")).expr
+      case None => g
+    }
+
+  /**
+   * Back-tick-quotes a column-path segment so names containing dots/backticks resolve literally.
+   */
+  private def quoteColumnName(name: String): String = "`" + name.replace("`", "``") + "`"
+
+  /**
+   * The dotted, back-tick-quoted column path of a pure attribute / named-`GetStructField` chain
+   * (e.g. `` `s`.`v` ``), or None when `e` is not such a chain.
+   */
+  private def columnPathOf(e: Expression): Option[Seq[String]] = e match {
+    case a: AttributeReference => Some(Seq(quoteColumnName(a.name)))
+    case GetStructField(child, _, Some(fieldName)) =>
+      columnPathOf(child).map(parent => parent :+ quoteColumnName(fieldName))
+    case _ => None
+  }
+}
+
+object ConflictDataSkippingReader {
+  /** `TahoeFileIndex` action-type tag for the conflict-time value-exact scan (metrics only). */
+  private[delta] val VALUE_EXACT_ACTION_TYPE = "conflictDetectionValueExact"
 }

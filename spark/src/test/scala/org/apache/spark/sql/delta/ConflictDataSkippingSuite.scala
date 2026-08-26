@@ -28,10 +28,10 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{QueryTest, Row, SaveMode}
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, GreaterThanOrEqual, LessThan, Literal, Remainder}
-import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, GetStructField, GreaterThanOrEqual, LessThan, Literal, Remainder}
+import org.apache.spark.sql.functions.{col, lit, struct}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.LongType
+import org.apache.spark.sql.types.{LongType, StructField, StructType}
 import org.apache.spark.util.ThreadUtils
 
 /**
@@ -350,7 +350,7 @@ class ConflictDataSkippingSuite extends QueryTest
     }
   }
 
-  test("filterFilesByValueExactScan drops a file whose rows never match, keeps one that does") {
+  test("anyAddedRowMatchesReadPredicate: false when no row matches, true when one does") {
     withTempDir { dir =>
       // A single file of all-even ids in [0,100). min/max = [0,98] spans odd values, so min/max
       // stats cannot prove `id % 2 = 1` unsatisfiable, but no row actually matches it.
@@ -365,27 +365,27 @@ class ConflictDataSkippingSuite extends QueryTest
       val odd = EqualTo(Remainder(id, Literal(2L)), Literal(1L))
       val even = EqualTo(Remainder(id, Literal(2L)), Literal(0L))
 
-      // Value-exact: no row is odd -> file dropped; every row is even -> file kept (no over-drop).
-      assert(snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq(odd))).isEmpty,
-        "all-even file must be dropped for id % 2 = 1")
-      assert(snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq(even))).size == 1,
-        "all-even file must be kept for id % 2 = 0")
+      // Value-exact: no row is odd -> no match; every row is even -> match (no over-drop).
+      assert(!snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(odd))),
+        "all-even file has no odd row -> no match for id % 2 = 1")
+      assert(snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(even))),
+        "all-even file matches id % 2 = 0")
 
       // Contrast tier 1: min/max stats cannot resolve modulo, so it keeps the file regardless.
       assert(snapshot.filterFilesByDataSkipping(allFiles, Seq(odd)).size == 1,
         "stats skipping cannot resolve modulo -> keeps the file")
 
-      // A read with no eligible filter matches everything -> keep all (cannot prove non-match).
-      assert(snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq.empty)).size == 1,
-        "a read with no eligible filter must keep all files")
+      // A read with no eligible filter matches everything -> conservative match (cannot prove not).
+      assert(snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq.empty)),
+        "a read with no eligible filter conservatively matches")
     }
   }
 
-  test("filterFilesByValueExactScan keeps all candidates if any matches, drops all if none do") {
+  test("anyAddedRowMatchesReadPredicate: existence check across candidate files") {
     withTempDir { dir =>
       // Two single-row-group files: one all-odd, one all-even. The scan is an existence check, not
       // per-file attribution -- the caller only needs a boolean -- so a predicate matched by EITHER
-      // file keeps BOTH, and a predicate no file matches drops both.
+      // file is a match, and a predicate no file matches is not.
       spark.range(1, 100, step = 2).repartition(1)
         .write.format("delta").mode("append").save(dir.getAbsolutePath) // all-odd file
       spark.range(0, 100, step = 2).repartition(1)
@@ -400,18 +400,152 @@ class ConflictDataSkippingSuite extends QueryTest
       val even = EqualTo(Remainder(id, Literal(2L)), Literal(0L))
       val noMatch = EqualTo(Remainder(id, Literal(2L)), Literal(5L)) // id % 2 is 0 or 1, never 5
 
-      // A row in either file matches -> keep every candidate.
-      assert(snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq(odd))).size == 2,
-        "the all-odd file matches -> keep both candidates")
-      assert(snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq(even))).size == 2,
-        "the all-even file matches -> keep both candidates")
-      // No file has a matching row -> drop every candidate (safe: nothing can conflict).
-      assert(snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq(noMatch))).isEmpty,
-        "no candidate matches -> drop all")
+      // A row in either file matches -> match.
+      assert(snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(odd))),
+        "the all-odd file matches")
+      assert(snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(even))),
+        "the all-even file matches")
+      // No file has a matching row -> no match (safe: caller drops all candidates).
+      assert(!snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(noMatch))),
+        "no candidate matches")
     }
   }
 
-  test("filterFilesByValueExactScan keeps all files when a predicate is unresolvable (fail-safe)") {
+  test("anyAddedRowMatchesReadPredicate OR-combines reads and ANDs within a read") {
+    withTempDir { dir =>
+      // One all-odd file and one all-even file.
+      spark.range(1, 100, step = 2).repartition(1)
+        .write.format("delta").mode("append").save(dir.getAbsolutePath)
+      spark.range(0, 100, step = 2).repartition(1)
+        .write.format("delta").mode("append").save(dir.getAbsolutePath)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val snapshot = log.update()
+      val allFiles = snapshot.allFiles.collect().toSeq
+      assert(allFiles.size == 2, s"expected two files, got ${allFiles.size}")
+
+      val id = AttributeReference("id", LongType)()
+      val odd = EqualTo(Remainder(id, Literal(2L)), Literal(1L))
+      val even = EqualTo(Remainder(id, Literal(2L)), Literal(0L))
+      val never = EqualTo(Remainder(id, Literal(2L)), Literal(5L))
+      val never2 = EqualTo(Remainder(id, Literal(2L)), Literal(7L))
+
+      // OR across reads: one read unsatisfiable, the other (odd) matches the all-odd file -> match.
+      assert(snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(never), Seq(odd))),
+        "second read matches -> OR across reads is a match")
+      // OR across reads, both unsatisfiable -> no match.
+      assert(!snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(never), Seq(never2))),
+        "neither read matches -> no match")
+      // AND within a read: `odd AND even` cannot hold for any single row -> no match.
+      assert(!snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(odd, even))),
+        "odd AND even cannot hold for any single row -> no match")
+    }
+  }
+
+  test("anyAddedRowMatchesReadPredicate resolves nested struct fields by name, not ordinal") {
+    withTempDir { dir =>
+      // Struct column `s` with fields (a, v): `a` holds odd values, `v` holds even values. A
+      // predicate built with the WRONG ordinal (0 -> `a`) but the RIGHT name (`v`) must read `v`.
+      // Ordinal-based rebinding would read `a` (odd) and wrongly report a match for `s.v % 2 = 1`.
+      spark.range(0, 100, step = 2)
+        .select(struct((col("id") + 1).as("a"), col("id").as("v")).as("s"))
+        .repartition(1)
+        .write.format("delta").mode("append").save(dir.getAbsolutePath)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val snapshot = log.update()
+      val allFiles = snapshot.allFiles.collect().toSeq
+      assert(allFiles.size == 1, s"expected a single file, got ${allFiles.size}")
+
+      val structType = StructType(Seq(StructField("a", LongType), StructField("v", LongType)))
+      val s = AttributeReference("s", structType)()
+      // Deliberately WRONG ordinal (0 = field `a`), correct name `v`.
+      val sv = GetStructField(s, 0, Some("v"))
+      val svOdd = EqualTo(Remainder(sv, Literal(2L)), Literal(1L))
+      val svEven = EqualTo(Remainder(sv, Literal(2L)), Literal(0L))
+
+      // `v` is all even: `s.v % 2 = 1` must find no match (name-based). Ordinal 0 -> `a` (odd)
+      // would wrongly match.
+      assert(!snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(svOdd))),
+        "s.v holds even values -> no row matches s.v % 2 = 1 (field `v` must resolve by name)")
+      // `s.v % 2 = 0` matches every row.
+      assert(snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(svEven))),
+        "s.v holds even values -> every row matches s.v % 2 = 0")
+    }
+  }
+
+  test("anyAddedRowMatchesReadPredicate: NULLs are non-matches (three-valued logic)") {
+    withTempDir { dir =>
+      // A file whose only rows are NULL id. `id = 5` is UNKNOWN on NULL, i.e. not a match.
+      val nulls = spark.createDataFrame(
+        spark.sparkContext.parallelize(Seq(Row(null), Row(null))),
+        StructType(Seq(StructField("id", LongType))))
+      nulls.repartition(1).write.format("delta").mode("append").save(dir.getAbsolutePath)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val snapshot = log.update()
+      val allFiles = snapshot.allFiles.collect().toSeq
+      assert(allFiles.size == 1, s"expected a single file, got ${allFiles.size}")
+
+      val id = AttributeReference("id", LongType)()
+      assert(
+        !snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(EqualTo(id, Literal(5L))))),
+        "id = 5 is UNKNOWN on NULL rows -> no match")
+    }
+  }
+
+  test("anyAddedRowMatchesReadPredicate on a partitioned table: a match anywhere -> true") {
+    withTempDir { dir =>
+      // Partitioned by `p`: p=0 all-even ids, p=1 all-odd ids. The scan ignores partitioning, so an
+      // odd predicate matched only in p=1 still returns true across both partitions' files -- the
+      // downstream partition filter, not tier 2, separates partitions.
+      spark.range(0, 100, step = 2).withColumn("p", lit(0)).repartition(1)
+        .write.partitionBy("p").format("delta").mode("append").save(dir.getAbsolutePath)
+      spark.range(1, 100, step = 2).withColumn("p", lit(1)).repartition(1)
+        .write.partitionBy("p").format("delta").mode("append").save(dir.getAbsolutePath)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val snapshot = log.update()
+      val allFiles = snapshot.allFiles.collect().toSeq
+      assert(allFiles.size == 2, s"expected two partition files, got ${allFiles.size}")
+
+      val id = AttributeReference("id", LongType)()
+      val odd = EqualTo(Remainder(id, Literal(2L)), Literal(1L))
+      val never = EqualTo(Remainder(id, Literal(2L)), Literal(5L))
+
+      // Odd rows exist only in p=1, but the existence check spans all candidate files -> true.
+      assert(snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(odd))),
+        "an odd row exists in the p=1 file -> match across partitions")
+      // No row anywhere matches -> false (the only case tier 2 helps on a partitioned table).
+      assert(!snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(never))),
+        "no row in any partition matches -> no match")
+    }
+  }
+
+  test("anyAddedRowMatchesReadPredicate: over the byte bound is a conservative match") {
+    withTempDir { dir =>
+      // An all-even file: `id % 2 = 1` normally proves no match. With the byte bound set below the
+      // file size, the scan is skipped and the method conservatively reports a match.
+      spark.range(0, 100, step = 2).repartition(1)
+        .write.format("delta").mode("append").save(dir.getAbsolutePath)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val snapshot = log.update()
+      val allFiles = snapshot.allFiles.collect().toSeq
+      assert(allFiles.size == 1)
+      assert(allFiles.head.size > 1, "the added file must be larger than the 1-byte bound below")
+
+      val id = AttributeReference("id", LongType)()
+      val odd = EqualTo(Remainder(id, Literal(2L)), Literal(1L))
+
+      // Bound above the file size (default): the scan runs and proves no odd row -> no match.
+      assert(!snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(odd))),
+        "under the default bound the scan runs and finds no match")
+      // Bound below the file size: the scan is skipped -> conservative match.
+      withSQLConf(
+          DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_VALUE_EXACT_MAX_BYTES.key -> "1") {
+        assert(snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(odd))),
+          "candidates exceed the 1-byte bound -> scan skipped -> conservative match")
+      }
+    }
+  }
+
+  test("anyAddedRowMatchesReadPredicate: unresolvable predicate is a conservative match") {
     withTempDir { dir =>
       createTable(dir)
       val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
@@ -420,11 +554,11 @@ class ConflictDataSkippingSuite extends QueryTest
       assert(allFiles.size == 10)
 
       // A predicate on a column that is not in the table: rebinding throws, and the fail-safe must
-      // keep every file as a conflict candidate rather than let the scan failure abort a commit.
+      // report a match (keep every file as a conflict candidate) rather than let the scan failure
+      // abort a commit.
       val ghost = EqualTo(AttributeReference("does_not_exist", LongType)(), Literal(1L))
-      val kept = snapshot.filterFilesByValueExactScan(allFiles, Seq(Seq(ghost)))
-      assert(kept.size == allFiles.size,
-        s"an unresolvable predicate must keep all files (fail-safe), got ${kept.size}")
+      assert(snapshot.anyAddedRowMatchesReadPredicate(allFiles, Seq(Seq(ghost))),
+        "an unresolvable predicate must be a conservative match (fail-safe)")
     }
   }
 
