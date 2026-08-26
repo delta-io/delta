@@ -1195,7 +1195,8 @@ class OptimisticTransactionSuite
               newProtocolOpt = None,
               op = DeltaOperations.Restore(Some(0), None),
               context = Map.empty,
-              metrics = Map.empty)
+              metrics = Map.empty,
+              dataChange = Some(true))
           }
           if (conflict) {
             assert(e.isInstanceOf[ConcurrentWriteException])
@@ -1830,7 +1831,8 @@ class OptimisticTransactionSuite
               newProtocolOpt = None,
               op = DeltaOperations.ManualUpdate,
               context = Map.empty,
-              metrics = Map.empty)
+              metrics = Map.empty,
+              dataChange = Some(true))
           } else {
             log.startTransaction().commit(mixedActions, ManualUpdate)
           }

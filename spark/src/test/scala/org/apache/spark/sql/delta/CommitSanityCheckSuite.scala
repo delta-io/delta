@@ -75,7 +75,8 @@ class CommitSanityCheckSuite extends QueryTest
         newProtocolOpt = None,
         op = DeltaOperations.ManualUpdate,
         context = Map.empty,
-        metrics = Map.empty
+        metrics = Map.empty,
+        dataChange = Some(true)
       )
     } else {
       txn.commit(addFiles, DeltaOperations.ManualUpdate)
