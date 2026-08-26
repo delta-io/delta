@@ -86,13 +86,13 @@ This design enables:
 | <ins>checkpoint</ins> | <ins>Struct</ins> | <ins>Optional. The embedded [`checkpoint` action](#checkpoint-action) for that manifest commit, for prefetch. May be omitted (see below).</ins> |
 | <ins>leaves</ins> | <ins>Array</ins> | <ins>Optional. The checkpoint's embedded [content entries](#content-entry-schema), prefetched alongside `checkpoint`.</ins> |
 
-<ins>For an `adaptiveMetadata` checkpoint the reused `version`, `parts`, and `size` fields hold the `contentRoot.version`, the number of `leaves`, and `-1` respectively.</ins>
+<ins>An `adaptiveMetadata` checkpoint writes the existing required fields in `_last_checkpoint` file such that `version` holds `contentRoot.version`, `size` holds `-1`, and `parts` holds the `<number of leaves> + 1`, respectively.</ins>
 
 <ins>`amtCheckpoint` and `v2Checkpoint` are mutually exclusive, as are the `adaptiveMetadata` and `v2Checkpoint` features.</ins>
 
-<ins>The embedded `checkpoint` and `leaves` are a prefetch optimization only; readers must not require them. When absent, the reader reads the `checkpoint` action from the commit at `manifestCommitVersion` (superseded by any newer `checkpoint` action in the log), or falls back to log replay.</ins>
+<ins>The embedded optional fields `checkpoint` and `leaves` are a prefetch optimization only; readers must not require them. When absent, the reader reads the `checkpoint` action from the commit file at `manifestCommitVersion`, and derives the `leaves` from the `checkpoint` action.</ins>
 
-<ins>`_last_checkpoint` is overwritten non-atomically on some object stores, so it must stay small. Writers bound it — as V2 checkpoints trim their inline caches above a threshold — omitting `checkpoint` and `leaves` (while still writing `checkpointType` and `manifestCommitVersion`) when they would exceed that threshold.</ins>
+<ins>If the size of `amtCheckpoint` is very large, writing it to `_last_checkpoint` file could take a long time in some object stores, resulting in concurrent readers seeing an empty `_last_checkpoint` file. Thus, writers should bound the size of `amtCheckpoint` by omitting `checkpoint` and `leaves` when their sizes exceed some threshold. `checkpointType` and `manifestCommitVersion` should still be written.</ins>
 
 ### Checkpoints
 
