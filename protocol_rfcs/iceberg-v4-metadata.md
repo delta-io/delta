@@ -119,6 +119,25 @@ This design enables:
 
 <ins>Files not in the reachable set may be deleted once past the retention period. Reachability is derived from the live tree, not from `remove` tombstones, so no tombstone tracking is required (see [Remove File](#remove-file)).</ins>
 
+### Commit Provenance Information
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#commit-provenance-information)***
+
+<ins>When the `adaptiveMetadata` table feature is enabled, the `commitInfo` action carries a `lastManifestCommit` field pointing at the most recent [manifest commit](#manifest-commit) as of that version:</ins>
+
+| Field Name | Data Type | Description |
+| - | - | - |
+| <ins>lastManifestCommit</ins> | <ins>Struct</ins> | <ins>Optional. Identifies the latest manifest commit up to this version. Absent until the table's first manifest commit. Fields below.</ins> |
+
+<ins>The `lastManifestCommit` struct has these fields:</ins>
+
+| Field Name | Data Type | Description |
+| - | - | - |
+| <ins>version</ins> | <ins>Long</ins> | <ins>The version of the manifest commit that emitted the latest [`checkpoint` action](#checkpoint-action).</ins> |
+| <ins>contentRootVersion</ins> | <ins>Long</ins> | <ins>The `contentRoot.version` of that `checkpoint` action. Not newer than `version`.</ins> |
+
+<ins>Every commit carries `lastManifestCommit` forward from the prior commit; a commit that is itself a manifest commit sets it to its own version and content root. Because it is written inside the commit — not in the best-effort `_last_checkpoint` file — the newest commit's value reliably identifies the latest manifest commit, so a reader can locate the latest `checkpoint` action from it without scanning the log.</ins>
+
 --------
 
 > ***Add a new section at the [Table Features](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#table-features) section***
