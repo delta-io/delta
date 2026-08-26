@@ -28,15 +28,23 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 private[delta] object DeltaFileSystemOptions {
 
   /**
-   * Extracts file-system-relevant storage properties from a catalog table, filtering to keys
-   * that match [[DeltaTableUtils.validDeltaTableHadoopPrefixes]].
+   * Retains only entries whose key starts with a recognised Hadoop filesystem
+   * prefix ([[DeltaTableUtils.validDeltaTableHadoopPrefixes]]).
+   */
+  private[delta] def filterHadoopOptions(
+      options: Map[String, String]): Map[String, String] = {
+    options.filter { case (k, _) =>
+      DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+    }
+  }
+
+  /**
+   * Extracts file-system-relevant storage properties from a catalog table.
    */
   private def extractCatalogTableFsOptions(
       catalogTableOpt: Option[CatalogTable]): Map[String, String] = {
     catalogTableOpt
-      .map(_.storage.properties.filter { case (k, _) =>
-        DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
-      })
+      .map(ct => filterHadoopOptions(ct.storage.properties))
       .getOrElse(Map.empty)
   }
 
@@ -54,9 +62,7 @@ private[delta] object DeltaFileSystemOptions {
     val catalogStorageProps = extractCatalogTableFsOptions(catalogTableOpt)
     if (spark.sessionState.conf.getConf(
         DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
-      catalogStorageProps ++ options.filterKeys { key =>
-        DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(key.startsWith)
-      }.toMap
+      catalogStorageProps ++ filterHadoopOptions(options)
     } else {
       catalogStorageProps
     }
