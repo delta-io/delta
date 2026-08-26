@@ -103,7 +103,7 @@ This design enables:
 
 <ins>Under `adaptiveMetadata`, deletion vectors have two separate representations, and the feature converts between them at the log / tree boundary.</ins>
 
-<ins>In the Delta log, `add` and `remove` actions carry a [`DeletionVectorDescriptor`](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#deletion-vector-descriptor-schema) whose `storageType` selects how `pathOrInlineDv` is encoded. Inline deletion vectors (storage type `i`) are forbidden when the `adaptiveMetadata` table feature is enabled, and existing inline DVs must be converted to file-based DVs before or during feature enablement. A new storage type `r` (relative) is also allowed — the raw, unencoded, table-relative DV type, following the [Iceberg V4 path spec](https://iceberg.apache.org/spec/#paths-in-metadata). The descriptor storage types are:</ins>
+<ins>In the Delta log, `add` and `remove` actions carry a [`Deletion Vector Descriptor`](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#deletion-vector-descriptor-schema) whose `storageType` selects how `pathOrInlineDv` is encoded. Inline deletion vectors (storage type `i`) are forbidden when the `adaptiveMetadata` table feature is enabled, and existing inline DVs must be converted to file-based DVs before or during feature enablement. A new storage type `r` (relative) is also allowed — the raw, unencoded, table-relative DV type, following the [Iceberg V4 path spec](https://iceberg.apache.org/spec/#paths-in-metadata). The descriptor storage types are:</ins>
 
 | <ins>Storage Type</ins> | <ins>`pathOrInlineDv`</ins> | <ins>Encoding</ins> | <ins>Under table root?</ins> |
 | - | - | - | - |
@@ -111,9 +111,9 @@ This design enables:
 | <ins>`p`</ins> | <ins>absolute URI</ins> | <ins>[URI-encoded](https://www.rfc-editor.org/rfc/rfc2396.txt)</ins> | <ins>No</ins> |
 | <ins>`r`</ins> | <ins>raw path relative to the table root</ins> | <ins>none</ins> | <ins>Yes</ins> |
 
-<ins>In the adaptive metadata tree, a content entry stores its DV as a `deletion_vector` struct (`location`, `offset`, `size_in_bytes`, `cardinality`). `location` is a bare path relative to the table root when possible, otherwise an absolute URI.</ins>
+<ins>In the adaptive metadata tree, a content entry stores its DV as a `deletion_vector` struct (`location`, `offset`, `size_in_bytes`, `cardinality`). `location` is a bare path relative to the table root when possible, otherwise an absolute path.</ins>
 
-<ins>When writing a content entry's `deletion_vector.location`, writers resolve the descriptor to that path: a `u` UUID decodes to its `.bin` path, an `r` path is used as-is, and an out-of-table `p` is stored as an absolute URI. When surfacing that `location` back as a `DeletionVectorDescriptor`, a path under the current table root becomes an `r` descriptor and a path outside it becomes a `p` descriptor.</ins>
+<ins>When writing a content entry's `deletion_vector.location`, writers convert the DV descriptor to a relative or absolute path: an `u` UUID decodes to its `.bin` relative path, a `r` path is used as-is, and an out-of-table `p` is stored as an absolute path, decoded from Delta's URI encoding. When converting `deletion_vector.location` back to `Deletion Vector Descriptor`, a path under the current table root becomes an `r` descriptor and a path outside it becomes a `p` descriptor, re-encoded with Delta's URI encoding.</ins>
 
 <ins>The same physical DV blob may be serialized under different storage types depending on where it originates, so a `remove` and its matching `add` need not agree on storage type for one blob. [Action Reconciliation](#action-reconciliation) must therefore match them by the DV's normalized object identity, which is the new `adaptiveMetadata` form of `uniqueId` defined in [Derived Fields](#derived-fields).</ins>
 
@@ -387,7 +387,7 @@ Tracks where a DV blob can be read. Only for `content_type` = DATA entries.
 
 | Field ID | Field Name | Delta Type | Required | Description |
 |----------|------------|------------|----------|-------------|
-| 155 | `location` | String | Required | Path to the file containing the DV, relative to the table root when possible. |
+| 155 | `location` | String | Required | Path to the file containing the DV. Writers should use path relative to the table root when possible |
 | 144 | `offset` | Long | Required | Offset in the file where DV content starts |
 | 145 | `size_in_bytes` | Long | Required | Length of DV content in the file |
 | 156 | `cardinality` | Long | Required | Number of set bits (deleted rows) in the vector |
