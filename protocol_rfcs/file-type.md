@@ -88,13 +88,13 @@ Generated Columns | **Supported:** A `file` column is allowed to be used as a so
 Delta CHECK Constraints | A `file` column may be used in a CHECK constraint expression through its **public** leaf fields (`uri`, `offset`, `size`, `content_type`, `checksum`), addressed by logical name (for example, `f.size > 0`). The `inline` field is not a public field and is not referenceable. Because a FILE leaf is not a struct field of the Delta schema, this is an explicit carve-out from the usual requirement that referenced columns exist in the schema — see the leaf-addressing rules in [Statistics for File Columns](#statistics-for-file-columns).
 Default Column Values | A `file` column must default to `NULL`. There is no Delta-defined way to construct a non-null `file` literal as a default expression, so `NULL` is the only permitted default (as with the Variant type).
 Change Data Feed | **Supported:** A table using the `file` data type is allowed to enable the Delta Change Data Feed. A `file` value flows through Change Data Feed and time travel like any other column value. See [Time Travel and Change Data Feed](#time-travel-and-change-data-feed) for the distinction between the reference and the referenced bytes.
-Iceberg Compatibility | **Not supported in currently-released Iceberg versions.** Iceberg has no equivalent type today, so a `file` column cannot be represented in an IcebergCompatV1 or IcebergCompatV2 table: under [IcebergCompatV2](#writer-requirements-for-icebergcompatv2) it is blocked by the type allow-list (which excludes `file`), and [IcebergCompatV1](#writer-requirements-for-icebergcompatv1) has no type allow-list (it only blocks `Map`/`Array`/`Void`), so this RFC adds the requirement that a `file` column is not permitted there either. The same holds for the in-flight IcebergCompatV3 ([#4574](https://github.com/delta-io/delta/issues/4574)). **Support is targeted for Iceberg V4**, via the in-flight IcebergNativeV4 RFC ([#7374](https://github.com/delta-io/delta/pull/7374)), where an equivalent capability is expected; the precise interaction is out of scope for this RFC and will follow that work.
+Iceberg Compatibility | **Not supported in currently-released Iceberg versions.** Iceberg has no equivalent type today, so a `file` column cannot be represented in an IcebergCompatV1 or IcebergCompatV2 table: under [IcebergCompatV2](#writer-requirements-for-icebergcompatv2) it is blocked by the type allow-list (which excludes `file`), and [IcebergCompatV1](#writer-requirements-for-icebergcompatv1) has no type allow-list (it only blocks `Map`/`Array`/`Void`), so this RFC adds the requirement that a `file` column is not permitted there either. The same holds for the in-flight IcebergCompatV3 ([#4574](https://github.com/delta-io/delta/issues/4574)). **Support is targeted for Iceberg V4**, via the in-flight IcebergNativeV4 RFC ([#7374](https://github.com/delta-io/delta/pull/7374)), where an equivalent capability is expected. The precise interaction is out of scope for this RFC and will follow that work — including whether the FILE leaf fields carry field IDs (needed to represent them in Iceberg column statistics), which is a followup tied to the Iceberg `FILE` proposal.
 Type Widening | **Unsupported:** No type change to or from `file` is supported.
 Map Keys | **Unsupported:** A `file` value is not comparable, so `file` cannot be used as a map key type. `file` is allowed as an array element type and as a map value type (see the schema example above).
 
 ## Statistics for File Columns
 
-A `file` value is physically a group with the fixed leaf fields defined by the Parquet `FILE` type (`uri`, `offset`, `size`, `content_type`, `checksum`, `inline`). Five of these are **public** fields — `uri`, `offset`, `size`, `content_type`, and `checksum` — exposed for addressing (statistics, clustering columns, CHECK constraints, and generated columns). The `inline` field holds the raw referenced bytes; it is **not** a public field and is neither addressable in expressions nor collected in statistics. Although `file` is a single primitive type name in the Delta schema, for [Per-file Statistics](#per-file-statistics) it is treated as that physical group: statistics descend into its public FILE leaf fields, exactly as they do for a struct column.
+A `file` value is physically a group with the fixed leaf fields defined by the Parquet `FILE` type (`uri`, `offset`, `size`, `content_type`, `checksum`, `inline`). Five of these are **public** fields — `uri`, `offset`, `size`, `content_type`, and `checksum` — exposed for addressing (statistics, clustering columns, CHECK constraints, and generated columns). The `inline` field holds the raw referenced bytes; it is **not** a public field and is neither addressable in expressions nor collected in statistics. Although `file` is serialized with a single type-name string in the Delta schema (like `variant`, and not a [Primitive Type](#primitive-types)), for [Per-file Statistics](#per-file-statistics) it is treated as that physical group: statistics descend into its public FILE leaf fields, exactly as they do for a struct column.
 
 **Leaf addressing.** A FILE leaf is named by extending Delta's [field path](#field-path) formalism — "the ordered sequence of field names along that path" — by one final segment naming the literal public `FILE` field (`uri`, `offset`, `size`, `content_type`, or `checksum`). The FILE group's inner field names are fixed literals: they are **not** subject to [Column Mapping](#column-mapping) (the Parquet spec requires that they not be renamed) and have no assigned physical name, and they are **not** [struct fields](#struct-field) of the Delta schema. This one logical leaf path is *encoded differently at each site* where a leaf is referenced:
 
@@ -147,7 +147,7 @@ A `file` value is a reference, and it is stored in the table's data files like a
 
 For **inline** values, the bytes are stored within the value itself, so they are versioned and time-travel with the table like any other column data.
 
-For **external** references (a `uri` is set), Delta makes **no guarantee about the referenced bytes**, because those bytes live outside the Delta transaction log:
+For **external** references (a `uri` is set), Delta makes **no guarantee about the referenced bytes**, because the referenced files live outside the Delta table (they are not tracked by its transaction log):
 
 - The bytes may be overwritten or deleted independently of the table, so dereferencing a reference read from a historical version (via time travel or Change Data Feed) may fail or may return different bytes than when the reference was written. The `checksum` field, when present, allows a reader to detect that the bytes have changed, but does not allow it to recover the original bytes.
 - Availability of the externally-referenced bytes is orthogonal to which table version is queried: time travel of the reference does not imply time travel of the external bytes.
@@ -171,13 +171,7 @@ Field Name | Description
 -|-
 type | Always the string "file"
 
---------
-
-> ***Update the [Primitive Types](#primitive-types) table in the [Schema Serialization Format](#schema-serialization-format) section***
-
-Add the following row to the Primitive Types table:
-
-> file | A reference to a range of bytes located inline in the value or in an external file. When stored in a Parquet file it is a group annotated with the Parquet `FILE` logical type. A `uri` must be absolute. To use this type, a table must support the feature `fileType`. See section [File Data Type](#file-data-type).
+Like `variant`, `file` is a distinct top-level Delta type — it is **not** one of the [Primitive Types](#primitive-types). It is serialized with a single type-name string (`"type": "file"`) but is physically a group (see [File Data Type](#file-data-type)). To use this type, a table must support the feature `fileType`.
 
 --------
 
