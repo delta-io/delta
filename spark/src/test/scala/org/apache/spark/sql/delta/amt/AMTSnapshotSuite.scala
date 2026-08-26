@@ -1310,6 +1310,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       outputSchema = Some(AMTSingleAction.persistedSchema(metadata.partitionSchema)),
       useDeltaParquetWriteSupport = true)
     val size = rootFile.getFileSystem(hadoopConf).getFileStatus(rootFile).getLen
-    base.copy(contentRoot = ContentRoot(path = rootFile.toString, sizeInBytes = size))
+    base.copy(contentRoot = ContentRoot(
+      path = rootFile.toString, sizeInBytes = size, version = base.version))
   }
 }

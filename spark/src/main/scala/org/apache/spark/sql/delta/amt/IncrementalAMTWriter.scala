@@ -192,20 +192,22 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       allLeafPointers.map(_.wrap) ++
         rootLiveEntries.map(_.wrap) ++
         rootRemoveEntries.map(_.wrap)
-    val contentRootBase = AMTWriteHelper.writeRoot(
-      spark, fs, hadoopConf, tableRoot, metadataDir, processedActions.postCommitMetadata, rootRows)
-
-    // ---- Step 6: generate the Checkpoint action. ----
     // The version the tree describes: an inline commit describes itself; a deferred OPTIMIZE
     // CHECKPOINT (no user actions) describes the last committed version (attemptVersion - 1).
     val contentStateVersion =
       if (actionsToCommit.isEmpty) attemptVersion - 1 else attemptVersion
+    val contentRootBase = AMTWriteHelper.writeRoot(
+      spark, fs, hadoopConf, tableRoot, metadataDir, processedActions.postCommitMetadata, rootRows,
+      version = contentStateVersion)
+
+    // ---- Step 6: generate the Checkpoint action. ----
     // An incremental rewrite carries forward the previous tree's last-full-rewrite marker.
     val lastFullRewriteVersion = oldCheckpoint.contentRoot
       .lastManifestCommitWithFullRewrite.getOrElse(contentStateVersion)
     val contentRoot = ContentRoot(
       path = contentRootBase.path,
       sizeInBytes = contentRootBase.sizeInBytes,
+      version = contentStateVersion,
       isIncremental = true,
       lastManifestCommitWithFullRewrite = lastFullRewriteVersion,
       numLeaves = allLeafPointers.size.toLong)

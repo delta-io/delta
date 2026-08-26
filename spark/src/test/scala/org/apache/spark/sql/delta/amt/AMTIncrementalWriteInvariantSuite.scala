@@ -45,7 +45,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
         commitCheckpoint(amtDeltaLog, incremental = false)
         val snapshot = amtDeltaLog.update()
         val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
-        val oldAMTVersion = provider.checkpointAction.version
+        val oldAMTVersion = provider.checkpointAction.contentRoot.version
         val intermediateLogCommits = snapshot.logSegment.deltas
           .filter(f => FileNames.getFileVersion(f) > oldAMTVersion)
         // They only reach snapshot.version, so [oldAMTVersion+1, snapshot.version+5) has a

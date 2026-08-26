@@ -59,16 +59,17 @@ object AMTWriteHelper extends DeltaLogging {
     val hadoopConf = deltaLog.newDeltaHadoopConf()
     val entriesPerLeaf = spark.sessionState.conf.getConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF)
 
+    // A full rewrite of the read snapshot's live files; it carries no commit actions, so the tree
+    // describes the read snapshot's version.
+    val contentStateVersion = readSnapshot.version
     val (contentRootBase, leaves) = writeClusteredManifestTree(
       spark = spark,
       deltaLog = deltaLog,
       readSnapshot = readSnapshot,
       hadoopConf = hadoopConf,
       metadata = readSnapshot.metadata,
-      entriesPerLeaf = entriesPerLeaf)
-    // A full rewrite of the read snapshot's live files; it carries no commit actions, so the tree
-    // describes the read snapshot's version.
-    val contentStateVersion = readSnapshot.version
+      entriesPerLeaf = entriesPerLeaf,
+      contentStateVersion = contentStateVersion)
     val contentRoot = policyTaggedContentRoot(
       readSnapshot, contentRootBase, incremental = false, contentStateVersion,
       numLeaves = leaves.size.toLong)
@@ -105,6 +106,7 @@ object AMTWriteHelper extends DeltaLogging {
     ContentRoot(
       path = contentRootBase.path,
       sizeInBytes = contentRootBase.sizeInBytes,
+      version = contentStateVersion,
       isIncremental = incremental,
       lastManifestCommitWithFullRewrite = lastFullRewriteVersion,
       numLeaves = numLeaves)
@@ -167,7 +169,8 @@ object AMTWriteHelper extends DeltaLogging {
       readSnapshot: Snapshot,
       hadoopConf: Configuration,
       metadata: Metadata,
-      entriesPerLeaf: Int): (ContentRoot, Seq[DataManifestEntry]) = {
+      entriesPerLeaf: Int,
+      contentStateVersion: Long): (ContentRoot, Seq[DataManifestEntry]) = {
     require(entriesPerLeaf > 0, "entriesPerLeaf must be positive.")
     val tableRoot = deltaLog.dataPath
     val fs = tableRoot.getFileSystem(hadoopConf)
@@ -191,11 +194,15 @@ object AMTWriteHelper extends DeltaLogging {
       case Seq(onlyLeaf) =>
         // If there is only one leaf, promote it to the root.
         val contentRoot =
-          ContentRoot(path = onlyLeaf.location, sizeInBytes = onlyLeaf.file_size_in_bytes)
+          ContentRoot(
+            path = onlyLeaf.location,
+            sizeInBytes = onlyLeaf.file_size_in_bytes,
+            version = contentStateVersion)
         (contentRoot, Seq.empty)
       case _ =>
         val contentRoot = writeRoot(
-          spark, fs, hadoopConf, tableRoot, metadataDir, metadata, leafEntries.map(_.wrap))
+          spark, fs, hadoopConf, tableRoot, metadataDir, metadata, leafEntries.map(_.wrap),
+          version = contentStateVersion)
         (contentRoot, leafEntries)
     }
   }
@@ -471,8 +478,10 @@ object AMTWriteHelper extends DeltaLogging {
   }
 
   /**
-   * Writes the root parquet file from a pre-built row set and returns the ContentRoot. The rows may
-   * be `DATA_MANIFEST` leaf pointers, root-resident `DATA` entries, or both.
+   * Writes the root parquet file from a pre-built row set and returns a [[ContentRoot]]
+   * carrying its path, size, and version. The rows may be `DATA_MANIFEST` leaf pointers,
+   * root-resident `DATA` entries, or both. Callers still attach tags before embedding it in a
+   * [[Checkpoint]].
    */
   private[amt] def writeRoot(
       spark: SparkSession,
@@ -481,13 +490,15 @@ object AMTWriteHelper extends DeltaLogging {
       tableRoot: Path,
       metadataDir: Path,
       metadata: Metadata,
-      rows: Seq[AMTSingleAction]): ContentRoot = {
+      rows: Seq[AMTSingleAction],
+      version: Long): ContentRoot = {
     val rootFile = FileNames.newAMTRootManifestFile(metadataDir)
     writeAMTParquet(spark, hadoopConf, rootFile, metadata, rows)
     val status = fs.getFileStatus(rootFile)
     ContentRoot(
       path = AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, rootFile),
-      sizeInBytes = status.getLen)
+      sizeInBytes = status.getLen,
+      version = version)
   }
 
   // Returns a copy of a carried-forward leaf's ManifestInfo with `mdv` recorded as its Manifest
