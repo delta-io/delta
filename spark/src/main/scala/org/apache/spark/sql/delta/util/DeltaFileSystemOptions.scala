@@ -41,7 +41,7 @@ private[delta] object DeltaFileSystemOptions {
   /**
    * Extracts file-system-relevant storage properties from a catalog table.
    */
-  private[delta] def extractCatalogTableFsOptions(
+  def extractCatalogTableFsOptions(
       catalogTableOpt: Option[CatalogTable]): Map[String, String] = {
     catalogTableOpt
       .map(ct => filterHadoopOptions(ct.storage.properties))

@@ -69,7 +69,6 @@ import org.apache.spark.sql.connector.write.RowLevelOperationBuilder;
 import org.apache.spark.sql.connector.write.RowLevelOperationInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
-import org.apache.spark.sql.delta.util.DeltaFileSystemOptions;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.delta.RowTracking$;
@@ -77,6 +76,7 @@ import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.catalog.DeltaV2TableMarker;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.util.DeltaFileSystemOptions;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
@@ -234,10 +234,10 @@ public class DeltaV2Table extends DeltaV2TableLogging
     this.catalogTable = catalogTable;
     // Merge options: file system options from catalog + user options (user takes precedence)
     // This follows the same pattern as DeltaTableV2 in delta-spark
-    Map<String, String> merged = new HashMap<>(
-        scala.collection.JavaConverters.mapAsJavaMap(
-            DeltaFileSystemOptions.extractCatalogTableFsOptions(
-                toScalaOption(catalogTable))));
+    Map<String, String> merged =
+        new HashMap<>(
+            scala.collection.JavaConverters.mapAsJavaMap(
+                DeltaFileSystemOptions.extractCatalogTableFsOptions(toScalaOption(catalogTable))));
     // User options override catalog properties
     merged.putAll(userOptions);
     this.options = Collections.unmodifiableMap(merged);
