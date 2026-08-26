@@ -17,20 +17,17 @@ package io.delta.spark.internal.v2.write;
 
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
-import io.delta.spark.internal.v2.utils.SchemaUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.types.StructType;
 
@@ -91,15 +88,18 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
 
     // TODO: support partitioned IcebergCompat / materializePartitionColumns writes.
     if (!partitionSchema.isEmpty()) {
-      SnapshotImpl snapshotImpl = (SnapshotImpl) initialSnapshot;
-      Metadata metadata = snapshotImpl.getMetadata();
-      Protocol protocol = snapshotImpl.getProtocol();
       boolean icebergCompat =
-          TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata)
-              || TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(
+                  initialSnapshot.metadata().getConfiguration())
+              || TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(
+                  initialSnapshot.metadata().getConfiguration());
       // Detect the materializePartitionColumns writer feature by its protocol name.
       boolean materializePartitionColumns =
-          protocol.getWriterFeatures().contains("materializePartitionColumns");
+          initialSnapshot.protocol().getWriterFeatures() != null
+              && initialSnapshot
+                  .protocol()
+                  .getWriterFeatures()
+                  .contains("materializePartitionColumns");
       if (icebergCompat || materializePartitionColumns) {
         throw new UnsupportedOperationException(
             "DSv2 partitioned writes are not supported on tables that materialize partition "
@@ -115,7 +115,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         engine,
         hadoopConf,
         tablePath,
-        initialSnapshot,
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
         snapshotManager,
         dataSchema,
         partitionSchema,
@@ -125,8 +125,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   static void validateDataSchema(Snapshot initialSnapshot, StructType dataSchema) {
     // Validate data schema against table schema using the same utility as V1
     // (ImplicitMetadataOperation.updateMetadata -> SchemaMergingUtils.mergeSchemas).
-    StructType tableSchema =
-        SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
+    StructType tableSchema = initialSnapshot.schema();
     // Strip column mapping metadata (physical names, IDs) so mergeSchemas compares
     // only logical types - matches V1's dropColumnMappingMetadata call.
     StructType cleanTableSchema =

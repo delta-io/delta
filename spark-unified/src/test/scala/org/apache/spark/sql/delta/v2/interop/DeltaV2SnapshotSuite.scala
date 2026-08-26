@@ -21,9 +21,9 @@ import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import org.apache.hadoop.fs.Path
 import io.delta.kernel.TableManager
-import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 
@@ -37,7 +37,8 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
 
   // scalastyle:off deltahadoopconfiguration
   // No DeltaLog in this test (the snapshot is loaded via Kernel), so use the session Hadoop conf.
-  private def engine: Engine = DefaultEngine.create(spark.sessionState.newHadoopConf())
+  private def engine: Engine =
+    KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
   // scalastyle:on deltahadoopconfiguration
 
   /** Load the latest snapshot of the Delta table at `path` via Kernel. */
@@ -50,7 +51,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       spark.range(5).write.format("delta").save(path) // version 0
 
       val kernelSnapshot0 = loadKernelSnapshot(path)
-      val snapshot0 = new DeltaV2Snapshot(kernelSnapshot0, spark)
+      val snapshot0 = new DeltaV2Snapshot(kernelSnapshot0)
       assert(snapshot0.version === kernelSnapshot0.getVersion)
       assert(snapshot0.version === 0L)
       assert(snapshot0.path === new Path(kernelSnapshot0.getDataPath.toString))
@@ -60,7 +61,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       spark.range(1).write.format("delta").mode("append").save(path) // version 2
 
       val kernelSnapshot2 = loadKernelSnapshot(path)
-      val snapshot2 = new DeltaV2Snapshot(kernelSnapshot2, spark)
+      val snapshot2 = new DeltaV2Snapshot(kernelSnapshot2)
       assert(snapshot2.version === 2L)
       assert(snapshot2.version === kernelSnapshot2.getVersion)
     }
@@ -72,7 +73,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
    */
   private def assertMatchesV1(path: String): Unit = {
     val v1 = DeltaLog.forTable(spark, path).update()
-    val v2 = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+    val v2 = new DeltaV2Snapshot(loadKernelSnapshot(path))
 
     assert(v2.version === v1.version)
     assert(v2.metadata.id === v1.metadata.id)
@@ -159,7 +160,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       val path = dir.getCanonicalPath
       spark.range(1).write.format("delta").save(path)
 
-      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path))
 
       // These still fail loudly so an unmigrated caller cannot silently read empty V1 state.
       intercept[UnsupportedOperationException](snapshot.stateDF)
@@ -186,7 +187,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
         DomainMetadata("test.userDomain", """{"key":"value"}""", removed = false) :: Nil,
         DeltaOperations.ManualUpdate)
 
-      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path))
 
       val userDomain = snapshot.domainMetadata.find(_.domain == "test.userDomain")
         .getOrElse(fail("expected the test.userDomain domain"))
@@ -205,7 +206,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       spark.range(0, 5).write.format("delta").mode("append").save(path)
       val kernelSnapshot = loadKernelSnapshot(path)
       assert(kernelSnapshot.getCurrentCrcInfo.get().getFileSizeHistogram.isPresent)
-      val snapshot = new DeltaV2Snapshot(kernelSnapshot, spark)
+      val snapshot = new DeltaV2Snapshot(kernelSnapshot)
 
       assert(snapshot.fileSizeHistogram.nonEmpty)
       assert(
@@ -226,7 +227,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
         spark.range(0, 1000).write.format("delta").save(path)
       }
-      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path))
       assert(snapshot.fileSizeHistogram.isEmpty)
     }
   }
@@ -239,7 +240,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       val kernelSnapshot = loadKernelSnapshot(path)
       assert(kernelSnapshot.getCurrentCrcInfo.isPresent)
 
-      val snapshot = new DeltaV2Snapshot(kernelSnapshot, spark)
+      val snapshot = new DeltaV2Snapshot(kernelSnapshot)
       assert(snapshot.sizeInBytesIfKnown.nonEmpty)
       assert(
         snapshot.sizeInBytes === snapshot.allFiles.collect().map(_.size).sum
@@ -254,7 +255,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
         spark.range(0, 1000).write.format("delta").save(path)
       }
 
-      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path))
       assert(snapshot.sizeInBytesIfKnown.isEmpty)
       assert(snapshot.sizeInBytes === -1L)
     }
@@ -266,7 +267,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       spark.range(5).write.format("delta").save(path)
 
       withSQLConf(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> "false") {
-        assert(new DeltaV2Snapshot(loadKernelSnapshot(path), spark).fileSizeHistogram.isEmpty)
+        assert(new DeltaV2Snapshot(loadKernelSnapshot(path)).fileSizeHistogram.isEmpty)
       }
     }
   }
@@ -276,9 +277,55 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       val path = dir.getCanonicalPath
       spark.range(1).write.format("delta").save(path)
 
-      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path), spark)
+      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path))
       assert(snapshot.domainMetadata.isEmpty)
     }
+  }
+
+  test("allFiles uses the active Spark session instead of storing a construction session") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(1).write.format("delta").save(path)
+      val snapshot = new DeltaV2Snapshot(loadKernelSnapshot(path))
+      val activeSession = spark.newSession()
+
+      activeSession.withActive {
+        assert(snapshot.allFiles.sparkSession eq activeSession)
+        assert(snapshot.allFiles.count() === 1L)
+      }
+    }
+  }
+
+  test("getKernelSnapshot returns the wrapped Kernel snapshot") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(1).write.format("delta").save(path)
+      val kernelSnapshot = loadKernelSnapshot(path)
+      val snapshot = new DeltaV2Snapshot(kernelSnapshot)
+
+      assert(DeltaV2Snapshot.getKernelSnapshot(snapshot) eq kernelSnapshot)
+    }
+  }
+
+  test("getKernelSnapshot rejects a non-Kernel-backed V1 snapshot") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(1).write.format("delta").save(path)
+      val snapshot = DeltaLog.forTable(spark, path).update()
+
+      val error = intercept[IllegalStateException] {
+        DeltaV2Snapshot.getKernelSnapshot(snapshot)
+      }
+      assert(error.getMessage.contains("Expected a DeltaV2Snapshot"))
+      assert(error.getMessage.contains(snapshot.getClass.getName))
+    }
+  }
+
+  test("getKernelSnapshot rejects null") {
+    val error = intercept[NullPointerException] {
+      DeltaV2Snapshot.getKernelSnapshot(null)
+    }
+    assert(error.getMessage === "snapshot is null")
   }
 
 }

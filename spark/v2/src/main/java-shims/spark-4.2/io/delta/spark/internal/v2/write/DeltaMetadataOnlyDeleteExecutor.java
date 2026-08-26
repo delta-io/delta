@@ -41,7 +41,6 @@ import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.V2ExpressionUtils;
@@ -92,7 +91,7 @@ public final class DeltaMetadataOnlyDeleteExecutor {
       Optional<CatalogTable> catalogTable,
       Predicate[] predicates) {
     DeltaV2Snapshot snapshot =
-        new DeltaV2Snapshot(initialSnapshot, SparkSession.active(), engine);
+        new DeltaV2Snapshot(initialSnapshot);
 
     List<Expression> catalystFilters = new ArrayList<>(predicates.length);
     for (Predicate predicate : predicates) {

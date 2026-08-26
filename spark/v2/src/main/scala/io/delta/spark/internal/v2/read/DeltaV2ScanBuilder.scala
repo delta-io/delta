@@ -19,17 +19,15 @@ package io.delta.spark.internal.v2.read
 import java.util.{Locale, Objects, Optional, OptionalInt}
 import java.util.function.Supplier
 
-import io.delta.kernel.Snapshot
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.SnapshotImpl
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
 
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.stats.DeltaScan
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, ExprId}
 import org.apache.spark.sql.connector.expressions.filter.Predicate
@@ -157,66 +155,65 @@ private[read] class DeltaV2ScanBuilder(
 
   override def build(): Scan =
     recordFrameProfile("Delta", "DeltaV2.scanBuilder.build") {
-    // Capture the planning inputs here, but defer constructing the Kernel-backed V1 snapshot and
-    // running filesForScan until DeltaV2Scan actually plans a batch. A MicroBatchStream performs
-    // its own snapshot and commit-range reads and never consumes batch-selected files.
-    //
-    // Ask for per-file record counts exactly when DeltaV2Scan will consume them for scan metadata.
-    // This must stay in sync with DeltaV2Scan.arePlanStatsEnabled, which gates the reading side.
-    // Note this only affects the no-limit branch below -- V1's limit-aware filesForScan takes no
-    // keepNumRecords and always drops per-file stats, so DeltaV2Scan falls back to
-    // DeltaScan.scanned.rows there.
-    val sparkSession = SparkSession.active
-    val sqlConf = SQLConf.get
-    val keepNumRecords = sqlConf.cboEnabled || sqlConf.planStatsEnabled
-    val partitionFiltersForScan = partitionCatalystFilters.toIndexedSeq
-    val catalystFilters = partitionFiltersForScan ++ dataCatalystFilters
+      // Capture the planning inputs here, but defer constructing the Kernel-backed V1 snapshot and
+      // running filesForScan until DeltaV2Scan actually plans a batch. A MicroBatchStream performs
+      // its own snapshot and commit-range reads and never consumes batch-selected files.
+      //
+      // Ask for per-file record counts exactly when DeltaV2Scan will consume them for scan
+      // metadata.
+      // This must stay in sync with DeltaV2Scan.arePlanStatsEnabled, which gates the reading side.
+      // Note this only affects the no-limit branch below -- V1's limit-aware filesForScan takes no
+      // keepNumRecords and always drops per-file stats, so DeltaV2Scan falls back to
+      // DeltaScan.scanned.rows there.
+      val sqlConf = SQLConf.get
+      val keepNumRecords = sqlConf.cboEnabled || sqlConf.planStatsEnabled
+      val partitionFiltersForScan = partitionCatalystFilters.toIndexedSeq
+      val catalystFilters = partitionFiltersForScan ++ dataCatalystFilters
 
-    // Spark's V2ScanRelationPushDown only pushes a limit when no post-scan residual remains (it
-    // matches PhysicalOperation(_, Nil, sHolder)), so an effective limit implies only exact
-    // partition filters are present. Retain this residual check for direct callers that may invoke
-    // the ScanBuilder methods in a different order.
-    val effectiveLimit = if (hasPostScanResidualFilters) OptionalInt.empty() else pushedLimit
+      // Spark's V2ScanRelationPushDown only pushes a limit when no post-scan residual remains (it
+      // matches PhysicalOperation(_, Nil, sHolder)), so an effective limit implies only exact
+      // partition filters are present. Retain this residual check for direct callers that may
+      // invoke the ScanBuilder methods in a different order.
+      val effectiveLimit = if (hasPostScanResidualFilters) OptionalInt.empty() else pushedLimit
 
-    val deltaScanSupplier = new Supplier[DeltaScan] {
-      override def get(): DeltaScan = {
-        val snapshot =
-          new DeltaV2Snapshot(
-            initialSnapshot.asInstanceOf[SnapshotImpl],
-            sparkSession,
-            kernelEngine)
+      val deltaScanSupplier = new Supplier[DeltaScan] {
+        override def get(): DeltaScan = {
+          val snapshot = initialSnapshot.asInstanceOf[DeltaV2Snapshot]
 
-        // When a limit is pushed, route selection through V1's limit-aware filesForScan. It
-        // requires partition-only filters (guaranteed above) and prunes files by accumulating
-        // record counts until the limit is satisfied.
-        def selectFiles(): DeltaScan =
-          if (effectiveLimit.isPresent) {
-            snapshot.filesForScan(
-              effectiveLimit.getAsInt.toLong,
-              partitionFiltersForScan)
-          } else {
-            snapshot.filesForScan(catalystFilters, keepNumRecords)
-          }
+          // When a limit is pushed, route selection through V1's limit-aware filesForScan. It
+          // requires partition-only filters (guaranteed above) and prunes files by accumulating
+          // record counts until the limit is satisfied.
+          def selectFiles(): DeltaScan =
+            if (effectiveLimit.isPresent) {
+              snapshot.filesForScan(
+                effectiveLimit.getAsInt.toLong,
+                partitionFiltersForScan)
+            } else {
+              snapshot.filesForScan(catalystFilters, keepNumRecords)
+            }
 
-        // Select files inline on this path.
-        selectFiles()
+          // Select files inline on this path.
+          selectFiles()
+        }
       }
-    }
 
-    new DeltaV2Scan(
-      snapshotManager,
-      initialSnapshot,
-      tableSchema,
-      dataSchema,
-      partitionSchema,
-      requiredDataSchema,
-      deltaScanSupplier,
-      dataCatalystFilters,
-      partitionCatalystFilters,
-      catalogStats,
-      options,
-      effectiveLimit)
-  }
+      val kernelSnapshot =
+        DeltaV2Snapshot.getKernelSnapshot(initialSnapshot)
+      val scan = new DeltaV2Scan(
+        snapshotManager,
+        kernelSnapshot,
+        tableSchema,
+        dataSchema,
+        partitionSchema,
+        requiredDataSchema,
+        deltaScanSupplier,
+        dataCatalystFilters,
+        partitionCatalystFilters,
+        catalogStats,
+        options,
+        effectiveLimit)
+      scan
+    }
 
   private[read] def getOptions: CaseInsensitiveStringMap = options
 
