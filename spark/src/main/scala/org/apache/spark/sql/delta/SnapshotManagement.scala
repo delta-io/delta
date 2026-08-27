@@ -1029,8 +1029,13 @@ trait SnapshotManagement { self: DeltaLog =>
       // the Delta log.
       return (oldLogSegment, Nil)
     }
+    // Pass only checkpoint files that follow the deterministic checkpoint file naming pattern to
+    // getLogSegmentForVersion: every file in its `files` argument must be a FileNames
+    // isCheckpointFile / isCompactedDeltaFile / isDeltaFile, otherwise it fails classifying it.
+    val checkpointTopLevelFiles =
+      oldLogSegment.checkpointProvider.topLevelFiles.filter(isCheckpointFile)
     val allFiles = (
-      oldLogSegment.checkpointProvider.topLevelFiles ++
+      checkpointTopLevelFiles ++
         oldLogSegment.deltas ++
         newFiles
       ).toArray
