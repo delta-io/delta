@@ -16,21 +16,21 @@
 
 package org.apache.spark.sql.delta.v2.tablemanager
 
-/**
- * Composite contract for a process-cached Delta table manager.
- *
- * The composite holds an engine-free kernel snapshot that is safe to cache across requests.
- *
- * Table identity (path, catalog table) is seeded at construction and determines cache-key
- * affinity.
- */
-trait DeltaV2TableManager {
+import org.apache.hadoop.fs.Path
 
-  /**
-   * Idempotently prevents future acquisitions and releases exclusively owned state when safe.
-   *
-   * Default no-op: the single production implementation overrides this. Test stubs inherit the
-   * no-op safely.
-   */
-  def retire(): Unit = {}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+
+/**
+ * Process-cached [[DeltaV2TableManager]] composite.
+ *
+ * Placeholder: inherits default trait stubs. The real implementation (snapshot lifecycle, freshness
+ * control, UC client path) is added in a follow-up layer.
+ */
+class DeltaV2TableManagerImpl(
+    val cacheKey: DeltaV2CacheKey,
+    val catalogTableOpt: Option[CatalogTable])
+    extends DeltaV2TableManager {
+
+  /** The table's data directory (parent of `_delta_log`), fully qualified. */
+  def tablePath: Path = cacheKey.path.getParent
 }
