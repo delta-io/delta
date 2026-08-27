@@ -16,13 +16,8 @@
 
 package org.apache.spark.sql.delta.amt
 
-import java.util.UUID
-
-import scala.util.Try
-
 import org.apache.spark.sql.delta.DeltaColumnMapping
-import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor}
-import org.apache.spark.sql.delta.stats.DeltaStatistics
+import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.core.JsonParser
@@ -69,7 +64,7 @@ case class AMTSingleAction(
     sort_order_id: Option[Int],                 // ID: 140, optional (only when content_type=0).
     record_count: Long,                         // ID: 103, required.
     file_size_in_bytes: Long,                   // ID: 104, required.
-    content_stats: Option[ContentStats],        // ID: 146, optional.
+    content_stats: Option[String],              // ID: 146, optional.
     manifest_info: Option[ManifestInfo],        // ID: 150, required for DATA_MANIFEST.
     key_metadata: Option[Array[Byte]],          // ID: 131, optional.
     split_offsets: Option[Seq[Long]]            // ID: 132, optional.
@@ -364,15 +359,21 @@ object AMTSingleAction {
 
   /**
    * The [[AMTSingleAction]] schema as written to disk, which differs from the encoder's in-memory
-   * schema in four ways: every mapped field carries its Iceberg field id, required/optional is
-   * driven by the field spec rather than the encoder, `partition` holds the table's typed partition
-   * struct instead of a string map, and `partition` is absent entirely for an unpartitioned table.
+   * schema: every mapped field carries its Iceberg field id, required/optional is driven by the
+   * field spec rather than the encoder, and the two per-table fields take their table-dependent
+   * shape -- `partition` holds the typed partition struct (absent entirely for an unpartitioned
+   * table), and `content_stats` holds the typed per-column statistics struct.
    */
-  def persistedSchema(partitionSchema: StructType): StructType =
+  def persistedSchema(metadata: Metadata, protocol: Protocol): StructType =
     StructType(staticStampedSchema.flatMap {
       case field if field.name == "partition" =>
-        if (partitionSchema.isEmpty) None
-        else Some(field.copy(dataType = AMTPartitionValues.persistedSchema(partitionSchema)))
+        if (metadata.partitionSchema.isEmpty) None
+        else Some(field.copy(
+          dataType = AMTPartitionValues.persistedSchema(metadata.partitionSchema)))
+      case field if field.name == "content_stats" =>
+        val contentStatsSchema = AMTContentStats.persistedSchema(metadata, protocol)
+        if (contentStatsSchema.isEmpty) None
+        else Some(field.copy(dataType = contentStatsSchema))
       case field => Some(field)
     })
 }
@@ -422,7 +423,7 @@ case class DataEntry(
     deletion_vector: Option[DeletionVector] = None,
     spec_id: Option[Int] = None,
     sort_order_id: Option[Int] = None,
-    content_stats: Option[ContentStats] = None,
+    content_stats: Option[String] = None,
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
     format_version: Int = AMTSingleAction.FormatVersionV4)
@@ -449,9 +450,7 @@ case class DataEntry(
 
   def toAddFile(tableRoot: Path): AddFile = {
     val dv = deletion_vector.map(DeletionVector.toDescriptor(_, tableRoot)).orNull
-    // `record_count` (Iceberg field 103) and the Delta `numRecords` statistic are both the physical
-    // row count (total records in the file, including DV-deleted rows), so store it directly.
-    val stats = s"""{"${DeltaStatistics.NUM_RECORDS}":$record_count}"""
+    val stats = AMTContentStats.toStatsJson(content_stats, record_count)
     AddFile(
       path = location,
       partitionValues = partition.getOrElse(Map.empty),
@@ -491,7 +490,7 @@ object DataEntry {
       sort_order_id = passthrough.flatMap(_.sort_order_id),
       key_metadata = passthrough.flatMap(_.key_metadata),
       split_offsets = passthrough.flatMap(_.split_offsets),
-      content_stats = None)
+      content_stats = AMTContentStats.fromStatsJson(add.stats))
   }
 }
 
@@ -642,7 +641,7 @@ case class DataManifestEntry(
     manifest_info: ManifestInfo,
     partition: Option[Map[String, String]] = None,
     spec_id: Option[Int] = None,
-    content_stats: Option[ContentStats] = None,
+    content_stats: Option[String] = None,
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
     format_version: Int = AMTSingleAction.FormatVersionV4)
@@ -849,19 +848,3 @@ case class ManifestInfo(
   /** Tombstone file entries: DELETED and REPLACED. */
   def tombstoneFilesCount: Int = deleted_files_count + replaced_files_count
 }
-
-/**
- * Column-level statistics carrier. Iceberg V4 leaves the inner shape
- * up to the caller (it depends on the table schema). A future PR introduces
- * the Delta-stats mapping.
- *
- * The single nullable `raw_stats` field is deliberate: an empty case class encodes to an
- * empty Parquet group, which the Parquet data source rejects
- * (`EMPTY_SCHEMA_NOT_SUPPORTED_FOR_DATASOURCE`). One nullable column keeps
- * `AMTSingleAction` Parquet-writable without committing to the final stats shape; M1
- * writers leave it `None`.
- *
- *
- * @param raw_stats Column-stats payload; M1 writers leave it None.
- */
-case class ContentStats(raw_stats: Option[Array[Byte]] = None)

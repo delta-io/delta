@@ -122,7 +122,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     inlineCheckpointTriggerActionsOrSQL =
       Some(name => Right(s"INSERT INTO $name VALUES (100)"))
   ) { context =>
-    val seededVersion = amtProvider(context.preCheckpointSnapshot)
+    val seededVersion = amtProvider(context.postSetupSnapshot)
       .getOrElse(fail("the seed commit must have emitted an AMT"))
       .version
     assert(
@@ -248,7 +248,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       Some(name => Right(s"INSERT INTO $name VALUES (100)"))
   ) { context =>
     // A new AMT re-materialized past the rewrite and still carries the passthrough.
-    val seededVersion = amtProvider(context.preCheckpointSnapshot)
+    val seededVersion = amtProvider(context.postSetupSnapshot)
       .getOrElse(fail("the seed commit must have emitted an AMT"))
       .version
     assert(
@@ -469,7 +469,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     val addFilesAtCheckpointVersion =
       context.postCheckpointSnapshot.allFiles.collect()
     val addFilesAtSetupVersion =
-      context.preCheckpointSnapshot.allFiles.collect()
+      context.postSetupSnapshot.allFiles.collect()
     assert(addFilesAtSetupVersion.length == 1, "The five setup rows must land in a single file.")
     val setupFileAtSetupVersion = addFilesAtSetupVersion.head
 
@@ -516,7 +516,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         s"INSERT INTO $name VALUES (3)"))) { context =>
     val log = context.postCheckpointSnapshot.deltaLog
     val addFilesAtCheckpointVersion = context.postCheckpointSnapshot.allFiles.collect()
-    val addFilesAtSetupVersion = context.preCheckpointSnapshot.allFiles.collect()
+    val addFilesAtSetupVersion = context.postSetupSnapshot.allFiles.collect()
     assert(addFilesAtSetupVersion.length == 1, "The two setup rows must land in a single file.")
     val setupFileAtSetupVersion = addFilesAtSetupVersion.head
 
@@ -549,7 +549,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (5)"))) { context =>
     val log = context.postCheckpointSnapshot.deltaLog
-    val addFilesAtSetupVersion = context.preCheckpointSnapshot.allFiles.collect()
+    val addFilesAtSetupVersion = context.postSetupSnapshot.allFiles.collect()
     assert(addFilesAtSetupVersion.length == 2)
 
     // Attach DVs to both setup files.
@@ -591,7 +591,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     assert(addFilesAtCheckpointVersion.length == 2)
 
     // AMT converts the DV type from u to r when reading it back.
-    val addFilesAtSetupVersion = context.preCheckpointSnapshot.allFiles.collect()
+    val addFilesAtSetupVersion = context.postSetupSnapshot.allFiles.collect()
     assert(addFilesAtSetupVersion.length == 1)
     val setupFileAtSetupVersion = addFilesAtSetupVersion.head
     assert(setupFileAtSetupVersion.deletionVector.storageType ==
@@ -637,7 +637,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     assert(addFilesAtCheckpointVersion.length == 2)
 
     // The checkpointed file's DV is committed in u form but stored in the leaf in r form.
-    val addFilesAtSetupVersion = context.preCheckpointSnapshot.allFiles.collect()
+    val addFilesAtSetupVersion = context.postSetupSnapshot.allFiles.collect()
     assert(addFilesAtSetupVersion.length == 1)
     val setupFileAtSetupVersion = addFilesAtSetupVersion.head
     assert(setupFileAtSetupVersion.deletionVector.storageType ==
@@ -853,7 +853,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (5)"))) { context =>
     val log = context.postCheckpointSnapshot.deltaLog
-    val addFilesAtSetupVersion = context.preCheckpointSnapshot.allFiles.collect()
+    val addFilesAtSetupVersion = context.postSetupSnapshot.allFiles.collect()
       .filter(_.deletionVector != null)
     assert(addFilesAtSetupVersion.length == 2)
     val addFilesAtCheckpointVersion = context.postCheckpointSnapshot.allFiles.collect()
@@ -1303,15 +1303,17 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
     val enc = org.apache.spark.sql.delta.implicits.amtSingleActionEncoder
     val metadata = base.metaData
-    val df = AMTPartitionValues.forWrite(
+    val protocol = base.protocol
+    val withPartition = AMTPartitionValues.forWrite(
       spark.createDataset(rows)(enc).toDF(), metadata.partitionSchema)
+    val df = AMTContentStats.forWrite(withPartition, metadata, protocol)
     Checkpoints.writeAtomicCheckpointParquetFile(
       spark,
       df,
       rootFile,
       hadoopConf,
       useRename,
-      outputSchema = Some(AMTSingleAction.persistedSchema(metadata.partitionSchema)),
+      outputSchema = Some(AMTSingleAction.persistedSchema(metadata, protocol)),
       useDeltaParquetWriteSupport = true)
     val size = rootFile.getFileSystem(hadoopConf).getFileStatus(rootFile).getLen
     base.copy(contentRoot = ContentRoot(

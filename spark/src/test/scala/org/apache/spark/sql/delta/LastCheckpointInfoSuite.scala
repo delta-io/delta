@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.{Checkpoint, ContentRoot, Metadata, Protocol}
-import org.apache.spark.sql.delta.amt.{AMTLeafComparisons, AMTSingleAction, AMTWriteResult, ContentStats, DataManifestEntry, ManifestInfo, Tracking}
+import org.apache.spark.sql.delta.amt.{AMTLeafComparisons, AMTSingleAction, AMTWriteResult, DataManifestEntry, ManifestInfo, Tracking}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -297,7 +297,7 @@ class LastCheckpointInfoSuite extends SharedSparkSession
       dv_cardinality = Some(5L)),
     partition = Some(Map("part_col" -> "part_val")),
     spec_id = Some(1),
-    content_stats = Some(ContentStats(raw_stats = Some(Array[Byte](42, 43)))),
+    content_stats = Some("""{"minValues":{"col-1":1}}"""),
     key_metadata = Some(Array[Byte](16, 17, 18)),
     split_offsets = Some(Seq(0L, 128L, 256L)))
 

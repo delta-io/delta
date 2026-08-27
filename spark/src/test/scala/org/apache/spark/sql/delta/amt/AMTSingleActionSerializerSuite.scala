@@ -228,7 +228,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
 
   test("parquet round-trip preserves every binary field") {
     // Binary columns are `Array[Byte]`, whose case-class `==` is reference equality, so this
-    // asserts the bytes structurally. Populate all five Option[Array[Byte]] fields across the
+    // asserts the bytes structurally. Populate all four Option[Array[Byte]] fields across the
     // row and its sub-structs on a single DATA_MANIFEST entry (the only kind that reaches
     // `manifest_info.dv`) so none is silently dropped by wrap/unwrap or the encoder.
     withTempDir { dir =>
@@ -236,7 +236,6 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       val deletedPos = Array[Byte](5, 6)
       val replacedPos = Array[Byte](7, 8, 9)
       val manifestDv = Array[Byte](10, 11)
-      val rawStats = Array[Byte](12, 13, 14)
       val entry = DataManifestEntry(
         location = "dm.parquet",
         file_format = AMTSingleAction.FileFormatParquet,
@@ -245,7 +244,6 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
         record_count = 1L,
         file_size_in_bytes = 1L,
         manifest_info = sampleManifestInfo.copy(dv = Some(manifestDv), dv_cardinality = Some(2L)),
-        content_stats = Some(ContentStats(Some(rawStats))),
         key_metadata = Some(keyMeta)).wrap
       val path = new java.io.File(dir, "binary").getCanonicalPath
       spark.createDataset(Seq(entry)).write.parquet(path)
@@ -259,8 +257,6 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
         "tracking.replaced_positions did not round-trip.")
       assert(r.manifest_info.flatMap(_.dv).exists(_.sameElements(manifestDv)),
         "manifest_info.dv did not round-trip.")
-      assert(r.content_stats.flatMap(_.raw_stats).exists(_.sameElements(rawStats)),
-        "content_stats.raw_stats did not round-trip.")
     }
   }
 
@@ -517,5 +513,23 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
 
     // A present struct whose fields are all null -> present but empty.
     assert(AMTPassthrough.fromRow(rowWith(structRow()), indices).contains(AMTPassthrough()))
+  }
+
+  test("toAddFile keeps numRecords physical for a file with a deletion vector") {
+    // Iceberg's record_count and Delta's numRecords are both physical counts, so neither
+    // fromAddFile nor toAddFile may adjust for the DV -- AddFile subtracts the cardinality itself
+    // when it derives numLogicalRecords. Adjusting in either place would double-count.
+    // AMT only supports on-disk deletion vectors.
+    val dv = DeletionVectorDescriptor.onDiskWithUuidRelativePath(
+      id = UUID.randomUUID(), sizeInBytes = 20, cardinality = 4L, offset = Some(8))
+    val add = sampleAddFile.copy(stats = """{"numRecords":10}""", deletionVector = dv)
+    assert(add.numPhysicalRecords.contains(10L))
+    assert(add.numLogicalRecords.contains(6L))
+
+    val entry = DataEntry.fromAddFile(add, addedTracking, tableRoot)
+    assert(entry.record_count == 10L, "record_count is the physical count")
+    val roundTripped = entry.toAddFile(tableRoot)
+    assert(roundTripped.numPhysicalRecords.contains(10L))
+    assert(roundTripped.numLogicalRecords.contains(6L))
   }
 }
