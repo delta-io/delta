@@ -60,7 +60,11 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
     collect(group, Seq.empty)
   }
 
-  private def assertFieldIds(hadoopConf: Configuration, file: File, label: String): Unit = {
+  private def assertFieldIds(
+      hadoopConf: Configuration,
+      file: File,
+      label: String,
+      expected: Map[String, Int]): Unit = {
     val schema = ParquetFileReader.readFooter(
       hadoopConf, new Path(file.getAbsolutePath), ParquetMetadataConverter.NO_FILTER)
       .getFileMetaData.getSchema
@@ -69,10 +73,10 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
       actual.values.toSet.size == actual.size,
       s"$label contains duplicate field ids: $actual")
     assert(
-      actual == AMTSingleAction.allFieldIdByName,
-      s"$label field ids did not match AMTSingleAction.allFieldIdByName\n" +
-        s"  missing=${AMTSingleAction.allFieldIdByName.toSet.diff(actual.toSet)}\n" +
-        s"  unexpected=${actual.toSet.diff(AMTSingleAction.allFieldIdByName.toSet)}")
+      actual == expected,
+      s"$label field ids did not match the schema the writer derived\n" +
+        s"  missing=${expected.toSet.diff(actual.toSet)}\n" +
+        s"  unexpected=${actual.toSet.diff(expected.toSet)}")
   }
 
   /**
@@ -116,27 +120,60 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
   }
 
   test("persistedSchema stamps an id on every mapped field of AMTSingleAction") {
-    val stamped = stampedFieldIdByName(
-      AMTSingleAction.persistedSchema(allTypesPartitionSchema))
-    // Partition fields take Iceberg ids from 1000 in partition-spec order, whatever their type.
-    val expected = AMTSingleAction.allFieldIdByName ++ Map("partition" -> 102) ++
-      allTypesPartitionSchema.fields.zipWithIndex.map { case (field, ordinal) =>
-        s"partition.${field.name}" -> (1000 + ordinal)
-      }
-    assert(
-      stamped == expected,
-      "persistedSchema field ids did not match AMTSingleAction.allFieldIdByName\n" +
-        s"  missing=${expected.toSet.diff(stamped.toSet)}\n" +
-        s"  unexpected=${stamped.toSet.diff(expected.toSet)}")
+    withAllTypesTable("amt_fieldid_schema", numFiles = 0) { deltaLog =>
+      val snapshot = deltaLog.update()
+      val metadata = snapshot.metadata
+      val protocol = snapshot.protocol
+      val stamped = stampedFieldIdByName(AMTSingleAction.persistedSchema(metadata, protocol))
 
-    // Guard against a field added to a nested id-bearing struct (tracking / deletion_vector /
-    // manifest_info) without a corresponding id: every scalar of those structs must be stamped.
-    val schema = AMTSingleAction.persistedSchema(allTypesPartitionSchema)
-    Seq("tracking", "deletion_vector", "manifest_info").foreach { parent =>
-      val struct = schema(parent).dataType.asInstanceOf[StructType]
-      struct.fields.foreach { f =>
-        assert(f.metadata.contains(ParquetUtils.FIELD_ID_METADATA_KEY),
-          s"nested field '$parent.${f.name}' has no stamped Iceberg field id.")
+      // Content-stats sub-structs are based at 10_000 + 200 * columnId, with the per-statistic
+      // offsets from the Iceberg V4 column-stats proposal. The sub-struct carries the base id
+      // (stats are resolved by id) and is named by the column's logical name with its field id
+      // attached (see StatsLeaf.fieldName), so the name stays unique. An array is not
+      // skipping-eligible, so it gets a null count and no bounds; a struct contributes its leaf.
+      def statsIds(columnId: Int, name: String, withBounds: Boolean): Seq[(String, Int)] = {
+        val base = 10000 + 200 * columnId
+        val field = s"${name}_$columnId" // sub-struct field name: logical name + field id
+        // Iceberg V4 offsets: lower_bound=1, upper_bound=2, tight_bounds=3, null_value_count=5.
+        Seq(
+          s"content_stats.$field" -> base,
+          s"content_stats.$field.null_value_count" -> (base + 5)) ++
+          (if (!withBounds) Nil
+           else Seq(
+             s"content_stats.$field.lower_bound" -> (base + 1),
+             s"content_stats.$field.upper_bound" -> (base + 2),
+             s"content_stats.$field.tight_bounds" -> (base + 3)))
+      }
+      // Partition fields take Iceberg ids from 1000 in partition-spec order, whatever their type.
+      val expected = AMTSingleAction.allFieldIdByName ++ Map("partition" -> 102) ++
+        partitionableTestColumns.map(_.structField("p_")).zipWithIndex.map {
+          case (field, ordinal) => s"partition.${field.name}" -> (1000 + ordinal)
+        } ++
+        // Data columns are one per type in `allTypeColumns` order, so column ids run d_int=1 ..
+        // d_double=12, d_binary=13, d_arr=14, d_nested=15 (inner=16).
+        Seq(
+          (1, "d_int"), (2, "d_long"), (3, "d_short"), (4, "d_byte"), (5, "d_str"),
+          (6, "d_date"), (7, "d_ts"), (8, "d_ts_ntz"), (9, "d_dec"),
+          (11, "d_float"), (12, "d_double"), (16, "d_nested_inner"))
+          .flatMap { case (id, name) => statsIds(id, name, withBounds = true) } ++
+        // Boolean, array, and binary are not skipping-eligible (no min/max): null count only.
+        Seq((10, "d_bool"), (13, "d_binary"), (14, "d_arr"))
+          .flatMap { case (id, name) => statsIds(id, name, withBounds = false) }
+      assert(
+        stamped == expected,
+        "persistedSchema field ids did not match the expected map\n" +
+          s"  missing=${expected.toSet.diff(stamped.toSet)}\n" +
+          s"  unexpected=${stamped.toSet.diff(expected.toSet)}")
+
+      // Guard against a field added to a nested id-bearing struct (tracking / deletion_vector /
+      // manifest_info) without a corresponding id: every scalar of those structs must be stamped.
+      val schema = AMTSingleAction.persistedSchema(metadata, protocol)
+      Seq("tracking", "deletion_vector", "manifest_info").foreach { parent =>
+        val struct = schema(parent).dataType.asInstanceOf[StructType]
+        struct.fields.foreach { f =>
+          assert(f.metadata.contains(ParquetUtils.FIELD_ID_METADATA_KEY),
+            s"nested field '$parent.${f.name}' has no stamped Iceberg field id.")
+        }
       }
     }
   }
@@ -149,12 +186,61 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val hadoopConf = context.postCheckpointSnapshot.deltaLog.newDeltaHadoopConf()
+    // `content_stats` is shaped per table, so the footer's ids can't match a static map. Compare
+    // against the schema the writer actually derived from the metadata/protocol the checkpoint
+    // recorded -- which is exactly what a reader projects with.
+    val checkpointAction = context.provider.checkpointAction
+    val expected = stampedFieldIdByName(AMTSingleAction.persistedSchema(
+      checkpointAction.metaData, checkpointAction.protocol))
     // `leaf.location` and `contentRoot.path` are stored table-root-relative, so go through the
     // provider, which resolves them against the table root.
     val leaves = context.provider.liveLeafManifestAbsolutePaths.map(path => new File(path.toUri))
     val root = new File(context.provider.topLevelFiles.head.getPath.toUri)
     assert(leaves.nonEmpty, "Expected at least one leaf manifest.")
-    leaves.foreach(f => assertFieldIds(hadoopConf, f, s"leaf ${f.getName}"))
-    assertFieldIds(hadoopConf, root, s"root ${root.getName}")
+    leaves.foreach(f => assertFieldIds(hadoopConf, f, s"leaf ${f.getName}", expected))
+    assertFieldIds(hadoopConf, root, s"root ${root.getName}", expected)
+  }
+
+  test("a full checkpoint rewrite refreshes content_stats names after a column rename") {
+    withTable("amt_rename_rewrite") {
+      // A huge checkpoint interval keeps the rename commit from auto-checkpointing, so the only
+      // rewrites are the two explicit ones below.
+      createAMTTable(
+        "amt_rename_rewrite", tableSchema = "c LONG", checkpointInterval = Int.MaxValue)
+      appendRowsAsSeparateFiles(
+        "amt_rename_rewrite", numFiles = 2, columnExprs = Seq("CAST(id AS LONG)"))
+      val deltaLog = deltaLogForName("amt_rename_rewrite")
+
+      // The logical name of the single `content_stats` sub-struct on the latest checkpoint's
+      // manifests. Sub-structs are named `<logical name>_<field id>` (the id keeps the name unique;
+      // see StatsLeaf.fieldName), so strip the id suffix to compare the logical part that a rename
+      // refreshes.
+      def contentStatsNames(): Seq[String] = {
+        val snapshot = deltaLog.update()
+        val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
+        val manifestPaths =
+          (provider.topLevelFiles.map(_.getPath.toString) ++
+            provider.liveLeafManifestAbsolutePaths.map(_.toString)).distinct
+        allowReadWithinDeltaLog {
+          val manifestDf = spark.read.parquet(manifestPaths: _*)
+          manifestDf.schema("content_stats").dataType.asInstanceOf[StructType]
+            .fieldNames.toSeq.map(_.replaceAll("_\\d+$", ""))
+        }
+      }
+
+      // The pre-rename checkpoint names the sub-struct by the original logical name.
+      commitCheckpoint(deltaLog, incremental = false)
+      assert(contentStatsNames() == Seq("c"))
+
+      // A metadata-only rename does not rewrite the existing manifests, so the checkpoint on disk
+      // still names the sub-struct by the old logical name until it is rewritten.
+      sql("ALTER TABLE amt_rename_rewrite RENAME COLUMN c TO c_renamed")
+      assert(contentStatsNames() == Seq("c"))
+
+      // Forcing a full rewrite re-derives content_stats from the current metadata, so the
+      // sub-struct picks up the new logical name (same field id).
+      commitCheckpoint(deltaLog, incremental = false)
+      assert(contentStatsNames() == Seq("c_renamed"))
+    }
   }
 }

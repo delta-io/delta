@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
-import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, Metadata, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, Metadata, Protocol, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.util.DeltaEncoder
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -163,7 +163,7 @@ final class AMTCheckpointProvider(
     }.toMap
     val mdvBroadcast = spark.sparkContext.broadcast(mdvByLeaf)
     val dataEntries = AMTCheckpointProvider.loadEntriesWithLocation(
-      deltaLog, index, checkpointAction.metaData)
+      deltaLog, index, checkpointAction.metaData, checkpointAction.protocol)
       .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
       .where(col("entry.tracking.status").isin(
         AMTCheckpointProvider.liveDataEntryStatuses.toSeq: _*))
@@ -293,7 +293,8 @@ object AMTCheckpointProvider {
       DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
     // The root manifest is small (one row per leaf), so collect it to the driver to enumerate the
     // leaf pointers.
-    val leaves = loadEntries(deltaLog, index, checkpoint.metaData).collect().toSeq
+    val leaves = loadEntries(deltaLog, index, checkpoint.metaData, checkpoint.protocol)
+      .collect().toSeq
       .filter(_.content_type == AMTSingleAction.ContentType.Type.DataManifest)
       .map(_.unwrap.asInstanceOf[DataManifestEntry])
     new AMTCheckpointProvider(
@@ -319,7 +320,8 @@ object AMTCheckpointProvider {
     val rootFile = checkpoint.contentRoot.toFileStatus(tableRoot)
     val index =
       DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
-    loadEntries(deltaLog, index, checkpoint.metaData).collect().toSeq
+    loadEntries(deltaLog, index, checkpoint.metaData, checkpoint.protocol)
+      .collect().toSeq
       .filter(_.content_type == AMTSingleAction.ContentType.Type.Data)
       .map(_.unwrap.asInstanceOf[DataEntry])
       .filter(e => liveDataEntryStatuses.contains(e.tracking.status))
@@ -333,11 +335,14 @@ object AMTCheckpointProvider {
   private def loadEntries(
       deltaLog: DeltaLog,
       index: DeltaLogFileIndex,
-      metadata: Metadata): Dataset[AMTSingleAction] = {
+      metadata: Metadata,
+      protocol: Protocol): Dataset[AMTSingleAction] = {
     import org.apache.spark.sql.delta.implicits._
-    val persistedSchema = AMTSingleAction.persistedSchema(metadata.partitionSchema)
+    val persistedSchema =
+      AMTSingleAction.persistedSchema(metadata, protocol)
     val persisted = deltaLog.loadIndex(index, persistedSchema)
-    AMTPartitionValues.forRead(persisted, metadata.partitionSchema)
+    val withPartition = AMTPartitionValues.forRead(persisted, metadata.partitionSchema)
+    AMTContentStats.forRead(withPartition, metadata, protocol)
       .as[AMTSingleAction]
   }
 
@@ -347,17 +352,20 @@ object AMTCheckpointProvider {
   private def loadEntriesWithLocation(
       deltaLog: DeltaLog,
       index: DeltaLogFileIndex,
-      metadata: Metadata): Dataset[AMTDataEntryWithLocation] = {
+      metadata: Metadata,
+      protocol: Protocol): Dataset[AMTDataEntryWithLocation] = {
     import org.apache.spark.sql.delta.implicits._
     implicit val entryLocEncoder: Encoder[AMTDataEntryWithLocation] =
       amtDataEntryWithLocationEncoder
-    val persistedSchema = AMTSingleAction.persistedSchema(metadata.partitionSchema)
+    val persistedSchema =
+      AMTSingleAction.persistedSchema(metadata, protocol)
     val persisted = deltaLog.loadIndex(index, persistedSchema)
       .select(
         persistedSchema.fieldNames.toIndexedSeq.map(col) :+
           col(s"$METADATA_NAME.$FILE_PATH").as("leafPath") :+
           col(s"$METADATA_NAME.${ParquetFileFormat.ROW_INDEX}").as("pos"): _*)
-    AMTPartitionValues.forRead(persisted, metadata.partitionSchema)
+    val withPartition = AMTPartitionValues.forRead(persisted, metadata.partitionSchema)
+    AMTContentStats.forRead(withPartition, metadata, protocol)
       .select(
         struct(
           amtSingleActionEncoder

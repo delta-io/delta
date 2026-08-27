@@ -55,7 +55,6 @@ private[amt] object AMTPartitionValues {
       field.copy(
         nullable = true,
         metadata = new MetadataBuilder()
-          .withMetadata(field.metadata)
           .putLong(ParquetUtils.FIELD_ID_METADATA_KEY, PARTITION_FIELD_ID_START + ordinal)
           .build())
     })
@@ -82,7 +81,8 @@ private[amt] object AMTPartitionValues {
         field.dataType,
         ansiEnabled = true)).as(field.name)
     }
-    val partition = when(raw.isNull, lit(null).cast(persistedSchema(partitionSchema)))
+    val persistedPartitionSchema = AMTPartitionValues.persistedSchema(partitionSchema)
+    val partition = when(raw.isNull, lit(null).cast(persistedPartitionSchema))
       .otherwise(struct(typedFields: _*))
     replacePartition(df, partition)
   }
