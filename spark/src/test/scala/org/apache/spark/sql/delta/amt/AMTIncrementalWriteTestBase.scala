@@ -286,7 +286,7 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
         assertCheckpointDescribesVersion(amtDeltaLog, attemptVersion)
         metrics
       case None =>
-        commitCheckpoint(amtDeltaLog, incremental = true)
+        commitIncrementalCheckpointAndReturnMetrics(amtDeltaLog)
           .getOrElse(fail("An incremental checkpoint must log IncrementalAMTWriteMetrics."))
     }
 

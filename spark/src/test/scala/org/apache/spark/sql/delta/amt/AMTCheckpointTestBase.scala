@@ -403,25 +403,33 @@ trait AMTCheckpointTestBase
   }
 
   /**
-   * Emits an AMT checkpoint on `deltaLog` via the real commit path and returns the incremental
-   * write's shape metrics, read back out of the logged [[CommitStats]]. `incremental = false`
-   * forces a full rewrite (and returns None, since a full write logs no incremental metrics);
-   * `true` an incremental one.
+   * Emits an AMT checkpoint on `deltaLog` via the real commit path. `incremental = false` forces a
+   * full rewrite; `true` an incremental one.
    */
-  protected def commitCheckpoint(
-      deltaLog: DeltaLog, incremental: Boolean): Option[IncrementalAMTWriteMetrics] = {
+  protected def commitCheckpoint(deltaLog: DeltaLog, incremental: Boolean): Unit = {
     val triggerName = if (incremental) {
       AMTTriggerMode.CheckpointIntervalIncremental.name
     } else {
       AMTTriggerMode.CheckpointIntervalFull.name
     }
+    deltaLog.startTransaction().commit(
+      Seq.empty,
+      DeltaOperations.OptimizeCheckpoint(
+        incremental = incremental,
+        triggerName = triggerName))
+  }
+
+  /**
+   * Emits an incremental AMT checkpoint on `deltaLog` and returns the incremental write's shape
+   * metrics, read back out of the logged [[CommitStats]] (None if no incremental metrics were
+   * logged). Wraps the commit in usage tracking, whose buffer is process-wide, so this must not run
+   * concurrently with another tracked commit.
+   */
+  protected def commitIncrementalCheckpointAndReturnMetrics(
+      deltaLog: DeltaLog): Option[IncrementalAMTWriteMetrics] = {
     val attemptVersion = deltaLog.update().version + 1
     trackIncrementalAMTWriteMetrics(attemptVersion) {
-      deltaLog.startTransaction().commit(
-        Seq.empty,
-        DeltaOperations.OptimizeCheckpoint(
-          incremental = incremental,
-          triggerName = triggerName))
+      commitCheckpoint(deltaLog, incremental = true)
     }
   }
 
