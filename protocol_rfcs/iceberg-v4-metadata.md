@@ -521,8 +521,8 @@ Manifest commits have the following characteristics:
 1. **File actions may be logged**: A manifest commit may also
    write `add` and `remove` actions to the Delta log, in addition to updating the metadata tree. The `checkpointMetadata.version` may be less than the commit version (the tree covers up to `checkpointMetadata.version`; remaining changes are in the log). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log.
 
-2. **Non-file actions must be logged**: A manifest commit must always
-   write non-file actions (`metadata`, `protocol`, `txn`, `domainMetadata`, `commitInfo`) to the Delta log. These actions are not stored in the metadata tree.
+2. **Non-file actions**: Non-file actions (`metaData`, `protocol`, `txn`, `domainMetadata`, `commitInfo`) are
+   never stored in the metadata tree. A manifest commit's `checkpoint` action already carries the current `protocol`, `metaData`, `domainMetadata`, and `txn`s (see [Checkpoint Action](#checkpoint-action)), so a checkpoint-based reader needs nothing else to reconstruct the table state up to `checkpointMetadata.version`. A *separate* top-level non-file action is written only in the commit that changes that value, following standard Delta commit semantics.
 
 3. **Incorporates preceding commits**: Manifest commits must
    incorporate all preceding log commits (since the last checkpoint) into the new metadata tree.
