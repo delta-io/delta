@@ -801,6 +801,12 @@
     ],
     "sqlState" : "56038"
   },
+  "DELTA_CONFLICTING_METADATA_DOMAIN" : {
+    "message" : [
+      "A concurrent transaction added a conflicting metadata domain <domain>."
+    ],
+    "sqlState" : "2D521"
+  },
   "DELTA_CONFLICT_SET_COLUMN" : {
     "message" : [
       "There is a conflict from these SET columns: <columnList>."
