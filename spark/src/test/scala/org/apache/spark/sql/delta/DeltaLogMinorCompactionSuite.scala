@@ -46,7 +46,10 @@ class DeltaLogMinorCompactionSuite extends QueryTest
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
+        deltaLog.update().protocol, spark))
     val hadoopConf = deltaLog.newDeltaHadoopConf()
 
     (startVersion to endVersion).foreach { versionToRead =>

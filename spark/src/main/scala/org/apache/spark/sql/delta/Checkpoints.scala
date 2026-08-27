@@ -528,7 +528,10 @@ trait Checkpoints extends DeltaLogging {
     } finally {
       actions.close()
     }
+    // It reads an inline (non-standalone) Checkpoint from a manifest commit,
+    // so both Checkpoint.version and ContentRoot.version must match the CRC pointer.
     assert(checkpoint.version == contentRootVersion)
+    assert(checkpoint.contentRoot.version == contentRootVersion)
     checkpoint
   }
 

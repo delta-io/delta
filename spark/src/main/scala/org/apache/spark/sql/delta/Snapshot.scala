@@ -600,6 +600,9 @@ class Snapshot(
       // for serializability
       val localMinFileRetentionTimestamp = minFileRetentionTimestamp
       val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
+      val localTableRoot = deltaLog.dataPath.toString
+      val localUseDeletionVectorObjectIdentity =
+        FileAction.useDeletionVectorObjectIdentity(protocol, spark)
 
       val canonicalPath = deltaLog.getCanonicalPathUdf()
 
@@ -646,7 +649,9 @@ class Snapshot(
           val state: LogReplay =
             new InMemoryLogReplay(
               Some(localMinFileRetentionTimestamp),
-              localMinSetTransactionRetentionTimestamp)
+              localMinSetTransactionRetentionTimestamp,
+              tableRoot = new Path(localTableRoot),
+              useDeletionVectorObjectIdentity = localUseDeletionVectorObjectIdentity)
           state.append(0, iter.map(_.unwrap))
           state.checkpoint.map(_.wrap)
         }

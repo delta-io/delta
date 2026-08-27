@@ -171,7 +171,7 @@ class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
         KernelSnapshotUtils.buildAllFiles(kernelSnapshot, spark, kernelEngine).collect()
       assert(kernelFiles.find(_.path == taggedPath).map(_.tags).contains(expectedTags))
 
-      val snapshot = new DeltaV2Snapshot(kernelSnapshot, spark)
+      val snapshot = new DeltaV2Snapshot(kernelSnapshot)
       val selectedFiles = snapshot.filesForScan(Nil).files
       assert(selectedFiles.find(_.path == taggedPath).map(_.tags).contains(expectedTags))
     }

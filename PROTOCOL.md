@@ -1836,7 +1836,7 @@ The following is an example for the `domainMetadata` action definition of a tabl
 {
   "domainMetadata": {
     "domain": "delta.clustering",
-    "configuration": "{\"clusteringColumns\":[\"col-daadafd7-7c20-4697-98f8-bff70199b1f9\", \"col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e\"]}",
+    "configuration": "{\"clusteringColumns\":[[\"col-daadafd7-7c20-4697-98f8-bff70199b1f9\"], [\"col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e\"]]}",
     "removed": false
   }
 }
@@ -1845,11 +1845,12 @@ The example above converts `configuration` field into JSON format, including esc
 ```json
 {
   "clusteringColumns": [
-    "col-daadafd7-7c20-4697-98f8-bff70199b1f9",
-    "col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e"
+    ["col-daadafd7-7c20-4697-98f8-bff70199b1f9"],
+    ["col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e"]
   ]
 }
 ```
+Each entry in `clusteringColumns` is the name path of a clustering column: a single segment for a top-level column, and multiple segments for a nested column (for example, `["user", "address", "city"]`). If [Column Mapping](#column-mapping) is enabled, physical names are used for each segment.
 
 
 # Variant Data Type

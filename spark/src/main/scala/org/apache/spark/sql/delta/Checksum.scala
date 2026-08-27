@@ -604,7 +604,11 @@ trait RecordChecksum extends DeltaLogging {
     // We can also ignore file retention because that only affects [[RemoveFile]] actions.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      // Using object identity or not doesn't matter here for computing SetTransactions.
+      useDeletionVectorObjectIdentity = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC))
 
     logReplay.append(attemptVersion - 1, oldSetTransactions.toIterator)
     logReplay.append(attemptVersion, setTransactionsToCommit.toIterator)
@@ -633,7 +637,11 @@ trait RecordChecksum extends DeltaLogging {
     // We only work with DomainMetadata, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      // Using object identity or not doesn't matter here for computing DomainMetadata.
+      useDeletionVectorObjectIdentity = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC))
 
     val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_DOMAIN_METADATAS_IN_CRC)
 
@@ -701,7 +709,10 @@ trait RecordChecksum extends DeltaLogging {
     // We only work with AddFile, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      useDeletionVectorObjectIdentity = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC))
 
     logReplay.append(attemptVersion - 1, oldAllFiles.map(normalizePath).toIterator)
     logReplay.append(attemptVersion, actionsToCommit.map(normalizePath).toIterator)

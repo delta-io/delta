@@ -25,6 +25,8 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescri
 import org.apache.spark.sql.delta.stats.DeltaStatistics
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.core.JsonParser
+import com.fasterxml.jackson.databind.{DeserializationContext, JsonDeserializer}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -486,8 +488,19 @@ object DataEntry {
       deletion_vector =
         Option(add.deletionVector).map(DeletionVector.fromDescriptor(_, tableRoot)),
       spec_id = passthrough.flatMap(_.spec_id),
+      sort_order_id = passthrough.flatMap(_.sort_order_id),
+      key_metadata = passthrough.flatMap(_.key_metadata),
+      split_offsets = passthrough.flatMap(_.split_offsets),
       content_stats = None)
   }
+}
+
+/**
+ * Deserializes split_offsets from commit-log JSON as a Seq[Long].
+ */
+private[amt] class AMTSplitOffsetsDeserializer extends JsonDeserializer[Seq[Long]] {
+  override def deserialize(p: JsonParser, ctxt: DeserializationContext): Seq[Long] =
+    p.readValueAs(classOf[Array[Long]]).toSeq
 }
 
 /**
@@ -495,7 +508,32 @@ object DataEntry {
  */
 case class AMTPassthrough(
     @JsonDeserialize(contentAs = classOf[java.lang.Integer])
-    spec_id: Option[Int] = None)
+    spec_id: Option[Int] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Integer])
+    sort_order_id: Option[Int] = None,
+    key_metadata: Option[Array[Byte]] = None,
+    @JsonDeserialize(contentUsing = classOf[AMTSplitOffsetsDeserializer])
+    split_offsets: Option[Seq[Long]] = None) {
+
+  // override equals and hashCode to compare by content for some fields.
+  override def equals(obj: Any): Boolean = obj match {
+    case that: AMTPassthrough =>
+      spec_id == that.spec_id &&
+        sort_order_id == that.sort_order_id &&
+        split_offsets == that.split_offsets &&
+        ((key_metadata, that.key_metadata) match {
+          case (Some(a), Some(b)) => java.util.Arrays.equals(a, b)
+          case (None, None) => true
+          case _ => false
+        })
+    case _ => false
+  }
+
+  override def hashCode(): Int = {
+    val keyMetadataHash = key_metadata.map(b => java.util.Arrays.hashCode(b)).getOrElse(0)
+    (spec_id, sort_order_id, keyMetadataHash, split_offsets).hashCode()
+  }
+}
 
 object AMTPassthrough {
   /** Name of the `amtPassthrough` field on the AddFile schema. */
@@ -508,7 +546,13 @@ object AMTPassthrough {
   /**
    * Positions of the `amtPassthrough` struct within an [[InternalRow]].
    */
-  case class RowIndices(structIndex: Int, numFields: Int, specId: Int)
+  case class RowIndices(
+      structIndex: Int,
+      numFields: Int,
+      specId: Int,
+      sortOrderId: Int,
+      keyMetadata: Int,
+      splitOffsets: Int)
 
   object RowIndices {
     /**
@@ -521,7 +565,10 @@ object AMTPassthrough {
         RowIndices(
           structIndex = structIndex,
           numFields = passthroughSchema.fields.length,
-          specId = passthroughSchema.fieldIndex("spec_id"))
+          specId = passthroughSchema.fieldIndex("spec_id"),
+          sortOrderId = passthroughSchema.fieldIndex("sort_order_id"),
+          keyMetadata = passthroughSchema.fieldIndex("key_metadata"),
+          splitOffsets = passthroughSchema.fieldIndex("split_offsets"))
       }
   }
 
@@ -536,7 +583,16 @@ object AMTPassthrough {
       val struct = row.getStruct(indices.structIndex, indices.numFields)
       Some(AMTPassthrough(
         spec_id =
-          if (struct.isNullAt(indices.specId)) None else Some(struct.getInt(indices.specId))))
+          if (struct.isNullAt(indices.specId)) None else Some(struct.getInt(indices.specId)),
+        sort_order_id =
+          if (struct.isNullAt(indices.sortOrderId)) None
+          else Some(struct.getInt(indices.sortOrderId)),
+        key_metadata =
+          if (struct.isNullAt(indices.keyMetadata)) None
+          else Some(struct.getBinary(indices.keyMetadata)),
+        split_offsets =
+          if (struct.isNullAt(indices.splitOffsets)) None
+          else Some(struct.getArray(indices.splitOffsets).toLongArray().toSeq)))
     }
   }
 
@@ -550,7 +606,11 @@ object AMTPassthrough {
         entry.format_version == AMTSingleAction.FormatVersionV4,
       s"amtPassthrough only supports parquet/v4. got " +
         s"${entry.file_format}/${entry.format_version}.")
-    val passthrough = AMTPassthrough(spec_id = entry.spec_id)
+    val passthrough = AMTPassthrough(
+      spec_id = entry.spec_id,
+      sort_order_id = entry.sort_order_id,
+      key_metadata = entry.key_metadata,
+      split_offsets = entry.split_offsets)
     if (passthrough == AMTPassthrough()) None else Some(passthrough)
   }
 }
@@ -705,7 +765,6 @@ case class DeletionVector(
     cardinality: Long)        // ID: 156, required.
 
 object DeletionVector {
-
   /** Maps a Delta on-disk [[DeletionVectorDescriptor]] onto the AMT sub-struct; rejects inline. */
   def fromDescriptor(dv: DeletionVectorDescriptor, tableRoot: Path): DeletionVector = {
     require(dv.isOnDisk,
@@ -729,11 +788,20 @@ object DeletionVector {
     // AMT stored paths are unencoded.
     val absolutePath = DeletionVectorStore.unescapedStringToPath(dv.location)
     require(absolutePath.isAbsolute)
-    DeletionVectorDescriptor.onDiskWithAbsolutePath(
-      path = DeletionVectorStore.pathToEscapedString(absolutePath),
-      sizeInBytes = rawSize,
-      cardinality = dv.cardinality,
-      offset = Some(dv.offset.toInt))
+    val relativePath = AMTUtils.relativizeLocation(tableRoot.toString, absolutePath.toString)
+    if (AMTUtils.isAbsoluteLocation(relativePath)) {
+      DeletionVectorDescriptor.onDiskWithAbsolutePath(
+        path = DeletionVectorStore.pathToEscapedString(absolutePath),
+        sizeInBytes = rawSize,
+        cardinality = dv.cardinality,
+        offset = Some(dv.offset.toInt))
+    } else {
+      DeletionVectorDescriptor.createRelativePathDVDescriptor(
+        relativePath = relativePath,
+        sizeInBytes = rawSize,
+        cardinality = dv.cardinality,
+        offset = Some(dv.offset.toInt))
+    }
   }
 }
 

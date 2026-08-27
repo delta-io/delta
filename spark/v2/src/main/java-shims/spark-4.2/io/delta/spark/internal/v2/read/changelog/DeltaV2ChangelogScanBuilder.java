@@ -1,12 +1,13 @@
 package io.delta.spark.internal.v2.read.changelog;
 
 import io.delta.kernel.CommitRange;
-import io.delta.kernel.Snapshot;
+import org.apache.spark.sql.delta.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.rowtracking.RowTracking;
+import org.apache.spark.sql.delta.RowTracking$;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.Objects;
@@ -63,14 +64,13 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
     // but the start does not, the toggle happened within the range -- emit
     // DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE with the offending start version.
     Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
-    SnapshotImpl startSnapshotImpl = (SnapshotImpl) startSnapshot;
+    SnapshotImpl startSnapshotImpl = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(startSnapshot);
     Snapshot endSnapshot = snapshotManager.loadSnapshotAt(endVersion);
-    SnapshotImpl endSnapshotImpl = (SnapshotImpl) endSnapshot;
-    StructType endSchema = SchemaUtils.convertKernelSchemaToSparkSchema(endSnapshot.getSchema());
-    if (!RowTracking.isEnabled(endSnapshotImpl.getProtocol(), endSnapshotImpl.getMetadata())) {
+    StructType endSchema = endSnapshot.schema();
+    if (!RowTracking$.MODULE$.isEnabled(endSnapshot.protocol(), endSnapshot.metadata())) {
       DeltaErrors.throwChangelogRequiresRowTracking(deltaV2Table.name());
     }
-    if (!RowTracking.isEnabled(startSnapshotImpl.getProtocol(), startSnapshotImpl.getMetadata())) {
+    if (!RowTracking$.MODULE$.isEnabled(startSnapshot.protocol(), startSnapshot.metadata())) {
       DeltaErrors.throwChangelogRowTrackingDisabledInRange(startVersion);
     }
 
@@ -85,7 +85,7 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
         commitRange,
         engine,
         endSchema,
-        startSnapshot,
+        startSnapshotImpl,
         startVersion,
         endVersion,
         hadoopConf);
