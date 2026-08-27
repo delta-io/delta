@@ -17,23 +17,28 @@
 package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.LastManifestCommit
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, LastManifestCommit}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.apache.commons.io.IOUtils
 import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
+
+  /** Whether this suite runs with `.crc` files enabled, read from the effective conf. */
+  protected def writeChecksumEnabled: Boolean =
+    spark.conf.get(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)
 
   ////////////////////////////
   // Cold snapshot discovery
   ////////////////////////////
 
   /** Loads a genuinely cold deltaLog + snapshot (cache cleared) for the given table. */
-  private def coldLoad(tableName: String): (DeltaLog, Snapshot) = {
+  protected def coldLoad(tableName: String): (DeltaLog, Snapshot) = {
     DeltaLog.clearCache()
     DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(tableName))
   }
@@ -51,12 +56,18 @@ class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
     assert(snapshot.logSegment.deltas.map(FileNames.deltaVersion) == trailingDeltas)
     assert(snapshot.lastManifestCommitOpt == lastManifestCommit)
     assert(amtProvider(snapshot).map(_.version) == amtCheckpointVersion)
-    // The AMT checkpoint is only trusted once the CRC corroborates it, so a cold read of an AMT
-    // table always resolves a checksum carrying the same manifest-commit reference.
-    val checksum = snapshot.checksumOpt.getOrElse(
-      fail(s"v$version: a cold AMT read must resolve a checksum (CRC)."))
-    assert(checksum.lastManifestCommit == lastManifestCommit,
-      s"v$version: the CRC's manifest-commit reference must match the snapshot's.")
+    // The AMT checkpoint is trusted once the manifest-commit reference corroborates it. With a CRC
+    // that reference comes from the checksum; without one it is recovered from the latest commit's
+    // CommitInfo, and no checksum is resolved.
+    if (writeChecksumEnabled) {
+      val checksum = snapshot.checksumOpt.getOrElse(
+        fail(s"v$version: a cold AMT read with CRC enabled must resolve a checksum."))
+      assert(checksum.lastManifestCommit == lastManifestCommit,
+        s"v$version: the CRC's manifest-commit reference must match the snapshot's.")
+    } else {
+      assert(snapshot.checksumOpt.isEmpty,
+        s"v$version: no checksum should be resolved when CRC writes are disabled.")
+    }
   }
 
   testInline("[cold init] installs the correct provider from up-to-date _last_checkpoint: inline") {
@@ -228,25 +239,6 @@ class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
     assert(fs.delete(path, false), s"failed to delete $path")
   }
 
-  test("[cold init] refuses any AMT checkpoint provider without a CRC to cross-verify") {
-    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
-      val name = "amt_no_crc_refused"
-      withTable(name) {
-        createAMTTable(name, checkpointInterval = 2)
-        // 2 INSERTs land the v2 tree recorded at v3, so the hint references an AMT checkpoint that
-        // a cold read will install as the provider. Commits reuse the in-memory post-commit
-        // snapshot (which does not verify), so they succeed even though no CRC is written.
-        (1 to 2).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
-
-        // A cold read installs the AMT provider from the hint, finds no CRC, and refuses it. The
-        // intercept itself proves the provider was installed (otherwise there would be no throw).
-        val e = intercept[IllegalStateException](coldLoad(name))
-        assert(e.getMessage.contains("no checksum (CRC) file is available to corroborate it"),
-          s"expected the no-CRC refusal, got: ${e.getMessage}")
-      }
-    }
-  }
-
   test("[cold init] updates to the correct provider when _last_checkpoint is stale") {
     val name = "amt_stale_last_checkpoint"
     withTable(name) {
@@ -346,8 +338,10 @@ class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
       "log segment must be equal between warm and cold.")
     assert(warmSnapshot.lastManifestCommitOpt == coldSnapshot.lastManifestCommitOpt,
       s"warm ${warmSnapshot.lastManifestCommitOpt} != cold ${coldSnapshot.lastManifestCommitOpt}.")
-    assert(warmSnapshot.checksumOpt == coldSnapshot.checksumOpt,
-      "checksum must be equal between warm and cold.")
+    if (writeChecksumEnabled) {
+      assert(warmSnapshot.checksumOpt == coldSnapshot.checksumOpt,
+        "checksum must be equal between warm and cold.")
+    }
     assert(warmSnapshot.protocol == coldSnapshot.protocol,
       "protocol must be equal between warm and cold.")
     assert(warmSnapshot.metadata == coldSnapshot.metadata,
@@ -660,5 +654,74 @@ class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
       context.postCheckpointSnapshot.logSegment.deltas.map(f => FileNames.deltaVersion(f))
     assert(segmentDeltaVersions.forall(_ > context.checkpoint.version),
       s"Log segment must trim deltas up to the checkpoint version; got $segmentDeltaVersions.")
+  }
+}
+
+/**
+ * AMT snapshot discovery must work identically via the CommitInfo fallback when CRC is missing.
+ */
+class AMTSnapshotDiscoveryWithoutCRCSuite extends AMTSnapshotDiscoverySuite {
+
+  override protected def sparkConf: SparkConf =
+    super.sparkConf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, "false")
+
+  test("[cold init] refuses an AMT provider when neither CRC nor CommitInfo carries a reference") {
+    val name = "amt_no_reference_refused"
+    withTable(name) {
+      createAMTTable(name, checkpointInterval = 2)
+      // 2 INSERTs land the v2 tree recorded at v3, so the hint references an AMT checkpoint
+      // that a cold read installs as the provider.
+      (1 to 2).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+
+      // Strip the reference from the recording commit's CommitInfo. With no CRC and no CommitInfo
+      // reference, nothing corroborates the installed AMT provider, so the cold read is refused.
+      val deltaLog = deltaLogForName(name)
+      val commitPath = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(3)
+      val hadoopConf = deltaLog.newDeltaHadoopConf()
+      val stripped = deltaLog.store.readAsIterator(commitPath, hadoopConf).toList
+        .map(Action.fromJson)
+        .map {
+          case ci: CommitInfo => ci.copy(lastManifestCommit = None).json
+          case other => other.json
+        }
+      deltaLog.store.write(commitPath, stripped.toIterator, overwrite = true, hadoopConf)
+
+      val e = intercept[IllegalStateException](coldLoad(name))
+      assert(e.getMessage.contains("no lastManifestCommit is available from either the CRC"),
+        s"expected the no-reference refusal, got: ${e.getMessage}")
+    }
+  }
+
+  test("[cold init] CommitInfo read is not kicked off when config is disabled: AMT table") {
+    withSQLConf(
+        DeltaSQLConf.AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED.key -> "false") {
+      val name = "amt_slow_commit_info_read"
+      withTable(name) {
+        createAMTTable(name, checkpointInterval = 2)
+        // 2 INSERTs land the v2 tree recorded at v3, so the hint references an AMT checkpoint
+        // that a cold read installs as the provider.
+        (1 to 2).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+
+        // With CommitInfo read not kicked off, the installed AMT provider is refused.
+        val e = intercept[IllegalStateException](coldLoad(name))
+        assert(e.getMessage.contains("no lastManifestCommit is available from either the CRC"))
+      }
+    }
+  }
+
+  test("[cold init] CommitInfo read is not kicked off when config is disabled: non-AMT table") {
+    withSQLConf(
+        DeltaSQLConf.AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED.key -> "false") {
+      val name = "non_amt_slow_commit_info_read"
+      withTable(name) {
+        sql(s"CREATE TABLE $name (id INT) USING delta")
+        (1 to 2).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+
+        // With CommitInfo read not kicked off, non-AMT tables can be loaded unaffected.
+        val (_, snapshot) = coldLoad(name)
+        assert(snapshot.version == 2, "the snapshot must be at v2.")
+        assert(amtProvider(snapshot).isEmpty, "the AMT provider must be absent.")
+      }
+    }
   }
 }

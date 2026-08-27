@@ -612,6 +612,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "fullRewriteCheckpointIntervalMultiplier must be positive.")
       .createWithDefault(5)
 
+  val AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED =
+    buildConf("amt.snapshotDiscovery.asyncCommitInfoRead.enabled")
+      .internal()
+      .doc("When enabled, an async CommitInfo read will be kicked off during snapshot creation " +
+        "in parallel with the CRC read. Enabling it could cause slight performance overhead on " +
+        "non-AMT tables when CRC is absent, and extra checkpoint threadpool contention. " +
+        "Disabling it could result in missing file actions in snapshot discovery for AMT tables.")
+      .booleanConf
+      .createWithDefault(DeltaUtils.isTesting)
+
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
       .internal()
