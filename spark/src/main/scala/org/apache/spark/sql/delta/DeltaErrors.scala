@@ -1286,16 +1286,15 @@ trait DeltaErrorsBase
       replaceWhere: String,
       invariantViolation: InvariantViolationException): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_REPLACE_WHERE_MISMATCH",
+      errorClass = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
       messageParameters = Array(replaceWhere, invariantViolation.getMessage),
       cause = Some(invariantViolation))
   }
 
   def replaceWhereMismatchException(replaceWhere: String, badPartitions: String): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_REPLACE_WHERE_MISMATCH",
-      messageParameters = Array(replaceWhere,
-        s"Invalid data would be written to partitions $badPartitions."))
+      errorClass = "DELTA_REPLACE_WHERE_MISMATCH.INVALID_PARTITIONS",
+      messageParameters = Array(replaceWhere, badPartitions))
   }
 
   def illegalFilesFound(file: String): Throwable = {

@@ -2651,9 +2651,21 @@
   },
   "DELTA_REPLACE_WHERE_MISMATCH" : {
     "message" : [
-      "Written data does not conform to partial table overwrite condition or constraint '<replaceWhere>'.",
-      "<message>"
+      "Written data does not conform to partial table overwrite condition or constraint '<replaceWhere>'."
     ],
+    "subClass" : {
+      "INVALID_PARTITIONS" : {
+        "message" : [
+          "Invalid data would be written to partitions <badPartitions>."
+        ]
+      },
+      "INVARIANT_VIOLATION" : {
+        "message" : [
+          "<invariantViolationMessage>",
+          ""
+        ]
+      }
+    },
     "sqlState" : "44000"
   },
   "DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE" : {

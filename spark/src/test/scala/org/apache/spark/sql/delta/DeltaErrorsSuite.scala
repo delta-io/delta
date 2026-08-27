@@ -580,16 +580,16 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.replaceWhereMismatchException("replaceWhereArgValue",
           new InvariantViolationException("Invariant violated."))
       }
-      checkError(e, "DELTA_REPLACE_WHERE_MISMATCH", "44000",
-        Map("replaceWhere" -> "replaceWhereArgValue", "message" -> "Invariant violated."))
+      checkError(e, "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION", "44000",
+        Map("replaceWhere" -> "replaceWhereArgValue",
+          "invariantViolationMessage" -> "Invariant violated."))
     }
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.replaceWhereMismatchException("replaceWhere", "badPartitions")
       }
-      checkError(e, "DELTA_REPLACE_WHERE_MISMATCH", "44000",
-        Map("replaceWhere" -> "replaceWhere",
-          "message" -> "Invalid data would be written to partitions badPartitions."))
+      checkError(e, "DELTA_REPLACE_WHERE_MISMATCH.INVALID_PARTITIONS", "44000",
+        Map("replaceWhere" -> "replaceWhere", "badPartitions" -> "badPartitions"))
     }
     {
       val e = intercept[DeltaIllegalStateException] {
