@@ -15,12 +15,12 @@
  */
 package io.delta.spark.internal.v2.catalog
 
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import io.delta.spark.internal.v2.DeltaV2Logging
 
 /**
- * Scala inheritance bridge for the Java [[DeltaV2Table]]. This lets the table use the scoped
- * profiling helpers on [[DeltaLogging]] without duplicating them in a companion object.
+ * Scala inheritance bridge that combines the Java table's Spark-version shims with scoped Delta
+ * V2 logging.
  */
-private[catalog] abstract class DeltaV2TableLogging
+private[catalog] abstract class DeltaV2TableShimsWithLogging
   extends DeltaV2TableShims
-  with DeltaLogging
+  with DeltaV2Logging

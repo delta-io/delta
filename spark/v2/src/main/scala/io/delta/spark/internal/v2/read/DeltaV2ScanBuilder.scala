@@ -23,8 +23,8 @@ import io.delta.kernel.engine.Engine
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
 
 import org.apache.spark.sql.delta.Snapshot
-import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.stats.DeltaScan
+import io.delta.spark.internal.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 
@@ -75,7 +75,7 @@ private[read] class DeltaV2ScanBuilder(
     with SupportsPushDownRequiredColumns
     with SupportsPushDownCatalystFilters
     with SupportsPushDownLimit
-    with DeltaLogging {
+    with DeltaV2Logging {
 
   // Use Objects.requireNonNull (throws NullPointerException) rather than Scala's require (throws
   // IllegalArgumentException) to preserve the exact null-check behavior of the original Java class.
@@ -104,7 +104,7 @@ private[read] class DeltaV2ScanBuilder(
   private var pushedLimit: OptionalInt = OptionalInt.empty()
 
   override def pushFilters(filters: Seq[Expression]): Seq[Expression] =
-    recordFrameProfile("Delta", "DeltaV2.scanBuilder.pushFilters") {
+    recordFrameProfile("scanBuilder.pushFilters") {
       val (partitionFilters, dataFilters) =
         DataSourceUtils.getPartitionFiltersAndDataFilters(partitionSchema, filters)
       partitionCatalystFilters = partitionFilters.toArray
@@ -120,7 +120,7 @@ private[read] class DeltaV2ScanBuilder(
   override def pushedFilters: Array[Predicate] = Array.empty
 
   override def pruneColumns(requiredSchema: StructType): Unit =
-    recordFrameProfile("Delta", "DeltaV2.scanBuilder.pruneColumns") {
+    recordFrameProfile("scanBuilder.pruneColumns") {
       Objects.requireNonNull(requiredSchema, "requiredSchema is null")
       // CDC columns are injected later by CDCReadFunction, so strip them here.
       requiredDataSchema = new StructType(
@@ -154,7 +154,7 @@ private[read] class DeltaV2ScanBuilder(
   // file granularity, the scan may produce more rows than requested, so Spark must reapply LIMIT.
 
   override def build(): Scan =
-    recordFrameProfile("Delta", "DeltaV2.scanBuilder.build") {
+    recordFrameProfile("scanBuilder.build") {
       // Capture the planning inputs here, but defer constructing the Kernel-backed V1 snapshot and
       // running filesForScan until DeltaV2Scan actually plans a batch. A MicroBatchStream performs
       // its own snapshot and commit-range reads and never consumes batch-selected files.
@@ -185,13 +185,13 @@ private[read] class DeltaV2ScanBuilder(
           // record counts until the limit is satisfied.
           def selectFiles(): DeltaScan =
             if (effectiveLimit.isPresent) {
-              recordFrameProfile("Delta", "DeltaV2.filesForScan.limitAndFilters") {
+              recordFrameProfile("filesForScan.limitAndFilters") {
                 snapshot.filesForScan(
                   effectiveLimit.getAsInt.toLong,
                   partitionFiltersForScan)
               }
             } else {
-              recordFrameProfile("Delta", "DeltaV2.filesForScan.filters") {
+              recordFrameProfile("filesForScan.filters") {
                 snapshot.filesForScan(catalystFilters, keepNumRecords)
               }
             }
