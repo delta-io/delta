@@ -997,7 +997,7 @@ class DummySnapshotWithAllFilesSupport(
         minSetTransactionRetentionTimestamp = None,
         tableRoot = deltaLog.dataPath,
         useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
-          protocol, spark))
+          metadata, protocol, spark))
       val baseVersion = version - 1
       if (baseVersion < 0) { // No prior commit exists
         replay.append(0, txnInfo.finalActionsToCommit.iterator)

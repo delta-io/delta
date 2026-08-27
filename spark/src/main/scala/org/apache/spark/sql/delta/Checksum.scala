@@ -28,6 +28,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -878,7 +879,7 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
     // AMT manifest trees do not yet round-trip every AddFile field: `DataEntry.toAddFile` zeroes
     // `modificationTime`, forces `dataChange = false`, drops `tags`, and reduces `stats` to
     // `{"numRecords":n}`. Project both sides through that lossy lens before comparing.
-    if (protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+    if (AMTUtils.amtEnabled(self)) {
       def normalizeForAmtTreeRoundTrip(f: AddFile): AddFile = f.copy(
         modificationTime = 0L,
         dataChange = false,

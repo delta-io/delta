@@ -833,12 +833,14 @@ object FileAction {
    * Whether deletion vectors should be reconciled by their normalized object identity for the
    * given table (see [[DeletionVectorDescriptor.uniqueId]]).
    *
+   * @param metadata the table metadata.
    * @param protocol the table protocol.
    */
   def useDeletionVectorObjectIdentity(
+      metadata: Metadata,
       protocol: Protocol,
       spark: SparkSession): Boolean =
-    protocol.isFeatureSupported(AdaptiveMetadataTableFeature) ||
+    AMTUtils.amtEnabled(metadata, protocol) ||
       spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT)
 
   /**

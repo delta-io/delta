@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, WinningCommitSummary}
-import org.apache.spark.sql.delta.actions.LastManifestCommit
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -31,6 +31,17 @@ import org.apache.hadoop.fs.{FileSystem, Path}
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
 object AMTUtils {
+  /**
+   * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
+   * `metadata`.
+   */
+  def amtEnabled(metadata: Metadata, protocol: Protocol): Boolean =
+    protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+
+  /** Whether AMT writes are enabled for `snapshot`. */
+  def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
+    amtEnabled(snapshot.metadata, snapshot.protocol)
+
   private val PathSeparator = "/"
 
   /**

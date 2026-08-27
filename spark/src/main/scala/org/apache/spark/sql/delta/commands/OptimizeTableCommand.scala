@@ -476,7 +476,8 @@ class OptimizeExecutor(
         // Note: When checking if the candidate set is the same, we need to consider (Path, DV)
         //       as the key.
         val useObjectIdentity =
-          FileAction.useDeletionVectorObjectIdentity(snapshot.protocol, sparkSession)
+          FileAction.useDeletionVectorObjectIdentity(
+            snapshot.metadata, snapshot.protocol, sparkSession)
         val candidateSetOld = filesToProcess
           .map(f =>
             f.toUniqueFileActionTuple(snapshot.dataPath, useObjectIdentity))
