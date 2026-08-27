@@ -185,11 +185,15 @@ private[read] class DeltaV2ScanBuilder(
           // record counts until the limit is satisfied.
           def selectFiles(): DeltaScan =
             if (effectiveLimit.isPresent) {
-              snapshot.filesForScan(
-                effectiveLimit.getAsInt.toLong,
-                partitionFiltersForScan)
+              recordFrameProfile("Delta", "DeltaV2.filesForScan.limitAndFilters") {
+                snapshot.filesForScan(
+                  effectiveLimit.getAsInt.toLong,
+                  partitionFiltersForScan)
+              }
             } else {
-              snapshot.filesForScan(catalystFilters, keepNumRecords)
+              recordFrameProfile("Delta", "DeltaV2.filesForScan.filters") {
+                snapshot.filesForScan(catalystFilters, keepNumRecords)
+              }
             }
 
           // Select files inline on this path.
