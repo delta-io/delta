@@ -36,18 +36,9 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 class PrepareDeltaSharingScan(override val spark: SparkSession) extends PrepareDeltaScan(spark) {
 
   /**
-   * Only skip DataSourceV2 writes that target a Delta table.
-   *
-   * [[PrepareDeltaScan]] skips every V2 write because a Delta target is re-planned through a V1
-   * fallback, which runs this rule again inside the transaction. That reasoning is about the
-   * *sink*, not the source: when a Delta Sharing scan feeds a non-Delta V2 sink (e.g. Iceberg)
-   * nothing ever re-plans the query, so skipping here means the scan is never prepared at all.
-   * The [[DeltaSharingFileIndex]] then survives into planning instead of being replaced by a
-   * [[PreparedDeltaFileIndex]], and because the rule that injects the deletion vector filter only
-   * matches a `TahoeFileIndex`, rows marked deleted are silently returned. See delta-io/delta#6719.
-   *
-   * Delta targets are still skipped so we do not issue a second, redundant RPC to the sharing
-   * server for a scan the V1 fallback is about to prepare again.
+   * Only skip writes that target a Delta table, since those get planned again later through a
+   * V1 fallback. Writes to other tables (e.g. Iceberg) are not re-planned, so we still need to
+   * prepare the scan here, otherwise deleted rows won't be filtered out.
    */
   override protected def shouldSkipV2WritePlan(plan: LogicalPlan): Boolean = plan match {
     case w: V2WriteCommand =>

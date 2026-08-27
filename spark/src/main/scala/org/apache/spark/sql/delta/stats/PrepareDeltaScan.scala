@@ -186,14 +186,10 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
   }
 
   /**
-   * Whether `plan` is a DataSourceV2 write that this rule should leave untouched.
-   *
-   * A Delta V2 write is re-planned later through a V1 fallback, and only that later planning
-   * takes place within the transaction, so preparing its scans here would both duplicate work
-   * and happen outside the transaction.
-   *
-   * Subclasses that prepare scans which are never re-planned through a Delta V1 fallback must
-   * narrow this, otherwise their scans are never prepared at all when the query feeds a V2 sink.
+   * Whether `plan` is a DataSourceV2 write plan that this rule should skip. By default we skip
+   * all of them, since Delta writes get planned again later through a V1 fallback. Subclasses
+   * whose writes don't go through that fallback should override this so their scans still get
+   * prepared.
    */
   protected def shouldSkipV2WritePlan(plan: LogicalPlan): Boolean = {
     plan.isInstanceOf[V2WriteCommand]
