@@ -265,8 +265,26 @@ class DeltaSuite extends QueryTest
             .mode("overwrite")
             .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
             .save(tempDir.toString)
-        }.getMessage
-        assert(e1.contains("does not conform to partial table overwrite condition or constraint"))
+        }
+        if (enabled) {
+          checkError(
+            exception = e1,
+            condition = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
+            sqlState = Some("44000"),
+            parameters = Map(
+              "replaceWhere" -> "is_odd = true",
+              "invariantViolationMessage" -> "(?s).*"),
+            matchPVals = true)
+        } else {
+          checkError(
+            exception = e1,
+            condition = "DELTA_REPLACE_WHERE_MISMATCH.INVALID_PARTITIONS",
+            sqlState = Some("44000"),
+            parameters = Map(
+              "replaceWhere" -> "is_odd = true",
+              "badPartitions" -> "(?s).*=false"),
+            matchPVals = true)
+        }
 
         val e2 = intercept[AnalysisException] {
           Seq(true).toDF("is_odd")
@@ -307,14 +325,20 @@ class DeltaSuite extends QueryTest
             .mode("overwrite")
             .option(DeltaOptions.REPLACE_WHERE_OPTION, "value = 1")
             .save(tempDir.toString)
-        }.getMessage
+        }
         if (enabled) {
-          assert(e4.contains(
-            "Written data does not conform to partial table overwrite condition " +
-              "or constraint 'value = 1'"))
+          checkError(
+            exception = e4,
+            condition = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
+            sqlState = Some("44000"),
+            parameters = Map(
+              "replaceWhere" -> "value = 1",
+              "invariantViolationMessage" -> "(?s).*"),
+            matchPVals = true)
         } else {
-          assert(e4.contains("Predicate references non-partition column 'value'. Only the " +
-            "partition columns may be referenced: [is_odd]"))
+          assert(e4.getMessage.contains(
+            "Predicate references non-partition column 'value'. Only the " +
+              "partition columns may be referenced: [is_odd]"))
         }
 
         val e5 = intercept[AnalysisException] {
@@ -2250,8 +2274,14 @@ class DeltaSuite extends QueryTest
           .mode("overwrite")
           .saveAsTable(table)
       }
-      assert(e.getMessage.startsWith("[DELTA_REPLACE_WHERE_MISMATCH] " +
-        "Written data does not conform to partial table overwrite condition or constraint"))
+      checkError(
+        exception = e,
+        condition = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
+        sqlState = Some("44000"),
+        parameters = Map(
+          "replaceWhere" -> "a\\.b = 'a' AND `a\\.b` = 'a'",
+          "invariantViolationMessage" -> "(?s).*"),
+        matchPVals = true)
 
       Seq(("a", "b", "c"), ("d", "e", "f"))
         .toDF("a.b", "c.d", "ab")
