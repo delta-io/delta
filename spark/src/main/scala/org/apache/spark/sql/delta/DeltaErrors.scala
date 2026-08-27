@@ -2977,6 +2977,11 @@ trait DeltaErrorsBase
     )
   }
 
+  def conflictingMetadataDomainException(
+      domain: String): ConflictingMetadataDomainException = {
+    new ConflictingMetadataDomainException(Array(domain))
+  }
+
   def restoreMissedDataFilesError(missedFiles: Array[String], version: Long): Throwable =
     new IllegalArgumentException(
       s"""Not all files from version $version are available in file system.
@@ -4392,6 +4397,22 @@ class ConcurrentTransactionException(message: String)
         "into this table. Did you run multiple instances of the same streaming query" +
         " at the same time?",
       conflictingCommit))
+}
+
+/**
+ * Thrown when the current transaction adds a metadata domain that conflicts with a metadata domain
+ * added by a concurrent transaction. Subclasses
+ * [[io.delta.exceptions.ConcurrentTransactionException]] for backward compatibility, but reports
+ * its own error class.
+ */
+class ConflictingMetadataDomainException(messageParameters: Array[String] = Array.empty)
+  extends io.delta.exceptions.ConcurrentTransactionException(
+    DeltaThrowableHelper.getMessage("DELTA_CONFLICTING_METADATA_DOMAIN", messageParameters))
+    with DeltaThrowable {
+  override def getErrorClass: String = "DELTA_CONFLICTING_METADATA_DOMAIN"
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(
+      "DELTA_CONFLICTING_METADATA_DOMAIN", errorSubClass = null, messageParameters)
 }
 
 /** A helper class in building a helpful error message in case of metadata mismatches. */

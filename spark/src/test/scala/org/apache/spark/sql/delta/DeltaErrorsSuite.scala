@@ -2902,6 +2902,14 @@ trait DeltaErrorsSuiteBase
         "same streaming query at the same time?"))
     }
     {
+      val e = intercept[ConflictingMetadataDomainException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .conflictingMetadataDomainException("delta.liquid")
+      }
+      checkError(e, "DELTA_CONFLICTING_METADATA_DOMAIN", "2D521",
+        Map("domain" -> "delta.liquid"))
+    }
+    {
       val e = intercept[io.delta.exceptions.ConcurrentWriteException] {
         throw org.apache.spark.sql.delta.DeltaErrors.concurrentWriteException(None)
       }
