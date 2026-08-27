@@ -1924,7 +1924,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
           case other => other
         }
       }
-      val preCommitLatestAMTCheckpointOpt = amtCheckpointProviderOpt.map(_.checkpointAction)
+      val preCommitLatestAMTCheckpointOpt = snapshot.checkpointProvider match {
+        case amt: AMTCheckpointProvider => Some(amt.checkpointAction)
+        case _ => None
+      }
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.asScala.toVector,
@@ -2158,7 +2161,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
               toProtocol = p,
               isCreatingNewTable)
             DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
-              validateProtocolWrite(p)
+              deltaLog.protocolWrite(p)
             }
           case _ =>
         }
@@ -2171,7 +2174,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       // Validate protocol support, specifically writer features.
       DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
-        validateProtocolWrite(snapshot.protocol)
+        deltaLog.protocolWrite(snapshot.protocol)
       }
 
       allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions, op)
@@ -2553,7 +2556,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         isCreatingNewTable,
         operationNameOpt = Some(op.name))
       DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
-        validateProtocolWrite(p)
+        deltaLog.protocolWrite(p)
       }
     }
 
@@ -2652,8 +2655,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
-      newProtocol.foreach(validateProtocolWrite)
-      validateProtocolWrite(snapshot.protocol)
+      newProtocol.foreach(deltaLog.protocolWrite)
+      deltaLog.protocolWrite(snapshot.protocol)
     }
 
     finalActions = RowId.assignFreshRowIds(
@@ -2689,10 +2692,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
    */
   private def verifyAmtBackReferences(finalActions: Seq[Action]): Unit = {
     if (!DeltaUtils.isTesting) return
-    amtCheckpointProviderOpt match {
-      case Some(amt) =>
+    snapshot.checkpointProvider match {
+      case amt: AMTCheckpointProvider =>
         amt.verifyCommitBackReferences(spark, deltaLog, finalActions)
-      case None =>
+      case _ =>
         // Not an AMT-backed table: no file action may carry a back reference.
         finalActions.foreach {
           case a: AddFile if a.backReference.isDefined =>
@@ -3004,10 +3007,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
     executionObserver.beginPostCommit()
     val catalogTableForPostCommitSnapshot = catalogTable
-    val postCommitSnapshot = resolvePostCommitSnapshot(
+    val postCommitSnapshot = deltaLog.updateAfterCommit(
       attemptVersion,
       commitOpt,
       newChecksumOpt,
+      preCommitLogSegment,
       catalogTableForPostCommitSnapshot,
       amtCheckpointWrittenInCommitOpt = amtWriteResultOpt.map(_.checkpoint),
       isIdempotentRetry = isIdempotentRetry)
@@ -3043,7 +3047,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // Add to commit stats and consume the returned iterator.
     commitStatsComputer.addToCommitStats(actions.toIterator).foreach(_ => ())
     partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
-    collectAutoOptimizeStatsAndFinalize(actions, commitTableId)
+    collectAutoOptimizeStatsAndFinalize(actions, deltaLog.unsafeVolatileTableId)
     val commitSizeBytes: Long = jsonActions.map(_.length.toLong).sum
     commitStatsComputer.finalizeAndEmitCommitStats(
       spark,
@@ -3411,42 +3415,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /** Returns the version that the first attempt will try to commit at. */
   private[delta] def getFirstAttemptVersion: Long = readVersion + 1L
-
-  /**
-   * Validates that this client may write with the given protocol.
-   */
-  protected def validateProtocolWrite(protocol: Protocol): Unit =
-    deltaLog.protocolWrite(protocol)
-
-  /**
-   * Resolves the post-commit snapshot after a successful commit-file write. It resolves it and
-   * installs it as the DeltaLog's current snapshot.
-   */
-  protected def resolvePostCommitSnapshot(
-      committedVersion: Long,
-      commitOpt: Option[Commit],
-      newChecksumOpt: Option[VersionChecksum],
-      catalogTableOpt: Option[CatalogTable],
-      amtCheckpointWrittenInCommitOpt: Option[Checkpoint] = None,
-      isIdempotentRetry: Boolean = false): Snapshot =
-    deltaLog.updateAfterCommit(
-      committedVersion, commitOpt, newChecksumOpt, preCommitLogSegment, catalogTableOpt,
-      amtCheckpointWrittenInCommitOpt = amtCheckpointWrittenInCommitOpt,
-      isIdempotentRetry = isIdempotentRetry)
-
-  /**
-   * The table id used for auto-optimize commit stats. V1 uses `deltaLog.unsafeVolatileTableId`
-   */
-  protected def commitTableId: String = deltaLog.unsafeVolatileTableId
-
-  /**
-   * The read snapshot's [[AMTCheckpointProvider]], or None if the table is not AMT-backed.
-   */
-  protected def amtCheckpointProviderOpt: Option[AMTCheckpointProvider] =
-    snapshot.checkpointProvider match {
-      case amt: AMTCheckpointProvider => Some(amt)
-      case _ => None
-    }
 
   /** Returns the conflicting commit information */
   protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {
