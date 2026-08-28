@@ -34,7 +34,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  *   local test paths may not).
  * @param mstId the active MST transaction identity, if any. Two keys with different MST contexts
  *   are distinct even for the same table path. Always `None` in the OSS build, which has no MST
- *   concept; reserved for parity with the Databricks Runtime cache key shape.
+ *   concept; reserved for cross-build cache-key shape parity.
  * @param sessionInvariantFsOptions filesystem-prefixed options (`fs.*`, `dfs.*`) extracted from
  *   reader/writer options and catalog storage properties. These are the credential-bearing options
  *   that distinguish cache entries for the same path accessed with different credentials. Called
