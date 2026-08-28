@@ -126,7 +126,10 @@ trait SnapshotManagement { self: DeltaLog =>
     val files =
       filesOpt.map {
       _.flatMap {
-        case DeltaFile(f, fileVersion) =>
+        // Use BackfilledDeltaFile, not the permissive DeltaFile: a raw listing must not promote
+        // staged commits (`_staged_commits/N.<uuid>.json`) to commits. They are ratified by the
+        // commit coordinator (getCommits), and enter the log segment separately via the caller.
+        case BackfilledDeltaFile(f, fileVersion) =>
           Some((f, FileType.DELTA, fileVersion))
         case CompactedDeltaFile(f, startVersion, endVersion)
             if includeMinorCompactions && versionToLoad.forall(endVersion <= _) =>
