@@ -105,6 +105,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
   private long totalRows = 0L;
   // true iff every AddFile in the scan had numRecords in its stats JSON.
   private boolean rowCountKnown = false;
+  private org.apache.spark.sql.delta.Snapshot plannedSnapshot = null;
   private volatile boolean planned = false;
 
   // Runtime predicates applied after planning (using Set for order-independent comparison)
@@ -441,6 +442,9 @@ class DeltaV2Scan extends DeltaV2JavaLogging
    * size statistics.
    */
   private void materializeSelectedFiles(DeltaScan deltaScan, String tablePath) {
+    plannedSnapshot =
+        Objects.requireNonNull(
+            deltaScan.scannedSnapshot(), "deltaScan.scannedSnapshot returned null");
     rowCountKnown = arePlanStatsEnabled();
     final List<org.apache.spark.sql.delta.actions.AddFile> scanFiles =
         scala.jdk.javaapi.CollectionConverters.asJava(deltaScan.files());
@@ -555,6 +559,11 @@ class DeltaV2Scan extends DeltaV2JavaLogging
   private void ensurePlanned() {
     // Pass null to indicate no runtime predicate should be applied - just perform the scan planning
     ensurePlanned(null);
+  }
+
+  org.apache.spark.sql.delta.Snapshot plannedSnapshot() {
+    ensurePlanned();
+    return Objects.requireNonNull(plannedSnapshot, "plannedSnapshot is null after planning");
   }
 
   public StructType getDataSchema() {
