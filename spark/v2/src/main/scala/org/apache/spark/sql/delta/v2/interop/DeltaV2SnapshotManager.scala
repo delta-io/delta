@@ -16,21 +16,24 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
-import java.util.Optional
+import java.util.{Objects, Optional}
 
-import io.delta.kernel.{CommitRange, Snapshot}
+import io.delta.kernel.CommitRange
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.DeltaHistoryManager
+import io.delta.kernel.internal.SnapshotImpl
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
+
+import org.apache.spark.sql.delta.Snapshot
 
 import org.apache.spark.annotation.Experimental
 
 /**
  * Contract for managing Delta table snapshots in the DSv2 connector.
  *
- * Provides methods for loading, caching, and querying Delta table
- * snapshots. Implementations manage snapshot lifecycle including loading
- * from storage and maintaining any necessary caching.
+ * This connector exposes loaded state through the V1 snapshot facade so callers use the same
+ * metadata, protocol, schema, timestamp, column-mapping, and file-access surface as V1. Kernel
+ * execution details remain confined to the connector's execution seams.
  */
 @Experimental
 trait DeltaV2SnapshotManager {
@@ -89,4 +92,20 @@ trait DeltaV2SnapshotManager {
       engine: Engine,
       startVersion: Long,
       endVersion: Optional[java.lang.Long]): CommitRange
+}
+
+object DeltaV2SnapshotManager {
+
+  /**
+   * Wraps a Kernel snapshot in the V1 [[Snapshot]] facade returned by manager load APIs.
+   *
+   * @param kernelSnapshot the Kernel snapshot to wrap
+   * @param tablePath table path used in construction-error messages
+   * @return the V1 snapshot facade
+   */
+  def wrapKernelSnapshot(kernelSnapshot: SnapshotImpl, tablePath: String): Snapshot = {
+    Objects.requireNonNull(kernelSnapshot, "kernelSnapshot is null")
+    Objects.requireNonNull(tablePath, "tablePath is null")
+    new DeltaV2Snapshot(kernelSnapshot)
+  }
 }

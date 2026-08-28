@@ -580,16 +580,16 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.replaceWhereMismatchException("replaceWhereArgValue",
           new InvariantViolationException("Invariant violated."))
       }
-      checkError(e, "DELTA_REPLACE_WHERE_MISMATCH", "44000",
-        Map("replaceWhere" -> "replaceWhereArgValue", "message" -> "Invariant violated."))
+      checkError(e, "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION", "44000",
+        Map("replaceWhere" -> "replaceWhereArgValue",
+          "invariantViolationMessage" -> "Invariant violated."))
     }
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.replaceWhereMismatchException("replaceWhere", "badPartitions")
       }
-      checkError(e, "DELTA_REPLACE_WHERE_MISMATCH", "44000",
-        Map("replaceWhere" -> "replaceWhere",
-          "message" -> "Invalid data would be written to partitions badPartitions."))
+      checkError(e, "DELTA_REPLACE_WHERE_MISMATCH.INVALID_PARTITIONS", "44000",
+        Map("replaceWhere" -> "replaceWhere", "badPartitions" -> "badPartitions"))
     }
     {
       val e = intercept[DeltaIllegalStateException] {
@@ -1339,14 +1339,15 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.nonPartitionColumnAbsentException(false)
       }
-      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT", "KD005", Map("details" -> ""))
+      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT.ALL_PARTITION_COLUMNS", "KD005",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.nonPartitionColumnAbsentException(true)
       }
-      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT", "KD005",
-        Map("details" -> " Columns which are of NullType have been dropped."))
+      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT.NULL_TYPE_COLUMNS_DROPPED", "KD005",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -1620,10 +1621,19 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.invalidIdempotentWritesOptionsException("someReason")
+        throw DeltaErrors.invalidIdempotentWritesMissingWriteOptionsException()
       }
-      checkError(e, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616",
-        Map("reason" -> "someReason"))
+      checkError(e,
+        "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+        Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.invalidIdempotentWritesMissingSessionConfsException()
+      }
+      checkError(e,
+        "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS", "42616",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2890,6 +2900,14 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage.contains("This error occurs when multiple streaming queries are using " +
         "the same checkpoint to write into this table. Did you run multiple instances of the " +
         "same streaming query at the same time?"))
+    }
+    {
+      val e = intercept[ConflictingMetadataDomainException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .conflictingMetadataDomainException("delta.liquid")
+      }
+      checkError(e, "DELTA_CONFLICTING_METADATA_DOMAIN", "2D521",
+        Map("domain" -> "delta.liquid"))
     }
     {
       val e = intercept[io.delta.exceptions.ConcurrentWriteException] {

@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.commands.backfill
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaOperations, OptimisticTransaction, RowTrackingFeature}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaOperations, OptimisticTransaction, RowTrackingFeature}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
@@ -39,11 +39,11 @@ case class RowTrackingBackfillBatch(filesInBatch: Seq[AddFile]) extends Backfill
     val ignoreSuspension = DeltaUtils.isTesting && spark.conf.get(ignoreProperty).toBoolean
     val suspendRowTracking =
       DeltaConfigs.ROW_TRACKING_SUSPENDED.fromMetaData(metadata) && !ignoreSuspension
-    if (!isRowTrackingSupported || suspendRowTracking) {
-      throw new IllegalStateException(
-        """
-          |Cannot run backfill command if row tracking is not supported or
-          |row ID generation is suspended.""".stripMargin)
+    if (!isRowTrackingSupported) {
+      throw DeltaErrors.protocolChangedException(None)
+    }
+    if (suspendRowTracking) {
+      throw DeltaErrors.rowTrackingIllegalPropertyCombination()
     }
 
     val filesToCommit = filesInBatch.map(_.copy(dataChange = false))

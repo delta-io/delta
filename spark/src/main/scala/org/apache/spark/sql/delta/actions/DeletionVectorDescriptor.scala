@@ -22,8 +22,9 @@ import java.util.{Base64, UUID}
 
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.DeltaUDF
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{Codec, DeltaEncoder, JsonUtils}
+import org.apache.spark.sql.delta.util.{Codec, DeltaEncoder}
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
@@ -33,6 +34,7 @@ import org.apache.spark.sql.{Column, Encoder}
 import org.apache.spark.sql.functions.{concat, lit, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
+import org.apache.spark.util.Utils
 
 /** Information about a deletion vector attached to a file action. */
 case class DeletionVectorDescriptor(
@@ -45,7 +47,7 @@ case class DeletionVectorDescriptor(
     /**
      * Contains the actual data that allows accessing the DV.
      *
-     * Three options are currently supported:
+     * Four options are currently supported:
      * - `storageType="u"` format: `<random prefix - optional><base85 encoded uuid>`
      *                            The deletion vector is stored in a file with a path relative to
      *                            the data directory of this Delta Table, and the file name can be
@@ -57,6 +59,12 @@ case class DeletionVectorDescriptor(
      * - `storageType="p"` format: `<absolute path>`
      *                             The DV is stored in a file with an absolute path given by this
      *                             url. Special characters in this path must be escaped.
+     * - `storageType="r"` format: `<relative path>`
+     *                             The DV is stored in a file at this path, relative to the root of
+     *                             this Delta Table. Unlike `u`, the file name is arbitrary rather
+     *                             than derived from a UUID; unlike `p`, the path is neither
+     *                             absolute nor URL-encoded. Only permitted when the
+     *                             `adaptiveMetadata` table feature is enabled.
      */
     pathOrInlineDv: String,
     /**
@@ -80,9 +88,13 @@ case class DeletionVectorDescriptor(
 
   import DeletionVectorDescriptor._
 
+  /**
+   * The legacy unique id of the DV.
+   * Prefer [[uniqueId]] if possible. See more details in the [[uniqueId]] documentation.
+   */
   @JsonIgnore
   @transient
-  lazy val uniqueId: String = {
+  lazy val legacyUniqueId: String = {
     offset match {
       case Some(offset) => s"$uniqueFileId@$offset"
       case None => uniqueFileId
@@ -93,6 +105,21 @@ case class DeletionVectorDescriptor(
   @transient
   lazy val uniqueFileId: String = s"$storageType$pathOrInlineDv"
 
+  /**
+   * Unique identifier for this DV.
+   *
+   * When `useObjectIdentity` is false, this returns the legacy descriptor identity:
+   * `storageType + pathOrInlineDv + optional offset`. That identity is stable for one serialized
+   * descriptor, but it treats equivalent `u`, `r`, and in-table `p` descriptors as different.
+   *
+   * When `useObjectIdentity` is true, this returns a normalized object identity. That identity
+   * represents the physical DV object relative to the table root when possible, plus the offset, so
+   * equivalent `u`, `r`, and in-table `p` descriptors compare equal.
+   */
+  def uniqueId(tableRoot: Path, useObjectIdentity: Boolean): String = {
+    if (useObjectIdentity) normalizedTableRelativeObjectId(tableRoot) else legacyUniqueId
+  }
+
   @JsonIgnore
   protected[delta] def isOnDisk: Boolean = !isInline
 
@@ -100,7 +127,10 @@ case class DeletionVectorDescriptor(
   protected[delta] def isInline: Boolean = storageType == INLINE_DV_MARKER
 
   @JsonIgnore
-  protected[delta] def isRelative: Boolean = storageType == UUID_DV_MARKER
+  protected[delta] def isUuidRelative: Boolean = storageType == UUID_DV_MARKER
+
+  @JsonIgnore
+  protected[delta] def isUnencodedRelative: Boolean = storageType == RELATIVE_DV_MARKER
 
   @JsonIgnore
   protected[delta] def isAbsolute: Boolean = storageType == PATH_DV_MARKER
@@ -115,11 +145,12 @@ case class DeletionVectorDescriptor(
         val (randomPrefix, uuid) = getRandomPrefixAndUuid.get
         assembleDeletionVectorPath(tableLocation, uuid, randomPrefix)
       case PATH_DV_MARKER =>
-        // Since there is no need for legacy support for relative paths for DVs,
-        // relative DVs should *always* use the UUID variant.
         val parsedUri = new URI(pathOrInlineDv)
         assert(parsedUri.isAbsolute, "Relative URIs are not supported for DVs")
         new Path(parsedUri)
+      case RELATIVE_DV_MARKER =>
+        val path = new Path(pathOrInlineDv)
+        new Path(tableLocation, path)
       case _ => throw DeltaErrors.cannotReconstructPathFromURI(pathOrInlineDv)
     }
   }
@@ -133,7 +164,7 @@ case class DeletionVectorDescriptor(
    * If the DV path is outside the table directory, returns None.
    */
   def urlEncodedRelativePathIfExists(tablePath: Path): Option[String] = {
-    if (isRelative) {
+    if (isUuidRelative) {
       return Some(SparkPath.fromPath(absolutePath(new Path("."))).urlEncoded)
     }
 
@@ -149,7 +180,7 @@ case class DeletionVectorDescriptor(
   }
 
   /**
-   * Parse the prefix and UUID of a relative DV. Returns None if the DV is not relative.
+   * Parse the prefix and UUID of a u DV. Returns None if the DV is not of type u.
    */
   @JsonIgnore
   def getRandomPrefixAndUuid: Option[(String, UUID)] = storageType match {
@@ -162,6 +193,36 @@ case class DeletionVectorDescriptor(
     case _ =>
       None
   }
+
+  /**
+   * Computes a normalized object identity for this descriptor. Use this when the caller wants
+   * to identify the underlying DV object rather than this descriptor's storage encoding.
+   */
+  def normalizedTableRelativeObjectId(tableRoot: Path): String = {
+    storageType match {
+      case INLINE_DV_MARKER =>
+        formatIdentity(INLINE_DV_MARKER, pathOrInlineDv, offset)
+      case UUID_DV_MARKER =>
+        val (randomPrefix, uuid) = getRandomPrefixAndUuid.get
+        val fileName = assembleDeletionVectorFileName(uuid)
+        val relativePath = if (randomPrefix.isEmpty) fileName else s"$randomPrefix/$fileName"
+        formatIdentity(RELATIVE_DV_MARKER, relativePath, offset)
+      case RELATIVE_DV_MARKER =>
+        formatIdentity(RELATIVE_DV_MARKER, pathOrInlineDv, offset)
+      case PATH_DV_MARKER =>
+        val path = SparkPath.fromUrlString(pathOrInlineDv).toPath.toString
+        val relativePath = AMTUtils.relativizeLocation(tableRoot.toString, path)
+        if (AMTUtils.isAbsoluteLocation(relativePath)) {
+          formatIdentity(PATH_DV_MARKER, pathOrInlineDv, offset)
+        } else {
+          formatIdentity(RELATIVE_DV_MARKER, relativePath, offset)
+        }
+      case _ =>
+        throw new IllegalArgumentException(
+          s"Unsupported deletion vector storage type: $storageType")
+    }
+  }
+
   /**
    * Produce a copy of this DV, but using an absolute path.
    *
@@ -169,7 +230,7 @@ case class DeletionVectorDescriptor(
    */
   def copyWithAbsolutePath(tableLocation: Path): DeletionVectorDescriptor = {
     storageType match {
-      case UUID_DV_MARKER =>
+      case UUID_DV_MARKER | RELATIVE_DV_MARKER =>
         this.copy(
           storageType = PATH_DV_MARKER,
           pathOrInlineDv = urlEncodedPath(tableLocation))
@@ -183,13 +244,14 @@ case class DeletionVectorDescriptor(
    *
    * If the DV already has a relative path or is inline, then this is just a normal copy.
    */
-  def copyWithNewRelativePath(id: UUID, randomPrefix: String): DeletionVectorDescriptor = {
+  def copyWithNewUuidRelativePath(id: UUID, randomPrefix: String): DeletionVectorDescriptor = {
     storageType match {
       case PATH_DV_MARKER =>
         this.copy(storageType = UUID_DV_MARKER, pathOrInlineDv = encodeUUID(id, randomPrefix))
-      case UUID_DV_MARKER | INLINE_DV_MARKER => this.copy()
+      case UUID_DV_MARKER | RELATIVE_DV_MARKER | INLINE_DV_MARKER => this.copy()
     }
   }
+
 
   @JsonIgnore
   def inlineData: Array[Byte] = {
@@ -256,6 +318,17 @@ object DeletionVectorDescriptor {
   final val PATH_DV_MARKER: String = "p"
   final val INLINE_DV_MARKER: String = "i"
   final val UUID_DV_MARKER: String = "u"
+  final val RELATIVE_DV_MARKER: String = "r"
+
+  private def formatIdentity(
+      storageType: String,
+      pathOrInlineDv: String,
+      offset: Option[Int]): String = {
+    offset match {
+      case Some(offsetValue) => s"$storageType$pathOrInlineDv@$offsetValue"
+      case None => s"$storageType$pathOrInlineDv"
+    }
+  }
 
   private final val deletionVectorFileNameRegex =
     raw"${new Path(DELETION_VECTOR_FILE_NAME_CORE).toUri}_([^.]+)\.bin".r
@@ -268,7 +341,7 @@ object DeletionVectorDescriptor {
   implicit def encoder: Encoder[DeletionVectorDescriptor] = _encoder.get
 
   /** Utility method to create an on-disk [[DeletionVectorDescriptor]] */
-  def onDiskWithRelativePath(
+  def onDiskWithUuidRelativePath(
       id: UUID,
       randomPrefix: String = "",
       sizeInBytes: Int,
@@ -297,6 +370,30 @@ object DeletionVectorDescriptor {
       sizeInBytes = sizeInBytes,
       cardinality = cardinality,
       maxRowIndex = maxRowIndex)
+
+  /**
+   * Utility method to create a [[DeletionVectorDescriptor]] for an unencoded path relative to the
+   * table root. Callers are responsible for relativizing the path before invoking this method.
+   */
+  def createRelativePathDVDescriptor(
+      relativePath: String,
+      sizeInBytes: Int,
+      cardinality: Long,
+      offset: Option[Int] = None,
+      maxRowIndex: Option[Long] = None): DeletionVectorDescriptor = {
+    if (Utils.isTesting) {
+      require(!AMTUtils.isAbsoluteLocation(relativePath),
+        s"A '$RELATIVE_DV_MARKER' deletion vector must have a relative path, " +
+          s"but got: $relativePath")
+    }
+    DeletionVectorDescriptor(
+      storageType = RELATIVE_DV_MARKER,
+      pathOrInlineDv = relativePath,
+      offset = offset,
+      sizeInBytes = sizeInBytes,
+      cardinality = cardinality,
+      maxRowIndex = maxRowIndex)
+  }
 
   /** Utility method to create an inline [[DeletionVectorDescriptor]] */
   def inlineInLog(
@@ -348,10 +445,10 @@ object DeletionVectorDescriptor {
       _.urlEncodedRelativePathIfExists(tablePath))(deletionVectorCol)
 
   /**
-   * This produces the same output as [[DeletionVectorDescriptor.uniqueId]] but as a column
-   * expression, so it can be used directly in a Spark query.
+   * This produces the same output as [[DeletionVectorDescriptor.legacyUniqueId]] but as a
+   * column expression, so it can be used directly in a Spark query.
    */
-  def uniqueIdExpression(deletionVectorCol: Column): Column = {
+  def legacyUniqueIdExpression(deletionVectorCol: Column): Column = {
     when(deletionVectorCol("offset").isNotNull,
         concat(
           deletionVectorCol("storageType"),
@@ -361,6 +458,31 @@ object DeletionVectorDescriptor {
       .otherwise(concat(
         deletionVectorCol("storageType"),
         deletionVectorCol("pathOrInlineDv")))
+  }
+
+  /**
+   * Produces the same output as [[DeletionVectorDescriptor.uniqueId]] with object identity, but as
+   * a column expression, so it can be used directly in a Spark query.
+   */
+  def objectUniqueIdExpression(deletionVectorCol: Column, tableRoot: Path): Column = {
+    val objectUniqueId = DeltaUDF.stringFromDeletionVectorDescriptor(
+      _.uniqueId(tableRoot, useObjectIdentity = true))
+    when(deletionVectorCol.isNotNull, objectUniqueId(deletionVectorCol))
+  }
+
+  /**
+   * Produces the same output as [[DeletionVectorDescriptor.uniqueId]] but as a column expression,
+   * so it can be used directly in a Spark query.
+   */
+  def uniqueIdExpression(
+      deletionVectorCol: Column,
+      tableRoot: Path,
+      useObjectIdentity: Boolean): Column = {
+    if (useObjectIdentity) {
+      objectUniqueIdExpression(deletionVectorCol, tableRoot)
+    } else {
+      legacyUniqueIdExpression(deletionVectorCol)
+    }
   }
 
   /**

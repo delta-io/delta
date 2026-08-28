@@ -809,6 +809,7 @@ trait DeltaSQLInMemoryTestUtils
 trait DeltaDMLTestUtils
   extends DeltaSQLTestUtils
   with DeltaTestUtilsBase
+  with DeltaTableProvider
   with BeforeAndAfterEach
   with CDCTestMixin {
   self: SharedSparkSession =>
@@ -868,7 +869,7 @@ trait DeltaDMLTestUtils
   }
 
   protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
-    val dfw = df.write.format("delta").mode("append")
+    val dfw = df.write.format(writeFormat).mode("append")
     if (partitionBy.nonEmpty) {
       dfw.partitionBy(partitionBy: _*)
     }
