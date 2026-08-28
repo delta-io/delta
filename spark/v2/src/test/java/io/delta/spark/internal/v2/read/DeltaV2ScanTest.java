@@ -31,6 +31,7 @@ import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -565,6 +566,21 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     assertTrue(
         filteredSelectedFiles.stream().allMatch(file -> file.getPath().contains("city=hz")),
         "selected files should be pruned with runtime partition filters");
+  }
+
+  @Test
+  public void testPlannedSnapshotTriggersPlanningAndReturnsSameSnapshot() throws Exception {
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    assertFalse(getPlanned(scan), "build() should leave file planning lazy");
+
+    Snapshot plannedSnapshot = scan.plannedSnapshot();
+
+    assertTrue(getPlanned(scan), "plannedSnapshot() should trigger file planning");
+    assertSame(
+        plannedSnapshot,
+        scan.plannedSnapshot(),
+        "repeated plannedSnapshot() calls should return the same planned snapshot");
   }
 
   private static long getTotalBytes(DeltaV2Scan scan) throws Exception {

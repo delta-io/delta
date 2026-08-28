@@ -518,7 +518,7 @@ object CrossSparkVersions extends AutoPlugin {
    * Generates release steps for cross-Spark publishing.
    *
    * Returns a sequence of release steps that:
-   * 1. Publishes all modules WITHOUT Spark suffix (backward compatibility)
+   * 1. Publishes non-Flink modules WITHOUT Spark suffix (backward compatibility)
    * 2. Publishes Spark-dependent modules WITH Spark suffix for each non-master version
    *
    * For example, with Spark versions 4.0, 4.1, and 4.2 (default):
@@ -560,13 +560,13 @@ object CrossSparkVersions extends AutoPlugin {
       state
     }
 
-    // Step 1: Publish ALL modules WITHOUT Spark suffix (backward compatibility)
-    // Uses skipSparkSuffix=true to get artifact names like delta-spark_2.13
+    // Step 1: Publish non-Flink modules WITHOUT Spark suffix (backward compatibility).
+    // Flink is published separately for every supported version.
     val backwardCompatStep: ReleaseStep = { (state: State) =>
       runSbtSubprocess(
         state,
-        Seq("-DskipSparkSuffix=true", task),
-        "Publishing all modules without Spark suffix (backward compat)"
+        Seq("-DskipSparkSuffix=true", "-DskipFlinkPublish=true", task),
+        "Publishing non-Flink modules without Spark suffix (backward compat)"
       )
     }
 

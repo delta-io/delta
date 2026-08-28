@@ -16,15 +16,12 @@
 
 package org.apache.spark.sql.delta.amt
 
-import java.util.UUID
-
-import scala.util.Try
-
 import org.apache.spark.sql.delta.DeltaColumnMapping
-import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor}
-import org.apache.spark.sql.delta.stats.DeltaStatistics
+import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.core.JsonParser
+import com.fasterxml.jackson.databind.{DeserializationContext, JsonDeserializer}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -67,7 +64,7 @@ case class AMTSingleAction(
     sort_order_id: Option[Int],                 // ID: 140, optional (only when content_type=0).
     record_count: Long,                         // ID: 103, required.
     file_size_in_bytes: Long,                   // ID: 104, required.
-    content_stats: Option[ContentStats],        // ID: 146, optional.
+    content_stats: Option[String],              // ID: 146, optional.
     manifest_info: Option[ManifestInfo],        // ID: 150, required for DATA_MANIFEST.
     key_metadata: Option[Array[Byte]],          // ID: 131, optional.
     split_offsets: Option[Seq[Long]]            // ID: 132, optional.
@@ -237,10 +234,12 @@ object AMTSingleAction {
     required(505L, "existing_files_count"),
     required(506L, "deleted_files_count"),
     required(520L, "replaced_files_count"),
+    required(524L, "modified_files_count"),
     required(512L, "added_rows_count"),
     required(513L, "existing_rows_count"),
     required(514L, "deleted_rows_count"),
     required(521L, "replaced_rows_count"),
+    required(525L, "modified_rows_count"),
     required(516L, "min_sequence_number"),
     optional(522L, "dv"),
     optional(523L, "dv_cardinality"))
@@ -360,15 +359,21 @@ object AMTSingleAction {
 
   /**
    * The [[AMTSingleAction]] schema as written to disk, which differs from the encoder's in-memory
-   * schema in four ways: every mapped field carries its Iceberg field id, required/optional is
-   * driven by the field spec rather than the encoder, `partition` holds the table's typed partition
-   * struct instead of a string map, and `partition` is absent entirely for an unpartitioned table.
+   * schema: every mapped field carries its Iceberg field id, required/optional is driven by the
+   * field spec rather than the encoder, and the two per-table fields take their table-dependent
+   * shape -- `partition` holds the typed partition struct (absent entirely for an unpartitioned
+   * table), and `content_stats` holds the typed per-column statistics struct.
    */
-  def persistedSchema(partitionSchema: StructType): StructType =
+  def persistedSchema(metadata: Metadata, protocol: Protocol): StructType =
     StructType(staticStampedSchema.flatMap {
       case field if field.name == "partition" =>
-        if (partitionSchema.isEmpty) None
-        else Some(field.copy(dataType = AMTPartitionValues.persistedSchema(partitionSchema)))
+        if (metadata.partitionSchema.isEmpty) None
+        else Some(field.copy(
+          dataType = AMTPartitionValues.persistedSchema(metadata.partitionSchema)))
+      case field if field.name == "content_stats" =>
+        val contentStatsSchema = AMTContentStats.persistedSchema(metadata, protocol)
+        if (contentStatsSchema.isEmpty) None
+        else Some(field.copy(dataType = contentStatsSchema))
       case field => Some(field)
     })
 }
@@ -418,7 +423,7 @@ case class DataEntry(
     deletion_vector: Option[DeletionVector] = None,
     spec_id: Option[Int] = None,
     sort_order_id: Option[Int] = None,
-    content_stats: Option[ContentStats] = None,
+    content_stats: Option[String] = None,
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
     format_version: Int = AMTSingleAction.FormatVersionV4)
@@ -445,9 +450,7 @@ case class DataEntry(
 
   def toAddFile(tableRoot: Path): AddFile = {
     val dv = deletion_vector.map(DeletionVector.toDescriptor(_, tableRoot)).orNull
-    // `record_count` (Iceberg field 103) and the Delta `numRecords` statistic are both the physical
-    // row count (total records in the file, including DV-deleted rows), so store it directly.
-    val stats = s"""{"${DeltaStatistics.NUM_RECORDS}":$record_count}"""
+    val stats = AMTContentStats.toStatsJson(content_stats, record_count)
     AddFile(
       path = location,
       partitionValues = partition.getOrElse(Map.empty),
@@ -484,8 +487,19 @@ object DataEntry {
       deletion_vector =
         Option(add.deletionVector).map(DeletionVector.fromDescriptor(_, tableRoot)),
       spec_id = passthrough.flatMap(_.spec_id),
-      content_stats = None)
+      sort_order_id = passthrough.flatMap(_.sort_order_id),
+      key_metadata = passthrough.flatMap(_.key_metadata),
+      split_offsets = passthrough.flatMap(_.split_offsets),
+      content_stats = AMTContentStats.fromStatsJson(add.stats))
   }
+}
+
+/**
+ * Deserializes split_offsets from commit-log JSON as a Seq[Long].
+ */
+private[amt] class AMTSplitOffsetsDeserializer extends JsonDeserializer[Seq[Long]] {
+  override def deserialize(p: JsonParser, ctxt: DeserializationContext): Seq[Long] =
+    p.readValueAs(classOf[Array[Long]]).toSeq
 }
 
 /**
@@ -493,7 +507,32 @@ object DataEntry {
  */
 case class AMTPassthrough(
     @JsonDeserialize(contentAs = classOf[java.lang.Integer])
-    spec_id: Option[Int] = None)
+    spec_id: Option[Int] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Integer])
+    sort_order_id: Option[Int] = None,
+    key_metadata: Option[Array[Byte]] = None,
+    @JsonDeserialize(contentUsing = classOf[AMTSplitOffsetsDeserializer])
+    split_offsets: Option[Seq[Long]] = None) {
+
+  // override equals and hashCode to compare by content for some fields.
+  override def equals(obj: Any): Boolean = obj match {
+    case that: AMTPassthrough =>
+      spec_id == that.spec_id &&
+        sort_order_id == that.sort_order_id &&
+        split_offsets == that.split_offsets &&
+        ((key_metadata, that.key_metadata) match {
+          case (Some(a), Some(b)) => java.util.Arrays.equals(a, b)
+          case (None, None) => true
+          case _ => false
+        })
+    case _ => false
+  }
+
+  override def hashCode(): Int = {
+    val keyMetadataHash = key_metadata.map(b => java.util.Arrays.hashCode(b)).getOrElse(0)
+    (spec_id, sort_order_id, keyMetadataHash, split_offsets).hashCode()
+  }
+}
 
 object AMTPassthrough {
   /** Name of the `amtPassthrough` field on the AddFile schema. */
@@ -506,7 +545,13 @@ object AMTPassthrough {
   /**
    * Positions of the `amtPassthrough` struct within an [[InternalRow]].
    */
-  case class RowIndices(structIndex: Int, numFields: Int, specId: Int)
+  case class RowIndices(
+      structIndex: Int,
+      numFields: Int,
+      specId: Int,
+      sortOrderId: Int,
+      keyMetadata: Int,
+      splitOffsets: Int)
 
   object RowIndices {
     /**
@@ -519,7 +564,10 @@ object AMTPassthrough {
         RowIndices(
           structIndex = structIndex,
           numFields = passthroughSchema.fields.length,
-          specId = passthroughSchema.fieldIndex("spec_id"))
+          specId = passthroughSchema.fieldIndex("spec_id"),
+          sortOrderId = passthroughSchema.fieldIndex("sort_order_id"),
+          keyMetadata = passthroughSchema.fieldIndex("key_metadata"),
+          splitOffsets = passthroughSchema.fieldIndex("split_offsets"))
       }
   }
 
@@ -534,7 +582,16 @@ object AMTPassthrough {
       val struct = row.getStruct(indices.structIndex, indices.numFields)
       Some(AMTPassthrough(
         spec_id =
-          if (struct.isNullAt(indices.specId)) None else Some(struct.getInt(indices.specId))))
+          if (struct.isNullAt(indices.specId)) None else Some(struct.getInt(indices.specId)),
+        sort_order_id =
+          if (struct.isNullAt(indices.sortOrderId)) None
+          else Some(struct.getInt(indices.sortOrderId)),
+        key_metadata =
+          if (struct.isNullAt(indices.keyMetadata)) None
+          else Some(struct.getBinary(indices.keyMetadata)),
+        split_offsets =
+          if (struct.isNullAt(indices.splitOffsets)) None
+          else Some(struct.getArray(indices.splitOffsets).toLongArray().toSeq)))
     }
   }
 
@@ -548,7 +605,11 @@ object AMTPassthrough {
         entry.format_version == AMTSingleAction.FormatVersionV4,
       s"amtPassthrough only supports parquet/v4. got " +
         s"${entry.file_format}/${entry.format_version}.")
-    val passthrough = AMTPassthrough(spec_id = entry.spec_id)
+    val passthrough = AMTPassthrough(
+      spec_id = entry.spec_id,
+      sort_order_id = entry.sort_order_id,
+      key_metadata = entry.key_metadata,
+      split_offsets = entry.split_offsets)
     if (passthrough == AMTPassthrough()) None else Some(passthrough)
   }
 }
@@ -580,7 +641,7 @@ case class DataManifestEntry(
     manifest_info: ManifestInfo,
     partition: Option[Map[String, String]] = None,
     spec_id: Option[Int] = None,
-    content_stats: Option[ContentStats] = None,
+    content_stats: Option[String] = None,
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
     format_version: Int = AMTSingleAction.FormatVersionV4)
@@ -703,7 +764,6 @@ case class DeletionVector(
     cardinality: Long)        // ID: 156, required.
 
 object DeletionVector {
-
   /** Maps a Delta on-disk [[DeletionVectorDescriptor]] onto the AMT sub-struct; rejects inline. */
   def fromDescriptor(dv: DeletionVectorDescriptor, tableRoot: Path): DeletionVector = {
     require(dv.isOnDisk,
@@ -727,11 +787,20 @@ object DeletionVector {
     // AMT stored paths are unencoded.
     val absolutePath = DeletionVectorStore.unescapedStringToPath(dv.location)
     require(absolutePath.isAbsolute)
-    DeletionVectorDescriptor.onDiskWithAbsolutePath(
-      path = DeletionVectorStore.pathToEscapedString(absolutePath),
-      sizeInBytes = rawSize,
-      cardinality = dv.cardinality,
-      offset = Some(dv.offset.toInt))
+    val relativePath = AMTUtils.relativizeLocation(tableRoot.toString, absolutePath.toString)
+    if (AMTUtils.isAbsoluteLocation(relativePath)) {
+      DeletionVectorDescriptor.onDiskWithAbsolutePath(
+        path = DeletionVectorStore.pathToEscapedString(absolutePath),
+        sizeInBytes = rawSize,
+        cardinality = dv.cardinality,
+        offset = Some(dv.offset.toInt))
+    } else {
+      DeletionVectorDescriptor.createRelativePathDVDescriptor(
+        relativePath = relativePath,
+        sizeInBytes = rawSize,
+        cardinality = dv.cardinality,
+        offset = Some(dv.offset.toInt))
+    }
   }
 }
 
@@ -748,10 +817,12 @@ object DeletionVector {
  * @param existing_files_count Count of EXISTING file entries.
  * @param deleted_files_count Count of DELETED file entries.
  * @param replaced_files_count Count of REPLACED file entries.
+ * @param modified_files_count Count of MODIFIED file entries.
  * @param added_rows_count Rows across ADDED files.
  * @param existing_rows_count Rows across EXISTING files.
  * @param deleted_rows_count Rows across DELETED files.
  * @param replaced_rows_count Rows across REPLACED files.
+ * @param modified_rows_count Rows across MODIFIED files.
  * @param min_sequence_number Minimum data sequence number across the manifest's entries.
  * @param dv Inline manifest deletion-vector bitmap over leaf row positions.
  * @param dv_cardinality Number of positions the inline manifest DV marks.
@@ -761,26 +832,19 @@ case class ManifestInfo(
     existing_files_count: Int,        // ID: 505, required.
     deleted_files_count: Int,         // ID: 506, required.
     replaced_files_count: Int,        // ID: 520, required.
+    modified_files_count: Int,        // ID: 524, required.
     added_rows_count: Long,           // ID: 512, required.
     existing_rows_count: Long,        // ID: 513, required.
     deleted_rows_count: Long,         // ID: 514, required.
     replaced_rows_count: Long,        // ID: 521, required.
+    modified_rows_count: Long,        // ID: 525, required.
     min_sequence_number: Long,        // ID: 516, required.
     dv: Option[Array[Byte]],          // ID: 522, optional (inline manifest DV bitmap).
-    dv_cardinality: Option[Long])     // ID: 523, optional.
+    dv_cardinality: Option[Long]) {   // ID: 523, optional.
 
-/**
- * Column-level statistics carrier. Iceberg V4 leaves the inner shape
- * up to the caller (it depends on the table schema). A future PR introduces
- * the Delta-stats mapping.
- *
- * The single nullable `raw_stats` field is deliberate: an empty case class encodes to an
- * empty Parquet group, which the Parquet data source rejects
- * (`EMPTY_SCHEMA_NOT_SUPPORTED_FOR_DATASOURCE`). One nullable column keeps
- * `AMTSingleAction` Parquet-writable without committing to the final stats shape; M1
- * writers leave it `None`.
- *
- *
- * @param raw_stats Column-stats payload; M1 writers leave it None.
- */
-case class ContentStats(raw_stats: Option[Array[Byte]] = None)
+  /** Live (non-tombstone) file entries: ADDED, EXISTING and MODIFIED are all live. */
+  def liveFilesCount: Int = added_files_count + existing_files_count + modified_files_count
+
+  /** Tombstone file entries: DELETED and REPLACED. */
+  def tombstoneFilesCount: Int = deleted_files_count + replaced_files_count
+}

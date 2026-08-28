@@ -23,7 +23,6 @@ import com.google.common.collect.ImmutableSet;
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Scan;
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
@@ -75,6 +74,7 @@ import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaStartingVersion;
 import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.TypeWidening;
@@ -87,6 +87,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.functions;
@@ -273,7 +274,7 @@ class DeltaV2MicroBatchStream
     this.sqlConf = SQLConf.get();
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
 
-    this.snapshotAtSourceInit = (SnapshotImpl) snapshotAtSourceInit;
+    this.snapshotAtSourceInit = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotAtSourceInit);
     this.tableId = this.snapshotAtSourceInit.getMetadata().getId();
 
     // The effective snapshot for reading, mirroring v1's readSnapshotDescriptor. When schema
@@ -809,7 +810,7 @@ class DeltaV2MicroBatchStream
       if (startingVersion instanceof StartingVersionLatest$) {
         Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
         // "latest": start reading from the next commit
-        cachedStartingVersion = Optional.of(latestSnapshot.getVersion() + 1);
+        cachedStartingVersion = Optional.of(latestSnapshot.version() + 1);
         return cachedStartingVersion;
       } else if (startingVersion instanceof StartingVersion) {
         long version = ((StartingVersion) startingVersion).version();
@@ -865,7 +866,7 @@ class DeltaV2MicroBatchStream
             /* canReturnLastCommit= */ true,
             /* mustBeRecreatable= */ false,
             /* canReturnEarliestCommit= */ true);
-    long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+    long latestVersion = snapshotManager.loadLatestSnapshot().version();
     long startingVersion =
         DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp(
             /* timeZone= */ spark.sessionState().conf().sessionLocalTimeZone(),
@@ -1130,7 +1131,9 @@ class DeltaV2MicroBatchStream
       startSnapshot = snapshotAtSourceInit;
     } else {
       try {
-        startSnapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(startVersion);
+        startSnapshot =
+            DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
+                snapshotManager.loadSnapshotAt(startVersion));
       } catch (io.delta.kernel.exceptions.KernelException e) {
         // startVersion may not yet exist (e.g. startingVersion=latest resolves to latest+1).
         // TODO(#6745): narrow this catch once kernel exposes a specific exception subclass
@@ -1192,7 +1195,7 @@ class DeltaV2MicroBatchStream
         // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
         // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
         // TODO(#5318): kernel should ideally relax this constraint.
-        endVersionOpt = Optional.of(snapshotManager.loadLatestSnapshot().getVersion());
+        endVersionOpt = Optional.of(snapshotManager.loadLatestSnapshot().version());
       }
 
       // After capping, check if startVersion is beyond the endVersion.
@@ -1205,7 +1208,7 @@ class DeltaV2MicroBatchStream
       // When endOffset is empty (offset discovery), check if startVersion exceeds the current
       // latest version. We must load the current latest (not snapshotAtSourceInit) because new
       // commits may have arrived since stream initialization.
-      long currentLatestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+      long currentLatestVersion = snapshotManager.loadLatestSnapshot().version();
       if (startVersion > currentLatestVersion) {
         return Utils.toCloseableIterator(Collections.emptyIterator());
       }
@@ -1698,7 +1701,9 @@ class DeltaV2MicroBatchStream
     SnapshotImpl startVersionSnapshot = null;
     Exception err = null;
     try {
-      startVersionSnapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(batchStartVersion);
+      startVersionSnapshot =
+          DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
+              snapshotManager.loadSnapshotAt(batchStartVersion));
     } catch (Exception e) {
       err = e;
     }
@@ -1870,7 +1875,8 @@ class DeltaV2MicroBatchStream
   private DataFrameSnapshotCache buildDataFrameSnapshotCache(long version) {
     // May differ from snapshotAtSourceInit on checkpoint restart. loadSnapshotAt is
     // metadata-only on driver; log replay runs on executors via ScanFileRDD.
-    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
+    SnapshotImpl snapshot =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(version));
     SerializableReadOnlySnapshot serSnapshot =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
 
@@ -1951,7 +1957,8 @@ class DeltaV2MicroBatchStream
 
   /** Loads snapshot files at the specified version. */
   private InitialSnapshotCache loadAndValidateSnapshot(long version) {
-    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
+    SnapshotImpl snapshot =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(version));
     // If schema tracking is already active and the initial snapshot has advanced since the tracked
     // read snapshot, replace the tracked metadata/protocol before reading snapshot files.
     if (metadataEvolutionHandler.shouldTrackMetadataChange()

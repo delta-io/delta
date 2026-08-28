@@ -1264,9 +1264,8 @@ private[delta] class ConflictChecker(
         case (domain, _) if RowTrackingMetadataDomain.isSameDomain(domain) => domain
         case (_, Some(_)) =>
           // Any conflict not specifically handled by a previous case must fail the transaction.
-          throw new io.delta.exceptions.ConcurrentTransactionException(
-            s"A conflicting metadata domain ${domainMetadataFromCurrentTransaction.domain} is " +
-              "added.")
+          throw DeltaErrors.conflictingMetadataDomainException(
+            domainMetadataFromCurrentTransaction.domain)
       }
 
     val mergedDomainMetadata = mutable.Buffer.empty[DomainMetadata]
@@ -1624,7 +1623,7 @@ private[delta] object ConflictChecker extends DeltaLogging {
     actions.map { action =>
       action match {
         case add: AddFile =>
-          val dvId = add.getDeletionVectorUniqueId
+          val dvId = add.getLegacyDeletionVectorUniqueId
           addPaths.put(add.path, dvId).foreach { existingDVId =>
             failDuplicate("add", add.path, dvId, existingDVId)
           }
@@ -1635,7 +1634,7 @@ private[delta] object ConflictChecker extends DeltaLogging {
             }
           }
         case remove: RemoveFile =>
-          val dvId = remove.getDeletionVectorUniqueId
+          val dvId = remove.getLegacyDeletionVectorUniqueId
           removePaths.put(remove.path, dvId).foreach { existingDVId =>
             failDuplicate("remove", remove.path, dvId, existingDVId)
           }

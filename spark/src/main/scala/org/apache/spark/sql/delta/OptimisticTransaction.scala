@@ -1093,7 +1093,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
    */
   private def enableAdaptiveMetadataDependentFeatures(metadata: Metadata): Metadata = {
     val adaptiveMetadataEnabled =
-      protocol.isFeatureSupported(AdaptiveMetadataTableFeature) ||
+      AMTUtils.amtEnabled(metadata, protocol) ||
         TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
           metadata.configuration, AdaptiveMetadataTableFeature)
     if (!adaptiveMetadataEnabled) {
@@ -1101,7 +1101,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     val existingTableHasAdaptiveMetadata =
-      snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+      AMTUtils.amtEnabled(snapshot)
     if (!isCreatingNewTable && !existingTableHasAdaptiveMetadata) {
       throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(AdaptiveMetadataTableFeature.name)
     }
@@ -1906,6 +1906,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         readVersion = Some(readVersion).filter(_ >= 0),
         isolationLevel = Option(isolationLevelToUse.toString),
         isBlindAppend = Some(isBlindAppend),
+        dataChange = Some(CommitInfo.dataChangeFromActions(preparedActions)),
         operationMetrics = getOperationMetrics(op),
         userMetadata = getUserMetadata(op),
         tags = if (allTags.nonEmpty) Some(allTags) else None,
@@ -2083,7 +2084,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       newProtocolOpt: Option[Protocol],
       op: DeltaOperations.Operation,
       context: Map[String, String],
-      metrics: Map[String, String]
+      metrics: Map[String, String],
+      dataChange: Option[Boolean]
   ): (Long, Snapshot) = recordDeltaOperation(deltaLog, "delta.commit.large") {
     assert(committed.isEmpty, "Transaction already committed.")
     commitStartNano = System.nanoTime()
@@ -2128,7 +2130,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         readVersion = Some(readVersion),
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
-        Some(metrics),
+        dataChange = dataChange,
+        operationMetrics = Some(metrics),
         userMetadata = getUserMetadata(op),
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId),
@@ -2461,6 +2464,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
     logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, attemptVersion)} to " +
       log"${MDC(DeltaLogKeys.PATH, logPath)}. Wrote " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
+
+    // If the table has AMT enabled, do not emit a classic checkpoint.
+    if (AMTUtils.amtEnabled(currentSnapshot)) {
+      return currentSnapshot
+    }
 
     deltaLog.checkpoint(currentSnapshot, catalogTable)
     currentSnapshot
@@ -3005,11 +3013,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       newChecksumOpt,
       preCommitLogSegment,
       catalogTableForPostCommitSnapshot,
-      amtCheckpointOpt = amtWriteResultOpt.map(_.checkpoint),
+      amtCheckpointWrittenInCommitOpt = amtWriteResultOpt.map(_.checkpoint),
       isIdempotentRetry = isIdempotentRetry)
     val postCommitReconstructionTime = System.nanoTime()
     maintenanceOperation = if (
-        !postCommitSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+        !AMTUtils.amtEnabled(postCommitSnapshot)) {
       MaintenanceOperation(
         shouldCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot))
     } else if (amtWriteResultOpt.isEmpty) {

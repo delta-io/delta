@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.flink.table.CatalogManagedTable;
 import io.delta.flink.table.DataColumnVectorView;
+import io.delta.flink.table.SchemaUpdateTestUtils;
 import io.delta.flink.table.UnityCatalog;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.FilteredColumnarBatch;
@@ -35,6 +36,7 @@ import java.net.URI;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.IntStream;
 import org.apache.spark.sql.Dataset;
@@ -162,5 +164,31 @@ public class CatalogManagedTableIntTest extends IntTestBase {
     Dataset<org.apache.spark.sql.Row> count =
         spark.sql(String.format("SELECT COUNT(1) FROM %s", TEST_NEW_TABLE_NAME));
     assertCount(100, count);
+  }
+
+  @IntTest
+  void testUpdateSchema() throws Exception {
+    spark.sql(
+        String.format(
+            "ALTER TABLE %s SET TBLPROPERTIES ('delta.columnMapping.mode'='name')",
+            TEST_TABLE_NAME));
+    StructType targetSchema = SCHEMA_WITH_ALL_TYPES.add("flink_added_column", StringType.STRING);
+    UnityCatalog catalog = new UnityCatalog("main", catalogEndpoint, catalogToken);
+    try (CatalogManagedTable table =
+        new CatalogManagedTable(
+            catalog, TEST_TABLE_NAME, Collections.emptyMap(), catalogEndpoint, catalogToken)) {
+      table.open();
+      SchemaUpdateTestUtils.updateSchema(table, targetSchema);
+
+      assertEquals(targetSchema.fieldNames(), table.getSchema().fieldNames());
+      assertEquals(
+          "flink_added_column",
+          Objects.requireNonNull(catalog.getTableDetail(TEST_TABLE_NAME).getColumns())
+              .get(targetSchema.length() - 1)
+              .getName());
+    }
+
+    spark.sql(String.format("REFRESH TABLE %s", TEST_TABLE_NAME));
+    assertEquals(targetSchema.fieldNames(), List.of(spark.table(TEST_TABLE_NAME).columns()));
   }
 }

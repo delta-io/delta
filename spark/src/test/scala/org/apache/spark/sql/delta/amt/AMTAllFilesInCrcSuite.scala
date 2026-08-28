@@ -65,7 +65,7 @@ class AMTAllFilesInCrcSuite extends AMTCheckpointTestBase {
         createAMTTable("amt_crc_leaves", checkpointInterval = Int.MaxValue)
         val deltaLog = deltaLogForName("amt_crc_leaves")
         commitCheckpoint(deltaLog, incremental = false) // bootstrap full checkpoint
-        appendRowsAsSeparateFiles("amt_crc_leaves", numRows = leafPackedFiles)
+        appendRowsAsSeparateFiles("amt_crc_leaves", numFiles = leafPackedFiles)
         commitCheckpoint(deltaLog, incremental = false)
         val snapshot = deltaLog.update()
         val provider = amtProvider(snapshot).getOrElse(fail("table must be AMT-backed."))
@@ -109,7 +109,7 @@ class AMTAllFilesInCrcSuite extends AMTCheckpointTestBase {
         val deltaLog = deltaLogForName("amt_crc_shrink")
         commitCheckpoint(deltaLog, incremental = false) // bootstrap full checkpoint
 
-        appendRowsAsSeparateFiles("amt_crc_shrink", numRows = leafPackedFiles)
+        appendRowsAsSeparateFiles("amt_crc_shrink", numFiles = leafPackedFiles)
         commitCheckpoint(deltaLog, incremental = false)
         val snapshotBackedByMultiLeafAMT = deltaLog.update()
         assert(amtProvider(snapshotBackedByMultiLeafAMT).exists(_.leaves.size >= 2),

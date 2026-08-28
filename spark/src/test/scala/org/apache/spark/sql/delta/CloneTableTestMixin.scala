@@ -106,8 +106,9 @@ trait CloneTableTestMixin extends DeltaColumnMappingTestUtils
   protected def uniqueFileActionGroupBy(action: FileAction): String = {
     val filePath = action.pathAsUri.toString
     val dvId = action match {
-      case add: AddFile => Option(add.deletionVector).map(_.uniqueId).getOrElse("")
-      case remove: RemoveFile => Option(remove.deletionVector).map(_.uniqueId).getOrElse("")
+      case add: AddFile => Option(add.deletionVector).map(_.legacyUniqueId).getOrElse("")
+      case remove: RemoveFile =>
+        Option(remove.deletionVector).map(_.legacyUniqueId).getOrElse("")
       case _ => ""
     }
     filePath + dvId

@@ -992,7 +992,12 @@ class DummySnapshotWithAllFilesSupport(
   override def allFiles: Dataset[AddFile] = {
     SparkSession.getActiveSession.map { spark =>
       import org.apache.spark.sql.delta.implicits._
-      val replay = new InMemoryLogReplay(None, None)
+      val replay = new InMemoryLogReplay(
+        minFileRetentionTimestamp = None,
+        minSetTransactionRetentionTimestamp = None,
+        tableRoot = deltaLog.dataPath,
+        useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
+          metadata, protocol, spark))
       val baseVersion = version - 1
       if (baseVersion < 0) { // No prior commit exists
         replay.append(0, txnInfo.finalActionsToCommit.iterator)

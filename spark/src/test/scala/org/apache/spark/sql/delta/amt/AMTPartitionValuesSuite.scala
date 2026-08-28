@@ -131,13 +131,14 @@ class AMTPartitionValuesSuite extends AMTCheckpointTestBase {
   }
 
   /**
-   * The physical-name partition-value maps `forRead` reconstructs from `leaves`' DATA entries.
+   * The physical-name partition-value maps `forRead` reconstructs from the manifest tree's DATA
+   * entries.
    */
   private def reconstructPartitionValues(
-      leaves: Seq[String],
+      manifests: Seq[String],
       partitionSchema: StructType): Set[Map[String, String]] =
     allowReadWithinDeltaLog {
-      val entries = spark.read.parquet(leaves: _*)
+      val entries = spark.read.parquet(manifests: _*)
         .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
       AMTPartitionValues.forRead(entries, partitionSchema)
         .select(col("partition"))
@@ -147,15 +148,16 @@ class AMTPartitionValuesSuite extends AMTCheckpointTestBase {
     }
 
   test("forRead reproduces the partition values the delta log holds, for every type") {
-    val numFiles = 4
-    withAllPartitionTypesTable(
-        "amt_partition_roundtrip", numFiles = numFiles, maxEntriesPerLeaf = 2) { deltaLog =>
+    withAllTypesTable("amt_partition_roundtrip", numFiles = leafPackedFiles) { deltaLog =>
       commitCheckpoint(deltaLog, incremental = false)
       val snapshot = deltaLog.update()
       val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
       val partitionSchema = snapshot.metadata.partitionSchema
-      val leaves = provider.liveLeafManifestAbsolutePaths.map(_.toString)
-      assert(leaves.nonEmpty, "Expected at least one leaf manifest.")
+      // A full rewrite can hash every file into one Spark partition. In that valid representation,
+      // the sole leaf is promoted to the root and there are no leaf pointers to read.
+      val manifests = provider.topLevelFiles.map(_.getPath.toString) ++
+        provider.liveLeafManifestAbsolutePaths.map(_.toString)
+      assert(manifests.nonEmpty, "Expected at least a root manifest.")
 
       // Read the commit json directly rather than going through the snapshot: an AMT snapshot
       // reconstructs its AddFiles through `forRead`, so comparing against it would compare
@@ -170,9 +172,10 @@ class AMTPartitionValuesSuite extends AMTCheckpointTestBase {
         .collect()
         .map(_.getMap[String, String](0).toMap)
         .toSet
-      assert(logged.size == numFiles, s"Expected one logged add per file, got ${logged.size}.")
+      assert(logged.size == leafPackedFiles,
+        s"Expected one logged add per file, got ${logged.size}.")
 
-      val reconstructed = reconstructPartitionValues(leaves, partitionSchema)
+      val reconstructed = reconstructPartitionValues(manifests, partitionSchema)
       assert(reconstructed == logged,
         s"forRead did not reproduce the logged partition values.\n" +
           s"  logged=$logged\n  reconstructed=$reconstructed")

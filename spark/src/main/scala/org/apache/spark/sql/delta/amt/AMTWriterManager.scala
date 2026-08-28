@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, LogSegment, MaintenanceOperation, Snapshot}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, LogSegment, MaintenanceOperation, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, Checkpoint}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
@@ -70,9 +70,15 @@ case class IncrementalAMTWriteMetrics(
     numOldLeavesUpdated: Int,
     numOldLeavesUntouched: Int,
     numNewLeaves: Int,
-    numRootLiveAdds: Int,
-    numRootTombstones: Int,
+    // Per-status breakdown over root-resident DATA entries (see [[Tracking.Status]]).
+    numRootEntriesAddedStatus: Int,
+    numRootEntriesExistingStatus: Int,
+    numRootEntriesModifiedStatus: Int,
+    numRootEntriesReplacedStatus: Int,
+    numRootEntriesDeletedStatus: Int,
     numLeafMdvBitsAdded: Int,
+    numLeafDeleteCDFBitsAdded: Int = 0,
+    numLeafReplaceCDFBitsAdded: Int = 0,
     // Per-status breakdown over all leaf pointers in the new tree (see [[Tracking.Status]]), plus
     // the stale DELETED tombstones from the previous tree that this rewrite dropped.
     numLeavesAddedStatus: Int = 0,
@@ -122,11 +128,23 @@ class AMTWriterManager(
       commitVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       preCommitLogSegment: LogSegment): Option[AMTWriteResult] = {
-    if (!amtEnabled(commitVersion)) return None
-    if (preCommitLogSegment.version > readSnapshot.version) {
-      throw DeltaErrors.concurrentWriteException(conflictingCommit = None)
-    }
+    if (!AMTUtils.amtEnabled(readSnapshot)) return None
     val actionsToCommit = currentTransactionInfo.actions
+    // Whether this attempt would (re)write a manifest tree.
+    val writesTree = initialOperation match {
+      case _: DeltaOperations.OptimizeCheckpoint => true
+      case _ => shouldDoInlineIncrementalCheckpoint(actionsToCommit)
+    }
+
+    if (preCommitLogSegment.version > readSnapshot.version) {
+      // A concurrent commit won our target version and we are rebasing. A commit that writes no
+      // tree, and that lost only to commits that wrote no tree, is safe to rebase as-is; anything
+      // else needs the tree and back-reference rebase that is not implemented yet.
+      if (writesTree || winningCommitInstalledNewAMTTree(currentTransactionInfo)) {
+        throw DeltaErrors.concurrentWriteException(conflictingCommit = None)
+      }
+    }
+
     val resultOpt = initialOperation match {
       case optimize: DeltaOperations.OptimizeCheckpoint =>
         assert(actionsToCommit.isEmpty,
@@ -145,6 +163,9 @@ class AMTWriterManager(
           commitVersion, currentTransactionInfo, preCommitLogSegment,
           incremental = mode.isIncremental, trigger = mode.name))
       case _ =>
+        // A commit that writes no tree emits no AMT.
+        assert(!writesTree,
+          s"writeAMT reached the no-tree branch for a tree-writing commit: $initialOperation.")
         None
     }
     lastAMTWriteResultOpt = resultOpt
@@ -159,6 +180,26 @@ class AMTWriterManager(
   private def shouldDoInlineIncrementalCheckpoint(actionsToCommit: Seq[Action]): Boolean =
     actionsToCommit.size.toLong >= largeCommitActionsCountThresholdForInlineManifestCommit &&
       AMTWriteHelper.previousAMTContentRoot(readSnapshot).isDefined
+
+  /**
+   * True when conflict resolution folded in a winning commit that installed a new AMT tree.
+   */
+  private def winningCommitInstalledNewAMTTree(
+      currentTransactionInfo: CurrentTransactionInfo): Boolean = {
+    val readSnapshotAMTVersion = readSnapshot.lastManifestCommitOpt.map(_.contentRootVersion)
+    val preCommitAMTVersion = currentTransactionInfo.preCommitLatestAMTCheckpointOpt.map(_.version)
+    (readSnapshotAMTVersion, preCommitAMTVersion) match {
+      case (Some(_), None) =>
+        throw new IllegalStateException(
+          "The read snapshot has an AMT but the winning commits has no AMT -- this can happen " +
+            "only during downgrade -- not supported yet")
+      case (Some(readVersion), Some(foldedVersion)) if readVersion > foldedVersion =>
+        throw new IllegalStateException(
+          s"The rebased AMT moved backwards: read-snapshot tree version $readVersion is newer " +
+            s"than the folded tree version $foldedVersion.")
+      case (readOpt, foldedOpt) => readOpt != foldedOpt
+    }
+  }
 
   // Materializes the manifest tree for this commit and records its metrics. An incremental rewrite
   // packs the post-commit live files into leaves in input order on the driver; a full rewrite
@@ -176,7 +217,7 @@ class AMTWriterManager(
     }
     val (result, singleMetric) =
       if (incremental && amtProviderOpt.isDefined) {
-        val oldAMTVersion = amtProviderOpt.get.checkpointAction.version
+        val oldAMTVersion = amtProviderOpt.get.checkpointAction.contentRoot.version
         // The commits written after the old AMT, up to the last committed version.
         val intermediateLogCommits = preCommitLogSegment.deltas
           .filter(f => FileNames.getFileVersion(f) > oldAMTVersion)
@@ -212,7 +253,7 @@ class AMTWriterManager(
       postCommitSnapshot: Snapshot): MaintenanceOperation = {
     // if the commit itself was to do a checkpoint, don't schedule any maintenance as part
     // of its post-commit hook.
-    if (!amtEnabled(commitVersion)
+    if (!AMTUtils.amtEnabled(readSnapshot)
         || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
       return MaintenanceOperation()
     }
@@ -235,7 +276,7 @@ class AMTWriterManager(
       commitVersion: Long,
       postCommitSnapshot: Snapshot): MaintenanceOperation = {
     // The follow-up OPTIMIZE CHECKPOINT commit itself must never schedule more maintenance.
-    if (!amtEnabled(commitVersion)
+    if (!AMTUtils.amtEnabled(readSnapshot)
         || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
       return MaintenanceOperation()
     }
@@ -317,15 +358,6 @@ class AMTWriterManager(
         versionsSinceFull > 0 && versionsSinceFull % checkpointInterval == 0 &&
           versionsSinceFull >= fullRewriteSpan
       }
-  }
-
-  /**
-   * Whether AMT write is possible at all for this commit.
-   * Note: We don't create AMT at commit 0 as of now but this could be relaxed in future.
-   */
-  private def amtEnabled(commitVersion: Long): Boolean = {
-    if (commitVersion <= 0) return false
-    readSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
   }
 
   private def largeCommitActionsCountThresholdForInlineManifestCommit: Long =
