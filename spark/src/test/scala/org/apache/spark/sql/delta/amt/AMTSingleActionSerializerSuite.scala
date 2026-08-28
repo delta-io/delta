@@ -92,7 +92,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       "content_type", "format_version", "location", "file_format", "tracking",
       "deletion_vector", "spec_id", "partition", "sort_order_id", "record_count",
       "file_size_in_bytes", "content_stats", "manifest_info", "key_metadata",
-      "split_offsets"))
+      "split_offsets", "tags"))
   }
 
   test("closed constant sets match Iceberg V4 integer codes") {
@@ -139,6 +139,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       deletion_vector: Option[DeletionVector] = None,
       sort_order_id: Option[Int] = None,
       manifest_info: Option[ManifestInfo] = None,
+      tags: Option[Map[String, String]] = None,
       tracking: Tracking = addedTracking): AMTSingleAction = AMTSingleAction(
     content_type = content_type,
     format_version = AMTSingleAction.FormatVersionV4,
@@ -154,7 +155,8 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     content_stats = None,
     manifest_info = manifest_info,
     key_metadata = None,
-    split_offsets = None)
+    split_offsets = None,
+    tags = tags)
 
   private def assertRejected(substring: String)(build: => AMTSingleAction): Unit = {
     val ex = intercept[IllegalArgumentException](build)
@@ -391,6 +393,50 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(restored.file_format == AMTSingleAction.FileFormatParquet)
     assert(restored.spec_id.isEmpty)
     assert(restored.format_version == AMTSingleAction.FormatVersionV4)
+  }
+
+  private val sampleTags: Map[String, String] =
+    Map(AddFile.Tags.INSERTION_TIME.name -> "123", "custom" -> "value")
+
+  test("validate rejects tags on a non-data entry") {
+    assertRejected("tags must be null")(
+      mkEntry(
+        content_type = AMTSingleAction.ContentType.Type.DataManifest,
+        manifest_info = Some(sampleManifestInfo),
+        tags = Some(sampleTags)))
+  }
+
+  test("fromAddFile preserves AddFile tags and drops an empty map") {
+    val withTags = DataEntry.fromAddFile(sampleAddFile.copy(tags = sampleTags), addedTracking,
+      tableRoot)
+    assert(withTags.tags.contains(sampleTags))
+    // A null or empty tag map is indistinguishable from no tags.
+    assert(DataEntry.fromAddFile(sampleAddFile, addedTracking, tableRoot).tags.isEmpty)
+    assert(DataEntry.fromAddFile(sampleAddFile.copy(tags = Map.empty[String, String]),
+      addedTracking, tableRoot).tags.isEmpty)
+  }
+
+  test("DataEntry round-trips tags through toAddFile -> fromAddFile") {
+    val entry = DataEntry(
+      location = "f.parquet", file_format = AMTSingleAction.FileFormatParquet,
+      tracking = addedTracking, record_count = 10L, file_size_in_bytes = 100L,
+      tags = Some(sampleTags))
+    val add = entry.toAddFile(tableRoot)
+    assert(add.tags != null && add.tags == sampleTags, "tags must be carried onto the AddFile")
+    val restored = DataEntry.fromAddFile(add, addedTracking, tableRoot)
+    assert(restored.tags.contains(sampleTags))
+  }
+
+  test("parquet round-trip preserves tags") {
+    withTempDir { dir =>
+      val entry = AMTSingleAction.fromAddFile(
+        sampleAddFile.copy(tags = sampleTags), addedTracking, tableRoot)
+      val path = new java.io.File(dir, "tags").getCanonicalPath
+      spark.createDataset(Seq(entry)).write.parquet(path)
+      val read = spark.read.parquet(path).as[AMTSingleAction].collect()
+      assert(read.length == 1)
+      assert(read.head.tags.contains(sampleTags), "tags did not round-trip through parquet.")
+    }
   }
 
   test("amtPassthrough round-trips through the commit JSON") {
