@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.amt
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{Checkpoints, DeltaLog, DeltaParquetWriteSupport, Snapshot}
+import org.apache.spark.sql.delta.{Checkpoints, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DomainMetadata, Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -28,7 +28,6 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.mapreduce.Job
-import org.apache.parquet.hadoop.ParquetOutputFormat
 
 import org.apache.spark.TaskContext
 import org.apache.spark.paths.SparkPath
@@ -247,9 +246,9 @@ object AMTWriteHelper extends DeltaLogging {
       val format = new ParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
       val f = format.prepareWrite(spark, job, Map.empty, schema)
-      // Emit nested (list-element / map key-value) field ids, which the stock ParquetWriteSupport
-      // does not. Set after prepareWrite (before snapshotting the conf) so it flows to executors.
-      ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
+      // Write as an Iceberg-V4 manifest (nested field ids + int64 micros timestamps). Applied after
+      // prepareWrite (before snapshotting the conf) so it flows to executors.
+      Checkpoints.configureIcebergManifestParquetWrite(job)
       (f, new SerializableConfiguration(job.getConfiguration))
     }
 
@@ -565,6 +564,6 @@ object AMTWriteHelper extends DeltaLogging {
       hadoopConf = hadoopConf,
       useRename = false,
       outputSchema = Some(AMTSingleAction.persistedSchema(metadata, protocol)),
-      useDeltaParquetWriteSupport = true)
+      writeAsIcebergManifest = true)
   }
 }
