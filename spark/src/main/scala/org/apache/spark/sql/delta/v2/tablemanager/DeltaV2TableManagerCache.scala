@@ -35,8 +35,7 @@ import org.apache.spark.sql.internal.SQLConf
  */
 object DeltaV2TableManagerCache extends DeltaLogging {
 
-  @volatile private var cache:
-      Cache[DeltaV2CacheKey, DeltaV2TableManager] = _
+  private var cache: Option[Cache[DeltaV2CacheKey, DeltaV2TableManager]] = None
 
   def isEnabled(sqlConf: SQLConf): Boolean =
     sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE) > 0
@@ -60,17 +59,11 @@ object DeltaV2TableManagerCache extends DeltaLogging {
   }
 
   def invalidate(key: DeltaV2CacheKey): Unit = {
-    val managerCache = cache
-    if (managerCache != null) {
-      managerCache.invalidate(key)
-    }
+    cache.foreach(_.invalidate(key))
   }
 
   def clearCache(): Unit = {
-    val managerCache = cache
-    if (managerCache != null) {
-      managerCache.invalidateAll()
-    }
+    cache.foreach(_.invalidateAll())
   }
 
   /**
@@ -82,27 +75,13 @@ object DeltaV2TableManagerCache extends DeltaLogging {
    *   applied.
    */
   def invalidateByLogPath(logPath: Path): Unit = {
-    val managerCache = cache
-    if (managerCache != null) {
-      managerCache.asMap().keySet().removeIf(_.path == logPath)
-    }
+    cache.foreach(_.asMap().keySet().removeIf(_.path == logPath))
   }
 
-  def cacheSizeForTesting(): Long = {
-    val managerCache = cache
-    if (managerCache == null) 0L else managerCache.size()
-  }
-
-  def putForTesting(
-      sqlConf: SQLConf,
-      key: DeltaV2CacheKey,
-      manager: DeltaV2TableManager): Unit = {
-    getOrCreateCache(sqlConf).put(key, manager)
-  }
+  def cacheSizeForTesting(): Long = cache.map(_.size()).getOrElse(0L)
 
   def containsKeyForTesting(key: DeltaV2CacheKey): Boolean = {
-    val managerCache = cache
-    managerCache != null && managerCache.getIfPresent(key) != null
+    cache.exists(_.getIfPresent(key) != null)
   }
 
   private def createManager(
@@ -111,34 +90,30 @@ object DeltaV2TableManagerCache extends DeltaLogging {
     new DeltaV2TableManagerImpl(key, catalogTableOpt)
   }
 
+  /**
+   * Returns the process-global cache, initializing it on first access. Uses the same
+   * `synchronized` + `Option` pattern as [[DeltaLog.getOrCreateCache]] -- the first caller's
+   * SQLConf determines size and TTL for all subsequent callers.
+   */
   private def getOrCreateCache(
-      sqlConf: SQLConf): Cache[DeltaV2CacheKey, DeltaV2TableManager] = {
-    var managerCache = cache
-    if (managerCache == null) {
-      synchronized {
-        managerCache = cache
-        if (managerCache == null) {
-          val maxSize =
-            sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE)
-          val ttlMinutes =
-            sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES)
-          val listener: RemovalListener[
-              DeltaV2CacheKey, DeltaV2TableManager] = notification => {
-            val composite = notification.getValue
-            if (composite != null) {
-              composite.retire()
-            }
-          }
-          managerCache = CacheBuilder.newBuilder()
-            .maximumSize(maxSize)
-            .expireAfterAccess(ttlMinutes, TimeUnit.MINUTES)
-            .removalListener(listener)
-            .build[DeltaV2CacheKey, DeltaV2TableManager]()
-          cache = managerCache
+      sqlConf: SQLConf): Cache[DeltaV2CacheKey, DeltaV2TableManager] = synchronized {
+    cache.getOrElse {
+      val maxSize = sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE)
+      val ttlMinutes = sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES)
+      val listener: RemovalListener[DeltaV2CacheKey, DeltaV2TableManager] = notification => {
+        val composite = notification.getValue
+        if (composite != null) {
+          composite.retire()
         }
       }
+      val newCache = CacheBuilder.newBuilder()
+        .maximumSize(maxSize)
+        .expireAfterAccess(ttlMinutes, TimeUnit.MINUTES)
+        .removalListener(listener)
+        .build[DeltaV2CacheKey, DeltaV2TableManager]()
+      cache = Some(newCache)
+      newCache
     }
-    managerCache
   }
 
 }
