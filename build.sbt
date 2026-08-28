@@ -1066,8 +1066,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "com.google.code.findbugs" % "jsr305" % "3.0.2",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.13.2" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
@@ -1081,7 +1079,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test"
     ),
-    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
     // Shade jackson libraries so that connector developers don't have to worry
     // about jackson version conflicts.
     Compile / packageBin := assembly.value,
