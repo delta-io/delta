@@ -476,7 +476,7 @@ class DeltaV2MicroBatchStream
 
     cachedInitialOffset =
         DeltaSourceOffset.apply(
-        tableId, version, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot);
+            tableId, version, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot);
     return cachedInitialOffset;
   }
 
