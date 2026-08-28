@@ -178,8 +178,8 @@ class DeltaV2MicroBatchStream
    *
    * <p>- First batch: initialOffset() -> latestOffset(Offset, ReadLimit) - Set `isFirstBatch` to
    * true in initialOffset() - in latestOffset(Offset, ReadLimit), use `isFirstBatch` to determine
-   * whether to return null vs previousOffset (when no data is available) - keep `isFirstBatch`
-   * true until a non-null offset is returned - Subsequent batches: latestOffset(Offset, ReadLimit)
+   * whether to return null vs previousOffset (when no data is available) - keep `isFirstBatch` true
+   * until a non-null offset is returned - Subsequent batches: latestOffset(Offset, ReadLimit)
    */
   private boolean isFirstBatch = false;
 
