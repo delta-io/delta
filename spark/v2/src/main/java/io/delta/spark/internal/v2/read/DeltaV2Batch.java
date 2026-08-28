@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.read;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.spark.internal.v2.DeltaV2JavaLogging;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -39,7 +40,7 @@ import org.apache.spark.sql.types.StructType;
  * <p>This class must remain package-private so callers outside {@code v2.read} depend only on
  * Spark's public connector interfaces instead of coupling to Delta's internal V2 implementation.
  */
-class DeltaV2Batch implements Batch {
+class DeltaV2Batch extends DeltaV2JavaLogging implements Batch {
   private final Snapshot snapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;
@@ -97,24 +98,30 @@ class DeltaV2Batch implements Batch {
 
   @Override
   public InputPartition[] planInputPartitions() {
-    return PartitionUtils.planInputPartitions(
-        SparkSession.active(), partitionedFiles, totalBytes, hadoopConf, sqlConf);
+    return recordFrameProfileValue(
+        "batchScan.planInputPartitions",
+        () ->
+            PartitionUtils.planInputPartitions(
+                SparkSession.active(), partitionedFiles, totalBytes, hadoopConf, sqlConf));
   }
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
     // Non-CDC plain table scan. Write-time CDF streaming reads route through
     // DeltaV2MicroBatchStream; read-time CDF batch reads use a dedicated batch implementation.
-    return PartitionUtils.createDeltaParquetReaderFactory(
-        snapshot,
-        dataSchema,
-        partitionSchema,
-        readDataSchema,
-        ddlOrderedReadOutputSchema,
-        dataFilters,
-        scalaOptions,
-        hadoopConf,
-        sqlConf);
+    return recordFrameProfileValue(
+        "batchScan.createReaderFactory",
+        () ->
+            PartitionUtils.createDeltaParquetReaderFactory(
+                snapshot,
+                dataSchema,
+                partitionSchema,
+                readDataSchema,
+                ddlOrderedReadOutputSchema,
+                dataFilters,
+                scalaOptions,
+                hadoopConf,
+                sqlConf));
   }
 
   @Override

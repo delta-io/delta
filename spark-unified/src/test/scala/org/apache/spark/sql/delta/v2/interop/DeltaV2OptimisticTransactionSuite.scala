@@ -49,7 +49,7 @@ class DeltaV2OptimisticTransactionSuite
       .forPath(engine, dir.getCanonicalPath)
       .getLatestSnapshot(engine)
       .asInstanceOf[SnapshotImpl]
-    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap, spark)
+    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap)
     new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot)
   }
 

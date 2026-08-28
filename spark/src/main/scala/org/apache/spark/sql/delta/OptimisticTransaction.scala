@@ -1093,7 +1093,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
    */
   private def enableAdaptiveMetadataDependentFeatures(metadata: Metadata): Metadata = {
     val adaptiveMetadataEnabled =
-      protocol.isFeatureSupported(AdaptiveMetadataTableFeature) ||
+      AMTUtils.amtEnabled(metadata, protocol) ||
         TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
           metadata.configuration, AdaptiveMetadataTableFeature)
     if (!adaptiveMetadataEnabled) {
@@ -1101,7 +1101,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     val existingTableHasAdaptiveMetadata =
-      snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+      AMTUtils.amtEnabled(snapshot)
     if (!isCreatingNewTable && !existingTableHasAdaptiveMetadata) {
       throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(AdaptiveMetadataTableFeature.name)
     }
@@ -1906,6 +1906,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         readVersion = Some(readVersion).filter(_ >= 0),
         isolationLevel = Option(isolationLevelToUse.toString),
         isBlindAppend = Some(isBlindAppend),
+        dataChange = Some(CommitInfo.dataChangeFromActions(preparedActions)),
         operationMetrics = getOperationMetrics(op),
         userMetadata = getUserMetadata(op),
         tags = if (allTags.nonEmpty) Some(allTags) else None,
@@ -2083,7 +2084,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       newProtocolOpt: Option[Protocol],
       op: DeltaOperations.Operation,
       context: Map[String, String],
-      metrics: Map[String, String]
+      metrics: Map[String, String],
+      dataChange: Option[Boolean]
   ): (Long, Snapshot) = recordDeltaOperation(deltaLog, "delta.commit.large") {
     assert(committed.isEmpty, "Transaction already committed.")
     commitStartNano = System.nanoTime()
@@ -2128,7 +2130,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         readVersion = Some(readVersion),
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
-        Some(metrics),
+        dataChange = dataChange,
+        operationMetrics = Some(metrics),
         userMetadata = getUserMetadata(op),
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId),
@@ -2461,6 +2464,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
     logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, attemptVersion)} to " +
       log"${MDC(DeltaLogKeys.PATH, logPath)}. Wrote " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
+
+    // If the table has AMT enabled, do not emit a classic checkpoint.
+    if (AMTUtils.amtEnabled(currentSnapshot)) {
+      return currentSnapshot
+    }
 
     deltaLog.checkpoint(currentSnapshot, catalogTable)
     currentSnapshot
@@ -2931,6 +2939,15 @@ trait OptimisticTransactionImpl extends TransactionHelper
         updatedCurrentTransactionInfo.finalActionsToCommit :+ result.checkpoint
       case None => baseActions
     }
+    // Surface the AMT checkpoint that this commit emits inline (at `attemptVersion`) so the
+    // incremental CRC can tell whether the resulting tree is root-only. This is the current
+    // attempt's tree, not `preCommitLatestAMTCheckpointOpt` (which tracks [0, attemptVersion-1]).
+    val txnInfoForCommit = amtWriteResultOpt.map(_.checkpoint) match {
+      case Some(amtCheckpoint) =>
+        updatedCurrentTransactionInfo.copy(
+          currentCommitAttemptAMTCheckpointOpt = Some(amtCheckpoint))
+      case None => updatedCurrentTransactionInfo
+    }
     logInfo(
       log"Attempting to commit version ${MDC(DeltaLogKeys.VERSION, attemptVersion)} with " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, actions.size.toLong)} actions with " +
@@ -2953,7 +2970,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val jsonActions = actions.map(_.json)
 
     val (newChecksumOpt, commit, committedTransactionInfo) =
-      writeCommitFile(attemptVersion, jsonActions.toIterator, updatedCurrentTransactionInfo)
+      writeCommitFile(attemptVersion, jsonActions.toIterator, txnInfoForCommit)
 
     performPostCommitActions(
       attemptVersion,
@@ -2996,11 +3013,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       newChecksumOpt,
       preCommitLogSegment,
       catalogTableForPostCommitSnapshot,
-      amtCheckpointOpt = amtWriteResultOpt.map(_.checkpoint),
+      amtCheckpointWrittenInCommitOpt = amtWriteResultOpt.map(_.checkpoint),
       isIdempotentRetry = isIdempotentRetry)
     val postCommitReconstructionTime = System.nanoTime()
     maintenanceOperation = if (
-        !postCommitSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+        !AMTUtils.amtEnabled(postCommitSnapshot)) {
       MaintenanceOperation(
         shouldCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot))
     } else if (amtWriteResultOpt.isEmpty) {
@@ -3009,6 +3026,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // if needed.
       amtWriterManager.planMaintenance(attemptVersion, postCommitSnapshot)
     } else {
+      // The _last_checkpoint file must be updated here rather than the checkpoint hook, because the
+      // hook does not know about the new AMT checkpoint emitted in this commit.
+      amtWriteResultOpt.foreach { writeResult =>
+        deltaLog.writeLastCheckpointFileForAMT(manifestCommitVersion = attemptVersion, writeResult)
+      }
       // The AMT was written inline with this commit (always incremental). A full rewrite is never
       // inlined, so schedule a follow-up full OPTIMIZE CHECKPOINT commit when the full-rewrite
       // cadence is due -- otherwise a table whose commits consistently inline would never get a
@@ -3206,6 +3228,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected def incrementallyDeriveChecksum(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo): Option[VersionChecksum] = {
+    val effectiveLatestAMTCheckpointAtCommitVersion =
+      currentTransactionInfo.currentCommitAttemptAMTCheckpointOpt
+        .orElse(currentTransactionInfo.preCommitLatestAMTCheckpointOpt)
     incrementallyDeriveChecksum(
       spark,
       deltaLog,
@@ -3218,7 +3243,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       previousVersionState = scala.Left(snapshot),
       mustIncludeFileSizeHistogram =
         spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED),
-      includeAddFilesInCrc = Snapshot.shouldIncludeAddFilesInCrc(spark, snapshot, metadata)
+      includeAddFilesInCrc = Snapshot.shouldIncludeAddFilesInCrc(
+        spark, snapshot, metadata, effectiveLatestAMTCheckpointAtCommitVersion)
     ).toOption
   }
 

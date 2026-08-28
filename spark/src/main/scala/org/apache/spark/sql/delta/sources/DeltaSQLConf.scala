@@ -200,6 +200,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(n => n >= 0, "must not be negative.")
       .createWithDefault(2)
 
+  val DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES =
+    buildConf("commit.inconsistentList.maxRetries")
+      .internal()
+      .doc("How many times to retry fetching the log segment after a commit when the listing " +
+        "returns a version lower than the committed version. The listing can be stale for a " +
+        "few seconds after a commit (in case of list-after-write storage inconsistency), and " +
+        "each retry waits with exponential backoff, capped at 30 seconds, before re-listing.")
+      .intConf
+      .checkValue(n => n >= 0 && n < 10, "must be between 0 (inclusive) and 10 (exclusive).")
+      .createWithDefault(3)
+
   val DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL =
     buildConf("snapshotCache.storageLevel")
       .internal()
@@ -600,6 +611,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .checkValue(_ > 0, "fullRewriteCheckpointIntervalMultiplier must be positive.")
       .createWithDefault(5)
+
+  val AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED =
+    buildConf("amt.snapshotDiscovery.asyncCommitInfoRead.enabled")
+      .internal()
+      .doc("When enabled, an async CommitInfo read will be kicked off during snapshot creation " +
+        "in parallel with the CRC read. Enabling it could cause slight performance overhead on " +
+        "non-AMT tables when CRC is absent, and extra checkpoint threadpool contention. " +
+        "Disabling it could result in missing file actions in snapshot discovery for AMT tables.")
+      .booleanConf
+      .createWithDefault(DeltaUtils.isTesting)
 
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
@@ -2955,6 +2976,31 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("When true, a failed close() of a deletion vector writer propagates and aborts the " +
         "write, instead of being swallowed. Swallowing it can commit a descriptor for a file " +
         "that was never durably written, corrupting the table. Kill-switch for the fix; leave on.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT =
+    buildConf("deletionVectors.useObjectIdentityForNonAMTTables")
+      .internal()
+      .doc(
+        """When true, Delta compares deletion vectors by their normalized object identity instead
+          |of their legacy descriptor identity for non-AMT tables (AMT tables always use object
+          |identity). The legacy identity is based on the serialized descriptor fields,
+          |so equivalent `u`, `r`, and in-table `p` descriptors compare as different DVs.
+          |The object identity is based on the table-relative DV object location and offset
+          |when possible, so those equivalent descriptors compare as the same DV.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC =
+    buildConf("deletionVectors.useObjectIdentityForIncrementalCRCComputation")
+      .internal()
+      .doc(
+        """Kill-switch for reconciling deletion vectors by their normalized object identity when
+          |incrementally computing the checksum (CRC). When false, deletion vectors fall back to
+          |their legacy descriptor identity.
+          |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 

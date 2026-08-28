@@ -225,6 +225,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = None,
@@ -251,6 +252,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = None,
@@ -529,7 +531,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10}}""")
 
   private def deletionVectorWithRelativePath: DeletionVectorDescriptor =
-    DeletionVectorDescriptor.onDiskWithRelativePath(
+    DeletionVectorDescriptor.onDiskWithUuidRelativePath(
       id = UUID.randomUUID(),
       randomPrefix = "a1",
       sizeInBytes = 10,
@@ -785,6 +787,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = Some(Map("k1" -> "v1")),
@@ -869,6 +872,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(5),
       isolationLevel = Some("WriteSerializable"),
       isBlindAppend = Some(false),
+      dataChange = None,
       operationMetrics = Some(Map("numFiles" -> "10")),
       userMetadata = Some("test metadata"),
       tags = Some(Map("source" -> "test")),
@@ -909,6 +913,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(42),
       isolationLevel = Some("WriteSerializable"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("numFiles" -> "25", "numOutputRows" -> "1000")),
       userMetadata = operation.userMetadata,
       tags = Some(Map("environment" -> "production", "team" -> "data-eng")),

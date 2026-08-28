@@ -16,8 +16,13 @@
 
 package org.apache.spark.sql.delta.columnmapping
 
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaColumnMapping
+import org.apache.spark.sql.delta.DeltaColumnMappingSuiteUtils
+import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.DeltaHistory
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOperations.RemoveColumnMapping
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils

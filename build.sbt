@@ -64,7 +64,7 @@ val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
-val flinkVersion = "2.0.1"
+val flinkVersion = CrossFlinkVersions.getFlinkArtifactVersion()
 val gcsConnectorVersion = "4.0.4"
 
 // Optional kernel version override. See `project/KernelVersion.scala` for the
@@ -1636,9 +1636,14 @@ lazy val flink = (project in file("flink"))
   .dependsOn(kernelUnityCatalog)
   .settings(
     name := "delta-flink",
+    // Publish one artifact per compatible Flink minor line, for example delta-flink_2.0.
+    moduleName := s"delta-flink_${CrossFlinkVersions.getFlinkVersionSpec().shortVersion}",
     commonSettings,
     releaseSettings,
     javafmtCheckSettings(),
+    // The base release publishes non-Flink modules. Flink versions are published separately by
+    // CrossFlinkVersions.crossFlinkReleaseSteps.
+    publish / skip := sys.props.getOrElse("skipFlinkPublish", "false").toBoolean,
     publishArtifact := scalaBinaryVersion.value == "2.13", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
     assembly / assemblyJarName := s"delta-flink-$flinkVersion-${version.value}.jar",
@@ -1854,6 +1859,13 @@ lazy val releaseSettings = Seq(
   releasePublishArtifactsAction := PgpKeys.publishSigned.value,
   releaseCrossBuild := true,
   pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toArray),
+  // Allow local Maven overwrites for release versions. The cross-Spark publish workflow
+  // publishes modules like delta-contribs (no Spark suffix) in both the backward-compat
+  // step and the per-version steps, producing identical artifacts. SBT 1.9+ blocks
+  // overwriting release artifacts by default; this restores the prior behavior for local
+  // publishing only (remote publish via publishSigned is unaffected).
+  publishLocalConfiguration := publishLocalConfiguration.value.withOverwrite(true),
+  publishM2Configuration := publishM2Configuration.value.withOverwrite(true),
 
   // TODO: This isn't working yet ...
   sonatypeProfileName := "io.delta", // sonatype account domain name prefix / group ID
@@ -1946,7 +1958,8 @@ releaseProcess := Seq[ReleaseStep](
   setReleaseVersion,
   commitReleaseVersion,
   tagRelease
-) ++ CrossSparkVersions.crossSparkReleaseSteps("publishSigned") ++ Seq[ReleaseStep](
+) ++ CrossSparkVersions.crossSparkReleaseSteps("publishSigned") ++
+  CrossFlinkVersions.crossFlinkReleaseSteps("publishSigned") ++ Seq[ReleaseStep](
 
   // Do NOT use `sonatypeBundleRelease` - it will actually release to Maven! We want to do that
   // manually.
