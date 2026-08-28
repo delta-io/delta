@@ -26,7 +26,7 @@ import scala.util.Try
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs, AMTUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
@@ -236,7 +236,7 @@ class Snapshot(
 
   /** Returns the lastManifestCommit reliably for this snapshot's version. */
   lazy val lastManifestCommitOpt: Option[LastManifestCommit] =
-    Option.when(protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+    Option.when(AMTUtils.amtEnabled(this)) {
       _reconstructedProtocolMetadataICTAndLMC.bestEffortLastManifestCommit.orElse {
         // Only fallback to direct CommitInfo read if there are no trailing deltas.
         // This avoids unnecessary I/O when there isn't any AMT checkpoint yet.
@@ -602,7 +602,7 @@ class Snapshot(
       val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
       val localTableRoot = deltaLog.dataPath.toString
       val localUseDeletionVectorObjectIdentity =
-        FileAction.useDeletionVectorObjectIdentity(protocol, spark)
+        FileAction.useDeletionVectorObjectIdentity(metadata, protocol, spark)
 
       val canonicalPath = deltaLog.getCanonicalPathUdf()
 
@@ -969,7 +969,7 @@ object Snapshot extends DeltaLogging {
     // AddFile-generation logic cannot handle back references (yet): it writes allFiles into the CRC
     // without them. Only leaf-resident files carry a back reference, so a root-only tree yields a
     // back-reference-free list that matches state reconstruction.
-    if (snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+    if (AMTUtils.amtEnabled(snapshot)) {
       val rootOnly =
         effectiveLatestAMTCheckpointAtCommitVersion.exists(_.contentRoot.numLeaves.contains(0L))
       if (!rootOnly) return false

@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, LogSegment, MaintenanceOperation, Snapshot}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, LogSegment, MaintenanceOperation, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, Checkpoint}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
@@ -128,7 +128,7 @@ class AMTWriterManager(
       commitVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       preCommitLogSegment: LogSegment): Option[AMTWriteResult] = {
-    if (!amtEnabled(commitVersion)) return None
+    if (!AMTUtils.amtEnabled(readSnapshot)) return None
     val actionsToCommit = currentTransactionInfo.actions
     // Whether this attempt would (re)write a manifest tree.
     val writesTree = initialOperation match {
@@ -253,7 +253,7 @@ class AMTWriterManager(
       postCommitSnapshot: Snapshot): MaintenanceOperation = {
     // if the commit itself was to do a checkpoint, don't schedule any maintenance as part
     // of its post-commit hook.
-    if (!amtEnabled(commitVersion)
+    if (!AMTUtils.amtEnabled(readSnapshot)
         || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
       return MaintenanceOperation()
     }
@@ -276,7 +276,7 @@ class AMTWriterManager(
       commitVersion: Long,
       postCommitSnapshot: Snapshot): MaintenanceOperation = {
     // The follow-up OPTIMIZE CHECKPOINT commit itself must never schedule more maintenance.
-    if (!amtEnabled(commitVersion)
+    if (!AMTUtils.amtEnabled(readSnapshot)
         || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
       return MaintenanceOperation()
     }
@@ -358,15 +358,6 @@ class AMTWriterManager(
         versionsSinceFull > 0 && versionsSinceFull % checkpointInterval == 0 &&
           versionsSinceFull >= fullRewriteSpan
       }
-  }
-
-  /**
-   * Whether AMT write is possible at all for this commit.
-   * Note: We don't create AMT at commit 0 as of now but this could be relaxed in future.
-   */
-  private def amtEnabled(commitVersion: Long): Boolean = {
-    if (commitVersion <= 0) return false
-    readSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
   }
 
   private def largeCommitActionsCountThresholdForInlineManifestCommit: Long =

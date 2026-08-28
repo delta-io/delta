@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CommittedTransaction, DeltaOperations}
+import org.apache.spark.sql.delta.{CommittedTransaction, DeltaOperations}
+import org.apache.spark.sql.delta.amt.AMTUtils
 
 import org.apache.spark.sql.SparkSession
 
@@ -29,7 +30,7 @@ object CheckpointHook extends PostCommitHook {
 
     // AMT tables checkpoint by rewriting their manifest tree via a follow-up OPTIMIZE CHECKPOINT
     // commit rather than a standalone checkpoint file.
-    if (txn.postCommitSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+    if (AMTUtils.amtEnabled(txn.postCommitSnapshot)) {
       val triggerMode = txn.maintenanceOperation.amtTriggerModeOpt.getOrElse {
         throw new IllegalStateException(
           "An AMT table scheduled a checkpoint but carries no AMTTriggerMode.")
