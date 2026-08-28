@@ -365,7 +365,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
           hadoopConf,
           useRename = false,
           outputSchema = Some(AMTSingleAction.persistedSchema(metadata, protocol)),
-          useDeltaParquetWriteSupport = true)
+          writeAsIcebergManifest = true)
         val relative = AMTUtils.relativizeManifestPathToTableRoot(
           file.getFileSystem(hadoopConf), dataPath, file)
         assert(relative == s"${FileNames.AMT_METADATA_DIR_NAME}/$fileName" &&
