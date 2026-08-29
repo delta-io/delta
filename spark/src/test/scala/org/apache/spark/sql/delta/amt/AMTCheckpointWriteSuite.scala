@@ -68,7 +68,6 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       def canonical(add: AddFile) =
         add.copy(
           modificationTime = 0L,
-          tags = null,
           stats = null,
           backReference = None,
           amtPassthrough = None) -> Option(add.stats).map(JsonUtils.mapper.readTree)
