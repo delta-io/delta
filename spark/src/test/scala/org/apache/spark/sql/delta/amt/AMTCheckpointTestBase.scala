@@ -639,14 +639,18 @@ trait AMTCheckpointTestBase
    * this can exceed the live file count. To assert the tree captures exactly the live file set,
    * call [[assertReconstructsLiveFileSet]] instead.
    */
-  protected def currentLeafDataEntries(snapshot: Snapshot): Long = {
-    val provider = amtProvider(snapshot)
-      .getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
-      provider.liveLeafManifestAbsolutePaths.map { leafPath =>
-        spark.read.parquet(leafPath.toString)
-          .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
-          .count()
-      }.sum
+  protected def leafLiveDataEntryCount(snapshot: Snapshot): Long =
+    leafLiveDataEntryCount(amtProvider(snapshot)
+      .getOrElse(fail("Snapshot has no AMTCheckpointProvider.")))
+
+  /**
+   * Total DATA (content_type=0) entry rows across `provider`'s live leaves, 0 when the tree is
+   * leafless. Like the [[Snapshot]]-based overload but driven by a provider a test built directly
+   * (e.g. from a checkpoint), where no owning [[Snapshot]] exists.
+   */
+  protected def leafLiveDataEntryCount(provider: AMTCheckpointProvider): Long = {
+    val leaves = provider.liveLeafManifestAbsolutePaths.map(_.toString)
+    if (leaves.isEmpty) 0L else withManifestDataEntries(leaves)(_.count())
   }
 
 
@@ -654,7 +658,7 @@ trait AMTCheckpointTestBase
    * The number of live files the CURRENT snapshot's AMT reconstructs across the WHOLE tree -- root
    * and leaves. Goes through the provider's own reconstruction, which drops MDV-masked leaf entries
    * and `tracking=removed` root tombstones, so it equals `snapshot.allFiles.count()` on both full
-   * and incremental trees. Unlike [[currentLeafDataEntries]], it counts live files stored directly
+   * and incremental trees. Unlike [[leafLiveDataEntryCount]], it counts live files stored directly
    * in the root too (as an incremental commit does below the spill threshold).
    *
    * Prefer [[assertReconstructsLiveFileSet]] when the test runs through

@@ -1270,7 +1270,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
 
   /** Maps a leaf's parquet row positions to their entry `location`s (bypasses the format check). */
   private def leafPosToLoc(leaf: DataManifestEntry, tableRoot: Path): Map[Long, String] =
-    {
+    allowReadWithinDeltaLog {
       spark.read.parquet(leaf.getAbsolutePath(tableRoot).toString)
         .select(col("_metadata.row_index").as("pos"), col("location"))
         .as[(Long, String)].collect().toMap
