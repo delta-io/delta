@@ -101,10 +101,8 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
    * Physical DATA-row counts of a manifest parquet keyed by `tracking.status`.
    */
   protected def trackingStatusToAddFileCountMap(absManifestPath: String): Map[Int, Long] =
-    allowReadWithinDeltaLog {
-      spark.read.parquet(absManifestPath)
-        .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
-        .groupBy(col("tracking.status").as("status")).count()
+    withManifestDataEntries(Seq(absManifestPath)) { entries =>
+      entries.groupBy(col("tracking.status").as("status")).count()
         .as[(Int, Long)].collect().toMap
     }
 
@@ -113,10 +111,8 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
    * `tracking.status`. Lets a test assert *which* file carries each status, not just the counts.
    */
   protected def trackingStatusToLocationsMap(absManifestPath: String): Map[Int, Set[String]] =
-    allowReadWithinDeltaLog {
-      spark.read.parquet(absManifestPath)
-        .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
-        .select(col("tracking.status").as("status"), col("location"))
+    withManifestDataEntries(Seq(absManifestPath)) { entries =>
+      entries.select(col("tracking.status").as("status"), col("location"))
         .as[(Int, String)].collect()
         .groupBy(_._1).map { case (status, rows) => status -> rows.map(_._2).toSet }
     }
@@ -137,7 +133,7 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
 
   /** The live AddFiles of a table's latest snapshot, for building real removes. */
   protected def liveAddFilesInLatestSnapshot(deltaLog: DeltaLog): Seq[AddFile] =
-    deltaLog.update().allFiles.collect().toSeq
+    liveAddFiles(deltaLog.update())
 
   /**
    * The leaf-resident live files of the AMT table grouped by their leaf's relative location, read
