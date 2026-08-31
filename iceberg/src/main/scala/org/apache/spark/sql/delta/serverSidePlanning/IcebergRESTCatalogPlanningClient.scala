@@ -26,7 +26,7 @@ import scala.jdk.CollectionConverters._
 import scala.util.Try
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.http.client.methods.{HttpGet, HttpPost}
+import org.apache.http.client.methods.{HttpDelete, HttpGet, HttpPost}
 import org.apache.http.entity.{ContentType, StringEntity}
 import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpRequest, HttpRequestInterceptor, HttpResponse, HttpStatus}
@@ -112,6 +112,8 @@ class IcebergRESTCatalogPlanningClient(
   private val POLL_SCALE_FACTOR_DEFAULT = 2.0
   private val FETCH_PLANNING_RESULT_ENDPOINT =
     "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan/{plan-id}"
+  private val CANCEL_PLANNING_ENDPOINT =
+    "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan/{plan-id}"
 
   private case class PollSettings(
       timeoutMs: Long,
@@ -280,13 +282,14 @@ class IcebergRESTCatalogPlanningClient(
   }
 
   private def requireFetchPlanningResultEndpoint(): Unit = {
-    catalogConfig.endpoints.foreach { endpoints =>
-      if (!endpoints.contains(FETCH_PLANNING_RESULT_ENDPOINT)) {
-        throw new UnsupportedOperationException(
-          s"Server does not support endpoint: $FETCH_PLANNING_RESULT_ENDPOINT")
-      }
+    if (!catalogConfig.endpoints.exists(_.contains(FETCH_PLANNING_RESULT_ENDPOINT))) {
+      throw new UnsupportedOperationException(
+        s"Server does not support endpoint: $FETCH_PLANNING_RESULT_ENDPOINT")
     }
   }
+
+  private def supportsCancelPlanning: Boolean =
+    catalogConfig.endpoints.exists(_.contains(CANCEL_PLANNING_ENDPOINT))
 
   // Default headers without auth -- auth is injected per-request via HttpRequestInterceptor
   private val httpHeaders = {
@@ -391,9 +394,9 @@ class IcebergRESTCatalogPlanningClient(
     val builder = HttpClientBuilder.create()
       .setDefaultHeaders(httpHeaders)
       .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
-      // requestSentRetryEnabled=true: safe to retry already-sent requests because
-      // planScan is a read-only operation (idempotent POST to /plan endpoint)
-      .setRetryHandler(new DefaultHttpRequestRetryHandler(HTTP_MAX_RETRIES, true))
+      // Do not retry requests that may have reached the server. Retrying POST /plan after an
+      // ambiguous transport failure could allocate a duplicate server-side plan.
+      .setRetryHandler(new DefaultHttpRequestRetryHandler(HTTP_MAX_RETRIES, false))
       .setServiceUnavailableRetryStrategy(new ServerErrorRetryStrategy(HTTP_MAX_RETRIES))
 
     // Per-request interceptor: calls tokenSupplier() to get the current token.
@@ -565,6 +568,7 @@ class IcebergRESTCatalogPlanningClient(
         .run(pollPlan, classOf[Exception])
     } catch {
       case e: NotCompleteException =>
+        cancelPlanning(fetchUri, planId)
         throw new IOException(
           s"Scan plan $planId for $database.$table did not complete within configured " +
             s"poll limits (timeout=${settings.timeoutMs} ms, " +
@@ -574,6 +578,26 @@ class IcebergRESTCatalogPlanningClient(
 
     val completed = result.get()
     convertToScanPlan(completed.response, completed.responseBody)
+  }
+
+  private def cancelPlanning(planUri: String, planId: String): Unit = {
+    if (supportsCancelPlanning) {
+      try {
+        val response = httpClient.execute(new HttpDelete(planUri))
+        try {
+          val statusCode = response.getStatusLine.getStatusCode
+          if (statusCode != HttpStatus.SC_NO_CONTENT && statusCode != HttpStatus.SC_NOT_FOUND) {
+            logWarning(
+              s"Failed to cancel scan plan $planId. HTTP status: $statusCode")
+          }
+        } finally {
+          response.close()
+        }
+      } catch {
+        case e: Exception =>
+          logWarning(s"Failed to cancel scan plan $planId", e)
+      }
+    }
   }
 
   private def planningFailure(
@@ -607,6 +631,10 @@ class IcebergRESTCatalogPlanningClient(
     val files = response.fileScanTasks().asScala.map { task =>
       require(task != null, "FileScanTask cannot be null")
       require(task.file() != null, "DataFile cannot be null")
+      if (task.deletes() != null && !task.deletes().isEmpty) {
+        throw new UnsupportedOperationException(
+          "Delete files are not supported; file scan tasks must not reference delete files")
+      }
 
       // Validate that the server does not expect the application of a residual. The application of
       // a residual filter is currently not supported, and its ignorance leads to wrong results.

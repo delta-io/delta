@@ -161,10 +161,24 @@ public class IcebergRESTServer {
     }
   }
 
+  /** Configure whether /v1/config includes an endpoints list. */
+  public void setAdvertiseEndpoints(boolean advertise) {
+    if (adapter != null) {
+      adapter.setAdvertiseEndpoints(advertise);
+    }
+  }
+
   /** Configure whether /v1/config advertises the fetch-planning-result endpoint. */
   public void setAdvertiseFetchPlanningResult(boolean advertise) {
     if (adapter != null) {
       adapter.setAdvertiseFetchPlanningResult(advertise);
+    }
+  }
+
+  /** Configure whether /v1/config advertises the cancel-planning endpoint. */
+  public void setAdvertiseCancelPlanning(boolean advertise) {
+    if (adapter != null) {
+      adapter.setAdvertiseCancelPlanning(advertise);
     }
   }
 
@@ -229,6 +243,11 @@ public class IcebergRESTServer {
     IcebergRESTCatalogAdapterWithPlanSupport.setTestResidual(residual);
   }
 
+  /** Configure whether scan responses include a position delete file. */
+  public void setInjectDeleteFiles(boolean inject) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setInjectDeleteFiles(inject);
+  }
+
   /**
    * Configure the server to fail the next N /plan requests with the specified HTTP status code.
    * After N failures, subsequent requests proceed normally.
@@ -259,6 +278,11 @@ public class IcebergRESTServer {
     return IcebergRESTCatalogAdapterWithPlanSupport.getPlanPollRequestCount();
   }
 
+  /** Get the number of cancel-planning requests since the last reset. */
+  public int getPlanCancelRequestCount() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getPlanCancelRequestCount();
+  }
+
   /** Configure the terminal response status returned by fetch-planning-result. */
   public void setFetchPlanningResultStatus(PlanStatus status) {
     IcebergRESTCatalogAdapterWithPlanSupport.setFetchTerminalStatus(status);
@@ -271,7 +295,9 @@ public class IcebergRESTServer {
     IcebergRESTCatalogAdapterWithPlanSupport.clearCaptured();
     if (adapter != null) {
       adapter.setCatalogDefaults(null);
+      adapter.setAdvertiseEndpoints(true);
       adapter.setAdvertiseFetchPlanningResult(true);
+      adapter.setAdvertiseCancelPlanning(true);
     }
   }
 

@@ -90,6 +90,18 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
     }
   }
 
+  @Override
+  protected void doDelete(HttpServletRequest req, HttpServletResponse resp)
+      throws IOException {
+    String path = req.getPathInfo();
+    if (isFetchPlanningResultPath(path)) {
+      IcebergRESTCatalogAdapterWithPlanSupport.recordPlanCancellation();
+      resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
+    } else {
+      super.doDelete(req, resp);
+    }
+  }
+
   /**
    * Test helper for Iceberg REST /v1/config endpoint that returns optional catalog
    * prefix, following the Iceberg REST catalog spec pattern.
@@ -111,26 +123,31 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
           builder.withOverride("prefix", prefix);
         }
 
-        List<Endpoint> endpoints = new ArrayList<>();
-        endpoints.add(Endpoint.V1_LIST_NAMESPACES);
-        endpoints.add(Endpoint.V1_LOAD_NAMESPACE);
-        endpoints.add(Endpoint.V1_CREATE_NAMESPACE);
-        endpoints.add(Endpoint.V1_UPDATE_NAMESPACE);
-        endpoints.add(Endpoint.V1_DELETE_NAMESPACE);
-        endpoints.add(Endpoint.V1_LIST_TABLES);
-        endpoints.add(Endpoint.V1_LOAD_TABLE);
-        endpoints.add(Endpoint.V1_CREATE_TABLE);
-        endpoints.add(Endpoint.V1_UPDATE_TABLE);
-        endpoints.add(Endpoint.V1_DELETE_TABLE);
-        endpoints.add(Endpoint.V1_RENAME_TABLE);
-        endpoints.add(Endpoint.V1_REGISTER_TABLE);
-        endpoints.add(Endpoint.V1_REPORT_METRICS);
-        endpoints.add(Endpoint.V1_COMMIT_TRANSACTION);
-        endpoints.add(Endpoint.V1_SUBMIT_TABLE_SCAN_PLAN);
-        if (customAdapter.getAdvertiseFetchPlanningResult()) {
-          endpoints.add(Endpoint.V1_FETCH_TABLE_SCAN_PLAN);
+        if (customAdapter.getAdvertiseEndpoints()) {
+          List<Endpoint> endpoints = new ArrayList<>();
+          endpoints.add(Endpoint.V1_LIST_NAMESPACES);
+          endpoints.add(Endpoint.V1_LOAD_NAMESPACE);
+          endpoints.add(Endpoint.V1_CREATE_NAMESPACE);
+          endpoints.add(Endpoint.V1_UPDATE_NAMESPACE);
+          endpoints.add(Endpoint.V1_DELETE_NAMESPACE);
+          endpoints.add(Endpoint.V1_LIST_TABLES);
+          endpoints.add(Endpoint.V1_LOAD_TABLE);
+          endpoints.add(Endpoint.V1_CREATE_TABLE);
+          endpoints.add(Endpoint.V1_UPDATE_TABLE);
+          endpoints.add(Endpoint.V1_DELETE_TABLE);
+          endpoints.add(Endpoint.V1_RENAME_TABLE);
+          endpoints.add(Endpoint.V1_REGISTER_TABLE);
+          endpoints.add(Endpoint.V1_REPORT_METRICS);
+          endpoints.add(Endpoint.V1_COMMIT_TRANSACTION);
+          endpoints.add(Endpoint.V1_SUBMIT_TABLE_SCAN_PLAN);
+          if (customAdapter.getAdvertiseFetchPlanningResult()) {
+            endpoints.add(Endpoint.V1_FETCH_TABLE_SCAN_PLAN);
+          }
+          if (customAdapter.getAdvertiseCancelPlanning()) {
+            endpoints.add(Endpoint.V1_CANCEL_TABLE_SCAN_PLAN);
+          }
+          builder.withEndpoints(endpoints);
         }
-        builder.withEndpoints(endpoints);
       }
 
       ConfigResponse config = builder.build();

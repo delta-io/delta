@@ -508,6 +508,28 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
+  test("rejects delete files in completed planning result") {
+    withTempTable("deleteFilesUnsupported") { _ =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.deleteFilesUnsupported")
+      server.clearCaptured()
+      configureFastPolling(numRetries = 1)
+      server.setSubmittedPollsBeforeCompletion(0)
+      server.setInjectDeleteFiles(true)
+
+      val client =
+        new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
+      try {
+        val exception = intercept[UnsupportedOperationException] {
+          client.planScan(defaultNamespace.toString, "deleteFilesUnsupported")
+        }
+        assert(exception.getMessage.contains("Delete files"))
+        assert(server.getPlanPollRequestCount() == 1)
+      } finally {
+        client.close()
+      }
+    }
+  }
+
   /**
    * Convenience wrapper for withTempTable that uses the test suite's default values.
    */
@@ -568,6 +590,28 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         }
         assert(exception.getMessage.contains("numRetries=0"))
         assert(server.getPlanPollRequestCount() == 1)
+        assert(server.getPlanCancelRequestCount() == 1)
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("reject submitted plan when endpoint list is omitted") {
+    withTempTable("asyncPlanEndpointsOmitted") { _ =>
+      server.clearCaptured()
+      server.setAdvertiseEndpoints(false)
+      server.setSubmittedPollsBeforeCompletion(0)
+
+      val client =
+        new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
+      try {
+        val exception = intercept[UnsupportedOperationException] {
+          client.planScan(defaultNamespace.toString, "asyncPlanEndpointsOmitted")
+        }
+        assert(exception.getMessage.contains("GET"))
+        assert(exception.getMessage.contains("/plan/{plan-id}"))
+        assert(server.getPlanPollRequestCount() == 0)
       } finally {
         client.close()
       }
@@ -614,6 +658,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           }
           assert(exception.getMessage.contains(expectedMessage))
           assert(server.getPlanPollRequestCount() == 1)
+          assert(server.getPlanCancelRequestCount() == 0)
         } finally {
           client.close()
         }
