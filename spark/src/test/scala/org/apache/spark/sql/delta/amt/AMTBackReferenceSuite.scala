@@ -42,6 +42,7 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
    */
   private def leafLocationByBackRef(snapshot: Snapshot): Map[(String, Long), String] = {
     val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
+    allowReadWithinDeltaLog {
       provider.liveLeafManifestAbsolutePaths.flatMap { leafPath =>
         val relManifest = relativeManifest(snapshot, leafPath)
         spark.read.parquet(leafPath.toString)
@@ -50,6 +51,7 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
           .collect()
           .map(row => (relManifest, row.getLong(1)) -> row.getString(0))
       }.toMap
+    }
   }
 
   /** All actions committed after `afterVersion`, up to the latest version. */
