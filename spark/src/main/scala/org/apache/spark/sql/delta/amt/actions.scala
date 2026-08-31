@@ -51,6 +51,9 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
  *                      for tables written by both Delta and Iceberg.
+ * @param tags Delta [[AddFile]] tags. They have no Iceberg V4 slot, so the field is a Delta-private
+ *             extension carried on DATA entries only, so a file's tags survive a manifest round
+ *             trip.
  */
 case class AMTSingleAction(
     content_type: Int,                          // ID: 134, required.
@@ -67,7 +70,8 @@ case class AMTSingleAction(
     content_stats: Option[String],              // ID: 146, optional.
     manifest_info: Option[ManifestInfo],        // ID: 150, required for DATA_MANIFEST.
     key_metadata: Option[Array[Byte]],          // ID: 131, optional.
-    split_offsets: Option[Seq[Long]]            // ID: 132, optional.
+    split_offsets: Option[Seq[Long]],           // ID: 132, optional.
+    tags: Option[Map[String, String]]           // Delta-private id (only when content_type=0).
 ) {
   AMTSingleAction.validate(this)
 
@@ -91,6 +95,7 @@ case class AMTSingleAction(
         content_stats = content_stats,
         key_metadata = key_metadata,
         split_offsets = split_offsets,
+        tags = tags,
         format_version = format_version)
     case AMTSingleAction.ContentType.Type.DataManifest =>
       DataManifestEntry(
@@ -164,6 +169,9 @@ object AMTSingleAction {
     require(action.content_type == ContentType.Type.Data || action.sort_order_id.isEmpty,
       s"sort_order_id must be null when content_type != ${ContentType.Type.Data}; " +
         s"got content_type=${action.content_type}.")
+    require(action.content_type == ContentType.Type.Data || action.tags.isEmpty,
+      s"tags must be null when content_type != ${ContentType.Type.Data}; " +
+        s"got content_type=${action.content_type}.")
     if (ContentType.isRootOnly(action.content_type)) {
       (action.tracking.sequence_number, action.tracking.file_sequence_number) match {
         case (Some(a), Some(b)) => require(a == b,
@@ -192,6 +200,20 @@ object AMTSingleAction {
   private def optional(id: Long, name: String): AMTFieldSpec =
     AMTFieldSpec(name, id, required = false)
 
+  /**
+   * Field ids for the Delta-private `tags` map. Delta's [[AddFile]] tags have no Iceberg V4 slot,
+   * so they are stamped from the top of the id space, just below Iceberg's reserved band. The V4
+   * spec forbids field ids greater than `Int.MaxValue - 200` (2147483447), reserving that range for
+   * metadata columns (`_file`, `_row_id`, ...); anchoring `tags` at `Int.MaxValue - 300` keeps it a
+   * legal, non-reserved id that does not collide with any other id this schema assigns in practice.
+   * The one theoretical exception is `content_stats` (ids grow as 10000 + 200 * columnId): a table
+   * would need more than ~10.7M stats-collected columns for those ids to reach this band, which is
+   * not realistic.
+   */
+  private[amt] val TagsFieldId: Long = Int.MaxValue.toLong - 300L
+  private val TAGS_KEY_FIELD_ID: Long = TagsFieldId + 1L
+  private val TAGS_VALUE_FIELD_ID: Long = TagsFieldId + 2L
+
   /** Iceberg V4 field specs for the top-level [[AMTSingleAction]] fields. */
   private val topLevelFields: Seq[AMTFieldSpec] = Seq(
     required(134L, "content_type"),
@@ -208,7 +230,8 @@ object AMTSingleAction {
     optional(146L, "content_stats"),
     optional(150L, "manifest_info"),
     optional(131L, "key_metadata"),
-    optional(132L, "split_offsets"))
+    optional(132L, "split_offsets"),
+    optional(TagsFieldId, "tags"))
 
   /** Iceberg V4 field specs for the scalar fields of the nested [[Tracking]] struct. */
   private val trackingFields: Seq[AMTFieldSpec] = Seq(
@@ -268,7 +291,9 @@ object AMTSingleAction {
       children.map(f => s"$parent.${f.name}" -> f.id.toInt)
     }
     val nestedContainers = Map(
-      "split_offsets.element" -> SPLIT_OFFSETS_ELEMENT_FIELD_ID.toInt)
+      "split_offsets.element" -> SPLIT_OFFSETS_ELEMENT_FIELD_ID.toInt,
+      "tags.key" -> TAGS_KEY_FIELD_ID.toInt,
+      "tags.value" -> TAGS_VALUE_FIELD_ID.toInt)
     (topLevel ++ nested ++ nestedContainers).toMap
   }
 
@@ -292,16 +317,15 @@ object AMTSingleAction {
     val builder = new MetadataBuilder()
       .withMetadata(field.metadata)
       .putLong(ParquetUtils.FIELD_ID_METADATA_KEY, spec.id)
-    // Attach nested (element) ids for list-bearing fields.
-    // DeltaParquetWriteSupport reads these off the list field itself, keyed `<field>.element`.
-    listElementFieldId(field.name).foreach { elementId =>
+    // Attach nested (list-element / map key-value) ids for container-typed fields.
+    // DeltaParquetWriteSupport reads these off the field itself, keyed by the relative path
+    // (`<field>.element` for a list, `<field>.key` / `<field>.value` for a map).
+    val nestedIds = nestedFieldIds(field.name)
+    if (nestedIds.nonEmpty) {
+      val nestedBuilder = new MetadataBuilder()
+      nestedIds.foreach { case (relativePath, id) => nestedBuilder.putLong(relativePath, id) }
       builder.putMetadata(
-        DeltaColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY,
-        new MetadataBuilder()
-          .putLong(
-            Seq(field.name, DeltaColumnMapping.PARQUET_LIST_ELEMENT_FIELD_NAME).mkString("."),
-            elementId)
-          .build())
+        DeltaColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY, nestedBuilder.build())
     }
     // Rewrite the field's data type by applying nested-struct field specs (id + nullability).
     val stampedDataType = field.dataType match {
@@ -328,10 +352,19 @@ object AMTSingleAction {
       metadata = builder.build())
   }
 
-  /** List-element field id for a top-level list field, or None if not a list field. */
-  private def listElementFieldId(fieldName: String): Option[Long] = fieldName match {
-    case "split_offsets" => Some(SPLIT_OFFSETS_ELEMENT_FIELD_ID)
-    case _ => None
+  /**
+   * Nested (list-element / map key-value) field ids for a top-level container field.
+   */
+  private def nestedFieldIds(fieldName: String): Seq[(String, Long)] = fieldName match {
+    case "split_offsets" =>
+      Seq(
+        s"$fieldName.${DeltaColumnMapping.PARQUET_LIST_ELEMENT_FIELD_NAME}" ->
+          SPLIT_OFFSETS_ELEMENT_FIELD_ID)
+    case "tags" =>
+      Seq(
+        s"$fieldName.${DeltaColumnMapping.PARQUET_MAP_KEY_FIELD_NAME}" -> TAGS_KEY_FIELD_ID,
+        s"$fieldName.${DeltaColumnMapping.PARQUET_MAP_VALUE_FIELD_NAME}" -> TAGS_VALUE_FIELD_ID)
+    case _ => Seq.empty
   }
 
   /**
@@ -411,6 +444,7 @@ sealed trait AMTAction {
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
  *                      for tables written by both Delta and Iceberg.
+ * @param tags Delta [[AddFile]] tags, preserved verbatim across the manifest round trip.
  * @param format_version Iceberg writer format version; 4 for V4.
  */
 case class DataEntry(
@@ -426,6 +460,7 @@ case class DataEntry(
     content_stats: Option[String] = None,
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
+    tags: Option[Map[String, String]] = None,
     format_version: Int = AMTSingleAction.FormatVersionV4)
   extends AMTAction {
 
@@ -446,7 +481,8 @@ case class DataEntry(
     content_stats = content_stats,
     manifest_info = None,
     key_metadata = key_metadata,
-    split_offsets = split_offsets)
+    split_offsets = split_offsets,
+    tags = tags)
 
   def toAddFile(tableRoot: Path): AddFile = {
     val dv = deletion_vector.map(DeletionVector.toDescriptor(_, tableRoot)).orNull
@@ -461,6 +497,7 @@ case class DataEntry(
       deletionVector = dv,
       baseRowId = tracking.first_row_id,
       defaultRowCommitVersion = tracking.sequence_number,
+      tags = tags.orNull,
       amtPassthrough = AMTPassthrough.fromDataEntry(this))
   }
 }
@@ -490,6 +527,7 @@ object DataEntry {
       sort_order_id = passthrough.flatMap(_.sort_order_id),
       key_metadata = passthrough.flatMap(_.key_metadata),
       split_offsets = passthrough.flatMap(_.split_offsets),
+      tags = Option(add.tags).map(_.toMap).filter(_.nonEmpty),
       content_stats = AMTContentStats.fromStatsJson(add.stats))
   }
 }
@@ -664,7 +702,8 @@ case class DataManifestEntry(
     content_stats = content_stats,
     manifest_info = Some(manifest_info),
     key_metadata = key_metadata,
-    split_offsets = split_offsets)
+    split_offsets = split_offsets,
+    tags = None)
 
   /** Absolute [[Path]] to the referenced leaf manifest, resolving `location` against the root. */
   @JsonIgnore

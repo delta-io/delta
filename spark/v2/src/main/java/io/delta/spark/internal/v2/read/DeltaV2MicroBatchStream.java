@@ -170,13 +170,16 @@ class DeltaV2MicroBatchStream
   /** Handler for non-additive schema evolution (rename/drop/type widening). */
   private final MetadataEvolutionHandler metadataEvolutionHandler;
 
+  // Spark can call initialOffset multiple times while constructing and executing the first batch.
+  private DeltaSourceOffset cachedInitialOffset;
+
   /**
    * Tracks whether this is the first batch for this stream (no checkpointed offset).
    *
    * <p>- First batch: initialOffset() -> latestOffset(Offset, ReadLimit) - Set `isFirstBatch` to
    * true in initialOffset() - in latestOffset(Offset, ReadLimit), use `isFirstBatch` to determine
-   * whether to return null vs previousOffset (when no data is available) - set `isFirstBatch` to
-   * false - Subsequent batches: latestOffset(Offset, ReadLimit)
+   * whether to return null vs previousOffset (when no data is available) - keep `isFirstBatch` true
+   * until a non-null offset is returned - Subsequent batches: latestOffset(Offset, ReadLimit)
    */
   private boolean isFirstBatch = false;
 
@@ -452,6 +455,10 @@ class DeltaV2MicroBatchStream
    */
   @Override
   public Offset initialOffset() {
+    if (cachedInitialOffset != null) {
+      return cachedInitialOffset;
+    }
+
     Optional<Long> startingVersionOpt = getStartingVersion();
     long version;
     boolean isInitialSnapshot;
@@ -467,8 +474,10 @@ class DeltaV2MicroBatchStream
       isInitialSnapshot = true;
     }
 
-    return DeltaSourceOffset.apply(
-        tableId, version, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot);
+    cachedInitialOffset =
+        DeltaSourceOffset.apply(
+            tableId, version, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot);
+    return cachedInitialOffset;
   }
 
   @Override
@@ -494,7 +503,9 @@ class DeltaV2MicroBatchStream
       initForTriggerAvailableNowIfNeeded(deltaStartOffset);
       // Return null when no data is available for this batch.
       DeltaSourceOffset endOffset = latestOffsetInternal(deltaStartOffset, limit).orElse(null);
-      isFirstBatch = false;
+      if (endOffset != null) {
+        isFirstBatch = false;
+      }
       return endOffset;
     } catch (Exception e) {
       // Kernel's DefaultJsonHandler wraps ClosedByInterruptException (thrown by NIO
