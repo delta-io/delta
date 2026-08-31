@@ -31,15 +31,11 @@ import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 // scalastyle:off import.ordering.noEmptyLine
 // scalastyle:off import.ordering.wrongOrderInGroup
-import io.delta.kernel.{
-  CommitRange,
-  TableManager => KernelTableManager
-}
+import io.delta.kernel.CommitRange
 import io.delta.kernel.engine.{Engine => KernelEngine}
 import io.delta.kernel.internal.{
   DeltaHistoryManager,
-  SnapshotImpl => KernelSnapshot,
-  Snapshots
+  SnapshotImpl => KernelSnapshot
 }
 
 import org.apache.hadoop.fs.Path
@@ -50,18 +46,16 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
- * Per-request snapshot manager that caches and incrementally updates the
- * kernel [[KernelSnapshot]] shared across requests for the same table.
+ * Table-scoped snapshot manager that caches the kernel [[KernelSnapshot]]
+ * and serves it to every operation on the same table.
  *
  * State invariants:
  *  - [[currentSnapshot]] is `null` until the first successful load.
  *  - [[tableId]] is captured on first load and validated on every
  *    subsequent install; a mismatch throws [[IllegalStateException]].
  *  - [[retire]] is idempotent and prevents further snapshot acquisition.
- *  - Incremental builds via [[KernelTableManager.builderFrom]] are
- *    attempted for path-based tables when a current snapshot exists.
- *    UC-managed tables always do a full reload through the uncached
- *    manager because builderFrom cannot discover unbackfilled commits.
+ *  - Stale entries are refreshed through the uncached snapshot manager.
+ *  - Incremental refresh strategies are layered by dependent modules.
  */
 private[tablemanager]
 class CachedSnapshotManager(
@@ -133,11 +127,7 @@ class CachedSnapshotManager(
   def retire(): Unit = synchronized {
     if (!retired) {
       retired = true
-      val snap = currentSnapshot
-      if (snap != null) {
-        currentSnapshot = null
-        snap.close()
-      }
+      currentSnapshot = null
     }
   }
 
@@ -161,24 +151,8 @@ class CachedSnapshotManager(
   private def rebuild(): KernelSnapshot = {
     recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.rebuild") {
       val validationStartedAt = System.currentTimeMillis()
-      val existing = currentSnapshot
-      val refreshed = if (existing != null && catalogTableOpt.isEmpty) {
-          incrementalBuild(existing)
-        } else {
-          loadLatestUncached()
-        }
+      val refreshed = loadLatestUncached()
       installSnapshot(refreshed, validationStartedAt)
-    }
-  }
-
-  private def incrementalBuild(existing: KernelSnapshot): KernelSnapshot = {
-    withEngine { kernelEngine =>
-      val builder = KernelTableManager.builderFrom(kernelEngine, existing)
-      try {
-        Snapshots.wrap(builder.build()).asInstanceOf[KernelSnapshot]
-      } finally {
-        builder.close()
-      }
     }
   }
 
@@ -210,11 +184,7 @@ class CachedSnapshotManager(
     val kernelEngine = recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.createEngine") {
       KernelEngineFactory.createDefaultEngine(conf)
     }
-    try {
-      f(kernelEngine)
-    } finally {
-      kernelEngine.close()
-    }
+    f(kernelEngine)
   }
 
   private def withUncachedManager[T](f: DeltaV2SnapshotManager => T): T = {
@@ -228,21 +198,16 @@ class CachedSnapshotManager(
   private[tablemanager] def installSnapshot(refreshed: KernelSnapshot,
       validationStartedAt: Long): KernelSnapshot = synchronized {
     if (retired) {
-      refreshed.close()
       return refreshed
     }
     validateTableIdentity(refreshed)
     val existing = currentSnapshot
     if (existing != null && existing.getVersion >= refreshed.getVersion) {
       lastValidatedAtMs = validationStartedAt
-      refreshed.close()
       existing
     } else {
       currentSnapshot = refreshed
       lastValidatedAtMs = validationStartedAt
-      if (existing != null) {
-        existing.close()
-      }
       refreshed
     }
   }

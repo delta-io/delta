@@ -95,9 +95,9 @@ class CachedSnapshotManagerSuite
     }
   }
 
-  // === Staleness triggers rebuild =============================
+  // === Staleness triggers full reload ==========================
 
-  test("rebuild after append advances version") {
+  test("stale rebuild after append advances version via full reload") {
     withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
       withTempDir { dir =>
         createDeltaTable(dir)
@@ -192,52 +192,6 @@ class CachedSnapshotManagerSuite
         assert(mgr.tableIdForTesting != null)
       } finally {
         mgr.retire()
-      }
-    }
-  }
-
-  // === Incremental build ======================================
-
-  test("incremental build advances version after append") {
-    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
-      withTempDir { dir =>
-        createDeltaTable(dir)
-        val mgr = createManager(dir)
-        try {
-          val snap1 = mgr.loadLatestSnapshot()
-          val v1 = DeltaV2Snapshot.getKernelSnapshot(snap1).getVersion
-          assert(v1 == 0L)
-
-          appendToDeltaTable(dir)
-
-          val snap2 = mgr.loadLatestSnapshot()
-          val v2 = DeltaV2Snapshot.getKernelSnapshot(snap2).getVersion
-          assert(v2 == 1L, "Incremental build should advance to version 1")
-        } finally {
-          mgr.retire()
-        }
-      }
-    }
-  }
-
-  test("incremental build through multiple appends") {
-    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
-      withTempDir { dir =>
-        createDeltaTable(dir)
-        val mgr = createManager(dir)
-        try {
-          mgr.loadLatestSnapshot()
-
-          appendToDeltaTable(dir)
-          appendToDeltaTable(dir)
-          appendToDeltaTable(dir)
-
-          val snap = mgr.loadLatestSnapshot()
-          val version = DeltaV2Snapshot.getKernelSnapshot(snap).getVersion
-          assert(version == 3L, "Incremental build should reach version 3")
-        } finally {
-          mgr.retire()
-        }
       }
     }
   }
