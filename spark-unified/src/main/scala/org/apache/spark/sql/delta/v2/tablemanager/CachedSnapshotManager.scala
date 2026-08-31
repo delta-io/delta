@@ -42,7 +42,6 @@ import io.delta.kernel.internal.{
   Snapshots
 }
 
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 // scalastyle:on import.ordering.noEmptyLine
@@ -89,13 +88,13 @@ class CachedSnapshotManager(
       } else {
         now
       }
-      new DeltaV2Snapshot(acquireLatest(freshAfter), catalogTableOpt)
+      wrapSnapshot(acquireLatest(freshAfter))
     }
   }
 
   override def loadSnapshotAt(version: Long): Snapshot = {
     recordFrameProfile("Delta", "CachedSnapshotManager.loadSnapshotAt") {
-      new DeltaV2Snapshot(acquireSnapshotAt(version), catalogTableOpt)
+      wrapSnapshot(acquireSnapshotAt(version))
     }
   }
 
@@ -192,6 +191,10 @@ class CachedSnapshotManager(
   }
 
   // === Uncached loading =====================================================
+
+  private def wrapSnapshot(kernelSnapshot: KernelSnapshot): DeltaV2Snapshot = {
+    new DeltaV2Snapshot(kernelSnapshot)
+  }
 
   private[tablemanager] def loadLatestUncached(): KernelSnapshot = {
     withUncachedManager { manager =>
