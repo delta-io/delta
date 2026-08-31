@@ -499,7 +499,7 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       name = "merge.sourceCachedAfterMaterializationStep",
       msg = "Cached source plans must be materialized in MERGE but the source only got cached " +
         "after the decision to materialize was taken.",
-      deltaLog = targetDeltaLog
+      provider = targetDeltaLog
     )
   }
 
