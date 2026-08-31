@@ -18,6 +18,7 @@ package shadedForDelta.org.apache.iceberg.rest;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -39,6 +40,7 @@ import shadedForDelta.org.apache.iceberg.rest.requests.PlanTableScanRequest;
 import shadedForDelta.org.apache.iceberg.rest.requests.PlanTableScanRequestParser;
 import shadedForDelta.org.apache.iceberg.rest.responses.ErrorResponse;
 import shadedForDelta.org.apache.iceberg.rest.PlanStatus;
+import shadedForDelta.org.apache.iceberg.rest.responses.FetchPlanningResultResponse;
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse;
 import shadedForDelta.org.apache.iceberg.expressions.Expression;
 import shadedForDelta.org.apache.iceberg.expressions.ResidualEvaluator;
@@ -59,6 +61,8 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   // Example: prefix="iceberg" transforms /v1/namespaces/db/tables/t1/plan
   //          to /v1/iceberg/namespaces/db/tables/t1/plan
   private String catalogPrefix = null;  // null = no prefix (fallback case)
+  private volatile Map<String, String> catalogDefaults = Collections.emptyMap();
+  private volatile boolean advertiseFetchPlanningResult = true;
 
   // Static fields for test verification - captures filter and projection from requests
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
@@ -88,6 +92,16 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   private static volatile int planRequestFailStatusCode = 503;
   private static final AtomicInteger planRequestCount = new AtomicInteger(0);
 
+  // Async planning injection fields. A non-negative value enables async planning and specifies
+  // how many GET fetchPlanningResult requests should return SUBMITTED before the completed result.
+  // The completed result is served as a FetchPlanningResultResponse, matching the GET endpoint's
+  // schema (no plan-id), while the POST /plan submitted response carries the plan-id.
+  private static final String TEST_PLAN_ID = "test-plan-id";
+  private static final AtomicInteger submittedPollsRemaining = new AtomicInteger(-1);
+  private static final AtomicInteger planPollRequestCount = new AtomicInteger(0);
+  private static volatile PlanStatus fetchTerminalStatus = PlanStatus.COMPLETED;
+  private static volatile FetchPlanningResultResponse pendingPlanResult = null;
+
   IcebergRESTCatalogAdapterWithPlanSupport(Catalog catalog) {
     super(catalog);
     this.catalog = catalog;
@@ -112,6 +126,25 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
    */
   String getCatalogPrefix() {
     return this.catalogPrefix;
+  }
+
+  void setCatalogDefaults(Map<String, String> defaults) {
+    this.catalogDefaults =
+        defaults != null
+            ? Collections.unmodifiableMap(new HashMap<>(defaults))
+            : Collections.emptyMap();
+  }
+
+  Map<String, String> getCatalogDefaults() {
+    return catalogDefaults;
+  }
+
+  void setAdvertiseFetchPlanningResult(boolean advertise) {
+    this.advertiseFetchPlanningResult = advertise;
+  }
+
+  boolean getAdvertiseFetchPlanningResult() {
+    return advertiseFetchPlanningResult;
   }
 
   /**
@@ -198,6 +231,22 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     capturedPlanRequestPath = null;
     planRequestFailCount.set(0);
     planRequestCount.set(0);
+    submittedPollsRemaining.set(-1);
+    planPollRequestCount.set(0);
+    fetchTerminalStatus = PlanStatus.COMPLETED;
+    pendingPlanResult = null;
+  }
+
+  static void setSubmittedPollsBeforeCompletion(int count) {
+    submittedPollsRemaining.set(count);
+  }
+
+  static int getPlanPollRequestCount() {
+    return planPollRequestCount.get();
+  }
+
+  static void setFetchTerminalStatus(PlanStatus status) {
+    fetchTerminalStatus = status;
   }
 
   /**
@@ -273,6 +322,22 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
       }
     }
 
+    if (isFetchPlanningResultRequest(request)) {
+      planPollRequestCount.incrementAndGet();
+      try {
+        return (T) handleFetchPlanningResult(request);
+      } catch (Exception e) {
+        LOG.error("Error fetching plan table scan result: {}", e.getMessage(), e);
+        ErrorResponse error = ErrorResponse.builder()
+            .responseCode(500)
+            .withType("InternalServerError")
+            .withMessage("Failed to fetch plan table scan result: " + e.getMessage())
+            .build();
+        errorHandler.accept(error);
+        return null;
+      }
+    }
+
     return super.execute(
         request, responseType, errorHandler, responseHeaders, parserContext);
   }
@@ -280,6 +345,28 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   private boolean isPlanTableScanRequest(HTTPRequest request) {
     return HTTPRequest.HTTPMethod.POST.equals(request.method()) &&
            request.path().endsWith("/plan");
+  }
+
+  private boolean isFetchPlanningResultRequest(HTTPRequest request) {
+    return HTTPRequest.HTTPMethod.GET.equals(request.method()) &&
+        request.path().endsWith("/plan/" + TEST_PLAN_ID);
+  }
+
+  private FetchPlanningResultResponse handleFetchPlanningResult(HTTPRequest request) {
+    if (pendingPlanResult == null) {
+      throw new IllegalArgumentException("Unknown plan ID in path: " + request.path());
+    }
+
+    // The GET fetchPlanningResult submitted response carries no plan-id, unlike POST /plan.
+    if (submittedPollsRemaining.getAndDecrement() > 0) {
+      return FetchPlanningResultResponse.builder()
+          .withPlanStatus(PlanStatus.SUBMITTED)
+          .build();
+    }
+
+    FetchPlanningResultResponse response = pendingPlanResult;
+    pendingPlanResult = null;
+    return response;
   }
 
   private TableIdentifier extractTableIdentifier(String path) {
@@ -404,7 +491,31 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     Map<Integer, shadedForDelta.org.apache.iceberg.PartitionSpec> specsById = table.specs();
     LOG.debug("Table has {} partition specs", specsById.size());
 
-    // Build response (Pattern 1: COMPLETED with direct tasks)
+    // Async planning: stash the terminal FetchPlanningResultResponse and return a submitted
+    // POST response carrying the plan-id.
+    if (submittedPollsRemaining.get() >= 0) {
+      FetchPlanningResultResponse.Builder resultBuilder =
+          FetchPlanningResultResponse.builder().withPlanStatus(fetchTerminalStatus);
+      if (fetchTerminalStatus == PlanStatus.COMPLETED) {
+        resultBuilder
+            .withFileScanTasks(tasksToReturn)
+            .withSpecsById(specsById);
+      } else if (fetchTerminalStatus == PlanStatus.FAILED) {
+        resultBuilder.withErrorResponse(ErrorResponse.builder()
+            .responseCode(500)
+            .withType("TestPlanningFailure")
+            .withMessage("Injected planning failure")
+            .build());
+      }
+      pendingPlanResult = resultBuilder.build();
+      return PlanTableScanResponse.builder()
+          .withSpecsById(specsById)
+          .withPlanStatus(PlanStatus.SUBMITTED)
+          .withPlanId(TEST_PLAN_ID)
+          .build();
+    }
+
+    // Synchronous planning (Pattern 1: COMPLETED with direct tasks).
     return PlanTableScanResponse.builder()
         .withPlanStatus(PlanStatus.COMPLETED)
         .withFileScanTasks(tasksToReturn)

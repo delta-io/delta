@@ -154,6 +154,20 @@ public class IcebergRESTServer {
     }
   }
 
+  /** Set default properties returned by the /v1/config endpoint. */
+  public void setCatalogDefaults(Map<String, String> defaults) {
+    if (adapter != null) {
+      adapter.setCatalogDefaults(defaults);
+    }
+  }
+
+  /** Configure whether /v1/config advertises the fetch-planning-result endpoint. */
+  public void setAdvertiseFetchPlanningResult(boolean advertise) {
+    if (adapter != null) {
+      adapter.setAdvertiseFetchPlanningResult(advertise);
+    }
+  }
+
   /**
    * Get the filter captured from the most recent /plan request.
    * Delegates to adapter. For test verification.
@@ -235,11 +249,30 @@ public class IcebergRESTServer {
     return IcebergRESTCatalogAdapterWithPlanSupport.getPlanRequestCount();
   }
 
+  /** Configure the number of submitted poll responses before the terminal response. */
+  public void setSubmittedPollsBeforeCompletion(int count) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setSubmittedPollsBeforeCompletion(count);
+  }
+
+  /** Get the number of fetch-planning-result requests since the last reset. */
+  public int getPlanPollRequestCount() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getPlanPollRequestCount();
+  }
+
+  /** Configure the terminal response status returned by fetch-planning-result. */
+  public void setFetchPlanningResultStatus(PlanStatus status) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setFetchTerminalStatus(status);
+  }
+
   /**
    * Clear captured filter and projection. Call between tests.
    */
   public void clearCaptured() {
     IcebergRESTCatalogAdapterWithPlanSupport.clearCaptured();
+    if (adapter != null) {
+      adapter.setCatalogDefaults(null);
+      adapter.setAdvertiseFetchPlanningResult(true);
+    }
   }
 
   public void stop() throws Exception {
