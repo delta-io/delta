@@ -1275,6 +1275,13 @@ lazy val storage = (project in file("storage"))
       // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API
       // is not compatible with 3.3.2.
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
+
+      // Only needed at runtime when delta.enableFastGCSListFrom is enabled (GCSLogStoreUtil).
+      // The shaded classifier is the artifact GCS deployments actually ship (see #7109); its
+      // com.google.cloud.hadoop.fs.gcs entry classes are not relocated, and GCSLogStoreUtil only
+      // uses members whose signatures are Hadoop types, so no unshaded Google libraries are
+      // required on any classpath.
+      "com.google.cloud.bigdataoss" % "gcs-connector" % gcsConnectorVersion % "provided" classifier "shaded",
       "io.unitycatalog" % "unitycatalog-client" % unityCatalogVersion excludeAll(
         ExclusionRule(organization = "org.openapitools"),
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
