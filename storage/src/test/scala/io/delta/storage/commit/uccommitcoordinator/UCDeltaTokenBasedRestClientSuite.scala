@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.jdk.CollectionConverters._
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
@@ -85,8 +86,7 @@ class UCDeltaTokenBasedRestClientSuite
       location: String = "s3://bucket/table",
       tableType: String = "MANAGED",
       commitsJson: String = "[]",
-      latestTableVersion: Long = -1L,
-      extraResponseFields: String = ""): String =
+      latestTableVersion: Long = -1L): String =
     s"""{"metadata":{"table-uuid":"$tableUuid","data-source-format":"$format",""" +
     s""""table-type":"$tableType",""" +
     s""""location":"$location",""" +
@@ -95,7 +95,6 @@ class UCDeltaTokenBasedRestClientSuite
     s"""{"name":"value","type":"integer","nullable":true,"metadata":{}}""" +
     s"""]},""" +
     s""""properties":{"key1":"val1"},"partition-columns":["date"],"created-time":1000},""" +
-    extraResponseFields +
     s""""commits":$commitsJson,"latest-table-version":$latestTableVersion}"""
 
   private def deltaCommitJson(
@@ -236,12 +235,15 @@ class UCDeltaTokenBasedRestClientSuite
   }
 
   test("loadTable returns recognized client maintenance operations") {
+    val response = objectMapper.readTree(loadTableJson()).asInstanceOf[ObjectNode]
+    response.putArray("client-maintenance-operations")
+      .add("DATA_REORGANIZATION")
+      .add("DATA_CLEANUP")
+      .add("METADATA_CLEANUP")
     deltaHandler = (exchange, _) => sendJson(
       exchange,
       HttpStatus.SC_OK,
-      loadTableJson(extraResponseFields =
-        """"client-maintenance-operations":["DATA_REORGANIZATION","DATA_CLEANUP",""" +
-          """"METADATA_CLEANUP"],"""))
+      objectMapper.writeValueAsString(response))
 
     withClient { c =>
       assert(c.loadTable(testIdentifier).getStorageProperties.get(
