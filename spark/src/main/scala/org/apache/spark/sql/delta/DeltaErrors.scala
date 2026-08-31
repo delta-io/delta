@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, Inva
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.exceptions
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
@@ -4197,7 +4198,14 @@ trait DeltaErrorsBase
       snapshot: SnapshotDescriptor,
       catalogTableOpt: Option[CatalogTable]): Unit = {
     if (snapshot.isCatalogOwned) {
-      throw operationBlockedOnCatalogManagedTable(operation)
+      val allowedOperations = catalogTableOpt
+        .flatMap(_.storage.properties.get(
+          UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY))
+        .map(_.split(",").toSet)
+        .getOrElse(Set.empty)
+      if (!allowedOperations.contains(operation)) {
+        throw operationBlockedOnCatalogManagedTable(operation)
+      }
     }
   }
 

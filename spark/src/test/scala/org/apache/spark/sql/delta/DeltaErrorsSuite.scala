@@ -39,15 +39,17 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.sql.DeltaSparkSessionExtension
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
+import org.mockito.Mockito.{mock, when}
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.{SparkContext, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable}
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, Length, LessThanOrEqual, Literal, SparkVersion}
 import org.apache.spark.sql.catalyst.expressions.Uuid
@@ -3049,6 +3051,37 @@ trait DeltaErrorsSuiteBase
     }
     checkError(wrapped, "DELTA_CHANGELOG_READ_FAILED.PLAN_INPUT_PARTITIONS", "XXKDS",
       Map.empty[String, String])
+  }
+
+  test("catalog-managed maintenance operation uses the catalog allowlist") {
+    val managedSnapshot = mock(classOf[SnapshotDescriptor])
+    when(managedSnapshot.isCatalogOwned).thenReturn(true)
+    val property = UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY
+
+    def tableWithOperations(value: String): CatalogTable = CatalogTable(
+      identifier = TableIdentifier("table"),
+      tableType = CatalogTableType.MANAGED,
+      storage = CatalogStorageFormat.empty.copy(
+        properties = Map(property -> value)),
+      schema = new StructType())
+
+    DeltaErrors.checkCatalogManagedTableOperationAllowed(
+      CatalogManagedTableMaintenanceOperation.DATA_CLEANUP,
+      managedSnapshot,
+      Some(tableWithOperations("DATA_CLEANUP,METADATA_CLEANUP")))
+
+    intercept[DeltaUnsupportedOperationException] {
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_REORGANIZATION,
+        managedSnapshot,
+        Some(tableWithOperations("DATA_CLEANUP,METADATA_CLEANUP")))
+    }
+    intercept[DeltaUnsupportedOperationException] {
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_CLEANUP,
+        managedSnapshot,
+        None)
+    }
   }
 
   private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {

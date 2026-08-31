@@ -85,7 +85,8 @@ class UCDeltaTokenBasedRestClientSuite
       location: String = "s3://bucket/table",
       tableType: String = "MANAGED",
       commitsJson: String = "[]",
-      latestTableVersion: Long = -1L): String =
+      latestTableVersion: Long = -1L,
+      extraResponseFields: String = ""): String =
     s"""{"metadata":{"table-uuid":"$tableUuid","data-source-format":"$format",""" +
     s""""table-type":"$tableType",""" +
     s""""location":"$location",""" +
@@ -94,6 +95,7 @@ class UCDeltaTokenBasedRestClientSuite
     s"""{"name":"value","type":"integer","nullable":true,"metadata":{}}""" +
     s"""]},""" +
     s""""properties":{"key1":"val1"},"partition-columns":["date"],"created-time":1000},""" +
+    extraResponseFields +
     s""""commits":$commitsJson,"latest-table-version":$latestTableVersion}"""
 
   private def deltaCommitJson(
@@ -228,6 +230,23 @@ class UCDeltaTokenBasedRestClientSuite
       assert(parsed.get("fields").size() === 2)
       assert(parsed.get("fields").get(0).get("name").asText() === "date")
       assert(parsed.get("fields").get(1).get("type").asText() === "integer")
+      assert(!info.getStorageProperties.containsKey(
+        UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY))
+    }
+  }
+
+  test("loadTable returns recognized client maintenance operations") {
+    deltaHandler = (exchange, _) => sendJson(
+      exchange,
+      HttpStatus.SC_OK,
+      loadTableJson(extraResponseFields =
+        """"client-maintenance-operations":["DATA_REORGANIZATION","DATA_CLEANUP",""" +
+          """"METADATA_CLEANUP"],"""))
+
+    withClient { c =>
+      assert(c.loadTable(testIdentifier).getStorageProperties.get(
+        UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY) ===
+        "DATA_REORGANIZATION,DATA_CLEANUP,METADATA_CLEANUP")
     }
   }
 
