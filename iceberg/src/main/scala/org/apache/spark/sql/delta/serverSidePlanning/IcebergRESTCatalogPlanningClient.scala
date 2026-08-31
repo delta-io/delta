@@ -58,8 +58,8 @@ import shadedForDelta.org.apache.iceberg.util.Tasks
  * The optional "prefix" in overrides is used for multi-tenant catalog paths.
  */
 private case class CatalogConfigResponse(
-    defaults: Map[String, String],
-    overrides: Map[String, String],
+    defaults: Map[String, String] = Map.empty,
+    overrides: Map[String, String] = Map.empty,
     endpoints: Option[Seq[String]] = None)
 
 /**
@@ -236,7 +236,8 @@ class IcebergRESTCatalogPlanningClient(
 
   /** Merge server defaults and overrides, with overrides taking precedence. */
   private lazy val catalogProperties: Map[String, String] =
-    catalogConfig.defaults ++ catalogConfig.overrides
+    Option(catalogConfig.defaults).getOrElse(Map.empty) ++
+      Option(catalogConfig.overrides).getOrElse(Map.empty)
 
   /**
    * Lazily construct the endpoint URI root from the Iceberg REST catalog config prefix.
