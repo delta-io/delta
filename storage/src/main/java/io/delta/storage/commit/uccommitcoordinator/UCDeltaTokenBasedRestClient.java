@@ -619,42 +619,34 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     AdaptedTableMetadata adapted = new AdaptedTableMetadata(name, m);
     Optional<UniformMetadata> uniformMetadata =
         toStorageUniformMetadata(response.getUniform());
-    Map<String, String> clientMaintenanceOperations =
-        toClientMaintenanceOperationProperties(response.getClientMaintenanceOperations());
+    Map<String, String> storageProps = new LinkedHashMap<>();
+    List<DeltaMaintenanceOperation> clientMaintenanceOperations =
+        response.getClientMaintenanceOperations();
+    if (clientMaintenanceOperations != null && !clientMaintenanceOperations.isEmpty()) {
+      storageProps.put(
+          UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY,
+          clientMaintenanceOperations.stream()
+              .map(DeltaMaintenanceOperation::getValue)
+              .collect(Collectors.joining(",")));
+    }
     if (!credentialVendingEnabled) {
       return new TableInfo(
-          ucTableId, tableType, location, adapted, clientMaintenanceOperations, uniformMetadata);
+          ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
     }
-    Map<String, String> storageProps;
     try {
-      storageProps = new LinkedHashMap<>(fetchTableCredentials(catalog, schema, name, location));
-      storageProps.putAll(clientMaintenanceOperations);
+      storageProps.putAll(fetchTableCredentials(catalog, schema, name, location));
     } catch (ApiException e) {
       // Surface as a typed failure so callers with a fallback (e.g. server-side planning) can
       // recover. The exception carries the catalog-side TableInfo without credentials so the
       // caller can still build a CatalogTable.
       TableInfo withoutCreds = new TableInfo(
-          ucTableId, tableType, location, adapted, clientMaintenanceOperations, uniformMetadata);
+          ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
       throw new CredentialFetchFailedException(
           String.format("Credential fetch failed for table %s.%s.%s (HTTP %s): %s",
               catalog, schema, name, e.getCode(), e.getResponseBody()),
           e, withoutCreds);
     }
     return new TableInfo(ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
-  }
-
-  private static Map<String, String> toClientMaintenanceOperationProperties(
-      List<DeltaMaintenanceOperation> operations) {
-    if (operations == null || operations.isEmpty()) {
-      return Collections.emptyMap();
-    }
-    String value = operations.stream()
-        .filter(Objects::nonNull)
-        .map(DeltaMaintenanceOperation::getValue)
-        .collect(Collectors.joining(","));
-    return Collections.singletonMap(
-        UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY,
-        value);
   }
 
   private static Optional<UniformMetadata> toStorageUniformMetadata(
