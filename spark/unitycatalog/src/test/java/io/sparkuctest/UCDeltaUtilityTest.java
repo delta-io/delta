@@ -16,8 +16,6 @@
 
 package io.sparkuctest;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
 import java.util.ArrayList;
 import java.util.List;
 import org.assertj.core.api.Assertions;
@@ -140,25 +138,19 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   @Test
-  public void testMaintenanceOpsBlockedOnManagedTable() throws Exception {
+  public void testMaintenanceOpsAllowedOnManagedTable() throws Exception {
     withNewTable(
-        "maintenance_blocked",
+        "maintenance_allowed",
         "id INT",
         TableType.MANAGED,
         tableName -> {
           sql("INSERT INTO %s VALUES (1)", tableName);
 
-          assertThatThrownBy(() -> sql("OPTIMIZE %s", tableName))
-              .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
-              .hasMessageContaining("DATA_REORGANIZATION");
+          sql("OPTIMIZE %s", tableName);
+          sql("VACUUM %s", tableName);
+          sql("REORG TABLE %s APPLY (PURGE)", tableName);
 
-          assertThatThrownBy(() -> sql("VACUUM %s", tableName))
-              .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
-              .hasMessageContaining("DATA_CLEANUP");
-
-          assertThatThrownBy(() -> sql("REORG TABLE %s APPLY (PURGE)", tableName))
-              .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
-              .hasMessageContaining("DATA_REORGANIZATION");
+          check(tableName, List.of(List.of("1")));
         });
   }
 }
