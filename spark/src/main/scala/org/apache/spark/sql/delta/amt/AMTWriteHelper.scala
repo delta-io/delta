@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{Checkpoints, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DomainMetadata, Metadata, Protocol, SetTransaction}
-import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
+import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
@@ -430,11 +430,11 @@ object AMTWriteHelper extends DeltaLogging {
       deletedPositions: Seq[Long],
       replacedPositions: Seq[Long]): (Tracking, ManifestInfo) = {
     val cumulativeMdv = oldEntry.manifest_info.dv
-      .map(AMTUtils.deserializeMdv).getOrElse(new RoaringBitmapArray)
+      .map(AMTUtils.deserializeMdv).getOrElse(ManifestBitmap.empty())
     mdvPositions.foreach(cumulativeMdv.add)
     def bitmapOf(positions: Seq[Long]): Option[Array[Byte]] = {
       if (positions.isEmpty) None
-      else Some(AMTUtils.serializeMdv(RoaringBitmapArray(positions: _*)))
+      else Some(AMTUtils.serializeMdv(ManifestBitmap(positions: _*)))
     }
     // Every masked / CDF position indexes an entry within this leaf, so no count can exceed the
     // leaf's entry count; a larger value signals a corrupt bitmap or a double-counted position.
@@ -516,7 +516,7 @@ object AMTWriteHelper extends DeltaLogging {
 
   // Returns a copy of a carried-forward leaf's ManifestInfo with `mdv` recorded as its Manifest
   // Deletion Vector.
-  private[amt] def withUpdatedMdv(base: ManifestInfo, mdv: RoaringBitmapArray): ManifestInfo = {
+  private[amt] def withUpdatedMdv(base: ManifestInfo, mdv: ManifestBitmap): ManifestInfo = {
     if (mdv.isEmpty) {
       base.copy(dv = None, dv_cardinality = None)
     } else {
@@ -546,7 +546,7 @@ object AMTWriteHelper extends DeltaLogging {
   /**
    * Writes a sequence of AMTSingleActions to a Parquet file.
    */
-  private def writeAMTParquet(
+  private[amt] def writeAMTParquet(
       spark: SparkSession,
       hadoopConf: Configuration,
       finalPath: Path,

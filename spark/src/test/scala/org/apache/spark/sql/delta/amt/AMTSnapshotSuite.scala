@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTestUtils, DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DeletionVectorDescriptor}
+import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot}
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
+import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
@@ -921,7 +923,6 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false") {
       withTable("amt_dv_clone_src", "amt_dv_clone_tgt") {
         val src = "amt_dv_clone_src"
-        // The source needs no AMT of its own, the clone reads its files.
         createAMTTable(src, checkpointInterval = 100)
         Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(src)
         val srcLog = deltaLogForName(src)
@@ -930,12 +931,38 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         val dvActions = writeFileWithDVOnDisk(srcLog, srcFile.head, RoaringBitmapArray(0L))
         srcLog.startTransaction().commit(dvActions, DeltaOperations.Delete(predicate = Seq.empty))
 
+        val sourceJsonFiles = srcLog.update().allFiles.collect()
+        assert(sourceJsonFiles.length == 1)
+        assert(sourceJsonFiles.head.deletionVector != null)
+        assert(sourceJsonFiles.head.deletionVector.storageType ==
+          DeletionVectorDescriptor.UUID_DV_MARKER)
+
+        // Materialize the source's AMT before cloning. AMT stores an in-root DV location as a
+        // relative path, so source allFiles reconstructs the on-disk DV as an r descriptor.
+        commitCheckpoint(srcLog, incremental = false)
+        val sourceAMTSnapshot = srcLog.update()
+        amtProvider(sourceAMTSnapshot).getOrElse(
+          fail("the clone source must have an AMTCheckpointProvider."))
+        val sourceAMTFiles = sourceAMTSnapshot.allFiles.collect()
+        assert(sourceAMTFiles.length == 1)
+        assert(sourceAMTFiles.head.deletionVector != null)
+        assert(sourceAMTFiles.head.deletionVector.storageType ==
+          DeletionVectorDescriptor.RELATIVE_DV_MARKER)
+
         val tgt = "amt_dv_clone_tgt"
         sql(s"CREATE TABLE $tgt SHALLOW CLONE $src")
-        // Materialize the target's AMT.
-        commitCheckpoint(deltaLogForName(tgt), incremental = false)
 
         val tgtLog = deltaLogForName(tgt)
+        val clonedFiles = tgtLog.update().allFiles.collect()
+        assert(clonedFiles.length == 1)
+        val clonedDv = clonedFiles.head.deletionVector
+        assert(clonedDv != null)
+        assert(clonedDv.storageType == DeletionVectorDescriptor.PATH_DV_MARKER,
+          "A shallow-cloned AMT DV must be stored as an absolute p DV")
+
+        // Materialize the target's AMT.
+        commitCheckpoint(tgtLog, incremental = false)
+
         val snapshot = tgtLog.update()
         amtProvider(snapshot).getOrElse(
           fail("the clone target must have an AMTCheckpointProvider."))
@@ -1278,7 +1305,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
 
   /** Serializes a manifest DV bitmap over the given leaf entry positions. */
   private def mdvBytesFor(positions: Long*): Array[Byte] =
-    AMTUtils.serializeMdv(RoaringBitmapArray(positions: _*))
+    AMTUtils.serializeMdv(ManifestBitmap(positions: _*))
 
   /** An ADDED tracking envelope with no lineage/sequence numbers, matching the AMT writer. */
   private def addedTracking: Tracking = Tracking(

@@ -20,7 +20,7 @@ import java.util.UUID
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, RemoveFile}
-import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
+import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.functions.col
@@ -216,7 +216,7 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
         provider.checkpointAction.contentRoot.getAbsolutePath(provider.tableRoot).toString)
     val liveAdds =
       byStatus.filter { case (status, _) =>
-        AMTCheckpointProvider.liveDataEntryStatuses.contains(status) }.values.sum
+        Tracking.Status.liveEntryStatuses.contains(status) }.values.sum
     val tombstones = tombstoneTrackingStatuses.toSeq.map(byStatus.getOrElse(_, 0L)).sum
     (liveAdds, tombstones)
   }
@@ -224,12 +224,12 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
   /** The per-commit CDF `tracking.deleted_positions` off a leaf pointer (empty if unset). */
   protected def leafDeletedPositions(leaf: DataManifestEntry): Set[Long] =
     leaf.tracking.deleted_positions
-      .map(RoaringBitmapArray.readFrom(_).toArray.toSet).getOrElse(Set.empty)
+      .map(ManifestBitmap.readFrom(_).toArray.toSet).getOrElse(Set.empty)
 
   /** The per-commit CDF `tracking.replaced_positions` off a leaf pointer (empty if unset). */
   protected def leafReplacedPositions(leaf: DataManifestEntry): Set[Long] =
     leaf.tracking.replaced_positions
-      .map(RoaringBitmapArray.readFrom(_).toArray.toSet).getOrElse(Set.empty)
+      .map(ManifestBitmap.readFrom(_).toArray.toSet).getOrElse(Set.empty)
 
   /** The current snapshot's leaf pointers, keyed by relative location. */
   protected def leafPointers(snapshot: Snapshot): Map[String, DataManifestEntry] = {
@@ -440,8 +440,8 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
     val statusToCountMap = trackingStatusToAddFileCountMap(rootPath)
     val rootLiveAdds =
       statusToCountMap
-        .filter { case (status, _) =>
-          AMTCheckpointProvider.liveDataEntryStatuses.contains(status) }.values.sum
+        .filter { case (status, _) => Tracking.Status.liveEntryStatuses.contains(status) }
+        .values.sum
 
     // Leaves: each pointer's MDV must be internally consistent, and the unmasked LIVE entries are
     // the leaf's live contribution. A tombstone-only leaf (born ADDED but holding no live entry)
@@ -453,12 +453,11 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
         val statusToCountMapForLeaf = trackingStatusToAddFileCountMap(leafPath)
         val physicalEntries = statusToCountMapForLeaf.values.sum
         val livePhysicalEntries = statusToCountMapForLeaf
-          .filter { case (status, _) =>
-            AMTCheckpointProvider.liveDataEntryStatuses.contains(status) }
+          .filter { case (status, _) => Tracking.Status.liveEntryStatuses.contains(status) }
           .values.sum
         val mdvDeclaredCardinality = leaf.manifest_info.dv_cardinality.getOrElse(0L)
         val decoded =
-          leaf.manifest_info.dv.map(RoaringBitmapArray.readFrom).getOrElse(new RoaringBitmapArray)
+          leaf.manifest_info.dv.map(ManifestBitmap.readFrom).getOrElse(ManifestBitmap.empty())
         assert(decoded.cardinality == mdvDeclaredCardinality,
           s"Leaf ${leaf.location}: dv_cardinality=$mdvDeclaredCardinality but the decoded MDV " +
             s"has ${decoded.cardinality} bits.")

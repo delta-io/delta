@@ -23,7 +23,6 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DeltaLog, SingleCommit}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, DomainMetadata, FileAction, InMemoryLogReplay, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
-import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileStatus, Path}
