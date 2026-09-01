@@ -32,9 +32,6 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  *   path. This is NOT the table data path -- it is `dataPath/_delta_log`. Must be absolute;
  *   scheme presence depends on the caller's qualification (catalog-resolved paths carry a scheme,
  *   local test paths may not).
- * @param mstId the active MST transaction identity, if any. Two keys with different MST contexts
- *   are distinct even for the same table path. Always `None` in the OSS build, which has no MST
- *   concept; reserved for cross-build cache-key shape parity.
  * @param sessionInvariantFsOptions filesystem-prefixed options (`fs.*`, `dfs.*`) extracted from
  *   reader/writer options and catalog storage properties. These are the credential-bearing options
  *   that distinguish cache entries for the same path accessed with different credentials. Called
@@ -44,11 +41,10 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  */
 case class DeltaV2CacheKey(
     path: Path,
-    mstId: Option[String],
     sessionInvariantFsOptions: Map[String, String]) {
 
   override def toString: String =
-    s"DeltaV2CacheKey(path=$path,mstId=$mstId,fsOptions=<redacted>)"
+    s"DeltaV2CacheKey(path=$path,fsOptions=<redacted>)"
 }
 
 object DeltaV2CacheKey {
@@ -75,6 +71,6 @@ object DeltaV2CacheKey {
     val sessionInvariantFsOptions = DeltaFileSystemOptions.buildFsOptions(
       spark, options.asScala.toMap, catalogTableOpt)
     val logPath = DeltaLog.logPathFor(dataPath)
-    DeltaV2CacheKey(logPath, mstId = None, sessionInvariantFsOptions)
+    DeltaV2CacheKey(logPath, sessionInvariantFsOptions)
   }
 }
