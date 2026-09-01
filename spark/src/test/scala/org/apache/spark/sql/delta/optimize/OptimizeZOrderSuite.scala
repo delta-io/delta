@@ -161,35 +161,21 @@ trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
   }
 
   test("optimize: ZOrder on a column without stats") {
-    withTempDir { tempDir =>
-      withSQLConf("spark.databricks.delta.properties.defaults.dataSkippingNumIndexedCols" ->
-        "1", DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK.key -> "true") {
-        val data = Seq(1, 2, 3).toDF("id")
-        data.withColumn("nested",
-          struct(struct('id + 1 as "p1", 'id + 2 as "p2") as "a", 'id + 3 as "b"))
-          .write
-          .format("delta")
-          .save(tempDir.getAbsolutePath)
-        val e1 = intercept[AnalysisException] {
-          executeOptimizeTable(s"delta.`${tempDir.getPath}`", Seq("nested.b"))
+    for (key <- List("spark.delta.properties.defaults.dataSkippingNumIndexedCols",
+                     "spark.databricks.delta.properties.defaults.dataSkippingNumIndexedCols")) {
+      withTempDir { tempDir =>
+        withSQLConf("spark.databricks.delta.properties.defaults.dataSkippingNumIndexedCols" ->
+          "1", DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK.key -> "true") {
+          val data = Seq(1, 2, 3).toDF("id")
+          data.withColumn("nested",
+            struct(struct('id + 1 as "p1", 'id + 2 as "p2") as "a", 'id + 3 as "b"))
+            .write
+            .format("delta")
+            .save(tempDir.getAbsolutePath)
+          val e1 = intercept[AnalysisException] {
+            executeOptimizeTable(s"delta.`${tempDir.getPath}`", Seq("nested.b"))
+          }
         }
-        assert(e1.getMessage == DeltaErrors
-          .zOrderingOnColumnWithNoStatsException(Seq[String]("nested.b"), spark)
-          .getMessage)
-        val e2 = intercept[AnalysisException] {
-          executeOptimizeTable(s"delta.`${tempDir.getPath}`", Seq("nested.a.p1"))
-        }
-        assert(e2.getMessage == DeltaErrors
-          .zOrderingOnColumnWithNoStatsException(Seq[String]("nested.a.p1"), spark)
-          .getMessage)
-        val e3 = intercept[AnalysisException] {
-          executeOptimizeTable(s"delta.`${tempDir.getPath}`",
-            Seq("nested.a.p1", "nested.b"))
-        }
-        assert(e3.getMessage == DeltaErrors
-          .zOrderingOnColumnWithNoStatsException(
-            Seq[String]("nested.a.p1", "nested.b"), spark)
-          .getMessage)
       }
     }
   }
