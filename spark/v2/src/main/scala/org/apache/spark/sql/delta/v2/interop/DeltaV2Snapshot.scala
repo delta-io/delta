@@ -21,6 +21,7 @@ import scala.jdk.OptionConverters._
 
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
+import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 
 import org.apache.spark.sql.delta.{CheckpointProvider, DeltaColumnMappingMode, DeltaLogFileIndex, Snapshot, VersionChecksum}
@@ -114,10 +115,10 @@ class DeltaV2Snapshot(
   // --- SnapshotDescriptor / state surface ----------------------------------------------------
 
   override lazy val metadata: Metadata =
-    DeltaV2SnapshotConversionsUtils.metadataFromKernel(kernelSnapshot.getMetadata)
+    KernelActionUtils.metadataFromKernel(kernelSnapshot.getMetadata)
 
   override lazy val protocol: Protocol =
-    DeltaV2SnapshotConversionsUtils.protocolFromKernel(kernelSnapshot.getProtocol)
+    KernelActionUtils.protocolFromKernel(kernelSnapshot.getProtocol)
 
   override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
 

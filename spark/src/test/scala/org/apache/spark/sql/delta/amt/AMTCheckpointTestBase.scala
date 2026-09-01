@@ -511,6 +511,28 @@ trait AMTCheckpointTestBase
       .flatMap(_.incrementalWriteMetrics)
   }
 
+  /**
+   * Like [[trackIncrementalAMTWriteMetrics]] but returns one entry per attempt that made an
+   * incremental write, in attempt order -- a conflict retry materializes the tree more than once,
+   * so this exposes each attempt's shape. `commitVersion` is by-name so callers can pass the final
+   * committed version, which is only known after `commit` runs.
+   */
+  protected def trackIncrementalAMTWriteMetricsPerAttempt(
+      commitVersion: => Long)(commit: => Unit): Seq[IncrementalAMTWriteMetrics] = {
+    val events = Log4jUsageLogger.track {
+      commit
+    }
+    val version = commitVersion
+    events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains("delta.commit.stats"))
+      .map(e => JsonUtils.fromJson[CommitStats](e.blob))
+      .find(_.commitVersion == version)
+      .toSeq
+      .flatMap(_.amtWriteMetrics.toSeq)
+      .flatMap(_.attempts)
+      .flatMap(_.incrementalWriteMetrics)
+  }
+
   private def assertAMTCheckpointScenarioInvariants(
       context: AMTCheckpointScenarioContext): Unit = {
     val scenario = context.scenario
@@ -579,11 +601,13 @@ trait AMTCheckpointTestBase
   }
 
   /** Forces every write to inline its AMT incrementally (a low action-count threshold). */
-  protected def withInline[T](body: => T): T =
+  protected def withInline[T](body: => T): T = withInlineThreshold(1)(body)
+
+  /** Runs `body` with the inline-manifest threshold at `n` actions. */
+  protected def withInlineThreshold[T](n: Int)(body: => T): T =
     withSQLConf(
-      DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key -> "1") {
-      body
-    }
+      DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+        -> n.toString)(body)
 
   /**
    * Runs the test with inline writes forced (a low action-count threshold).
@@ -639,14 +663,18 @@ trait AMTCheckpointTestBase
    * this can exceed the live file count. To assert the tree captures exactly the live file set,
    * call [[assertReconstructsLiveFileSet]] instead.
    */
-  protected def currentLeafDataEntries(snapshot: Snapshot): Long = {
-    val provider = amtProvider(snapshot)
-      .getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
-      provider.liveLeafManifestAbsolutePaths.map { leafPath =>
-        spark.read.parquet(leafPath.toString)
-          .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
-          .count()
-      }.sum
+  protected def leafLiveDataEntryCount(snapshot: Snapshot): Long =
+    leafLiveDataEntryCount(amtProvider(snapshot)
+      .getOrElse(fail("Snapshot has no AMTCheckpointProvider.")))
+
+  /**
+   * Total DATA (content_type=0) entry rows across `provider`'s live leaves, 0 when the tree is
+   * leafless. Like the [[Snapshot]]-based overload but driven by a provider a test built directly
+   * (e.g. from a checkpoint), where no owning [[Snapshot]] exists.
+   */
+  protected def leafLiveDataEntryCount(provider: AMTCheckpointProvider): Long = {
+    val leaves = provider.liveLeafManifestAbsolutePaths.map(_.toString)
+    if (leaves.isEmpty) 0L else withManifestDataEntries(leaves)(_.count())
   }
 
 
@@ -654,7 +682,7 @@ trait AMTCheckpointTestBase
    * The number of live files the CURRENT snapshot's AMT reconstructs across the WHOLE tree -- root
    * and leaves. Goes through the provider's own reconstruction, which drops MDV-masked leaf entries
    * and `tracking=removed` root tombstones, so it equals `snapshot.allFiles.count()` on both full
-   * and incremental trees. Unlike [[currentLeafDataEntries]], it counts live files stored directly
+   * and incremental trees. Unlike [[leafLiveDataEntryCount]], it counts live files stored directly
    * in the root too (as an incremental commit does below the spill threshold).
    *
    * Prefer [[assertReconstructsLiveFileSet]] when the test runs through
