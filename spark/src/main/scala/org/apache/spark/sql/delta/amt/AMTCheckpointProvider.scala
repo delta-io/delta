@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, Metadata, Protocol, RemoveFile, SingleAction}
-import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.util.DeltaEncoder
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -169,7 +168,7 @@ final class AMTCheckpointProvider(
         AMTCheckpointProvider.liveDataEntryStatuses.toSeq: _*))
       .filter { entryWithLoc =>
         mdvBroadcast.value.get(entryWithLoc.leafPath)
-          .forall(bytes => !RoaringBitmapArray.readFrom(bytes).contains(entryWithLoc.pos))
+          .forall(bytes => !AMTUtils.deserializeMdv(bytes).contains(entryWithLoc.pos))
       }
 
     dataEntries

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTestUtils, DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DeletionVectorDescriptor}
+import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
@@ -1278,7 +1279,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
 
   /** Serializes a manifest DV bitmap over the given leaf entry positions. */
   private def mdvBytesFor(positions: Long*): Array[Byte] =
-    AMTUtils.serializeMdv(RoaringBitmapArray(positions: _*))
+    AMTUtils.serializeMdv(ManifestBitmap(positions: _*))
 
   /** An ADDED tracking envelope with no lineage/sequence numbers, matching the AMT writer. */
   private def addedTracking: Tracking = Tracking(
