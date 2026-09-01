@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.v2.tablemanager
 import java.io.File
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import org.apache.hadoop.fs.Path
 
@@ -27,7 +28,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 
 class CachedSnapshotManagerSuite
     extends QueryTest
-    with SharedSparkSession {
+    with SharedSparkSession
+    with DeltaSQLCommandTest {
 
   private def createDeltaTable(dir: File, numRows: Int = 10): Unit = {
     spark.range(numRows).write.format("delta").save(dir.getCanonicalPath)
