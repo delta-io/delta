@@ -27,54 +27,10 @@ import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import io.delta.kernel.types.CollationIdentifier;
-import java.math.BigDecimal;
 import java.util.*;
-import java.util.function.BiFunction;
 
 /** Utility methods to evaluate {@code IN} expression. */
 public class InExpressionEvaluator {
-
-  private static final Map<Class<? extends DataType>, BiFunction<Object, Object, Integer>>
-      COMPARATORS = createComparatorMap();
-
-  private static Map<Class<? extends DataType>, BiFunction<Object, Object, Integer>>
-      createComparatorMap() {
-    Map<Class<? extends DataType>, BiFunction<Object, Object, Integer>> map = new HashMap<>();
-    map.put(BooleanType.class, (v1, v2) -> Boolean.compare((Boolean) v1, (Boolean) v2));
-    map.put(
-        ByteType.class,
-        (v1, v2) -> Byte.compare(((Number) v1).byteValue(), ((Number) v2).byteValue()));
-    map.put(
-        ShortType.class,
-        (v1, v2) -> Short.compare(((Number) v1).shortValue(), ((Number) v2).shortValue()));
-    map.put(
-        IntegerType.class,
-        (v1, v2) -> Integer.compare(((Number) v1).intValue(), ((Number) v2).intValue()));
-    map.put(
-        DateType.class,
-        (v1, v2) -> Integer.compare(((Number) v1).intValue(), ((Number) v2).intValue()));
-    map.put(
-        LongType.class,
-        (v1, v2) -> Long.compare(((Number) v1).longValue(), ((Number) v2).longValue()));
-    map.put(
-        TimestampType.class,
-        (v1, v2) -> Long.compare(((Number) v1).longValue(), ((Number) v2).longValue()));
-    map.put(
-        TimestampNTZType.class,
-        (v1, v2) -> Long.compare(((Number) v1).longValue(), ((Number) v2).longValue()));
-    map.put(
-        FloatType.class,
-        (v1, v2) -> Float.compare(((Number) v1).floatValue(), ((Number) v2).floatValue()));
-    map.put(
-        DoubleType.class,
-        (v1, v2) -> Double.compare(((Number) v1).doubleValue(), ((Number) v2).doubleValue()));
-    map.put(
-        DecimalType.class,
-        (v1, v2) -> BIGDECIMAL_COMPARATOR.compare((BigDecimal) v1, (BigDecimal) v2));
-    map.put(StringType.class, (v1, v2) -> STRING_COMPARATOR.compare((String) v1, (String) v2));
-    map.put(BinaryType.class, (v1, v2) -> BINARY_COMPARTOR.compare((byte[]) v1, (byte[]) v2));
-    return Collections.unmodifiableMap(map);
-  }
 
   /** Validates and transforms the {@code IN} expression. */
   static In validateAndTransform(
@@ -83,15 +39,22 @@ public class InExpressionEvaluator {
       DataType valueDataType,
       List<Expression> inListExpressions,
       List<DataType> inListDataTypes) {
-    // TODO: [delta-io/delta#5227] Try to reuse Implicit cast and simplify comparison logic
     validateArgumentCount(in, inListExpressions);
     validateInListElementsAreLiterals(in, inListExpressions);
-    validateTypeCompatibility(in, valueDataType, inListDataTypes);
-    validateCollation(in, valueDataType, inListExpressions, inListDataTypes);
+
+    // Use implicit casting for type compatibility
+    DataType commonType = resolveCommonType(in, valueDataType, inListDataTypes);
+    Expression transformedValue = applyCastIfNeeded(valueExpression, valueDataType, commonType);
+    List<Expression> transformedList =
+        applyListCasts(inListExpressions, inListDataTypes, commonType);
+
+    validateCollation(
+        in, commonType, transformedList, Collections.nCopies(transformedList.size(), commonType));
+
     if (in.getCollationIdentifier().isPresent()) {
-      return new In(valueExpression, inListExpressions, in.getCollationIdentifier().get());
+      return new In(transformedValue, transformedList, in.getCollationIdentifier().get());
     } else {
-      return new In(valueExpression, inListExpressions);
+      return new In(transformedValue, transformedList);
     }
   }
 
@@ -110,7 +73,8 @@ public class InExpressionEvaluator {
       throw unsupportedExpressionException(
           in,
           "IN expression requires at least 1 element in the IN list. "
-              + "Example usage: column IN (value1, value2, ...)");
+              + "Example usage: column IN (value1, value2, ...). "
+              + "Empty IN lists are not supported.");
     }
   }
 
@@ -123,32 +87,136 @@ public class InExpressionEvaluator {
             String.format(
                 "IN expression requires all list elements to be literals. "
                     + "Non-literal expression found at position %d: %s. "
-                    + "Only constant values are currently supported in IN lists.",
+                    + "Only constant values are currently supported in IN lists. "
+                    + "Consider using subqueries or other expressions for dynamic values.",
                 i + 1, child.getClass().getSimpleName()));
       }
     }
   }
 
-  private static void validateTypeCompatibility(
+  /** Resolves the common type for all operands in the IN expression using implicit cast rules. */
+  private static DataType resolveCommonType(
       In in, DataType valueDataType, List<DataType> inListDataTypes) {
     // Check for nested types which are not supported
     if (valueDataType.isNested()) {
       throw unsupportedExpressionException(
-          in, String.format("IN expression does not support nested types.", valueDataType));
+          in,
+          String.format(
+              "IN expression does not support nested types. Value type: %s. "
+                  + "Only primitive types (numeric, string, boolean, date, timestamp, binary) "
+                  + "are supported.",
+              valueDataType));
     }
 
     for (int i = 0; i < inListDataTypes.size(); i++) {
       DataType listElementType = inListDataTypes.get(i);
-      if (!valueDataType.equivalent(listElementType)) {
+      if (listElementType.isNested()) {
         throw unsupportedExpressionException(
             in,
             String.format(
-                "IN expression requires all list elements to match the value type. "
-                    + "Value type: %s, but found incompatible element type at position %d: %s. "
-                    + "Consider casting the incompatible element to the value type.",
+                "IN expression does not support nested types at position %d. Element type: %s. "
+                    + "Only primitive types (numeric, string, boolean, date, timestamp, binary) "
+                    + "are supported.",
+                i + 1, listElementType));
+      }
+    }
+
+    try {
+      return TypeResolver.findCommonType(valueDataType, inListDataTypes);
+    } catch (IllegalArgumentException e) {
+      // Provide enhanced error messages with specific guidance
+      throw createTypeCompatibilityError(in, valueDataType, inListDataTypes, e);
+    }
+  }
+
+  /**
+   * Creates a detailed error message for type compatibility issues in IN expressions. Provides
+   * specific guidance about implicit casting and supported type combinations.
+   */
+  private static UnsupportedOperationException createTypeCompatibilityError(
+      In in,
+      DataType valueDataType,
+      List<DataType> inListDataTypes,
+      IllegalArgumentException originalError) {
+
+    // Find the first incompatible type to provide specific guidance
+    for (int i = 0; i < inListDataTypes.size(); i++) {
+      DataType listElementType = inListDataTypes.get(i);
+
+      if (!valueDataType.equivalent(listElementType)) {
+        // Check if both are numeric types
+        if (TypeResolver.isNumericType(valueDataType)
+            && TypeResolver.isNumericType(listElementType)) {
+          // This should not happen as numeric types should be compatible, but provide guidance
+          return unsupportedExpressionException(
+              in,
+              String.format(
+                  "Cannot find common numeric type for IN expression. "
+                      + "Value type: %s, incompatible element at position %d: %s. "
+                      + "This may indicate a precision or range compatibility issue. "
+                      + "Supported numeric type hierarchy: "
+                      + "byte → short → integer → long → float → double.",
+                  valueDataType, i + 1, listElementType));
+        }
+
+        // Check if one is numeric and the other is not
+        if (TypeResolver.isNumericType(valueDataType)
+            || TypeResolver.isNumericType(listElementType)) {
+          return unsupportedExpressionException(
+              in,
+              String.format(
+                  "Cannot find common type for IN expression. "
+                      + "Value type: %s, incompatible element at position %d: %s. "
+                      + "No implicit cast available between numeric and non-numeric types. "
+                      + "Consider using explicit casting or ensuring all operands are "
+                      + "of compatible types.",
+                  valueDataType, i + 1, listElementType));
+        }
+
+        // Both are non-numeric types
+        return unsupportedExpressionException(
+            in,
+            String.format(
+                "Cannot find common type for IN expression. "
+                    + "Value type: %s, incompatible element at position %d: %s. "
+                    + "Non-numeric types must be exactly equivalent "
+                    + "(no implicit casting available). "
+                    + "Supported type families: numeric (byte, short, integer, long, "
+                    + "float, double), string, boolean, date, timestamp, binary.",
                 valueDataType, i + 1, listElementType));
       }
     }
+
+    // Fallback to original error message if we couldn't identify the specific issue
+    return unsupportedExpressionException(
+        in,
+        String.format(
+            "Cannot find common type for IN expression. %s "
+                + "Ensure all operands are of compatible types. "
+                + "Implicit casting is supported within numeric types "
+                + "(byte → short → integer → long → float → double). "
+                + "Other types must be exactly equivalent.",
+            originalError.getMessage()));
+  }
+
+  /** Applies an implicit cast to the given expression if needed. */
+  private static Expression applyCastIfNeeded(
+      Expression expression, DataType fromType, DataType toType) {
+    if (fromType.equivalent(toType)) {
+      return expression;
+    }
+    return new ImplicitCastExpression(expression, toType);
+  }
+
+  /** Applies implicit casts to all expressions in the list if needed. */
+  private static List<Expression> applyListCasts(
+      List<Expression> expressions, List<DataType> fromTypes, DataType toType) {
+    List<Expression> transformedExpressions = new ArrayList<>();
+    for (int i = 0; i < expressions.size(); i++) {
+      Expression transformed = applyCastIfNeeded(expressions.get(i), fromTypes.get(i), toType);
+      transformedExpressions.add(transformed);
+    }
+    return transformedExpressions;
   }
 
   /** Validates that collation is only used with string types and the collation is UTF8Binary. */
@@ -196,25 +264,22 @@ public class InExpressionEvaluator {
 
   private static void checkIsStringType(DataType dataType, In in, String message) {
     if (!(dataType instanceof StringType)) {
-      throw unsupportedExpressionException(in, message);
+      throw unsupportedExpressionException(
+          in,
+          String.format(
+              "%s Found type: %s. "
+                  + "Collation can only be applied to STRING types in IN expressions.",
+              message, dataType));
     }
   }
 
-  private static boolean compareValues(Object value1, Object value2, DataType valueType) {
-    Preconditions.checkArgument(value1 != null || value2 != null);
-    if (value1 == null || value2 == null) {
-      return false;
-    }
-    return getComparator(valueType).apply(value1, value2) == 0;
-  }
-
-  private static BiFunction<Object, Object, Integer> getComparator(DataType dataType) {
-    BiFunction<Object, Object, Integer> comparator = COMPARATORS.get(dataType.getClass());
-    if (comparator == null) {
-      throw new UnsupportedOperationException(
-          "No comparator available for data type: " + dataType.getClass().getSimpleName());
-    }
-    return comparator;
+  /**
+   * Compares two values for equality after implicit casting has been applied. Since all values have
+   * been cast to the same type, we can use simple equality comparison.
+   */
+  private static boolean compareValues(Object value1, Object value2) {
+    // After implicit casting, both values are of the same type, so we can use Objects.equals
+    return Objects.equals(value1, value2);
   }
 
   /** Column vector implementation for IN expression evaluation. */
@@ -290,7 +355,7 @@ public class InExpressionEvaluator {
         } else {
           Object inListValue =
               VectorUtils.getValueAsObject(inListVector, inListVector.getDataType(), rowId);
-          if (compareValues(valueToFind, inListValue, valueVector.getDataType())) {
+          if (compareValues(valueToFind, inListValue)) {
             return Optional.of(true);
           }
         }
