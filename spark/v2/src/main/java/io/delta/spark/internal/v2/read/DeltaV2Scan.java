@@ -19,6 +19,7 @@ import static io.delta.spark.internal.v2.utils.ExpressionUtils.dsv2PredicateToCa
 
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.spark.internal.v2.DeltaV2JavaLogging;
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
@@ -60,7 +61,8 @@ import scala.Option;
  * <p>This class must remain package-private so callers outside {@code v2.read} depend only on
  * Spark's public connector interfaces instead of coupling to Delta's internal V2 implementation.
  */
-class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
+class DeltaV2Scan extends DeltaV2JavaLogging
+    implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
   private final DeltaV2SnapshotManager snapshotManager;
   private final io.delta.kernel.Snapshot initialSnapshot;
@@ -103,6 +105,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   private long totalRows = 0L;
   // true iff every AddFile in the scan had numRecords in its stats JSON.
   private boolean rowCountKnown = false;
+  private org.apache.spark.sql.delta.Snapshot plannedSnapshot = null;
   private volatile boolean planned = false;
 
   // Runtime predicates applied after planning (using Set for order-independent comparison)
@@ -207,6 +210,11 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   // point and the Batch-only bookkeeping below goes away with it.
   @Override
   public Batch toBatch() {
+    return recordFrameProfileValue("batchScan.toBatch", this::createBatch);
+  }
+
+  /** Constructs the fallback batch without putting its multi-step body inside a Java lambda. */
+  private Batch createBatch() {
     if (isCDCRead) {
       throw new UnsupportedOperationException(
           "Batch reads with CDC (readChangeFeed / readChangeData) are not supported in the V2 "
@@ -422,8 +430,21 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     //     out AddFile.stats (DataSkippingReader.getFilesAndNumRecords defaults keepStats=false),
     //     but it does report the aggregate in DeltaScan.scanned.rows -- the very field V1's
     //     PreparedDeltaFileIndex.getNumOfRows reads. The aggregate fallback below picks it up.
-    final DeltaScan deltaScan =
-        Objects.requireNonNull(deltaScanSupplier.get(), "deltaScanSupplier returned null");
+    final Supplier<DeltaScan> selectFiles =
+        () -> Objects.requireNonNull(deltaScanSupplier.get(), "deltaScanSupplier returned null");
+    final DeltaScan deltaScan = recordFrameProfileValue("scan.awaitFileSelection", selectFiles);
+    final Runnable materializeFiles = () -> materializeSelectedFiles(deltaScan, tablePath);
+    recordFrameProfileAction("scan.materializeSelectedFiles", materializeFiles);
+  }
+
+  /**
+   * Converts the files selected by {@code deltaScan} to connector scan objects and aggregates scan
+   * size statistics.
+   */
+  private void materializeSelectedFiles(DeltaScan deltaScan, String tablePath) {
+    plannedSnapshot =
+        Objects.requireNonNull(
+            deltaScan.scannedSnapshot(), "deltaScan.scannedSnapshot returned null");
     rowCountKnown = arePlanStatsEnabled();
     final List<org.apache.spark.sql.delta.actions.AddFile> scanFiles =
         scala.jdk.javaapi.CollectionConverters.asJava(deltaScan.files());
@@ -473,7 +494,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   private synchronized void ensurePlanned(List<RuntimePredicate> runtimePredicates) {
     // First, ensure planning is done
     if (!planned) {
-      planScanFiles();
+      recordFrameProfileAction("scan.planFiles", this::planScanFiles);
       planned = true;
     }
 
@@ -538,6 +559,11 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   private void ensurePlanned() {
     // Pass null to indicate no runtime predicate should be applied - just perform the scan planning
     ensurePlanned(null);
+  }
+
+  org.apache.spark.sql.delta.Snapshot plannedSnapshot() {
+    ensurePlanned();
+    return Objects.requireNonNull(plannedSnapshot, "plannedSnapshot is null after planning");
   }
 
   public StructType getDataSchema() {

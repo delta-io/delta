@@ -23,7 +23,6 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DeltaLog, SingleCommit}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, DomainMetadata, FileAction, InMemoryLogReplay, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
-import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -183,11 +182,13 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     // ---- Step 4: spill entries into new leaves if the root would exceed the per-leaf cap. ----
     val fixedRootCount = carriedLeafPointers.size
     val (rootLiveEntries, rootRemoveEntries, spilledLeafPointers) =
-      spillIfNeeded(liveEntries, removeEntries, fixedRootCount, processedActions.postCommitMetadata)
+      spillIfNeeded(liveEntries, removeEntries, fixedRootCount,
+        processedActions.postCommitMetadata, processedActions.postCommitProtocol)
     val allLeafPointers = carriedLeafPointers ++ spilledLeafPointers
 
-    // ---- Step 5: write the new root. The post-commit metadata shapes the persisted manifest
-    // schema (the Iceberg partition struct), so every manifest write needs it.
+    // ---- Step 5: write the new root. The post-commit metadata and protocol shape the persisted
+    // manifest schema (the Iceberg partition struct and the typed per-column content stats), so
+    // every manifest write needs them.
     val rootRows =
       allLeafPointers.map(_.wrap) ++
         rootLiveEntries.map(_.wrap) ++
@@ -197,7 +198,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     val contentStateVersion =
       if (actionsToCommit.isEmpty) attemptVersion - 1 else attemptVersion
     val contentRootBase = AMTWriteHelper.writeRoot(
-      spark, fs, hadoopConf, tableRoot, metadataDir, processedActions.postCommitMetadata, rootRows,
+      spark, fs, hadoopConf, tableRoot, metadataDir, processedActions.postCommitMetadata,
+      processedActions.postCommitProtocol, rootRows,
       version = contentStateVersion)
 
     // ---- Step 6: generate the Checkpoint action. ----
@@ -414,7 +416,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       liveEntries: Seq[DataEntry],
       removeEntries: Seq[DataEntry],
       fixedRootCount: Int,
-      metadata: Metadata): (Seq[DataEntry], Seq[DataEntry], Seq[DataManifestEntry]) = {
+      metadata: Metadata,
+      protocol: Protocol): (Seq[DataEntry], Seq[DataEntry], Seq[DataManifestEntry]) = {
     val spilled = ArrayBuffer.empty[DataManifestEntry]
     var remainingLive = liveEntries
     var remainingRemoves = removeEntries
@@ -423,13 +426,13 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     while (rootRowCount > entriesPerLeaf && remainingLive.nonEmpty) {
       val (batch, rest) = remainingLive.splitAt(entriesPerLeaf)
       spilled += AMTWriteHelper.writeLeaf(
-        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, batch)
+        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, protocol, batch)
       remainingLive = rest
     }
     while (rootRowCount > entriesPerLeaf && remainingRemoves.nonEmpty) {
       val (batch, rest) = remainingRemoves.splitAt(entriesPerLeaf)
       spilled += AMTWriteHelper.writeLeaf(
-        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, batch)
+        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, protocol, batch)
       remainingRemoves = rest
     }
     (remainingLive, remainingRemoves, spilled.toSeq)

@@ -300,7 +300,7 @@ class AMTIncrementalWriteTrackingMDVSuite extends AMTIncrementalWriteTestBase {
 
         // A second bare incremental rewrite carries nothing new, so it must drop the stale DELETED
         // pointers and report them as numStaleDeletedLeavesDropped, leaving an empty tree.
-        val metrics = commitCheckpoint(amtDeltaLog, incremental = true)
+        val metrics = commitIncrementalCheckpointAndReturnMetrics(amtDeltaLog)
           .getOrElse(fail("An incremental checkpoint must log metrics."))
         assert(metrics.numStaleDeletedLeavesDropped == leafCount,
           s"All $leafCount stale DELETED leaves must be dropped; got " +

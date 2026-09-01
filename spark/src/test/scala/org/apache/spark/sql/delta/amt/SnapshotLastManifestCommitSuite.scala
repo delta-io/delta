@@ -210,13 +210,10 @@ trait SnapshotLastManifestCommitSuiteBase extends AMTCheckpointTestBase {
     }
     assert(lastManifestCommitFromCommitInfoAt(deltaLog, version) == expected,
       s"v$version CommitInfo must carry LMC $expected.")
-    // Currently, we are cross-validating the installed checkpoint provider against the CRC, so in
-    // no-CRC mode, exceptions are thrown. We temporarily skip this assertion in no-CRC mode.
-    // TODO: once CommitInfo fallback lands, stop skipping this assertion.
-    if (writeChecksumEnabled) {
-      assert(deltaLog.getSnapshotAt(version).lastManifestCommitOpt == expected,
-        s"v$version snapshot must resolve LMC $expected.")
-    }
+    // The snapshot resolves the reference from the CRC when present, and otherwise from the latest
+    // commit's CommitInfo fallback, so this holds in both CRC and no-CRC modes.
+    assert(deltaLog.getSnapshotAt(version).lastManifestCommitOpt == expected,
+      s"v$version snapshot must resolve LMC $expected.")
   }
 
   test("manifest commits persist lastManifestCommit to the CRC and CommitInfo, " +

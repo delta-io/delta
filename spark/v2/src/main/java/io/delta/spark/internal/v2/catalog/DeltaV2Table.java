@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.catalog;
 
 import static io.delta.spark.internal.v2.utils.ScalaUtils.toJavaOptional;
 import static io.delta.spark.internal.v2.utils.ScalaUtils.toScalaMap;
+import static io.delta.spark.internal.v2.utils.ScalaUtils.toScalaOption;
 import static io.delta.spark.internal.v2.utils.StatsUtils.toV2Statistics;
 import static java.util.Objects.requireNonNull;
 
@@ -75,6 +76,7 @@ import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.catalog.DeltaV2TableMarker;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.util.DeltaFileSystemOptions;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
@@ -88,7 +90,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.jdk.javaapi.CollectionConverters;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class DeltaV2Table extends DeltaV2TableLogging
+public class DeltaV2Table extends DeltaV2TableShimsWithLogging
     implements Table,
         SupportsRead,
         SupportsWrite,
@@ -232,18 +234,10 @@ public class DeltaV2Table extends DeltaV2TableLogging
     this.catalogTable = catalogTable;
     // Merge options: file system options from catalog + user options (user takes precedence)
     // This follows the same pattern as DeltaTableV2 in delta-spark
-    Map<String, String> merged = new HashMap<>();
-    // Only extract file system options from table storage properties
-    catalogTable.ifPresent(
-        table ->
-            scala.collection.JavaConverters.mapAsJavaMap(table.storage().properties())
-                .forEach(
-                    (key, value) -> {
-                      if (DeltaTableUtils.validDeltaTableHadoopPrefixes()
-                          .exists(prefix -> key.startsWith(prefix))) {
-                        merged.put(key, value);
-                      }
-                    }));
+    Map<String, String> merged =
+        new HashMap<>(
+            scala.collection.JavaConverters.mapAsJavaMap(
+                DeltaFileSystemOptions.extractCatalogTableFsOptions(toScalaOption(catalogTable))));
     // User options override catalog properties
     merged.putAll(userOptions);
     this.options = Collections.unmodifiableMap(merged);
@@ -253,10 +247,13 @@ public class DeltaV2Table extends DeltaV2TableLogging
     this.kernelEngine = KernelEngineFactory.createDefaultEngine(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     try {
-      this.initialSnapshot =
-          timeTravelVersion.isPresent()
-              ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
-              : snapshotManager.loadLatestSnapshot();
+      if (timeTravelVersion.isPresent()) {
+        this.initialSnapshot =
+            loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong());
+      } else {
+        this.initialSnapshot =
+            recordFrameProfileValue("snapshot.loadLatest", snapshotManager::loadLatestSnapshot);
+      }
     } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
       // Rethrow as the Delta-module wrapper so catalog/interop layer never names a Kernel type.
       throw new TableNotFoundException(tablePath);
@@ -558,8 +555,8 @@ public class DeltaV2Table extends DeltaV2TableLogging
   private Snapshot loadSnapshotAtCheckedVersion(DeltaV2SnapshotManager manager, long version) {
     manager.checkVersionExists(
         version, /* mustBeRecreatable = */ true, /* allowOutOfRange = */ false);
-    return recordFrameProfileValue(
-        "Delta", "DeltaV2.snapshot.loadAtVersion", () -> manager.loadSnapshotAt(version));
+    final Supplier<Snapshot> loadSnapshot = () -> manager.loadSnapshotAt(version);
+    return recordFrameProfileValue("snapshot.loadAtVersion", loadSnapshot);
   }
 
   @Override

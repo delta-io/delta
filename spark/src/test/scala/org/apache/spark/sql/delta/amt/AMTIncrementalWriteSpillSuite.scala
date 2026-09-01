@@ -162,7 +162,7 @@ class AMTIncrementalWriteSpillSuite extends AMTIncrementalWriteTestBase {
         // which is the accounting this test guards.
         val oldAMTLeafToMDV = leafToLeafMDVCardinalityMap(amtDeltaLog)
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(fakeAdd(7)))
-        val actualIncrementalMetrics = commitCheckpoint(amtDeltaLog, incremental = true)
+        val actualIncrementalMetrics = commitIncrementalCheckpointAndReturnMetrics(amtDeltaLog)
           .getOrElse(fail("An incremental checkpoint must log metrics."))
         assert(actualIncrementalMetrics.numOldLeavesUntouched == numLeafCountBefore,
           s"All $numLeafCountBefore carried leaves must be untouched by an append; got " +

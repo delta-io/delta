@@ -143,6 +143,58 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testInitialOffset_doesNotResetFirstBatchState(@TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_idempotent_initial_offset_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 1,
+        /* rowsPerVersion= */ 1,
+        /* includeEmptyVersion= */ false);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    Offset initialOffset = stream.initialOffset();
+    Offset firstEndOffset = stream.latestOffset(initialOffset, ReadLimit.allAvailable());
+    assertNotNull(firstEndOffset);
+
+    // MicroBatchExecution calls initialOffset again while constructing the first batch's scan.
+    assertEquals(initialOffset, stream.initialOffset());
+
+    // With no new data, a subsequent batch returns its start offset rather than null.
+    assertEquals(firstEndOffset, stream.latestOffset(firstEndOffset, ReadLimit.allAvailable()));
+  }
+
+  @Test
+  public void testInitialOffset_noDataRemainsFirstBatch(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_initial_offset_no_data_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    scala.collection.immutable.Map<String, String> scalaOptions =
+        Map$.MODULE$.<String, String>empty().updated("startingVersion", "latest");
+    DeltaOptions options = new DeltaOptions(scalaOptions, spark.sessionState().conf());
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+
+    Offset initialOffset = stream.initialOffset();
+    assertNull(stream.latestOffset(initialOffset, ReadLimit.allAvailable()));
+
+    Offset cachedInitialOffset = stream.initialOffset();
+    assertEquals(initialOffset, cachedInitialOffset);
+    assertNull(stream.latestOffset(cachedInitialOffset, ReadLimit.allAvailable()));
+  }
+
+  @Test
   public void testDeserializeOffset_ValidJson(@TempDir File tempDir) throws Exception {
     String tablePath = tempDir.getAbsolutePath();
     DeltaV2MicroBatchStream stream = createTestStream(tempDir);

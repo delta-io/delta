@@ -18,15 +18,17 @@ package org.apache.spark.sql.delta
 
 import java.io.FileNotFoundException
 import java.util.UUID
+import java.util.concurrent.Future
 
 import scala.collection.mutable
+import scala.concurrent.duration.Duration
 import scala.math.Ordering.Implicits._
 import scala.util.Try
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.actions.{Action, Checkpoint, CheckpointMetadata, LastManifestCommit, Metadata, SidecarFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, Checkpoint, CheckpointMetadata, CommitInfo, LastManifestCommit, Metadata, SidecarFile, SingleAction}
 import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTWriteResult}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -61,7 +63,7 @@ import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{coalesce, col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.{LongAccumulator, SerializableConfiguration, Utils}
+import org.apache.spark.util.{LongAccumulator, SerializableConfiguration, ThreadUtils, Utils}
 
 /**
  * A class to help with comparing checkpoints with each other, where we may have had concurrent
@@ -417,24 +419,64 @@ trait Checkpoints extends DeltaLogging {
       .toSeq ++ instanceFromOldCheckpointProvider
   }
 
+  /** Starts an async read of the last commit's CommitInfo if needed and flag enabled. */
+  protected def maybeReadLastCommitInfoAsync(
+      logSegment: LogSegment,
+      shouldReconcileAMTCheckpointProvider: Boolean): Option[Future[Option[CommitInfo]]] = {
+    val shouldKickOffAsyncCommitInfoRead = shouldReconcileAMTCheckpointProvider &&
+      spark.conf.get(DeltaSQLConf.AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED)
+    Option.when(shouldKickOffAsyncCommitInfoRead) {
+      SnapshotManagement.checkpointThreadPool.submit(spark) { readLastCommitInfo(logSegment) }
+    }
+  }
+
   /**
-   * Verifies the AMT checkpoint provider (if any) of the log segment against LastManifestCommit.
-   * Updates the log segment with the correct AMT if possible; throws otherwise.
+   * Reconciles the AMT checkpoint provider (if any) of the log segment against the last manifest
+   * commit reference, updating/trimming the segment as needed and throwing on inconsistency.
+   *
+   * @param initSegment initial log segment; may contain some initial checkpoint provider.
+   * @param lastChecksumOpt optional checksum at the log segment's version.
+   * @param lastCommitInfoFuture future of the CommitInfo from the last commit in the log segment.
+   *
+   * @return updated log segment with reconciled AMT checkpoint provider and trimmed deltas.
    */
   protected def reconcileAMTCheckpointProvider(
-      logSegment: LogSegment,
-      finalChecksumOpt: Option[VersionChecksum]): LogSegment = {
-    (logSegment.checkpointProvider, finalChecksumOpt) match {
-      case (amtCheckpointProvider: AMTCheckpointProvider, Some(checksum)) =>
-        val lastManifestCommit = checksum.lastManifestCommit.getOrElse {
-          throw new IllegalStateException(
-            s"An AMT checkpoint provider at version ${amtCheckpointProvider.version} was " +
-              s"discovered for table $logPath, but the checksum at version ${logSegment.version} " +
-              s"carries no lastManifestCommit. Refusing to trust the AMT checkpoint.")
+      initSegment: LogSegment,
+      lastChecksumOpt: Option[VersionChecksum],
+      lastCommitInfoFutureOpt: Option[Future[Option[CommitInfo]]]): LogSegment = {
+    val lastManifestCommitOpt = (lastChecksumOpt, lastCommitInfoFutureOpt) match {
+      case (Some(checksum), _) =>
+        lastCommitInfoFutureOpt.foreach { lastCommitInfoFuture =>
+          if (DeltaUtils.isTesting) {
+            // In testing, we always complete the async read to avoid flaky file operation counts.
+            ThreadUtils.awaitResult(lastCommitInfoFuture, Duration.Inf)
+          } else {
+            // In prod, the async CommitInfo read is no longer needed and we can cancel it.
+            // We trust the CRC and the CommitInfo have the same lastManifestCommit.
+            lastCommitInfoFuture.cancel(false)
+          }
         }
+        checksum.lastManifestCommit
+
+      case (None, Some(lastCommitInfoFuture)) =>
+        // No CRC is available, so fall back to the reference from the last commit's CommitInfo.
+        // Block on the read that was started in parallel with the CRC read.
+        ThreadUtils.awaitResult(lastCommitInfoFuture, Duration.Inf).flatMap(_.lastManifestCommit)
+
+      case (None, None) =>
+        // Without either a CRC or a CommitInfo, we cannot differentiate between:
+        //  1. There is no lastManifestCommit at all;
+        //  2. There is a lastManifestCommit, but we chose not to read it (flag disabled).
+        // We return None in both cases, but note that case-2 could lead to an existing AMT
+        // checkpoint provider not discovered, and cause missing file actions.
+        None
+    }
+
+    (initSegment.checkpointProvider, lastManifestCommitOpt) match {
+      case (amtCheckpointProvider: AMTCheckpointProvider, Some(lastManifestCommit)) =>
         if (amtCheckpointProvider.version == lastManifestCommit.contentRootVersion) {
           // Happy-path: the versions match. Safe to use the initial AMT checkpoint provider.
-          return logSegment
+          return initSegment
         } else if (amtCheckpointProvider.version < lastManifestCommit.contentRootVersion) {
           // The initial AMT checkpoint provider is stale, which could happen during:
           //  - `deltaLog.createSnapshotAtInit()` when _last_checkpoint is stale;
@@ -445,7 +487,7 @@ trait Checkpoints extends DeltaLogging {
           //    least one newer manifest commit has landed.
           //  - If that newer manifest commit is an inline one, having it in the trailing deltas
           //    would lead to missing file actions.
-          return readManifestCommitAndUpdateAMTCheckpointProvider(logSegment, lastManifestCommit)
+          return readManifestCommitAndUpdateAMTCheckpointProvider(initSegment, lastManifestCommit)
         } else if (amtCheckpointProvider.version > lastManifestCommit.contentRootVersion) {
           // This should not happen.
           throw new IllegalStateException(
@@ -457,33 +499,39 @@ trait Checkpoints extends DeltaLogging {
       case (amtCheckpointProvider: AMTCheckpointProvider, None) =>
         throw new IllegalStateException(
           s"An AMT checkpoint provider at version ${amtCheckpointProvider.version} was " +
-            s"discovered for table $logPath, but no checksum (CRC) file is available to " +
-            s"corroborate it. Refusing to trust the AMT checkpoint.")
+            s"discovered for table $logPath, but no lastManifestCommit is available from either " +
+            s"the CRC or the latest commit's CommitInfo to corroborate it. Refusing to trust the " +
+            s"AMT checkpoint.")
 
-      case (otherCheckpointProvider, Some(checksum)) if checksum.lastManifestCommit.isDefined =>
-        // Treat the LastManifestCommit as the source of truth for the AMT checkpoint provider,
-        // even the initial log segment has a non-AMT or empty checkpoint provider.
-        checksum.lastManifestCommit.foreach { lastManifestCommit =>
-          if (otherCheckpointProvider.version <= lastManifestCommit.contentRootVersion) {
-            // We have all the deltas needed after the accurate content root version, so we update.
-            return readManifestCommitAndUpdateAMTCheckpointProvider(logSegment, lastManifestCommit)
-          } else {
-            // The initial log segment somehow has a non-AMT provider, while the lastManifestCommit
-            // claims that there is some AMT content root available describing an earlier version.
-            // This might happen across upgrade/downgrade code paths. Throw until we support them.
-            throw new IllegalStateException(
-              s"The LastManifestCommit of version ${logSegment.version} carries a content root " +
-                s"version ${lastManifestCommit.contentRootVersion} that is ahead of the initial " +
-                s"non-AMT checkpoint version ${otherCheckpointProvider.version}. Refusing to " +
-                s"trust the checkpoint.")
-          }
+      case (otherCheckpointProvider, Some(lastManifestCommit)) =>
+        // Treat the lastManifestCommit as the source of truth for the AMT checkpoint provider,
+        // even when the initial log segment has a non-AMT or empty checkpoint provider.
+        if (otherCheckpointProvider.version <= lastManifestCommit.contentRootVersion) {
+          // We have all the deltas needed after the accurate content root version, so we update.
+          return readManifestCommitAndUpdateAMTCheckpointProvider(initSegment, lastManifestCommit)
+        } else {
+          // The initial log segment somehow has a non-AMT provider, while the lastManifestCommit
+          // claims that there is some AMT content root available describing an earlier version.
+          // This might happen across upgrade/downgrade code paths. Throw until we support them.
+          throw new IllegalStateException(
+            s"The LastManifestCommit of version ${initSegment.version} carries a content root " +
+              s"version ${lastManifestCommit.contentRootVersion} that is ahead of the initial " +
+              s"non-AMT checkpoint version ${otherCheckpointProvider.version}. Refusing to " +
+              s"trust the checkpoint.")
         }
 
+      // A non-AMT / empty provider with no lastManifestCommit: nothing to reconcile.
       case _ => ()
     }
 
     // No changes needed.
-    logSegment
+    initSegment
+  }
+
+  /** Reads the [[CommitInfo]] from the last commit file of the given log segment. */
+  protected def readLastCommitInfo(logSegment: LogSegment): Option[CommitInfo] = {
+    val commitFile = DeltaCommitFileProvider(logPath, logSegment).deltaFile(logSegment.version)
+    DeltaHistoryManager.getCommitInfoOpt(store, commitFile, newDeltaHadoopConf())
   }
 
   /**
@@ -1265,11 +1313,11 @@ object Checkpoints
    *                  (the default, classic-checkpoint behavior) it is `df.schema.asNullable` (fully
    *                  nullable). The AMT manifest writer passes its id-carrying schema. The resolved
    *                  schema is the value returned to the caller.
-   * @param useDeltaParquetWriteSupport When true, hooks in [[DeltaParquetWriteSupport]] as the
-   *                  Parquet write support class so that list-element / map key-value field ids
-   *                  carried on `outputSchema` via `parquet.field.nested.ids` are emitted to the
-   *                  file's Parquet schema (the stock `ParquetWriteSupport` does not). Needed for
-   *                  the AMT Iceberg-V4 manifest schema. Default false uses the standard support.
+   * @param writeAsIcebergManifest When true, applies the Iceberg-V4 manifest write settings via
+   *                  [[configureIcebergManifestParquetWrite]]: list-element / map key-value field
+   *                  ids (carried on `outputSchema` via `parquet.field.nested.ids`, which the stock
+   *                  `ParquetWriteSupport` omits) and int64 `TIMESTAMP(MICROS)` timestamps. Needed
+   *                  for the AMT manifest schema. Default false uses the standard parquet write.
    * @return The schema actually written.
    */
   def writeAtomicCheckpointParquetFile(
@@ -1279,17 +1327,17 @@ object Checkpoints
       hadoopConf: Configuration,
       useRename: Boolean,
       outputSchema: Option[StructType] = None,
-      useDeltaParquetWriteSupport: Boolean = false): StructType =
+      writeAsIcebergManifest: Boolean = false): StructType =
       recordFrameProfile(
         "Checkpoints", "writeAtomicCheckpointParquetFile") {
     val schema = outputSchema.getOrElse(df.schema.asNullable)
     val format = new ParquetFileFormat()
     val job = Job.getInstance(hadoopConf)
     val factory = format.prepareWrite(spark, job, Map.empty, schema)
-    if (useDeltaParquetWriteSupport) {
-      // Emit nested (list-element / map key-value) field ids, which the stock ParquetWriteSupport
-      // does not. Set after prepareWrite so it overrides the write-support class prepareWrite set.
-      ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
+    if (writeAsIcebergManifest) {
+      // Write as an Iceberg-V4 manifest (nested field ids + int64 micros timestamps). Applied after
+      // prepareWrite so it overrides what prepareWrite put on the job.
+      configureIcebergManifestParquetWrite(job)
     }
     val serConf = new SerializableConfiguration(job.getConfiguration)
     val finalSparkPath = SparkPath.fromPath(finalPath)
@@ -1324,6 +1372,22 @@ object Checkpoints
         Iterator(status)
       }.collect()
     schema
+  }
+
+  /**
+   * Applies the extra Parquet write settings an AMT Iceberg-V4 manifest needs, on top of what
+   * `ParquetFileFormat.prepareWrite` sets. Call after `prepareWrite` and before the job's
+   * `Configuration` is snapshotted for executors, so these override the defaults. Keep in sync with
+   * the Iceberg write behaviors in `DeltaParquetFileFormatBase.prepareWrite`:
+   *   - timestamps as int64 `TIMESTAMP(MICROS)` (Iceberg-legal; Spark's default is `INT96`);
+   *   - list-element / map key-value field ids via [[DeltaParquetWriteSupport]] (the stock
+   *     `ParquetWriteSupport` omits them).
+   */
+  private[delta] def configureIcebergManifestParquetWrite(job: Job): Unit = {
+    job.getConfiguration.set(
+      SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
+      SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
+    ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
   }
 
   // scalastyle:off argcount
