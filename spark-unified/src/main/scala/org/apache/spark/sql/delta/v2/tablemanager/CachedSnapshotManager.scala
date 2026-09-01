@@ -157,6 +157,10 @@ class CachedSnapshotManager(
   }
 
   private def acquireSnapshotAt(version: Long): KernelSnapshot = {
+    val existing = currentSnapshot
+    if (existing != null && version == existing.getVersion) {
+      return existing
+    }
     withUncachedManager { manager =>
       val kernelSnapshot = DeltaV2Snapshot.getKernelSnapshot(manager.loadSnapshotAt(version))
       validateTableIdentity(kernelSnapshot)

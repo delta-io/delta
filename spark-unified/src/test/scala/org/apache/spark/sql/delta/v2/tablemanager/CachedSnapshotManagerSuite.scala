@@ -139,6 +139,25 @@ class CachedSnapshotManagerSuite
     }
   }
 
+  test("loadSnapshotAt reuses the matching cached snapshot") {
+    withTempDir { dir =>
+      createDeltaTable(dir)
+      appendToDeltaTable(dir)
+      val mgr = createManager(dir)
+      try {
+        mgr.loadLatestSnapshot()
+        val cached = mgr.currentSnapshotForTesting
+        assert(cached.getVersion == 1L)
+
+        val loaded = DeltaV2Snapshot.getKernelSnapshot(mgr.loadSnapshotAt(1L))
+        assert(loaded eq cached, "Matching version should reuse the cached snapshot")
+        assert(mgr.currentSnapshotForTesting eq cached)
+      } finally {
+        mgr.retire()
+      }
+    }
+  }
+
   // === Retire lifecycle =======================================
 
   test("retire closes current snapshot") {
