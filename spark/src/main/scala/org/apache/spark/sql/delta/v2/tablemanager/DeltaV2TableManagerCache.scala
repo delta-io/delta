@@ -35,7 +35,7 @@ import org.apache.spark.sql.internal.SQLConf
  */
 object DeltaV2TableManagerCache extends DeltaLogging {
 
-  private var cache: Option[Cache[DeltaV2CacheKey, DeltaV2TableManager]] = None
+  @volatile private var cache: Option[Cache[DeltaV2CacheKey, DeltaV2TableManager]] = None
 
   def isEnabled(sqlConf: SQLConf): Boolean =
     sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE) > 0
