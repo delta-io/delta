@@ -29,7 +29,6 @@ import org.apache.spark.sql.test.SharedSparkSession
  * or Scala API resp.
  */
 trait MergeIntoTestUtils extends DeltaDMLTestUtils with MergeHelpers {
-  self: SharedSparkSession =>
 
   protected def executeMerge(
       target: String,
@@ -56,7 +55,6 @@ trait MergeIntoTestUtils extends DeltaDMLTestUtils with MergeHelpers {
 }
 
 trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
-  self: SharedSparkSession =>
 
   protected def basicMergeStmt(
       cte: Option[String] = None,
@@ -120,7 +118,6 @@ trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
 }
 
 trait MergeIntoScalaTestUtils extends MergeIntoTestUtils {
-  self: SharedSparkSession =>
 
   override protected def executeMerge(
       target: String,

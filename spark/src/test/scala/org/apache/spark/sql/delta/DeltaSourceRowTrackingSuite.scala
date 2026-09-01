@@ -21,6 +21,7 @@ import java.util.Locale
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.streaming.StreamTest
+import org.apache.spark.sql.test.SharedSparkSession
 
 /**
  * Streaming regression tests for row-tracking metadata and CDC combination scenarios.
@@ -28,9 +29,11 @@ import org.apache.spark.sql.streaming.StreamTest
  * The base suite runs through the DSv1 connector; DeltaV2SourceRowTrackingSuite
  * re-runs the same tests through the DSv2 connector via V2ForceTest.
  */
-trait DeltaSourceRowTrackingSuiteBase extends StreamTest
+trait DeltaSourceRowTrackingSuiteBase
+  extends SharedSparkSession
   with DeltaSourceSuiteBase
-  with DeltaColumnMappingTestUtils {
+  with DeltaColumnMappingTestUtils
+  with StreamTest {
 
   import testImplicits._
 

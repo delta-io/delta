@@ -121,13 +121,10 @@ trait V2ForceTest extends DeltaSQLCommandTest with AdaptiveSparkPlanHelper {
    * Run an arbitrary action through the V1 connector by temporarily setting V2_ENABLE_MODE to
    * NONE. Useful for setup/DDL/DML that V2 doesn't support.
    */
-  protected def inV1Mode[T](f: => T): T =
+  protected def inV1Mode[T](f: => T): T = {
     withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE")(f)
+  }
 
   /** Run a SQL statement through the V1 connector. */
-  protected def executeInV1Mode(sqlText: String): Unit = inV1Mode(sql(sqlText))
-
-  override def afterAll(): Unit = {
-    super.afterAll()
-  }
+  protected def executeInV1Mode(sqlText: String): Unit = inV1Mode(spark.sql(sqlText))
 }

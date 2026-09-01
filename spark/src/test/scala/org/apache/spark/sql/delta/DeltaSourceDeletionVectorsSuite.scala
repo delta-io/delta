@@ -29,9 +29,10 @@ import org.scalatest.concurrent.PatienceConfiguration.Timeout
 import org.apache.spark.sql.streaming.{StreamTest, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 
-trait DeltaSourceDeletionVectorTests extends StreamTest
-  with DeletionVectorsTestUtils {
-  self: DeltaSourceConnectorTrait =>
+trait DeltaSourceDeletionVectorTests
+  extends DeltaSQLCommandTest
+  with DeletionVectorsTestUtils
+  with StreamTest { self: DeltaSourceConnectorTrait =>
 
   import testImplicits._
 

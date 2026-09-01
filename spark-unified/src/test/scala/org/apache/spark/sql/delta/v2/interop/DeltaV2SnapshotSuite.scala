@@ -27,6 +27,7 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 
@@ -36,7 +37,9 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable
  * (`metadata`, `protocol`, `allFiles`, `timestamp`, ...), and the V1 state-reconstruction members
  * that remain unsupported and throw [[UnsupportedOperationException]].
  */
-class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
+class DeltaV2SnapshotSuite
+  extends DeltaSQLCommandTest
+  with SharedSparkSession {
 
   // scalastyle:off deltahadoopconfiguration
   // No DeltaLog in this test (the snapshot is loaded via Kernel), so use the session Hadoop conf.
