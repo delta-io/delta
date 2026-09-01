@@ -58,6 +58,8 @@ import org.slf4j.LoggerFactory;
 public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(BaseExternalLogStore.class);
 
+    public static final int DEFAULT_MAX_RETRIES = 3;
+
     /**
      * A global path lock to ensure that no two writers/readers are copying a given T(N) into N.json
      * at the same time within the same JVM. This can occur
@@ -415,7 +417,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                     // happen when we execute the main try block on the next while loop iteration
                 } catch (Throwable e) {
                     LOG.info("{}:", e.getClass().getSimpleName(), e);
-                    if (retry >= 3) {
+                    if (retry >= DEFAULT_MAX_RETRIES) {
                         throw e;
                     }
                 }
