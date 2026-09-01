@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.coordinatedcommits.{
   TrackingInMemoryCommitCoordinatorBuilder
 }
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.spark.internal.v2.snapshot.unitycatalog.{
@@ -64,7 +65,8 @@ import org.apache.spark.sql.types.StructType
 
 class CachedSnapshotManagerSuite
     extends QueryTest
-    with SharedSparkSession {
+    with SharedSparkSession
+    with DeltaSQLCommandTest {
 
   private def createDeltaTable(dir: File, numRows: Int = 10): Unit = {
     spark.range(numRows).write.format("delta").save(dir.getCanonicalPath)
