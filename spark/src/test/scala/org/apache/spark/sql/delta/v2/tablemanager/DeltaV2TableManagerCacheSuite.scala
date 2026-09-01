@@ -30,11 +30,11 @@ class DeltaV2TableManagerCacheSuite
 
   override def beforeEach(): Unit = {
     super.beforeEach()
-    DeltaV2TableManagerCache.clearCache()
+    DeltaV2TableManagerCache.resetCacheForTesting()
   }
 
   override def afterEach(): Unit = {
-    DeltaV2TableManagerCache.clearCache()
+    DeltaV2TableManagerCache.resetCacheForTesting()
     super.afterEach()
   }
 

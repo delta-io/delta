@@ -83,6 +83,10 @@ object DeltaV2TableManagerCache extends DeltaLogging {
   def containsKeyForTesting(key: DeltaV2CacheKey): Boolean = {
     cache.exists(_.getIfPresent(key) != null)
   }
+  private[tablemanager] def resetCacheForTesting(): Unit = synchronized {
+    cache.foreach(_.invalidateAll())
+    cache = None
+  }
 
   private def createManager(
       key: DeltaV2CacheKey,
