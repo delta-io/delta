@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.coordinatedcommits
 import java.io.File
 import java.util.Optional
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import scala.collection.mutable
 import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaColumnMappingMode, DeltaConfig, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, DomainMetadataTableFeature, MaterializedRowCommitVersion, MaterializedRowId, RowTrackingFeature, Snapshot, TableFeature}
@@ -624,6 +624,8 @@ class TrackingCommitCoordinatorClient(
   val numGetCommitsCalled = new AtomicInteger(0)
   val numBackfillToVersionCalled = new AtomicInteger(0)
   val numRegisterTableCalled = new AtomicInteger(0)
+  val lastGetCommitsStartVersion =
+    new AtomicReference[java.lang.Long](null)
 
   def recordOperation[T](op: String)(f: => T): T = {
     val oldInsideOperation = TrackingCommitCoordinatorClient.insideOperation.get()
@@ -664,6 +666,7 @@ class TrackingCommitCoordinatorClient(
       tableDesc: TableDescriptor,
       startVersion: java.lang.Long,
       endVersion: java.lang.Long): JGetCommitsResponse = recordOperation("getCommits") {
+    lastGetCommitsStartVersion.set(startVersion)
     delegatingCommitCoordinatorClient.getCommits(tableDesc, startVersion, endVersion)
   }
 
@@ -695,6 +698,7 @@ class TrackingCommitCoordinatorClient(
     numCommitsCalled.set(0)
     numGetCommitsCalled.set(0)
     numBackfillToVersionCalled.set(0)
+    lastGetCommitsStartVersion.set(null)
   }
 
   override def registerTable(

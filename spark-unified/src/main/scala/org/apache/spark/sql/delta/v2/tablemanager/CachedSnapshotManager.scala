@@ -29,13 +29,18 @@ import org.apache.spark.sql.delta.v2.interop.{
 }
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
+import io.delta.spark.internal.v2.snapshot.unitycatalog.UCManagedTableSnapshotManager
 // scalastyle:off import.ordering.noEmptyLine
 // scalastyle:off import.ordering.wrongOrderInGroup
-import io.delta.kernel.CommitRange
+import io.delta.kernel.{
+  CommitRange,
+  TableManager => KernelTableManager
+}
 import io.delta.kernel.engine.{Engine => KernelEngine}
 import io.delta.kernel.internal.{
   DeltaHistoryManager,
-  SnapshotImpl => KernelSnapshot
+  SnapshotImpl => KernelSnapshot,
+  Snapshots
 }
 
 import org.apache.hadoop.fs.Path
@@ -46,16 +51,22 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
- * Table-scoped snapshot manager that caches the kernel [[KernelSnapshot]]
- * and serves it to every operation on the same table.
+ * Table-scoped snapshot manager that caches and incrementally updates the
+ * kernel [[KernelSnapshot]], serving it to every operation on the same table.
  *
  * State invariants:
  *  - [[currentSnapshot]] is `null` until the first successful load.
  *  - [[tableId]] is captured on first load and validated on every
  *    subsequent install; a mismatch throws [[IllegalStateException]].
  *  - [[retire]] is idempotent and prevents further snapshot acquisition.
- *  - Stale entries are refreshed through the uncached snapshot manager.
- *  - Incremental refresh strategies are layered by dependent modules.
+ *  - Incremental builds via [[KernelTableManager.builderFrom]] are
+ *    attempted for path-based tables when a current snapshot exists.
+ *    UC-managed tables use [[incrementalBuildUC]] which delegates to
+ *    [[UCManagedTableSnapshotManager.loadLatestSnapshotFrom]]: the UC
+ *    client fetches the unbackfilled commit tail from the catalog while
+ *    the kernel builder supplies the promoted filesystem prefix.
+ *    Non-UC catalog tables fall back to the path-based incremental
+ *    build.
  */
 private[tablemanager]
 class CachedSnapshotManager(
@@ -151,8 +162,53 @@ class CachedSnapshotManager(
   private def rebuild(): KernelSnapshot = {
     recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.rebuild") {
       val validationStartedAt = System.currentTimeMillis()
-      val refreshed = loadLatestUncached()
+      val existing = currentSnapshot
+      val refreshed = if (existing != null) {
+        if (catalogTableOpt.isEmpty) {
+          incrementalBuild(existing)
+        } else {
+          incrementalBuildUC(existing)
+        }
+      } else {
+        loadLatestUncached()
+      }
       installSnapshot(refreshed, validationStartedAt)
+    }
+  }
+
+  private def incrementalBuild(existing: KernelSnapshot): KernelSnapshot = {
+    withEngine { kernelEngine =>
+      val builder = KernelTableManager.builderFrom(kernelEngine, existing)
+      try {
+        Snapshots.wrap(builder.build()).asInstanceOf[KernelSnapshot]
+      } finally {
+        builder.close()
+      }
+    }
+  }
+
+  private def incrementalBuildUC(
+      existing: KernelSnapshot): KernelSnapshot = {
+    withEngine { kernelEngine =>
+      val manager = SnapshotManagerFactory.create(
+        tablePath.toString, kernelEngine,
+        catalogTableOpt.toJava)
+      manager match {
+        case uc: UCManagedTableSnapshotManager =>
+          if (KernelBackend.resolve() == KernelBackend.JVM) {
+            // JVM backend does not support incremental
+            // UC snapshots; fall back to full reload.
+            loadLatestUncached()
+          } else {
+            uc.loadLatestSnapshotFrom(
+              kernelEngine, existing)
+          }
+        case _ =>
+          // Non-UC catalog table: the factory returned a
+          // PathBasedSnapshotManager; use filesystem
+          // incremental build instead.
+          incrementalBuild(existing)
+      }
     }
   }
 
@@ -204,6 +260,8 @@ class CachedSnapshotManager(
     val existing = currentSnapshot
     if (existing != null && existing.getVersion >= refreshed.getVersion) {
       lastValidatedAtMs = validationStartedAt
+      if (refreshed ne existing) {
+      }
       existing
     } else {
       currentSnapshot = refreshed

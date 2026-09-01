@@ -82,6 +82,25 @@ trait DeltaV2SnapshotManager {
       allowOutOfRange: Boolean): Unit
 
   /**
+   * Builds a snapshot incrementally from an existing kernel snapshot.
+   *
+   * <p>Override in catalog-aware managers that can query the catalog
+   * for commits newer than the existing snapshot's version. The
+   * default throws [[UnsupportedOperationException]].
+   *
+   * @param engine kernel engine for snapshot construction
+   * @param existing the base kernel snapshot to build from
+   * @return the updated snapshot, or {@code existing} if unchanged
+   */
+  def loadLatestSnapshotFrom(
+      engine: Engine,
+      existing: SnapshotImpl): SnapshotImpl = {
+    throw new UnsupportedOperationException(
+      "Incremental snapshot update not supported by " +
+        getClass.getSimpleName)
+  }
+
+  /**
    * Gets a range of table changes between start and end versions.
    *
    * @param engine the engine for executing operations
