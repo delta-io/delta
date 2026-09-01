@@ -546,7 +546,7 @@ object AMTWriteHelper extends DeltaLogging {
   /**
    * Writes a sequence of AMTSingleActions to a Parquet file.
    */
-  private def writeAMTParquet(
+  private[amt] def writeAMTParquet(
       spark: SparkSession,
       hadoopConf: Configuration,
       finalPath: Path,

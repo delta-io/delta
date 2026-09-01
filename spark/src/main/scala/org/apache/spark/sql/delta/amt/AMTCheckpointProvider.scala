@@ -63,8 +63,13 @@ final class AMTCheckpointProvider(
 
   /** The live leaf pointers which must have all the live [[DataEntry]]s. */
   private lazy val liveLeaves: Seq[DataManifestEntry] =
-    leaves.filter(l =>
-      AMTCheckpointProvider.liveDataManifestEntryStatuses.contains(l.tracking.status))
+    leaves.filter(l => Tracking.Status.liveEntryStatuses.contains(l.tracking.status))
+
+  /** The tracking to inherit from. */
+  private lazy val parentTrackingByManifestPath: Map[String, InheritableTracking] =
+    liveLeaves.map { leaf =>
+      SparkPath.fromPath(leaf.getAbsolutePath(tableRoot)).urlEncoded -> InheritableTracking(leaf)
+    }.toMap
 
   /** Absolute [[Path]]s to the live leaf manifest parquet files, resolved against the root. */
   lazy val liveLeafManifestAbsolutePaths: Seq[Path] = liveLeaves.map(_.getAbsolutePath(tableRoot))
@@ -119,10 +124,6 @@ final class AMTCheckpointProvider(
    * The full action set of this checkpoint as a distributed [[Dataset]] of [[SingleAction]]: the
    * live file `AddFile`s reconstructed from the AMT(root + leaves), unioned with the inline
    * non-content actions (protocol, metadata, domain metadata, txns) built on the driver.
-   *
-   * Note: Iceberg metadata inheritance (manifest entries inheriting fields such as partition
-   * values, sequence numbers, or snapshot id from the parent manifest) is not supported yet;
-   * entries are read as fully materialized rows.
    */
   private def allActions(spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
     import org.apache.spark.sql.delta.implicits._
@@ -144,11 +145,12 @@ final class AMTCheckpointProvider(
   private def liveAddSingleActions(
       spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
     import org.apache.spark.sql.delta.implicits._
-    // Bind to a local so the `mapPartitions` closure captures it, not the (non-serializable)
+    // Bind to locals so the `mapPartitions` closure captures them, not the (non-serializable)
     // provider.
     val localTableRoot = tableRoot
     val encodedRootPath = SparkPath.fromPath(rootManifestAbsolutePath).urlEncoded
     val serializableConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
+    val parentTracking = parentTrackingByManifestPath
 
     val files = rootFile +: liveLeafFiles
     val fmt = DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET
@@ -165,8 +167,7 @@ final class AMTCheckpointProvider(
     val dataEntries = AMTCheckpointProvider.loadEntriesWithLocation(
       deltaLog, index, checkpointAction.metaData, checkpointAction.protocol)
       .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
-      .where(col("entry.tracking.status").isin(
-        AMTCheckpointProvider.liveDataEntryStatuses.toSeq: _*))
+      .where(col("entry.tracking.status").isin(Tracking.Status.liveEntryStatuses.toSeq: _*))
       .filter { entryWithLoc =>
         mdvBroadcast.value.get(entryWithLoc.leafPath)
           .forall(bytes => !RoaringBitmapArray.readFrom(bytes).contains(entryWithLoc.pos))
@@ -186,7 +187,16 @@ final class AMTCheckpointProvider(
                   AMTUtils.relativizeManifestPathToTableRoot(fs, localTableRoot, absLeaf)
                 Some(BackReference(relManifest, entryWithLoc.pos))
               }
-              val add = data.toAddFile(localTableRoot).copy(backReference = backReference)
+              // Root entries have nothing above them to inherit from, so they resolve against an
+              // empty parent.
+              val resolvedTracking = Tracking.resolve(
+                childTracking = data.tracking,
+                parentTracking =
+                  parentTracking.getOrElse(entryWithLoc.leafPath, InheritableTracking.none),
+                childEntryLocationForLogging = data.location)
+              val add = data.copy(tracking = resolvedTracking)
+                .toAddFile(localTableRoot)
+                .copy(backReference = backReference)
               SingleAction(add = add)
             case other => throw new IllegalStateException(
               s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
@@ -304,14 +314,6 @@ object AMTCheckpointProvider {
       tableRoot = tableRoot)
   }
 
-  /** Tracking Status representing the live [[DataEntry]] in an AMT. */
-  private[amt] val liveDataEntryStatuses: Set[Int] =
-    Set(Tracking.Status.Existing, Tracking.Status.Added, Tracking.Status.Modified)
-
-  /** All Tracking Status for leafs which may have any live files. */
-  private[amt] val liveDataManifestEntryStatuses: Set[Int] =
-    Set(Tracking.Status.Added, Tracking.Status.Existing, Tracking.Status.Modified)
-
   /** Reads the AMT root and returns the live [[DataEntry]]s tracked by root. */
   private[amt] def readLiveRootDataEntries(
       deltaLog: DeltaLog,
@@ -324,7 +326,7 @@ object AMTCheckpointProvider {
       .collect().toSeq
       .filter(_.content_type == AMTSingleAction.ContentType.Type.Data)
       .map(_.unwrap.asInstanceOf[DataEntry])
-      .filter(e => liveDataEntryStatuses.contains(e.tracking.status))
+      .filter(e => Tracking.Status.liveEntryStatuses.contains(e.tracking.status))
       .map(_.toAddFile(tableRoot))
   }
 
