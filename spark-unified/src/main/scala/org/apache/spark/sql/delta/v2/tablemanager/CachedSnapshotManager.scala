@@ -29,13 +29,18 @@ import org.apache.spark.sql.delta.v2.interop.{
 }
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
+import io.delta.spark.internal.v2.snapshot.unitycatalog.UCManagedTableSnapshotManager
 // scalastyle:off import.ordering.noEmptyLine
 // scalastyle:off import.ordering.wrongOrderInGroup
-import io.delta.kernel.CommitRange
+import io.delta.kernel.{
+  CommitRange,
+  TableManager => KernelTableManager
+}
 import io.delta.kernel.engine.{Engine => KernelEngine}
 import io.delta.kernel.internal.{
   DeltaHistoryManager,
-  SnapshotImpl => KernelSnapshot
+  SnapshotImpl => KernelSnapshot,
+  Snapshots
 }
 
 import org.apache.hadoop.fs.Path
