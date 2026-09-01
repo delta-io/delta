@@ -40,6 +40,24 @@ public class RowTracking {
   }
 
   /**
+   * Returns true if row tracking is suspended for this table. When suspended, writers must NOT
+   * assign baseRowId or defaultRowCommitVersion.
+   *
+   * @param metadata the metadata to check
+   * @return true if row tracking is suspended
+   * @throws io.delta.kernel.exceptions.KernelException if both enableRowTracking and
+   *     rowTrackingSuspended are true
+   */
+  public static boolean isSuspended(Metadata metadata) {
+    boolean suspended = TableConfig.ROW_TRACKING_SUSPENDED.fromMetadata(metadata);
+    boolean enabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
+    if (enabled && suspended) {
+      throw DeltaErrors.rowTrackingEnabledAndSuspended();
+    }
+    return suspended;
+  }
+
+  /**
    * Check if row tracking is enabled for reading.
    *
    * @param protocol the protocol to check
