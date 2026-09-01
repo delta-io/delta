@@ -58,7 +58,7 @@ object LogCompactionHook extends PostCommitHook {
     if (!spark.conf.get(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_WRITES)) return
     // A checkpoint already subsumes the commits a compaction would cover, so skip when one was
     // just written for this commit.
-    if (txn.needsCheckpoint) return
+    if (txn.maintenanceOperation.shouldCheckpoint) return
 
     val interval =
       DeltaConfigs.LOG_COMPACTION_INTERVAL.fromMetaData(txn.postCommitSnapshot.metadata)
