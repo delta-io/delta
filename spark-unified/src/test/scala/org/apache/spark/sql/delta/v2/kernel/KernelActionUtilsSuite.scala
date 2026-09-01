@@ -36,6 +36,7 @@ import io.delta.kernel.internal.actions.{Format => KernelFormat}
 import io.delta.kernel.internal.actions.{Metadata => KernelMetadata}
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
 import io.delta.kernel.internal.actions.{RemoveFile => KernelRemoveFile}
+import io.delta.kernel.internal.actions.{SetTransaction => KernelSetTransaction}
 import io.delta.kernel.internal.data.GenericColumnVector
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.util.{Utils => KernelUtils}
@@ -247,6 +248,25 @@ class KernelActionUtilsSuite extends SparkFunSuite {
   }
   // scalastyle:on removeFile
 
+  test("setTransactionFromKernel preserves all fields") {
+    val setTransaction = KernelActionUtils.setTransactionFromKernel(
+      new KernelSetTransaction(
+        "app-id", java.lang.Long.valueOf(7L), Optional.of(java.lang.Long.valueOf(12345L))))
+
+    assert(setTransaction.appId === "app-id")
+    assert(setTransaction.version === 7L)
+    assert(setTransaction.lastUpdated === Some(12345L))
+  }
+
+  test("setTransactionFromKernel maps an absent lastUpdated") {
+    val setTransaction = KernelActionUtils.setTransactionFromKernel(
+      new KernelSetTransaction("app-id", java.lang.Long.valueOf(7L), Optional.empty()))
+
+    assert(setTransaction.appId === "app-id")
+    assert(setTransaction.version === 7L)
+    assert(setTransaction.lastUpdated === None)
+  }
+
   test("addFileFromKernel preserves all populated fields") {
     val kernelDv = new KernelDeletionVectorDescriptor(
       "u", "storage-path", Optional.of(java.lang.Integer.valueOf(10)), 128, 5L)
@@ -390,7 +410,7 @@ class KernelActionUtilsSuite extends SparkFunSuite {
   test("readActions fails loud on an action type with no decoder (hand-built commit batch)") {
     val presentColumn = new GenericColumnVector(
       java.util.Collections.singletonList("present"), StringType.STRING)
-    Seq(KernelDeltaAction.TXN, KernelDeltaAction.DOMAINMETADATA, KernelDeltaAction.CDC)
+    Seq(KernelDeltaAction.DOMAINMETADATA, KernelDeltaAction.CDC)
       .foreach { action =>
         val e = intercept[UnsupportedOperationException] {
           KernelActionUtils.readActions(singleColumnCommitActions(action.colName, presentColumn))
