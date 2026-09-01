@@ -91,16 +91,6 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
             Optional.empty() /* timestampOpt */);
   }
 
-  @Override
-  public SnapshotImpl loadLatestSnapshotFrom(Engine engine, SnapshotImpl existing) {
-    io.delta.kernel.Snapshot updated =
-        ucCatalogManagedClient.loadSnapshotFrom(
-            engine, existing, tableId, tablePath, tableIdentifier);
-    if (updated == existing) {
-      return existing;
-    }
-    return (SnapshotImpl) updated;
-  }
 
   /**
    * Finds the active commit at a specific timestamp.
