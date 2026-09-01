@@ -91,7 +91,6 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
             Optional.empty() /* timestampOpt */);
   }
 
-
   /**
    * Finds the active commit at a specific timestamp.
    *
