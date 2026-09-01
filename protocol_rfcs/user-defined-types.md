@@ -46,13 +46,19 @@ The `udt` object MUST contain:
 - **`type`**: the string `"udt"`.
 - **`sqlType`**: any valid Delta type (see below). This is the physical, on-disk representation of the column.
 
-Every other member is an **engine-specific annotation field**. Each such member's value MUST be a JSON string or JSON null. Delta does not interpret these fields; it treats them as an opaque string-to-string mapping that MUST be preserved verbatim across read and write. The annotation fields Spark currently writes are:
+Every other member forms the **annotation**: an open, engine-defined set of members identifying the engine-specific type and where its conversion code lives. The protocol does not define these members and never interprets them. Each value MUST be a JSON string or JSON null, and readers and writers MUST preserve every member verbatim. An engine emits only the members meaningful to it; a reader that does not recognize them reads the column as its `sqlType`.
 
-- **`class`**: the fully-qualified JVM class name of the UDT. Present for JVM-defined UDTs, and for Python UDTs backed by a registered Scala UDT.
-- **`pyClass`**: the `module.ClassName` of the paired Python UDT, or `null` when there is no Python pairing. When the member is present its key MUST be retained even if the value is `null`.
-- **`serializedClass`**: a base64-encoded serialization of a Python-only UDT class. Present only when there is no JVM `class`.
+**What the annotation is for.** A UDT pairs the stored physical type (`sqlType`) with a reference to engine-specific code that converts between the stored value and the engine's own richer representation, in both directions: reading turns a stored `sqlType` value into the rich object, and writing turns a rich object back into a `sqlType` value. Only the `sqlType` value is ever stored; the rich object exists only in the engine's memory. An engine that recognizes the reference uses its code to convert; one that does not reads the `sqlType` value, which is already correct.
 
-A conformant `udt` object therefore takes one of two shapes: `{type, sqlType, class, pyClass}` (JVM-defined, or Python with a Scala peer) or `{type, sqlType, pyClass, serializedClass}` (Python-only). Additional string-or-null members are permitted and MUST be preserved, but are not defined by this protocol.
+**Spark's members (example).** Spark records where its conversion code lives as:
+
+- `class` — the JVM type implementing the conversion (e.g. `org.apache.spark.ml.linalg.VectorUDT`). Present for JVM-defined UDTs and Python UDTs with a JVM peer.
+- `pyClass` — the Python type (e.g. `pyspark.ml.linalg.VectorUDT`), or `null` when there is no Python pairing (the key is still present).
+- `serializedClass` — a base64-encoded Python type, used when there is no JVM `class`.
+
+Each is only an identifier Spark uses to find its code; Delta does not interpret any of them. So a Spark `udt` takes one of two shapes — `{type, sqlType, class, pyClass}` or `{type, sqlType, pyClass, serializedClass}` (Python-only) — shown as an example of the mechanism, not the set of members the protocol requires. For example, `VectorUDT`'s stored `sqlType` is `struct<type: byte, size: int, indices: array<int>, values: array<double>>`, and Spark's code maps that struct to and from a vector object.
+
+**Other engines.** A different engine uses its own annotation members — whatever identifies its type and code — or none at all. It does not set Spark's `class`/`pyClass` (not even to `null`); those are meaningful only to Spark. Any reader that lacks a given engine's code reads the column as its `sqlType`.
 
 ### The `sqlType`
 
