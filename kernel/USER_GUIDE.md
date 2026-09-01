@@ -204,7 +204,7 @@ A few working examples to read Delta tables within a single process are availabl
 > All the Delta protocol-level details are encoded in the rows returned by `Scan.getScanFiles` API, but you do not have to understand them in order to read the table data correctly. All you need is to get the Parquet file status from each scan file row and read the data from the Parquet file into the `ColumnarBatch` format. The physical data is converted into the logical data of the table using [`Scan.transformPhysicalData`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html#transformPhysicalData-io.delta.kernel.engine.Engine-io.delta.kernel.data.Row-io.delta.kernel.data.Row-io.delta.kernel.utils.CloseableIterator-). Transformation to logical data is dictated by the protocol and the metadata of the table and the scan file. As the Delta protocol evolves this transformation step will evolve with it and your code will not have to change to accommodate protocol changes. This is the major advantage of the abstractions provided by Delta Kernel.
 
 > [!NOTE]
-> Observe that the same `Engine` instance `myEngine` is passed multiple times whenever a call to Delta Kernel API is made. The reason for passing this instance for every call is because it is the connector context, it should maintained outside of the Delta Kernel APIs to give the connector control over the `Engine`.
+> Observe that the same `Engine` instance `myEngine` is passed multiple times whenever a call to Delta Kernel API is made. The reason for passing this instance for every call is because it is the connector context, it should be maintained outside the Delta Kernel APIs to give the connector control over the `Engine`.
 
 ### Step 2: Improve scan performance with file skipping
 We have explored how to do a full table scan. However, the real advantage of using the Delta format is that you can skip files using your query filters. To make this possible, Delta Kernel provides an [expression framework](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/expressions/package-summary.html) to encode your filters and provide them to Delta Kernel to skip files during the scan file generation. For example, say your table is partitioned by `columnX`, you want to query only the partition `columnX=1`. You can generate the expression and use it to build the scan as follows:
@@ -306,7 +306,7 @@ TransactionCommitResult commitResult =
   );
 ```
 
-The [`TransactionCommitResult`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/TransactionCommitResult.html) contains the what version the transaction is committed as and whether the table is ready for a checkpoint. As we are creating a table the version will be `0`. We will be discussing later on what a checkpoint is and what it means for the table to be ready for the checkpoint.
+The [`TransactionCommitResult`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/TransactionCommitResult.html) contains the version the transaction is committed as and whether the table is ready for a checkpoint. As we are creating a table the version will be `0`. We will be discussing later on what a checkpoint is and what it means for the table to be ready for the checkpoint.
 
 A few working examples to create partitioned and un-partitioned Delta tables are available [here](https://github.com/delta-io/delta/tree/master/kernel/examples).
 
@@ -433,7 +433,7 @@ CloseableIterator<Row> dataActions =
 The next step is constructing [`CloseableIterable`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/CloseableIterable.html) out of the all the Delta log actions generated above. The reason for constructing an `Iterable` is that the transaction committing involves accessing the list of Delta log actions more than one time (in order to resolve conflicts when there are multiple writes to the table). Kernel provides a [utility method](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/CloseableIterable.html#inMemoryIterable-io.delta.kernel.utils.CloseableIterator-) to create an in-memory version of `CloseableIterable`. This interface also gives the connector an option to implement a custom implementation that spills the data actions to disk when the contents are too big to fit in memory.
 
 ```java
-// Create a iterable out of the data actions. If the contents are too big to fit in memory,
+// Create an iterable out of the data actions. If the contents are too big to fit in memory,
 // the connector may choose to write the data actions to a temporary file and return an
 // iterator that reads from the file.
 CloseableIterable<Row> dataActionsIterable = CloseableIterable.inMemoryIterable(dataActions);
@@ -445,7 +445,7 @@ The final step is committing the transaction!
 TransactionCommitStatus commitStatus = txn.commit(engine, dataActionsIterable)
 ```
 
-The [`TransactionCommitResult`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/TransactionCommitResult.html) contains the what version the transaction is committed as and whether the table is ready for a checkpoint. As we are creating a table the version will be `0`. We will be discussing later on what a checkpoint is and what it means for the table to be ready for the checkpoint.
+The [`TransactionCommitResult`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/TransactionCommitResult.html) contains the version the transaction is committed as and whether the table is ready for a checkpoint. As we are creating a table the version will be `0`. We will be discussing later on what a checkpoint is and what it means for the table to be ready for the checkpoint.
 
 A few working examples to create and insert data into partitioned and un-partitioned Delta tables are available [here](https://github.com/delta-io/delta/tree/master/kernel/examples).
 
@@ -537,7 +537,7 @@ for (String city : Arrays.asList("San Francisco", "Campbell", "San Jose")) {
     }
 }
 
-// Create a iterable out of the data actions. If the contents are too big to fit in memory,
+// Create an iterable out of the data actions. If the contents are too big to fit in memory,
 // the connector may choose to write the data actions to a temporary file and return an
 // iterator that reads from the file.
 CloseableIterable<Row> dataActionsIterable = CloseableIterable.inMemoryIterable(
@@ -610,7 +610,7 @@ For each of these capabilities, you can choose to build your own implementation 
 In the Delta Kernel project, there are multiple dependencies you can choose to depend on.
 
 1. Delta Kernel core APIs - This is a must-have dependency, which contains all the main APIs like Table, Snapshot, and Scan that you will use to access the metadata and data of the Delta table. This has very few dependencies reducing the chance of conflicts with any dependencies in your connector and engine. This also provides the [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) interface which allows you to plug in your implementations of computationally expensive operations, but it does not provide any implementation of this interface.
-2. Delta Kernel default- This has a default implementation called [`DefaultEngine`](https://delta-io.github.io/delta/snapshot/kernel-defaults/java/io/delta/kernel/defaults/engine/DefaultEngine.html) and additional dependencies such as `Hadoop`. If you wish to reuse all or parts of this implementation, then you can optionally depend on this.
+2. Delta Kernel default - This has a default implementation called [`DefaultEngine`](https://delta-io.github.io/delta/snapshot/kernel-defaults/java/io/delta/kernel/defaults/engine/DefaultEngine.html) and additional dependencies such as `Hadoop`. If you wish to reuse all or parts of this implementation, then you can optionally depend on this.
 
 #### Set up Java projects
 As discussed above, you can import one or both of the artifacts as follows:
@@ -704,7 +704,7 @@ When identifying the columns to read, note that there are multiple types of colu
 
 * Data columns: Columns that are expected to be read from the Parquet file. Based on the `StructField` object defining the column, read the column in the Parquet file that matches the same name or field id. If the column has a field id (stored as `parquet.field.id` in the `StructField` metadata) then the field id should be used to match the column in the Parquet file. Otherwise, the column name should be used for matching.
 * Metadata columns: These are special columns that must be populated using metadata about the Parquet file ([`StructField#isMetadataColumn`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/types/StructField.html#isMetadataColumn--) tells whether a column in `StructType` is a metadata column). To understand how to populate such a column, first match the column name against the set of standard metadata column name constants. For example, 
-    * `StructFileld#isMetadataColumn()` returns true and the column name is `StructField.METADATA_ROW_INDEX_COLUMN_NAME`, then you have to a generate column vector populated with the actual index of each row in the Parquet file (that is, not indexed by the possible subset of rows returned after Parquet data skipping).
+    * `StructField#isMetadataColumn()` returns true and the column name is `StructField.METADATA_ROW_INDEX_COLUMN_NAME`, then you have to a generate column vector populated with the actual index of each row in the Parquet file (that is, not indexed by the possible subset of rows returned after Parquet data skipping).
 
 ##### Requirements and guarantees
 Any implementation must adhere to the following guarantees.
