@@ -44,17 +44,23 @@ object DeltaV2TableManagerCache extends DeltaLogging {
       sqlConf: SQLConf,
       key: DeltaV2CacheKey,
       catalogTableOpt: Option[CatalogTable] = None): DeltaV2TableManager = {
-    if (!isEnabled(sqlConf)) {
-      return createManager(key, catalogTableOpt)
-    }
-    val managerCache = getOrCreateCache(sqlConf)
-    try {
-      managerCache.get(key, () => createManager(key, catalogTableOpt))
-    } catch {
-      // Guava Cache.get wraps loader exceptions; unwrap to re-throw the original cause
-      // (same pattern as DeltaLog.apply's cache lookup).
-      case e: ExecutionException => throw e.getCause
-      case e: UncheckedExecutionException => throw e.getCause
+    recordFrameProfile("Delta", "DeltaV2.tableManagerCache.getOrCreate") {
+      if (!isEnabled(sqlConf)) {
+        return createManager(key, catalogTableOpt)
+      }
+      val managerCache = getOrCreateCache(sqlConf)
+      try {
+        managerCache.get(key, () => {
+          recordFrameProfile("Delta", "DeltaV2.cache.createManager") {
+            createManager(key, catalogTableOpt)
+          }
+        })
+      } catch {
+        // Guava Cache.get wraps loader exceptions; unwrap to re-throw
+        // the original cause (same pattern as DeltaLog.apply).
+        case e: ExecutionException => throw e.getCause
+        case e: UncheckedExecutionException => throw e.getCause
+      }
     }
   }
 
