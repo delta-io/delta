@@ -24,7 +24,6 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
-import com.google.common.io.CountingOutputStream;
 import io.delta.storage.internal.PathLock;
 import io.delta.storage.internal.S3LogStoreUtil;
 import org.apache.hadoop.conf.Configuration;
@@ -46,11 +45,31 @@ import org.apache.hadoop.fs.RawLocalFileSystem;
  * Regarding file creation, this implementation:
  * <ul>
  *   <li>Opens a stream to write to S3 (regardless of the overwrite option).</li>
- *   <li>Failures during stream write may leak resources, but may never result in partial
- *       writes.</li>
+ *   <li>Failures during stream write may never result in partial writes.</li>
  * </ul>
  */
 public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
+
+    static void writeActions(java.io.OutputStream output, Iterator<String> actions)
+            throws IOException {
+        try (java.io.OutputStream stream = output) {
+            while (actions.hasNext()) {
+                stream.write((actions.next() + "\n").getBytes(StandardCharsets.UTF_8));
+            }
+        }
+    }
+
+    /**
+     * Converts an `InterruptedException` caught while writing to the interruption-preserving
+     * `InterruptedIOException` that callers of `write` expect: restores the thread's interrupted
+     * status and keeps the original exception as the cause.
+     */
+    static InterruptedIOException toInterruptedIOException(java.lang.InterruptedException e) {
+        Thread.currentThread().interrupt();
+        InterruptedIOException interrupted = new InterruptedIOException(e.getMessage());
+        interrupted.initCause(e);
+        return interrupted;
+    }
 
     /**
      * Enables a faster implementation of listFrom by setting the startAfter parameter in S3 list
@@ -165,19 +184,13 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
                     );
                 }
 
-                final CountingOutputStream stream =
-                    new CountingOutputStream(fs.create(resolvedPath, overwrite));
-
-                while (actions.hasNext()) {
-                    stream.write((actions.next() + "\n").getBytes(StandardCharsets.UTF_8));
-                }
-                stream.close();
+                writeActions(fs.create(resolvedPath, overwrite), actions);
             } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
                 // Convert Hadoop's FileAlreadyExistsException to Java's FileAlreadyExistsException
                 throw new java.nio.file.FileAlreadyExistsException(e.getMessage());
             }
         } catch (java.lang.InterruptedException e) {
-            throw new InterruptedIOException(e.getMessage());
+            throw toInterruptedIOException(e);
         } finally {
             pathLock.release(resolvedPath);
         }
