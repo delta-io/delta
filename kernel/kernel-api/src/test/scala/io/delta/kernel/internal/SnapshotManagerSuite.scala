@@ -25,10 +25,15 @@ import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.exceptions.{InvalidTableException, TableNotFoundException}
 import io.delta.kernel.expressions.Predicate
+import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.checkpoints.{CheckpointInstance, CheckpointMetaData, SidecarFile}
+import io.delta.kernel.internal.data.GenericColumnVector
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.metrics.SnapshotQueryContext
+import io.delta.kernel.internal.replay.ProtocolMetadataLogReplay
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.{FileNames, Utils}
+import io.delta.kernel.test.ActionUtils
 import io.delta.kernel.test.BaseMockJsonHandler
 import io.delta.kernel.test.BaseMockParquetHandler
 import io.delta.kernel.test.MockFileSystemClientUtils
@@ -39,7 +44,7 @@ import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
+class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils with ActionUtils {
 
   test("verifyDeltaVersionsContiguous") {
     val path = new Path("/path/to/table")
@@ -900,6 +905,36 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expectedErrorMessageContains = "Missing checkpoint at version 30")
   }
 
+  test("buildLatestSnapshot: ignore corrupted checkpoint newer than _last_checkpoint") {
+    val lastCheckpointVersion = 97460L
+    val corruptedCheckpointVersion = 97470L
+    val corruptedCheckpointPath =
+      FileNames.checkpointFileSingular(logPath, corruptedCheckpointVersion).toString
+    val validCheckpointPath = FileNames.checkpointFileSingular(logPath, lastCheckpointVersion)
+      .toString
+
+    val files =
+      deltaFileStatuses(lastCheckpointVersion to corruptedCheckpointVersion) ++
+        singularCheckpointFileStatuses(Seq(lastCheckpointVersion, corruptedCheckpointVersion))
+
+    val engine = mockEngine(
+      fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files)),
+      jsonHandler = new MockLastCheckpointAndEmptyDeltaJsonHandler(
+        s"$logPath/_last_checkpoint",
+        lastCheckpointVersion),
+      parquetHandler = new MockProtocolMetadataCheckpointParquetHandler(
+        corruptedCheckpointPath,
+        validCheckpointPath,
+        protocolWithCatalogManagedSupport,
+        basicPartitionedMetadata))
+
+    val snapshotContext = SnapshotQueryContext.forLatestSnapshot(dataPath.toString)
+    val snapshot = snapshotManager.buildLatestSnapshot(engine, snapshotContext)
+
+    assert(snapshot.getVersion == corruptedCheckpointVersion)
+    assert(snapshotContext.getCheckpointVersion == Optional.of(lastCheckpointVersion))
+  }
+
   /* ------------------- CATALOG MANAGED TABLE TESTS ------------------ */
 
   test("catalog managed: latest query, we load the maxCatalogVersion even if other deltas exist") {
@@ -1178,5 +1213,80 @@ class MockReadLastCheckpointFileJsonHandler(
 
         override def getSize: Int = 1
       })
+  }
+}
+
+class MockLastCheckpointAndEmptyDeltaJsonHandler(
+    lastCheckpointPath: String,
+    lastCheckpointVersion: Long)
+    extends BaseMockJsonHandler with VectorTestUtils {
+  override def readJsonFiles(
+      fileIter: CloseableIterator[FileStatus],
+      physicalSchema: StructType,
+      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+    assert(fileIter.hasNext)
+    val filePath = fileIter.next.getPath
+
+    if (filePath == lastCheckpointPath) {
+      Utils.singletonCloseableIterator(
+        new ColumnarBatch {
+          override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
+
+          override def getColumnVector(ordinal: Int): ColumnVector = {
+            ordinal match {
+              case 0 => longVector(Seq(lastCheckpointVersion)) /* version */
+              case 1 => longVector(Seq(100L)) /* size */
+              case 2 => longVector(Seq(1L)) /* parts */
+              case 3 => mapTypeVector(Seq(Map.empty[String, String]))
+            }
+          }
+
+          override def getSize: Int = 1
+        })
+    } else {
+      Utils.toCloseableIterator(Collections.emptyIterator[ColumnarBatch]())
+    }
+  }
+}
+
+class MockProtocolMetadataCheckpointParquetHandler(
+    corruptedCheckpointPath: String,
+    validCheckpointPath: String,
+    protocol: Protocol,
+    metadata: Metadata)
+    extends BaseMockParquetHandler {
+
+  override def readParquetFiles(
+      fileIter: CloseableIterator[FileStatus],
+      physicalSchema: StructType,
+      predicate: Optional[Predicate]): CloseableIterator[FileReadResult] = {
+    assert(fileIter.hasNext)
+    val fileStatus = fileIter.next()
+    val filePath = fileStatus.getPath
+
+    if (filePath == corruptedCheckpointPath) {
+      throw new RuntimeException(
+        s"$corruptedCheckpointPath is not a Parquet file (length is too low: 4)")
+    }
+
+    assert(filePath == validCheckpointPath)
+
+    val batch = new ColumnarBatch {
+      private val protocolVector =
+        new GenericColumnVector(Collections.singletonList(protocol.toRow()), Protocol.FULL_SCHEMA)
+      private val metadataVector =
+        new GenericColumnVector(Collections.singletonList(metadata.toRow()), Metadata.FULL_SCHEMA)
+
+      override def getSchema: StructType = ProtocolMetadataLogReplay.PROTOCOL_METADATA_READ_SCHEMA
+
+      override def getColumnVector(ordinal: Int): ColumnVector = ordinal match {
+        case 0 => protocolVector
+        case 1 => metadataVector
+      }
+
+      override def getSize: Int = 1
+    }
+
+    Utils.singletonCloseableIterator(new FileReadResult(batch, filePath))
   }
 }
