@@ -20,7 +20,7 @@ import java.io.IOException
 import java.lang.reflect.Method
 import java.util.Locale
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 
 import scala.jdk.CollectionConverters._
 import scala.util.Try
@@ -32,7 +32,7 @@ import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpRequest, HttpRequestInterceptor, HttpResponse, HttpStatus}
 import org.apache.http.client.ServiceUnavailableRetryStrategy
 import org.apache.http.impl.client.{DefaultHttpRequestRetryHandler, HttpClientBuilder}
-import org.apache.http.protocol.HttpContext
+import org.apache.http.protocol.{HttpContext, HttpCoreContext}
 import org.apache.http.message.BasicHeader
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -100,6 +100,12 @@ class IcebergRESTCatalogPlanningClient(
   private val GCS_EXPIRY_KEY = "gcs.oauth2.token-expires-at"
 
   // Iceberg REST scan-planning poll properties and defaults.
+  // NOTE: Of these, only `rest-scan-planning.poll-timeout-ms` is a documented config key in
+  // released Iceberg 1.11.0 (RESTCatalogProperties). The poll-num-retries / poll-min-wait-ms /
+  // poll-max-wait-ms / poll-scale-factor keys track the still-open Iceberg proposal #17846;
+  // released 1.11.0 hard-codes retries and backoff inside RESTTableScan. We read them from
+  // /v1/config so a server that adopts the proposal can tune them, and fall back to the
+  // hard-coded defaults below otherwise.
   private val POLL_TIMEOUT_MS = "rest-scan-planning.poll-timeout-ms"
   private val POLL_TIMEOUT_MS_DEFAULT = TimeUnit.MINUTES.toMillis(5)
   private val POLL_NUM_RETRIES = "rest-scan-planning.poll-num-retries"
@@ -114,6 +120,12 @@ class IcebergRESTCatalogPlanningClient(
     "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan/{plan-id}"
   private val CANCEL_PLANNING_ENDPOINT =
     "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan/{plan-id}"
+
+  // Credential vending header sent on POST /plan and GET /plan/{plan-id}, matching Iceberg REST
+  // clients. Servers that only vend storage credentials when the client opts in rely on this
+  // header being present; without it a completed plan can come back without storage-credentials.
+  private val ACCESS_DELEGATION_HEADER = "X-Iceberg-Access-Delegation"
+  private val ACCESS_DELEGATION_VENDED_CREDENTIALS = "vended-credentials"
 
   private case class PollSettings(
       timeoutMs: Long,
@@ -281,12 +293,11 @@ class IcebergRESTCatalogPlanningClient(
       throw new IllegalArgumentException(s"Invalid value for $key: '$value'"))
   }
 
-  private def requireFetchPlanningResultEndpoint(): Unit = {
-    if (!catalogConfig.endpoints.exists(_.contains(FETCH_PLANNING_RESULT_ENDPOINT))) {
-      throw new UnsupportedOperationException(
-        s"Server does not support endpoint: $FETCH_PLANNING_RESULT_ENDPOINT")
-    }
-  }
+  // A missing endpoints list is treated as the Iceberg default endpoint set, which does not
+  // include fetch planning, so an absent list is reported as unsupported (same as Iceberg's
+  // Endpoint.check refusing a submitted plan it cannot follow up on).
+  private def supportsFetchPlanningResult: Boolean =
+    catalogConfig.endpoints.exists(_.contains(FETCH_PLANNING_RESULT_ENDPOINT))
 
   private def supportsCancelPlanning: Boolean =
     catalogConfig.endpoints.exists(_.contains(CANCEL_PLANNING_ENDPOINT))
@@ -467,6 +478,7 @@ class IcebergRESTCatalogPlanningClient(
         PlanTableScanRequestParser.toJson(request)
     }
     val httpPost = new HttpPost(planTableScanUri)
+    httpPost.setHeader(ACCESS_DELEGATION_HEADER, ACCESS_DELEGATION_VENDED_CREDENTIALS)
     httpPost.setEntity(new StringEntity(requestJson, ContentType.APPLICATION_JSON))
     val httpResponse = httpClient.execute(httpPost)
     val (statusCode, responseBody) = try {
@@ -494,8 +506,17 @@ class IcebergRESTCatalogPlanningClient(
             .filter(_.nonEmpty)
             .getOrElse(throw new IllegalStateException(
               s"Submitted scan plan response did not contain a plan ID. Table: $database.$table"))
-          requireFetchPlanningResultEndpoint()
-          fetchPlanningResult(database, table, planId, unpartitionedSpecMap)
+          val encodedPlanId = RESTUtil.encodeString(planId)
+          val planUri =
+            s"$icebergRestCatalogUriRoot/namespaces/$database/tables/$table/plan/$encodedPlanId"
+          if (!supportsFetchPlanningResult) {
+            // The POST already allocated a server-side plan; best-effort cancel it (if the server
+            // advertises cancellation) before failing, so we do not leak a submitted plan.
+            cancelPlanning(planUri, planId)
+            throw new UnsupportedOperationException(
+              s"Server does not support endpoint: $FETCH_PLANNING_RESULT_ENDPOINT")
+          }
+          fetchPlanningResult(database, table, planId, planUri, unpartitionedSpecMap)
         case PlanStatus.FAILED =>
           throw planningFailure(database, table, Option(icebergResponse.planId()),
             icebergResponse.errorResponse())
@@ -515,16 +536,19 @@ class IcebergRESTCatalogPlanningClient(
       database: String,
       table: String,
       planId: String,
+      fetchUri: String,
       specsById: Map[Int, PartitionSpec]): ScanPlan = {
-    val encodedPlanId = RESTUtil.encodeString(planId)
-    val fetchUri =
-      s"$icebergRestCatalogUriRoot/namespaces/$database/tables/$table/plan/$encodedPlanId"
     val settings = pollSettings
     val result = new AtomicReference[CompletedPlanningResult]()
+    // Set when the server reports a terminal status (FAILED / CANCELLED). Those plan-ids are
+    // already done server-side, so we must not send a cancel for them.
+    val serverTerminal = new AtomicBoolean(false)
 
     // Poll GET /plan/{plan-id} only. Plan-task pagination (GET /tasks) is not supported.
     val pollPlan: Tasks.Task[String, Exception] = (_: String) => {
-      val httpResponse = httpClient.execute(new HttpGet(fetchUri))
+      val httpGet = new HttpGet(fetchUri)
+      httpGet.setHeader(ACCESS_DELEGATION_HEADER, ACCESS_DELEGATION_VENDED_CREDENTIALS)
+      val httpResponse = httpClient.execute(httpGet)
       val (statusCode, responseBody) = try {
         httpResponse.getStatusLine.getStatusCode -> EntityUtils.toString(httpResponse.getEntity)
       } finally {
@@ -545,8 +569,10 @@ class IcebergRESTCatalogPlanningClient(
         case PlanStatus.SUBMITTED =>
           throw new NotCompleteException
         case PlanStatus.FAILED =>
+          serverTerminal.set(true)
           throw planningFailure(database, table, Some(planId), response.errorResponse())
         case PlanStatus.CANCELLED =>
+          serverTerminal.set(true)
           throw new IllegalStateException(
             s"Scan plan $planId for $database.$table was cancelled")
         case status =>
@@ -556,24 +582,34 @@ class IcebergRESTCatalogPlanningClient(
     }
 
     try {
-      Tasks.foreach(planId)
-        .exponentialBackoff(
-          settings.minWaitMs,
-          settings.maxWaitMs,
-          settings.timeoutMs,
-          settings.scaleFactor)
-        .retry(settings.numRetries)
-        .onlyRetryOn(classOf[NotCompleteException])
-        .throwFailureWhenFinished()
-        .run(pollPlan, classOf[Exception])
-    } catch {
-      case e: NotCompleteException =>
+      try {
+        Tasks.foreach(planId)
+          .exponentialBackoff(
+            settings.minWaitMs,
+            settings.maxWaitMs,
+            settings.timeoutMs,
+            settings.scaleFactor)
+          .retry(settings.numRetries)
+          .onlyRetryOn(classOf[NotCompleteException])
+          .throwFailureWhenFinished()
+          .run(pollPlan, classOf[Exception])
+      } catch {
+        case e: NotCompleteException =>
+          throw new IOException(
+            s"Scan plan $planId for $database.$table did not complete within configured " +
+              s"poll limits (timeout=${settings.timeoutMs} ms, " +
+              s"numRetries=${settings.numRetries})",
+            e)
+      }
+    } finally {
+      // Best-effort cancel whenever we leave the poll loop without a completed result and the
+      // server has not already reported a terminal status. This covers timeout / retry
+      // exhaustion as well as mid-poll transport or unexpected-status failures, matching
+      // Iceberg's RESTTableScan which cancels from onFailure. Cancellation is a no-op unless
+      // the server advertises the cancel endpoint.
+      if (result.get() == null && !serverTerminal.get()) {
         cancelPlanning(fetchUri, planId)
-        throw new IOException(
-          s"Scan plan $planId for $database.$table did not complete within configured " +
-            s"poll limits (timeout=${settings.timeoutMs} ms, " +
-            s"numRetries=${settings.numRetries})",
-          e)
+      }
     }
 
     val completed = result.get()
@@ -690,6 +726,21 @@ class IcebergRESTCatalogPlanningClient(
     implicit val formats: Formats = DefaultFormats
     val json = parse(responseBody)
 
+    // Iceberg's spec returns storage-credentials as a list keyed by path prefix and picks the
+    // credential whose prefix is the longest match for a given file. ScanPlan currently carries a
+    // single credential set applied to every file (unpartitioned, single-location tables), so it
+    // cannot represent per-prefix selection. Rather than silently pick the first entry and risk
+    // reading files with the wrong credentials, fail loud when the server returns more than one.
+    val credentialEntries = json \ "storage-credentials" match {
+      case JArray(entries) => entries
+      case _ => Nil
+    }
+    if (credentialEntries.size > 1) {
+      throw new UnsupportedOperationException(
+        s"Multiple storage-credentials entries (${credentialEntries.size}) are not supported; " +
+          "only a single credential set applied to all files is currently handled")
+    }
+
     // Extract config map from storage-credentials[0].config
     val config: Option[Map[String, String]] = try {
       (json \ "storage-credentials")(0) \ "config" match {
@@ -721,6 +772,10 @@ class IcebergRESTCatalogPlanningClient(
    * Retries up to maxRetries times with doubling intervals (1s, 2s, 4s, ...).
    * Does NOT retry on client errors (4xx) since those indicate request-level issues.
    *
+   * POST /plan is intentionally excluded: a 5xx after the server has already allocated a plan-id
+   * is ambiguous, and retrying would leak a second server-side plan (same hazard as
+   * requestSentRetryEnabled). We only retry idempotent methods (GET poll, DELETE cancel).
+   *
    * The ServiceUnavailableRetryStrategy interface calls retryRequest() first, then
    * getRetryInterval(), so we capture the execution count in retryRequest() and
    * use it to compute the backoff in getRetryInterval().
@@ -740,8 +795,12 @@ class IcebergRESTCatalogPlanningClient(
         executionCount: Int,
         context: HttpContext): Boolean = {
       lastExecutionCount.set(executionCount)
+      val method = Option(context.getAttribute(HttpCoreContext.HTTP_REQUEST))
+        .collect { case r: HttpRequest => r.getRequestLine.getMethod }
+        .getOrElse("")
       val statusCode = response.getStatusLine.getStatusCode
-      statusCode >= 500 && executionCount <= maxRetries
+      // Never retry POST: a retried submit can allocate a duplicate server-side plan.
+      !method.equalsIgnoreCase("POST") && statusCode >= 500 && executionCount <= maxRetries
     }
 
     // Exponential backoff: 1s, 2s, 4s, ...

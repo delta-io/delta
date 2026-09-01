@@ -248,6 +248,16 @@ public class IcebergRESTServer {
     IcebergRESTCatalogAdapterWithPlanSupport.setInjectDeleteFiles(inject);
   }
 
+  /** Configure whether completed scan responses include a non-empty plan-tasks list. */
+  public void setInjectPlanTasks(boolean inject) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setInjectPlanTasks(inject);
+  }
+
+  /** Configure the server to fail the next N poll (GET /plan/{plan-id}) requests. */
+  public void setFailNextFetchRequests(int count, int statusCode) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setFailNextFetchRequests(count, statusCode);
+  }
+
   /**
    * Configure the server to fail the next N /plan requests with the specified HTTP status code.
    * After N failures, subsequent requests proceed normally.

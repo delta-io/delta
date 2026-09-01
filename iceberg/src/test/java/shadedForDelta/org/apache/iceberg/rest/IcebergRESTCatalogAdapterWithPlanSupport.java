@@ -84,7 +84,14 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile Expression testResidual = null;
   private static volatile boolean injectDeleteFiles = false;
-  
+  private static volatile boolean injectPlanTasks = false;
+
+  // Failure injection for the GET fetch-planning-result (poll) path, mirroring the POST fields.
+  // fetchFailCount: number of remaining poll requests to fail before allowing success.
+  // fetchFailStatusCode: HTTP status code to return for injected poll failures.
+  private static final AtomicInteger fetchFailCount = new AtomicInteger(0);
+  private static volatile int fetchFailStatusCode = 503;
+
   // Static field to capture the request path of /plan requests for test verification
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile String capturedPlanRequestPath = null;
@@ -243,6 +250,30 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     injectDeleteFiles = inject;
   }
 
+  static void setInjectPlanTasks(boolean inject) {
+    injectPlanTasks = inject;
+  }
+
+  /** Configure the server to fail the next N poll (GET /plan/{plan-id}) requests. */
+  static void setFailNextFetchRequests(int count, int statusCode) {
+    fetchFailCount.set(count);
+    fetchFailStatusCode = statusCode;
+  }
+
+  /** Atomically get and decrement the remaining poll failure count. */
+  static int getAndDecrementFetchFailCount() {
+    return fetchFailCount.getAndDecrement();
+  }
+
+  static int getFetchFailStatusCode() {
+    return fetchFailStatusCode;
+  }
+
+  /** Increment the poll request count (used by the servlet when injecting poll failures). */
+  static void incrementPlanPollRequestCount() {
+    planPollRequestCount.incrementAndGet();
+  }
+
   /**
    * Clear captured filter, projection, and limit. Call between tests to avoid pollution.
    * Package-private for test access.
@@ -255,6 +286,9 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     testCredentials = null;
     testResidual = null;
     injectDeleteFiles = false;
+    injectPlanTasks = false;
+    fetchFailCount.set(0);
+    fetchFailStatusCode = 503;
     capturedPlanRequestPath = null;
     planRequestFailCount.set(0);
     planRequestCount.set(0);
@@ -549,6 +583,9 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
         resultBuilder
             .withFileScanTasks(tasksToReturn)
             .withSpecsById(specsById);
+        if (injectPlanTasks) {
+          resultBuilder.withPlanTasks(Collections.singletonList("test-plan-task"));
+        }
       } else if (fetchTerminalStatus == PlanStatus.FAILED) {
         resultBuilder.withErrorResponse(ErrorResponse.builder()
             .responseCode(500)
@@ -565,10 +602,13 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     }
 
     // Synchronous planning (Pattern 1: COMPLETED with direct tasks).
-    return PlanTableScanResponse.builder()
+    PlanTableScanResponse.Builder syncBuilder = PlanTableScanResponse.builder()
         .withPlanStatus(PlanStatus.COMPLETED)
         .withFileScanTasks(tasksToReturn)
-        .withSpecsById(specsById)
-        .build();
+        .withSpecsById(specsById);
+    if (injectPlanTasks) {
+      syncBuilder.withPlanTasks(Collections.singletonList("test-plan-task"));
+    }
+    return syncBuilder.build();
   }
 }

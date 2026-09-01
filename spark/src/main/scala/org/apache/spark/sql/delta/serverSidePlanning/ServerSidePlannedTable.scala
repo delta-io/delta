@@ -367,15 +367,19 @@ class ServerSidePlannedScan(
   // Call the server-side planning API to get the scan plan with files AND credentials.
   // Close the client after planning - the scan plan contains all data needed for partition
   // creation and reading, so the client (and its HTTP connection) is no longer needed.
+  // Close in a finally so a failed plan (e.g. a poll timeout that can block for minutes) does
+  // not leak the HTTP connection pool until something else closes the table.
   private lazy val scanPlan: ScanPlan = {
-    val plan = planningClient.planScan(
-      databaseName,
-      tableName,
-      combinedFilter,
-      projectionColumnNames,
-      limit)
-    planningClient.close()
-    plan
+    try {
+      planningClient.planScan(
+        databaseName,
+        tableName,
+        combinedFilter,
+        projectionColumnNames,
+        limit)
+    } finally {
+      planningClient.close()
+    }
   }
 
   // Explicitly signal that columnar is unsupported to prevent early enumeration of the partitions

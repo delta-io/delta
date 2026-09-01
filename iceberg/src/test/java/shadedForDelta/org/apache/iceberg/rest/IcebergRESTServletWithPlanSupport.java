@@ -182,6 +182,23 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
                 + "\"type\": \"TestError\", \"code\": " + failStatusCode + "}}");
         return;
       }
+    } else {
+      // GET poll path: inject failures for the fetch-planning-result (poll) retry tests.
+      int remainingFetchFailures =
+          IcebergRESTCatalogAdapterWithPlanSupport.getAndDecrementFetchFailCount();
+      if (remainingFetchFailures > 0) {
+        int failStatusCode = IcebergRESTCatalogAdapterWithPlanSupport.getFetchFailStatusCode();
+        LOG.info("Injecting poll failure: returning HTTP {} ({} failures remaining)",
+            failStatusCode, remainingFetchFailures - 1);
+        // Count the poll attempt even though we short-circuit before the adapter executes.
+        IcebergRESTCatalogAdapterWithPlanSupport.incrementPlanPollRequestCount();
+        resp.setStatus(failStatusCode);
+        resp.setContentType("application/json");
+        resp.getWriter().write(
+            "{\"error\": {\"message\": \"Injected test failure\", "
+                + "\"type\": \"TestError\", \"code\": " + failStatusCode + "}}");
+        return;
+      }
     }
 
     try {
