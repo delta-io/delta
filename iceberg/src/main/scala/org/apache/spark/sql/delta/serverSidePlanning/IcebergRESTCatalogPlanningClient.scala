@@ -444,6 +444,9 @@ class IcebergRESTCatalogPlanningClient(
     // where prefix comes from /v1/config?warehouse=<catalogName> per Iceberg REST spec.
     // See: https://iceberg.apache.org/rest-catalog-spec/
     val planTableScanUri = s"$icebergRestCatalogUriRoot/namespaces/$database/tables/$table/plan"
+    // Validate poll settings before POST /plan. Otherwise a malformed rest-scan-planning.poll-*
+    // value from /v1/config would only throw after the server had already allocated a plan-id.
+    val _ = pollSettings
 
     // Request planning for current snapshot. snapshotId = 0 means "use current snapshot"
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
@@ -538,50 +541,50 @@ class IcebergRESTCatalogPlanningClient(
       planId: String,
       fetchUri: String,
       specsById: Map[Int, PartitionSpec]): ScanPlan = {
-    val settings = pollSettings
     val result = new AtomicReference[CompletedPlanningResult]()
     // Set when the server reports a terminal status (FAILED / CANCELLED). Those plan-ids are
     // already done server-side, so we must not send a cancel for them.
     val serverTerminal = new AtomicBoolean(false)
 
-    // Poll GET /plan/{plan-id} only. Plan-task pagination (GET /tasks) is not supported.
-    val pollPlan: Tasks.Task[String, Exception] = (_: String) => {
-      val httpGet = new HttpGet(fetchUri)
-      httpGet.setHeader(ACCESS_DELEGATION_HEADER, ACCESS_DELEGATION_VENDED_CREDENTIALS)
-      val httpResponse = httpClient.execute(httpGet)
-      val (statusCode, responseBody) = try {
-        httpResponse.getStatusLine.getStatusCode -> EntityUtils.toString(httpResponse.getEntity)
-      } finally {
-        httpResponse.close()
-      }
-
-      if (statusCode != HttpStatus.SC_OK) {
-        throw new IOException(
-          s"Failed to fetch scan plan $planId for $database.$table. " +
-            s"HTTP status: $statusCode, Response: $responseBody")
-      }
-
-      val response =
-        parseFetchPlanningResultResponse(responseBody, specsById, caseSensitive = false)
-      response.planStatus() match {
-        case PlanStatus.COMPLETED =>
-          result.set(CompletedPlanningResult(response, responseBody))
-        case PlanStatus.SUBMITTED =>
-          throw new NotCompleteException
-        case PlanStatus.FAILED =>
-          serverTerminal.set(true)
-          throw planningFailure(database, table, Some(planId), response.errorResponse())
-        case PlanStatus.CANCELLED =>
-          serverTerminal.set(true)
-          throw new IllegalStateException(
-            s"Scan plan $planId for $database.$table was cancelled")
-        case status =>
-          throw new IllegalStateException(
-            s"Unexpected scan plan status '$status' for plan $planId. Table: $database.$table")
-      }
-    }
-
     try {
+      val settings = pollSettings
+      // Poll GET /plan/{plan-id} only. Plan-task pagination (GET /tasks) is not supported.
+      val pollPlan: Tasks.Task[String, Exception] = (_: String) => {
+        val httpGet = new HttpGet(fetchUri)
+        httpGet.setHeader(ACCESS_DELEGATION_HEADER, ACCESS_DELEGATION_VENDED_CREDENTIALS)
+        val httpResponse = httpClient.execute(httpGet)
+        val (statusCode, responseBody) = try {
+          httpResponse.getStatusLine.getStatusCode -> EntityUtils.toString(httpResponse.getEntity)
+        } finally {
+          httpResponse.close()
+        }
+
+        if (statusCode != HttpStatus.SC_OK) {
+          throw new IOException(
+            s"Failed to fetch scan plan $planId for $database.$table. " +
+              s"HTTP status: $statusCode, Response: $responseBody")
+        }
+
+        val response =
+          parseFetchPlanningResultResponse(responseBody, specsById, caseSensitive = false)
+        response.planStatus() match {
+          case PlanStatus.COMPLETED =>
+            result.set(CompletedPlanningResult(response, responseBody))
+          case PlanStatus.SUBMITTED =>
+            throw new NotCompleteException
+          case PlanStatus.FAILED =>
+            serverTerminal.set(true)
+            throw planningFailure(database, table, Some(planId), response.errorResponse())
+          case PlanStatus.CANCELLED =>
+            serverTerminal.set(true)
+            throw new IllegalStateException(
+              s"Scan plan $planId for $database.$table was cancelled")
+          case status =>
+            throw new IllegalStateException(
+              s"Unexpected scan plan status '$status' for plan $planId. Table: $database.$table")
+        }
+      }
+
       try {
         Tasks.foreach(planId)
           .exponentialBackoff(
@@ -604,9 +607,9 @@ class IcebergRESTCatalogPlanningClient(
     } finally {
       // Best-effort cancel whenever we leave the poll loop without a completed result and the
       // server has not already reported a terminal status. This covers timeout / retry
-      // exhaustion as well as mid-poll transport or unexpected-status failures, matching
-      // Iceberg's RESTTableScan which cancels from onFailure. Cancellation is a no-op unless
-      // the server advertises the cancel endpoint.
+      // exhaustion, malformed poll config, and mid-poll transport or unexpected-status
+      // failures, matching Iceberg's RESTTableScan which cancels from onFailure.
+      // Cancellation is a no-op unless the server advertises the cancel endpoint.
       if (result.get() == null && !serverTerminal.get()) {
         cancelPlanning(fetchUri, planId)
       }

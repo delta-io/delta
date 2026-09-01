@@ -626,6 +626,33 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
+  test("reject malformed poll config before submitting a plan") {
+    withTempTable("asyncPlanBadPollConfig") { _ =>
+      server.clearCaptured()
+      server.setCatalogDefaults(Map(
+        "rest-scan-planning.poll-timeout-ms" -> "1000",
+        "rest-scan-planning.poll-num-retries" -> "1",
+        "rest-scan-planning.poll-min-wait-ms" -> "1",
+        "rest-scan-planning.poll-max-wait-ms" -> "1",
+        "rest-scan-planning.poll-scale-factor" -> "abc").asJava)
+      server.setSubmittedPollsBeforeCompletion(0)
+
+      val client =
+        new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
+      try {
+        val exception = intercept[IllegalArgumentException] {
+          client.planScan(defaultNamespace.toString, "asyncPlanBadPollConfig")
+        }
+        assert(exception.getMessage.contains("poll-scale-factor"))
+        assert(server.getPlanRequestCount() == 0)
+        assert(server.getPlanPollRequestCount() == 0)
+        assert(server.getPlanCancelRequestCount() == 0)
+      } finally {
+        client.close()
+      }
+    }
+  }
+
   test("reject submitted plan when endpoint list is omitted") {
     withTempTable("asyncPlanEndpointsOmitted") { _ =>
       server.clearCaptured()
