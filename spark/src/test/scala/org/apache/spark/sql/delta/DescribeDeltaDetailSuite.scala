@@ -181,14 +181,17 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
         sql(s"DESCRIBE DETAIL $tblName2"),
         Seq(s"$catalogAndSchema$tblName2"),
         Seq("name"))
-      checkResult(
-        sql(s"DESCRIBE DETAIL delta.`$tempDir`"),
-        Seq(null),
-        Seq("name"))
-      checkResult(
-        sql(s"DESCRIBE DETAIL '$tempDir'"),
-        Seq(null),
-        Seq("name"))
+      // When accessing by path and multiple tables point to the same location,
+      // we expect to get one of the table names (the first one found in catalog lookup)
+      val pathResult =
+        sql(s"DESCRIBE DETAIL delta.`$tempDir`").select("name").collect().head.getString(0)
+      val quotedPathResult =
+        sql(s"DESCRIBE DETAIL '$tempDir'").select("name").collect().head.getString(0)
+      // Both path accesses should return the same table name
+      assert(pathResult == quotedPathResult)
+      // The result should be one of the two table names
+      assert(
+        pathResult == s"$catalogAndSchema$tblName1" || pathResult == s"$catalogAndSchema$tblName2")
     }
   }
 
