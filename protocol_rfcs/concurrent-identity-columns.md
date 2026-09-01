@@ -1,7 +1,6 @@
 # Concurrent Identity Columns
 
-**Associated Github issue for discussions: https://github.com/delta-io/delta/issues/XXXX**
-<!-- Replace XXXX with the actual github issue number once the Protocol Change Request is filed. -->
+**Associated Github issue for discussions: https://github.com/delta-io/delta/issues/7572**
 
 ## Overview
 
@@ -45,19 +44,19 @@ additionally contain:
 
 - `delta.identity.concurrent.sequenceId`: The identifier of the catalog-hosted sequence (a monotonic
   counter, see [Concurrent Identity Columns](#concurrent-identity-columns)) that currently allocates
-  values for this column. This is a string type value. Its presence marks the column as
-  **service-backed**: its values are allocated from the named sequence rather than derived from
+  values for this column. This is a string type value. Its presence marks the column as a
+  **concurrent identity column**: its values are allocated from the named sequence rather than derived from
   `delta.identity.highWaterMark`, and the two keys are mutually exclusive. It is an opaque pointer to
   the column's *current* sequence, not a stable column identifier: a writer must not change it during
-  ordinary writes, it is replaced when the column is re-bound, and it is removed when the column leaves
-  the service backend. See [Concurrent Identity Columns](#concurrent-identity-columns).
+  ordinary writes, it is replaced when the column is re-bound to a fresh sequence, and it is removed
+  when the column is converted back to a classic identity column.
 
 > ***New Section after the [Identity Columns](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#identity-columns) section***
 
 ## Concurrent Identity Columns
 
-A **service-backed** identity column draws its values from a monotonic sequence hosted by the table's
-catalog instead of from `delta.identity.highWaterMark`. An identity column is service-backed if and
+A **concurrent** identity column draws its values from a monotonic sequence hosted by the table's
+catalog instead of from `delta.identity.highWaterMark`. An identity column is concurrent if and
 only if its schema metadata contains `delta.identity.concurrent.sequenceId`.
 
 To support this feature:
@@ -68,17 +67,17 @@ To support this feature:
 - The table must be on Writer Version 7.
 - The feature `concurrentIdentityColumns` must exist in the table `protocol`'s `writerFeatures`.
 - The feature `identityColumns` must exist in the table `protocol`'s `writerFeatures`. A
-  service-backed column is still an [Identity Column](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#identity-columns)
+  concurrent identity column is still an [Identity Column](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#identity-columns)
   and must satisfy the identity-column requirements (`start`, `step`, `allowExplicitInsert`); only
   value generation and the highest-value bookkeeping are delegated to the sequence.
 
 `concurrentIdentityColumns` is a table-level mode for identity generation, not a per-column opt-in: on
-a table that supports the feature, **every** identity column must be service-backed. Uniformity keeps
+a table that supports the feature, **every** identity column must be concurrent. Uniformity keeps
 the write path unambiguous, no writer has to reconcile two generation models. Consequently:
 - A writer that adds the feature to a table must bind every existing identity column to a sequence in
   the same operation.
 - A writer creating or altering an identity column on a feature-supporting table must make it
-  service-backed.
+  concurrent.
 - A writer must reject a table state in which the feature is supported but some identity column lacks
   a `sequenceId`, or in which a column carries both `sequenceId` and `delta.identity.highWaterMark`,
   rather than fall back to high-water-mark generation for that column.
@@ -102,7 +101,7 @@ fail rather than wrap.
 
 **Gaps are acceptable.** The sequence guarantees only that a generated value is never reused, not that
 generated values are contiguous. A range a writer reserves but does not fully use (it crashes, aborts,
-or under-fills) leaves those values permanently unallocated, so a service-backed column's values may
+or under-fills) leaves those values permanently unallocated, so a concurrent identity column's values may
 contain holes, exactly as a classic identity column's may after a failed write. Writers must not return
 or replay an unused range to close the hole.
 
@@ -110,17 +109,18 @@ or replay an unused range to close the hole.
 
 A writer to a table that supports `concurrentIdentityColumns` must:
 
-- Obtain each service-backed column's values by **reserving disjoint ranges** from that column's
+- Obtain each concurrent identity column's values by **reserving disjoint ranges** from that column's
   sequence via the catalog, and assign only values drawn from ranges it has reserved. Writers must not
-  generate a service-backed column's values from `delta.identity.highWaterMark` or from any local
-  counter, and must never write or advance that key for such a column.
+  generate a concurrent identity column's values from `delta.identity.highWaterMark` or from any local
+  counter, and must never write or advance that key during ordinary writes.
 - Honor `delta.identity.allowExplicitInsert` exactly as for classic identity columns. Explicitly
   inserted values are not drawn from the sequence and the catalog does not account for them, just as
   they do not advance the high-water mark today, so when `allowExplicitInsert` is `true` a
-  user-supplied value may collide with a generated one; deduplicating explicit inserts remains the
-  user's responsibility.
-- When creating a service-backed identity column, or converting a classic identity column to a
-  service-backed one, bind the column to a sequence and persist its `sequenceId` in the column
+  user-supplied value may collide with a generated one. Writers neither detect nor report such a
+  collision, exactly as for classic identity columns: an identity column is not a uniqueness
+  constraint, and deduplicating explicit inserts remains the user's responsibility.
+- When creating a concurrent identity column, or converting a classic identity column to a
+  concurrent one, bind the column to a sequence and persist its `sequenceId` in the column
   metadata in the same operation. During ordinary writes a writer must not change a column's
   `sequenceId`; it changes only when the binding is repaired or the feature is removed (see
   [Establishing, Repairing, and Removing a Sequence Binding](#establishing-repairing-and-removing-a-sequence-binding)).
@@ -136,16 +136,17 @@ is no longer current.
 - **Establishing a binding.** In the version that adds `concurrentIdentityColumns` to the table's
   `writerFeatures`, a writer must, for every identity column, create a sequence seeded at the first
   value past the column's current `delta.identity.highWaterMark` (`highWaterMark + step`, or `start`
-  when the column has never emitted a value) and persist its `sequenceId`. The writer trusts the mark
-  and does not scan the data.
-- **Repairing a binding.** A writer may re-bind a service-backed column to a **fresh** sequence seeded
-  strictly past the column's current extreme in the data (max for ascending `step`, min for
+  when the column has never emitted a value), persist its `sequenceId`, and remove
+  `delta.identity.highWaterMark` from the column in the same commit. The writer trusts the mark and
+  does not scan the data.
+- **Repairing a binding.** A writer may re-bind a concurrent identity column to a **fresh** sequence
+  seeded strictly past the column's current extreme in the data (max for ascending `step`, min for
   descending), persisting the new `sequenceId`. This scans the data, and repairs a sequence that
   drifted from it, e.g. after explicit inserts the sequence never saw. It does not convert a column
-  between the classic and service backends. (delta-spark exposes this as
+  between the classic and concurrent implementations. (delta-spark exposes this as
   `ALTER TABLE ... ALTER COLUMN c SYNC IDENTITY`.)
 - **Removing the binding.** In the version that removes `concurrentIdentityColumns` from the table's
-  `writerFeatures`, a writer must convert every service-backed column back to a classic identity
+  `writerFeatures`, a writer must convert every concurrent identity column back to a classic identity
   column: rather than scan the data, it reserves a **single** value from the column's sequence, writes
   that value into `delta.identity.highWaterMark`, and removes
   `delta.identity.concurrent.sequenceId`. The reserved value is past everything the sequence has handed
@@ -159,16 +160,6 @@ transition can cause a previously-written identity value to be regenerated.
 None beyond those already imposed by the required `catalogManaged` reader-writer feature. Identity
 values are fully materialized into the data files by writers, exactly as for classic identity columns,
 and `delta.identity.concurrent.sequenceId` is write-path bookkeeping.
-
-### Compatibility with other Delta Features
-
-| Feature | Interaction |
-|-|-|
-| [Identity Columns](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#identity-columns) | **Required** (`identityColumns` in `writerFeatures`). A service-backed column is an identity column whose value generation is delegated to a sequence. Every identity column on a feature-supporting table must be service-backed. |
-| [Catalog-Managed Tables](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/catalog-managed.md) | **Required.** The catalog owns and allocates the sequence, so a table must not support `concurrentIdentityColumns` without `catalogManaged`. |
-| Per-file statistics | Unchanged. Computed from the materialized values exactly as for any other column. |
-| Time Travel / Change Data Feed | Unchanged. Identity values are materialized in the data, so historical versions and CDF read the values that were written, with no dependency on the current sequence state. |
-| Column Mapping | Unchanged. The `sequenceId` binds to the column's logical identity, independent of physical name/id. |
 
 ## Valid Feature Names in Table Features
 
