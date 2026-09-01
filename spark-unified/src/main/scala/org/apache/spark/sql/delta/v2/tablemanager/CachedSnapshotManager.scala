@@ -167,7 +167,7 @@ class CachedSnapshotManager(
   // === Uncached loading =====================================================
 
   private def wrapSnapshot(kernelSnapshot: KernelSnapshot): DeltaV2Snapshot = {
-    new DeltaV2Snapshot(kernelSnapshot)
+    new DeltaV2Snapshot(kernelSnapshot, catalogTableOpt)
   }
 
   private[tablemanager] def loadLatestUncached(): KernelSnapshot = {
