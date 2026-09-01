@@ -736,6 +736,34 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     assert(merged.get("fs.s3a.access.key") === Some("key"))
   }
 
+  test("loadTable uses only the catalog maintenance operation list") {
+    val property = UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY
+    val metadata = new TestMetadata(configuration = util.Map.of(property, "DATA_CLEANUP"))
+
+    def loadTable(operations: util.List[String]): V1Table = {
+      val info = new TableInfo(
+        UUID.randomUUID(),
+        UCDeltaModels.TableType.MANAGED,
+        "s3://bucket/table",
+        metadata,
+        Collections.emptyMap(),
+        operations,
+        Optional.empty())
+      new UCDeltaCatalogClientImpl(
+        catalogName = "main",
+        ucClient = new StubUCDeltaClient(info))
+        .loadTable(Identifier.of(Array("sch"), "tbl"))
+        .asInstanceOf[V1Table]
+    }
+
+    val withoutPermission = loadTable(Collections.emptyList()).catalogTable.storage.properties
+    assert(!withoutPermission.contains(property))
+
+    val withPermission = loadTable(util.List.of("DATA_REORGANIZATION"))
+      .catalogTable.storage.properties
+    assert(withPermission.get(property) === Some("DATA_REORGANIZATION"))
+  }
+
   test("loadTable falls back to SSP on CredentialFetchFailedException when SSP is enabled") {
     val tableId = UUID.randomUUID()
     val metadata = new TestMetadata() // no credential properties

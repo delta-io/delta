@@ -229,6 +229,7 @@ class UCDeltaTokenBasedRestClientSuite
       assert(parsed.get("fields").size() === 2)
       assert(parsed.get("fields").get(0).get("name").asText() === "date")
       assert(parsed.get("fields").get(1).get("type").asText() === "integer")
+      assert(info.getClientMaintenanceOperations.isEmpty)
       assert(!info.getStorageProperties.containsKey(
         UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY))
     }
@@ -246,9 +247,11 @@ class UCDeltaTokenBasedRestClientSuite
       objectMapper.writeValueAsString(response))
 
     withClient { c =>
-      assert(c.loadTable(testIdentifier).getStorageProperties.get(
-        UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY) ===
-        "DATA_REORGANIZATION,DATA_CLEANUP,METADATA_CLEANUP")
+      val info = c.loadTable(testIdentifier)
+      assert(info.getClientMaintenanceOperations.asScala.toSeq === Seq(
+        "DATA_REORGANIZATION", "DATA_CLEANUP", "METADATA_CLEANUP"))
+      assert(!info.getStorageProperties.containsKey(
+        UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY))
     }
   }
 

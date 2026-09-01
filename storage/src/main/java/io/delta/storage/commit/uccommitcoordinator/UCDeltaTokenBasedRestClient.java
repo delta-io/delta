@@ -619,34 +619,52 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     AdaptedTableMetadata adapted = new AdaptedTableMetadata(name, m);
     Optional<UniformMetadata> uniformMetadata =
         toStorageUniformMetadata(response.getUniform());
-    Map<String, String> storageProps = new LinkedHashMap<>();
-    List<DeltaMaintenanceOperation> clientMaintenanceOperations =
+    List<DeltaMaintenanceOperation> responseMaintenanceOperations =
         response.getClientMaintenanceOperations();
-    if (clientMaintenanceOperations != null && !clientMaintenanceOperations.isEmpty()) {
-      storageProps.put(
-          UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY,
-          clientMaintenanceOperations.stream()
-              .map(DeltaMaintenanceOperation::getValue)
-              .collect(Collectors.joining(",")));
-    }
+    List<String> clientMaintenanceOperations =
+        responseMaintenanceOperations == null
+            ? Collections.emptyList()
+            : responseMaintenanceOperations.stream()
+                .map(DeltaMaintenanceOperation::getValue)
+                .collect(Collectors.toList());
     if (!credentialVendingEnabled) {
       return new TableInfo(
-          ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
+          ucTableId,
+          tableType,
+          location,
+          adapted,
+          Collections.emptyMap(),
+          clientMaintenanceOperations,
+          uniformMetadata);
     }
+    Map<String, String> storageProps;
     try {
-      storageProps.putAll(fetchTableCredentials(catalog, schema, name, location));
+      storageProps = fetchTableCredentials(catalog, schema, name, location);
     } catch (ApiException e) {
       // Surface as a typed failure so callers with a fallback (e.g. server-side planning) can
-      // recover. The exception carries the catalog-side TableInfo without credentials so the
-      // caller can still build a CatalogTable.
+      // recover. The exception carries the catalog-side TableInfo (with empty storageProperties)
+      // so the caller can still build a CatalogTable.
       TableInfo withoutCreds = new TableInfo(
-          ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
+          ucTableId,
+          tableType,
+          location,
+          adapted,
+          Collections.emptyMap(),
+          clientMaintenanceOperations,
+          uniformMetadata);
       throw new CredentialFetchFailedException(
           String.format("Credential fetch failed for table %s.%s.%s (HTTP %s): %s",
               catalog, schema, name, e.getCode(), e.getResponseBody()),
           e, withoutCreds);
     }
-    return new TableInfo(ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
+    return new TableInfo(
+        ucTableId,
+        tableType,
+        location,
+        adapted,
+        storageProps,
+        clientMaintenanceOperations,
+        uniformMetadata);
   }
 
   private static Optional<UniformMetadata> toStorageUniformMetadata(
