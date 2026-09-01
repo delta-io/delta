@@ -31,6 +31,140 @@ import org.assertj.core.util.Maps
 import org.scalatest.funsuite.AnyFunSuite
 
 class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
+
+  ///////////////////////////////////////////////////////////
+  // Tests for checkColumnIdAndPhysicalNameAssignments      //
+  ///////////////////////////////////////////////////////////
+
+  /** Helper to create a StructField with column mapping metadata. */
+  private def cmField(
+      name: String,
+      dataType: DataType,
+      id: Long,
+      physicalName: String): StructField = {
+    new StructField(
+      name,
+      dataType,
+      true,
+      FieldMetadata.builder()
+        .putLong(COLUMN_MAPPING_ID_KEY, id)
+        .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
+        .build())
+  }
+
+  /** Helper to create metadata with column mapping enabled and a given maxColumnId. */
+  private def cmMetadata(schema: StructType, maxId: String): Metadata = {
+    testMetadata(schema).withColumnMappingEnabled("name")
+      .withMergedConfiguration(
+        Maps.newHashMap(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, maxId))
+  }
+
+  test("checkColumnIdAndPhysicalNameAssignments: duplicate column ID detected") {
+    val schema = new StructType()
+      .add(cmField("a", StringType.STRING, 1L, "phys_a"))
+      .add(cmField("b", IntegerType.INTEGER, 1L, "phys_b")) // duplicate ID
+
+    val ex = intercept[KernelException] {
+      ColumnMapping.checkColumnIdAndPhysicalNameAssignments(cmMetadata(schema, "2"))
+    }
+    assert(ex.getMessage.contains("Duplicate column mapping ID 1"))
+    assert(ex.getMessage.contains("field 'b'"))
+  }
+
+  test("checkColumnIdAndPhysicalNameAssignments: duplicate physical name detected") {
+    val schema = new StructType()
+      .add(cmField("a", StringType.STRING, 1L, "same_name"))
+      .add(cmField("b", IntegerType.INTEGER, 2L, "same_name")) // duplicate physical name
+
+    val ex = intercept[KernelException] {
+      ColumnMapping.checkColumnIdAndPhysicalNameAssignments(cmMetadata(schema, "2"))
+    }
+    assert(ex.getMessage.contains("Duplicate physical name 'same_name'"))
+    assert(ex.getMessage.contains("field 'b'"))
+  }
+
+  test("checkColumnIdAndPhysicalNameAssignments: nested struct duplicate column ID detected") {
+    val innerStruct = new StructType()
+      .add(cmField("c", IntegerType.INTEGER, 1L, "phys_c")) // duplicate of top-level "a"
+
+    val schema = new StructType()
+      .add(cmField("a", StringType.STRING, 1L, "phys_a"))
+      .add(cmField("b", innerStruct, 2L, "phys_b"))
+
+    val ex = intercept[KernelException] {
+      ColumnMapping.checkColumnIdAndPhysicalNameAssignments(cmMetadata(schema, "3"))
+    }
+    assert(ex.getMessage.contains("Duplicate column mapping ID 1"))
+    assert(ex.getMessage.contains("field 'c'"))
+  }
+
+  test("checkColumnIdAndPhysicalNameAssignments: duplicate ID in array element struct") {
+    // Validates traversal into ArrayType elements
+    val elementStruct = new StructType()
+      .add(cmField("inner", IntegerType.INTEGER, 1L, "phys_inner")) // duplicate of "a"
+
+    val schema = new StructType()
+      .add(cmField("a", StringType.STRING, 1L, "phys_a"))
+      .add(cmField("arr", new ArrayType(elementStruct, false), 2L, "phys_arr"))
+
+    val ex = intercept[KernelException] {
+      ColumnMapping.checkColumnIdAndPhysicalNameAssignments(cmMetadata(schema, "3"))
+    }
+    assert(ex.getMessage.contains("Duplicate column mapping ID 1"))
+    assert(ex.getMessage.contains("field 'inner'"))
+  }
+
+  test("checkColumnIdAndPhysicalNameAssignments: duplicate ID in map value struct") {
+    // Validates traversal into MapType values
+    val valueStruct = new StructType()
+      .add(cmField("inner", IntegerType.INTEGER, 1L, "phys_inner")) // duplicate of "a"
+
+    val schema = new StructType()
+      .add(cmField("a", StringType.STRING, 1L, "phys_a"))
+      .add(cmField(
+        "m",
+        new MapType(StringType.STRING, valueStruct, false),
+        2L,
+        "phys_m"))
+
+    val ex = intercept[KernelException] {
+      ColumnMapping.checkColumnIdAndPhysicalNameAssignments(cmMetadata(schema, "3"))
+    }
+    assert(ex.getMessage.contains("Duplicate column mapping ID 1"))
+    assert(ex.getMessage.contains("field 'inner'"))
+  }
+
+  test("checkColumnIdAndPhysicalNameAssignments: maxColumnId too small") {
+    val schema = new StructType()
+      .add(cmField("a", StringType.STRING, 5L, "phys_a"))
+      .add(cmField("b", IntegerType.INTEGER, 10L, "phys_b"))
+
+    val ex = intercept[KernelException] {
+      ColumnMapping.checkColumnIdAndPhysicalNameAssignments(cmMetadata(schema, "7"))
+    }
+    assert(ex.getMessage.contains("delta.columnMapping.maxColumnId (7)"))
+    assert(ex.getMessage.contains("less than the max column ID in the schema (10)"))
+  }
+
+  test("checkColumnIdAndPhysicalNameAssignments: valid schema passes") {
+    val schema = new StructType()
+      .add(cmField("a", StringType.STRING, 1L, "phys_a"))
+      .add(cmField("b", IntegerType.INTEGER, 2L, "phys_b"))
+
+    assertThatNoException.isThrownBy(() =>
+      ColumnMapping.checkColumnIdAndPhysicalNameAssignments(cmMetadata(schema, "2")))
+  }
+
+  test("checkColumnIdAndPhysicalNameAssignments: no-op for NONE mode") {
+    // Fields without column mapping metadata - validation should skip entirely
+    val schema = new StructType()
+      .add("a", StringType.STRING, true)
+      .add("b", IntegerType.INTEGER, true)
+
+    assertThatNoException.isThrownBy(() =>
+      ColumnMapping.checkColumnIdAndPhysicalNameAssignments(testMetadata(schema)))
+  }
+
   test("column mapping is only enabled on known mapping modes") {
     assertThat(ColumnMapping.isColumnMappingModeEnabled(null)).isFalse
     assertThat(ColumnMapping.isColumnMappingModeEnabled(NONE)).isFalse
