@@ -26,7 +26,7 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 | 2025-11-20    | [materialize-partition-columns.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/materialize-partition-columns.md)                         | https://github.com/delta-io/delta/issues/5555 | Materialize Partition Columns                      |
 | 2026-04-22    | [iceberg-v4-metadata.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md)                     | https://github.com/delta-io/delta/issues/6640 | Iceberg V4 Adaptive Metadata Tree      |
 | 2026-06-23    | [interval-types.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/interval-types.md)                                         | https://github.com/delta-io/delta/issues/7077 | Interval Types                         |
-| 2026-08-26    | [concurrent-identity-columns.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/concurrent-identity-columns.md)      | https://github.com/delta-io/delta/issues/XXXX | Concurrent Identity Columns            |
+| 2026-09-01    | [concurrent-identity-columns.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/concurrent-identity-columns.md)      | https://github.com/delta-io/delta/issues/7572 | Concurrent Identity Columns            |
 
 ### Accepted RFCs
 
