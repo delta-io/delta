@@ -90,7 +90,8 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       val (location, sizeInBytes) =
         writeManifest(FileNames.newAMTRootManifestFile(metadataDir), rootEntries)
       val checkpoint =
-        base.copy(contentRoot = ContentRoot(path = location, sizeInBytes = sizeInBytes))
+        base.copy(contentRoot =
+          ContentRoot(path = location, sizeInBytes = sizeInBytes, version = base.version))
       val provider = AMTCheckpointProvider.fromCheckpoint(
         deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
       provider.loadActionsForStateReconstruction(spark, deltaLog)
