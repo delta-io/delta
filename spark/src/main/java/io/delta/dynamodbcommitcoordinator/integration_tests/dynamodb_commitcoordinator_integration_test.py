@@ -25,6 +25,8 @@ import time
 import boto3
 import uuid
 
+from _dynamodb_commitcoordinator_listing import validate_delta_file_listing_response
+
 """
 
 Run this script in root dir of repository:
@@ -197,14 +199,7 @@ def check_for_delta_file_in_filesystem(delta_table_path, version, is_backfilled,
     listing_prefix = os.path.join(relative_commit_folder_path, f"{version:020}.").lstrip("/")
     print(f"querying {listing_prefix} from bucket {s3_bucket} for version {version}")
     response = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=listing_prefix)
-    if 'Contents' not in response:
-        assert(not should_exist, f"Listing for prefix {listing_prefix} did not return any files even though it should have.")
-        return
-    items = response['Contents']
-    commits = filter(lambda key: ".json" in key and ".tmp" not in key, map(lambda x: os.path.basename(x['Key']), items))
-    expected_count = 1 if should_exist else 0
-    matching_files = list(filter(lambda key: key.split('.')[0].endswith(f"{version:020}"), commits))
-    assert(len(matching_files) == expected_count)
+    validate_delta_file_listing_response(response, listing_prefix, version, should_exist)
 
 def test_downgrades_and_upgrades(delta_table_path, delta_table_version):
     # Downgrade to filesystem based commits should work
