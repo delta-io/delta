@@ -21,6 +21,9 @@ import java.util.Locale
 
 import scala.collection.JavaConverters._
 
+import io.unitycatalog.client.auth.TokenProvider
+import io.unitycatalog.hadoop.UCCredentialHadoopConfs
+
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
@@ -391,7 +394,7 @@ class ServerSidePlannedScan(
 
   override def createReaderFactory(): PartitionReaderFactory = {
     new ServerSidePlannedFilePartitionReaderFactory(
-      spark, tableSchema, requiredSchema, scanPlan.credentials)
+      spark, tableSchema, requiredSchema, scanPlan.credentials, scanPlan.credentialRefresh)
   }
 }
 
@@ -410,12 +413,14 @@ case class ServerSidePlannedFileInputPartition(
  * @param tableSchema The full table schema (all columns in the file)
  * @param requiredSchema The required schema (columns to read after projection pushdown)
  * @param credentials Optional storage credentials from server-side planning response
+ * @param credentialRefresh Optional plan-scoped context for renewable credentials
  */
 class ServerSidePlannedFilePartitionReaderFactory(
     spark: SparkSession,
     tableSchema: StructType,
     requiredSchema: StructType,
-    credentials: Option[ScanPlanStorageCredentials])
+    credentials: Option[ScanPlanStorageCredentials],
+    credentialRefresh: Option[ScanPlanCredentialRefresh] = None)
     extends PartitionReaderFactory {
 
   import org.apache.spark.util.SerializableConfiguration
@@ -428,18 +433,33 @@ class ServerSidePlannedFilePartitionReaderFactory(
   // - ServerSidePlannedTable is NOT a Delta table, so we don't want Delta-specific options
   //   from deltaLog.newDeltaHadoopConf()
   // - General Spark options from spark.hadoop.* are included and work for all tables
-  private val hadoopConf = {
+  private[serverSidePlanning] val hadoopConf = {
     val conf = spark.sessionState.newHadoopConf()
 
-    // Inject temporary credentials from IRC server response.
-    // Disable FileSystem cache for S3, Azure, and GCS so each scan uses fresh credentials
-    // (avoids AccessDenied when temp creds expire and a cached FS is reused).
-    // Aligns with CredPropsUtil in the Unity Catalog connector.
-    credentials.foreach(_.configure(conf))
+    credentialRefresh match {
+      case Some(refresh) => configureRenewableCredentials(conf, refresh)
+      case None => credentials.foreach(_.configure(conf))
+    }
 
     new SerializableConfiguration(conf)
   }
   // scalastyle:on deltahadoopconfiguration
+
+  private def configureRenewableCredentials(
+      conf: org.apache.hadoop.conf.Configuration,
+      refresh: ScanPlanCredentialRefresh): Unit = {
+    val tokenProvider = TokenProvider.create(refresh.authConfig.asJava)
+    val appVersions = Map("Spark" -> spark.version).asJava
+
+    refresh.storageSchemes.distinct.foreach { scheme =>
+      val props = UCCredentialHadoopConfs.builder(refresh.catalogUri, scheme)
+        .tokenProvider(tokenProvider)
+        .hadoopConf(conf)
+        .addAppVersions(appVersions)
+        .buildForIcebergPlan(refresh.credentialsEndpoint, refresh.planId)
+      props.asScala.foreach { case (key, value) => conf.set(key, value) }
+    }
+  }
 
   // Pre-build reader function for Parquet on the driver
   // This function will be serialized and sent to executors
