@@ -17,15 +17,26 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off funsuite
+import org.scalatest.BeforeAndAfterEach
 import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.types._
 
-trait DeltaInsertIntoEvolutionSuiteBase extends DeltaInsertIntoTestBase { self: AnyFunSuite =>
+trait DeltaInsertIntoEvolutionSuiteBase
+    extends DeltaInsertIntoTestBase
+    with BeforeAndAfterEach { self: AnyFunSuite =>
+
+  protected val schemaEvolutionBooleanDomain: Seq[Boolean] = Seq(true, false)
+
+  protected val DeltaInsertPreserveNullSourceStructsKey: String =
+    "spark.databricks.delta.insert.preserveNullSourceStructs"
+  protected val DeltaInsertByNameSchemaEvolutionEnabledKey: String =
+    "spark.databricks.delta.insert.byName.schemaEvolution.enabled"
+
   protected def setCurrentCatalog(): Unit = {
-    executeSql(s"set catalog $catalogName")
+    spark.sql(s"set catalog $catalogName")
   }
 
   override protected def beforeEach(): Unit = {
@@ -34,7 +45,6 @@ trait DeltaInsertIntoEvolutionSuiteBase extends DeltaInsertIntoTestBase { self: 
   }
 
   test("all test cases are implemented") {
-    assert(supportedInsertTypes.nonEmpty, "At least one insert type must be supported")
     // we don't cover SQL INSERT with an explicit column list in this suite as it's not possible to
     // specify a column that doesn't exist in the target table that way.
     val ignoredTestCases = testCases.map { case (name, _) =>
@@ -57,31 +67,29 @@ trait DeltaInsertIntoSchemaEvolutionTests
   extends DeltaInsertIntoEvolutionSuiteBase { self: AnyFunSuite =>
   import DeltaInsertIntoTestHarness._
 
-  if (supportsRuntimeConfigMutations) {
-    for (enableAutoMerge <- BOOLEAN_DOMAIN) {
-      val testMsg = s"enableAutoMerge=$enableAutoMerge"
-      testInserts("WITH SCHEMA EVOLUTION or .option always take precedence over the SQL Conf, " +
-          testMsg)(
-        initialData = TestData("a int, s struct <x: int>", Seq("""{ "a": 1, "s": { "x": 2 } }""")),
-        partitionBy = Seq("a"),
-        overwriteWhere = "a" -> 1,
-        insertData = TestData("a int, s struct <x: int, y: int>",
-          Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
-        expectedResult = ExpectedResult.Success(
-          expected = new StructType()
-            .add("a", IntegerType)
-            .add("s", new StructType()
-              .add("x", IntegerType)
-              .add("y", IntegerType)
-            )),
-        confs = Seq(
-          DeltaSchemaAutoMigrateKey -> enableAutoMerge.toString),
-        withSchemaEvolution = true
-      )
-    }
+  for (enableAutoMergeSQLConf <- schemaEvolutionBooleanDomain) {
+    val testMsg = s"enableAutoMergeSQLConf=$enableAutoMergeSQLConf"
+    testInserts("WITH SCHEMA EVOLUTION or .option always take precedence over the SQL Conf, " +
+        testMsg)(
+      initialData = TestData("a int, s struct <x: int>", Seq("""{ "a": 1, "s": { "x": 2 } }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, s struct <x: int, y: int>",
+        Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
+      expectedResult = ExpectedResult.Success(
+        expected = new StructType()
+          .add("a", IntegerType)
+          .add("s", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType)
+          )),
+      confs = Seq(
+        DeltaSchemaAutoMigrateKey -> enableAutoMergeSQLConf.toString),
+      withSchemaEvolution = true
+    )
   }
 
-  for (schemaEvolution <- BOOLEAN_DOMAIN) {
+  for (schemaEvolution <- schemaEvolutionBooleanDomain) {
     // We allow adding new top-level columns with schema evolution for all inserts.
     testInserts(s"insert with extra top-level column, schemaEvolution=$schemaEvolution")(
       initialData = TestData("a int, b int", Seq("""{ "a": 1, "b": 2 }""")),
@@ -215,37 +223,35 @@ trait DeltaInsertIntoSchemaEvolutionTests
     )
   }
 
-  if (supportsRuntimeConfigMutations) {
-    for {
-      preserveNullSourceStructs <- BOOLEAN_DOMAIN
-      (inserts: Set[Insert], expectedAnswer) <- Seq(
+  for {
+    preserveNullSourceStructs <- schemaEvolutionBooleanDomain
+    (inserts: Set[Insert], expectedAnswer) <- Seq(
       insertsAppend ->
         TestData("a int, s struct <x: int, y: int>",
           Seq("""{ "a": 1, "s": { "x": 2, "y": null } }""", """{ "a": 1, "s": null }""")),
       insertsOverwrite ->
         TestData("a int, s struct <x: int, y: int>",
           Seq("""{ "a": 1, "s": null }"""))
-      )
-    } {
-      testInserts(s"insert with extra nested field, null struct, " +
-          s"preserveNullSourceStructs=$preserveNullSourceStructs")(
-        initialData = TestData("a int, s struct <x: int>",
-          Seq("""{ "a": 1, "s": { "x": 2 } }""")),
-        partitionBy = Seq("a"),
-        overwriteWhere = "a" -> 1,
-        insertData = TestData("a int, s struct <x: int, y: int>",
-          Seq("""{ "a": 1, "s": null }""")),
-        expectedResult = ExpectedResult.Success(expected = expectedAnswer),
-        includeInserts = inserts,
-        confs = Seq(
-          DeltaInsertPreserveNullSourceStructsKey -> preserveNullSourceStructs.toString
-        ),
-        withSchemaEvolution = true
-      )
-    }
+    )
+  } {
+    testInserts(s"insert with extra nested field, null struct, " +
+        s"preserveNullSourceStructs=$preserveNullSourceStructs")(
+      initialData = TestData("a int, s struct <x: int>",
+        Seq("""{ "a": 1, "s": { "x": 2 } }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, s struct <x: int, y: int>",
+        Seq("""{ "a": 1, "s": null }""")),
+      expectedResult = ExpectedResult.Success(expected = expectedAnswer),
+      includeInserts = inserts,
+      confs = Seq(
+        DeltaInsertPreserveNullSourceStructsKey -> preserveNullSourceStructs.toString
+      ),
+      withSchemaEvolution = true
+    )
   }
 
-  for (schemaEvolution <- BOOLEAN_DOMAIN) {
+  for (schemaEvolution <- schemaEvolutionBooleanDomain) {
     // Adding new nested struct fields with schema evolution is allowed for all inserts, but
     // dataframe inserts by name don't support implicit casting and will fail due to the type
     // mismatch.
@@ -303,33 +309,27 @@ trait DeltaInsertIntoSchemaEvolutionTests
 
   // When DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED is disabled, SQL INSERT BY NAME with extra
   // top-level columns should fail even when schema evolution is enabled.
-  if (supportsRuntimeConfigMutations &&
-      supportedInsertTypes.contains(SQLInsertByName(SaveMode.Append))) {
-    test("insert by name with extra top-level column and implicit cast fails " +
-        "when byNameSchemaEvolution is disabled") {
-      withTestTables(targetTableName) {
-        val quotedTargetTableName = quoteMultipartIdentifier(targetTableName)
-        executeSql(s"CREATE TABLE $quotedTargetTableName (a INT, b INT) USING DELTA")
-        withRuntimeConf(
-            DeltaSchemaAutoMigrateKey -> "true",
-            DeltaInsertByNameSchemaEvolutionEnabledKey -> "false") {
-          val ex = intercept[SparkThrowable] {
-            executeSql(
-              s"INSERT INTO $quotedTargetTableName BY NAME SELECT 1 AS a, 2L AS b, 3 AS c")
-          }
-          validateInsertFailure(
-            ex,
-            exception =>
-              checkExpectedError(
-                exception,
-                "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
-                parameters = Map(
-                  "tableName" ->
-                    s"`$catalogName`.`default`.${quoteIdentifier(targetTableName)}",
-                  "tableColumns" -> "`a`, `b`",
-                  "dataColumns" -> "`a`, `b`, `c`"
-                )))
+  test("insert by name with extra top-level column and implicit cast fails " +
+      "when byNameSchemaEvolution is disabled") {
+    withTestTables(targetTableName) {
+      val quotedTargetTableName = quoteMultipartIdentifier(targetTableName)
+      spark.sql(s"CREATE TABLE $quotedTargetTableName (a INT, b INT) USING DELTA")
+      withRuntimeConf(
+          DeltaSchemaAutoMigrateKey -> "true",
+          DeltaInsertByNameSchemaEvolutionEnabledKey -> "false") {
+        val ex = intercept[SparkThrowable] {
+          spark.sql(
+            s"INSERT INTO $quotedTargetTableName BY NAME SELECT 1 AS a, 2L AS b, 3 AS c")
         }
+        checkExpectedError(
+          ex,
+          "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
+          parameters = Map(
+            "tableName" ->
+              s"`$catalogName`.`default`.${quoteIdentifier(targetTableName)}",
+            "tableColumns" -> "`a`, `b`",
+            "dataColumns" -> "`a`, `b`, `c`"
+          ))
       }
     }
   }
@@ -339,7 +339,7 @@ trait DeltaInsertIntoVoidEvolutionTests
   extends DeltaInsertIntoEvolutionSuiteBase { self: AnyFunSuite =>
   import DeltaInsertIntoTestHarness._
 
-  for (schemaEvolution <- BOOLEAN_DOMAIN) {
+  for (schemaEvolution <- schemaEvolutionBooleanDomain) {
     testInserts(s"insert and evolve void column into int," +
       s"schemaEvolution=$schemaEvolution")(
       initialData = TestData("a int, i int, v void", Seq("""{ "a": 1, "i": 1, "v": null }""")),

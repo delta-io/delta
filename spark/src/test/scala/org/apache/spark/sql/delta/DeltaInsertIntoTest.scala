@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta
 import scala.collection.mutable
 
 // scalastyle:off funsuite
-import org.scalatest.BeforeAndAfterEach
 import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.SparkThrowable
@@ -29,8 +28,6 @@ import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.types.StructType
 
 object DeltaInsertIntoTestHarness {
-  val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
-
   sealed trait ExpectedResult[-T]
   object ExpectedResult {
     case class Success[T](expected: T) extends ExpectedResult[T]
@@ -47,8 +44,7 @@ object DeltaInsertIntoTestHarness {
  * Each take a unique path through analysis. The abstractions below captures these different
  * inserts to allow more easily running tests with all or a subset of them.
  */
-trait DeltaInsertIntoTestBase
-  extends BeforeAndAfterEach { self: AnyFunSuite =>
+trait DeltaInsertIntoTestBase { self: AnyFunSuite =>
 
   protected def spark: SparkSession
 
@@ -77,8 +73,6 @@ trait DeltaInsertIntoTestBase
       s"Expected no query context but got ${exception.getQueryContext.toSeq}")
   }
 
-  protected def executeSql(query: String): DataFrame = spark.sql(query)
-
   protected def writeFormat: String
 
   protected val catalogName: String = "spark_catalog"
@@ -89,13 +83,16 @@ trait DeltaInsertIntoTestBase
 
   protected val DeltaSchemaAutoMigrateKey: String =
     "spark.databricks.delta.schema.autoMerge.enabled"
-  protected val DeltaInsertPreserveNullSourceStructsKey: String =
-    "spark.databricks.delta.insert.preserveNullSourceStructs"
-  protected val DeltaInsertByNameSchemaEvolutionEnabledKey: String =
-    "spark.databricks.delta.insert.byName.schemaEvolution.enabled"
 
   private val ReplaceOnDataFrameWriterEnabledKey =
     "spark.databricks.delta.replaceOn.dataframe.writer.enabled"
+
+  private def supportsInsertWithSchemaEvolutionSyntax: Boolean = {
+    val versionParts = spark.version.split('.')
+    val major = versionParts(0).toInt
+    val minor = versionParts(1).toInt
+    major > 4 || (major == 4 && minor >= 2)
+  }
 
   private def targetTablePath: String =
     spark.sql(s"DESCRIBE DETAIL $quotedTargetTableName")
@@ -106,12 +103,10 @@ trait DeltaInsertIntoTestBase
       f
     } finally {
       tableNames.reverse.foreach { tableName =>
-        executeSql(s"DROP TABLE IF EXISTS ${quoteMultipartIdentifier(tableName)}").collect()
+        spark.sql(s"DROP TABLE IF EXISTS ${quoteMultipartIdentifier(tableName)}").collect()
       }
     }
   }
-
-  protected def unsetRuntimeConf(key: String): Unit = spark.conf.unset(key)
 
   protected def withRuntimeConf[T](pairs: (String, String)*)(f: => T): T = {
     val previousValues = pairs.map { case (key, _) => key -> spark.conf.getOption(key) }
@@ -119,7 +114,7 @@ trait DeltaInsertIntoTestBase
     try f finally {
       previousValues.foreach {
         case (key, Some(value)) => spark.conf.set(key, value)
-        case (key, None) => unsetRuntimeConf(key)
+        case (key, None) => spark.conf.unset(key)
       }
     }
   }
@@ -155,12 +150,21 @@ trait DeltaInsertIntoTestBase
     /**
      * Runs a SQL INSERT, enabling Delta schema evolution when [[withSchemaEvolution]] is set.
      *
+     * Spark 4.2 introduced the `INSERT WITH SCHEMA EVOLUTION` syntax. Earlier versions enable
+     * schema evolution through the corresponding SQL configuration instead.
+     *
      * @param buildInsert builds the INSERT statement given the schema evolution clause to splice
      *                    in right after the leading `INSERT` keyword.
      */
     def runInsertSql(withSchemaEvolution: Boolean)(buildInsert: String => String): Unit = {
-      val clause = if (withSchemaEvolution) "WITH SCHEMA EVOLUTION " else ""
-      executeSql(buildInsert(clause))
+      if (supportsInsertWithSchemaEvolutionSyntax) {
+        val clause = if (withSchemaEvolution) "WITH SCHEMA EVOLUTION " else ""
+        spark.sql(buildInsert(clause))
+      } else {
+        withRuntimeConf(DeltaSchemaAutoMigrateKey -> withSchemaEvolution.toString) {
+          spark.sql(buildInsert(""))
+        }
+      }
     }
 
     /** The expected content of the table after the insert. */
@@ -295,7 +299,7 @@ trait DeltaInsertIntoTestBase
         withSchemaEvolution: Boolean): Unit =
       spark.read.table(sourceTableName).write.mode(mode)
         .option("mergeSchema", withSchemaEvolution.toString)
-        .format("delta")
+        .format(writeFormat)
         .insertInto(targetTableName)
   }
 
@@ -311,7 +315,7 @@ trait DeltaInsertIntoTestBase
         withSchemaEvolution: Boolean): Unit = {
       spark.read.table(sourceTableName).write.mode(mode)
         .option("mergeSchema", withSchemaEvolution.toString)
-        .format("delta")
+        .format(writeFormat)
         .saveAsTable(targetTableName)
     }
   }
@@ -328,7 +332,7 @@ trait DeltaInsertIntoTestBase
         withSchemaEvolution: Boolean): Unit = {
       spark.read.table(sourceTableName).write.mode(mode)
         .option("mergeSchema", withSchemaEvolution.toString)
-        .format("delta")
+        .format(writeFormat)
         .save(targetTablePath)
     }
   }
@@ -350,7 +354,7 @@ trait DeltaInsertIntoTestBase
           .option("replaceOn", s"t.$whereCol = $whereValue")
           .option("targetAlias", "t")
           .option("mergeSchema", withSchemaEvolution.toString)
-          .format("delta")
+          .format(writeFormat)
           .insertInto(targetTableName)
       }
     }
@@ -373,7 +377,7 @@ trait DeltaInsertIntoTestBase
           .option("replaceOn", s"t.$whereCol = $whereValue")
           .option("targetAlias", "t")
           .option("mergeSchema", withSchemaEvolution.toString)
-          .format("delta")
+          .format(writeFormat)
           .save(targetTablePath)
       }
     }
@@ -394,7 +398,7 @@ trait DeltaInsertIntoTestBase
         .mode(mode)
         .option("partitionOverwriteMode", "dynamic")
         .option("mergeSchema", withSchemaEvolution.toString)
-        .format("delta")
+        .format(writeFormat)
         .insertInto(targetTableName)
   }
 
@@ -504,18 +508,6 @@ trait DeltaInsertIntoTestBase
       )
     } yield insert).toSet
 
-  protected def supportedInsertTypes: Set[Insert] = allInsertTypes
-
-  protected def supportsUsageLogValidation: Boolean = true
-
-  protected def supportsRuntimeConfigMutations: Boolean = true
-
-  protected def supportsCanonicalInsertFailureErrors: Boolean = true
-
-  protected def validateInsertFailure(
-      exception: SparkThrowable,
-      validation: SparkThrowable => Unit): Unit = validation(exception)
-
   protected def adaptExpectedResult(
       expectedResult: Any): DeltaInsertIntoTestHarness.ExpectedResult[Any] = {
     expectedResult match {
@@ -566,7 +558,7 @@ trait DeltaInsertIntoTestBase
   def checkAllTestCasesImplemented(ignoredTestCases: Map[String, Set[Insert]] = Map.empty): Unit = {
     val ignoredTests = ignoredTestCases.withDefaultValue(Set.empty)
     val missingTests = testCases.map {
-      case (name, inserts) => name -> (supportedInsertTypes -- inserts -- ignoredTests(name))
+      case (name, inserts) => name -> (allInsertTypes -- inserts -- ignoredTests(name))
     }.collect {
       case (name, missingInserts) if missingInserts.nonEmpty =>
         s"Test '$name' is not covering all insert types, missing: $missingInserts"
@@ -593,15 +585,7 @@ trait DeltaInsertIntoTestBase
     } else {
       s"SELECT from_json(CAST(NULL AS STRING), $schemaLiteral) AS parsed"
     }
-    executeSql(s"SELECT parsed.* FROM ($parsedRows) WHERE parsed IS NOT NULL")
-  }
-
-  protected def expectedRows(
-      insert: Insert,
-      initialData: TestData,
-      insertData: TestData,
-      expectedSchema: StructType): Seq[Row] = {
-    insert.expectedResult(initialData.toDF, insertData.toDF).collect().toSeq
+    spark.sql(s"SELECT parsed.* FROM ($parsedRows) WHERE parsed IS NOT NULL")
   }
 
   protected def checkExpectedRows(
@@ -610,7 +594,8 @@ trait DeltaInsertIntoTestBase
       initialData: TestData,
       insertData: TestData,
       expectedSchema: StructType): Unit = {
-    checkAnswer(actual, expectedRows(insert, initialData, insertData, expectedSchema))
+    val expected = insert.expectedResult(initialData.toDF, insertData.toDF).collect().toSeq
+    checkAnswer(actual, expected)
   }
 
   protected def checkExpectedRows(actual: => DataFrame, expectedData: TestData): Unit = {
@@ -621,7 +606,7 @@ trait DeltaInsertIntoTestBase
       tableName: String,
       data: TestData,
       partitionBy: Seq[String] = Seq.empty): Unit = {
-    val writer = data.toDF.write.format("delta")
+    val writer = data.toDF.write.format(writeFormat)
     if (partitionBy.nonEmpty) {
       writer.partitionBy(partitionBy: _*)
     }
@@ -656,20 +641,11 @@ trait DeltaInsertIntoTestBase
       excludeInserts: Set[Insert] = Set.empty,
       confs: Seq[(String, String)] = Seq.empty,
       withSchemaEvolution: Boolean = false): Unit = {
-    val requestedInserts = includeInserts.filterNot(excludeInserts)
-    assert(requestedInserts.nonEmpty, s"Test '$name' doesn't cover any inserts. Please check the " +
+    val inserts = includeInserts.filterNot(excludeInserts)
+    assert(inserts.nonEmpty, s"Test '$name' doesn't cover any inserts. Please check the " +
       "includeInserts/excludeInserts sets and ensure at least one insert is included.")
+    testCases(name) ++= inserts
     val adaptedExpectedResult = adaptExpectedResult(expectedResult)
-    val supportsExpectedResult = adaptedExpectedResult match {
-      case _: DeltaInsertIntoTestHarness.ExpectedResult.Failure[_] =>
-        supportsCanonicalInsertFailureErrors
-      case _ => true
-    }
-    val inserts =
-      if (supportsExpectedResult) requestedInserts.intersect(supportedInsertTypes) else Set.empty
-    if (inserts.nonEmpty) {
-      testCases(name) ++= inserts
-    }
 
     for (insert <- inserts) {
       test(s"${insert.name} - $name") {
@@ -705,6 +681,8 @@ trait DeltaInsertIntoTestBase
                 val target = spark.read.table(targetTableName)
                 assert(target.schema === expectedData.schema)
                 checkExpectedRows(target, expectedData)
+              case DeltaInsertIntoTestHarness.ExpectedResult.Success(expected) =>
+                fail(s"Unsupported expected success type: ${expected.getClass.getName}")
               case DeltaInsertIntoTestHarness.ExpectedResult.Failure(checkError) =>
                 val ex = if (insert == StreamingInsert) {
                   intercept[StreamingQueryException] {
@@ -715,7 +693,7 @@ trait DeltaInsertIntoTestBase
                     runInsert()
                   }
                 }
-                validateInsertFailure(ex, checkError)
+                checkError(ex)
             }
           }
         }
