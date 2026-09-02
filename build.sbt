@@ -635,12 +635,58 @@ lazy val spark = (project in file("spark-unified"))
       import scala.xml._
       import scala.xml.transform._
 
+      // Exclude dependencies provided by Spark
+      val jacksonExclusions = Seq(
+        "com.fasterxml.jackson.core" -> "jackson-annotations",
+        "com.fasterxml.jackson.core" -> "jackson-core",
+        "com.fasterxml.jackson.core" -> "jackson-databind"
+      )
+      val deltaStorageExclusions = Seq(
+        "com.google.code.findbugs" -> "jsr305",
+        "org.apache.logging.log4j" -> "log4j-api",
+        "org.apache.logging.log4j" -> "log4j-slf4j2-impl",
+        "org.slf4j" -> "slf4j-api"
+      )
+      val deltaSparkDependencyExclusions = Map(
+        "delta-storage" -> deltaStorageExclusions,
+        "delta-kernel-api" -> (jacksonExclusions ++ Seq(
+          "com.google.code.findbugs" -> "jsr305",
+          "org.roaringbitmap" -> "RoaringBitmap",
+          "org.slf4j" -> "slf4j-api"
+        )),
+        "delta-kernel-defaults" -> (deltaStorageExclusions ++ jacksonExclusions ++ Seq(
+          "org.apache.hadoop" -> "hadoop-client-runtime",
+          "org.apache.parquet" -> "parquet-hadoop"
+        )),
+        "delta-kernel-unitycatalog" -> deltaStorageExclusions
+      )
+
+      def exclusionNodes(artifactId: String): Seq[Elem] = {
+        deltaSparkDependencyExclusions.getOrElse(artifactId, Seq.empty).map {
+          case (groupId, dependencyArtifactId) =>
+            <exclusion>
+              <groupId>{groupId}</groupId>
+              <artifactId>{dependencyArtifactId}</artifactId>
+            </exclusion>
+        }
+      }
+
       def kernelDependencyNode(artifactId: String): Elem = {
         <dependency>
           <groupId>io.delta</groupId>
           <artifactId>{artifactId}</artifactId>
           <version>{ver}</version>
+          <exclusions>{exclusionNodes(artifactId)}</exclusions>
         </dependency>
+      }
+
+      def addSparkExclusions(dependency: Elem, artifactId: String): Elem = {
+        val childrenWithoutExclusions = dependency.child.filter {
+          case child: Elem if child.label == "exclusions" => false
+          case _ => true
+        }
+        dependency.copy(
+          child = childrenWithoutExclusions ++ Seq(<exclusions>{exclusionNodes(artifactId)}</exclusions>))
       }
 
       val kernelDeps = Seq(
@@ -657,6 +703,10 @@ lazy val spark = (project in file("spark-unified"))
                 val artifactId = (child \ "artifactId").text
                 !internalModules.exists(module => artifactId.startsWith(module))
               case _ => true
+            }.map {
+              case child: Elem if (child \ "artifactId").text == "delta-storage" =>
+                addSparkExclusions(child, "delta-storage")
+              case child => child
             }
             Seq(e.copy(child = filtered ++ kernelDeps))
           case _ => Seq(n)
