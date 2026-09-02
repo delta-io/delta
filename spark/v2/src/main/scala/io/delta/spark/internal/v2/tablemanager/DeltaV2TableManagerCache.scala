@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.sql.delta.v2.tablemanager
+package io.delta.spark.internal.v2.tablemanager
 
 import java.util.concurrent.{ExecutionException, TimeUnit}
 
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import io.delta.spark.internal.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.google.common.base.Ticker
 import com.google.common.cache.{Cache, CacheBuilder, RemovalListener}
@@ -38,7 +38,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
     ticker: Ticker = Ticker.systemTicker(),
     managerFactory: (DeltaV2CacheKey, Option[CatalogTable]) => DeltaV2TableManager =
       (key, catalog) => new DeltaV2TableManagerImpl(key, catalog)
-) extends DeltaLogging {
+) extends DeltaV2Logging {
 
   private val cache: Cache[DeltaV2CacheKey, DeltaV2TableManager] = {
     val listener: RemovalListener[DeltaV2CacheKey, DeltaV2TableManager] =
@@ -65,7 +65,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
     try {
       cache.get(key, () => {
         recordFrameProfile(
-            "Delta", "v2.tableManagerCache.createManager") {
+            "tableManagerCache.createManager") {
           managerFactory(key, initialCatalogTableOpt)
         }
       })
@@ -109,7 +109,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
  * pattern. Enabled when `delta.log.cacheSize > 0`. Size and TTL are read from [[SQLConf]]
  * at first access, reusing the V1 DeltaLog cache configs.
  */
-object DeltaV2TableManagerCache extends DeltaLogging {
+private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
 
   @volatile private var instance: Option[DeltaV2TableManagerCache] = None
 
@@ -122,7 +122,7 @@ object DeltaV2TableManagerCache extends DeltaLogging {
       initialCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     recordFrameProfile(
-        "Delta", "v2.tableManagerCache.getOrCreate") {
+        "tableManagerCache.getOrCreate") {
       if (!isEnabled(sqlConf)) {
         return createManager(key, initialCatalogTableOpt)
       }

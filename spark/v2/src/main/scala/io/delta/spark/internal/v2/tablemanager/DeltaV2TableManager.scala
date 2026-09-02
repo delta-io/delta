@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.sql.delta.v2.tablemanager
+package io.delta.spark.internal.v2.tablemanager
 
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 
@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
  * Table identity (path, catalog table) is seeded at construction and determines cache-key
  * affinity.
  */
-trait DeltaV2TableManager {
+private[v2] trait DeltaV2TableManager {
   /** Returns a per-request snapshot manager backed by this composite's shared snapshot state. */
   def snapshotManager(): DeltaV2SnapshotManager = {
     throw new UnsupportedOperationException("snapshotManager not implemented")

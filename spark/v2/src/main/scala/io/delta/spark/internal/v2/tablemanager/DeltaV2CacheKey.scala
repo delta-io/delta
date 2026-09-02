@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.sql.delta.v2.tablemanager
+package io.delta.spark.internal.v2.tablemanager
 
 import scala.jdk.CollectionConverters._
 
