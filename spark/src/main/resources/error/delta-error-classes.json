@@ -3189,8 +3189,21 @@
   },
   "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED" : {
     "message" : [
-      "Failed to convert the table version <version> to the universal format <format>. <message>"
+      "Failed to convert the table version <version> to the universal format <format>."
     ],
+    "subClass" : {
+      "CAUSED_BY_ERROR" : {
+        "message" : [
+          "<causeErrorMessage>",
+          ""
+        ]
+      },
+      "UNEXPECTED_PARTITION_DATA_TYPE" : {
+        "message" : [
+          "Unexpected partition data type <dataType>."
+        ]
+      }
+    },
     "sqlState" : "KD00E"
   },
   "DELTA_UNIVERSAL_FORMAT_VIOLATION" : {

@@ -143,9 +143,7 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
 
       // forRead reconstructs the Delta stats JSON from the leaves' DATA entries; compare as parsed
       // JSON trees so field order and formatting do not matter.
-      val reconstructed = allowReadWithinDeltaLog {
-        val entries = spark.read.parquet(leaves: _*)
-          .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
+      val reconstructed = withManifestDataEntries(leaves) { entries =>
         AMTContentStats.forRead(entries, metadata, protocol)
           .select(col("content_stats"))
           .as[String].collect()

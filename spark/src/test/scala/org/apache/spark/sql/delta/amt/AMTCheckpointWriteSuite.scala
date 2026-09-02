@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.amt
 
 import java.io.File
 
-// scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.{Checkpoints, CommitStats, CurrentTransactionInfo, DeltaOperations, LastCheckpointInfo}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, RemoveFile}
@@ -26,7 +25,6 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.functions.col
@@ -68,7 +66,6 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       def canonical(add: AddFile) =
         add.copy(
           modificationTime = 0L,
-          tags = null,
           stats = null,
           backReference = None,
           amtPassthrough = None) -> Option(add.stats).map(JsonUtils.mapper.readTree)
@@ -133,13 +130,9 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
         sql(s"INSERT INTO $name VALUES (1)")
         sql(s"INSERT INTO $name VALUES (2)")
       }) { context =>
-    val rootDataEntries = {
-      spark.read
-        .parquet(context.checkpoint.contentRoot.getAbsolutePath(context.provider.tableRoot)
-          .toString)
-        .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
-        .count()
-    }
+    val rootDataEntries = withManifestDataEntries(
+      Seq(context.checkpoint.contentRoot.getAbsolutePath(context.provider.tableRoot).toString)
+    )(_.count())
 
     assert(context.provider.leaves.isEmpty, "The root must contain no leaf pointers.")
     assert(rootDataEntries == 2L, "Both live files must be reachable as DATA entries in the root.")
@@ -166,18 +159,20 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
              |SELECT $cols
              |FROM range(${leafPackedFiles - 1}, $leafPackedFiles)""".stripMargin)
       }) { context =>
-    val leafDf = spark.read.parquet(
-      context.provider.liveLeafManifestAbsolutePaths.map(_.toString): _*)
-    val partitionSchema = context.postCheckpointSnapshot.metadata.partitionSchema
-    val partition = leafDf.schema("partition")
-    assert(partition.nullable)
-    val expectedSchema = AMTPartitionValues.persistedSchema(partitionSchema)
-    assert(
-      fieldIdShape(partition.dataType.asInstanceOf[StructType]) == fieldIdShape(expectedSchema),
-      s"persisted partition schema did not match the expected typed shape\n" +
-        s"  actual=${partition.dataType}\n  expected=$expectedSchema")
-    assert(leafDf.select("partition.p_int").collect().map(_.getInt(0)).toSet ==
-      (0 until leafPackedFiles).toSet)
+    allowReadWithinDeltaLog {
+      val leafDf = spark.read.parquet(
+        context.provider.liveLeafManifestAbsolutePaths.map(_.toString): _*)
+      val partitionSchema = context.postCheckpointSnapshot.metadata.partitionSchema
+      val partition = leafDf.schema("partition")
+      assert(partition.nullable)
+      val expectedSchema = AMTPartitionValues.persistedSchema(partitionSchema)
+      assert(
+        fieldIdShape(partition.dataType.asInstanceOf[StructType]) == fieldIdShape(expectedSchema),
+        s"persisted partition schema did not match the expected typed shape\n" +
+          s"  actual=${partition.dataType}\n  expected=$expectedSchema")
+      assert(leafDf.select("partition.p_int").collect().map(_.getInt(0)).toSet ==
+        (0 until leafPackedFiles).toSet)
+    }
 
     // Every physical-name -> string partition entry must come back exactly as the log recorded it;
     // a cast that disagrees with Delta's own serialization would corrupt these silently.
@@ -200,7 +195,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
         context.provider.liveLeafManifestAbsolutePaths.map(_.toString))
     assert(manifests.nonEmpty, "Expected at least a root manifest.")
     manifests.foreach { manifest =>
-      val columns = {
+      val columns = allowReadWithinDeltaLog {
         spark.read.parquet(manifest).columns.toSeq
       }
       assert(!columns.contains("partition"),
@@ -220,7 +215,9 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     val snapshot = context.postCheckpointSnapshot
 
     val manifest = context.provider.topLevelFiles.map(_.getPath.toString).head
-    val contentStats = spark.read.parquet(manifest).schema("content_stats")
+    val contentStats = allowReadWithinDeltaLog {
+      spark.read.parquet(manifest).schema("content_stats")
+    }
     assert(contentStats.nullable)
     val expectedSchema = AMTContentStats.persistedSchema(snapshot.metadata, snapshot.protocol)
     assert(
@@ -255,7 +252,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     assert(isRootFileName(new File(rootPointer).getName))
 
     // Every leaf pointer stored in the root manifest is likewise table-root-relative.
-    val leafLocations = {
+    val leafLocations = allowReadWithinDeltaLog {
       spark.read.parquet(new File(new File(tablePath(name),
         FileNames.AMT_METADATA_DIR_NAME), new File(rootPointer).getName).toString)
         .where(col("content_type") === AMTSingleAction.ContentType.Type.DataManifest)
@@ -365,7 +362,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
           hadoopConf,
           useRename = false,
           outputSchema = Some(AMTSingleAction.persistedSchema(metadata, protocol)),
-          useDeltaParquetWriteSupport = true)
+          writeAsIcebergManifest = true)
         val relative = AMTUtils.relativizeManifestPathToTableRoot(
           file.getFileSystem(hadoopConf), dataPath, file)
         assert(relative == s"${FileNames.AMT_METADATA_DIR_NAME}/$fileName" &&

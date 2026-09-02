@@ -19,16 +19,15 @@ package org.apache.spark.sql.delta.amt
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{Checkpoints, DeltaLog, DeltaParquetWriteSupport, Snapshot}
+import org.apache.spark.sql.delta.{Checkpoints, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DomainMetadata, Metadata, Protocol, SetTransaction}
-import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
+import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.mapreduce.Job
-import org.apache.parquet.hadoop.ParquetOutputFormat
 
 import org.apache.spark.TaskContext
 import org.apache.spark.paths.SparkPath
@@ -247,9 +246,9 @@ object AMTWriteHelper extends DeltaLogging {
       val format = new ParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
       val f = format.prepareWrite(spark, job, Map.empty, schema)
-      // Emit nested (list-element / map key-value) field ids, which the stock ParquetWriteSupport
-      // does not. Set after prepareWrite (before snapshotting the conf) so it flows to executors.
-      ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
+      // Write as an Iceberg-V4 manifest (nested field ids + int64 micros timestamps). Applied after
+      // prepareWrite (before snapshotting the conf) so it flows to executors.
+      Checkpoints.configureIcebergManifestParquetWrite(job)
       (f, new SerializableConfiguration(job.getConfiguration))
     }
 
@@ -431,11 +430,11 @@ object AMTWriteHelper extends DeltaLogging {
       deletedPositions: Seq[Long],
       replacedPositions: Seq[Long]): (Tracking, ManifestInfo) = {
     val cumulativeMdv = oldEntry.manifest_info.dv
-      .map(AMTUtils.deserializeMdv).getOrElse(new RoaringBitmapArray)
+      .map(AMTUtils.deserializeMdv).getOrElse(ManifestBitmap.empty())
     mdvPositions.foreach(cumulativeMdv.add)
     def bitmapOf(positions: Seq[Long]): Option[Array[Byte]] = {
       if (positions.isEmpty) None
-      else Some(AMTUtils.serializeMdv(RoaringBitmapArray(positions: _*)))
+      else Some(AMTUtils.serializeMdv(ManifestBitmap(positions: _*)))
     }
     // Every masked / CDF position indexes an entry within this leaf, so no count can exceed the
     // leaf's entry count; a larger value signals a corrupt bitmap or a double-counted position.
@@ -517,7 +516,7 @@ object AMTWriteHelper extends DeltaLogging {
 
   // Returns a copy of a carried-forward leaf's ManifestInfo with `mdv` recorded as its Manifest
   // Deletion Vector.
-  private[amt] def withUpdatedMdv(base: ManifestInfo, mdv: RoaringBitmapArray): ManifestInfo = {
+  private[amt] def withUpdatedMdv(base: ManifestInfo, mdv: ManifestBitmap): ManifestInfo = {
     if (mdv.isEmpty) {
       base.copy(dv = None, dv_cardinality = None)
     } else {
@@ -547,7 +546,7 @@ object AMTWriteHelper extends DeltaLogging {
   /**
    * Writes a sequence of AMTSingleActions to a Parquet file.
    */
-  private def writeAMTParquet(
+  private[amt] def writeAMTParquet(
       spark: SparkSession,
       hadoopConf: Configuration,
       finalPath: Path,
@@ -565,6 +564,6 @@ object AMTWriteHelper extends DeltaLogging {
       hadoopConf = hadoopConf,
       useRename = false,
       outputSchema = Some(AMTSingleAction.persistedSchema(metadata, protocol)),
-      useDeltaParquetWriteSupport = true)
+      writeAsIcebergManifest = true)
   }
 }
