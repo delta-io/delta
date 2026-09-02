@@ -16,23 +16,25 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.scalactic.source.Position
-import org.scalatest.Tag
+// scalastyle:off funsuite
+import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.SaveMode
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
-trait DeltaInsertIntoEvolutionSuiteBase extends DeltaInsertIntoTest with DeltaTableProvider {
+trait DeltaInsertIntoEvolutionSuiteBase extends DeltaInsertIntoTestBase { self: AnyFunSuite =>
+  protected def setCurrentCatalog(): Unit = {
+    executeSql(s"set catalog $catalogName")
+  }
 
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
+  override protected def beforeEach(): Unit = {
+    super.beforeEach()
+    spark.conf.set("spark.sql.ansi.enabled", "true")
   }
 
   test("all test cases are implemented") {
+    assert(supportedInsertTypes.nonEmpty, "At least one insert type must be supported")
     // we don't cover SQL INSERT with an explicit column list in this suite as it's not possible to
     // specify a column that doesn't exist in the target table that way.
     val ignoredTestCases = testCases.map { case (name, _) =>
@@ -51,28 +53,32 @@ trait DeltaInsertIntoEvolutionSuiteBase extends DeltaInsertIntoTest with DeltaTa
  * This suite intends to exhaustively cover all the ways INSERT can be run on a Delta table. See
  * [[DeltaInsertIntoTest]] for a list of these INSERT operations covered.
  */
-class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBase {
+trait DeltaInsertIntoSchemaEvolutionTests
+  extends DeltaInsertIntoEvolutionSuiteBase { self: AnyFunSuite =>
+  import DeltaInsertIntoTestHarness._
 
-  for (enableAutoMergeSQLConf <- BOOLEAN_DOMAIN) {
-    val testMsg = s"enableAutoMergeSQLConf=$enableAutoMergeSQLConf"
-    testInserts("WITH SCHEMA EVOLUTION or .option always take precedence over the SQL Conf, " +
-        testMsg)(
-      initialData = TestData("a int, s struct <x: int>", Seq("""{ "a": 1, "s": { "x": 2 } }""")),
-      partitionBy = Seq("a"),
-      overwriteWhere = "a" -> 1,
-      insertData = TestData("a int, s struct <x: int, y: int>",
-        Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
-      expectedResult = ExpectedResult.Success(
-        expected = new StructType()
-          .add("a", IntegerType)
-          .add("s", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType)
-          )),
-      confs = Seq(
-        DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> enableAutoMergeSQLConf.toString),
-      withSchemaEvolution = true
-    )
+  if (supportsRuntimeConfigMutations) {
+    for (enableAutoMerge <- BOOLEAN_DOMAIN) {
+      val testMsg = s"enableAutoMerge=$enableAutoMerge"
+      testInserts("WITH SCHEMA EVOLUTION or .option always take precedence over the SQL Conf, " +
+          testMsg)(
+        initialData = TestData("a int, s struct <x: int>", Seq("""{ "a": 1, "s": { "x": 2 } }""")),
+        partitionBy = Seq("a"),
+        overwriteWhere = "a" -> 1,
+        insertData = TestData("a int, s struct <x: int, y: int>",
+          Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
+        expectedResult = ExpectedResult.Success(
+          expected = new StructType()
+            .add("a", IntegerType)
+            .add("s", new StructType()
+              .add("x", IntegerType)
+              .add("y", IntegerType)
+            )),
+        confs = Seq(
+          DeltaSchemaAutoMigrateKey -> enableAutoMerge.toString),
+        withSchemaEvolution = true
+      )
+    }
   }
 
   for (schemaEvolution <- BOOLEAN_DOMAIN) {
@@ -90,7 +96,8 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteB
             .add("c", IntegerType))
       } else {
         ExpectedResult.Failure(ex => {
-          checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
+          checkExpectedError(
+            ex, "DELTA_METADATA_MISMATCH", Some("42KDG"), Map.empty[String, String])
         })
       },
       excludeInserts = Set(
@@ -119,7 +126,8 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteB
             .add("c", IntegerType))
       } else {
         ExpectedResult.Failure(ex => {
-          checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
+          checkExpectedError(
+            ex, "DELTA_METADATA_MISMATCH", Some("42KDG"), Map.empty[String, String])
         })
       },
       excludeInserts = insertsSQL.intersect(insertsByName) ++
@@ -134,7 +142,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteB
       overwriteWhere = "a" -> 1,
       insertData = TestData("a int, b long, c int", Seq("""{ "a": 1, "b": 4, "c": 5  }""")),
       expectedResult = ExpectedResult.Failure(ex => {
-        checkError(
+        checkExpectedError(
           ex,
           "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
@@ -162,11 +170,11 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteB
             .add("c", IntegerType))
       } else {
         ExpectedResult.Failure(ex => {
-          checkError(
+          checkExpectedError(
             ex,
             "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
             parameters = Map(
-              "tableName" -> s"`$catalogName`.`default`.`target`",
+              "tableName" -> s"`$catalogName`.`default`.${quoteIdentifier(targetTableName)}",
               "tableColumns" -> "`a`, `b`",
               "dataColumns" -> "`a`, `b`, `c`"
             ))
@@ -199,40 +207,42 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteB
             ))
       } else {
         ExpectedResult.Failure(ex => {
-          checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
+          checkExpectedError(
+            ex, "DELTA_METADATA_MISMATCH", Some("42KDG"), Map.empty[String, String])
         })
       },
       withSchemaEvolution = schemaEvolution
     )
   }
 
-  for {
-    preserveNullSourceStructs <- BOOLEAN_DOMAIN
-    (inserts: Set[Insert], expectedAnswer) <- Seq(
+  if (supportsRuntimeConfigMutations) {
+    for {
+      preserveNullSourceStructs <- BOOLEAN_DOMAIN
+      (inserts: Set[Insert], expectedAnswer) <- Seq(
       insertsAppend ->
         TestData("a int, s struct <x: int, y: int>",
           Seq("""{ "a": 1, "s": { "x": 2, "y": null } }""", """{ "a": 1, "s": null }""")),
       insertsOverwrite ->
         TestData("a int, s struct <x: int, y: int>",
           Seq("""{ "a": 1, "s": null }"""))
-    )
-  } {
-    testInserts(s"insert with extra nested field, null struct, " +
-        s"preserveNullSourceStructs=$preserveNullSourceStructs")(
-      initialData = TestData("a int, s struct <x: int>",
-        Seq("""{ "a": 1, "s": { "x": 2 } }""")),
-      partitionBy = Seq("a"),
-      overwriteWhere = "a" -> 1,
-      insertData = TestData("a int, s struct <x: int, y: int>",
-        Seq("""{ "a": 1, "s": null }""")),
-      expectedResult = ExpectedResult.Success(expected = expectedAnswer),
-      includeInserts = inserts,
-      confs = Seq(
-        DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
-          -> preserveNullSourceStructs.toString
-      ),
-      withSchemaEvolution = true
-    )
+      )
+    } {
+      testInserts(s"insert with extra nested field, null struct, " +
+          s"preserveNullSourceStructs=$preserveNullSourceStructs")(
+        initialData = TestData("a int, s struct <x: int>",
+          Seq("""{ "a": 1, "s": { "x": 2 } }""")),
+        partitionBy = Seq("a"),
+        overwriteWhere = "a" -> 1,
+        insertData = TestData("a int, s struct <x: int, y: int>",
+          Seq("""{ "a": 1, "s": null }""")),
+        expectedResult = ExpectedResult.Success(expected = expectedAnswer),
+        includeInserts = inserts,
+        confs = Seq(
+          DeltaInsertPreserveNullSourceStructsKey -> preserveNullSourceStructs.toString
+        ),
+        withSchemaEvolution = true
+      )
+    }
   }
 
   for (schemaEvolution <- BOOLEAN_DOMAIN) {
@@ -256,7 +266,8 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteB
             ))
       } else {
         ExpectedResult.Failure(ex => {
-          checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
+          checkExpectedError(
+            ex, "DELTA_METADATA_MISMATCH", Some("42KDG"), Map.empty[String, String])
         })
       },
       excludeInserts = Set(
@@ -277,7 +288,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteB
       insertData = TestData("a int, s struct <x: long, y: int>",
         Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
       expectedResult = ExpectedResult.Failure(ex => {
-        checkError(
+        checkExpectedError(
           ex,
           "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
@@ -292,38 +303,41 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteB
 
   // When DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED is disabled, SQL INSERT BY NAME with extra
   // top-level columns should fail even when schema evolution is enabled.
-  test("insert by name with extra top-level column and implicit cast fails " +
-      "when byNameSchemaEvolution is disabled") {
-    withTable("target") {
-      sql(createTableSQL("target", "a INT, b INT"))
-      withSQLConf(
-          DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true",
-          DeltaSQLConf.DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED.key -> "false") {
-        val ex = intercept[SparkThrowable] {
-          sql("INSERT INTO target BY NAME SELECT 1 AS a, 2L AS b, 3 AS c")
+  if (supportsRuntimeConfigMutations &&
+      supportedInsertTypes.contains(SQLInsertByName(SaveMode.Append))) {
+    test("insert by name with extra top-level column and implicit cast fails " +
+        "when byNameSchemaEvolution is disabled") {
+      withTestTables(targetTableName) {
+        val quotedTargetTableName = quoteMultipartIdentifier(targetTableName)
+        executeSql(s"CREATE TABLE $quotedTargetTableName (a INT, b INT) USING DELTA")
+        withRuntimeConf(
+            DeltaSchemaAutoMigrateKey -> "true",
+            DeltaInsertByNameSchemaEvolutionEnabledKey -> "false") {
+          val ex = intercept[SparkThrowable] {
+            executeSql(
+              s"INSERT INTO $quotedTargetTableName BY NAME SELECT 1 AS a, 2L AS b, 3 AS c")
+          }
+          validateInsertFailure(
+            ex,
+            exception =>
+              checkExpectedError(
+                exception,
+                "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
+                parameters = Map(
+                  "tableName" ->
+                    s"`$catalogName`.`default`.${quoteIdentifier(targetTableName)}",
+                  "tableColumns" -> "`a`, `b`",
+                  "dataColumns" -> "`a`, `b`, `c`"
+                )))
         }
-        checkError(
-          ex,
-          "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
-          parameters = Map(
-            "tableName" -> s"`$catalogName`.`default`.`target`",
-            "tableColumns" -> "`a`, `b`",
-            "dataColumns" -> "`a`, `b`, `c`"
-          ))
       }
     }
   }
 }
 
-class DeltaInsertIntoVoidEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBase {
-
-  override protected def test(testName: String, testTags: Tag*)(testFun: => Any)
-      (implicit pos: Position): Unit = {
-    super.test(testName, testTags: _*) {
-      assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
-      testFun
-    }
-  }
+trait DeltaInsertIntoVoidEvolutionTests
+  extends DeltaInsertIntoEvolutionSuiteBase { self: AnyFunSuite =>
+  import DeltaInsertIntoTestHarness._
 
   for (schemaEvolution <- BOOLEAN_DOMAIN) {
     testInserts(s"insert and evolve void column into int," +
@@ -341,14 +355,18 @@ class DeltaInsertIntoVoidEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBas
             .add("v", IntegerType))
       } else {
         ExpectedResult.Failure(ex => {
-          checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
+          checkExpectedError(
+            ex,
+            "DELTA_METADATA_MISMATCH",
+            Some("42KDG"),
+            Map.empty[String, String])
         })
       },
       withSchemaEvolution = schemaEvolution
     )
   }
 
-  testInserts(s"insert and evolve void column into struct")(
+  testInserts("insert and evolve void column into struct")(
     initialData = TestData("a int, i int, v void", Seq("""{ "a": 1, "i": 1, "v": null }""")),
     partitionBy = Seq("a"),
     overwriteWhere = "a" -> 1,
@@ -363,7 +381,7 @@ class DeltaInsertIntoVoidEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBas
     withSchemaEvolution = true
   )
 
-  testInserts(s"insert and evolve void column into array")(
+  testInserts("insert and evolve void column into array")(
     initialData = TestData("a int, i int, v void", Seq("""{ "a": 1, "i": 1, "v": null }""")),
     partitionBy = Seq("a"),
     overwriteWhere = "a" -> 1,
@@ -380,7 +398,7 @@ class DeltaInsertIntoVoidEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBas
     withSchemaEvolution = true
   )
 
-  testInserts(s"insert and evolve void column into map")(
+  testInserts("insert and evolve void column into map")(
     initialData = TestData("a int, i int, v void", Seq("""{ "a": 1, "i": 1, "v": null }""")),
     partitionBy = Seq("a"),
     overwriteWhere = "a" -> 1,
@@ -398,7 +416,7 @@ class DeltaInsertIntoVoidEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBas
     withSchemaEvolution = true
   )
 
-  testInserts(s"insert and evolve void column in struct into int")(
+  testInserts("insert and evolve void column in struct into int")(
     initialData = TestData("a int, i int, v struct<x:int, y:void>",
       Seq("""{ "a": 1, "i": 1, "v": { "x": 1, "y": null } }""")),
     partitionBy = Seq("a"),
@@ -415,7 +433,7 @@ class DeltaInsertIntoVoidEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBas
     withSchemaEvolution = true
   )
 
-  testInserts(s"insert and evolve void column in struct into struct")(
+  testInserts("insert and evolve void column in struct into struct")(
     initialData = TestData("a int, i int, v struct<x:int, y:void>",
       Seq("""{ "a": 1, "i": 1, "v": { "x": 1, "y": null } }""")),
     partitionBy = Seq("a"),
@@ -433,7 +451,7 @@ class DeltaInsertIntoVoidEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBas
     withSchemaEvolution = true
   )
 
-  testInserts(s"insert and evolve void column in struct into struct with void")(
+  testInserts("insert and evolve void column in struct into struct with void")(
     initialData = TestData("a int, i int, v struct<x:int, y:void>",
       Seq("""{ "a": 1, "i": 1, "v": { "x": 1, "y": null } }""")),
     partitionBy = Seq("a"),
@@ -453,7 +471,7 @@ class DeltaInsertIntoVoidEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBas
     withSchemaEvolution = true
   )
 
-  testInserts(s"insert and evolve void column in struct into struct with void")(
+  testInserts("insert and evolve void column in struct into struct with void")(
     initialData = TestData("a int, i int, v struct<x:int, y:void>",
       Seq("""{ "a": 1, "i": 1, "v": { "x": 1, "y": null } }""")),
     partitionBy = Seq("a"),
@@ -461,13 +479,13 @@ class DeltaInsertIntoVoidEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBas
     insertData = TestData("a int, i int, v struct<x:int, y:struct<f1:int, f2:void>>",
       Seq("""{ "a": 1, "i": 2, "v": { "x": 2, "y": { "f1": 2, "f2": null } } }""")),
     expectedResult = ExpectedResult.Failure(ex => {
-      checkError(ex, "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE")
+      checkExpectedError(ex, "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE")
     }),
     includeInserts = Set(StreamingInsert),
     withSchemaEvolution = true
   )
 
-  testInserts(s"insert and evolve void column in struct into array")(
+  testInserts("insert and evolve void column in struct into array")(
     initialData = TestData("a int, i int, v struct<x:int, y:void>",
       Seq("""{ "a": 1, "i": 1, "v": { "x": 1, "y": null } }""")),
     partitionBy = Seq("a"),
@@ -484,7 +502,7 @@ class DeltaInsertIntoVoidEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBas
     withSchemaEvolution = true
   )
 
-  testInserts(s"insert and evolve void column in struct into map")(
+  testInserts("insert and evolve void column in struct into map")(
     initialData = TestData("a int, i int, v struct<x:int, y:void>",
       Seq("""{ "a": 1, "i": 1, "v": { "x": 1, "y": null } }""")),
     partitionBy = Seq("a"),
