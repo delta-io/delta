@@ -27,7 +27,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
-import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException
+import io.delta.storage.commit.uccommitcoordinator.exceptions.{CredentialFetchFailedException, NoSuchTableException}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -75,7 +75,12 @@ class UCDeltaTokenBasedRestClientSuite
   }
 
   override def afterAll(): Unit = if (server != null) server.stop(0)
-  override def beforeEach(): Unit = { deltaHandler = null }
+  override def beforeEach(): Unit = {
+    deltaHandler = null
+    // The UC hadoop credential cache is JVM-global; clear it so no test inherits (or leaves
+    // behind) cached credentials for `testIdentifier`.
+    clearUcCredentialCache()
+  }
 
   // --------------- helpers ---------------
 
@@ -273,6 +278,131 @@ class UCDeltaTokenBasedRestClientSuite
       assert(!c.createStagingTable(testIdentifier).getStorageProperties.isEmpty)
     }
     assert(credentialRequests.get() === 2)
+  }
+
+  // --------------- write-intent credential selection ---------------
+
+  /**
+   * The UC hadoop package keeps a JVM-global credential cache keyed by (context, table,
+   * operation); earlier tests in this suite populate it for `testIdentifier`. Clear it so every
+   * fetch in these tests reaches the stub server.
+   */
+  private def clearUcCredentialCache(): Unit = {
+    val field = classOf[io.unitycatalog.hadoop.internal.CredPropsUtil]
+      .getDeclaredField("initialCredCache")
+    field.setAccessible(true)
+    field.get(null)
+      .asInstanceOf[io.unitycatalog.hadoop.internal.auth.CredentialCache]
+      .clear()
+  }
+
+  /**
+   * Routes credential requests through `recordedOps`; a non-zero status from `denyRwStatus`
+   * fails READ_WRITE requests with that HTTP status.
+   */
+  private def credentialOpHandler(
+      recordedOps: java.util.List[String],
+      denyRwStatus: () => Int): (HttpExchange, String) => Unit = (exchange, _) => {
+    val path = exchange.getRequestURI.getPath
+    if (path.endsWith("/credentials")) {
+      val query = Option(exchange.getRequestURI.getQuery).getOrElse("")
+      val op = if (query.contains("READ_WRITE")) "READ_WRITE" else "READ"
+      recordedOps.add(op)
+      val status = if (op == "READ_WRITE") denyRwStatus() else 0
+      if (status != 0) {
+        sendJson(exchange, status,
+          s"""{"error":{"message":"DENIED","type":"Denied","code":$status}}""")
+      } else {
+        sendJson(
+          exchange,
+          HttpStatus.SC_OK,
+          s"""{"storage-credentials":[{"prefix":"s3://bucket/table","operation":"$op",""" +
+            """"expiration-time-ms":4102444800000,"config":{"s3.access-key-id":"ak",""" +
+            """"s3.secret-access-key":"sk","s3.session-token":"st"}}]}""")
+      }
+    } else {
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+    }
+  }
+
+  test("a transient READ_WRITE failure does not poison the denial memory") {
+    val ops = java.util.Collections.synchronizedList(new java.util.ArrayList[String]())
+    // 503 until the "outage" ends. The client retries 503s internally, so exact READ_WRITE
+    // counts vary; assert on the fallback, the memory, and the post-outage probe instead.
+    @volatile var outage = true
+    deltaHandler = credentialOpHandler(
+      ops, () => if (outage) HttpStatus.SC_SERVICE_UNAVAILABLE else 0)
+    withClient { c =>
+      // Retries exhaust, the load falls back to READ, and no denial is remembered.
+      assert(!c.loadTable(testIdentifier).getStorageProperties.isEmpty)
+      assert(ops.asScala.count(_ == "READ") === 1)
+      assert(c.writeDeniedTables.isEmpty)
+      // Once the outage ends, the next load probes READ_WRITE again and succeeds with it.
+      outage = false
+      clearUcCredentialCache()
+      c.loadTable(testIdentifier)
+      assert(ops.asScala.last === "READ_WRITE")
+    }
+  }
+
+  test("an expired denial entry restores READ_WRITE-first probing") {
+    val ops = java.util.Collections.synchronizedList(new java.util.ArrayList[String]())
+    deltaHandler = credentialOpHandler(ops, () => HttpStatus.SC_FORBIDDEN)
+    withClient { c =>
+      c.loadTable(testIdentifier)
+      assert(ops.asScala.toList === List("READ_WRITE", "READ"))
+      // Simulate the TTL elapsing (e.g. a grant added later): the next load probes again.
+      c.writeDeniedTables.put(s"$testCatalog.$testSchema.$testTable", 0L)
+      clearUcCredentialCache()
+      c.loadTable(testIdentifier)
+      assert(ops.asScala.toList === List("READ_WRITE", "READ", "READ_WRITE", "READ"))
+    }
+  }
+
+  test("intent-less load remembers a READ_WRITE denial and skips the retry") {
+    val ops = java.util.Collections.synchronizedList(new java.util.ArrayList[String]())
+    deltaHandler = credentialOpHandler(ops, () => HttpStatus.SC_FORBIDDEN)
+    withClient { c =>
+      // First load: READ_WRITE denied once, READ succeeds.
+      assert(!c.loadTable(testIdentifier).getStorageProperties.isEmpty)
+      assert(ops.asScala.toList === List("READ_WRITE", "READ"))
+      // Force a re-fetch (drop the cached READ credential): the load must go straight to READ
+      // without retrying the denied READ_WRITE.
+      clearUcCredentialCache()
+      assert(!c.loadTable(testIdentifier).getStorageProperties.isEmpty)
+      assert(ops.asScala.toList === List("READ_WRITE", "READ", "READ"))
+    }
+  }
+
+  test("declared write requests READ_WRITE and surfaces a denial without READ fallback") {
+    val ops = java.util.Collections.synchronizedList(new java.util.ArrayList[String]())
+    deltaHandler = credentialOpHandler(ops, () => HttpStatus.SC_FORBIDDEN)
+    withClient { c =>
+      intercept[CredentialFetchFailedException] {
+        c.loadTable(testIdentifier, true)
+      }
+      assert(ops.asScala.toList === List("READ_WRITE"))
+    }
+  }
+
+  test("successful declared write clears the denial memory") {
+    val ops = java.util.Collections.synchronizedList(new java.util.ArrayList[String]())
+    @volatile var deny = true
+    deltaHandler = credentialOpHandler(ops, () => if (deny) HttpStatus.SC_FORBIDDEN else 0)
+    withClient { c =>
+      // Prime the denial memory through an intent-less load.
+      c.loadTable(testIdentifier)
+      assert(ops.asScala.toList === List("READ_WRITE", "READ"))
+      // Write access granted: a declared write requests READ_WRITE (never gated by the memory)
+      // and clears it.
+      deny = false
+      c.loadTable(testIdentifier, true)
+      assert(ops.asScala.toList === List("READ_WRITE", "READ", "READ_WRITE"))
+      // Intent-less loads are back on the READ_WRITE-first path.
+      clearUcCredentialCache()
+      c.loadTable(testIdentifier)
+      assert(ops.asScala.toList === List("READ_WRITE", "READ", "READ_WRITE", "READ_WRITE"))
+    }
   }
 
   test("loadTable schema emits Delta camelCase wire format for array and map") {
