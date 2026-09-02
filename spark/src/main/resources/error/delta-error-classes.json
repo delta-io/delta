@@ -928,7 +928,7 @@
     ],
     "sqlState" : "42601"
   },
-  "DELTA_CREATE_TABLE_SCHEME_MISMATCH" : {
+  "DELTA_CREATE_TABLE_SCHEMA_MISMATCH" : {
     "message" : [
       "The specified schema does not match the existing schema at <path>.",
       "",
