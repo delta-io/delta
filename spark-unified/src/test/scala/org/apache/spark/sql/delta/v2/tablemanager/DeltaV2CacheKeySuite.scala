@@ -20,7 +20,7 @@ import java.io.File
 import scala.jdk.CollectionConverters._
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -196,5 +196,55 @@ class DeltaV2CacheKeySuite
           .contains("fs.ignored"))
       }
     }
+  }
+
+  // --- Qualification and non-retention invariants ------------------
+
+  test("absolute schemeless path is qualified with a URI scheme") {
+    withTempDir { dataPath =>
+      val schemelessAbsolute = dataPath.getCanonicalPath
+      assert(!schemelessAbsolute.contains("://"),
+        "precondition: input must not carry a URI scheme")
+      val key = DeltaV2CacheKey.from(
+        spark, schemelessAbsolute,
+        Map.empty[String, String].asJava)
+
+      // Independently compute the expected qualified path using
+      // the same Hadoop configuration and FileSystem that the
+      // production code would use.
+      val rawLogPath =
+        new Path(new Path(schemelessAbsolute), "_delta_log")
+      // scalastyle:off deltahadoopconfiguration
+      val hadoopConf = spark.sessionState
+        .newHadoopConfWithOptions(Map.empty)
+      // scalastyle:on deltahadoopconfiguration
+      val expectedPath =
+        rawLogPath.getFileSystem(hadoopConf)
+          .makeQualified(rawLogPath)
+
+      assert(key.path === expectedPath,
+        "key path must equal the FileSystem-qualified path")
+      assert(key.path.toUri.getScheme != null,
+        "qualified path must carry a URI scheme")
+      assert(key.path.toUri.getAuthority != null ||
+        key.path.toUri.getScheme == "file",
+        "qualified path must carry authority or be local")
+    }
+  }
+
+  test("cache key does not retain a Hadoop FileSystem instance") {
+    // Deterministic structural assertion: none of the case-class
+    // fields have a type assignable to Hadoop FileSystem. This pins
+    // the non-retention invariant without relying on GC timing or
+    // weak references, which are invalid under Hadoop's global
+    // FileSystem cache.
+    val fsClass = classOf[FileSystem]
+    val fields = classOf[DeltaV2CacheKey].getDeclaredFields
+    val fsFields = fields.filter { f =>
+      fsClass.isAssignableFrom(f.getType)
+    }
+    assert(fsFields.isEmpty,
+      s"DeltaV2CacheKey must not hold a FileSystem; found: " +
+        fsFields.map(_.getName).mkString(", "))
   }
 }
