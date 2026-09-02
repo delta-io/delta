@@ -32,7 +32,7 @@ import org.apache.spark.sql.internal.SQLConf
  * The companion object owns the process-wide singleton; tests construct independent
  * instances with custom settings and injected factories.
  */
-class DeltaV2TableManagerCache(
+private[tablemanager] class DeltaV2TableManagerCache(
     maxSize: Long,
     ttlMinutes: Long,
     ticker: Ticker = Ticker.systemTicker(),

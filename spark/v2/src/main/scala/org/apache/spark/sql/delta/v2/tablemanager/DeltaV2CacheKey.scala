@@ -39,7 +39,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  *   table-resolution time and do not change across requests to the same cached composite.
  *   Values are redacted in [[toString]] to prevent credential leakage in logs.
  */
-case class DeltaV2CacheKey(
+private[tablemanager] case class DeltaV2CacheKey(
     path: Path,
     sessionInvariantFsOptions: Map[String, String]) {
 
@@ -47,7 +47,7 @@ case class DeltaV2CacheKey(
     s"DeltaV2CacheKey(path=$path,fsOptions=<redacted>)"
 }
 
-object DeltaV2CacheKey {
+private[tablemanager] object DeltaV2CacheKey {
 
   /**
    * Constructs a cache key from caller-supplied table coordinates.

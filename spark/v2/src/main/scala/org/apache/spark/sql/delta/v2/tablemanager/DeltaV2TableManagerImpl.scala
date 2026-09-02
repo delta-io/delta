@@ -25,7 +25,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  * Placeholder: inherits default trait stubs. The real implementation (snapshot lifecycle and
  * freshness control) is added in a follow-up layer.
  */
-class DeltaV2TableManagerImpl(
+private[tablemanager] class DeltaV2TableManagerImpl(
     val cacheKey: DeltaV2CacheKey,
     val initialCatalogTableOpt: Option[CatalogTable])
     extends DeltaV2TableManager {
