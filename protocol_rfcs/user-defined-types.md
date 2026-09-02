@@ -69,13 +69,13 @@ The Parquet column data carries no `udt` marker: a UDT column is physically indi
 - **Feature conformance.** A `udt`'s `sqlType` (recursively) MUST consist only of types supported by the table's protocol version and enabled table features, exactly as if the column were declared with that type directly. If the `sqlType` contains a feature-gated type (for example `timestampNtz` or `variant`), that feature MUST be enabled on the table, and table-feature detection MUST descend into the `sqlType`. A `udt` does not exempt its `sqlType` from any type's requirements.
 - **No nesting.** A `udt`'s `sqlType` MUST NOT be, or contain, another `udt`.
 
-A UDT column is permitted anywhere a type is permitted: as a top-level column, a nested struct field, an array element type, or a map key or value type.
+A UDT is permitted anywhere its `sqlType` is permitted: as a top-level column, a nested struct field, an array element type, or a map key or value type. As a map key, a UDT is allowed only when its `sqlType` is itself a valid map-key type.
 
 ## Reader and writer requirements
 
 A reader:
 
-- MUST interpret a `udt` column as its `sqlType` for all physical operations (Parquet read, projection, statistics).
+- MUST interpret a `udt` column as its `sqlType` for all physical operations (Parquet read, projection, expression evaluation).
 - that does not implement the engine code identified by the annotation MUST still read the column as its `sqlType`; the stored values are correct, and only reconstruction of the richer object is unavailable.
 - MUST reject a `udt` object that has no `sqlType`, or whose annotation contains a member (other than `type` and `sqlType`) whose value is neither a JSON string nor JSON null.
 - that re-serializes the schema MUST retain the annotation verbatim.
