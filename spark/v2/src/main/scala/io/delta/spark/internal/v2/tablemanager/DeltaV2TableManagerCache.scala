@@ -64,18 +64,13 @@ private[tablemanager] class DeltaV2TableManagerCache(
   ): DeltaV2TableManager = {
     try {
       cache.get(key, () => {
-        recordFrameProfile(
-            "tableManagerCache.createManager") {
+        recordFrameProfile("tableManagerCache.createManager") {
           managerFactory(key, initialCatalogTableOpt)
         }
       })
     } catch {
-      case e @ (_: UncheckedExecutionException | _: ExecutionError |
-          _: ExecutionException) =>
-        logWarning(
-          s"Cache loader failed; unwrapping " +
-            s"${e.getClass.getSimpleName}",
-          e.getCause)
+      case e @ (_: UncheckedExecutionException | _: ExecutionError | _: ExecutionException) =>
+        logWarning(s"Cache loader failed; unwrapping ${e.getClass.getSimpleName}", e.getCause)
         throw e.getCause
     }
   }
@@ -121,13 +116,11 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
       key: DeltaV2CacheKey,
       initialCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
-    recordFrameProfile(
-        "tableManagerCache.getOrCreate") {
+    recordFrameProfile("tableManagerCache.getOrCreate") {
       if (!isEnabled(sqlConf)) {
         return createManager(key, initialCatalogTableOpt)
       }
-      getOrCreateInstance(sqlConf)
-        .getOrCreate(key, initialCatalogTableOpt)
+      getOrCreateInstance(sqlConf).getOrCreate(key, initialCatalogTableOpt)
     }
   }
 
@@ -169,8 +162,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
    * Returns the process-global cache instance, initializing on first access. First
    * caller's SQLConf determines size and TTL for all subsequent callers.
    */
-  private def getOrCreateInstance(
-      sqlConf: SQLConf): DeltaV2TableManagerCache = synchronized {
+  private def getOrCreateInstance(sqlConf: SQLConf): DeltaV2TableManagerCache = synchronized {
     instance.getOrElse {
       val maxSize = sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE)
       val ttlMinutes =
