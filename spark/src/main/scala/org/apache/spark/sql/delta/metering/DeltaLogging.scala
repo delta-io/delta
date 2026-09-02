@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.metering
 
+import java.util.function.Supplier
+
 import scala.concurrent.duration._
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -173,6 +175,23 @@ trait DeltaLogging
   protected def recordFrameProfile[T](group: String, name: String)(thunk: => T): T = {
     // future work to capture runtime information ...
     thunk
+  }
+
+
+  /** Java adapter for a value-returning frame with fixed system-code group and name literals. */
+  protected def recordFrameProfileValue[T](
+      group: String,
+      name: String,
+      body: Supplier[T]): T = {
+    recordFrameProfile(group, name)(body.get())
+  }
+
+  /** Java adapter for a void frame with fixed system-code group and name literals. */
+  protected def recordFrameProfileAction(
+      group: String,
+      name: String,
+      body: Runnable): Unit = {
+    recordFrameProfile(group, name)(body.run())
   }
 
   private def withDmqTag[T](thunk: => T): T = {

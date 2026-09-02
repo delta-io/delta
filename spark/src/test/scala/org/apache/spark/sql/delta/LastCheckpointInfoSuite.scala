@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.{Checkpoint, ContentRoot, Metadata, Protocol}
-import org.apache.spark.sql.delta.amt.{AMTLeafComparisons, AMTSingleAction, AMTWriteResult, ContentStats, DataManifestEntry, ManifestInfo, Tracking}
+import org.apache.spark.sql.delta.amt.{AMTLeafComparisons, AMTSingleAction, AMTWriteResult, DataManifestEntry, ManifestInfo, Tracking}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -242,7 +242,7 @@ class LastCheckpointInfoSuite extends SharedSparkSession
       rootPath: String = "metadata/root-abc.parquet",
       rootSizeInBytes: Long = 4096L): Checkpoint = Checkpoint(
     version = version,
-    contentRoot = ContentRoot(path = rootPath, sizeInBytes = rootSizeInBytes),
+    contentRoot = ContentRoot(path = rootPath, sizeInBytes = rootSizeInBytes, version = version),
     protocol = Protocol(minReaderVersion = 3, minWriterVersion = 7),
     metaData = Metadata(id = "metadata-id", name = "t"),
     domainMetadata = Nil,
@@ -286,16 +286,18 @@ class LastCheckpointInfoSuite extends SharedSparkSession
       existing_files_count = 2,
       deleted_files_count = 3,
       replaced_files_count = 4,
+      modified_files_count = 5,
       added_rows_count = 100L,
       existing_rows_count = 200L,
       deleted_rows_count = 300L,
       replaced_rows_count = 400L,
+      modified_rows_count = 500L,
       min_sequence_number = 7L,
       dv = Some(Array[Byte](9, 8, 7)),
       dv_cardinality = Some(5L)),
     partition = Some(Map("part_col" -> "part_val")),
     spec_id = Some(1),
-    content_stats = Some(ContentStats(raw_stats = Some(Array[Byte](42, 43)))),
+    content_stats = Some("""{"minValues":{"col-1":1}}"""),
     key_metadata = Some(Array[Byte](16, 17, 18)),
     split_offsets = Some(Seq(0L, 128L, 256L)))
 

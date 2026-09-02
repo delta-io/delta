@@ -1329,6 +1329,11 @@ object DeltaSource extends DeltaLogging {
       bytesToTake -= bytes
     }
 
+    /** Returns whether an atomic group of files fits within the admission limits. */
+    protected def hasCapacityFor(files: Int, bytes: Long): Boolean = {
+      filesToTake - files >= 0 && bytesToTake - bytes >= 0
+    }
+
     /**
      * This overloaded method checks if all the FileActions for a commit can be accommodated by
      * the rate limit.
@@ -1344,8 +1349,7 @@ object DeltaSource extends DeltaLogging {
         // else check if all of the files together satisfy the limit, only then admit
         val bytesInFiles = getSize(admittableFiles)
         val shouldAdmit = !commitProcessedInBatch ||
-          (filesToTake - admittableFiles.size >= 0 && bytesToTake - bytesInFiles >= 0)
-
+          hasCapacityFor(admittableFiles.size, bytesInFiles)
         commitProcessedInBatch = true
         take(files = admittableFiles.size, bytes = bytesInFiles)
         shouldAdmit

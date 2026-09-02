@@ -56,7 +56,7 @@ This design enables:
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>deletionTimestamp</ins> | <ins>Long</ins> | <ins>Must be null. Metadata cleanup uses tree reachability instead of timestamp-based expiration.</ins> |
-| <ins>extendedFileMetadata</ins> | <ins>Boolean</ins> | <ins>Must be true. `partitionValues`, `size`, and `tags` are always present on the `remove`.</ins> |
+| <ins>extendedFileMetadata</ins> | <ins>Boolean</ins> | <ins>Must be true. `partitionValues` and `size` are always present on the `remove`.</ins> |
 | <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the file's entry in a leaf manifest. Null when the file has no leaf-manifest entry — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
 | <ins>stats</ins> | <ins>String</ins> | <ins>Must be present. Statistics of the removed file, with `numRecords` required at minimum; column statistics are included when recorded for the file. Copied from the matching `add.stats`, or converted from the file's tree entry (`record_count`, `content_stats`).</ins> |
 
@@ -570,6 +570,8 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Record a `backReference` for every file read from the tree, and use the accumulated backreferences to build MDVs and re-add entries when producing a manifest commit (see [Backreferences](#backreferences) and [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
 - Populate manifest entries with partition values, content stats, deletion vectors, and tracking and sequence numbers (see [Content Entry Schema](#content-entry-schema) and [Row Tracking Compatibility](#row-tracking-compatibility)).
 - Materialize row-tracking and partition columns in data files, tagged with their Iceberg `field_id`s (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns) and [Partition Values](#partition-values)).
+- Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
+- Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
 
 ### Manifest Commit Procedure

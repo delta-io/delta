@@ -384,6 +384,8 @@ class AbstractKernelTableTest extends TestHelper {
           CyclicBarrier snapshotBarrier = new CyclicBarrier(2);
           ExecutorService executor = Executors.newFixedThreadPool(2);
 
+          // Concurrent commits use separate HDFSLogStore instances, exercising cross-instance
+          // locking.
           try (BarrierLocalFileSystemTable first =
                   new BarrierLocalFileSystemTable(
                       dir.toURI(), properties, initialSchema, snapshotBarrier);

@@ -1093,7 +1093,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
    */
   private def enableAdaptiveMetadataDependentFeatures(metadata: Metadata): Metadata = {
     val adaptiveMetadataEnabled =
-      protocol.isFeatureSupported(AdaptiveMetadataTableFeature) ||
+      AMTUtils.amtEnabled(metadata, protocol) ||
         TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
           metadata.configuration, AdaptiveMetadataTableFeature)
     if (!adaptiveMetadataEnabled) {
@@ -1101,7 +1101,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     val existingTableHasAdaptiveMetadata =
-      snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+      AMTUtils.amtEnabled(snapshot)
     if (!isCreatingNewTable && !existingTableHasAdaptiveMetadata) {
       throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(AdaptiveMetadataTableFeature.name)
     }
@@ -1906,6 +1906,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         readVersion = Some(readVersion).filter(_ >= 0),
         isolationLevel = Option(isolationLevelToUse.toString),
         isBlindAppend = Some(isBlindAppend),
+        dataChange = Some(CommitInfo.dataChangeFromActions(preparedActions)),
         operationMetrics = getOperationMetrics(op),
         userMetadata = getUserMetadata(op),
         tags = if (allTags.nonEmpty) Some(allTags) else None,
@@ -1923,10 +1924,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           case other => other
         }
       }
-      val preCommitLatestAMTCheckpointOpt = snapshot.checkpointProvider match {
-        case amt: AMTCheckpointProvider => Some(amt.checkpointAction)
-        case _ => None
-      }
+      val preCommitLatestAMTCheckpointOpt = amtCheckpointProviderOpt.map(_.checkpointAction)
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.asScala.toVector,
@@ -2083,7 +2081,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       newProtocolOpt: Option[Protocol],
       op: DeltaOperations.Operation,
       context: Map[String, String],
-      metrics: Map[String, String]
+      metrics: Map[String, String],
+      dataChange: Option[Boolean]
   ): (Long, Snapshot) = recordDeltaOperation(deltaLog, "delta.commit.large") {
     assert(committed.isEmpty, "Transaction already committed.")
     commitStartNano = System.nanoTime()
@@ -2128,7 +2127,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         readVersion = Some(readVersion),
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
-        Some(metrics),
+        dataChange = dataChange,
+        operationMetrics = Some(metrics),
         userMetadata = getUserMetadata(op),
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId),
@@ -2158,7 +2158,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
               toProtocol = p,
               isCreatingNewTable)
             DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
-              deltaLog.protocolWrite(p)
+              validateProtocolWrite(p)
             }
           case _ =>
         }
@@ -2171,7 +2171,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       // Validate protocol support, specifically writer features.
       DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
-        deltaLog.protocolWrite(snapshot.protocol)
+        validateProtocolWrite(snapshot.protocol)
       }
 
       allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions, op)
@@ -2462,6 +2462,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       log"${MDC(DeltaLogKeys.PATH, logPath)}. Wrote " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
 
+    // If the table has AMT enabled, do not emit a classic checkpoint.
+    if (AMTUtils.amtEnabled(currentSnapshot)) {
+      return currentSnapshot
+    }
+
     deltaLog.checkpoint(currentSnapshot, catalogTable)
     currentSnapshot
   }
@@ -2548,7 +2553,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         isCreatingNewTable,
         operationNameOpt = Some(op.name))
       DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
-        deltaLog.protocolWrite(p)
+        validateProtocolWrite(p)
       }
     }
 
@@ -2647,8 +2652,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
-      newProtocol.foreach(deltaLog.protocolWrite)
-      deltaLog.protocolWrite(snapshot.protocol)
+      newProtocol.foreach(validateProtocolWrite)
+      validateProtocolWrite(snapshot.protocol)
     }
 
     finalActions = RowId.assignFreshRowIds(
@@ -2684,10 +2689,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
    */
   private def verifyAmtBackReferences(finalActions: Seq[Action]): Unit = {
     if (!DeltaUtils.isTesting) return
-    snapshot.checkpointProvider match {
-      case amt: AMTCheckpointProvider =>
+    amtCheckpointProviderOpt match {
+      case Some(amt) =>
         amt.verifyCommitBackReferences(spark, deltaLog, finalActions)
-      case _ =>
+      case None =>
         // Not an AMT-backed table: no file action may carry a back reference.
         finalActions.foreach {
           case a: AddFile if a.backReference.isDefined =>
@@ -2999,17 +3004,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
     executionObserver.beginPostCommit()
     val catalogTableForPostCommitSnapshot = catalogTable
-    val postCommitSnapshot = deltaLog.updateAfterCommit(
+    val postCommitSnapshot = resolvePostCommitSnapshot(
       attemptVersion,
       commitOpt,
       newChecksumOpt,
-      preCommitLogSegment,
       catalogTableForPostCommitSnapshot,
-      amtCheckpointOpt = amtWriteResultOpt.map(_.checkpoint),
+      amtCheckpointWrittenInCommitOpt = amtWriteResultOpt.map(_.checkpoint),
       isIdempotentRetry = isIdempotentRetry)
     val postCommitReconstructionTime = System.nanoTime()
     maintenanceOperation = if (
-        !postCommitSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+        !AMTUtils.amtEnabled(postCommitSnapshot)) {
       MaintenanceOperation(
         shouldCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot))
     } else if (amtWriteResultOpt.isEmpty) {
@@ -3039,7 +3043,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // Add to commit stats and consume the returned iterator.
     commitStatsComputer.addToCommitStats(actions.toIterator).foreach(_ => ())
     partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
-    collectAutoOptimizeStatsAndFinalize(actions, deltaLog.unsafeVolatileTableId)
+    collectAutoOptimizeStatsAndFinalize(actions, commitTableId)
     val commitSizeBytes: Long = jsonActions.map(_.length.toLong).sum
     commitStatsComputer.finalizeAndEmitCommitStats(
       spark,
@@ -3407,6 +3411,42 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /** Returns the version that the first attempt will try to commit at. */
   private[delta] def getFirstAttemptVersion: Long = readVersion + 1L
+
+  /**
+   * Validates that this client may write with the given protocol.
+   */
+  protected def validateProtocolWrite(protocol: Protocol): Unit =
+    deltaLog.protocolWrite(protocol)
+
+  /**
+   * Resolves the post-commit snapshot after a successful commit-file write. It resolves it and
+   * installs it as the DeltaLog's current snapshot.
+   */
+  protected def resolvePostCommitSnapshot(
+      committedVersion: Long,
+      commitOpt: Option[Commit],
+      newChecksumOpt: Option[VersionChecksum],
+      catalogTableOpt: Option[CatalogTable],
+      amtCheckpointWrittenInCommitOpt: Option[Checkpoint] = None,
+      isIdempotentRetry: Boolean = false): Snapshot =
+    deltaLog.updateAfterCommit(
+      committedVersion, commitOpt, newChecksumOpt, preCommitLogSegment, catalogTableOpt,
+      amtCheckpointWrittenInCommitOpt = amtCheckpointWrittenInCommitOpt,
+      isIdempotentRetry = isIdempotentRetry)
+
+  /**
+   * The table id used for auto-optimize commit stats. V1 uses `deltaLog.unsafeVolatileTableId`
+   */
+  protected def commitTableId: String = deltaLog.unsafeVolatileTableId
+
+  /**
+   * The read snapshot's [[AMTCheckpointProvider]], or None if the table is not AMT-backed.
+   */
+  protected def amtCheckpointProviderOpt: Option[AMTCheckpointProvider] =
+    snapshot.checkpointProvider match {
+      case amt: AMTCheckpointProvider => Some(amt)
+      case _ => None
+    }
 
   /** Returns the conflicting commit information */
   protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {

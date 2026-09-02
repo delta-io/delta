@@ -143,6 +143,58 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testInitialOffset_doesNotResetFirstBatchState(@TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_idempotent_initial_offset_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 1,
+        /* rowsPerVersion= */ 1,
+        /* includeEmptyVersion= */ false);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    Offset initialOffset = stream.initialOffset();
+    Offset firstEndOffset = stream.latestOffset(initialOffset, ReadLimit.allAvailable());
+    assertNotNull(firstEndOffset);
+
+    // MicroBatchExecution calls initialOffset again while constructing the first batch's scan.
+    assertEquals(initialOffset, stream.initialOffset());
+
+    // With no new data, a subsequent batch returns its start offset rather than null.
+    assertEquals(firstEndOffset, stream.latestOffset(firstEndOffset, ReadLimit.allAvailable()));
+  }
+
+  @Test
+  public void testInitialOffset_noDataRemainsFirstBatch(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_initial_offset_no_data_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    scala.collection.immutable.Map<String, String> scalaOptions =
+        Map$.MODULE$.<String, String>empty().updated("startingVersion", "latest");
+    DeltaOptions options = new DeltaOptions(scalaOptions, spark.sessionState().conf());
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+
+    Offset initialOffset = stream.initialOffset();
+    assertNull(stream.latestOffset(initialOffset, ReadLimit.allAvailable()));
+
+    Offset cachedInitialOffset = stream.initialOffset();
+    assertEquals(initialOffset, cachedInitialOffset);
+    assertNull(stream.latestOffset(cachedInitialOffset, ReadLimit.allAvailable()));
+  }
+
+  @Test
   public void testDeserializeOffset_ValidJson(@TempDir File tempDir) throws Exception {
     String tablePath = tempDir.getAbsolutePath();
     DeltaV2MicroBatchStream stream = createTestStream(tempDir);
@@ -2060,10 +2112,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             partitionSchema,
             dataSchema,
             SchemaUtils.ddlOrderedOutputSchema(
-                io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-                    snapshotManager.loadLatestSnapshot().getSchema()),
-                dataSchema,
-                partitionSchema),
+                snapshotManager.loadLatestSnapshot().schema(), dataSchema, partitionSchema),
             new org.apache.spark.sql.sources.Filter[0],
             Map$.MODULE$.empty(),
             Option.empty(),
@@ -2248,10 +2297,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             partitionSchema,
             dataSchema,
             SchemaUtils.ddlOrderedOutputSchema(
-                io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-                    snapshotManager.loadLatestSnapshot().getSchema()),
-                dataSchema,
-                partitionSchema),
+                snapshotManager.loadLatestSnapshot().schema(), dataSchema, partitionSchema),
             new org.apache.spark.sql.sources.Filter[0],
             Map$.MODULE$.empty(),
             Option.empty(),
@@ -3362,9 +3408,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       assertPostChangeSchema.accept(evolved.dataSchema());
 
       // Restart with the post-change schema (same trackingLog: it now carries the evolved entry).
-      StructType postChangeSchema =
-          io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-              snapshotManager.loadLatestSnapshot().getSchema());
+      StructType postChangeSchema = snapshotManager.loadLatestSnapshot().schema();
       DeltaV2MicroBatchStream streamPostChange =
           createSchemaTrackingTestStream(
               snapshotManager,
@@ -3458,9 +3502,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
           createTrackingLog(snapshotManager, schemaTrackingLocation, checkpointLocation, optionMap);
 
       StructType preChangeSchema = loadSparkSchemaAtVersion(snapshotManager, startVersion);
-      StructType postChangeSchema =
-          io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-              snapshotManager.loadLatestSnapshot().getSchema());
+      StructType postChangeSchema = snapshotManager.loadLatestSnapshot().schema();
 
       // Round 1: post-change schema (analysis would bind to the latest snapshot since the log
       // is empty). First latestOffset runs eager-init and throws.
@@ -3575,8 +3617,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     String schemaTrackingLocation = new File(tempDir, "schema_tracking").getAbsolutePath();
     String checkpointLocation = new File(tempDir, "checkpoint").getAbsolutePath();
     StructType schema =
-        loadSparkSchemaAtVersion(
-            snapshotManager, snapshotManager.loadLatestSnapshot().getVersion());
+        loadSparkSchemaAtVersion(snapshotManager, snapshotManager.loadLatestSnapshot().version());
     DeltaSourceMetadataTrackingLog trackingLog =
         createTrackingLog(
             snapshotManager, schemaTrackingLocation, checkpointLocation, Collections.emptyMap());
@@ -4292,11 +4333,9 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
   /** Helper method to create a DeltaV2MicroBatchStream with default values for testing. */
   private DeltaV2MicroBatchStream createTestStreamWithDefaults(
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
-    io.delta.kernel.Snapshot snapshot = snapshotManager.loadLatestSnapshot();
-    String tablePath = ((io.delta.kernel.internal.SnapshotImpl) snapshot).getPath();
-    StructType tableSchema =
-        io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-            snapshot.getSchema());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    String tablePath = snapshot.dataPath().toString();
+    StructType tableSchema = snapshot.schema();
     return new DeltaV2MicroBatchStream(
         snapshotManager,
         snapshot,
@@ -4322,7 +4361,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       StructType dataSchema,
       Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog,
       String metadataPath) {
-    io.delta.kernel.Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return new DeltaV2MicroBatchStream(
         snapshotManager,
         snapshot,
@@ -4334,10 +4373,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         /* partitionSchema= */ new StructType(),
         /* readDataSchema= */ dataSchema,
         SchemaUtils.ddlOrderedOutputSchema(
-            io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-                snapshotManager.loadLatestSnapshot().getSchema()),
-            dataSchema,
-            new StructType()),
+            snapshotManager.loadLatestSnapshot().schema(), dataSchema, new StructType()),
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
         /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty(),
         metadataTrackingLog,
@@ -4349,13 +4385,12 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       String schemaTrackingLocation,
       String checkpointLocation,
       java.util.Map<String, String> optionMap) {
-    io.delta.kernel.internal.SnapshotImpl snapshot =
-        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return DeltaSourceMetadataTrackingLog.create(
         spark,
         schemaTrackingLocation,
-        snapshot.getMetadata().getId(),
-        snapshot.getPath(),
+        snapshot.metadata().getId(),
+        snapshot.dataPath().toString(),
         ScalaUtils.toScalaMap(optionMap),
         Option.apply(checkpointLocation),
         /* mergeConsecutiveSchemaChanges= */ false,
@@ -4365,8 +4400,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
   private StructType loadSparkSchemaAtVersion(
       PathBasedSnapshotManager snapshotManager, long version) {
-    return io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-        snapshotManager.loadSnapshotAt(version).getSchema());
+    return snapshotManager.loadSnapshotAt(version).schema();
   }
 
   private List<Integer> readIdsBetweenOffsets(
@@ -4942,7 +4976,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
-      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long version = snapshotManager.loadLatestSnapshot().version();
       long fromIndex = DeltaSourceOffset.BASE_INDEX();
       boolean isInitialSnapshot = true;
 
@@ -5004,7 +5038,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
-      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long version = snapshotManager.loadLatestSnapshot().version();
       long fromIndex = DeltaSourceOffset.BASE_INDEX();
       boolean isInitialSnapshot = true;
 
@@ -5084,7 +5118,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
-      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long version = snapshotManager.loadLatestSnapshot().version();
 
       // Access the internal AtomicReference via reflection
       java.lang.reflect.Field cacheField =
@@ -5137,7 +5171,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
-      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long version = snapshotManager.loadLatestSnapshot().version();
       long fromIndex = DeltaSourceOffset.BASE_INDEX();
       boolean isInitialSnapshot = true;
 

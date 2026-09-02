@@ -87,8 +87,8 @@ private[delta] object KernelSnapshotUtils {
    * Builds one V1 [[AddFile]] from one Kernel AddFile.
    *
    * The returned AddFile keeps the path, partition values, size, modification time, stats,
-   * deletion vector, and row tracking fields from Kernel. The row tracking fields are baseRowId
-   * and defaultRowCommitVersion.
+   * tags, deletion vector, and row tracking fields from Kernel. The row tracking fields are
+   * baseRowId and defaultRowCommitVersion.
    */
   private def toV1AddFile(kernelAddFile: KernelAddFile): AddFile = {
     AddFile(
@@ -99,6 +99,7 @@ private[delta] object KernelSnapshotUtils {
       // V1 Snapshot.allFiles normalizes active files to dataChange = false.
       dataChange = false,
       stats = kernelAddFile.getStatsJson.toScala.orNull,
+      tags = toV1Tags(kernelAddFile),
       deletionVector = toV1DeletionVectorDescriptor(kernelAddFile),
       baseRowId = kernelAddFile.getBaseRowId.toScala.map(_.longValue()),
       defaultRowCommitVersion =
@@ -147,5 +148,24 @@ private[delta] object KernelSnapshotUtils {
     } else {
       Map.empty
     }
+  }
+
+  /**
+   * Returns the tags for one AddFile as a Scala map.
+   *
+   * Kernel stores tags as an optional string-to-string map, the same shape as partition values.
+   * A missing Kernel tags map stays null, matching V1 AddFile.tags.
+   */
+  private def toV1Tags(kernelAddFile: KernelAddFile): Map[String, String] = {
+    kernelAddFile.getTags.toScala
+      .map { tags =>
+        val keys = tags.getKeys
+        val values = tags.getValues
+        (0 until tags.getSize).map { index =>
+          val value = if (values.isNullAt(index)) null else values.getString(index)
+          keys.getString(index) -> value
+        }.toMap
+      }
+      .orNull
   }
 }
