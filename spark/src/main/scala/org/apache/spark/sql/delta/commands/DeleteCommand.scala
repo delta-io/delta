@@ -38,7 +38,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, EqualNullSafe, Expression, If, Literal, Not}
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.QueryPlan
-import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan, SupportsSubquery}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.catalyst.plans.logical.SupportsSubquery
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
