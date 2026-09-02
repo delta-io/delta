@@ -5,9 +5,11 @@ This protocol change documents the disposition of Spark's `UserDefinedType` (`ud
 
 Like [`void`](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types) and interval types, `udt` is documented here post-facto and is **not** gated by a table feature. A `udt` introduces no new physical representation: it is an engine-specific *annotation* over an existing physical type (its `sqlType`). A reader that does not run the engine's deserialization code and simply reads the `sqlType` reads correct data. Unlike `timestampNtz` / `variant`, which introduced new physical semantics that readers must opt into, there is nothing here for a reader to opt into, and a feature gate could only fragment behavior for columns that already exist unguarded. This mirrors the `void` precedent.
 
-This change consists of one addition:
+Notes for reviewers (not part of the proposed spec text):
 
-- A new **User-Defined Types** section under Schema Serialization Format, defining the `udt` schema serialization, its physical representation (always the `sqlType`), the annotation fields as an opaque string-to-string mapping, reader/writer requirements, column-mapping behavior, statistics behavior, and error conditions.
+- The annotation members (`class` / `pyClass` / `serializedClass`) are Spark-specific and shown only as an example; the protocol fixes only `type` and `sqlType` and treats the rest as an opaque, engine-defined set. Generated columns and column defaults are deliberately left to the general rule ("a UDT column is subject to the same rules as its `sqlType`"): Delta does not restrict them for a UDT today, and a UDT-typed generated column or default is in any case not expressible, so the spec does not call them out.
+- Nested UDTs are forbidden because they do not round-trip: an engine that reconstructs a UDT from its declared type ignores the serialized inner `sqlType`, silently dropping the nested annotation.
+- On adoption, the corresponding `PROTOCOL.md` sections (statistics, type widening, column mapping, IcebergCompat) should be updated to reference UDT, rather than only this standalone section.
 
 --------
 
@@ -15,7 +17,7 @@ This change consists of one addition:
 
 # User-Defined Types
 
-A user-defined type (UDT) is an engine-specific logical annotation over an ordinary physical type. It carries no new physical representation: the column is stored on disk exactly as its **`sqlType`**. The annotation names an engine-specific class (referenced by `class` and/or `pyClass`) that the engine uses to convert between the stored `sqlType` value and a richer in-memory object (for example, a Spark ML vector). That class, and the conversion it performs, are outside the scope of this protocol; Delta neither loads nor runs it.
+A user-defined type (UDT) is an engine-specific logical annotation over an ordinary physical type. It introduces no new physical representation: the column is stored on disk exactly as its `sqlType`. The annotation identifies engine-specific code that converts between the stored `sqlType` value and a richer in-memory object (for example, a Spark ML vector); that code is outside the scope of this protocol, and Delta neither loads nor runs it. A `udt` is not gated by a table feature; a client that does not recognize `udt` should read the column as its `sqlType` rather than reject the schema.
 
 A UDT field's `type` in `metaData.schemaString` is a JSON object. A full example is Spark ML's `VectorUDT`, whose `sqlType` is a struct:
 
@@ -43,12 +45,12 @@ A UDT field's `type` in `metaData.schemaString` is a JSON object. A full example
 
 The `udt` object MUST contain:
 
-- **`type`**: the string `"udt"`.
-- **`sqlType`**: any valid Delta type (see below). This is the physical, on-disk representation of the column.
+- `type`: the string `"udt"`.
+- `sqlType`: any valid Delta type (see [The `sqlType`](#the-sqltype)). This is the physical, on-disk representation of the column.
 
-Every other member forms the **annotation**: an open, engine-defined set of members identifying the engine-specific type and where its conversion code lives. The protocol does not define these members and never interprets them. Each value MUST be a JSON string or JSON null, and readers and writers MUST preserve every member verbatim. An engine emits only the members meaningful to it; a reader that does not recognize them reads the column as its `sqlType`. A `udt` may carry no annotation members at all: `{type, sqlType}` alone is valid, and is then indistinguishable to a reader from its `sqlType`. Whether a missing engine-specific member (for example Spark's `class`) is an error is the engine's decision, not the protocol's.
+Every other member forms the **annotation**: an open, engine-defined set that identifies the engine-specific type and where its conversion code lives. Delta does not define or interpret these members. Each value MUST be a JSON string or JSON null, and readers and writers MUST preserve every member verbatim. An engine emits only the members meaningful to it, and MAY emit none: `{type, sqlType}` alone is valid, and is then indistinguishable to a reader from its `sqlType`. A reader that does not recognize the members reads the column as its `sqlType`. Whether a missing engine-specific member is an error is the engine's decision, not the protocol's.
 
-**What the annotation is for.** A UDT pairs the stored physical type (`sqlType`) with a reference to engine-specific code that converts between the stored value and the engine's own richer representation, in both directions: reading turns a stored `sqlType` value into the rich object, and writing turns a rich object back into a `sqlType` value. Only the `sqlType` value is ever stored; the rich object exists only in the engine's memory. An engine that recognizes the reference uses its code to convert; one that does not reads the `sqlType` value, which is already correct.
+**What the annotation is for.** A UDT pairs the stored physical type (`sqlType`) with a reference to engine-specific code that converts between the stored value and the engine's own richer representation, in both directions: reading turns a stored `sqlType` value into the rich object, and writing turns a rich object back into a `sqlType` value. Only the `sqlType` value is ever stored. An engine that recognizes the reference uses its code to convert; one that does not reads the `sqlType` value, which is already correct.
 
 **Spark's members (example).** Spark records where its conversion code lives as:
 
@@ -56,68 +58,41 @@ Every other member forms the **annotation**: an open, engine-defined set of memb
 - `pyClass`: the Python type (e.g. `pyspark.ml.linalg.VectorUDT`), or `null` when there is no Python pairing (the key is still present).
 - `serializedClass`: a base64-encoded Python type, used when there is no JVM `class`.
 
-Each is only an identifier Spark uses to find its code; Delta does not interpret any of them. So a Spark `udt` takes one of two shapes, `{type, sqlType, class, pyClass}` or `{type, sqlType, pyClass, serializedClass}` (Python-only). These are an example of the mechanism, not the set of members the protocol requires. For example, `VectorUDT`'s stored `sqlType` is `struct<type: byte, size: int, indices: array<int>, values: array<double>>`, and Spark's code maps that struct to and from a vector object.
+Each is only an identifier Spark uses to find its code; Delta does not interpret any of them. A Spark `udt` therefore takes one of two shapes, `{type, sqlType, class, pyClass}` or `{type, sqlType, pyClass, serializedClass}` (Python-only). These are an example of the mechanism, not the set of members the protocol requires. A different engine uses its own annotation members, or none, and does not set Spark's `class` / `pyClass`.
 
-**Other engines.** A different engine uses its own annotation members (whatever identifies its type and code), or none at all. It does not set Spark's `class`/`pyClass` (not even to `null`); those are meaningful only to Spark. Any reader that lacks a given engine's code reads the column as its `sqlType`.
+The Parquet column data carries no `udt` marker: a UDT column is physically indistinguishable from a column of its `sqlType`, and the UDT semantics are carried solely by the annotation in `metaData.schemaString`. (Spark also copies its full schema, annotation included, into the Parquet file footer's key-value metadata under `org.apache.spark.sql.parquet.row.metadata`; that copy is Spark-specific and not required. A reader obtains the schema from `metaData.schemaString` and MUST NOT depend on the Parquet footer for UDT information.)
 
-### The `sqlType`
+## The `sqlType`
 
-`sqlType` is a **Delta schema type**, expressed in the same serialization used everywhere else in `metaData.schemaString`, not a Parquet type. It may be a primitive, or a nested struct / array / map, and may itself contain any Delta type.
+`sqlType` is a Delta type, expressed in the same serialization used everywhere else in `metaData.schemaString`, not a Parquet type. It may be a primitive or a nested struct / array / map, and may itself contain any Delta type, subject to two constraints:
 
-A `udt`'s `sqlType` (recursively) MUST consist only of types that are supported by the table's protocol version and enabled table features, exactly as if the column were declared with that type directly. A `udt` does not exempt its `sqlType` from any type's requirements: if the `sqlType` contains a feature-gated type (for example `timestampNtz` or `variant`), that feature MUST be enabled on the table. Equivalently, table-feature detection MUST descend into a `udt`'s `sqlType`, and a writer MUST NOT use a `udt` to introduce a type whose feature is not enabled.
+- **Feature conformance.** A `udt`'s `sqlType` (recursively) MUST consist only of types supported by the table's protocol version and enabled table features, exactly as if the column were declared with that type directly. If the `sqlType` contains a feature-gated type (for example `timestampNtz` or `variant`), that feature MUST be enabled on the table, and table-feature detection MUST descend into the `sqlType`. A `udt` does not exempt its `sqlType` from any type's requirements.
+- **No nesting.** A `udt`'s `sqlType` MUST NOT be, or contain, another `udt`.
 
-This requirement is also what makes an ungated `udt` safe. Because the `sqlType` is independently conformant with the table's enabled features, a reader that supports those features reads the `sqlType` correctly, and the `udt` annotation adds nothing a reader must opt into. Without it, a `udt` would be a backdoor around the feature gate. Statistics and Parquet rules for the physical `sqlType` apply as normal.
+A UDT column is permitted anywhere a type is permitted: as a top-level column, a nested struct field, an array element type, or a map key or value type.
 
-UDT columns are permitted anywhere a type is permitted: as a top-level column, a nested struct field, an array element type, or a map key or value type.
-
-## Physical Representation
-
-The physical Parquet representation of a UDT column is exactly that of its `sqlType`. The column data carries no `udt` marker: a UDT column is physically indistinguishable from a column of its `sqlType`, and the UDT semantics are carried solely by the annotation in `metaData.schemaString`.
-
-Spark additionally embeds a copy of its full schema (including the `udt` annotation) in the Parquet file footer's key-value metadata (under `org.apache.spark.sql.parquet.row.metadata`). This footer copy is Spark-specific and is **not required** by this protocol. A Delta reader obtains the table schema from `metaData.schemaString` and MUST NOT depend on the Parquet footer for UDT information; a writer is not required to produce it.
-
-## Column Mapping
-
-A UDT is a **leaf** for column mapping. When [Column Mapping](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#column-mapping) is enabled, the field whose type is a `udt` receives a `physicalName` and field id like any other column, but column mapping does **not** recurse into the `sqlType`: the fields inside the `sqlType` are not assigned `physicalName`/id metadata and are matched by the `sqlType`'s own intrinsic structure (the field names the UDT defines). This matches how a UDT is handled elsewhere: its internal shape is engine-defined and opaque to the table's logical column namespace.
-
-## Reader Requirements
+## Reader and writer requirements
 
 A reader:
 
 - MUST interpret a `udt` column as its `sqlType` for all physical operations (Parquet read, projection, statistics).
-- that does not implement the engine deserialization code identified by `class` / `pyClass` MUST still read the column as its `sqlType`. The stored values are correct; only the reconstruction of the richer engine object is unavailable.
-- that preserves and re-serializes the schema MUST retain the annotation (see Writer Requirements).
-
-## Writer Requirements
+- that does not implement the engine code identified by the annotation MUST still read the column as its `sqlType`; the stored values are correct, and only reconstruction of the richer object is unavailable.
+- MUST reject a `udt` object that has no `sqlType`, or whose annotation contains a member (other than `type` and `sqlType`) whose value is neither a JSON string nor JSON null.
+- that re-serializes the schema MUST retain the annotation verbatim.
 
 A writer:
 
 - MUST store a UDT column's data physically as its `sqlType`.
-- **MUST preserve `udt` columns.** A writer MUST NOT drop the annotation or downgrade a `udt` column to its bare `sqlType`. It MUST emit `type` and `sqlType`, and MUST retain every annotation member together with its string-or-null value, in `metaData.schemaString`.
+- MUST preserve `udt` columns: it MUST NOT drop the annotation or downgrade a column to its bare `sqlType`, and MUST retain `type`, `sqlType`, and every annotation member with its string-or-null value.
 - MUST NOT introduce a non-string annotation member.
 
-## Per-file Statistics
+## Constraints and interactions with other features
 
-A UDT column is not eligible for `minValues` / `maxValues`, and readers must not perform min/max data skipping over one: `UserDefinedType` is not a skipping-eligible type, so no min/max is recorded, and its `sqlType` (even if it contains orderable leaves) is not descended into for skipping. A per-column `nullCount` is recorded for a UDT column, with the UDT treated as a single statistics leaf: the null count is for the column as a whole, and statistics do not descend into the `sqlType`. Per-file `numRecords` is unaffected.
+Except where stated below, a UDT column is subject to the same protocol rules as a column of its `sqlType`.
 
-## Partitioning and Clustering
-
-A UDT column must not be used as a partition column or a clustering column. Partition values have no defined serialization for a UDT (the partition-value serialization rules cover primitive types only), and clustering requires per-column `minValues` / `maxValues` statistics, which are not collected for a UDT column.
-
-## Schema Evolution and Type Changes
-
-A UDT column does not participate in type changes. A writer must not change a UDT column to any other type, nor any other type to a UDT, via the [Type Widening](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#type-widening) feature. Changing the annotation (`class` / `pyClass`) while preserving `sqlType` is an engine concern outside this protocol.
-
-## IcebergCompat
-
-Apache Iceberg has no UDT concept. When any of the `icebergCompatV1`, `icebergCompatV2`, or `icebergCompatV3` features is enabled, a writer must reject a schema containing a UDT column.
-
-## No Table Feature
-
-`udt` is not gated by a table feature (see the introduction). Because it is ungated, a client that does not recognize `udt` may fail when parsing `metaData.schemaString`; the recommended behavior is to read the column as its `sqlType` rather than reject the schema.
-
-## Error Conditions
-
-- **Missing `sqlType`.** A `udt` object without a `sqlType` member must be rejected with an error.
-- **Non-string annotation member.** A `udt` object whose annotation member (any member other than `type` and `sqlType`) has a value that is neither a JSON string nor JSON null must be rejected. The annotation is defined as a string-to-string mapping; a non-string value is non-conformant.
-- **Unknown but string-valued members** must be preserved, not rejected: the annotation set is engine-extensible and Delta does not enumerate it.
+- **Column mapping.** A UDT is a leaf: the enclosing field receives a `physicalName` and field id, and column mapping does not recurse into the `sqlType`, whose fields are matched by their intrinsic UDT-defined structure.
+- **Statistics and data skipping.** A UDT column is not eligible for `minValues` / `maxValues`, and readers MUST NOT perform min/max data skipping over one. A per-column `nullCount` is recorded, with the UDT treated as a single statistics leaf (statistics do not descend into the `sqlType`). Per-file `numRecords` is unaffected.
+- **Partitioning and clustering.** A UDT column MUST NOT be a partition column or a clustering column: partition values have no serialization for a UDT, and clustering requires the `minValues` / `maxValues` a UDT does not have.
+- **Identity columns.** A UDT column MUST NOT be an identity column.
+- **Type widening.** A UDT does not participate in type changes: a writer MUST NOT widen a UDT to another type, nor another type to a UDT.
+- **IcebergCompat.** Iceberg has no UDT concept; when any of `icebergCompatV1`, `icebergCompatV2`, or `icebergCompatV3` is enabled, a writer MUST reject a schema containing a UDT column.
