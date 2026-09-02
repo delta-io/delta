@@ -25,7 +25,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  * Shared helpers for deriving Hadoop filesystem options from DataFrame options and catalog table
  * storage properties.
  */
-private[delta] object DeltaFileSystemOptions {
+object DeltaFileSystemOptions {
 
   /**
    * Retains only entries whose key starts with a recognised Hadoop filesystem
