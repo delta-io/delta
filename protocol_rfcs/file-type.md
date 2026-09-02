@@ -154,10 +154,13 @@ For **external** references (a `uri` is set), Delta makes **no guarantee about t
 
 ## Non-Goals
 
-The following are out of scope for this RFC:
+A `file` value is a reference, and the referenced bytes are **external to the table and not under its management.** In particular, `VACUUM` does not treat referenced files as table data (and may delete files that happen to reside under the table's directory but are not tracked in the transaction log), and `CLONE` (shallow or deep) does not copy referenced files.
 
-- **Lifecycle and garbage collection of referenced bytes.** This RFC defines `file` as a reference only; it does not specify how, or whether, the referenced bytes are created, retained, or reclaimed, nor any interaction with `VACUUM`. Referenced bytes are handled out-of-band by the writer or an external system.
+The following are additionally out of scope for this RFC:
+
+- **Lifecycle and garbage collection of referenced bytes.** This RFC defines `file` as a reference only; it does not specify how, or whether, the referenced bytes are created, retained, or reclaimed. Referenced bytes are handled out-of-band by the writer or an external system.
 - **Access brokering and governance** of the referenced bytes (for example, catalog-vended credentials or signed URLs).
+- **Resolution of a `uri` to a physical location.** A `uri` is an absolute, resolvable reference; how it maps to a physical location (for example, environment- or catalog-level path mapping or mounts) is owned by the engine or catalog, not defined here.
 
 --------
 
