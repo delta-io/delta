@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,13 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.delta.v2.tablemanager
 
 import scala.jdk.CollectionConverters._
 
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.util.DeltaFileSystemOptions
+import org.apache.spark.sql.delta.util.{DeltaFileSystemOptions, PathWithFileSystem}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
@@ -52,25 +51,57 @@ object DeltaV2CacheKey {
   /**
    * Constructs a cache key from caller-supplied table coordinates.
    *
-   * @param spark the active SparkSession, used to resolve filesystem options via
-   *   [[DeltaFileSystemOptions.buildFsOptions]]
-   * @param dataPath the table's data directory path as a fully-qualified string (e.g.
-   *   `s3://bucket/warehouse/db/table` or `/tmp/local-table`). Must NOT include the `_delta_log`
-   *   suffix -- this method appends it. Callers (e.g. DeltaV2Table) are responsible for passing a
-   *   path already resolved by the catalog or filesystem.
-   * @param options reader/writer options (Java map). Only `fs.*` and `dfs.*` prefixed entries are
-   *   retained as filesystem options; all others are filtered out.
-   * @param catalogTableOpt optional catalog table whose storage properties contribute additional
-   *   filesystem options (merged with `options`).
+   * Cache identity must follow DeltaLog's resolved filesystem identity
+   * rather than lexical path spelling: two paths that resolve to the
+   * same filesystem location must share a cache entry, and paths that
+   * differ by authority or mount point must remain distinct.
+   *
+   * To achieve this, `newHadoopConfWithOptions` snapshots the current
+   * session's Hadoop configuration and overlays the derived
+   * session-invariant filesystem options. This Configuration is used
+   * transiently to choose the filesystem, default authority, and
+   * working directory, then call `FileSystem.makeQualified`. Neither
+   * the SparkSession nor the Configuration is retained in the cache
+   * key or manager.
+   *
+   * Unqualified paths can therefore resolve differently under
+   * different session default filesystems, while already-qualified
+   * absolute paths (e.g. `s3://bucket/path`) are generally stable.
+   * Different authorities and mount points remain distinct; the code
+   * intentionally does not lowercase or hand-normalize bucket or
+   * authority names.
+   *
+   * @param spark the active SparkSession, used to resolve filesystem
+   *   options via [[DeltaFileSystemOptions.buildFsOptions]] and to
+   *   qualify the cache key path through the filesystem.
+   * @param dataPath the table's data directory path as a string (e.g.
+   *   `s3://bucket/warehouse/db/table` or `/tmp/local-table`). Must
+   *   NOT include the `_delta_log` suffix -- this method appends it.
+   * @param options reader/writer options (Java map). Only `fs.*` and
+   *   `dfs.*` prefixed entries are retained; others are filtered out.
+   * @param catalogTableOpt optional catalog table whose storage
+   *   properties contribute additional filesystem options.
    */
   def from(
       spark: SparkSession,
       dataPath: String,
       options: java.util.Map[String, String],
-      catalogTableOpt: Option[CatalogTable] = None): DeltaV2CacheKey = {
-    val sessionInvariantFsOptions = DeltaFileSystemOptions.buildFsOptions(
-      spark, options.asScala.toMap, catalogTableOpt)
-    val logPath = DeltaLog.logPathFor(dataPath)
-    DeltaV2CacheKey(logPath, sessionInvariantFsOptions)
+      catalogTableOpt: Option[CatalogTable] = None
+  ): DeltaV2CacheKey = {
+    val sessionInvariantFsOptions =
+      DeltaFileSystemOptions.buildFsOptions(
+        spark, options.asScala.toMap, catalogTableOpt)
+    val rawLogPath = DeltaLog.logPathFor(dataPath)
+    // Snapshot the session's Hadoop config with fs options overlaid.
+    // Used only for qualification; not retained in the key.
+    // scalastyle:off deltahadoopconfiguration
+    val hadoopConf = spark.sessionState
+      .newHadoopConfWithOptions(sessionInvariantFsOptions)
+    // scalastyle:on deltahadoopconfiguration
+    val qualifiedLogPath = PathWithFileSystem
+      .withConf(rawLogPath, hadoopConf)
+      .fs
+      .makeQualified(rawLogPath)
+    DeltaV2CacheKey(qualifiedLogPath, sessionInvariantFsOptions)
   }
 }

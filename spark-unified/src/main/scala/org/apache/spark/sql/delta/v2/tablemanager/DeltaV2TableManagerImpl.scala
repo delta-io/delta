@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.delta.v2.tablemanager
 
 import org.apache.hadoop.fs.Path
@@ -23,12 +22,12 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 /**
  * Process-cached [[DeltaV2TableManager]] composite.
  *
- * Placeholder: inherits default trait stubs. The real implementation (snapshot lifecycle, freshness
- * control, UC client path) is added in a follow-up layer.
+ * Placeholder: inherits default trait stubs. The real implementation (snapshot lifecycle and
+ * freshness control) is added in a follow-up layer.
  */
 class DeltaV2TableManagerImpl(
     val cacheKey: DeltaV2CacheKey,
-    val catalogTableOpt: Option[CatalogTable])
+    val initialCatalogTableOpt: Option[CatalogTable])
     extends DeltaV2TableManager {
 
   /** The table's data directory (parent of `_delta_log`), fully qualified. */

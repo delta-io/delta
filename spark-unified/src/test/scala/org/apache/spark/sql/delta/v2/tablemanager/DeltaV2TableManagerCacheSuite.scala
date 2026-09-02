@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,20 +13,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.delta.v2.tablemanager
 
 import java.util.Collections
-import java.util.concurrent.{CountDownLatch, Executors}
+import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import com.google.common.base.Ticker
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.StructType
 
 class DeltaV2TableManagerCacheSuite
     extends QueryTest
     with SharedSparkSession {
+
+  /** Creates a cache key from a data directory using the public factory. */
+  private def makeKey(dataPath: String): DeltaV2CacheKey =
+    DeltaV2CacheKey.from(spark, dataPath, Collections.emptyMap())
 
   override def beforeEach(): Unit = {
     super.beforeEach()
@@ -58,8 +66,7 @@ class DeltaV2TableManagerCacheSuite
   test("getOrCreate bypasses cache when size=0") {
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "0") {
       withTempDir { dir =>
-        val key = DeltaV2CacheKey.from(
-          spark, dir.getCanonicalPath, Collections.emptyMap())
+        val key = makeKey(dir.getCanonicalPath)
         val first = DeltaV2TableManagerCache.getOrCreate(
           spark.sessionState.conf, key)
         val second = DeltaV2TableManagerCache.getOrCreate(
@@ -72,8 +79,7 @@ class DeltaV2TableManagerCacheSuite
   test("getOrCreate caches when enabled") {
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
       withTempDir { dir =>
-        val key = DeltaV2CacheKey.from(
-          spark, dir.getCanonicalPath, Collections.emptyMap())
+        val key = makeKey(dir.getCanonicalPath)
         val first = DeltaV2TableManagerCache.getOrCreate(
           spark.sessionState.conf, key)
         val second = DeltaV2TableManagerCache.getOrCreate(
@@ -88,10 +94,8 @@ class DeltaV2TableManagerCacheSuite
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
       withTempDir { dirA =>
         withTempDir { dirB =>
-          val keyA = DeltaV2CacheKey.from(
-            spark, dirA.getCanonicalPath, Collections.emptyMap())
-          val keyB = DeltaV2CacheKey.from(
-            spark, dirB.getCanonicalPath, Collections.emptyMap())
+          val keyA = makeKey(dirA.getCanonicalPath)
+          val keyB = makeKey(dirB.getCanonicalPath)
           DeltaV2TableManagerCache.getOrCreate(
             spark.sessionState.conf, keyA)
           DeltaV2TableManagerCache.getOrCreate(
@@ -105,8 +109,7 @@ class DeltaV2TableManagerCacheSuite
   test("invalidate removes a single entry") {
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
       withTempDir { dir =>
-        val key = DeltaV2CacheKey.from(
-          spark, dir.getCanonicalPath, Collections.emptyMap())
+        val key = makeKey(dir.getCanonicalPath)
         DeltaV2TableManagerCache.getOrCreate(
           spark.sessionState.conf, key)
         assert(DeltaV2TableManagerCache.containsKeyForTesting(key))
@@ -120,10 +123,8 @@ class DeltaV2TableManagerCacheSuite
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
       withTempDir { dirA =>
         withTempDir { dirB =>
-          val keyA = DeltaV2CacheKey.from(
-            spark, dirA.getCanonicalPath, Collections.emptyMap())
-          val keyB = DeltaV2CacheKey.from(
-            spark, dirB.getCanonicalPath, Collections.emptyMap())
+          val keyA = makeKey(dirA.getCanonicalPath)
+          val keyB = makeKey(dirB.getCanonicalPath)
           DeltaV2TableManagerCache.getOrCreate(
             spark.sessionState.conf, keyA)
           DeltaV2TableManagerCache.getOrCreate(
@@ -143,8 +144,7 @@ class DeltaV2TableManagerCacheSuite
   test("clearCache empties the entire cache") {
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
       withTempDir { dir =>
-        val key = DeltaV2CacheKey.from(
-          spark, dir.getCanonicalPath, Collections.emptyMap())
+        val key = makeKey(dir.getCanonicalPath)
         DeltaV2TableManagerCache.getOrCreate(
           spark.sessionState.conf, key)
         assert(DeltaV2TableManagerCache.cacheSizeForTesting() > 0)
@@ -154,16 +154,13 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("process-global: different sessions with same key return same instance") {
-    // Verified precedent: DeltaLog.forTable(sessionA, path) eq DeltaLog.forTable(sessionB, path)
-    // when both sessions resolve to the same DeltaLogCacheKey. The Guava cache is process-wide
-    // and the first caller's conf initializes it. We assert the same for our V2 cache.
+  test("process-global: different sessions share same instance") {
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
       withTempDir { dir =>
         val sessionA = spark.newSession()
         val sessionB = spark.newSession()
-        // Give session B a different cache size to prove it doesn't create a separate cache
-        sessionB.conf.set(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "500")
+        sessionB.conf.set(
+          DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "500")
 
         val keyA = DeltaV2CacheKey.from(
           sessionA, dir.getCanonicalPath, Collections.emptyMap())
@@ -176,23 +173,22 @@ class DeltaV2TableManagerCacheSuite
           sessionB.sessionState.conf, keyB)
 
         assert(keyA == keyB,
-          "Different sessions must produce the same cache key for the same path")
+          "Same path must produce the same cache key across sessions")
         assert(fromA eq fromB,
-          "Same key from different sessions must return the same cached instance " +
-            "(process-global single-flight, matching DeltaLog.forTable semantics)")
+          "Same key from different sessions must return the same " +
+            "cached instance (process-global, DeltaLog semantics)")
       }
     }
   }
 
-  test("process-global: cache is single-flight initialized regardless of calling session") {
-    // If concurrent callers initialized separate cache instances, each would load its own manager.
-    // Referential equality therefore proves both process-global cache initialization and Guava's
-    // per-key loader single-flight behavior.
+  test("process-global: single-flight initialization") {
     withTempDir { dir =>
       val sessionA = spark.newSession()
       val sessionB = spark.newSession()
-      sessionA.conf.set(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "1000")
-      sessionB.conf.set(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "2000")
+      sessionA.conf.set(
+        DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "1000")
+      sessionB.conf.set(
+        DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "2000")
       val keyA = DeltaV2CacheKey.from(
         sessionA, dir.getCanonicalPath, Collections.emptyMap())
       val keyB = DeltaV2CacheKey.from(
@@ -206,20 +202,160 @@ class DeltaV2TableManagerCacheSuite
       try {
         val futureA = executor.submit(() => {
           start.await()
-          DeltaV2TableManagerCache.getOrCreate(sessionA.sessionState.conf, keyA)
+          DeltaV2TableManagerCache.getOrCreate(
+            sessionA.sessionState.conf, keyA)
         })
         val futureB = executor.submit(() => {
           start.await()
-          DeltaV2TableManagerCache.getOrCreate(sessionB.sessionState.conf, keyB)
+          DeltaV2TableManagerCache.getOrCreate(
+            sessionB.sessionState.conf, keyB)
         })
         start.countDown()
 
         assert(futureA.get() eq futureB.get(),
-          "Concurrent sessions must share one cache and one manager load for the same key")
-        assert(DeltaV2TableManagerCache.cacheSizeForTesting() == 1)
+          "Concurrent sessions must share one manager load")
+        assert(
+          DeltaV2TableManagerCache.cacheSizeForTesting() == 1)
       } finally {
         executor.shutdownNow()
       }
     }
   }
+
+  // --- initialCatalogTableOpt preservation ------------------------
+
+  test("cache hit preserves initialCatalogTableOpt from first load") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
+      withTempDir { dir =>
+        val key = makeKey(dir.getCanonicalPath)
+        val catalogA = CatalogTable(
+          identifier = TableIdentifier("tableA"),
+          tableType = CatalogTableType.EXTERNAL,
+          storage = CatalogStorageFormat.empty,
+          schema = new StructType())
+        val catalogB = CatalogTable(
+          identifier = TableIdentifier("tableB"),
+          tableType = CatalogTableType.EXTERNAL,
+          storage = CatalogStorageFormat.empty,
+          schema = new StructType())
+
+        val first = DeltaV2TableManagerCache.getOrCreate(
+          spark.sessionState.conf, key, Some(catalogA))
+        val second = DeltaV2TableManagerCache.getOrCreate(
+          spark.sessionState.conf, key, Some(catalogB))
+
+        assert(first eq second)
+        val impl = first.asInstanceOf[DeltaV2TableManagerImpl]
+        assert(impl.initialCatalogTableOpt === Some(catalogA),
+          "initial catalog should be from first load")
+      }
+    }
+  }
+
+  // --- RemovalListener -> retire() --------------------------------
+
+  test("removal listener retires manager on invalidation") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
+      withTempDir { dir =>
+        val key = makeKey(dir.getCanonicalPath)
+        val stub = new StubTableManager("a")
+        DeltaV2TableManagerCache.putForTesting(
+          spark.sessionState.conf, key, stub)
+        assert(!stub.retired)
+        DeltaV2TableManagerCache.invalidate(key)
+        assert(stub.retired,
+          "retire() should be called on eviction")
+      }
+    }
+  }
+
+  // --- Capacity / first-caller-wins -------------------------------
+
+  test("first-caller config wins: maxSize=1 evicts LRU") {
+    DeltaV2TableManagerCache.resetCacheForTesting()
+    withSQLConf(
+        DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1") {
+      withTempDir { dirA =>
+        withTempDir { dirB =>
+          val keyA = makeKey(dirA.getCanonicalPath)
+          val keyB = makeKey(dirB.getCanonicalPath)
+          val stubA = new StubTableManager("a")
+          val stubB = new StubTableManager("b")
+
+          DeltaV2TableManagerCache.putForTesting(
+            spark.sessionState.conf, keyA, stubA)
+
+          val bigSession = spark.newSession()
+          bigSession.conf.set(
+            DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "1000")
+          DeltaV2TableManagerCache.putForTesting(
+            bigSession.sessionState.conf, keyB, stubB)
+
+          DeltaV2TableManagerCache.cleanUpForTesting()
+          assert(
+            DeltaV2TableManagerCache.cacheSizeForTesting() == 1,
+            "effective maxSize should remain 1")
+          assert(stubA.retired,
+            "LRU entry should be retired on capacity eviction")
+          assert(!stubB.retired,
+            "newest entry should remain cached")
+          assert(
+            DeltaV2TableManagerCache.containsKeyForTesting(keyB),
+            "newest entry should still be present")
+        }
+      }
+    }
+  }
+
+  // --- Deterministic TTL with Ticker ------------------------------
+
+  test("deterministic TTL eviction retires expired entry") {
+    val ticker = new TestTicker()
+    DeltaV2TableManagerCache.setTickerForTesting(ticker)
+    try {
+      val ttlMinutes = 10
+      withSQLConf(
+          DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000",
+          DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES.key
+            -> ttlMinutes.toString) {
+        withTempDir { dir =>
+          val key = makeKey(dir.getCanonicalPath)
+          val stub = new StubTableManager("ttl")
+          DeltaV2TableManagerCache.putForTesting(
+            spark.sessionState.conf, key, stub)
+          assert(
+            DeltaV2TableManagerCache.containsKeyForTesting(key))
+
+          ticker.advance((ttlMinutes + 1) * 60L)
+          DeltaV2TableManagerCache.cleanUpForTesting()
+
+          assert(stub.retired, "expired entry should be retired")
+          assert(
+            !DeltaV2TableManagerCache.containsKeyForTesting(key))
+        }
+      }
+    } finally {
+      DeltaV2TableManagerCache.resetCacheForTesting()
+    }
+  }
+
+}
+
+// === Test helpers (package-private, same-file) ====================
+
+private[tablemanager] class TestTicker extends Ticker {
+  private var now: Long = System.nanoTime()
+  override def read(): Long = now
+  def advance(seconds: Long): Long = {
+    now += TimeUnit.NANOSECONDS.convert(seconds, TimeUnit.SECONDS)
+    now
+  }
+}
+
+private[tablemanager] class StubTableManager(val id: String)
+    extends DeltaV2TableManager {
+  @volatile var retired: Boolean = false
+  override def retire(): Unit = { retired = true }
 }
