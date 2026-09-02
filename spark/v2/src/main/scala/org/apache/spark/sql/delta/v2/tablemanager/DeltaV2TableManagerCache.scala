@@ -65,13 +65,17 @@ private[tablemanager] class DeltaV2TableManagerCache(
     try {
       cache.get(key, () => {
         recordFrameProfile(
-            "Delta", "DeltaV2.cache.createManager") {
+            "Delta", "v2.tableManagerCache.createManager") {
           managerFactory(key, initialCatalogTableOpt)
         }
       })
     } catch {
       case e @ (_: UncheckedExecutionException | _: ExecutionError |
           _: ExecutionException) =>
+        logWarning(
+          s"Cache loader failed; unwrapping " +
+            s"${e.getClass.getSimpleName}",
+          e.getCause)
         throw e.getCause
     }
   }
@@ -118,7 +122,7 @@ object DeltaV2TableManagerCache extends DeltaLogging {
       initialCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     recordFrameProfile(
-        "Delta", "DeltaV2.tableManagerCache.getOrCreate") {
+        "Delta", "v2.tableManagerCache.getOrCreate") {
       if (!isEnabled(sqlConf)) {
         return createManager(key, initialCatalogTableOpt)
       }
