@@ -77,11 +77,13 @@ private case class CatalogConfigResponse(
  * @param catalogName Name of the catalog for config endpoint query parameter.
  * @param tokenSupplier Supplier of auth tokens, called per-request to support OAuth.
  *                      Returns empty string if no auth is needed.
+ * @param clientProperties Client-provided Iceberg REST catalog properties.
  */
 class IcebergRESTCatalogPlanningClient(
     baseUriRaw: String,
     catalogName: String,
-    tokenSupplier: () => String
+    tokenSupplier: () => String,
+    clientProperties: Map[String, String] = Map.empty
 ) extends ServerSidePlanningClient with Logging {
 
   // Normalize baseUri to handle trailing slashes
@@ -248,9 +250,15 @@ class IcebergRESTCatalogPlanningClient(
     }
   }
 
-  /** Merge server defaults and overrides, with overrides taking precedence. */
+  /**
+   * Merge catalog properties using Iceberg REST precedence:
+   * server overrides > client properties > server defaults > client defaults.
+   *
+   * Client defaults are applied by the propertyAs* helpers when a key is absent from this map.
+   */
   private lazy val catalogProperties: Map[String, String] =
     Option(catalogConfig.defaults).getOrElse(Map.empty) ++
+      Option(clientProperties).getOrElse(Map.empty) ++
       Option(catalogConfig.overrides).getOrElse(Map.empty)
 
   /**

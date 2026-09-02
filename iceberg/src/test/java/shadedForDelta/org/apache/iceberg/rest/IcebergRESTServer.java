@@ -161,6 +161,13 @@ public class IcebergRESTServer {
     }
   }
 
+  /** Set override properties returned by the /v1/config endpoint. */
+  public void setCatalogOverrides(Map<String, String> overrides) {
+    if (adapter != null) {
+      adapter.setCatalogOverrides(overrides);
+    }
+  }
+
   /** Configure whether /v1/config includes an endpoints list. */
   public void setAdvertiseEndpoints(boolean advertise) {
     if (adapter != null) {
@@ -305,6 +312,7 @@ public class IcebergRESTServer {
     IcebergRESTCatalogAdapterWithPlanSupport.clearCaptured();
     if (adapter != null) {
       adapter.setCatalogDefaults(null);
+      adapter.setCatalogOverrides(null);
       adapter.setAdvertiseEndpoints(true);
       adapter.setAdvertiseFetchPlanningResult(true);
       adapter.setAdvertiseCancelPlanning(true);

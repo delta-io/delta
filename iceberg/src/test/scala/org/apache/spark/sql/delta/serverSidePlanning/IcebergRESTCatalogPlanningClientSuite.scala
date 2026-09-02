@@ -578,6 +578,55 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       "rest-scan-planning.poll-scale-factor" -> "1.0").asJava)
   }
 
+  test("poll settings precedence: overrides, client config, server defaults, client defaults") {
+    case class TestCase(
+        name: String,
+        serverDefaultRetries: Option[Int],
+        clientRetries: Option[Int],
+        serverOverrideRetries: Option[Int],
+        submittedPolls: Int,
+        expectedPolls: Int)
+
+    Seq(
+      TestCase("serverOverride", Some(0), Some(1), Some(2), 2, 3),
+      TestCase("clientConfig", Some(0), Some(1), None, 1, 2),
+      TestCase("serverDefault", Some(1), None, None, 1, 2),
+      TestCase("clientDefault", None, None, None, 1, 2)
+    ).foreach { testCase =>
+      withTempTable(s"pollPrecedence${testCase.name}") { _ =>
+        populateTestData(s"rest_catalog.${defaultNamespace}.pollPrecedence${testCase.name}")
+        server.clearCaptured()
+
+        val serverDefaults = Map(
+          "rest-scan-planning.poll-timeout-ms" -> "1000",
+          "rest-scan-planning.poll-min-wait-ms" -> "1",
+          "rest-scan-planning.poll-max-wait-ms" -> "1",
+          "rest-scan-planning.poll-scale-factor" -> "1.0") ++
+          testCase.serverDefaultRetries.map(
+            retries => "rest-scan-planning.poll-num-retries" -> retries.toString)
+        server.setCatalogDefaults(serverDefaults.asJava)
+        server.setCatalogOverrides(testCase.serverOverrideRetries.map(
+          retries => Map("rest-scan-planning.poll-num-retries" -> retries.toString))
+          .getOrElse(Map.empty).asJava)
+        server.setSubmittedPollsBeforeCompletion(testCase.submittedPolls)
+
+        val clientProperties = testCase.clientRetries.map(
+          retries => Map("rest-scan-planning.poll-num-retries" -> retries.toString))
+          .getOrElse(Map.empty)
+        val client = new IcebergRESTCatalogPlanningClient(
+          s"$serverUri/v1", "test_catalog", () => "", clientProperties)
+        try {
+          val scanPlan = client.planScan(
+            defaultNamespace.toString, s"pollPrecedence${testCase.name}")
+          assert(scanPlan.files.nonEmpty)
+          assert(server.getPlanPollRequestCount() == testCase.expectedPolls)
+        } finally {
+          client.close()
+        }
+      }
+    }
+  }
+
   test("poll submitted scan plan until completed") {
     withTempTable("asyncPlanCompletes") { _ =>
       populateTestData(s"rest_catalog.${defaultNamespace}.asyncPlanCompletes")

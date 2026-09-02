@@ -117,6 +117,7 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
         IcebergRESTCatalogAdapterWithPlanSupport customAdapter =
             (IcebergRESTCatalogAdapterWithPlanSupport) adapter;
         builder.withDefaults(customAdapter.getCatalogDefaults());
+        builder.withOverrides(customAdapter.getCatalogOverrides());
         String prefix = customAdapter.getCatalogPrefix();
         if (prefix != null && !prefix.isEmpty()) {
           LOG.info("Adding prefix to /v1/config response: {}", prefix);

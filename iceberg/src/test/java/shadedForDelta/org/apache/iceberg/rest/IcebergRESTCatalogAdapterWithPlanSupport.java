@@ -64,6 +64,7 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   //          to /v1/iceberg/namespaces/db/tables/t1/plan
   private String catalogPrefix = null;  // null = no prefix (fallback case)
   private volatile Map<String, String> catalogDefaults = Collections.emptyMap();
+  private volatile Map<String, String> catalogOverrides = Collections.emptyMap();
   private volatile boolean advertiseEndpoints = true;
   private volatile boolean advertiseFetchPlanningResult = true;
   private volatile boolean advertiseCancelPlanning = true;
@@ -150,6 +151,17 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
 
   Map<String, String> getCatalogDefaults() {
     return catalogDefaults;
+  }
+
+  void setCatalogOverrides(Map<String, String> overrides) {
+    this.catalogOverrides =
+        overrides != null
+            ? Collections.unmodifiableMap(new HashMap<>(overrides))
+            : Collections.emptyMap();
+  }
+
+  Map<String, String> getCatalogOverrides() {
+    return catalogOverrides;
   }
 
   void setAdvertiseEndpoints(boolean advertise) {
