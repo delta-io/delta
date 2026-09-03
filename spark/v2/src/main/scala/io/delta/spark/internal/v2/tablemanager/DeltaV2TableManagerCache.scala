@@ -235,7 +235,10 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
         initialCatalogTableOpt)
       val sqlConf = spark.sessionState.conf
       if (!isEnabled(sqlConf)) {
-        return createManager(key, initialCatalogTableOpt)
+        return new DeltaV2TableManagerImpl(
+          key.path.getParent,
+          key.sessionInvariantFsOptions,
+          initialCatalogTableOpt)
       }
       getOrCreateInstance(sqlConf).getOrCreate(key, initialCatalogTableOpt)
     }
@@ -250,7 +253,10 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
       initialCatalogTableOpt: Option[CatalogTable] = None): DeltaV2TableManager = {
     recordFrameProfile("tableManagerCache.getOrCreate") {
       if (!isEnabled(sqlConf)) {
-        return createManager(key, initialCatalogTableOpt)
+        return new DeltaV2TableManagerImpl(
+          key.path.getParent,
+          key.sessionInvariantFsOptions,
+          initialCatalogTableOpt)
       }
       getOrCreateInstance(sqlConf).getOrCreate(key, initialCatalogTableOpt)
     }
@@ -282,15 +288,6 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
   private[tablemanager] def unsetCache(): Unit = synchronized {
     instance.foreach(_.invalidateAll())
     instance = None
-  }
-
-  private def createManager(
-      key: DeltaV2TableManagerCacheKey,
-      initialCatalogTableOpt: Option[CatalogTable]): DeltaV2TableManagerImpl = {
-    new DeltaV2TableManagerImpl(
-      key.path.getParent,
-      key.sessionInvariantFsOptions,
-      initialCatalogTableOpt)
   }
 
   /**
