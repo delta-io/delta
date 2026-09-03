@@ -158,11 +158,9 @@ private[tablemanager] class CachedSnapshotManager(
     if (existing != null && version == existing.getVersion) {
       return existing
     }
-    withUncachedManager { manager =>
-      val kernelSnapshot = DeltaV2Snapshot.getKernelSnapshot(manager.loadSnapshotAt(version))
-      validateTableIdentity(kernelSnapshot)
-      kernelSnapshot
-    }
+    val kernelSnapshot = loadSnapshotAtUncached(version)
+    validateTableIdentity(kernelSnapshot)
+    kernelSnapshot
   }
 
   // === Uncached loading =====================================================
@@ -172,26 +170,36 @@ private[tablemanager] class CachedSnapshotManager(
   }
 
   private[tablemanager] def loadLatestUncached(): KernelSnapshot = {
-    withUncachedManager { manager =>
-      DeltaV2Snapshot.getKernelSnapshot(manager.loadLatestSnapshot())
-    }
+    val kernelEngine = createKernelEngine()
+    val manager = createUncachedManager(kernelEngine)
+    DeltaV2Snapshot.getKernelSnapshot(manager.loadLatestSnapshot())
   }
 
-  private def withEngine[T](f: KernelEngine => T): T = {
+  private def loadSnapshotAtUncached(version: Long): KernelSnapshot = {
+    val kernelEngine = createKernelEngine()
+    val manager = createUncachedManager(kernelEngine)
+    DeltaV2Snapshot.getKernelSnapshot(manager.loadSnapshotAt(version))
+  }
+
+  private def createKernelEngine(): KernelEngine = {
     // scalastyle:off deltahadoopconfiguration
     val conf =
       SparkSession.active.sessionState.newHadoopConfWithOptions(sessionInvariantFsOptions)
     // scalastyle:on deltahadoopconfiguration
-    val kernelEngine = recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.createEngine") {
+    recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.createEngine") {
       KernelEngineFactory.createDefaultEngine(conf)
     }
-    f(kernelEngine)
+  }
+
+  private def createUncachedManager(kernelEngine: KernelEngine): DeltaV2SnapshotManager =
+    SnapshotManagerFactory.create(tablePath.toString, kernelEngine, catalogTableOpt.toJava)
+
+  private def withScopedEngine[T](f: KernelEngine => T): T = {
+    f(createKernelEngine())
   }
 
   private def withUncachedManager[T](f: DeltaV2SnapshotManager => T): T = {
-    withEngine { engine =>
-      f(SnapshotManagerFactory.create(tablePath.toString, engine, catalogTableOpt.toJava))
-    }
+    withScopedEngine(kernelEngine => f(createUncachedManager(kernelEngine)))
   }
 
   // === Snapshot installation =================================================
