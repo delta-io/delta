@@ -44,6 +44,8 @@ import org.apache.parquet.hadoop.api.WriteSupport;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.apache.parquet.io.api.RecordConsumer;
 import org.apache.parquet.schema.MessageType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Implements writing data given as {@link FilteredColumnarBatch} to Parquet files.
@@ -56,6 +58,8 @@ import org.apache.parquet.schema.MessageType;
  * ParquetWriter} through {@link RecordConsumer}.
  */
 public class ParquetFileWriter {
+  private static final Logger logger = LoggerFactory.getLogger(ParquetFileWriter.class);
+
   public static final String TARGET_FILE_SIZE_CONF =
       "delta.kernel.default.parquet.writer.targetMaxFileSize";
   public static final long DEFAULT_TARGET_FILE_SIZE = 128 * 1024 * 1024; // 128MB
@@ -205,19 +209,22 @@ public class ParquetFileWriter {
             // the read failed before completing; abort the write so no partial
             // file is published in the subsequent close()
             parquetOutputFile.abort();
-          }
-          if (writer != null) {
+            try {
+              if (writer != null) {
+                writer.close();
+              }
+            } catch (Throwable closeFailure) {
+              logger.warn(
+                  "Ignoring close failure while aborting {}",
+                  parquetOutputFile.getPath(),
+                  closeFailure);
+            }
+          } else if (writer != null) {
             try {
               writer.close();
-            } catch (IOException closeEx) {
-              if (committed) {
-                throw new UncheckedIOException(
-                    "Failed to close the Parquet file: " + parquetOutputFile.getPath(), closeEx);
-              }
-            } catch (Throwable suppressed) {
-              if (committed) {
-                throw suppressed;
-              }
+            } catch (IOException e) {
+              throw new UncheckedIOException(
+                  "Failed to close the Parquet file: " + parquetOutputFile.getPath(), e);
             }
           }
         }

@@ -36,6 +36,10 @@ public abstract class PositionOutputStream extends OutputStream {
    * Record that this stream should discard, rather than publish, its output. abort() does not
    * release resources on its own; the subsequent {@link #close()} does, and must honor this flag so
    * that no file - partial or complete - becomes visible at the destination path.
+   *
+   * <p>Honored by temp-then-rename staging (temp file deleted) and by abortable streams. A backend
+   * that writes directly to the destination with a non-abortable stream cannot discard on close()
+   * and will publish.
    */
   public void abort() {
     this.aborted = true;

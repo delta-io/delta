@@ -70,11 +70,11 @@ public class HadoopOutputFile implements OutputFile {
       public void close() throws IOException {
         // super.close() aborts the temp stream if it is abortable, else closes it normally
         super.close();
+        if (isAborted()) {
+          fs.delete(writePath, false /* recursive */);
+          return;
+        }
         if (useRename) {
-          if (isAborted()) {
-            fs.delete(writePath, false /* recursive */);
-            return;
-          }
           boolean renameDone = false;
           try {
             renameDone = fs.rename(writePath, targetPath);
