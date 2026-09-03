@@ -21,8 +21,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache.DeltaV2TableManagerCacheKey
 import com.google.common.base.Ticker
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -32,11 +32,13 @@ import org.apache.spark.sql.types.StructType
 
 class DeltaV2TableManagerCacheSuite
     extends QueryTest
-    with SharedSparkSession {
+    with SharedSparkSession
+{
 
   /** Creates a cache key from a data directory using the public factory. */
-  private def makeKey(dataPath: String): DeltaV2CacheKey =
-    DeltaV2CacheKey.from(spark, dataPath, Collections.emptyMap())
+  private def makeKey(dataPath: String): DeltaV2TableManagerCacheKey =
+    DeltaV2TableManagerCacheKey.from(
+      spark, dataPath, Collections.emptyMap())
 
   // Process-global companion tests use unsetCache for isolation.
   override def beforeEach(): Unit = {
@@ -77,7 +79,8 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("per-instance: cache hit preserves initialCatalogTableOpt from first load") {
+  test("per-instance: cache hit preserves " +
+      "initialCatalogTableOpt from first load") {
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1000, ttlMinutes = 60)
     withTempDir { dir =>
@@ -102,7 +105,8 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("per-instance: removal listener retires manager on invalidation") {
+  test("per-instance: removal listener retires manager " +
+      "on invalidation") {
     val stub = new StubTableManager("a")
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1000, ttlMinutes = 60,
@@ -117,7 +121,8 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("per-instance: maxSize=1 LRU eviction retires old manager") {
+  test("per-instance: maxSize=1 LRU eviction retires " +
+      "old manager") {
     val stubA = new StubTableManager("a")
     val stubB = new StubTableManager("b")
     val stubs = Iterator(stubA, stubB)
@@ -143,7 +148,8 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("per-instance: deterministic TTL eviction retires expired entry") {
+  test("per-instance: deterministic TTL eviction retires " +
+      "expired entry") {
     val ticker = new TestTicker()
     val ttlMinutes = 10
     val stub = new StubTableManager("ttl")
@@ -164,9 +170,10 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  // --- Guava exception unwrapping via injected factory --------------
+  // --- Guava exception unwrapping via injected factory -------------
 
-  test("per-instance: unwraps checked exception from ExecutionException") {
+  test("per-instance: unwraps checked exception " +
+      "from ExecutionException") {
     val cause = new java.io.IOException("checked-cause")
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1000, ttlMinutes = 60,
@@ -181,7 +188,8 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("per-instance: unwraps runtime exception from UncheckedExecutionException") {
+  test("per-instance: unwraps runtime exception " +
+      "from UncheckedExecutionException") {
     val cause = new IllegalStateException("runtime-cause")
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1000, ttlMinutes = 60,
@@ -211,9 +219,10 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  // --- Per-instance size / getIfPresent / invalidation --------------
+  // --- Per-instance size / getIfPresent / invalidation -------------
 
-  test("per-instance: size and getIfPresent reflect cache state") {
+  test("per-instance: size and getIfPresent " +
+      "reflect cache state") {
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1000, ttlMinutes = 60)
     withTempDir { dir =>
@@ -238,19 +247,20 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("per-instance: invalidateByLogPath removes all entries with matching path") {
-    // Two distinct keys share the same qualified log path but differ in
-    // sessionInvariantFsOptions, proving removeIf matches every entry
-    // whose path equals the target -- not just a single-key invalidation.
+  test("per-instance: invalidateByLogPath removes all " +
+      "entries with matching path") {
+    // Two distinct keys share the same qualified log path but
+    // differ in sessionInvariantFsOptions, proving removeIf
+    // matches every entry whose path equals the target -- not
+    // just a single-key invalidation.
     val stubA = new StubTableManager("pathA")
     val stubB = new StubTableManager("pathB")
     val stubs = Iterator(stubA, stubB)
     withTempDir { dir =>
-      val sharedLogPath =
-        makeKey(dir.getCanonicalPath).path
-      val keyA = DeltaV2CacheKey(
+      val sharedLogPath = makeKey(dir.getCanonicalPath).path
+      val keyA = DeltaV2TableManagerCacheKey(
         sharedLogPath, Map("fs.s3a.access.key" -> "AAA"))
-      val keyB = DeltaV2CacheKey(
+      val keyB = DeltaV2TableManagerCacheKey(
         sharedLogPath, Map("fs.s3a.access.key" -> "BBB"))
       val cache = new DeltaV2TableManagerCache(
         maxSize = 1000, ttlMinutes = 60,
@@ -267,7 +277,8 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("per-instance: invalidateAll empties the entire cache") {
+  test("per-instance: invalidateAll empties " +
+      "the entire cache") {
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1000, ttlMinutes = 60)
     withTempDir { dir =>
@@ -287,8 +298,8 @@ class DeltaV2TableManagerCacheSuite
   }
 
   test("default cache size is positive") {
-    val size =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE)
+    val size = spark.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE)
     assert(size > 0, s"Expected positive cache size, got $size")
   }
 
@@ -313,7 +324,8 @@ class DeltaV2TableManagerCacheSuite
   }
 
   test("getOrCreate caches when enabled") {
-    withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
       withTempDir { dir =>
         val key = makeKey(dir.getCanonicalPath)
         val first = DeltaV2TableManagerCache.getOrCreate(
@@ -325,7 +337,8 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("process-global: different sessions share same instance") {
+  test("process-global: different sessions share " +
+      "same instance") {
     withSQLConf(
         DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
       withTempDir { dir =>
@@ -334,10 +347,10 @@ class DeltaV2TableManagerCacheSuite
         sessionB.conf.set(
           DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "500")
 
-        val keyA = DeltaV2CacheKey.from(
+        val keyA = DeltaV2TableManagerCacheKey.from(
           sessionA, dir.getCanonicalPath,
           Collections.emptyMap())
-        val keyB = DeltaV2CacheKey.from(
+        val keyB = DeltaV2TableManagerCacheKey.from(
           sessionB, dir.getCanonicalPath,
           Collections.emptyMap())
 
@@ -350,15 +363,18 @@ class DeltaV2TableManagerCacheSuite
           "Same path must produce the same cache key " +
             "across sessions")
         assert(fromA eq fromB,
-          "Same key from different sessions must share one cached instance")
+          "Same key from different sessions must share " +
+            "one cached instance")
       }
     }
   }
 
-  test("per-instance: Guava per-key single-flight loader invokes factory once") {
-    // Holds the first loader mid-flight while a second caller requests the
-    // same key, proving Guava's per-key single-flight guarantees exactly
-    // one factory invocation and identical result for both callers.
+  test("per-instance: Guava per-key single-flight loader " +
+      "invokes factory once") {
+    // Holds the first loader mid-flight while a second caller
+    // requests the same key, proving Guava's per-key
+    // single-flight guarantees exactly one factory invocation
+    // and identical result for both callers.
     val invocations = new AtomicInteger(0)
     val loaderEntered = new CountDownLatch(1)
     val loaderRelease = new CountDownLatch(1)
@@ -379,10 +395,12 @@ class DeltaV2TableManagerCacheSuite
       val executor = Executors.newFixedThreadPool(2)
       // scalastyle:on sparkThreadPools
       try {
-        val futureA = executor.submit(() => cache.getOrCreate(key))
+        val futureA = executor.submit(() =>
+          cache.getOrCreate(key))
         assert(loaderEntered.await(10, TimeUnit.SECONDS),
           "loader must be entered")
-        val futureB = executor.submit(() => cache.getOrCreate(key))
+        val futureB = executor.submit(() =>
+          cache.getOrCreate(key))
         loaderRelease.countDown()
 
         val resultA = futureA.get(10, TimeUnit.SECONDS)
@@ -397,85 +415,61 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("process-global: concurrent callers share same instance") {
-    // Serialized through the companion's synchronized block; the eq
-    // assertion validates shared-instance semantics, not concurrent
-    // loader single-flight (which is tested per-instance above).
-    withTempDir { dir =>
-      val sessionA = spark.newSession()
-      val sessionB = spark.newSession()
-      sessionA.conf.set(
-        DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "1000")
-      sessionB.conf.set(
-        DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "2000")
-      val keyA = DeltaV2CacheKey.from(
-        sessionA, dir.getCanonicalPath,
-        Collections.emptyMap())
-      val keyB = DeltaV2CacheKey.from(
-        sessionB, dir.getCanonicalPath,
-        Collections.emptyMap())
-      assert(keyA == keyB)
+  test("process-global: first caller's size config " +
+      "remains effective") {
+    // Session A initializes the singleton with maxSize=1.
+    val sessionA = spark.newSession()
+    sessionA.conf.set(
+      DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "1")
 
-      val start = new CountDownLatch(1)
-      // scalastyle:off sparkThreadPools
-      val executor = Executors.newFixedThreadPool(2)
-      // scalastyle:on sparkThreadPools
-      try {
-        val futureA = executor.submit(() => {
-          start.await()
-          DeltaV2TableManagerCache.getOrCreate(
-            sessionA.sessionState.conf, keyA)
-        })
-        val futureB = executor.submit(() => {
-          start.await()
-          DeltaV2TableManagerCache.getOrCreate(
-            sessionB.sessionState.conf, keyB)
-        })
-        start.countDown()
+    // Session B would prefer a larger cache, but the
+    // singleton is already built.
+    val sessionB = spark.newSession()
+    sessionB.conf.set(
+      DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "1000")
 
-        assert(futureA.get() eq futureB.get(),
-          "Concurrent sessions must share one cached instance")
-      } finally {
-        executor.shutdownNow()
+    withTempDir { dirA =>
+      withTempDir { dirB =>
+        val keyA = DeltaV2TableManagerCacheKey.from(
+          sessionA, dirA.getCanonicalPath,
+          Collections.emptyMap())
+        val keyB = DeltaV2TableManagerCacheKey.from(
+          sessionB, dirB.getCanonicalPath,
+          Collections.emptyMap())
+
+        // Session A loads key A -- initializes singleton (size 1).
+        val originalA = DeltaV2TableManagerCache.getOrCreate(
+          sessionA.sessionState.conf, keyA)
+
+        // Session B loads key B -- evicts key A under size-1.
+        DeltaV2TableManagerCache.getOrCreate(
+          sessionB.sessionState.conf, keyB)
+
+        // Re-lookup key A: must create a new instance because
+        // size-1 evicted the original, proving first caller's
+        // config governs, not the second caller's (size 1000).
+        val reloadedA = DeltaV2TableManagerCache.getOrCreate(
+          sessionA.sessionState.conf, keyA)
+        assert(reloadedA ne originalA,
+          "Key A should have been evicted under the first " +
+            "caller's maxSize=1 and reloaded as a new instance")
       }
     }
   }
 
-  test("process-global: first caller's size config remains effective") {
-    // Session A initializes the singleton with maxSize=1.
-    val sessionA = spark.newSession()
-    sessionA.conf.set(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "1")
+  // === Facade and manager-field assertions ========================
 
-    // Session B would prefer a larger cache, but the singleton is already built.
-    val sessionB = spark.newSession()
-    sessionB.conf.set(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "1000")
-
-    withTempDir { dirA =>
-      withTempDir { dirB =>
-        val keyA = DeltaV2CacheKey.from(
-          sessionA, dirA.getCanonicalPath,
-          Collections.emptyMap())
-        val keyB = DeltaV2CacheKey.from(
-          sessionB, dirB.getCanonicalPath,
-          Collections.emptyMap())
-
-        // Session A loads key A -- this initializes the singleton (size 1).
-        val originalA = DeltaV2TableManagerCache.getOrCreate(
-          sessionA.sessionState.conf, keyA)
-
-        // Session B loads key B -- evicts key A under size-1 constraint.
-        DeltaV2TableManagerCache.getOrCreate(
-          sessionB.sessionState.conf, keyB)
-
-        // Re-lookup key A through the companion: must create a new instance
-        // because size-1 evicted the original, proving the first caller's
-        // config (size 1) governs, not the second caller's (size 1000).
-        val reloadedA = DeltaV2TableManagerCache.getOrCreate(
-          sessionA.sessionState.conf, keyA)
-        assert(reloadedA ne originalA,
-          "Key A should have been evicted under the first caller's " +
-            "maxSize=1 and reloaded as a new instance")
-      }
+  test("forTable produces a manager with expected " +
+      "qualified path and options") {
+    withTempDir { dir =>
+      val manager = DeltaV2TableManagerCache.forTable(
+        spark, dir.getCanonicalPath, Collections.emptyMap())
+      val impl = manager.asInstanceOf[DeltaV2TableManagerImpl]
+      assert(impl.qualifiedTableDataPath.isAbsolute)
+      assert(impl.qualifiedTableDataPath.toUri.getPath
+        .contains(dir.getName))
+      assert(impl.sessionInvariantFsOptions.isEmpty)
+      assert(impl.initialCatalogTableOpt.isEmpty)
     }
   }
 }
@@ -486,7 +480,8 @@ private[tablemanager] class TestTicker extends Ticker {
   private var now: Long = System.nanoTime()
   override def read(): Long = now
   def advance(seconds: Long): Long = {
-    now += TimeUnit.NANOSECONDS.convert(seconds, TimeUnit.SECONDS)
+    now += TimeUnit.NANOSECONDS.convert(
+      seconds, TimeUnit.SECONDS)
     now
   }
 }
