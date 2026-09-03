@@ -64,6 +64,10 @@ trait CatalogManagedStreamingSuiteBase
     getTrackingClient.foreach(_.reset())
   }
 
+
+  /** Runs test-data setup that is separate from the streaming connector operation. */
+  protected def runDataSetup(f: => Unit): Unit = f
+
   /**
    * Provides a checkpoint location for streaming tests. Defaults to a local temp dir; subclasses
    * can override it to run the same test bodies against a different storage backend.
@@ -90,7 +94,9 @@ trait CatalogManagedStreamingSuiteBase
         testStream(df)(
           StartStream(checkpointLocation = checkpointPath),
           Execute{ _ =>
-            Seq(1, 2).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
+            runDataSetup {
+              Seq(1, 2).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
+            }
           },
           ProcessAllAvailable(),
           CheckAnswer(1, 2),
@@ -173,7 +179,9 @@ trait CatalogManagedStreamingSuiteBase
           assertNumGetCommitsCalled(expectedNumGetCommits)
 
           try {
-            Seq(1).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
+            runDataSetup {
+              Seq(1).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
+            }
             query.processAllAvailable()
             // One commit to the source table and one commit to the sink table
             expectedNumCommits += 2
@@ -186,7 +194,9 @@ trait CatalogManagedStreamingSuiteBase
             assertNumCommitsCalled(expectedNumCommits)
             assertNumGetCommitsCalled(expectedNumGetCommits)
 
-            Seq(2).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
+            runDataSetup {
+              Seq(2).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
+            }
             query.processAllAvailable()
             // One commit to the source table and one commit to the sink table
             expectedNumCommits += 2
