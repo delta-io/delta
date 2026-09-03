@@ -19,10 +19,11 @@ import java.io.File
 
 import scala.jdk.CollectionConverters._
 
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache.DeltaV2TableManagerCacheKey
-import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
@@ -31,22 +32,21 @@ import org.apache.spark.sql.types.StructType
 
 class DeltaV2TableManagerCacheKeySuite
     extends QueryTest
-    with SharedSparkSession
-{
+    with SharedSparkSession {
 
   test("produces a _delta_log path from the data path") {
     withTempDir { dataPath =>
       val key = DeltaV2TableManagerCacheKey.from(
-        spark, dataPath.getCanonicalPath,
+        spark,
+        dataPath.getCanonicalPath,
         Map.empty[String, String].asJava)
 
       assert(key.path.isAbsolute)
       assert(key.path.toString.endsWith("_delta_log"))
       val parentUri = key.path.getParent.toUri
-      val expectedUri = new Path(
-        dataPath.getCanonicalPath).toUri.normalize()
-      assert(parentUri.normalize().getPath ===
-        expectedUri.getPath,
+      val expectedUri = new Path(dataPath.getCanonicalPath).toUri.normalize()
+      assert(
+        parentUri.normalize().getPath === expectedUri.getPath,
         "qualified parent path component must match data path")
     }
   }
@@ -57,9 +57,13 @@ class DeltaV2TableManagerCacheKeySuite
         "fs.test.option" -> "value",
         "reader.option" -> "ignored")
       val first = DeltaV2TableManagerCacheKey.from(
-        spark, dataPath.getCanonicalPath, options.asJava)
+        spark,
+        dataPath.getCanonicalPath,
+        options.asJava)
       val second = DeltaV2TableManagerCacheKey.from(
-        spark, dataPath.getCanonicalPath, options.asJava)
+        spark,
+        dataPath.getCanonicalPath,
+        options.asJava)
       assert(first === second)
     }
   }
@@ -69,12 +73,10 @@ class DeltaV2TableManagerCacheKeySuite
       val dataPath = new File(parent, "table:with:colons")
       assert(dataPath.mkdirs())
 
-      withSQLConf(
-          DeltaSQLConf
-            .DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS.key
-              -> "true") {
+      withSQLConf(DeltaSQLConf.DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS.key -> "true") {
         val key = DeltaV2TableManagerCacheKey.from(
-          spark, dataPath.getCanonicalPath,
+          spark,
+          dataPath.getCanonicalPath,
           Map.empty[String, String].asJava)
         assert(key.path.isAbsolute)
         assert(key.path.toString.endsWith("_delta_log"))
@@ -82,8 +84,7 @@ class DeltaV2TableManagerCacheKeySuite
     }
   }
 
-  test("filters non-filesystem options and isolates " +
-      "filesystem credentials") {
+  test("filters non-filesystem options and isolates filesystem credentials") {
     withTempDir { dataPath =>
       val path = dataPath.getCanonicalPath
       val firstOptions = Map(
@@ -94,27 +95,30 @@ class DeltaV2TableManagerCacheKeySuite
         firstOptions.updated("fs.test.secret", "second")
 
       val first = DeltaV2TableManagerCacheKey.from(
-        spark, path, firstOptions.asJava)
+        spark,
+        path,
+        firstOptions.asJava)
       val second = DeltaV2TableManagerCacheKey.from(
-        spark, path, secondOptions.asJava)
+        spark,
+        path,
+        secondOptions.asJava)
 
-      assert(first.sessionInvariantFsOptions ===
-        firstOptions.filter { case (key, _) =>
+      assert(
+        first.sessionInvariantFsOptions === firstOptions.filter { case (key, _) =>
           key.startsWith("fs.") || key.startsWith("dfs.")
         })
-      assert(!first.sessionInvariantFsOptions
-        .contains("reader.option"))
+      assert(!first.sessionInvariantFsOptions.contains("reader.option"))
       assert(first !== second)
     }
   }
 
-  test("redacts filesystem option names and values " +
-      "from rendering") {
+  test("redacts filesystem option names and values from rendering") {
     withTempDir { dataPath =>
       val optionName = "fs.test.secret"
       val optionValue = "credential-value"
       val key = DeltaV2TableManagerCacheKey.from(
-        spark, dataPath.getCanonicalPath,
+        spark,
+        dataPath.getCanonicalPath,
         Map(optionName -> optionValue).asJava)
       val rendered = key.toString
 
@@ -131,9 +135,13 @@ class DeltaV2TableManagerCacheKeySuite
       val path = dataPath.getCanonicalPath
       val empty = Map.empty[String, String].asJava
       val withSlash = DeltaV2TableManagerCacheKey.from(
-        spark, path + "/", empty)
+        spark,
+        path + "/",
+        empty)
       val withoutSlash = DeltaV2TableManagerCacheKey.from(
-        spark, path, empty)
+        spark,
+        path,
+        empty)
       assert(withSlash === withoutSlash)
     }
   }
@@ -144,21 +152,28 @@ class DeltaV2TableManagerCacheKeySuite
       val withScheme = "file://" + plain
       val empty = Map.empty[String, String].asJava
       val keyPlain = DeltaV2TableManagerCacheKey.from(
-        spark, plain, empty)
+        spark,
+        plain,
+        empty)
       val keyScheme = DeltaV2TableManagerCacheKey.from(
-        spark, withScheme, empty)
+        spark,
+        withScheme,
+        empty)
       assert(keyPlain === keyScheme)
     }
   }
 
-  test("different fs options produce distinct keys " +
-      "for same path") {
+  test("different fs options produce distinct keys for same path") {
     withTempDir { dataPath =>
       val path = dataPath.getCanonicalPath
       val keyA = DeltaV2TableManagerCacheKey.from(
-        spark, path, Map("fs.test" -> "a").asJava)
+        spark,
+        path,
+        Map("fs.test" -> "a").asJava)
       val keyB = DeltaV2TableManagerCacheKey.from(
-        spark, path, Map("fs.test" -> "b").asJava)
+        spark,
+        path,
+        Map("fs.test" -> "b").asJava)
       assert(keyA !== keyB)
     }
   }
@@ -172,20 +187,20 @@ class DeltaV2TableManagerCacheKeySuite
         .LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS.key
       withSQLConf(confKey -> "false") {
         val withFsOpts = DeltaV2TableManagerCacheKey.from(
-          spark, path,
+          spark,
+          path,
           Map("fs.test" -> "v", "dfs.test" -> "x").asJava)
         val bare = DeltaV2TableManagerCacheKey.from(
-          spark, path, Map.empty[String, String].asJava)
-        assert(withFsOpts === bare,
-          "fs/dfs DataFrame options should be ignored")
-        assert(
-          withFsOpts.sessionInvariantFsOptions.isEmpty)
+          spark,
+          path,
+          Map.empty[String, String].asJava)
+        assert(withFsOpts === bare, "fs/dfs DataFrame options should be ignored")
+        assert(withFsOpts.sessionInvariantFsOptions.isEmpty)
       }
     }
   }
 
-  test("catalog storage properties authoritative " +
-      "when config off") {
+  test("catalog storage properties authoritative when config off") {
     withTempDir { dataPath =>
       val path = dataPath.getCanonicalPath
       val confKey = DeltaSQLConf
@@ -193,79 +208,64 @@ class DeltaV2TableManagerCacheKeySuite
       val catalogTable = CatalogTable(
         identifier = TableIdentifier("test_table"),
         tableType = CatalogTableType.EXTERNAL,
-        storage = CatalogStorageFormat.empty.copy(
-          properties =
-            Map("fs.catalog.key" -> "catalog-value")),
+        storage = CatalogStorageFormat.empty.copy(properties =
+          Map("fs.catalog.key" -> "catalog-value")),
         schema = new StructType())
       withSQLConf(confKey -> "false") {
         val withCatalog = DeltaV2TableManagerCacheKey.from(
-          spark, path,
+          spark,
+          path,
           Map("fs.ignored" -> "from-options").asJava,
           Some(catalogTable))
         val bare = DeltaV2TableManagerCacheKey.from(
-          spark, path,
+          spark,
+          path,
           Map.empty[String, String].asJava)
-        assert(withCatalog !== bare,
-          "catalog fs options should differentiate keys")
-        assert(withCatalog.sessionInvariantFsOptions
-          .contains("fs.catalog.key"))
-        assert(!withCatalog.sessionInvariantFsOptions
-          .contains("fs.ignored"))
+        assert(withCatalog !== bare, "catalog fs options should differentiate keys")
+        assert(withCatalog.sessionInvariantFsOptions.contains("fs.catalog.key"))
+        assert(!withCatalog.sessionInvariantFsOptions.contains("fs.ignored"))
       }
     }
   }
 
   // --- Qualification and non-retention invariants ------------------
 
-  test("absolute schemeless path is qualified " +
-      "with a URI scheme") {
+  test("absolute schemeless path is qualified with a URI scheme") {
     withTempDir { dataPath =>
       val schemelessAbsolute = dataPath.getCanonicalPath
-      assert(!schemelessAbsolute.contains("://"),
-        "precondition: input must not carry a URI scheme")
+      assert(!schemelessAbsolute.contains("://"), "precondition: input must not carry a URI scheme")
       val key = DeltaV2TableManagerCacheKey.from(
-        spark, schemelessAbsolute,
+        spark,
+        schemelessAbsolute,
         Map.empty[String, String].asJava)
 
-      // Independently compute the expected qualified path using
-      // the same Hadoop configuration and FileSystem that the
-      // production code would use.
-      val rawLogPath =
-        new Path(new Path(schemelessAbsolute), "_delta_log")
+      // Independently compute the expected qualified path using the same Hadoop configuration and
+      // FileSystem that the production code would use.
+      val rawLogPath = new Path(new Path(schemelessAbsolute), "_delta_log")
       // scalastyle:off deltahadoopconfiguration
-      val hadoopConf = spark.sessionState
-        .newHadoopConfWithOptions(Map.empty)
+      val hadoopConf = spark.sessionState.newHadoopConfWithOptions(Map.empty)
       // scalastyle:on deltahadoopconfiguration
-      val expectedPath =
-        rawLogPath.getFileSystem(hadoopConf)
-          .makeQualified(rawLogPath)
+      val expectedPath = rawLogPath.getFileSystem(hadoopConf).makeQualified(rawLogPath)
 
-      assert(key.path === expectedPath,
-        "key path must equal the FileSystem-qualified path")
-      assert(key.path.toUri.getScheme != null,
-        "qualified path must carry a URI scheme")
-      assert(key.path.toUri.getAuthority != null ||
-        key.path.toUri.getScheme == "file",
+      assert(key.path === expectedPath, "key path must equal the FileSystem-qualified path")
+      assert(key.path.toUri.getScheme != null, "qualified path must carry a URI scheme")
+      assert(
+        key.path.toUri.getAuthority != null ||
+          key.path.toUri.getScheme == "file",
         "qualified path must carry authority or be local")
     }
   }
 
-  test("cache key does not retain a Hadoop " +
-      "FileSystem instance") {
-    // Deterministic structural assertion: none of the case-class
-    // fields have a type assignable to Hadoop FileSystem. This
-    // pins the non-retention invariant without relying on GC
-    // timing or weak references, which are invalid under Hadoop's
-    // global FileSystem cache.
+  test("cache key does not retain a Hadoop FileSystem instance") {
+    // Deterministic structural assertion: none of the case-class fields have a type assignable to
+    // Hadoop FileSystem. This pins the non-retention invariant without relying on GC timing or
+    // weak references, which are invalid under Hadoop's global FileSystem cache.
     val fsClass = classOf[FileSystem]
-    val fields =
-      classOf[DeltaV2TableManagerCacheKey].getDeclaredFields
-    val fsFields = fields.filter { f =>
-      fsClass.isAssignableFrom(f.getType)
-    }
-    assert(fsFields.isEmpty,
-      "DeltaV2TableManagerCacheKey must not hold a " +
-        "FileSystem; found: " +
+    val fields = classOf[DeltaV2TableManagerCacheKey].getDeclaredFields
+    val fsFields = fields.filter(field => fsClass.isAssignableFrom(field.getType))
+    assert(
+      fsFields.isEmpty,
+      "DeltaV2TableManagerCacheKey must not hold a FileSystem; found: " +
         fsFields.map(_.getName).mkString(", "))
   }
 }

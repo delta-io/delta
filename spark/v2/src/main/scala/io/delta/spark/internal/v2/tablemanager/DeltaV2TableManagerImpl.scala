@@ -16,24 +16,21 @@
 package io.delta.spark.internal.v2.tablemanager
 
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
-import org.apache.hadoop.fs.Path
 
+import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Process-cached [[DeltaV2TableManager]] composite.
  *
- * Placeholder: inherits default trait stubs. The real implementation
- * (snapshot lifecycle and freshness control) is added in a follow-up
- * layer.
+ * Placeholder: inherits default trait stubs. The real implementation (snapshot lifecycle and
+ * freshness control) is added in a follow-up layer.
  *
- * @param qualifiedTableDataPath the fully-qualified table data
- *   directory (parent of `_delta_log`).
- * @param sessionInvariantFsOptions filesystem-prefixed credential
- *   options (`fs.*`, `dfs.*`) that were used to resolve the table
- *   path. Retained for downstream engine construction.
- * @param initialCatalogTableOpt the catalog table supplied by the
- *   first caller that loaded this entry, if any.
+ * @param qualifiedTableDataPath the fully-qualified table data directory (parent of `_delta_log`).
+ * @param sessionInvariantFsOptions filesystem-prefixed credential options (`fs.*`, `dfs.*`) that
+ *   were used to resolve the table path. Retained for downstream engine construction.
+ * @param initialCatalogTableOpt the catalog table supplied by the first caller that loaded this
+ *   entry, if any.
  */
 private[tablemanager] class DeltaV2TableManagerImpl(
     val qualifiedTableDataPath: Path,
@@ -46,6 +43,5 @@ private[tablemanager] class DeltaV2TableManagerImpl(
 
   // Placeholder until snapshot lifecycle is implemented.
   override def snapshotManager(): DeltaV2SnapshotManager =
-    throw new UnsupportedOperationException(
-      "snapshotManager not yet implemented")
+    throw new UnsupportedOperationException("snapshotManager not yet implemented")
 }
