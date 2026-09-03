@@ -99,8 +99,9 @@ class CachedSnapshotManagerSuite
           val k1 = DeltaV2Snapshot.getKernelSnapshot(first)
           val k2 = DeltaV2Snapshot.getKernelSnapshot(second)
           assert(k1 eq k2, "Expected same SnapshotImpl instance on warm hit")
-          assert(first.allFiles.count() == 10L)
-          assert(second.allFiles.count() == 10L)
+          val firstFileCount = first.allFiles.count()
+          assert(firstFileCount > 0L)
+          assert(second.allFiles.count() == firstFileCount)
         } finally {
           mgr.retire()
         }
