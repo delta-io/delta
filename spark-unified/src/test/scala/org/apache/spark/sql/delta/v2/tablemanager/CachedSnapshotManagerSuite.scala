@@ -284,6 +284,29 @@ class CachedSnapshotManagerSuite
     }
   }
 
+  test("history and version checks honor cached snapshot staleness") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val mgr = createManager(dir)
+        mgr.loadLatestSnapshot()
+        appendToDeltaTable(dir)
+
+        val activeCommit = mgr.getActiveCommitAtTime(
+          Long.MaxValue,
+          /* canReturnLastCommit= */ true,
+          /* mustBeRecreatable= */ true,
+          /* canReturnEarliestCommit= */ false)
+        assert(activeCommit.getVersion == 0L)
+
+        val error = intercept[VersionNotFoundException] {
+          mgr.checkVersionExists(1L, mustBeRecreatable = true, allowOutOfRange = false)
+        }
+        assert(error.getLatest == 0L)
+      }
+    }
+  }
+
   // === Concurrency correctness ================================
 
   test("concurrent loadLatestSnapshot converges to latest version") {
