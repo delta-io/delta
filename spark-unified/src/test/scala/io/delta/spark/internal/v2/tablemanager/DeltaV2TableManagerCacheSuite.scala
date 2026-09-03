@@ -381,8 +381,7 @@ class DeltaV2TableManagerCacheSuite
         // Re-lookup key A: must create a new instance because size-1 evicted the original, proving
         // first caller's config governs, not the second caller's (size 1000).
         val reloadedA = DeltaV2TableManagerCache.getOrCreate(sessionA.sessionState.conf, keyA)
-        assert(
-          reloadedA ne originalA,
+        assert(reloadedA ne originalA,
           "Key A should have been evicted under the first caller's maxSize=1 and " +
             "reloaded as a new instance")
       }

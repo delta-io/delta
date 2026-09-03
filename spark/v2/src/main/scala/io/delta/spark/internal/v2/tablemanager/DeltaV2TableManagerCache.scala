@@ -261,9 +261,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
    * the caller must supply an already-qualified path consistent with the key's construction in
    * [[CacheKey.from]].
    */
-  def invalidateByLogPath(logPath: Path): Unit = {
-    instance.foreach(_.invalidateByLogPath(logPath))
-  }
+  def invalidateByLogPath(logPath: Path): Unit = instance.foreach(_.invalidateByLogPath(logPath))
 
   /**
    * Retires and clears all cached managers, then discards the singleton. Matches the

@@ -36,15 +36,13 @@ class DeltaV2TableManagerCacheKeySuite
 
   test("produces a _delta_log path from the data path") {
     withTempDir { dataPath =>
-      val key =
-        CacheKey.from(spark, dataPath.getCanonicalPath, Map.empty[String, String].asJava)
+      val key = CacheKey.from(spark, dataPath.getCanonicalPath, Map.empty[String, String].asJava)
 
       assert(key.path.isAbsolute)
       assert(key.path.toString.endsWith("_delta_log"))
       val parentUri = key.path.getParent.toUri
       val expectedUri = new Path(dataPath.getCanonicalPath).toUri.normalize()
-      assert(
-        parentUri.normalize().getPath === expectedUri.getPath,
+      assert(parentUri.normalize().getPath === expectedUri.getPath,
         "qualified parent path component must match data path")
     }
   }
@@ -64,8 +62,7 @@ class DeltaV2TableManagerCacheKeySuite
       assert(dataPath.mkdirs())
 
       withSQLConf(DeltaSQLConf.DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS.key -> "true") {
-        val key =
-          CacheKey.from(spark, dataPath.getCanonicalPath, Map.empty[String, String].asJava)
+        val key = CacheKey.from(spark, dataPath.getCanonicalPath, Map.empty[String, String].asJava)
         assert(key.path.isAbsolute)
         assert(key.path.toString.endsWith("_delta_log"))
       }
@@ -84,8 +81,7 @@ class DeltaV2TableManagerCacheKeySuite
       val first = CacheKey.from(spark, path, firstOptions.asJava)
       val second = CacheKey.from(spark, path, secondOptions.asJava)
 
-      assert(
-        first.sessionInvariantFsOptions === firstOptions.filter { case (key, _) =>
+      assert(first.sessionInvariantFsOptions === firstOptions.filter { case (key, _) =>
           key.startsWith("fs.") || key.startsWith("dfs.")
         })
       assert(!first.sessionInvariantFsOptions.contains("reader.option"))
