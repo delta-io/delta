@@ -28,6 +28,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -426,7 +427,7 @@ trait RecordChecksum extends DeltaLogging {
 
       case _: RemoveFile if ignoreRemoveFiles => ()
 
-      // extendedFileMetadata == true implies fields partitionValues, size, and tags are present
+      // extendedFileMetadata == true implies fields partitionValues and size are present
       case r: RemoveFile if r.extendedFileMetadata == Some(true) =>
         val size = r.size.get
         tableSizeBytes -= size
@@ -604,7 +605,11 @@ trait RecordChecksum extends DeltaLogging {
     // We can also ignore file retention because that only affects [[RemoveFile]] actions.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      // Using object identity or not doesn't matter here for computing SetTransactions.
+      useDeletionVectorObjectIdentity = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC))
 
     logReplay.append(attemptVersion - 1, oldSetTransactions.toIterator)
     logReplay.append(attemptVersion, setTransactionsToCommit.toIterator)
@@ -633,7 +638,11 @@ trait RecordChecksum extends DeltaLogging {
     // We only work with DomainMetadata, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      // Using object identity or not doesn't matter here for computing DomainMetadata.
+      useDeletionVectorObjectIdentity = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC))
 
     val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_DOMAIN_METADATAS_IN_CRC)
 
@@ -701,7 +710,10 @@ trait RecordChecksum extends DeltaLogging {
     // We only work with AddFile, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      useDeletionVectorObjectIdentity = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC))
 
     logReplay.append(attemptVersion - 1, oldAllFiles.map(normalizePath).toIterator)
     logReplay.append(attemptVersion, actionsToCommit.map(normalizePath).toIterator)
@@ -867,7 +879,7 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
     // AMT manifest trees do not yet round-trip every AddFile field: `DataEntry.toAddFile` zeroes
     // `modificationTime`, forces `dataChange = false`, drops `tags`, and reduces `stats` to
     // `{"numRecords":n}`. Project both sides through that lossy lens before comparing.
-    if (protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+    if (AMTUtils.amtEnabled(self)) {
       def normalizeForAmtTreeRoundTrip(f: AddFile): AddFile = f.copy(
         modificationTime = 0L,
         dataChange = false,

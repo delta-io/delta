@@ -801,6 +801,12 @@
     ],
     "sqlState" : "56038"
   },
+  "DELTA_CONFLICTING_METADATA_DOMAIN" : {
+    "message" : [
+      "A concurrent transaction added a conflicting metadata domain <domain>."
+    ],
+    "sqlState" : "2D521"
+  },
   "DELTA_CONFLICT_SET_COLUMN" : {
     "message" : [
       "There is a conflict from these SET columns: <columnList>."
@@ -2651,9 +2657,21 @@
   },
   "DELTA_REPLACE_WHERE_MISMATCH" : {
     "message" : [
-      "Written data does not conform to partial table overwrite condition or constraint '<replaceWhere>'.",
-      "<message>"
+      "Written data does not conform to partial table overwrite condition or constraint '<replaceWhere>'."
     ],
+    "subClass" : {
+      "INVALID_PARTITIONS" : {
+        "message" : [
+          "Invalid data would be written to partitions <badPartitions>."
+        ]
+      },
+      "INVARIANT_VIOLATION" : {
+        "message" : [
+          "<invariantViolationMessage>",
+          ""
+        ]
+      }
+    },
     "sqlState" : "44000"
   },
   "DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
@@ -3171,8 +3189,21 @@
   },
   "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED" : {
     "message" : [
-      "Failed to convert the table version <version> to the universal format <format>. <message>"
+      "Failed to convert the table version <version> to the universal format <format>."
     ],
+    "subClass" : {
+      "CAUSED_BY_ERROR" : {
+        "message" : [
+          "<causeErrorMessage>",
+          ""
+        ]
+      },
+      "UNEXPECTED_PARTITION_DATA_TYPE" : {
+        "message" : [
+          "Unexpected partition data type <dataType>."
+        ]
+      }
+    },
     "sqlState" : "KD00E"
   },
   "DELTA_UNIVERSAL_FORMAT_VIOLATION" : {

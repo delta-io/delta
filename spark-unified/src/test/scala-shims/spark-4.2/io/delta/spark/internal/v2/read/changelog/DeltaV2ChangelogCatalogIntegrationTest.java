@@ -108,7 +108,7 @@ class DeltaV2ChangelogCatalogIntegrationTest extends DeltaV2ChangelogTestBase {
     // runs in. tableLocation is resolved by withHistoryTable before STRICT is set.
     DeltaV2SnapshotManager snapshotManager =
         SnapshotManagerFactory.create(tableLocation, defaultEngine, Optional.empty());
-    long millis = snapshotManager.loadSnapshotAt(version).getTimestamp(defaultEngine);
+    long millis = snapshotManager.loadSnapshotAt(version).timestamp();
     return new java.sql.Timestamp(millis);
   }
 

@@ -21,7 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
-import java.nio.file.Paths;
 import java.sql.Timestamp;
 import java.util.List;
 import org.apache.spark.sql.Dataset;
@@ -195,10 +194,6 @@ public class V2MetadataReadTest extends DeltaV2TestBase {
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
-
-  private static String newTablePath(String prefix) {
-    return Paths.get(System.getProperty("java.io.tmpdir"), prefix + System.nanoTime()).toString();
-  }
 
   private void createTable(String path, boolean rowTrackingEnabled) {
     spark.sql(

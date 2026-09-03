@@ -62,6 +62,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -787,7 +788,8 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     // Capture v0 metadata BEFORE evolving the table.
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
-    SnapshotImpl snapshotV0 = (SnapshotImpl) snapshotManager.loadSnapshotAt(0L);
+    SnapshotImpl snapshotV0 =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(0L));
     Metadata metadataV0 = snapshotV0.getMetadata();
     Protocol protocolV0 = snapshotV0.getProtocol();
     String tableId = metadataV0.getId();

@@ -111,7 +111,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       size = 1,
       modificationTime = 2,
       dataChange = false,
-      backReference = Some(BackReference(manifest = "metadata/leaf-1.parquet", pos = 7L)))
+      backReference = Some(BackReference(manifest = "metadata/leaf-1.parquet", pos = 7)))
     assert(withBackRef.json.contains("\"backReference\":{\"manifest\":" +
       "\"metadata/leaf-1.parquet\",\"pos\":7}"))
     assert(Action.fromJson(withBackRef.json) === withBackRef)
@@ -126,7 +126,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     val withBackRef = RemoveFile(
       path = "a",
       deletionTimestamp = Some(1L),
-      backReference = Some(BackReference(manifest = "metadata/leaf-2.parquet", pos = 3L)))
+      backReference = Some(BackReference(manifest = "metadata/leaf-2.parquet", pos = 3)))
     assert(withBackRef.json.contains("\"backReference\":{\"manifest\":" +
       "\"metadata/leaf-2.parquet\",\"pos\":3}"))
     assert(Action.fromJson(withBackRef.json) === withBackRef)
@@ -137,7 +137,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
   }
 
   test("AddFile back reference propagates to removeWithTimestamp and copy") {
-    val backRef = Some(BackReference(manifest = "metadata/leaf-3.parquet", pos = 11L))
+    val backRef = Some(BackReference(manifest = "metadata/leaf-3.parquet", pos = 11))
     val add = AddFile("a", Map.empty, 1, 2, dataChange = true, backReference = backRef)
     // removeWithTimestamp -> tombstone inherits the back reference.
     assert(add.removeWithTimestamp().backReference == backRef)
@@ -225,6 +225,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = None,
@@ -251,6 +252,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = None,
@@ -785,6 +787,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = Some(Map("k1" -> "v1")),
@@ -869,6 +872,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(5),
       isolationLevel = Some("WriteSerializable"),
       isBlindAppend = Some(false),
+      dataChange = None,
       operationMetrics = Some(Map("numFiles" -> "10")),
       userMetadata = Some("test metadata"),
       tags = Some(Map("source" -> "test")),
@@ -909,6 +913,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(42),
       isolationLevel = Some("WriteSerializable"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("numFiles" -> "25", "numOutputRows" -> "1000")),
       userMetadata = operation.userMetadata,
       tags = Some(Map("environment" -> "production", "team" -> "data-eng")),

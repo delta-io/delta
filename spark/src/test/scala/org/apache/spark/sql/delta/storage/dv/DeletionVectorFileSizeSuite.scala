@@ -26,14 +26,15 @@ import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 
 class DeletionVectorFileSizeSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLTestUtils
     with DeltaSQLCommandTest {
+
   private def getAddAndRemoveFilesFromCommitVersion(
       deltaLog: DeltaLog,
       commitVersion: Long): (Seq[AddFile], Seq[RemoveFile]) = {

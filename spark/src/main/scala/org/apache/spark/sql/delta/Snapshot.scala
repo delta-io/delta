@@ -26,7 +26,7 @@ import scala.util.Try
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs, AMTUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
@@ -236,7 +236,7 @@ class Snapshot(
 
   /** Returns the lastManifestCommit reliably for this snapshot's version. */
   lazy val lastManifestCommitOpt: Option[LastManifestCommit] =
-    Option.when(protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+    Option.when(AMTUtils.amtEnabled(this)) {
       _reconstructedProtocolMetadataICTAndLMC.bestEffortLastManifestCommit.orElse {
         // Only fallback to direct CommitInfo read if there are no trailing deltas.
         // This avoids unnecessary I/O when there isn't any AMT checkpoint yet.
@@ -600,6 +600,9 @@ class Snapshot(
       // for serializability
       val localMinFileRetentionTimestamp = minFileRetentionTimestamp
       val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
+      val localTableRoot = deltaLog.dataPath.toString
+      val localUseDeletionVectorObjectIdentity =
+        FileAction.useDeletionVectorObjectIdentity(metadata, protocol, spark)
 
       val canonicalPath = deltaLog.getCanonicalPathUdf()
 
@@ -646,7 +649,9 @@ class Snapshot(
           val state: LogReplay =
             new InMemoryLogReplay(
               Some(localMinFileRetentionTimestamp),
-              localMinSetTransactionRetentionTimestamp)
+              localMinSetTransactionRetentionTimestamp,
+              tableRoot = new Path(localTableRoot),
+              useDeletionVectorObjectIdentity = localUseDeletionVectorObjectIdentity)
           state.append(0, iter.map(_.unwrap))
           state.checkpoint.map(_.wrap)
         }
@@ -964,7 +969,7 @@ object Snapshot extends DeltaLogging {
     // AddFile-generation logic cannot handle back references (yet): it writes allFiles into the CRC
     // without them. Only leaf-resident files carry a back reference, so a root-only tree yields a
     // back-reference-free list that matches state reconstruction.
-    if (snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+    if (AMTUtils.amtEnabled(snapshot)) {
       val rootOnly =
         effectiveLatestAMTCheckpointAtCommitVersion.exists(_.contentRoot.numLeaves.contains(0L))
       if (!rootOnly) return false
