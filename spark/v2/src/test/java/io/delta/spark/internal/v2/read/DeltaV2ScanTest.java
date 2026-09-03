@@ -15,6 +15,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
+import java.util.OptionalLong;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogColumnStat;
@@ -30,6 +31,7 @@ import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -503,7 +505,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     long beforeDppTotalBytes = getTotalBytes(deltaV2Scan);
     long beforeDppEstimatedSize = getEstimatedSizeInBytes(deltaV2Scan);
     assert (beforeDppFiles.size() == 5);
-    // Without column pruning, estimatedSizeInBytes should equal totalBytes
+    // Snappy tables use the selected-file byte sum directly.
     assertEquals(beforeDppTotalBytes, beforeDppEstimatedSize);
 
     deltaV2Scan.filter(runtimeFilters);
@@ -528,7 +530,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     assertEquals(expectedPartitionFilesAfterDpp.size(), afterDppFiles.size());
     assertEquals(new HashSet<>(expectedPartitionFilesAfterDpp), new HashSet<>(afterDppFiles));
     assertEquals(expectedTotalBytesAfterDpp, afterDppTotalBytes);
-    // Without column pruning, estimatedSizeInBytes should equal totalBytes after filtering too
+    // Runtime filtering updates the selected-file byte sum used by the size API.
     assertEquals(afterDppTotalBytes, afterDppEstimatedSize);
   }
 
@@ -566,6 +568,21 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         "selected files should be pruned with runtime partition filters");
   }
 
+  @Test
+  public void testPlannedSnapshotTriggersPlanningAndReturnsSameSnapshot() throws Exception {
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    assertFalse(getPlanned(scan), "build() should leave file planning lazy");
+
+    Snapshot plannedSnapshot = scan.plannedSnapshot();
+
+    assertTrue(getPlanned(scan), "plannedSnapshot() should trigger file planning");
+    assertSame(
+        plannedSnapshot,
+        scan.plannedSnapshot(),
+        "repeated plannedSnapshot() calls should return the same planned snapshot");
+  }
+
   private static long getTotalBytes(DeltaV2Scan scan) throws Exception {
     scan.estimateStatistics(); // ensurePlanned
     Field field = DeltaV2Scan.class.getDeclaredField("totalBytes");
@@ -574,17 +591,20 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   }
 
   private static long getEstimatedSizeInBytes(DeltaV2Scan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
-    Field field = DeltaV2Scan.class.getDeclaredField("estimatedSizeInBytes");
-    field.setAccessible(true);
-    return (long) field.get(scan);
+    return scan.estimateSizeInBytes().getAsLong();
   }
 
-  private static org.apache.spark.sql.sources.Filter[] getDataFilters(DeltaV2Scan scan)
-      throws Exception {
+  private static org.apache.spark.sql.catalyst.expressions.Expression[] getDataFilters(
+      DeltaV2Scan scan) throws Exception {
     Field field = DeltaV2Scan.class.getDeclaredField("dataFilters");
     field.setAccessible(true);
-    return (org.apache.spark.sql.sources.Filter[]) field.get(scan);
+    return (org.apache.spark.sql.catalyst.expressions.Expression[]) field.get(scan);
+  }
+
+  private static boolean getPlanned(DeltaV2Scan scan) throws Exception {
+    Field field = DeltaV2Scan.class.getDeclaredField("planned");
+    field.setAccessible(true);
+    return (boolean) field.get(scan);
   }
 
   private static long getTotalRows(DeltaV2Scan scan) throws Exception {
@@ -607,20 +627,30 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
   @Test
   public void testNumRowsEmptyWhenStatsDisabled() throws Exception {
-    // With CBO and planStats disabled (the default), numRows() should return empty even when all
-    // files have stats, matching V1 behavior (LogicalRelation.computeStats()).
-    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    // Explicitly disable both settings so the test does not depend on environment defaults.
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "false",
+        () -> {
+          withSQLConf(
+              "spark.sql.cbo.planStats.enabled",
+              "false",
+              () -> {
+                DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+                DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
-    assertFalse(
-        isRowCountKnown(scan), "rowCountKnown should be false when CBO and planStats are disabled");
-    assertFalse(
-        scan.estimateStatistics().numRows().isPresent(),
-        "numRows() should be empty when CBO and planStats are disabled");
+                assertFalse(
+                    isRowCountKnown(scan),
+                    "rowCountKnown should be false when CBO and planStats are disabled");
+                assertFalse(
+                    scan.estimateStatistics().numRows().isPresent(),
+                    "numRows() should be empty when CBO and planStats are disabled");
+              });
+        });
   }
 
   @Test
-  public void testNumRowsInStatistics() throws Exception {
+  public void testPathStatisticsDoNotReportPerFileNumRows() throws Exception {
     // Table has 5 rows inserted as 5 separate partitions (1 row each), all with stats.
     withSQLConf(
         "spark.sql.cbo.planStats.enabled",
@@ -631,16 +661,16 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
           assertTrue(isRowCountKnown(scan), "Row count should be known when all files have stats");
           assertEquals(5L, getTotalRows(scan), "Total rows should match the 5 inserted rows");
-          assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
-          assertEquals(5L, scan.estimateStatistics().numRows().getAsLong());
+          assertFalse(
+              scan.estimateStatistics().numRows().isPresent(),
+              "path-based optimizer statistics should not expose per-file row counts");
         });
   }
 
   @Test
   public void testNumRowsAfterRuntimeFiltering() throws Exception {
-    // Runtime partition filtering recomputes totalRows from the per-file counts of files that
-    // survive pruning, so numRows() reflects the post-prune row count rather than the
-    // pre-filter total or empty.
+    // Runtime partition filtering still recomputes the internal per-file row count used by Delta
+    // metrics, even though path-based optimizer statistics intentionally omit numRows().
     withSQLConf(
         "spark.sql.cbo.planStats.enabled",
         "true",
@@ -648,26 +678,25 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
           DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
           DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
-          assertEquals(
-              5L, scan.estimateStatistics().numRows().getAsLong(), "5 rows before filtering");
+          scan.estimateStatistics();
+          assertEquals(5L, getTotalRows(scan), "5 rows before filtering");
 
           // Two rows in the table have city=hz (Alice and Bob, in different date partitions).
           scan.filter(new Predicate[] {cityPredicate}); // city=hz
 
-          assertTrue(
+          assertFalse(
               scan.estimateStatistics().numRows().isPresent(),
-              "numRows should remain known after runtime filtering");
+              "path-based optimizer statistics should not expose per-file row counts");
           assertEquals(
               2L,
-              scan.estimateStatistics().numRows().getAsLong(),
-              "numRows should be recomputed to the post-prune count (2 city=hz rows)");
+              getTotalRows(scan),
+              "the internal row count should be recomputed after runtime filtering");
         });
   }
 
   @Test
   public void testNumRowsZeroAfterFilteringOutAllFiles() throws Exception {
-    // When runtime filtering prunes every file, totalRows recomputes to 0 (still a known
-    // value, not OptionalLong.empty()).
+    // When runtime filtering prunes every file, the internal totalRows recomputes to 0.
     withSQLConf(
         "spark.sql.cbo.planStats.enabled",
         "true",
@@ -677,13 +706,13 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
           scan.filter(new Predicate[] {negativeCityPredicate}); // city=zz doesn't exist
 
-          assertTrue(
+          assertFalse(
               scan.estimateStatistics().numRows().isPresent(),
-              "numRows should remain known after runtime filtering (even when all files filtered)");
+              "path-based optimizer statistics should not expose per-file row counts");
           assertEquals(
               0L,
-              scan.estimateStatistics().numRows().getAsLong(),
-              "numRows should be 0 when all files are filtered out");
+              getTotalRows(scan),
+              "the internal row count should be 0 when all files are filtered out");
         });
   }
 
@@ -917,17 +946,11 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testEqualsWithSameFilters() {
     // Both scans with equivalent filters created separately (not same instance)
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder1.pushFilters(
-        new org.apache.spark.sql.sources.Filter[] {
-          new org.apache.spark.sql.sources.EqualTo("city", "hz")
-        });
+    pushFilters(builder1, new org.apache.spark.sql.sources.EqualTo("city", "hz"));
     DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder2.pushFilters(
-        new org.apache.spark.sql.sources.Filter[] {
-          new org.apache.spark.sql.sources.EqualTo("city", "hz")
-        });
+    pushFilters(builder2, new org.apache.spark.sql.sources.EqualTo("city", "hz"));
     DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     // Same options and equivalent filters should be equal
@@ -943,10 +966,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
     // Scan with filters pushed
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder2.pushFilters(
-        new org.apache.spark.sql.sources.Filter[] {
-          new org.apache.spark.sql.sources.EqualTo("city", "hz")
-        });
+    pushFilters(builder2, new org.apache.spark.sql.sources.EqualTo("city", "hz"));
     DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     // Same options but different filters should not be equal and hashCodes should differ
@@ -962,11 +982,11 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         new org.apache.spark.sql.sources.EqualTo("date", "20180520");
 
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {cityEq, dateEq});
+    pushFilters(builder1, new org.apache.spark.sql.sources.Filter[] {cityEq, dateEq});
     DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {dateEq, cityEq});
+    pushFilters(builder2, new org.apache.spark.sql.sources.Filter[] {dateEq, cityEq});
     DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     assertEquals(scan1, scan2);
@@ -985,11 +1005,11 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         new org.apache.spark.sql.sources.GreaterThan("cnt", 10);
 
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {nameEq, cntGt});
+    pushFilters(builder1, new org.apache.spark.sql.sources.Filter[] {nameEq, cntGt});
     DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {cntGt, nameEq});
+    pushFilters(builder2, new org.apache.spark.sql.sources.Filter[] {cntGt, nameEq});
     DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     // Sanity check that dataFilters is actually populated, otherwise this test would trivially
@@ -1002,119 +1022,47 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   }
 
   // ================================================================================================
-  // Tests for estimated size with column projection
+  // Tests for selected-file size estimates
   // ================================================================================================
 
   @Test
   public void testEstimatedSizeMatchesStatistics() throws Exception {
-    // Test that estimateStatistics().sizeInBytes() returns the estimatedSizeInBytes field
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     long estimatedSizeFromStats = scan.estimateStatistics().sizeInBytes().getAsLong();
-    long estimatedSizeFromField = getEstimatedSizeInBytes(scan);
+    long estimatedSizeFromSizeOnlyApi = scan.estimateSizeInBytes().getAsLong();
 
-    assertEquals(estimatedSizeFromField, estimatedSizeFromStats);
+    assertEquals(estimatedSizeFromSizeOnlyApi, estimatedSizeFromStats);
   }
 
   @Test
-  public void testEstimatedSizeWithColumnPruning() throws Exception {
-    // Test that with column pruning, estimatedSizeInBytes is computed correctly
-    // Table schema: (part INT, date STRING, city STRING, name STRING, cnt INT)
-    // Partition columns: (date STRING, city STRING, part INT)
-    // Data columns: (name STRING, cnt INT)
-    //
-    // Formula: estimatedBytes = (totalBytes * outputRowSize) / fullSchemaRowSize
-    // Where:
-    //   ROW_OVERHEAD = 8
-    //   dataSchema.defaultSize() = 20 (STRING) + 4 (INT) = 24
-    //   partitionSchema.defaultSize() = 20 + 20 + 4 = 44
-    //   fullSchemaRowSize = 8 + 24 + 44 = 76
-    //
-    // With pruning to only 'name' column:
-    //   readDataSchema.defaultSize() = 20 (STRING only)
-    //   readSchema().defaultSize() = 20 + 44 = 64
-    //   outputRowSize = 8 + 64 = 72
-    //   estimatedBytes = (totalBytes * 72) / 76
-    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+  public void testEstimateSizeInBytesUsesCheapFileSizePath() throws Exception {
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "false",
+        () ->
+            withSQLConf(
+                "spark.sql.cbo.planStats.enabled",
+                "false",
+                () -> {
+                  DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+                  builder.pruneColumns(new StructType().add("name", DataTypes.StringType));
+                  DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
-    // Prune columns to only include 'name' (a data column) and partition columns
-    // This simulates: SELECT name, date, city, part FROM table
-    StructType prunedSchema =
-        new StructType()
-            .add("name", DataTypes.StringType) // only one data column
-            .add("date", DataTypes.StringType) // partition columns are always included
-            .add("city", DataTypes.StringType)
-            .add("part", DataTypes.IntegerType);
-    builder.pruneColumns(prunedSchema);
-
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-
-    long totalBytes = getTotalBytes(scan);
-    long estimatedSize = getEstimatedSizeInBytes(scan);
-
-    // Calculate expected estimated size using the formula
-    // outputRowSize = 8 + 64 = 72, fullSchemaRowSize = 8 + 24 + 44 = 76
-    // Note: We don't use Math.max(1, ...) here because totalBytes is guaranteed to be large enough
-    // (parquet files with actual data) that the division result won't be zero.
-    long expectedEstimatedSize = (totalBytes * 72) / 76;
-
-    assertTrue(totalBytes > 0, "totalBytes should be positive");
-    assertEquals(
-        expectedEstimatedSize,
-        estimatedSize,
-        String.format(
-            "estimatedSize should be (totalBytes * 72) / 76 = (%d * 72) / 76 = %d",
-            totalBytes, expectedEstimatedSize));
+                  long sizeInBytes = scan.estimateSizeInBytes().getAsLong();
+                  assertEquals(getTotalBytes(scan), sizeInBytes);
+                  assertTrue(sizeInBytes > 0, "post-pruning size should be positive");
+                  assertFalse(
+                      isRowCountKnown(scan),
+                      "the size-only path must not request per-file row statistics");
+                }));
   }
 
   @Test
-  public void testEstimatedSizeWithColumnPruningAndFiltering() throws Exception {
-    // Test that column pruning and runtime filtering work together correctly
-    // Using same formula as testEstimatedSizeWithColumnPruning:
-    //   estimatedBytes = (totalBytes * 72) / 76
-    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-
-    // Prune columns to only include 'name' column
-    StructType prunedSchema =
-        new StructType()
-            .add("name", DataTypes.StringType)
-            .add("date", DataTypes.StringType)
-            .add("city", DataTypes.StringType)
-            .add("part", DataTypes.IntegerType);
-    builder.pruneColumns(prunedSchema);
-
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-
-    // Get initial stats with column pruning
-    long initialTotalBytes = getTotalBytes(scan);
-    long initialEstimatedSize = getEstimatedSizeInBytes(scan);
-
-    // Verify initial estimated size matches formula
-    // Note: No Math.max(1, ...) needed - totalBytes from parquet files is large enough
-    long expectedInitialEstimated = (initialTotalBytes * 72) / 76;
-    assertEquals(
-        expectedInitialEstimated,
-        initialEstimatedSize,
-        "Initial estimatedSize should match formula");
-
-    // Apply a runtime filter
-    scan.filter(new Predicate[] {cityPredicate}); // city=hz
-
-    // After filtering, verify both values are updated correctly
-    long afterFilterTotalBytes = getTotalBytes(scan);
-    long afterFilterEstimatedSize = getEstimatedSizeInBytes(scan);
-
-    // Verify estimated size matches formula with new totalBytes
-    long expectedAfterFilterEstimated = (afterFilterTotalBytes * 72) / 76;
-    assertEquals(
-        expectedAfterFilterEstimated,
-        afterFilterEstimatedSize,
-        "After filter, estimatedSize should match formula with new totalBytes");
-
-    // Verify both values were reduced
-    assertTrue(afterFilterTotalBytes < initialTotalBytes, "totalBytes should be reduced");
-    assertTrue(afterFilterEstimatedSize < initialEstimatedSize, "estimatedSize should be reduced");
+  public void testStatisticsRequireSparkPostPushdownFilterAdjustment() {
+    DeltaV2Scan scan = (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+    assertFalse(scan.reflectsFullyPushedDownFilters());
   }
 
   @Test
@@ -1304,10 +1252,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testEstimateStatisticsWithCatalogStats_cboEnabled(@TempDir File tempDir)
-      throws Exception {
+  public void testEstimateStatisticsWithCatalogStats(@TempDir File tempDir) throws Exception {
     String path = tempDir.getAbsolutePath();
-    String tblName = "stats_cbo_enabled";
+    String tblName = "catalog_stats";
     spark.sql(
         String.format(
             "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
@@ -1334,49 +1281,37 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
     CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
 
-    withSQLConf(
-        "spark.sql.cbo.enabled",
-        "true",
-        () -> {
-          Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
+    Identifier id = Identifier.of(new String[] {"default"}, tblName);
+    DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
-          DeltaV2ScanBuilder builder =
-              (DeltaV2ScanBuilder)
-                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-          Statistics stats = scan.estimateStatistics();
+    DeltaV2ScanBuilder builder =
+        (DeltaV2ScanBuilder)
+            sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    Statistics stats = scan.estimateStatistics();
 
-          // numRows comes from per-file (post-prune) stats
-          assertTrue(stats.numRows().isPresent(), "numRows should be present with CBO enabled");
-          assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
+    // Catalog rows and columns are returned without an explicit size so Spark can derive a
+    // projection-aware size from the retained output.
+    assertTrue(stats.numRows().isPresent(), "numRows should be present");
+    assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
+    assertFalse(stats.sizeInBytes().isPresent(), "Spark should derive projected size");
 
-          // sizeInBytes should still come from planned files (more accurate)
-          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
-          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+    Map<NamedReference, ColumnStatistics> colStats = stats.columnStats();
+    assertNotNull(colStats, "columnStats should not be null");
+    assertFalse(colStats.isEmpty(), "columnStats should not be empty");
 
-          // Should have column stats
-          Map<NamedReference, ColumnStatistics> colStats = stats.columnStats();
-          assertNotNull(colStats, "columnStats should not be null");
-          assertFalse(colStats.isEmpty(), "columnStats should not be empty");
-
-          // Check that column stats contain expected columns
-          ColumnStatistics idStats = colStats.get(FieldReference.apply("id"));
-          assertNotNull(idStats, "id column stats should be present");
-          assertTrue(idStats.nullCount().isPresent(), "id nullCount should be present");
-          assertTrue(idStats.distinctCount().isPresent(), "id distinctCount should be present");
-          assertTrue(idStats.min().isPresent(), "id min should be present");
-          assertTrue(idStats.max().isPresent(), "id max should be present");
-          assertEquals(1, idStats.min().get(), "id min should be 1");
-          assertEquals(2, idStats.max().get(), "id max should be 2");
-        });
+    ColumnStatistics idStats = colStats.get(FieldReference.apply("id"));
+    assertNotNull(idStats, "id column stats should be present");
+    assertTrue(idStats.nullCount().isPresent(), "id nullCount should be present");
+    assertTrue(idStats.distinctCount().isPresent(), "id distinctCount should be present");
+    assertTrue(idStats.min().isPresent(), "id min should be present");
+    assertTrue(idStats.max().isPresent(), "id max should be present");
+    assertEquals(1, idStats.min().get(), "id min should be 1");
+    assertEquals(2, idStats.max().get(), "id max should be 2");
   }
 
   @Test
-  public void testPerFileNumRowsPreferredOverCatalog(@TempDir File tempDir) throws Exception {
-    // Verifies that per-file (post-prune) numRows is used in preference to catalog numRows.
-    // numRows() reflects the row count for this scan after pruning, while catalog stats are
-    // table-level and unpruned.
+  public void testCatalogNumRowsPreferredForFullStatistics(@TempDir File tempDir) throws Exception {
     String path = tempDir.getAbsolutePath();
     String tblName = "stats_per_file_wins";
     spark.sql(
@@ -1392,172 +1327,17 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
             buildColStatsMap(new String[] {}, new CatalogColumnStat[] {}));
     CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
 
-    withSQLConf(
-        "spark.sql.cbo.enabled",
-        "true",
-        () -> {
-          Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
-          DeltaV2ScanBuilder builder =
-              (DeltaV2ScanBuilder)
-                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-          Statistics stats = scan.estimateStatistics();
+    Identifier id = Identifier.of(new String[] {"default"}, tblName);
+    DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
+    DeltaV2ScanBuilder builder =
+        (DeltaV2ScanBuilder)
+            sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    Statistics stats = scan.estimateStatistics();
 
-          // Per-file numRows wins over catalog stats.
-          assertTrue(stats.numRows().isPresent(), "numRows should be present");
-          assertEquals(
-              2L,
-              stats.numRows().getAsLong(),
-              "numRows should come from per-file (2), not catalog (999)");
-        });
-  }
-
-  @Test
-  public void testCatalogNumRowsFallbackWhenPerFileUnknown(@TempDir File tempDir) throws Exception {
-    // When per-file numRecords is unavailable for any AddFile (rowCountKnown=false), numRows()
-    // should fall back to the catalog value rather than return OptionalLong.empty().
-    String path = tempDir.getAbsolutePath();
-    String tblName = "stats_catalog_fallback";
-    try {
-      spark.sql(
-          String.format(
-              "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
-      spark.sql(String.format("INSERT INTO %s VALUES (1, 'a')", tblName));
-
-      // Disable stats collection so the next AddFile has no numRecords. With one file lacking
-      // numRecords, rowCountKnown is false for the whole scan.
-      withSQLConf(
-          "spark.databricks.delta.stats.collect",
-          "false",
-          () -> spark.sql(String.format("INSERT INTO %s VALUES (2, 'b')", tblName)));
-
-      // Inject catalog stats with a distinguishable row count (777) so the fallback is observable.
-      CatalogStatistics catalogStats =
-          new CatalogStatistics(
-              scala.math.BigInt.apply(1024L),
-              scala.Option.apply(scala.math.BigInt.apply(777L)),
-              buildColStatsMap(new String[] {}, new CatalogColumnStat[] {}));
-      CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
-
-      withSQLConf(
-          "spark.sql.cbo.enabled",
-          "true",
-          () -> {
-            Identifier id = Identifier.of(new String[] {"default"}, tblName);
-            DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
-            DeltaV2ScanBuilder builder =
-                (DeltaV2ScanBuilder)
-                    sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-            DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-
-            assertFalse(
-                isRowCountKnown(scan),
-                "rowCountKnown should be false when an AddFile lacks numRecords");
-
-            Statistics stats = scan.estimateStatistics();
-            assertTrue(
-                stats.numRows().isPresent(),
-                "numRows should fall back to catalog when per-file unknown");
-            assertEquals(
-                777L,
-                stats.numRows().getAsLong(),
-                "numRows should come from catalog stats (777) when per-file is unknown");
-          });
-    } finally {
-      spark.sql("DROP TABLE IF EXISTS " + tblName);
-    }
-  }
-
-  @Test
-  public void testEstimateStatisticsWithCatalogStats_cboDisabled(@TempDir File tempDir)
-      throws Exception {
-    String path = tempDir.getAbsolutePath();
-    String tblName = "stats_cbo_disabled";
-    spark.sql(
-        String.format(
-            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
-    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tblName));
-
-    // Inject catalog stats
-    CatalogStatistics catalogStats =
-        new CatalogStatistics(
-            scala.math.BigInt.apply(512L),
-            scala.Option.apply(scala.math.BigInt.apply(2L)),
-            scala.collection.immutable.Map$.MODULE$.empty());
-
-    CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
-
-    withSQLConf(
-        "spark.sql.cbo.enabled",
-        "false",
-        () -> {
-          Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
-
-          DeltaV2ScanBuilder builder =
-              (DeltaV2ScanBuilder)
-                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-          Statistics stats = scan.estimateStatistics();
-
-          // With CBO disabled, numRows should be empty (matching V1 behavior)
-          assertFalse(stats.numRows().isPresent(), "numRows should be empty with CBO disabled");
-
-          // sizeInBytes should still come from planned files
-          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
-          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
-        });
-  }
-
-  @Test
-  public void testEstimateStatisticsWithCatalogStats_planStatsEnabled(@TempDir File tempDir)
-      throws Exception {
-    String path = tempDir.getAbsolutePath();
-    String tblName = "stats_plan_stats_enabled";
-    spark.sql(
-        String.format(
-            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
-    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tblName));
-
-    // Inject catalog stats with numRows
-    CatalogStatistics catalogStats =
-        new CatalogStatistics(
-            scala.math.BigInt.apply(512L),
-            scala.Option.apply(scala.math.BigInt.apply(2L)),
-            scala.collection.immutable.Map$.MODULE$.empty());
-
-    CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
-
-    // CBO disabled but planStatsEnabled=true should still surface catalog stats
-    withSQLConf(
-        "spark.sql.cbo.enabled",
-        "false",
-        () -> {
-          withSQLConf(
-              "spark.sql.cbo.planStats.enabled",
-              "true",
-              () -> {
-                Identifier id = Identifier.of(new String[] {"default"}, tblName);
-                DeltaV2Table sparkTable =
-                    new DeltaV2Table(id, catalogTable, Collections.emptyMap());
-
-                DeltaV2ScanBuilder builder =
-                    (DeltaV2ScanBuilder)
-                        sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-                DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-                Statistics stats = scan.estimateStatistics();
-
-                // With planStatsEnabled, numRows should be present (from per-file stats)
-                assertTrue(
-                    stats.numRows().isPresent(), "numRows should be present with planStatsEnabled");
-                assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
-
-                // sizeInBytes should still come from planned files
-                assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
-                assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
-              });
-        });
+    assertTrue(stats.numRows().isPresent(), "numRows should be present");
+    assertEquals(999L, stats.numRows().getAsLong(), "numRows should come from catalog statistics");
+    assertFalse(getPlanned(scan), "catalog full statistics should not plan Delta files");
   }
 
   @Test
@@ -1570,28 +1350,21 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
             "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
     spark.sql(String.format("INSERT INTO %s VALUES (1, 'a')", tblName));
 
-    withSQLConf(
-        "spark.sql.cbo.enabled",
-        "true",
-        () -> {
-          // Path-based table - no catalog table, no ANALYZE TABLE stats
-          Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          DeltaV2Table sparkTable = new DeltaV2Table(id, path);
+    // Path-based table - no catalog table, no ANALYZE TABLE stats
+    Identifier id = Identifier.of(new String[] {"default"}, tblName);
+    DeltaV2Table sparkTable = new DeltaV2Table(id, path);
 
-          DeltaV2ScanBuilder builder =
-              (DeltaV2ScanBuilder)
-                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-          Statistics stats = scan.estimateStatistics();
+    DeltaV2ScanBuilder builder =
+        (DeltaV2ScanBuilder)
+            sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    Statistics stats = scan.estimateStatistics();
 
-          // Per-file Delta stats (numRecords in the transaction log) are available even without
-          // catalog stats from ANALYZE TABLE, so numRows should be present.
-          assertTrue(stats.numRows().isPresent(), "numRows should be present from per-file stats");
-          assertEquals(
-              1L, stats.numRows().getAsLong(), "numRows should match the inserted row count");
-          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
-          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
-        });
+    assertFalse(
+        stats.numRows().isPresent(),
+        "path-based full statistics should not expose per-file row counts");
+    assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
+    assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
   }
 
   @Test
@@ -1639,40 +1412,35 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
     CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
 
-    withSQLConf(
-        "spark.sql.cbo.enabled",
-        "true",
-        () -> {
-          Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
+    Identifier id = Identifier.of(new String[] {"default"}, tblName);
+    DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
-          DeltaV2ScanBuilder builder =
-              (DeltaV2ScanBuilder)
-                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-          Statistics stats = scan.estimateStatistics();
+    DeltaV2ScanBuilder builder =
+        (DeltaV2ScanBuilder)
+            sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    Statistics stats = scan.estimateStatistics();
 
-          assertTrue(stats.numRows().isPresent(), "numRows should be present");
-          assertEquals(3L, stats.numRows().getAsLong(), "numRows should be 3");
+    assertTrue(stats.numRows().isPresent(), "numRows should be present");
+    assertEquals(3L, stats.numRows().getAsLong(), "numRows should be 3");
 
-          // Verify column stats include both data and partition columns
-          Map<NamedReference, ColumnStatistics> colStats = stats.columnStats();
-          assertNotNull(colStats.get(FieldReference.apply("id")), "id stats should be present");
-          assertNotNull(colStats.get(FieldReference.apply("part")), "part stats should be present");
+    // Verify column stats include both data and partition columns
+    Map<NamedReference, ColumnStatistics> colStats = stats.columnStats();
+    assertNotNull(colStats.get(FieldReference.apply("id")), "id stats should be present");
+    assertNotNull(colStats.get(FieldReference.apply("part")), "part stats should be present");
 
-          // Check partition column stats
-          ColumnStatistics partStats = colStats.get(FieldReference.apply("part"));
-          assertTrue(partStats.min().isPresent(), "part min should be present");
-          assertTrue(partStats.max().isPresent(), "part max should be present");
-          assertEquals(1, partStats.min().get(), "part min should be 1");
-          assertEquals(2, partStats.max().get(), "part max should be 2");
-        });
+    ColumnStatistics partStats = colStats.get(FieldReference.apply("part"));
+    assertTrue(partStats.min().isPresent(), "part min should be present");
+    assertTrue(partStats.max().isPresent(), "part max should be present");
+    assertEquals(1, partStats.min().get(), "part min should be 1");
+    assertEquals(2, partStats.max().get(), "part max should be 2");
   }
 
   @Test
-  public void testEstimatedSizeUsesAvgLenFromCatalogStats(@TempDir File tempDir) throws Exception {
-    // Verify that computeEstimatedSizeWithColumnProjection uses avgLen from catalog stats
-    // instead of defaultSize(), mirroring EstimationUtils.getSizePerRow() (#5952).
+  public void testSizeOnlyEstimateDoesNotUseCatalogColumnStats(@TempDir File tempDir)
+      throws Exception {
+    // The size-only API should return the catalog size directly without consulting column stats or
+    // planning Delta files.
     String path = tempDir.getAbsolutePath();
     String tblName = "stats_avglen";
     spark.sql(
@@ -1700,101 +1468,36 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
     CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
 
-    // avgLen is used for sizeInBytes estimation regardless of CBO/planStats settings
-    withSQLConf(
-        "spark.sql.cbo.enabled",
-        "false",
-        () -> {
-          withSQLConf(
-              "spark.sql.cbo.planStats.enabled",
-              "false",
-              () -> {
-                Identifier id = Identifier.of(new String[] {"default"}, tblName);
-                DeltaV2Table sparkTable =
-                    new DeltaV2Table(id, catalogTable, Collections.emptyMap());
+    Identifier id = Identifier.of(new String[] {"default"}, tblName);
+    DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
+    DeltaV2ScanBuilder builder =
+        (DeltaV2ScanBuilder)
+            sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
 
-                DeltaV2ScanBuilder builder =
-                    (DeltaV2ScanBuilder)
-                        sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+    // Pruning must not affect the catalog size fast path.
+    StructType prunedSchema = new StructType().add("name", DataTypes.StringType);
+    builder.pruneColumns(prunedSchema);
 
-                // Prune to only 'name' column to trigger column projection estimation
-                StructType prunedSchema = new StructType().add("name", DataTypes.StringType);
-                builder.pruneColumns(prunedSchema);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    assertFalse(getPlanned(scan));
+    assertEquals(OptionalLong.of(1024L), scan.estimateSizeInBytes());
+    assertFalse(getPlanned(scan), "catalog size lookup should not plan Delta files");
 
-                DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-
-                long totalBytes = getTotalBytes(scan);
-                long estimatedSize = getEstimatedSizeInBytes(scan);
-                assertTrue(totalBytes > 0, "totalBytes should be positive");
-
-                // Schema: dataSchema = (id INT, name STRING), partitionSchema = empty
-                // readSchema = (name STRING) after pruning
-                //
-                // With avgLen=5 for name (STRING: avgLen + 12 = 17, vs defaultSize 20):
-                //   fullSchemaRowSize = 8 + (4 [INT default] + 17 [STRING avgLen]) = 29
-                //   outputRowSize     = 8 + 17 = 25
-                //   estimated = (totalBytes * 25) / 29
-                //
-                // Without avgLen (defaultSize only):
-                //   fullSchemaRowSize = 8 + (4 + 20) = 32
-                //   outputRowSize     = 8 + 20 = 28
-                //   estimated = (totalBytes * 28) / 32
-                long expectedWithAvgLen = (totalBytes * 25) / 29;
-                long expectedWithoutAvgLen = (totalBytes * 28) / 32;
-
-                assertEquals(
-                    expectedWithAvgLen,
-                    estimatedSize,
-                    "estimatedSize should use avgLen from catalog stats");
-                assertNotEquals(
-                    expectedWithoutAvgLen,
-                    estimatedSize,
-                    "estimatedSize should differ from defaultSize-only calculation");
-              });
-        });
-  }
-
-  @Test
-  public void testEstimateStatisticsWithoutAnalyze(@TempDir File tempDir) throws Exception {
-    // Table exists in catalog but no stats were injected
-    String path = tempDir.getAbsolutePath();
-    String tblName = "stats_no_analyze";
-    spark.sql(
-        String.format(
-            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
-    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a')", tblName));
-
-    withSQLConf(
-        "spark.sql.cbo.enabled",
-        "true",
-        () -> {
-          CatalogTable catalogTable =
-              spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tblName));
-          Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
-
-          DeltaV2ScanBuilder builder =
-              (DeltaV2ScanBuilder)
-                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-          Statistics stats = scan.estimateStatistics();
-
-          // Per-file Delta stats (numRecords in the transaction log) provide numRows even when
-          // ANALYZE TABLE has not been run and no catalog stats exist.
-          assertTrue(stats.numRows().isPresent(), "numRows should be present from per-file stats");
-          assertEquals(
-              1L, stats.numRows().getAsLong(), "numRows should match the inserted row count");
-          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
-          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
-        });
+    Statistics stats = scan.estimateStatistics();
+    assertFalse(stats.sizeInBytes().isPresent());
+    assertEquals(OptionalLong.of(3L), stats.numRows());
+    assertTrue(
+        stats.columnStats().containsKey(FieldReference.apply("name")),
+        "full statistics should preserve catalog column statistics");
+    assertFalse(getPlanned(scan), "catalog full statistics should not plan Delta files");
   }
 
   @Test
   public void testEstimateStatisticsWithCatalogStats_noNumRows(@TempDir File tempDir)
       throws Exception {
-    // Catalog stats with sizeInBytes but no numRows: when per-file stats are available,
-    // numRows should still be reported from per-file numRecords (not from catalog stats).
-    // sizeInBytes should come from planned files, not the stale catalog value.
+    // Catalog stats with sizeInBytes but no numRows: the size-only API should use the catalog
+    // size without planning files, while full statistics should use the planned file size and
+    // leave row and column statistics empty.
     String path = tempDir.getAbsolutePath();
     String tblName = "stats_no_numrows";
     spark.sql(
@@ -1811,37 +1514,35 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
     CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
 
-    withSQLConf(
-        "spark.sql.cbo.enabled",
-        "true",
-        () -> {
-          Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
+    Identifier id = Identifier.of(new String[] {"default"}, tblName);
+    DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
-          DeltaV2ScanBuilder builder =
-              (DeltaV2ScanBuilder)
-                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-          Statistics stats = scan.estimateStatistics();
+    DeltaV2ScanBuilder builder =
+        (DeltaV2ScanBuilder)
+            sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
-          // Per-file stats provide numRows even when catalog stats lack it
-          assertTrue(stats.numRows().isPresent(), "numRows should be present from per-file stats");
-          assertEquals(
-              2L, stats.numRows().getAsLong(), "numRows should reflect per-file row count");
-          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
-          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+    assertFalse(getPlanned(scan));
+    assertEquals(
+        OptionalLong.of(99999L),
+        scan.estimateSizeInBytes(),
+        "size-only statistics should use the catalog size");
+    assertFalse(getPlanned(scan), "reading the catalog size should not plan Delta files");
 
-          // sizeInBytes should NOT be the catalog sizeInBytes (99999)
-          assertNotEquals(
-              99999L,
-              stats.sizeInBytes().getAsLong(),
-              "sizeInBytes should come from planned files, not catalog stats");
+    Statistics stats = scan.estimateStatistics();
 
-          // columnStats should be empty (catalog stats had no column stats)
-          assertTrue(
-              stats.columnStats().isEmpty(),
-              "columnStats should be empty when catalog stats have no column stats");
-        });
+    // A catalog entry without rowCount stays on the size-only branch.
+    assertFalse(stats.numRows().isPresent(), "numRows should be absent without catalog rows");
+    assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
+    assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+
+    assertNotEquals(
+        99999L,
+        stats.sizeInBytes().getAsLong(),
+        "sizeInBytes should come from planned files, not catalog stats");
+    assertTrue(
+        stats.columnStats().isEmpty(),
+        "columnStats should be empty when catalog stats have no column stats");
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})
@@ -1942,9 +1643,8 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   @Test
   public void testLimitPushdown_limit0ReportsZeroNumRowsNotStaleCatalog(@TempDir File tempDir)
       throws Exception {
-    // The LIMIT 0 short-circuit reads no files. Under CBO with catalog stats present, numRows()
-    // must report 0 (the scan logically returns zero rows), NOT the stale table-level catalog
-    // count. This adds regression guard for the short-circuit setting rowCountKnown/totalRows.
+    // The LIMIT 0 short-circuit reads no files and reports exact zero statistics instead of stale
+    // table-level catalog values.
     String path = tempDir.getAbsolutePath();
     String tblName = "stats_limit0_numrows";
     spark.sql(
@@ -1972,7 +1672,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
           builder.pushLimit(0);
           DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
-          assertTrue(isRowCountKnown(scan), "LIMIT 0 under CBO should mark the row count known");
+          assertFalse(getPlanned(scan), "LIMIT 0 statistics should not plan Delta files");
           Statistics stats = scan.estimateStatistics();
           assertTrue(stats.numRows().isPresent(), "numRows should be present under CBO");
           assertEquals(
@@ -1981,6 +1681,78 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
               "LIMIT 0 must report 0 rows, not the stale catalog count (999)");
           assertEquals(
               0L, getTotalBytes(scan), "LIMIT 0 should read zero bytes even with catalog stats");
+          assertFalse(getPlanned(scan), "LIMIT 0 statistics should remain on the fast path");
+        });
+  }
+
+  @Test
+  public void testLimitPushdown_numRowsRemainsInternalUnderPlanStats() throws Exception {
+    // Delta retains per-file or scan-level row counts for its internal scan statistics, but the
+    // generic SupportsReportStatistics handoff intentionally exposes only scan-local size when
+    // catalog row statistics are absent.
+    withSQLConf(
+        "spark.sql.cbo.planStats.enabled",
+        "true",
+        () -> {
+          // Baseline: no limit, count summed from per-file numRecords (table has 5 rows, 5 files).
+          DeltaV2Scan noLimit =
+              (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+          assertTrue(isRowCountKnown(noLimit), "row count should be known without a limit");
+          assertFalse(noLimit.estimateStatistics().numRows().isPresent());
+
+          // With a pushed limit, the per-file counts are gone but the aggregate still reports the
+          // rows the limited scan will read.
+          DeltaV2Scan withLimit = buildScanWithLimit(3);
+          assertTrue(
+              isRowCountKnown(withLimit),
+              "row count must stay known for a pushed limit (aggregate fallback)");
+          assertFalse(
+              withLimit.estimateStatistics().numRows().isPresent(),
+              "generic relation statistics must not expose the internal limited row count");
+        });
+  }
+
+  @Test
+  public void testLimitPushdown_numRowsEmptyWhenPlanStatsDisabled() throws Exception {
+    // The aggregate fallback must respect the same plan-stats gate as the per-file path: with CBO
+    // and planStats off, a pushed limit must not start reporting numRows.
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "false",
+        () -> {
+          withSQLConf(
+              "spark.sql.cbo.planStats.enabled",
+              "false",
+              () -> {
+                DeltaV2Scan scan = buildScanWithLimit(3);
+                assertFalse(
+                    isRowCountKnown(scan),
+                    "row count must stay unknown when CBO and planStats are both disabled");
+                assertFalse(
+                    scan.estimateStatistics().numRows().isPresent(),
+                    "numRows must be empty when CBO and planStats are both disabled");
+              });
+        });
+  }
+
+  @Test
+  public void testLimitPushdown_numRowsInvalidatedByRuntimeFiltering() throws Exception {
+    // An aggregate row count describes the pre-prune file set. Runtime partition filtering has no
+    // per-file breakdown to re-derive from, so the count must become unknown rather than overstate
+    // what the pruned scan reads. (Without a limit the per-file counts survive pruning -- see
+    // testNumRowsAfterRuntimeFiltering.)
+    withSQLConf(
+        "spark.sql.cbo.planStats.enabled",
+        "true",
+        () -> {
+          DeltaV2Scan scan = buildScanWithLimit(3);
+          assertTrue(isRowCountKnown(scan), "precondition: count known before runtime filtering");
+
+          scan.filter(new Predicate[] {cityPredicate}); // city=hz prunes files
+
+          assertFalse(
+              scan.estimateStatistics().numRows().isPresent(),
+              "an aggregate-derived count must not survive runtime file pruning");
         });
   }
 

@@ -88,7 +88,7 @@ trait ChangelogV2CDCUtilMixin extends CDCTestMixin with ChangelogSyntaxSupported
     // Read-CDF does not write any files.
     "usage metrics",
     // VOID is not a supported Delta data type in the Kernel schema parser. On the V2 changelog
-    // read path (DeltaChangelogScan -> JvmSnapshot.getSchema) a table whose schema retains a VOID
+    // read path (DeltaV2ChangelogScan -> JvmSnapshot.getSchema) a table whose schema retains a VOID
     // field throws KernelException. These tests build a struct that keeps a lit(null) VOID field.
     // V1 CDCReader does not parse the schema through the Kernel, so these are excluded only on the
     // V2 path.
@@ -809,6 +809,7 @@ trait DeltaSQLInMemoryTestUtils
 trait DeltaDMLTestUtils
   extends DeltaSQLTestUtils
   with DeltaTestUtilsBase
+  with DeltaTableProvider
   with BeforeAndAfterEach
   with CDCTestMixin {
   self: SharedSparkSession =>
@@ -868,7 +869,7 @@ trait DeltaDMLTestUtils
   }
 
   protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
-    val dfw = df.write.format("delta").mode("append")
+    val dfw = df.write.format(writeFormat).mode("append")
     if (partitionBy.nonEmpty) {
       dfw.partitionBy(partitionBy: _*)
     }

@@ -429,6 +429,80 @@ class DeltaSinkSuite
     }
   }
 
+  /** Asserts each of `partitionValues` is a physical `col-<uuid>=<value>` dir, not logical. */
+  private def assertPhysicalColumnMappedPartitionDirs(
+      tableRoot: File, partitionValues: Seq[String]): Unit = {
+    val dirNames = Option(tableRoot.listFiles()).getOrElse(Array.empty[File])
+      .filter(_.isDirectory).map(_.getName)
+    partitionValues.foreach { value =>
+      assert(
+        dirNames.count(n => n.startsWith("col-") && n.endsWith("=" + value)) == 1,
+        s"expected one physical partition dir col-*=$value under $tableRoot, " +
+          s"got: ${dirNames.mkString(", ")}")
+      assert(
+        !dirNames.exists(n => !n.startsWith("col-") && n.endsWith("=" + value)),
+        s"did not expect a logical partition dir ending in '=$value' under $tableRoot")
+    }
+  }
+
+  test("partitioned writing into a column-mapped table") {
+    // Runs on V1 here and, via DeltaV2SinkSuite's classification, on the V2 Kernel sink.
+    Seq("name", "id").foreach { mode =>
+      withClue(s"columnMappingMode=$mode") {
+        withColumnMappingConf(mode) {
+          withSinkTarget { (target, checkpointDir) =>
+            val inputData = MemoryStream[Int]
+            val ds = inputData.toDS()
+            val query = startStream(
+              ds.map(i => (i, i * 1000))
+                .toDF("id", "value")
+                .writeStream
+                .partitionBy("id")
+                .option("checkpointLocation", checkpointDir.getCanonicalPath)
+                .format("delta"),
+              target)
+            try {
+              inputData.addData(1, 2, 3)
+              failAfter(streamingTimeout) {
+                query.processAllAvailable()
+              }
+
+              // Data round-trips through a batch read.
+              checkDatasetUnorderly(
+                readTarget(target).as[(Int, Int)],
+                (1, 1000), (2, 2000), (3, 3000))
+
+              // Guard that the auto-created table is actually column-mapped.
+              assert(deltaLogForTarget(target).update().metadata.columnMappingMode.name == mode)
+
+              // Partition pruning returns the right rows.
+              checkDatasetUnorderly(
+                readTarget(target).filter("id = 1").as[(Int, Int)], (1, 1000))
+              checkDatasetUnorderly(
+                readTarget(target).filter("id in (1, 2)").as[(Int, Int)], (1, 1000), (2, 2000))
+
+              val tableRoot = new File(deltaLogForTarget(target).dataPath.toUri)
+              // TODO(#7140): Implement randomized file prefixes in the V2 sink and remove
+              // this V1/V2 physical-layout distinction.
+              if (useDsv2) {
+                assertPhysicalColumnMappedPartitionDirs(tableRoot, Seq("1", "2", "3"))
+              } else {
+                val dataDirs = Option(tableRoot.listFiles()).getOrElse(Array.empty[File])
+                  .filter(_.isDirectory).map(_.getName).filterNot(_ == "_delta_log")
+                assert(
+                  dataDirs.nonEmpty && !dataDirs.exists(_.contains("=")),
+                  s"expected V1's random-prefix layout (data dirs, none of the form col=value), " +
+                    s"got: ${dataDirs.mkString(", ")}")
+              }
+            } finally {
+              query.stop()
+            }
+          }
+        }
+      }
+    }
+  }
+
   test("work with aggregation + watermark") {
     withSinkTarget { (target, checkpointDir) =>
       val inputData = MemoryStream[Long]

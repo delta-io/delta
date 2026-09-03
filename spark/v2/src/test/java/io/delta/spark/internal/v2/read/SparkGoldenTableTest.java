@@ -19,9 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.golden.GoldenTableUtils$;
-import io.delta.kernel.expressions.Column;
-import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.expressions.Predicate;
+import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import java.io.File;
 import java.lang.reflect.Field;
@@ -187,46 +185,23 @@ public class SparkGoldenTableTest {
     verifyHadoopConf(sparkScan2.getConfiguration());
 
     // check SupportsPushDownFilters
-    // case 1: mix of supported and unsupported, data and partition filters
+    // case 1: mix of data and partition filters
     checkSupportsPushDownFilters(
         table,
         scanOptions,
         // input filters
         new Filter[] {
-          new GreaterThan("cnt", 10), // supported data filter
-          new StringStartsWith("name", "foo"), // supported data filter
-          new EqualTo("date", "2025-09-01"), // supported partition filter
-          new StringEndsWith("city", "York"), // unsupported partition filter
-        },
-        // expected post-scan filters
-        new Filter[] {
           new GreaterThan("cnt", 10),
           new StringStartsWith("name", "foo"),
+          new EqualTo("date", "2025-09-01"),
           new StringEndsWith("city", "York"),
         },
-        // expected pushed filters
+        // expected partition filters
         new Filter[] {
-          new GreaterThan("cnt", 10),
-          new StringStartsWith("name", "foo"),
-          new EqualTo("date", "2025-09-01")
+          new EqualTo("date", "2025-09-01"), new StringEndsWith("city", "York"),
         },
-        // expected pushed kernel predicates
-        new Predicate[] {
-          new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
-          new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo")),
-          new Predicate("=", new Column("date"), Literal.ofString("2025-09-01"))
-        },
-        // expected data filters
-        new Filter[] {new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")},
-        // expected kernel scan builder predicate
-        Optional.of(
-            new Predicate(
-                "AND",
-                new Predicate(
-                    "AND",
-                    new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
-                    new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo"))),
-                new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))));
+        // expected data filters (and post-scan filters)
+        new Filter[] {new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")});
 
     // case 2: OR and NOT filters
     checkSupportsPushDownFilters(
@@ -239,84 +214,15 @@ public class SparkGoldenTableTest {
           new Not(new And(new GreaterThan("cnt", 100), new EqualTo("date", "2025-09-01"))),
           new Not(new Or(new EqualTo("name", "foo"), new StringStartsWith("city", "New")))
         },
-        // expected post-scan filters
+        // expected partition filters
+        new Filter[0],
+        // expected data filters (and post-scan filters)
         new Filter[] {
           new Or(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
           new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01")),
           new Not(new And(new GreaterThan("cnt", 100), new EqualTo("date", "2025-09-01"))),
           new Not(new Or(new EqualTo("name", "foo"), new StringStartsWith("city", "New")))
-        },
-        // expected pushed filters
-        new Filter[] {
-          new Or(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
-          new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01")),
-          new Not(new And(new GreaterThan("cnt", 100), new EqualTo("date", "2025-09-01"))),
-          new Not(new Or(new EqualTo("name", "foo"), new StringStartsWith("city", "New")))
-        },
-        // expected pushed kernel predicates
-        new Predicate[] {
-          new Predicate(
-              "OR",
-              new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
-              new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo"))),
-          new Predicate(
-              "OR",
-              new Predicate("=", new Column("cnt"), Literal.ofInt(50)),
-              new Predicate("=", new Column("date"), Literal.ofString("2025-10-01"))),
-          new Predicate(
-              "NOT",
-              new Predicate(
-                  "AND",
-                  new Predicate(">", new Column("cnt"), Literal.ofInt(100)),
-                  new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))),
-          new Predicate(
-              "NOT",
-              new Predicate(
-                  "OR",
-                  new Predicate("=", new Column("name"), Literal.ofString("foo")),
-                  new Predicate("STARTS_WITH", new Column("city"), Literal.ofString("New"))))
-        },
-        // expected data filters
-        new Filter[] {
-          new Or(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
-          new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01")),
-          new Not(new And(new GreaterThan("cnt", 100), new EqualTo("date", "2025-09-01"))),
-          new Not(new Or(new EqualTo("name", "foo"), new StringStartsWith("city", "New")))
-        },
-        // expected kernel scan builder predicate
-        // reduce(And::new) over 4 predicates gives left-associative nesting:
-        // AND(AND(AND(pred1, pred2), pred3), pred4)
-        Optional.of(
-            new Predicate(
-                "AND",
-                new Predicate(
-                    "AND",
-                    new Predicate(
-                        "AND",
-                        new Predicate(
-                            "OR",
-                            new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
-                            new Predicate(
-                                "STARTS_WITH", new Column("name"), Literal.ofString("foo"))),
-                        new Predicate(
-                            "OR",
-                            new Predicate("=", new Column("cnt"), Literal.ofInt(50)),
-                            new Predicate(
-                                "=", new Column("date"), Literal.ofString("2025-10-01")))),
-                    new Predicate(
-                        "NOT",
-                        new Predicate(
-                            "AND",
-                            new Predicate(">", new Column("cnt"), Literal.ofInt(100)),
-                            new Predicate(
-                                "=", new Column("date"), Literal.ofString("2025-09-01"))))),
-                new Predicate(
-                    "NOT",
-                    new Predicate(
-                        "OR",
-                        new Predicate("=", new Column("name"), Literal.ofString("foo")),
-                        new Predicate(
-                            "STARTS_WITH", new Column("city"), Literal.ofString("New")))))));
+        });
 
     // check SupportsRuntimeV2Filtering
     // city = 'hz' AND date = '20180520'
@@ -381,64 +287,74 @@ public class SparkGoldenTableTest {
       DeltaV2Table table,
       CaseInsensitiveStringMap scanOptions,
       Filter[] inputFilters,
-      Filter[] expectedPostScanFilters,
-      Filter[] expectedPushedFilters,
-      Predicate[] expectedPushedKernelPredicates,
-      Filter[] expectedDataFilters,
-      Optional<Predicate> expectedKernelScanBuilderPredicate)
+      Filter[] expectedPartitionFilters,
+      Filter[] expectedDataFilters)
       throws Exception {
     ScanBuilder newBuilder = table.newScanBuilder(scanOptions);
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) newBuilder;
 
-    Filter[] postScanFilters = builder.pushFilters(inputFilters);
+    scala.collection.immutable.Seq<org.apache.spark.sql.catalyst.expressions.Expression> filters =
+        scala.jdk.javaapi.CollectionConverters.asScala(
+                Arrays.asList(toCatalystFilters(builder, inputFilters)))
+            .toList();
+    Object postScanFilters = builder.pushFilters(filters);
 
     assertEquals(
-        new HashSet<>(Arrays.asList(expectedPostScanFilters)),
-        new HashSet<>(Arrays.asList(postScanFilters)));
-
+        describe(toCatalystFilters(builder, expectedDataFilters)),
+        describe(
+            scala.jdk.javaapi.CollectionConverters
+                .<org.apache.spark.sql.catalyst.expressions.Expression>asJava(
+                    (scala.collection.immutable.Seq<
+                            org.apache.spark.sql.catalyst.expressions.Expression>)
+                        postScanFilters)
+                .toArray(new org.apache.spark.sql.catalyst.expressions.Expression[0])));
     assertEquals(
-        new HashSet<>(Arrays.asList(expectedPushedFilters)),
-        new HashSet<>(Arrays.asList(builder.pushedFilters())));
-
-    Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
+        describeUnordered(toCatalystFilters(builder, expectedPartitionFilters)),
+        describeUnordered(getCatalystFilters(builder, "partitionCatalystFilters")));
     assertEquals(
-        new HashSet<>(Arrays.asList(expectedPushedKernelPredicates)),
-        new HashSet<>(Arrays.asList(pushedPredicates)));
-
-    Filter[] dataFilters = getDataFilters(builder);
-    assertEquals(
-        new HashSet<>(Arrays.asList(expectedDataFilters)),
-        new HashSet<>(Arrays.asList(dataFilters)));
-
-    Optional<Predicate> predicateOpt = getKernelScanBuilderPredicate(builder);
-    assertEquals(expectedKernelScanBuilderPredicate, predicateOpt);
+        describeUnordered(toCatalystFilters(builder, expectedDataFilters)),
+        describeUnordered(getCatalystFilters(builder, "dataCatalystFilters")));
+    assertEquals(0, builder.pushedFilters().length);
   }
 
-  private Predicate[] getPushedKernelPredicates(DeltaV2ScanBuilder builder) throws Exception {
-    Field field = DeltaV2ScanBuilder.class.getDeclaredField("pushedKernelPredicates");
-    field.setAccessible(true);
-    return (Predicate[]) field.get(builder);
-  }
-
-  private Filter[] getDataFilters(DeltaV2ScanBuilder builder) throws Exception {
-    Field field = DeltaV2ScanBuilder.class.getDeclaredField("dataFilters");
-    field.setAccessible(true);
-    return (Filter[]) field.get(builder);
-  }
-
-  private Optional<Predicate> getKernelScanBuilderPredicate(DeltaV2ScanBuilder builder)
-      throws Exception {
-    Field field = DeltaV2ScanBuilder.class.getDeclaredField("kernelScanBuilder");
-    field.setAccessible(true);
-    Object kernelScanBuilder = field.get(builder);
-    Field predicateField = kernelScanBuilder.getClass().getDeclaredField("predicate");
-    predicateField.setAccessible(true);
-    Object raw = predicateField.get(kernelScanBuilder);
-    if (raw == null) {
-      return Optional.empty();
+  private static org.apache.spark.sql.catalyst.expressions.Expression[] toCatalystFilters(
+      DeltaV2ScanBuilder builder, Filter[] filters) {
+    org.apache.spark.sql.catalyst.expressions.Expression[] expressions =
+        new org.apache.spark.sql.catalyst.expressions.Expression[filters.length];
+    for (int i = 0; i < filters.length; i++) {
+      expressions[i] = DeltaV2TestBaseAccess.convert(builder, filters[i]);
     }
-    Optional<?> opt = (Optional<?>) raw;
-    return opt.map(Predicate.class::cast);
+    return expressions;
+  }
+
+  private static final class DeltaV2TestBaseAccess extends DeltaV2TestBase {
+    private static org.apache.spark.sql.catalyst.expressions.Expression convert(
+        DeltaV2ScanBuilder builder, Filter filter) {
+      return toCatalystFilter(builder, filter);
+    }
+  }
+
+  private static org.apache.spark.sql.catalyst.expressions.Expression[] getCatalystFilters(
+      DeltaV2ScanBuilder builder, String fieldName) throws Exception {
+    Field field = DeltaV2ScanBuilder.class.getDeclaredField(fieldName);
+    field.setAccessible(true);
+    return (org.apache.spark.sql.catalyst.expressions.Expression[]) field.get(builder);
+  }
+
+  private static List<String> describe(
+      org.apache.spark.sql.catalyst.expressions.Expression[] expressions) {
+    List<String> rendered = new ArrayList<>();
+    for (org.apache.spark.sql.catalyst.expressions.Expression expression : expressions) {
+      rendered.add(expression.toString().replaceAll("#\\d+", ""));
+    }
+    return rendered;
+  }
+
+  private static List<String> describeUnordered(
+      org.apache.spark.sql.catalyst.expressions.Expression[] expressions) {
+    List<String> rendered = describe(expressions);
+    Collections.sort(rendered);
+    return rendered;
   }
 
   @Test

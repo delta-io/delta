@@ -18,7 +18,6 @@ package io.delta.spark.internal.v2.snapshot.unitycatalog;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.CommitRange;
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
@@ -26,9 +25,11 @@ import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.util.List;
 import java.util.Optional;
+import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager$;
 
 /**
  * Snapshot manager for Unity Catalog managed tables.
@@ -36,7 +37,7 @@ import java.util.Optional;
  * <p>Used for tables with the catalog-managed commit feature enabled. Unity Catalog serves as the
  * source of truth for the table's commit history.
  */
-public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
+public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
 
   private final UCCatalogManagedClient ucCatalogManagedClient;
   private final String tableId;
@@ -69,22 +70,25 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    */
   @Override
   public Snapshot loadLatestSnapshot() {
-    return loadSnapshot(Optional.empty() /* versionOpt */);
+    return DeltaV2SnapshotManager$.MODULE$.wrapKernelSnapshot(
+        loadKernelSnapshot(Optional.empty()), tablePath);
   }
 
   @Override
   public Snapshot loadSnapshotAt(long version) {
-    return loadSnapshot(Optional.of(version));
+    return DeltaV2SnapshotManager$.MODULE$.wrapKernelSnapshot(
+        loadKernelSnapshot(Optional.of(version)), tablePath);
   }
 
-  private Snapshot loadSnapshot(Optional<Long> versionOpt) {
-    return ucCatalogManagedClient.loadSnapshot(
-        engine,
-        tableId,
-        tablePath,
-        tableIdentifier,
-        versionOpt,
-        Optional.empty() /* timestampOpt */);
+  private SnapshotImpl loadKernelSnapshot(Optional<Long> versionOpt) {
+    return (SnapshotImpl)
+        ucCatalogManagedClient.loadSnapshot(
+            engine,
+            tableId,
+            tablePath,
+            tableIdentifier,
+            versionOpt,
+            Optional.empty() /* timestampOpt */);
   }
 
   /**
@@ -108,7 +112,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit) {
-    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    SnapshotImpl snapshot = loadKernelSnapshot(Optional.empty());
     List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
         engine,
@@ -138,7 +142,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
       throws VersionNotFoundException {
     // Load latest to get the current version bounds
-    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    SnapshotImpl snapshot = loadKernelSnapshot(Optional.empty());
     // Latest version visible in this UC-managed snapshot.
     long latestSnapshotVersion = snapshot.getVersion();
 

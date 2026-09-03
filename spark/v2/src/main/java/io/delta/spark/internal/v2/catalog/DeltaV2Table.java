@@ -17,27 +17,22 @@ package io.delta.spark.internal.v2.catalog;
 
 import static io.delta.spark.internal.v2.utils.ScalaUtils.toJavaOptional;
 import static io.delta.spark.internal.v2.utils.ScalaUtils.toScalaMap;
+import static io.delta.spark.internal.v2.utils.ScalaUtils.toScalaOption;
 import static io.delta.spark.internal.v2.utils.StatsUtils.toV2Statistics;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.rowtracking.RowTracking;
-import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
-import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.exception.NoRecreatableHistoryException;
 import io.delta.spark.internal.v2.exception.TableNotFoundException;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.read.DeltaV2ScanUtils;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.shims.CatalogV2UtilShims;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
-import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.write.DeltaRowLevelOperationBuilder;
 import io.delta.spark.internal.v2.write.DeltaV2WriteBuilder;
 import java.util.ArrayList;
@@ -61,6 +56,7 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.MetadataColumn;
 import org.apache.spark.sql.connector.catalog.SupportsMetadataColumns;
 import org.apache.spark.sql.connector.catalog.SupportsRead;
+import org.apache.spark.sql.connector.catalog.SupportsRowLevelOperations;
 import org.apache.spark.sql.connector.catalog.SupportsWrite;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCapability;
@@ -75,11 +71,16 @@ import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
+import org.apache.spark.sql.delta.RowTracking$;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.catalog.DeltaV2TableMarker;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.util.DeltaFileSystemOptions;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
@@ -89,8 +90,13 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.jdk.javaapi.CollectionConverters;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class DeltaV2Table extends DeltaV2TableShims
-    implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns, DeltaV2TableMarker {
+public class DeltaV2Table extends DeltaV2TableShimsWithLogging
+    implements Table,
+        SupportsRead,
+        SupportsWrite,
+        SupportsMetadataColumns,
+        SupportsRowLevelOperations,
+        DeltaV2TableMarker {
   private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
   private static final String ROW_ID_METADATA_FIELD_NAME = RowId$.MODULE$.ROW_ID();
   private static final String ROW_COMMIT_VERSION_METADATA_FIELD_NAME =
@@ -118,7 +124,7 @@ public class DeltaV2Table extends DeltaV2TableShims
   private final Identifier identifier;
   private final String tablePath;
   private final Map<String, String> options;
-  private final DeltaSnapshotManager snapshotManager;
+  private final DeltaV2SnapshotManager snapshotManager;
   /** Snapshot created during connector setup */
   private final Snapshot initialSnapshot;
 
@@ -228,31 +234,26 @@ public class DeltaV2Table extends DeltaV2TableShims
     this.catalogTable = catalogTable;
     // Merge options: file system options from catalog + user options (user takes precedence)
     // This follows the same pattern as DeltaTableV2 in delta-spark
-    Map<String, String> merged = new HashMap<>();
-    // Only extract file system options from table storage properties
-    catalogTable.ifPresent(
-        table ->
-            scala.collection.JavaConverters.mapAsJavaMap(table.storage().properties())
-                .forEach(
-                    (key, value) -> {
-                      if (DeltaTableUtils.validDeltaTableHadoopPrefixes()
-                          .exists(prefix -> key.startsWith(prefix))) {
-                        merged.put(key, value);
-                      }
-                    }));
+    Map<String, String> merged =
+        new HashMap<>(
+            scala.collection.JavaConverters.mapAsJavaMap(
+                DeltaFileSystemOptions.extractCatalogTableFsOptions(toScalaOption(catalogTable))));
     // User options override catalog properties
     merged.putAll(userOptions);
     this.options = Collections.unmodifiableMap(merged);
 
     this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    this.kernelEngine = DefaultEngine.create(this.hadoopConf);
+    this.kernelEngine = KernelEngineFactory.createDefaultEngine(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     try {
-      this.initialSnapshot =
-          timeTravelVersion.isPresent()
-              ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
-              : snapshotManager.loadLatestSnapshot();
+      if (timeTravelVersion.isPresent()) {
+        this.initialSnapshot =
+            loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong());
+      } else {
+        this.initialSnapshot =
+            recordFrameProfileValue("snapshot.loadLatest", snapshotManager::loadLatestSnapshot);
+      }
     } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
       // Rethrow as the Delta-module wrapper so catalog/interop layer never names a Kernel type.
       throw new TableNotFoundException(tablePath);
@@ -270,11 +271,7 @@ public class DeltaV2Table extends DeltaV2TableShims
 
     Optional<PersistedMetadata> persistedMetadata =
         MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-            SparkSession.active(),
-            (SnapshotImpl) initialSnapshot,
-            options,
-            snapshotManager,
-            kernelEngine);
+            SparkSession.active(), initialSnapshot, options, snapshotManager, kernelEngine);
 
     StructType rawSchema;
     List<String> partitionColumnNames;
@@ -283,8 +280,8 @@ public class DeltaV2Table extends DeltaV2TableShims
       rawSchema = persisted.dataSchema();
       partitionColumnNames = Arrays.asList(persisted.partitionSchema().fieldNames());
     } else {
-      rawSchema = SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
-      partitionColumnNames = new ArrayList<>(initialSnapshot.getPartitionColumnNames());
+      rawSchema = initialSnapshot.schema();
+      partitionColumnNames = new ArrayList<>(initialSnapshot.metadata().getPartitionColumns());
     }
     // Schema-related metadata is lazily computed on first access within SchemaProvider
     this.schemaProvider =
@@ -350,18 +347,31 @@ public class DeltaV2Table extends DeltaV2TableShims
    * (TableCatalog.loadChangelog) use this to resolve versions, timestamps, and snapshots without
    * having to build their own snapshot manager.
    */
-  public DeltaSnapshotManager getSnapshotManager() {
+  public DeltaV2SnapshotManager getSnapshotManager() {
     return snapshotManager;
   }
 
   /** The table protocol from the initial snapshot. */
   protected AbstractProtocol protocol() {
-    return new KernelProtocolAdapter(((SnapshotImpl) initialSnapshot).getProtocol());
+    return initialSnapshot.protocol();
   }
 
   /** The table metadata from the initial snapshot. */
   protected AbstractMetadata metadata() {
-    return new KernelMetadataAdapter(((SnapshotImpl) initialSnapshot).getMetadata());
+    return initialSnapshot.metadata();
+  }
+
+  /** Inputs exposed to the Spark-version shim for metadata-only DELETE. */
+  protected Engine kernelEngine() {
+    return kernelEngine;
+  }
+
+  protected SnapshotImpl initialSnapshot() {
+    return DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot);
+  }
+
+  protected Optional<CatalogTable> catalogTable() {
+    return catalogTable;
   }
 
   /** Returns a copy of this table pinned to {@code version}. */
@@ -384,7 +394,7 @@ public class DeltaV2Table extends DeltaV2TableShims
    * share a singular load once the snapshot manager exposes it TODO(#5999).
    */
   private static long resolveTimestampToVersion(
-      DeltaSnapshotManager manager, long timestampMicros) {
+      DeltaV2SnapshotManager manager, long timestampMicros) {
     long timeMillis = timestampMicros / 1000;
     DeltaHistoryManager.Commit commit =
         manager.getActiveCommitAtTime(
@@ -392,7 +402,7 @@ public class DeltaV2Table extends DeltaV2TableShims
             /* canReturnLastCommit = */ true,
             /* mustBeRecreatable = */ true,
             /* canReturnEarliestCommit = */ true);
-    long latestVersion = manager.loadLatestSnapshot().getVersion();
+    long latestVersion = manager.loadLatestSnapshot().version();
     if (commit.getTimestamp() > timeMillis) {
       // The earliest available commit is younger than the requested time.
       throw new TimestampOutOfRangeException(timeMillis, commit.getTimestamp(), false);
@@ -437,7 +447,7 @@ public class DeltaV2Table extends DeltaV2TableShims
 
   @Override
   public Map<String, String> properties() {
-    Map<String, String> props = new HashMap<>(initialSnapshot.getTableProperties());
+    Map<String, String> props = new HashMap<>(initialSnapshot.metadata().getConfiguration());
     return Collections.unmodifiableMap(props);
   }
 
@@ -454,7 +464,7 @@ public class DeltaV2Table extends DeltaV2TableShims
    * <p>Add {@code @Override} annotation eventually: TODO(#7128)
    */
   public String version() {
-    return Long.toString(initialSnapshot.getVersion());
+    return Long.toString(initialSnapshot.version());
   }
 
   /**
@@ -474,9 +484,8 @@ public class DeltaV2Table extends DeltaV2TableShims
    */
   @Override
   public MetadataColumn[] metadataColumns() {
-    SnapshotImpl snapshotImpl = (SnapshotImpl) initialSnapshot;
     boolean rowTrackingEnabled =
-        RowTracking.isEnabled(snapshotImpl.getProtocol(), snapshotImpl.getMetadata());
+        RowTracking$.MODULE$.isEnabled(initialSnapshot.protocol(), initialSnapshot.metadata());
 
     StructType metadataType = new StructType();
     for (StructField field :
@@ -530,6 +539,8 @@ public class DeltaV2Table extends DeltaV2TableShims
     return DeltaV2ScanUtils.newScanBuilder(
         name(),
         initialSnapshot,
+        kernelEngine,
+        catalogTable,
         snapshotManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
@@ -541,10 +552,11 @@ public class DeltaV2Table extends DeltaV2TableShims
   /**
    * Validates that {@code version} exists in the Delta log, then loads the snapshot pinned to it.
    */
-  private static Snapshot loadSnapshotAtCheckedVersion(DeltaSnapshotManager manager, long version) {
+  private Snapshot loadSnapshotAtCheckedVersion(DeltaV2SnapshotManager manager, long version) {
     manager.checkVersionExists(
         version, /* mustBeRecreatable = */ true, /* allowOutOfRange = */ false);
-    return manager.loadSnapshotAt(version);
+    final Supplier<Snapshot> loadSnapshot = () -> manager.loadSnapshotAt(version);
+    return recordFrameProfileValue("snapshot.loadAtVersion", loadSnapshot);
   }
 
   @Override
@@ -566,9 +578,15 @@ public class DeltaV2Table extends DeltaV2TableShims
    * Delta's copy-on-write operation shell; the concrete ReplaceData write path is introduced in a
    * follow-up PR.
    */
+  @Override
   public RowLevelOperationBuilder newRowLevelOperationBuilder(RowLevelOperationInfo info) {
     requireNonNull(info, "row-level operation info is null");
-    return new DeltaRowLevelOperationBuilder(this, kernelEngine, hadoopConf, initialSnapshot, info);
+    return new DeltaRowLevelOperationBuilder(
+        this,
+        kernelEngine,
+        hadoopConf,
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
+        info);
   }
 
   @Override
@@ -589,8 +607,11 @@ public class DeltaV2Table extends DeltaV2TableShims
         && Objects.equals(tablePath, that.tablePath)
         && Objects.equals(options, that.options)
         && Objects.equals(catalogTable, that.catalogTable)
-        && Objects.equals(initialSnapshot.getPath(), that.initialSnapshot.getPath())
-        && initialSnapshot.getVersion() == that.initialSnapshot.getVersion();
+        && Objects.equals(
+            initialSnapshot.dataPath().toString(), that.initialSnapshot.dataPath().toString())
+        && initialSnapshot.version() == that.initialSnapshot.version()
+        && Objects.equals(
+            initialSnapshot.metadata().getId(), that.initialSnapshot.metadata().getId());
   }
 
   @Override
@@ -600,8 +621,9 @@ public class DeltaV2Table extends DeltaV2TableShims
         tablePath,
         options,
         catalogTable,
-        initialSnapshot.getPath(),
-        initialSnapshot.getVersion());
+        initialSnapshot.dataPath().toString(),
+        initialSnapshot.version(),
+        initialSnapshot.metadata().getId());
   }
 
   /**

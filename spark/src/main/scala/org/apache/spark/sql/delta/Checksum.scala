@@ -28,6 +28,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -368,6 +369,7 @@ trait RecordChecksum extends DeltaLogging {
     var numFiles = oldVersionChecksum.numFiles
     var protocol = oldVersionChecksum.protocol
     var metadata = oldVersionChecksum.metadata
+    var lastManifestCommit: Option[LastManifestCommit] = oldVersionChecksum.lastManifestCommit
     val fileSizeHistogram = if (spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)) {
       oldVersionChecksum.fileSizeHistogram.map { h =>
         FileSizeHistogram(h.sortedBinBoundaries, h.fileCounts.clone(), h.totalBytes.clone())
@@ -425,7 +427,7 @@ trait RecordChecksum extends DeltaLogging {
 
       case _: RemoveFile if ignoreRemoveFiles => ()
 
-      // extendedFileMetadata == true implies fields partitionValues, size, and tags are present
+      // extendedFileMetadata == true implies fields partitionValues and size are present
       case r: RemoveFile if r.extendedFileMetadata == Some(true) =>
         val size = r.size.get
         tableSizeBytes -= size
@@ -454,6 +456,7 @@ trait RecordChecksum extends DeltaLogging {
         metadata = m
       case ci: CommitInfo =>
         inCommitTimestamp = ci.inCommitTimestamp
+        lastManifestCommit = ci.lastManifestCommit
       case _ =>
     }
 
@@ -549,7 +552,7 @@ trait RecordChecksum extends DeltaLogging {
       allFiles = allFiles,
       deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramOpt,
       fileSizeHistogram = fileSizeHistogram,
-      lastManifestCommit = None
+      lastManifestCommit = lastManifestCommit
     ))
   }
 
@@ -602,7 +605,11 @@ trait RecordChecksum extends DeltaLogging {
     // We can also ignore file retention because that only affects [[RemoveFile]] actions.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      // Using object identity or not doesn't matter here for computing SetTransactions.
+      useDeletionVectorObjectIdentity = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC))
 
     logReplay.append(attemptVersion - 1, oldSetTransactions.toIterator)
     logReplay.append(attemptVersion, setTransactionsToCommit.toIterator)
@@ -631,7 +638,11 @@ trait RecordChecksum extends DeltaLogging {
     // We only work with DomainMetadata, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      // Using object identity or not doesn't matter here for computing DomainMetadata.
+      useDeletionVectorObjectIdentity = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC))
 
     val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_DOMAIN_METADATAS_IN_CRC)
 
@@ -682,7 +693,9 @@ trait RecordChecksum extends DeltaLogging {
       .orElse {
         recordFrameProfile(
             "Delta", "VersionChecksum.incrementallyComputeAddFiles") {
-          oldSnapshot.map(_.allFiles.collect().toSeq)
+          // Reconstructing from the read snapshot can surface stale leaf back references when that
+          // snapshot's AMT tree still had leaf manifests so strip them here.
+          oldSnapshot.map(_.allFiles.collect().toSeq.map(_.copy(backReference = None)))
         }
       }
       .getOrElse { return None }
@@ -697,7 +710,10 @@ trait RecordChecksum extends DeltaLogging {
     // We only work with AddFile, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      useDeletionVectorObjectIdentity = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC))
 
     logReplay.append(attemptVersion - 1, oldAllFiles.map(normalizePath).toIterator)
     logReplay.append(attemptVersion, actionsToCommit.map(normalizePath).toIterator)
@@ -855,10 +871,23 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
    */
   def validateFileListAgainstCRC(checksum: VersionChecksum, contextOpt: Option[String]): Boolean = {
     val fileSortKey = (f: AddFile) => (f.path, f.modificationTime, f.size)
-    val filesFromCrc = checksum.allFiles.map(_.sortBy(fileSortKey)).getOrElse { return true }
-    val filesFromStateReconstruction = recordFrameProfile(
+    var filesFromCrc = checksum.allFiles.map(_.sortBy(fileSortKey)).getOrElse { return true }
+    var filesFromStateReconstruction = recordFrameProfile(
         "Delta", "snapshot.allFiles") {
       allFilesViaStateReconstruction.collect().toSeq.sortBy(fileSortKey)
+    }
+    // AMT manifest trees do not yet round-trip every AddFile field: `DataEntry.toAddFile` zeroes
+    // `modificationTime`, forces `dataChange = false`, drops `tags`, and reduces `stats` to
+    // `{"numRecords":n}`. Project both sides through that lossy lens before comparing.
+    if (AMTUtils.amtEnabled(self)) {
+      def normalizeForAmtTreeRoundTrip(f: AddFile): AddFile = f.copy(
+        modificationTime = 0L,
+        dataChange = false,
+        tags = null,
+        stats = f.numPhysicalRecords.map(n => s"""{"numRecords":$n}""").getOrElse(null))
+      filesFromCrc = filesFromCrc.map(normalizeForAmtTreeRoundTrip).sortBy(fileSortKey)
+      filesFromStateReconstruction =
+        filesFromStateReconstruction.map(normalizeForAmtTreeRoundTrip).sortBy(fileSortKey)
     }
     if (filesFromCrc == filesFromStateReconstruction) return true
 

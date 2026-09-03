@@ -17,19 +17,18 @@ package io.delta.spark.internal.v2.write;
 
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
-import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.kernel.internal.TableConfig;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.types.StructType;
 
 /**
@@ -47,7 +46,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   private final String tablePath;
   private final Configuration hadoopConf;
   private final Snapshot initialSnapshot;
-  private final DeltaSnapshotManager snapshotManager;
+  private final DeltaV2SnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
   private final LogicalWriteInfo writeInfo;
@@ -69,7 +68,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       String tablePath,
       Configuration hadoopConf,
       Snapshot initialSnapshot,
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
       LogicalWriteInfo writeInfo) {
@@ -87,17 +86,25 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   public Write build() {
     validateDataSchema(initialSnapshot, writeInfo.schema());
 
-    // TODO(#7140): support partitioned writes to column-mapped tables. Unpartitioned is supported;
-    // partitioned writes need partition values keyed by physical name, so reject for now.
+    // TODO: support partitioned IcebergCompat / materializePartitionColumns writes.
     if (!partitionSchema.isEmpty()) {
-      ColumnMappingMode cmMode =
-          ColumnMapping.getColumnMappingMode(initialSnapshot.getTableProperties());
-      if (cmMode != ColumnMappingMode.NONE) {
+      boolean icebergCompat =
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(
+                  initialSnapshot.metadata().getConfiguration())
+              || TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(
+                  initialSnapshot.metadata().getConfiguration());
+      // Detect the materializePartitionColumns writer feature by its protocol name.
+      boolean materializePartitionColumns =
+          initialSnapshot.protocol().getWriterFeatures() != null
+              && initialSnapshot
+                  .protocol()
+                  .getWriterFeatures()
+                  .contains("materializePartitionColumns");
+      if (icebergCompat || materializePartitionColumns) {
         throw new UnsupportedOperationException(
-            "DSv2 partitioned writes are not supported on column-mapped Delta tables "
-                + "(delta.columnMapping.mode = "
-                + cmMode
-                + "). Use the V1 write path (format(\"delta\").write()) instead.");
+            "DSv2 partitioned writes are not supported on tables that materialize partition "
+                + "columns (IcebergCompat or the materializePartitionColumns feature). Use the V1 "
+                + "write path (format(\"delta\").write()) instead.");
       }
     }
 
@@ -108,7 +115,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         engine,
         hadoopConf,
         tablePath,
-        initialSnapshot,
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
         snapshotManager,
         dataSchema,
         partitionSchema,
@@ -118,8 +125,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   static void validateDataSchema(Snapshot initialSnapshot, StructType dataSchema) {
     // Validate data schema against table schema using the same utility as V1
     // (ImplicitMetadataOperation.updateMetadata -> SchemaMergingUtils.mergeSchemas).
-    StructType tableSchema =
-        SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
+    StructType tableSchema = initialSnapshot.schema();
     // Strip column mapping metadata (physical names, IDs) so mergeSchemas compares
     // only logical types - matches V1's dropColumnMappingMetadata call.
     StructType cleanTableSchema =

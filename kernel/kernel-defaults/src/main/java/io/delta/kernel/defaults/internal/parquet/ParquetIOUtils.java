@@ -19,7 +19,14 @@ import io.delta.kernel.defaults.engine.fileio.InputFile;
 import io.delta.kernel.defaults.engine.fileio.OutputFile;
 import io.delta.kernel.defaults.engine.fileio.PositionOutputStream;
 import io.delta.kernel.defaults.engine.fileio.SeekableInputStream;
+import io.delta.kernel.defaults.engine.hadoopio.HadoopInputFile;
 import java.io.IOException;
+import org.apache.parquet.ParquetReadOptions;
+import org.apache.parquet.conf.HadoopParquetConfiguration;
+import org.apache.parquet.conf.ParquetConfiguration;
+import org.apache.parquet.format.converter.ParquetMetadataConverter;
+import org.apache.parquet.hadoop.ParquetFileReader;
+import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.io.DelegatingPositionOutputStream;
 import org.apache.parquet.io.DelegatingSeekableInputStream;
 
@@ -29,6 +36,44 @@ import org.apache.parquet.io.DelegatingSeekableInputStream;
  */
 public class ParquetIOUtils {
   private ParquetIOUtils() {}
+
+  /**
+   * Returns the {@link ParquetConfiguration} to read {@code inputFile} with.
+   *
+   * <p>This matters for concurrency, not just for honoring settings. `parquet-mr` entry points
+   * taking an {@link org.apache.parquet.io.InputFile} that isn't {@code
+   * org.apache.parquet.hadoop.util.HadoopInputFile} fall back to {@code new
+   * HadoopParquetConfiguration()}, which wraps a fresh {@code Configuration(loadDefaults=true)}.
+   * Hadoop loads such a configuration's properties lazily, so the first property read -- which
+   * `parquet-mr` issues immediately while building the read options -- scans the classpath for
+   * `core-default.xml` and friends under a JVM-global lock. This would make concurrent readers
+   * serialize on the lock.
+   *
+   * <p>Reusing the configuration the file is already being read with avoids the scan entirely: its
+   * properties are loaded once and memoized on the instance. A non-{@code HadoopInputFile} input
+   * carries no Hadoop configuration to reuse, so it falls back to a fresh {@code
+   * HadoopParquetConfiguration}.
+   */
+  static ParquetConfiguration parquetConfiguration(InputFile inputFile) {
+    return inputFile instanceof HadoopInputFile
+        ? new HadoopParquetConfiguration(((HadoopInputFile) inputFile).configuration())
+        : new HadoopParquetConfiguration();
+  }
+
+  /**
+   * Reads the footer of {@code parquetFile} using {@code conf}, so that `parquet-mr` doesn't
+   * construct a fresh Hadoop Configuration for the read. See {@link #parquetConfiguration}.
+   */
+  static ParquetMetadata readFooter(
+      org.apache.parquet.io.InputFile parquetFile, ParquetConfiguration conf) throws IOException {
+    ParquetReadOptions readOptions =
+        ParquetReadOptions.builder(conf)
+            .withMetadataFilter(ParquetMetadataConverter.NO_FILTER)
+            .build();
+    try (org.apache.parquet.io.SeekableInputStream stream = parquetFile.newStream()) {
+      return ParquetFileReader.readFooter(parquetFile, readOptions, stream);
+    }
+  }
 
   /** Create a Parquet {@link org.apache.parquet.io.InputFile} from a Kernel's {@link InputFile}. */
   static org.apache.parquet.io.InputFile createParquetInputFile(InputFile inputFile) {
