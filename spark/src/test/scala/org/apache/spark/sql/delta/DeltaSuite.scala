@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -399,7 +399,7 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("replaceWhere with rearrangeOnly") {
+  test("replaceWhere with rearrangeOnly", CatalogManagedMaintenanceIncompatible) {
     withTempDir { dir =>
       Seq(1, 2, 3, 4).toDF()
         .withColumn("is_odd", $"value" % 2 =!= 0)
@@ -433,6 +433,32 @@ class DeltaSuite extends QueryTest
       checkAnswer(
         spark.read.format("delta").load(dir.toString),
         Seq(2, 4, 9).toDF().withColumn("is_odd", $"value" % 2 =!= 0))
+    }
+  }
+
+  test("rearrange-only write is blocked for a catalog-managed table") {
+    withCatalogManagedTable() { tableName =>
+      spark.sql(s"INSERT INTO $tableName VALUES (1)")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val snapshotBefore = deltaLog.update()
+
+      checkError(
+        intercept[DeltaUnsupportedOperationException] {
+          Seq(2).toDF("id")
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "id = 1")
+            .option(DeltaOptions.DATA_CHANGE_OPTION, "false")
+            .save(deltaLog.dataPath.toString)
+        },
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "DATA_REORGANIZATION"))
+
+      val snapshotAfter = deltaLog.update()
+      assert(snapshotAfter.version === snapshotBefore.version)
+      assert(snapshotAfter.allFiles.collect().toSet === snapshotBefore.allFiles.collect().toSet)
+      checkAnswer(spark.table(tableName), Row(1))
     }
   }
 
