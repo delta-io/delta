@@ -52,8 +52,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
   import DeltaV2TableManagerCache.CacheKey
 
   private val cache: Cache[CacheKey, DeltaV2TableManager] = {
-    val listener: RemovalListener[CacheKey, DeltaV2TableManager] =
-      notification => {
+    val listener: RemovalListener[CacheKey, DeltaV2TableManager] = notification => {
         val manager = notification.getValue
         if (manager != null) manager.retire()
       }
@@ -87,8 +86,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
     }
   }
 
-  def invalidate(key: CacheKey): Unit =
-    cache.invalidate(key)
+  def invalidate(key: CacheKey): Unit = cache.invalidate(key)
 
   /**
    * Invalidates all entries whose log path matches the given path. Plain equality is used; no
@@ -102,13 +100,9 @@ private[tablemanager] class DeltaV2TableManagerCache(
 
   def size(): Long = cache.size()
 
-  def getIfPresent(
-      key: CacheKey
-  ): Option[DeltaV2TableManager] =
-    Option(cache.getIfPresent(key))
+  def getIfPresent(key: CacheKey): Option[DeltaV2TableManager] = Option(cache.getIfPresent(key))
 
-  def contains(key: CacheKey): Boolean =
-    cache.getIfPresent(key) != null
+  def contains(key: CacheKey): Boolean = cache.getIfPresent(key) != null
 
   /** Triggers pending eviction maintenance (Guava defers cleanup). */
   def cleanUp(): Unit = cache.cleanUp()
@@ -204,15 +198,14 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
 
   @volatile private var instance: Option[DeltaV2TableManagerCache] = None
 
-  def isEnabled(sqlConf: SQLConf): Boolean =
-    sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE) > 0
+  def isEnabled(sqlConf: SQLConf): Boolean = sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE) > 0
 
   /**
    * Returns a cached or freshly-created [[DeltaV2TableManager]] for the given table coordinates.
    *
-   * This is the sole public entry point for wider callers. It constructs the internal
-   * [[CacheKey]], derives SQLConf from the [[SparkSession]], and routes through
-   * the process-global singleton cache (or bypasses it when caching is disabled).
+   * This is the sole public entry point for wider callers. It constructs the internal [[CacheKey]],
+   * derives SQLConf from the [[SparkSession]], and routes through the process-global singleton
+   * cache (or bypasses it when caching is disabled).
    *
    * @param spark the active SparkSession, used for filesystem resolution and configuration.
    * @param dataPath the table's data directory path as a string.
@@ -227,8 +220,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
       initialCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     recordFrameProfile("tableManagerCache.forTable") {
-      val key = CacheKey.from(
-        spark, dataPath, options, initialCatalogTableOpt)
+      val key = CacheKey.from(spark, dataPath, options, initialCatalogTableOpt)
       val sqlConf = spark.sessionState.conf
       if (!isEnabled(sqlConf)) {
         return new DeltaV2TableManagerImpl(
@@ -259,15 +251,9 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
     }
   }
 
-  private[tablemanager] def invalidate(
-      key: CacheKey
-  ): Unit = {
-    instance.foreach(_.invalidate(key))
-  }
+  private[tablemanager] def invalidate(key: CacheKey): Unit = instance.foreach(_.invalidate(key))
 
-  def clearCache(): Unit = {
-    instance.foreach(_.invalidateAll())
-  }
+  def clearCache(): Unit = instance.foreach(_.invalidateAll())
 
   /**
    * Invalidates all cache entries whose key path equals `logPath`. Matching uses exact [[Path]]
@@ -292,9 +278,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
    * Returns the process-global cache instance, initializing on first access. First caller's SQLConf
    * determines size and TTL for all subsequent callers.
    */
-  private def getOrCreateInstance(
-      sqlConf: SQLConf
-  ): DeltaV2TableManagerCache = synchronized {
+  private def getOrCreateInstance(sqlConf: SQLConf): DeltaV2TableManagerCache = synchronized {
     instance.getOrElse {
       val maxSize = sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE)
       val ttlMinutes = sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES)

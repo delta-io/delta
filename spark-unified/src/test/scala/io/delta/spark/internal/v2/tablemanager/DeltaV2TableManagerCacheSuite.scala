@@ -95,8 +95,7 @@ class DeltaV2TableManagerCacheSuite
       val second = cache.getOrCreate(key, Some(catalogB))
       assert(first eq second)
       val impl = first.asInstanceOf[DeltaV2TableManagerImpl]
-      assert(
-        impl.initialCatalogTableOpt === Some(catalogA),
+      assert(impl.initialCatalogTableOpt === Some(catalogA),
         "initial catalog should be from first load")
     }
   }
@@ -104,8 +103,7 @@ class DeltaV2TableManagerCacheSuite
   test("per-instance: removal listener retires manager on invalidation") {
     val stub = new StubTableManager("a")
     val cache = new DeltaV2TableManagerCache(
-      maxSize = 1000,
-      ttlMinutes = 60,
+      maxSize = 1000, ttlMinutes = 60,
       managerFactory = (_, _) => stub)
     withTempDir { dir =>
       val key = makeKey(dir.getCanonicalPath)
@@ -121,8 +119,7 @@ class DeltaV2TableManagerCacheSuite
     val stubB = new StubTableManager("b")
     val stubs = Iterator(stubA, stubB)
     val cache = new DeltaV2TableManagerCache(
-      maxSize = 1,
-      ttlMinutes = 60,
+      maxSize = 1, ttlMinutes = 60,
       managerFactory = (_, _) => stubs.next())
     withTempDir { dirA =>
       withTempDir { dirB =>
@@ -144,8 +141,7 @@ class DeltaV2TableManagerCacheSuite
     val ttlMinutes = 10
     val stub = new StubTableManager("ttl")
     val cache = new DeltaV2TableManagerCache(
-      maxSize = 1000,
-      ttlMinutes = ttlMinutes,
+      maxSize = 1000, ttlMinutes = ttlMinutes,
       ticker = ticker,
       managerFactory = (_, _) => stub)
     withTempDir { dir =>
@@ -166,8 +162,7 @@ class DeltaV2TableManagerCacheSuite
   test("per-instance: unwraps checked exception from ExecutionException") {
     val cause = new java.io.IOException("checked-cause")
     val cache = new DeltaV2TableManagerCache(
-      maxSize = 1000,
-      ttlMinutes = 60,
+      maxSize = 1000, ttlMinutes = 60,
       managerFactory = (_, _) => throw cause)
     withTempDir { dir =>
       val key = makeKey(dir.getCanonicalPath)
@@ -181,8 +176,7 @@ class DeltaV2TableManagerCacheSuite
   test("per-instance: unwraps runtime exception from UncheckedExecutionException") {
     val cause = new IllegalStateException("runtime-cause")
     val cache = new DeltaV2TableManagerCache(
-      maxSize = 1000,
-      ttlMinutes = 60,
+      maxSize = 1000, ttlMinutes = 60,
       managerFactory = (_, _) => throw cause)
     withTempDir { dir =>
       val key = makeKey(dir.getCanonicalPath)
@@ -196,8 +190,7 @@ class DeltaV2TableManagerCacheSuite
   test("per-instance: unwraps Error from ExecutionError") {
     val cause = new StackOverflowError("error-cause")
     val cache = new DeltaV2TableManagerCache(
-      maxSize = 1000,
-      ttlMinutes = 60,
+      maxSize = 1000, ttlMinutes = 60,
       managerFactory = (_, _) => throw cause)
     withTempDir { dir =>
       val key = makeKey(dir.getCanonicalPath)
@@ -241,15 +234,10 @@ class DeltaV2TableManagerCacheSuite
     val stubs = Iterator(stubA, stubB)
     withTempDir { dir =>
       val sharedLogPath = makeKey(dir.getCanonicalPath).path
-      val keyA = CacheKey(
-        sharedLogPath,
-        Map("fs.s3a.access.key" -> "AAA"))
-      val keyB = CacheKey(
-        sharedLogPath,
-        Map("fs.s3a.access.key" -> "BBB"))
+      val keyA = CacheKey(sharedLogPath, Map("fs.s3a.access.key" -> "AAA"))
+      val keyB = CacheKey(sharedLogPath, Map("fs.s3a.access.key" -> "BBB"))
       val cache = new DeltaV2TableManagerCache(
-        maxSize = 1000,
-        ttlMinutes = 60,
+        maxSize = 1000, ttlMinutes = 60,
         managerFactory = (_, _) => stubs.next())
       cache.getOrCreate(keyA)
       cache.getOrCreate(keyB)
@@ -294,12 +282,8 @@ class DeltaV2TableManagerCacheSuite
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "0") {
       withTempDir { dir =>
         val key = makeKey(dir.getCanonicalPath)
-        val first = DeltaV2TableManagerCache.getOrCreate(
-          spark.sessionState.conf,
-          key)
-        val second = DeltaV2TableManagerCache.getOrCreate(
-          spark.sessionState.conf,
-          key)
+        val first = DeltaV2TableManagerCache.getOrCreate(spark.sessionState.conf, key)
+        val second = DeltaV2TableManagerCache.getOrCreate(spark.sessionState.conf, key)
         assert(first ne second)
       }
     }
@@ -309,12 +293,8 @@ class DeltaV2TableManagerCacheSuite
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
       withTempDir { dir =>
         val key = makeKey(dir.getCanonicalPath)
-        val first = DeltaV2TableManagerCache.getOrCreate(
-          spark.sessionState.conf,
-          key)
-        val second = DeltaV2TableManagerCache.getOrCreate(
-          spark.sessionState.conf,
-          key)
+        val first = DeltaV2TableManagerCache.getOrCreate(spark.sessionState.conf, key)
+        val second = DeltaV2TableManagerCache.getOrCreate(spark.sessionState.conf, key)
         assert(first eq second)
       }
     }
@@ -327,21 +307,11 @@ class DeltaV2TableManagerCacheSuite
         val sessionB = spark.newSession()
         sessionB.conf.set(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "500")
 
-        val keyA = CacheKey.from(
-          sessionA,
-          dir.getCanonicalPath,
-          Collections.emptyMap())
-        val keyB = CacheKey.from(
-          sessionB,
-          dir.getCanonicalPath,
-          Collections.emptyMap())
+        val keyA = CacheKey.from(sessionA, dir.getCanonicalPath, Collections.emptyMap())
+        val keyB = CacheKey.from(sessionB, dir.getCanonicalPath, Collections.emptyMap())
 
-        val fromA = DeltaV2TableManagerCache.getOrCreate(
-          sessionA.sessionState.conf,
-          keyA)
-        val fromB = DeltaV2TableManagerCache.getOrCreate(
-          sessionB.sessionState.conf,
-          keyB)
+        val fromA = DeltaV2TableManagerCache.getOrCreate(sessionA.sessionState.conf, keyA)
+        val fromB = DeltaV2TableManagerCache.getOrCreate(sessionB.sessionState.conf, keyB)
 
         assert(keyA == keyB, "Same path must produce the same cache key across sessions")
         assert(fromA eq fromB, "Same key from different sessions must share one cached instance")
@@ -359,8 +329,7 @@ class DeltaV2TableManagerCacheSuite
     val stub = new StubTableManager("single-flight")
 
     val cache = new DeltaV2TableManagerCache(
-      maxSize = 1000,
-      ttlMinutes = 60,
+      maxSize = 1000, ttlMinutes = 60,
       managerFactory = (_, _) => {
         invocations.incrementAndGet()
         loaderEntered.countDown()
@@ -400,30 +369,18 @@ class DeltaV2TableManagerCacheSuite
 
     withTempDir { dirA =>
       withTempDir { dirB =>
-        val keyA = CacheKey.from(
-          sessionA,
-          dirA.getCanonicalPath,
-          Collections.emptyMap())
-        val keyB = CacheKey.from(
-          sessionB,
-          dirB.getCanonicalPath,
-          Collections.emptyMap())
+        val keyA = CacheKey.from(sessionA, dirA.getCanonicalPath, Collections.emptyMap())
+        val keyB = CacheKey.from(sessionB, dirB.getCanonicalPath, Collections.emptyMap())
 
         // Session A loads key A -- initializes singleton (size 1).
-        val originalA = DeltaV2TableManagerCache.getOrCreate(
-          sessionA.sessionState.conf,
-          keyA)
+        val originalA = DeltaV2TableManagerCache.getOrCreate(sessionA.sessionState.conf, keyA)
 
         // Session B loads key B -- evicts key A under size-1.
-        DeltaV2TableManagerCache.getOrCreate(
-          sessionB.sessionState.conf,
-          keyB)
+        DeltaV2TableManagerCache.getOrCreate(sessionB.sessionState.conf, keyB)
 
         // Re-lookup key A: must create a new instance because size-1 evicted the original, proving
         // first caller's config governs, not the second caller's (size 1000).
-        val reloadedA = DeltaV2TableManagerCache.getOrCreate(
-          sessionA.sessionState.conf,
-          keyA)
+        val reloadedA = DeltaV2TableManagerCache.getOrCreate(sessionA.sessionState.conf, keyA)
         assert(
           reloadedA ne originalA,
           "Key A should have been evicted under the first caller's maxSize=1 and " +
@@ -437,9 +394,7 @@ class DeltaV2TableManagerCacheSuite
   test("forTable produces a manager with expected qualified path and options") {
     withTempDir { dir =>
       val manager = DeltaV2TableManagerCache.forTable(
-        spark,
-        dir.getCanonicalPath,
-        Collections.emptyMap())
+        spark, dir.getCanonicalPath, Collections.emptyMap())
       val impl = manager.asInstanceOf[DeltaV2TableManagerImpl]
       assert(impl.qualifiedTableDataPath.isAbsolute)
       assert(impl.qualifiedTableDataPath.toUri.getPath.contains(dir.getName))
