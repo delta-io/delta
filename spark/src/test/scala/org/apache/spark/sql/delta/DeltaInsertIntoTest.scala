@@ -23,6 +23,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.{DataFrame, Row, SaveMode, SparkSession}
+import org.apache.spark.sql.catalyst.util.QuotingUtils
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.types.StructType
@@ -258,7 +259,7 @@ trait DeltaInsertIntoTestBase { self: AnyFunSuite =>
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      val assignments = columns.filterNot(_ == quoteIdentifier(whereCol)).mkString(", ")
+      val assignments = columns.filterNot(_ == whereCol).mkString(", ")
       runInsertSql(withSchemaEvolution) { clause =>
         s"INSERT ${clause}OVERWRITE $quotedTargetTableName " +
           s"PARTITION ($whereCol = $whereValue) " +
@@ -278,7 +279,7 @@ trait DeltaInsertIntoTestBase { self: AnyFunSuite =>
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      val assignments = columns.filterNot(_ == quoteIdentifier(whereCol)).mkString(", ")
+      val assignments = columns.filterNot(_ == whereCol).mkString(", ")
       runInsertSql(withSchemaEvolution) { clause =>
         s"INSERT ${clause}OVERWRITE $quotedTargetTableName " +
           s"PARTITION ($whereCol = $whereValue) ($assignments) " +
@@ -657,7 +658,7 @@ trait DeltaInsertIntoTestBase { self: AnyFunSuite =>
 
           def runInsert(): Unit =
             insert.runInsert(
-              columns = insertData.schema.map(field => quoteIdentifier(field.name)),
+              columns = insertData.schema.map(field => QuotingUtils.quoteIfNeeded(field.name)),
               whereCol = overwriteWhere._1,
               whereValue = overwriteWhere._2,
               withSchemaEvolution = withSchemaEvolution
