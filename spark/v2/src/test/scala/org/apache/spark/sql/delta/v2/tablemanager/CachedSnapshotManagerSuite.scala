@@ -22,21 +22,33 @@ import java.util.concurrent.ConcurrentLinkedQueue
 
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
+import io.delta.sql.DeltaSparkSessionExtension
 
 import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 
 import org.apache.hadoop.fs.Path
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
 class CachedSnapshotManagerSuite
     extends QueryTest
-    with SharedSparkSession
-    with DeltaSQLCommandTest {
+    with SharedSparkSession {
+
+  override protected def sparkConf: SparkConf = {
+    super.sparkConf
+      .set(
+        StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
+        classOf[DeltaSparkSessionExtension].getName)
+      .set(
+        SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
+        classOf[DeltaCatalog].getName)
+  }
 
   private def createDeltaTable(dir: File, numRows: Int = 10): Unit = {
     spark.range(numRows).write.format("delta").save(dir.getCanonicalPath)
