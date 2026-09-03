@@ -91,8 +91,7 @@ class DeltaV2TableManagerCacheKeySuite
         "fs.test.secret" -> "first",
         "dfs.test.endpoint" -> "endpoint",
         "reader.option" -> "ignored")
-      val secondOptions =
-        firstOptions.updated("fs.test.secret", "second")
+      val secondOptions = firstOptions.updated("fs.test.secret", "second")
 
       val first = DeltaV2TableManagerCacheKey.from(
         spark,
@@ -183,8 +182,7 @@ class DeltaV2TableManagerCacheKeySuite
   test("DataFrame fs options ignored when config is off") {
     withTempDir { dataPath =>
       val path = dataPath.getCanonicalPath
-      val confKey = DeltaSQLConf
-        .LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS.key
+      val confKey = DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS.key
       withSQLConf(confKey -> "false") {
         val withFsOpts = DeltaV2TableManagerCacheKey.from(
           spark,
@@ -203,8 +201,7 @@ class DeltaV2TableManagerCacheKeySuite
   test("catalog storage properties authoritative when config off") {
     withTempDir { dataPath =>
       val path = dataPath.getCanonicalPath
-      val confKey = DeltaSQLConf
-        .LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS.key
+      val confKey = DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS.key
       val catalogTable = CatalogTable(
         identifier = TableIdentifier("test_table"),
         tableType = CatalogTableType.EXTERNAL,
