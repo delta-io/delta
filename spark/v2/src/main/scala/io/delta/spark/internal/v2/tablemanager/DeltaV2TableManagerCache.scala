@@ -42,17 +42,17 @@ private[tablemanager] class DeltaV2TableManagerCache(
     ttlMinutes: Long,
     ticker: Ticker = Ticker.systemTicker(),
     managerFactory: (
-        DeltaV2TableManagerCache.DeltaV2TableManagerCacheKey,
+        DeltaV2TableManagerCache.CacheKey,
         Option[CatalogTable]) => DeltaV2TableManager =
       (key, catalog) => new DeltaV2TableManagerImpl(
         key.path.getParent,
         key.sessionInvariantFsOptions,
         catalog)
 ) extends DeltaV2Logging {
-  import DeltaV2TableManagerCache.DeltaV2TableManagerCacheKey
+  import DeltaV2TableManagerCache.CacheKey
 
-  private val cache: Cache[DeltaV2TableManagerCacheKey, DeltaV2TableManager] = {
-    val listener: RemovalListener[DeltaV2TableManagerCacheKey, DeltaV2TableManager] =
+  private val cache: Cache[CacheKey, DeltaV2TableManager] = {
+    val listener: RemovalListener[CacheKey, DeltaV2TableManager] =
       notification => {
         val manager = notification.getValue
         if (manager != null) manager.retire()
@@ -62,14 +62,14 @@ private[tablemanager] class DeltaV2TableManagerCache(
       .expireAfterAccess(ttlMinutes, TimeUnit.MINUTES)
       .removalListener(listener)
       .ticker(ticker)
-      .build[DeltaV2TableManagerCacheKey, DeltaV2TableManager]()
+      .build[CacheKey, DeltaV2TableManager]()
   }
 
   // Guava's Cache.get wraps loader failures: checked exceptions in ExecutionException, runtime
   // exceptions in UncheckedExecutionException, and Errors in ExecutionError. Unwrapping preserves
   // the original Delta error class, SQLSTATE, and cause chain rather than exposing Guava wrappers.
   def getOrCreate(
-      key: DeltaV2TableManagerCacheKey,
+      key: CacheKey,
       initialCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     try {
@@ -87,7 +87,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
     }
   }
 
-  def invalidate(key: DeltaV2TableManagerCacheKey): Unit =
+  def invalidate(key: CacheKey): Unit =
     cache.invalidate(key)
 
   /**
@@ -103,11 +103,11 @@ private[tablemanager] class DeltaV2TableManagerCache(
   def size(): Long = cache.size()
 
   def getIfPresent(
-      key: DeltaV2TableManagerCacheKey
+      key: CacheKey
   ): Option[DeltaV2TableManager] =
     Option(cache.getIfPresent(key))
 
-  def contains(key: DeltaV2TableManagerCacheKey): Boolean =
+  def contains(key: CacheKey): Boolean =
     cache.getIfPresent(key) != null
 
   /** Triggers pending eviction maintenance (Guava defers cleanup). */
@@ -141,15 +141,15 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
    *   do not change across requests to the same cached composite. Values are redacted in
    *   [[toString]] to prevent credential leakage in logs.
    */
-  private[tablemanager] case class DeltaV2TableManagerCacheKey(
+  private[tablemanager] case class CacheKey(
       path: Path,
       sessionInvariantFsOptions: Map[String, String]) {
 
     override def toString: String =
-      s"DeltaV2TableManagerCacheKey(path=$path,fsOptions=<redacted>)"
+      s"CacheKey(path=$path,fsOptions=<redacted>)"
   }
 
-  private[tablemanager] object DeltaV2TableManagerCacheKey {
+  private[tablemanager] object CacheKey {
 
     /**
      * Constructs a cache key from caller-supplied table coordinates.
@@ -185,7 +185,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
         dataPath: String,
         options: java.util.Map[String, String],
         catalogTableOpt: Option[CatalogTable] = None
-    ): DeltaV2TableManagerCacheKey = {
+    ): CacheKey = {
       val sessionInvariantFsOptions = DeltaFileSystemOptions.buildFsOptions(
         spark, options.asScala.toMap, catalogTableOpt)
       val rawLogPath = DeltaTableUtils.safeConcatPaths(new Path(dataPath), "_delta_log")
@@ -196,7 +196,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
       // scalastyle:on deltahadoopconfiguration
       val qualifiedLogPath = PathWithFileSystem
         .withConf(rawLogPath, hadoopConf).fs.makeQualified(rawLogPath)
-      DeltaV2TableManagerCacheKey(qualifiedLogPath, sessionInvariantFsOptions)
+      CacheKey(qualifiedLogPath, sessionInvariantFsOptions)
     }
   }
 
@@ -211,7 +211,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
    * Returns a cached or freshly-created [[DeltaV2TableManager]] for the given table coordinates.
    *
    * This is the sole public entry point for wider callers. It constructs the internal
-   * [[DeltaV2TableManagerCacheKey]], derives SQLConf from the [[SparkSession]], and routes through
+   * [[CacheKey]], derives SQLConf from the [[SparkSession]], and routes through
    * the process-global singleton cache (or bypasses it when caching is disabled).
    *
    * @param spark the active SparkSession, used for filesystem resolution and configuration.
@@ -227,7 +227,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
       initialCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     recordFrameProfile("tableManagerCache.forTable") {
-      val key = DeltaV2TableManagerCacheKey.from(
+      val key = CacheKey.from(
         spark, dataPath, options, initialCatalogTableOpt)
       val sqlConf = spark.sessionState.conf
       if (!isEnabled(sqlConf)) {
@@ -245,7 +245,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
    */
   private[tablemanager] def getOrCreate(
       sqlConf: SQLConf,
-      key: DeltaV2TableManagerCacheKey,
+      key: CacheKey,
       initialCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     recordFrameProfile("tableManagerCache.getOrCreate") {
@@ -260,7 +260,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
   }
 
   private[tablemanager] def invalidate(
-      key: DeltaV2TableManagerCacheKey
+      key: CacheKey
   ): Unit = {
     instance.foreach(_.invalidate(key))
   }
@@ -273,7 +273,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
    * Invalidates all cache entries whose key path equals `logPath`. Matching uses exact [[Path]]
    * equality; no normalization, qualification, or scheme resolution is applied by this method --
    * the caller must supply an already-qualified path consistent with the key's construction in
-   * [[DeltaV2TableManagerCacheKey.from]].
+   * [[CacheKey.from]].
    */
   def invalidateByLogPath(logPath: Path): Unit = {
     instance.foreach(_.invalidateByLogPath(logPath))

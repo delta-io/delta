@@ -19,7 +19,7 @@ import java.util.Collections
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
-import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache.DeltaV2TableManagerCacheKey
+import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache.CacheKey
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
@@ -36,8 +36,8 @@ class DeltaV2TableManagerCacheSuite
     with SharedSparkSession {
 
   /** Creates a cache key from a data directory using the public factory. */
-  private def makeKey(dataPath: String): DeltaV2TableManagerCacheKey =
-    DeltaV2TableManagerCacheKey.from(spark, dataPath, Collections.emptyMap())
+  private def makeKey(dataPath: String): CacheKey =
+    CacheKey.from(spark, dataPath, Collections.emptyMap())
 
   // Process-global companion tests use unsetCache for isolation.
   override def beforeEach(): Unit = {
@@ -241,10 +241,10 @@ class DeltaV2TableManagerCacheSuite
     val stubs = Iterator(stubA, stubB)
     withTempDir { dir =>
       val sharedLogPath = makeKey(dir.getCanonicalPath).path
-      val keyA = DeltaV2TableManagerCacheKey(
+      val keyA = CacheKey(
         sharedLogPath,
         Map("fs.s3a.access.key" -> "AAA"))
-      val keyB = DeltaV2TableManagerCacheKey(
+      val keyB = CacheKey(
         sharedLogPath,
         Map("fs.s3a.access.key" -> "BBB"))
       val cache = new DeltaV2TableManagerCache(
@@ -327,11 +327,11 @@ class DeltaV2TableManagerCacheSuite
         val sessionB = spark.newSession()
         sessionB.conf.set(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "500")
 
-        val keyA = DeltaV2TableManagerCacheKey.from(
+        val keyA = CacheKey.from(
           sessionA,
           dir.getCanonicalPath,
           Collections.emptyMap())
-        val keyB = DeltaV2TableManagerCacheKey.from(
+        val keyB = CacheKey.from(
           sessionB,
           dir.getCanonicalPath,
           Collections.emptyMap())
@@ -400,11 +400,11 @@ class DeltaV2TableManagerCacheSuite
 
     withTempDir { dirA =>
       withTempDir { dirB =>
-        val keyA = DeltaV2TableManagerCacheKey.from(
+        val keyA = CacheKey.from(
           sessionA,
           dirA.getCanonicalPath,
           Collections.emptyMap())
-        val keyB = DeltaV2TableManagerCacheKey.from(
+        val keyB = CacheKey.from(
           sessionB,
           dirB.getCanonicalPath,
           Collections.emptyMap())

@@ -19,7 +19,7 @@ import java.io.File
 
 import scala.jdk.CollectionConverters._
 
-import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache.DeltaV2TableManagerCacheKey
+import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache.CacheKey
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -36,7 +36,7 @@ class DeltaV2TableManagerCacheKeySuite
 
   test("produces a _delta_log path from the data path") {
     withTempDir { dataPath =>
-      val key = DeltaV2TableManagerCacheKey.from(
+      val key = CacheKey.from(
         spark,
         dataPath.getCanonicalPath,
         Map.empty[String, String].asJava)
@@ -56,11 +56,11 @@ class DeltaV2TableManagerCacheKeySuite
       val options = Map(
         "fs.test.option" -> "value",
         "reader.option" -> "ignored")
-      val first = DeltaV2TableManagerCacheKey.from(
+      val first = CacheKey.from(
         spark,
         dataPath.getCanonicalPath,
         options.asJava)
-      val second = DeltaV2TableManagerCacheKey.from(
+      val second = CacheKey.from(
         spark,
         dataPath.getCanonicalPath,
         options.asJava)
@@ -74,7 +74,7 @@ class DeltaV2TableManagerCacheKeySuite
       assert(dataPath.mkdirs())
 
       withSQLConf(DeltaSQLConf.DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS.key -> "true") {
-        val key = DeltaV2TableManagerCacheKey.from(
+        val key = CacheKey.from(
           spark,
           dataPath.getCanonicalPath,
           Map.empty[String, String].asJava)
@@ -93,11 +93,11 @@ class DeltaV2TableManagerCacheKeySuite
         "reader.option" -> "ignored")
       val secondOptions = firstOptions.updated("fs.test.secret", "second")
 
-      val first = DeltaV2TableManagerCacheKey.from(
+      val first = CacheKey.from(
         spark,
         path,
         firstOptions.asJava)
-      val second = DeltaV2TableManagerCacheKey.from(
+      val second = CacheKey.from(
         spark,
         path,
         secondOptions.asJava)
@@ -115,7 +115,7 @@ class DeltaV2TableManagerCacheKeySuite
     withTempDir { dataPath =>
       val optionName = "fs.test.secret"
       val optionValue = "credential-value"
-      val key = DeltaV2TableManagerCacheKey.from(
+      val key = CacheKey.from(
         spark,
         dataPath.getCanonicalPath,
         Map(optionName -> optionValue).asJava)
@@ -133,11 +133,11 @@ class DeltaV2TableManagerCacheKeySuite
     withTempDir { dataPath =>
       val path = dataPath.getCanonicalPath
       val empty = Map.empty[String, String].asJava
-      val withSlash = DeltaV2TableManagerCacheKey.from(
+      val withSlash = CacheKey.from(
         spark,
         path + "/",
         empty)
-      val withoutSlash = DeltaV2TableManagerCacheKey.from(
+      val withoutSlash = CacheKey.from(
         spark,
         path,
         empty)
@@ -150,11 +150,11 @@ class DeltaV2TableManagerCacheKeySuite
       val plain = dataPath.getCanonicalPath
       val withScheme = "file://" + plain
       val empty = Map.empty[String, String].asJava
-      val keyPlain = DeltaV2TableManagerCacheKey.from(
+      val keyPlain = CacheKey.from(
         spark,
         plain,
         empty)
-      val keyScheme = DeltaV2TableManagerCacheKey.from(
+      val keyScheme = CacheKey.from(
         spark,
         withScheme,
         empty)
@@ -165,11 +165,11 @@ class DeltaV2TableManagerCacheKeySuite
   test("different fs options produce distinct keys for same path") {
     withTempDir { dataPath =>
       val path = dataPath.getCanonicalPath
-      val keyA = DeltaV2TableManagerCacheKey.from(
+      val keyA = CacheKey.from(
         spark,
         path,
         Map("fs.test" -> "a").asJava)
-      val keyB = DeltaV2TableManagerCacheKey.from(
+      val keyB = CacheKey.from(
         spark,
         path,
         Map("fs.test" -> "b").asJava)
@@ -184,11 +184,11 @@ class DeltaV2TableManagerCacheKeySuite
       val path = dataPath.getCanonicalPath
       val confKey = DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS.key
       withSQLConf(confKey -> "false") {
-        val withFsOpts = DeltaV2TableManagerCacheKey.from(
+        val withFsOpts = CacheKey.from(
           spark,
           path,
           Map("fs.test" -> "v", "dfs.test" -> "x").asJava)
-        val bare = DeltaV2TableManagerCacheKey.from(
+        val bare = CacheKey.from(
           spark,
           path,
           Map.empty[String, String].asJava)
@@ -209,12 +209,12 @@ class DeltaV2TableManagerCacheKeySuite
           Map("fs.catalog.key" -> "catalog-value")),
         schema = new StructType())
       withSQLConf(confKey -> "false") {
-        val withCatalog = DeltaV2TableManagerCacheKey.from(
+        val withCatalog = CacheKey.from(
           spark,
           path,
           Map("fs.ignored" -> "from-options").asJava,
           Some(catalogTable))
-        val bare = DeltaV2TableManagerCacheKey.from(
+        val bare = CacheKey.from(
           spark,
           path,
           Map.empty[String, String].asJava)
@@ -231,7 +231,7 @@ class DeltaV2TableManagerCacheKeySuite
     withTempDir { dataPath =>
       val schemelessAbsolute = dataPath.getCanonicalPath
       assert(!schemelessAbsolute.contains("://"), "precondition: input must not carry a URI scheme")
-      val key = DeltaV2TableManagerCacheKey.from(
+      val key = CacheKey.from(
         spark,
         schemelessAbsolute,
         Map.empty[String, String].asJava)
@@ -258,11 +258,11 @@ class DeltaV2TableManagerCacheKeySuite
     // Hadoop FileSystem. This pins the non-retention invariant without relying on GC timing or
     // weak references, which are invalid under Hadoop's global FileSystem cache.
     val fsClass = classOf[FileSystem]
-    val fields = classOf[DeltaV2TableManagerCacheKey].getDeclaredFields
+    val fields = classOf[CacheKey].getDeclaredFields
     val fsFields = fields.filter(field => fsClass.isAssignableFrom(field.getType))
     assert(
       fsFields.isEmpty,
-      "DeltaV2TableManagerCacheKey must not hold a FileSystem; found: " +
+      "CacheKey must not hold a FileSystem; found: " +
         fsFields.map(_.getName).mkString(", "))
   }
 }
