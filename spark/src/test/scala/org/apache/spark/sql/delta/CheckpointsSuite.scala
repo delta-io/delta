@@ -26,7 +26,7 @@ import scala.concurrent.duration._
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
@@ -1029,7 +1029,9 @@ class CheckpointsSuite
     }
   }
 
-  test("validate metadata cleanup is not called with createCheckpointAtVersion API") {
+  test(
+      "validate metadata cleanup is not called with createCheckpointAtVersion API",
+      CatalogManagedMaintenanceIncompatible) {
     withTempDir { dir =>
       val usageRecords1 = Log4jUsageLogger.track {
         spark.range(10).write.format("delta").save(dir.getAbsolutePath)
@@ -1849,4 +1851,3 @@ class CheckpointsWithCatalogOwnedBatch2Suite extends CheckpointsSuite {
 class CheckpointsWithCatalogOwnedBatch100Suite extends CheckpointsSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
-
