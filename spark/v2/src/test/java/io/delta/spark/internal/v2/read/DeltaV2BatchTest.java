@@ -56,7 +56,7 @@ public class DeltaV2BatchTest extends DeltaV2TestBase {
           Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath, options);
 
   // Cases where two batches built from the same table must be equal. city/date are partition
-  // columns; name/cnt are data columns. Both kinds flow into DeltaV2Batch.pushedFiltersSet for
+  // columns; name/cnt are data columns. Both kinds flow into DeltaV2Batch.filterSet for
   // equals/hashCode, but only data-column filters are passed to the Parquet reader.
   static Stream<Arguments> equalBatchCasesProvider() {
     Filter cityEq = new EqualTo("city", "hz");

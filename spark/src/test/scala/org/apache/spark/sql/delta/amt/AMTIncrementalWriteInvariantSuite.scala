@@ -209,7 +209,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
       // there is nothing left to mask.
       val tombstoneOnly = carriedLeafPointer(deletedFiles = 3)
       val ex = intercept[IllegalStateException] {
-        writer.carryForwardOneLeaf(tombstoneOnly, newMdvPositions = Seq(0L),
+        writer.carryForwardOneLeaf(tombstoneOnly, newMdvPositions = Seq(0),
           deletedPositions = Seq.empty, replacedPositions = Seq.empty)
       }
       assert(ex.getMessage.contains("no live file but gained new MDV positions"),

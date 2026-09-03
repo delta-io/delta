@@ -350,4 +350,14 @@ class UpdateMetricsSuite extends QueryTest
     )
   }
 
+  test("UPDATE output metrics schema is not nullable") {
+    withTable("target") {
+      spark.range(10).write.format("delta").saveAsTable("target")
+
+      val schema = spark.sql("UPDATE target SET id = id + 100 WHERE id < 5").schema
+
+      assert(schema.forall(!_.nullable))
+    }
+  }
+
 }
