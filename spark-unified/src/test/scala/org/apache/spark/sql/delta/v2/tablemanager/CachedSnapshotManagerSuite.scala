@@ -126,6 +126,8 @@ class CachedSnapshotManagerSuite
           val snap2 = mgr.loadLatestSnapshot()
           val k2 = DeltaV2Snapshot.getKernelSnapshot(snap2)
           assert(k2.getVersion == 1L)
+          assert(snap2 ne snap1, "A new Kernel snapshot must install a new DeltaV2Snapshot")
+          assert(k2 ne k1)
         } finally {
           mgr.retire()
         }
@@ -157,10 +159,10 @@ class CachedSnapshotManagerSuite
       appendToDeltaTable(dir)
       val mgr = createManager(dir)
       try {
-        val cached = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
-        assert(cached.getVersion == 1L)
+        val cached = mgr.loadLatestSnapshot()
+        assert(cached.version == 1L)
 
-        val loaded = DeltaV2Snapshot.getKernelSnapshot(mgr.loadSnapshotAt(1L))
+        val loaded = mgr.loadSnapshotAt(1L)
         assert(loaded eq cached, "Matching version should reuse the cached snapshot")
       } finally {
         mgr.retire()
@@ -174,11 +176,11 @@ class CachedSnapshotManagerSuite
     withTempDir { dir =>
       createDeltaTable(dir)
       val mgr = createManager(dir)
-      val beforeRetire = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
+      val beforeRetire = mgr.loadLatestSnapshot()
 
       mgr.retire()
 
-      val afterRetire = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
+      val afterRetire = mgr.loadLatestSnapshot()
       assert(afterRetire ne beforeRetire)
     }
   }
@@ -192,7 +194,7 @@ class CachedSnapshotManagerSuite
       mgr.retire()
       mgr.retire()
 
-      assert(DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot()).getVersion == 0L)
+      assert(mgr.loadLatestSnapshot().version == 0L)
     }
   }
 
@@ -203,10 +205,10 @@ class CachedSnapshotManagerSuite
       mgr.loadLatestSnapshot()
       mgr.retire()
 
-      val first = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
-      val second = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
-      assert(first.getVersion == 0L)
-      assert(second.getVersion == 0L)
+      val first = mgr.loadLatestSnapshot()
+      val second = mgr.loadLatestSnapshot()
+      assert(first.version == 0L)
+      assert(second.version == 0L)
       assert(first ne second, "Retired manager should not cache snapshots")
     }
   }
@@ -242,10 +244,10 @@ class CachedSnapshotManagerSuite
         createDeltaTable(dir)
         val mgr = createManager(dir)
         try {
-          val firstSnap = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
-          assert(firstSnap.getVersion == 0L)
+          val firstSnap = mgr.loadLatestSnapshot()
+          assert(firstSnap.version == 0L)
 
-          val secondSnap = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
+          val secondSnap = mgr.loadLatestSnapshot()
           assert(firstSnap eq secondSnap, "Same version should keep existing instance")
         } finally {
           mgr.retire()
@@ -263,8 +265,8 @@ class CachedSnapshotManagerSuite
           val stale = DeltaV2Snapshot.getKernelSnapshot(mgr.loadSnapshotAt(0L))
           mgr.loadLatestSnapshot()
           appendToDeltaTable(dir)
-          val current = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
-          assert(current.getVersion == 1L)
+          val current = mgr.loadLatestSnapshot()
+          assert(current.version == 1L)
 
           assert(mgr.installSnapshot(stale, System.currentTimeMillis()) eq current)
         } finally {
@@ -374,8 +376,8 @@ class CachedSnapshotManagerSuite
         while (!snapshots.isEmpty) {
           assert(DeltaV2Snapshot.getKernelSnapshot(snapshots.poll()).getVersion == 0L)
         }
-        val firstAfterRetire = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
-        val secondAfterRetire = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
+        val firstAfterRetire = mgr.loadLatestSnapshot()
+        val secondAfterRetire = mgr.loadLatestSnapshot()
         assert(firstAfterRetire ne secondAfterRetire)
       }
     }
