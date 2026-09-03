@@ -126,8 +126,6 @@ private[tablemanager] class CachedSnapshotManager(
     }
   }
 
-  def isRetired: Boolean = retired
-
   // === Acquisition ==========================================================
 
   private[tablemanager] def acquireLatest(requiredFreshAfter: Long): KernelSnapshot = {
@@ -234,13 +232,4 @@ private[tablemanager] class CachedSnapshotManager(
     }
   }
 
-  // === Test-only accessors ==================================================
-
-  private[tablemanager] def currentSnapshotForTesting: KernelSnapshot =
-    currentSnapshot
-
-  private[tablemanager] def lastValidatedAtMsForTesting: Long =
-    lastValidatedAtMs
-
-  private[tablemanager] def tableIdForTesting: String = tableId
 }

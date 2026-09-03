@@ -157,13 +157,11 @@ class CachedSnapshotManagerSuite
       appendToDeltaTable(dir)
       val mgr = createManager(dir)
       try {
-        mgr.loadLatestSnapshot()
-        val cached = mgr.currentSnapshotForTesting
+        val cached = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
         assert(cached.getVersion == 1L)
 
         val loaded = DeltaV2Snapshot.getKernelSnapshot(mgr.loadSnapshotAt(1L))
         assert(loaded eq cached, "Matching version should reuse the cached snapshot")
-        assert(mgr.currentSnapshotForTesting eq cached)
       } finally {
         mgr.retire()
       }
@@ -176,13 +174,12 @@ class CachedSnapshotManagerSuite
     withTempDir { dir =>
       createDeltaTable(dir)
       val mgr = createManager(dir)
-      mgr.loadLatestSnapshot()
-      assert(mgr.currentSnapshotForTesting != null)
+      val beforeRetire = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
 
       mgr.retire()
 
-      assert(mgr.isRetired)
-      assert(mgr.currentSnapshotForTesting == null)
+      val afterRetire = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
+      assert(afterRetire ne beforeRetire)
     }
   }
 
@@ -195,7 +192,7 @@ class CachedSnapshotManagerSuite
       mgr.retire()
       mgr.retire()
 
-      assert(mgr.isRetired)
+      assert(DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot()).getVersion == 0L)
     }
   }
 
@@ -206,28 +203,15 @@ class CachedSnapshotManagerSuite
       mgr.loadLatestSnapshot()
       mgr.retire()
 
-      val snap = mgr.loadLatestSnapshot()
-      val k = DeltaV2Snapshot.getKernelSnapshot(snap)
-      assert(k.getVersion == 0L)
-      assert(mgr.currentSnapshotForTesting == null, "Retired manager should not cache snapshots")
+      val first = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
+      val second = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
+      assert(first.getVersion == 0L)
+      assert(second.getVersion == 0L)
+      assert(first ne second, "Retired manager should not cache snapshots")
     }
   }
 
   // === Table identity validation ==============================
-
-  test("table identity is captured on first load") {
-    withTempDir { dir =>
-      createDeltaTable(dir)
-      val mgr = createManager(dir)
-      try {
-        assert(mgr.tableIdForTesting == null)
-        mgr.loadLatestSnapshot()
-        assert(mgr.tableIdForTesting != null)
-      } finally {
-        mgr.retire()
-      }
-    }
-  }
 
   test("table identity mismatch fails after the table is recreated at the same path") {
     withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
@@ -250,25 +234,6 @@ class CachedSnapshotManagerSuite
     }
   }
 
-  // === Validation timestamp tracking ==========================
-
-  test("lastValidatedAtMs is recorded after a successful acquire") {
-    withTempDir { dir =>
-      createDeltaTable(dir)
-      val mgr = createManager(dir)
-      try {
-        assert(mgr.lastValidatedAtMsForTesting == -1L)
-
-        mgr.loadLatestSnapshot()
-
-        val afterFirst = mgr.lastValidatedAtMsForTesting
-        assert(afterFirst > 0L)
-      } finally {
-        mgr.retire()
-      }
-    }
-  }
-
   // === installSnapshot same-version dedup =====================
 
   test("installSnapshot deduplicates same-version refresh") {
@@ -277,12 +242,10 @@ class CachedSnapshotManagerSuite
         createDeltaTable(dir)
         val mgr = createManager(dir)
         try {
-          mgr.loadLatestSnapshot()
-          val firstSnap = mgr.currentSnapshotForTesting
+          val firstSnap = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
           assert(firstSnap.getVersion == 0L)
 
-          val second = mgr.loadLatestSnapshot()
-          val secondSnap = mgr.currentSnapshotForTesting
+          val secondSnap = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
           assert(firstSnap eq secondSnap, "Same version should keep existing instance")
         } finally {
           mgr.retire()
@@ -300,12 +263,10 @@ class CachedSnapshotManagerSuite
           val stale = DeltaV2Snapshot.getKernelSnapshot(mgr.loadSnapshotAt(0L))
           mgr.loadLatestSnapshot()
           appendToDeltaTable(dir)
-          mgr.loadLatestSnapshot()
-          val current = mgr.currentSnapshotForTesting
+          val current = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
           assert(current.getVersion == 1L)
 
           assert(mgr.installSnapshot(stale, System.currentTimeMillis()) eq current)
-          assert(mgr.currentSnapshotForTesting eq current)
         } finally {
           mgr.retire()
         }
@@ -353,17 +314,25 @@ class CachedSnapshotManagerSuite
         appendToDeltaTable(dir)
         val mgr = createManager(dir)
         try {
+          val snapshots = new ConcurrentLinkedQueue[Snapshot]()
+          val failures = new ConcurrentLinkedQueue[Throwable]()
           val threads = (1 to 8).map { _ =>
             new Thread(() => {
-              mgr.loadLatestSnapshot()
+              try {
+                snapshots.add(mgr.loadLatestSnapshot())
+              } catch {
+                case failure: Throwable => failures.add(failure)
+              }
             })
           }
           threads.foreach(_.start())
           threads.foreach(_.join())
 
-          val cached = mgr.currentSnapshotForTesting
-          assert(cached != null)
-          assert(cached.getVersion == 2L, "All threads should converge on the latest version")
+          assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
+          assert(snapshots.size() == threads.size)
+          while (!snapshots.isEmpty) {
+            assert(DeltaV2Snapshot.getKernelSnapshot(snapshots.poll()).getVersion == 2L)
+          }
         } finally {
           mgr.retire()
         }
@@ -405,37 +374,9 @@ class CachedSnapshotManagerSuite
         while (!snapshots.isEmpty) {
           assert(DeltaV2Snapshot.getKernelSnapshot(snapshots.poll()).getVersion == 0L)
         }
-        assert(mgr.isRetired)
-        assert(mgr.currentSnapshotForTesting == null, "Retired manager must not retain a snapshot")
-      }
-    }
-  }
-
-  test("concurrent loads never regress cached version") {
-    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
-      withTempDir { dir =>
-        createDeltaTable(dir)
-        val mgr = createManager(dir)
-        try {
-          mgr.loadLatestSnapshot()
-          assert(
-            mgr.currentSnapshotForTesting.getVersion == 0L)
-
-          appendToDeltaTable(dir)
-
-          val threads = (1 to 8).map { _ =>
-            new Thread(() => {
-              mgr.loadLatestSnapshot()
-            })
-          }
-          threads.foreach(_.start())
-          threads.foreach(_.join())
-
-          val finalVersion = mgr.currentSnapshotForTesting.getVersion
-          assert(finalVersion == 1L, s"Cached version must not regress; got $finalVersion")
-        } finally {
-          mgr.retire()
-        }
+        val firstAfterRetire = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
+        val secondAfterRetire = DeltaV2Snapshot.getKernelSnapshot(mgr.loadLatestSnapshot())
+        assert(firstAfterRetire ne secondAfterRetire)
       }
     }
   }
@@ -446,28 +387,27 @@ class CachedSnapshotManagerSuite
         createDeltaTable(dir)
         val mgr = createManager(dir)
         try {
+          val snapshots = new ConcurrentLinkedQueue[Snapshot]()
+          val failures = new ConcurrentLinkedQueue[Throwable]()
           val threads = (1 to 8).map { _ =>
             new Thread(() => {
-              mgr.loadLatestSnapshot()
+              try {
+                snapshots.add(mgr.loadLatestSnapshot())
+              } catch {
+                case failure: Throwable => failures.add(failure)
+              }
             })
           }
           threads.foreach(_.start())
           threads.foreach(_.join())
 
-          val tableId = mgr.tableIdForTesting
-          assert(tableId != null)
-
-          val threads2 = (1 to 4).map { _ =>
-            new Thread(() => {
-              mgr.loadLatestSnapshot()
-            })
+          assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
+          assert(snapshots.size() == threads.size)
+          val tableIds = Seq.newBuilder[String]
+          while (!snapshots.isEmpty) {
+            tableIds += DeltaV2Snapshot.getKernelSnapshot(snapshots.poll()).getMetadata.getId
           }
-          threads2.foreach(_.start())
-          threads2.foreach(_.join())
-
-          assert(
-            mgr.tableIdForTesting == tableId,
-            "Table identity must remain stable across concurrent loads")
+          assert(tableIds.result().distinct.size == 1)
         } finally {
           mgr.retire()
         }
