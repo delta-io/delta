@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.streaming.StreamTest
 
 /**
@@ -30,10 +31,11 @@ import org.apache.spark.sql.streaming.StreamTest
  * on the tracking client will not be deterministic.
  */
 trait CatalogManagedStreamingSuiteBase
-  extends StreamTest
-  with DeltaSQLTestUtils
+  extends QueryTest
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite {
+  with DeltaSQLTestUtils
+  with CatalogOwnedTestBaseSuite
+  with StreamTest {
 
 
   import testImplicits._

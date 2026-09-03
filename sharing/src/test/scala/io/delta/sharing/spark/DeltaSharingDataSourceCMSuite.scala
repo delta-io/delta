@@ -34,10 +34,10 @@ import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 
 // Unit tests to verify that delta format sharing support column mapping (CM).
 class DeltaSharingDataSourceCMSuite
-    extends StreamTest
-    with DeltaSQLCommandTest
+    extends DeltaSQLCommandTest
     with DeltaSharingTestSparkUtils
-    with DeltaSharingDataSourceDeltaTestUtils {
+    with DeltaSharingDataSourceDeltaTestUtils
+    with StreamTest {
 
   import testImplicits._
 

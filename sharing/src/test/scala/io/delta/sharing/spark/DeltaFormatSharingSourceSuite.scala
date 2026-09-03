@@ -55,10 +55,10 @@ import org.apache.spark.sql.types.{
 }
 
 class DeltaFormatSharingSourceSuite
-    extends StreamTest
-    with DeltaSQLCommandTest
+    extends DeltaSQLCommandTest
     with DeltaSharingTestSparkUtils
-    with DeltaSharingDataSourceDeltaTestUtils {
+    with DeltaSharingDataSourceDeltaTestUtils
+    with StreamTest {
 
   import testImplicits._
 

@@ -24,21 +24,18 @@ import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
-import org.apache.spark.sql.{AnalysisException, Dataset}
+import org.apache.spark.sql.{AnalysisException, Dataset, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.SessionCatalog.DEFAULT_DATABASE
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamTest}
 import org.apache.spark.util.Utils
 
-class DeltaSourceTableAPISuite extends StreamTest
+class DeltaSourceTableAPISuite
+  extends QueryTest
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite {
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-
-  }
+  with CatalogOwnedTestBaseSuite
+  with StreamTest {
 
   import testImplicits._
   test("table API") {
