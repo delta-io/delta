@@ -170,6 +170,23 @@ class CachedSnapshotManagerSuite
     }
   }
 
+  test("loadSnapshotAt does not replace a non-stale cached latest snapshot") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val mgr = createManager(dir)
+        val cachedLatest = mgr.loadLatestSnapshot()
+        appendToDeltaTable(dir)
+
+        val versioned = mgr.loadSnapshotAt(1L)
+        val latestAgain = mgr.loadLatestSnapshot()
+        assert(versioned.version == 1L)
+        assert(latestAgain eq cachedLatest)
+        assert(latestAgain.version == 0L)
+      }
+    }
+  }
+
   // === Retire lifecycle =======================================
 
   test("retire does not change snapshot management behavior") {
@@ -303,6 +320,14 @@ class CachedSnapshotManagerSuite
           mgr.checkVersionExists(1L, mustBeRecreatable = true, allowOutOfRange = false)
         }
         assert(error.getLatest == 0L)
+
+        // scalastyle:off deltahadoopconfiguration
+        val kernelEngine =
+          KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
+        // scalastyle:on deltahadoopconfiguration
+        intercept[IllegalArgumentException] {
+          mgr.getTableChanges(kernelEngine, 1L, Optional.empty[java.lang.Long]())
+        }
       }
     }
   }
