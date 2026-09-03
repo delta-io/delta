@@ -2960,6 +2960,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELETE_USE_FILE_METADATA_COLUMN =
+    buildConf("delete.useFileMetadataColumn")
+      .internal()
+      .doc("Use the file metadata column instead of input_file_name() to identify files " +
+        "containing rows matched by DELETE.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELETE_USE_PERSISTENT_DELETION_VECTORS =
     buildConf("delete.deletionVectors.persistent")
       .internal()

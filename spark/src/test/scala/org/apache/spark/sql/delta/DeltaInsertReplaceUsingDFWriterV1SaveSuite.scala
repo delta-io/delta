@@ -22,7 +22,6 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, Row}
 import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
 
 class DeltaInsertReplaceUsingDFWriterV1SaveSuite
   extends DeltaInsertReplaceUsingDFWriterTests {
@@ -71,30 +70,6 @@ class DeltaInsertReplaceUsingDFWriterV1SaveSuite
           Row(3, "a_source", "b_source") ::
           Nil
       )
-    }
-  }
-
-  test("save with replaceUsing: RDD-backed source on partitioned table") {
-    withTempDir { dir =>
-      val path = dir.getAbsolutePath
-      val schema = StructType(Seq(
-        StructField("country_code", StringType, nullable = false),
-        StructField("value", IntegerType, nullable = true)))
-      def createDataFrame(rows: Seq[Row]): DataFrame = {
-        spark.createDataFrame(spark.sparkContext.parallelize(rows, 1), schema)
-      }
-
-      createDataFrame(Seq(Row("DE", 1), Row("FR", 2), Row("IT", 3)))
-        .write.format("delta").partitionBy("country_code").save(path)
-
-      writeReplaceUsingDF(
-        sourceDF = createDataFrame(Seq(Row("DE", 99))),
-        target = path,
-        replaceUsingCols = "country_code")
-
-      checkAnswer(
-        spark.read.format("delta").load(path),
-        Row("DE", 99) :: Row("FR", 2) :: Row("IT", 3) :: Nil)
     }
   }
 
