@@ -53,9 +53,9 @@ import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
 class DeltaSourceSuite
-  extends DeltaSQLCommandTest
+  extends DeltaSourceSuiteBase
   with DeltaColumnMappingTestUtils
-  with DeltaSourceSuiteBase {
+  with DeltaSQLCommandTest {
 
   // Many tests in this suite deliberately delete commit JSON files to exercise streaming's own
   // missing-commit-file / failOnDataLoss handling. The DeltaLog.getChangeLogFiles version-gap
