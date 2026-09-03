@@ -39,9 +39,11 @@ import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.MetastoresApi;
 import io.unitycatalog.client.auth.TokenProvider;
+import io.unitycatalog.client.delta.api.DeltaConfigurationApi;
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.model.DeltaAddCommitUpdate;
 import io.unitycatalog.client.delta.model.DeltaAssertTableUUID;
+import io.unitycatalog.client.delta.model.DeltaCatalogConfig;
 import io.unitycatalog.client.delta.model.DeltaClusteringDomainMetadata;
 import io.unitycatalog.client.delta.model.DeltaCommit;
 import io.unitycatalog.client.delta.model.DeltaCreateStagingTableRequest;
@@ -81,11 +83,13 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -107,7 +111,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private static final int HTTP_BAD_REQUEST = 400;
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
+  private static final String DELTA_API_PROTOCOL_VERSION = "1.0";
 
+  private DeltaConfigurationApi deltaConfigurationApi;
   private DeltaTablesApi deltaTablesApi;
   private MetastoresApi metastoresApi;
   private final ApiClient apiClient;
@@ -118,6 +124,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private final boolean credentialRenewalEnabled;
   private final boolean credentialScopedFsEnabled;
   private final Supplier<Configuration> hadoopConfSupplier;
+  private final Set<String> negotiatedCatalogs = new HashSet<>();
 
   /**
    * Creates an instance by parsing all configuration from a flat config map.
@@ -157,6 +164,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     });
 
     this.apiClient = builder.build();
+    this.deltaConfigurationApi = new DeltaConfigurationApi(this.apiClient);
     this.deltaTablesApi = new DeltaTablesApi(this.apiClient);
     this.metastoresApi = new MetastoresApi(this.apiClient);
     this.baseUri = baseUri;
@@ -215,9 +223,32 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   }
 
   private void ensureOpen() {
-    if (deltaTablesApi == null || metastoresApi == null) {
+    if (deltaConfigurationApi == null || deltaTablesApi == null || metastoresApi == null) {
       throw new IllegalStateException("UCDeltaTokenBasedRestClient has been closed.");
     }
+  }
+
+  private synchronized void ensureProtocolNegotiated(String catalog) throws IOException {
+    if (negotiatedCatalogs.contains(catalog)) {
+      return;
+    }
+
+    DeltaCatalogConfig config;
+    try {
+      config = deltaConfigurationApi.getConfig(catalog, DELTA_API_PROTOCOL_VERSION);
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format("Failed to negotiate the Delta API protocol for catalog %s (HTTP %s): %s",
+              catalog, e.getCode(), e.getResponseBody()),
+          e);
+    }
+
+    if (!DELTA_API_PROTOCOL_VERSION.equals(config.getProtocolVersion())) {
+      throw new IOException(
+          String.format("UC selected unsupported Delta API protocol version %s for catalog %s",
+              config.getProtocolVersion(), catalog));
+    }
+    negotiatedCatalogs.add(catalog);
   }
 
   // ===========================
@@ -255,6 +286,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(tableId, "tableId must not be null");
     Objects.requireNonNull(transactionDomainMetadata, "transactionDomainMetadata must not be null");
     ResolvedTableName name = requireThreePartName(tableIdentifier);
+    ensureProtocolNegotiated(name.catalog);
 
     DeltaUpdateTableRequest request = new DeltaUpdateTableRequest();
     request.addRequirementsItem(new DeltaAssertTableUUID()
@@ -309,6 +341,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(endVersion, "endVersion must not be null");
 
     ResolvedTableName name = requireThreePartName(tableIdentifier);
+    ensureProtocolNegotiated(name.catalog);
 
     // The UC loadTable endpoint does not support server-side filtering by version range, so
     // we fetch the full unbackfilled commit window and filter client-side below. The server
@@ -395,6 +428,16 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(properties, "properties must not be null");
     Objects.requireNonNull(domainMetadata, "domainMetadata must not be null");
 
+    try {
+      ensureProtocolNegotiated(catalogName);
+    } catch (IOException e) {
+      throw new CommitFailedException(
+          false /* retryable */,
+          false /* conflict */,
+          e.getMessage(),
+          e);
+    }
+
     DeltaCreateTableRequest sdkRequest = new DeltaCreateTableRequest()
         .name(tableName)
         .location(storageLocation)
@@ -435,6 +478,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
   @Override
   public void close() throws IOException {
+    this.deltaConfigurationApi = null;
     this.deltaTablesApi = null;
     this.metastoresApi = null;
   }
@@ -447,6 +491,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   public TableInfo loadTable(TableIdentifier tableIdentifier) throws IOException {
     ensureOpen();
     ResolvedTableName name = requireThreePartName(tableIdentifier);
+    ensureProtocolNegotiated(name.catalog);
 
     try {
       return toTableInfo(
@@ -478,6 +523,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       throws IOException {
     ensureOpen();
     ResolvedTableName name = requireThreePartName(tableIdentifier);
+    ensureProtocolNegotiated(name.catalog);
     try {
       DeltaCreateStagingTableRequest request =
           new DeltaCreateStagingTableRequest().name(name.table);
@@ -508,6 +554,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(protocol, "protocol must not be null");
     Objects.requireNonNull(domainMetadata, "domainMetadata must not be null");
     ResolvedTableName name = requireThreePartName(tableIdentifier);
+    ensureProtocolNegotiated(name.catalog);
     String schemaJson = metadata.getSchemaString();
     Objects.requireNonNull(schemaJson, "metadata.schemaString must not be null");
 
@@ -557,6 +604,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(tableId, "tableId must not be null");
     Objects.requireNonNull(report, "report must not be null");
     ResolvedTableName name = requireThreePartName(tableIdentifier);
+    ensureProtocolNegotiated(name.catalog);
     try {
       DeltaReportMetricsRequest sdkRequest = new DeltaReportMetricsRequest()
           .tableId(UUID.fromString(tableId))
