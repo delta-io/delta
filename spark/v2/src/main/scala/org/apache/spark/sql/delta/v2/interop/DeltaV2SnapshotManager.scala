@@ -27,6 +27,7 @@ import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.Snapshot
 
 import org.apache.spark.annotation.Experimental
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Contract for managing Delta table snapshots in the DSv2 connector.
@@ -104,8 +105,17 @@ object DeltaV2SnapshotManager {
    * @return the V1 snapshot facade
    */
   def wrapKernelSnapshot(kernelSnapshot: SnapshotImpl, tablePath: String): Snapshot = {
+    wrapKernelSnapshot(kernelSnapshot, tablePath, None)
+  }
+
+  /** Wraps a Kernel snapshot while preserving its resolved catalog context. */
+  private[v2] def wrapKernelSnapshot(
+      kernelSnapshot: SnapshotImpl,
+      tablePath: String,
+      catalogTableOpt: Option[CatalogTable]): DeltaV2Snapshot = {
     Objects.requireNonNull(kernelSnapshot, "kernelSnapshot is null")
     Objects.requireNonNull(tablePath, "tablePath is null")
-    new DeltaV2Snapshot(kernelSnapshot)
+    Objects.requireNonNull(catalogTableOpt, "catalogTableOpt is null")
+    new DeltaV2Snapshot(kernelSnapshot, catalogTableOpt)
   }
 }
