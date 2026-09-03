@@ -825,6 +825,39 @@ sealed trait FileAction extends Action {
   }
 }
 
+object FileAction {
+  /** The path unique tuple in delta log actions: (parquet file, deletion vector id). */
+  final case class UniqueFileActionTuple private (fileURI: URI, deletionVectorId: Option[String])
+
+  /**
+   * Whether deletion vectors should be reconciled by their normalized object identity for the
+   * given table (see [[DeletionVectorDescriptor.uniqueId]]).
+   *
+   * @param metadata the table metadata.
+   * @param protocol the table protocol.
+   */
+  def useDeletionVectorObjectIdentity(
+      metadata: Metadata,
+      protocol: Protocol,
+      spark: SparkSession): Boolean =
+    AMTUtils.amtEnabled(metadata, protocol) ||
+      spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT)
+
+  /**
+   * The unique tuple `(parquet file, deletion vector id)` of a file action, as a method on
+   * [[AddFile]] / [[RemoveFile]]. See [[DeletionVectorDescriptor.uniqueId]] for the
+   * `useObjectIdentity` semantics.
+   */
+  implicit class FileActionUniqueTupleOps(val action: FileAction) {
+    def toUniqueFileActionTuple(
+        tableRoot: Path,
+        useObjectIdentity: Boolean): UniqueFileActionTuple =
+      UniqueFileActionTuple(
+        action.pathAsUri,
+        Option(action.deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity)))
+  }
+}
+
 case class ParsedStatsFields(
   numLogicalRecords: Option[Long],
   tightBounds: Option[Boolean])
@@ -966,8 +999,10 @@ case class AddFile(
       case Some(_) => deletionVector.copy(maxRowIndex = None)
       case _ => deletionVector
     }
-    var addFileWithNewDv =
-      this.copy(deletionVector = dvDescriptorWithoutMaxRowIndex, dataChange = dataChange)
+    var addFileWithNewDv = this.copy(
+      deletionVector = dvDescriptorWithoutMaxRowIndex,
+      dataChange = dataChange,
+      backReference = None)
     if (updateStats) {
       addFileWithNewDv = addFileWithNewDv.withoutTightBoundStats
     }
@@ -982,13 +1017,27 @@ case class AddFile(
   }
 
   /**
-   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   * Return the legacy unique id of the deletion vector, if present, or `None` if there's no DV.
    *
-   * The unique id differentiates DVs, even if there are multiple in the same file
+   * The legacy unique id differentiates DVs, even if there are multiple in the same file
    * or the DV is stored inline.
    */
   @JsonIgnore
-  def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
+  def getLegacyDeletionVectorUniqueId: Option[String] =
+    Option(deletionVector).map(_.legacyUniqueId)
+
+  /**
+   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   *
+   * This overload allows callers to use object identity for comparisons. Prefer this
+   * if possible. See document of [[DeletionVectorDescriptor.uniqueId]] for more details.
+   */
+  @JsonIgnore
+  def getDeletionVectorUniqueId(
+      tableRoot: Path,
+      useObjectIdentity: Boolean): Option[String] = {
+    Option(deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity))
+  }
 
   /** Update stats to have tightBounds = false, if file has any stats. */
   def withoutTightBoundStats: AddFile = {
@@ -1142,7 +1191,7 @@ object AddFile {
  */
 case class BackReference(
     manifest: String,
-    pos: Long)
+    pos: Int)
 
 object BackReference {
 
@@ -1157,10 +1206,10 @@ object BackReference {
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is
  * deleted permanently.
  *
- * Note that for protocol compatibility reasons, the fields `partitionValues`, `size`, and `tags`
- * are only present when the extendedFileMetadata flag is true. New writers should generally be
- * setting this flag, but old writers (and FSCK) won't, so readers must check this flag before
- * attempting to consume those values.
+ * Note that for protocol compatibility reasons, the fields `partitionValues` and `size` are only
+ * present when the extendedFileMetadata flag is true. New writers should generally be setting this
+ * flag, but old writers (and FSCK) won't, so readers must check this flag before attempting to
+ * consume those values.
  *
  * Since old tables would not have `extendedFileMetadata` and `size` field, we should make them
  * nullable by setting their type Option.
@@ -1192,13 +1241,27 @@ case class RemoveFile(
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
 
   /**
-   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   * Return the legacy unique id of the deletion vector, if present, or `None` if there's no DV.
    *
-   * The unique id differentiates DVs, even if there are multiple in the same file
+   * The legacy unique id differentiates DVs, even if there are multiple in the same file
    * or the DV is stored inline.
    */
   @JsonIgnore
-  def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
+  def getLegacyDeletionVectorUniqueId: Option[String] =
+    Option(deletionVector).map(_.legacyUniqueId)
+
+  /**
+   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   *
+   * This overload allows callers to use object identity for comparisons. Prefer this
+   * if possible. See document of [[DeletionVectorDescriptor.uniqueId]] for more details.
+   */
+  @JsonIgnore
+  def getDeletionVectorUniqueId(
+      tableRoot: Path,
+      useObjectIdentity: Boolean): Option[String] = {
+    Option(deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity))
+  }
 
   /**
    * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.
@@ -1407,6 +1470,7 @@ trait CommitMarker {
  *                          epoch in milliseconds when the commit write was started. This should
  *                          only be set when the feature inCommitTimestamps is enabled.
  * @param isBlindAppend Whether this commit has blindly appended without caring about existing files
+ * @param dataChange Whether this commit changes the data of the table logically.
  * @param engineInfo The information for the engine that makes the commit.
  *                   If a commit is made by Delta Lake 1.1.0 or above, it will be
  *                   `Apache-Spark/x.y.z Delta-Lake/x.y.z`.
@@ -1433,6 +1497,7 @@ case class CommitInfo(
     readVersion: Option[Long],
     isolationLevel: Option[String],
     isBlindAppend: Option[Boolean],
+    dataChange: Option[Boolean],
     operationMetrics: Option[Map[String, String]],
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
@@ -1495,7 +1560,17 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, None, null, None, None, null, null, None, None,
-      None, None, None, None, None, None, None, None, None, None)
+      None, None, None, None, None, None, None, None, None, None, None)
+  }
+
+  /**
+   * Derives the commit-level `dataChange` summary stored in [[CommitInfo.dataChange]] from the
+   * actions of a commit: a commit changes data if and only if at least one of its file actions
+   * does.
+   */
+  def dataChangeFromActions(actions: Iterable[Action]): Boolean = actions.exists {
+    case f: FileAction => f.dataChange
+    case _ => false
   }
 
   // scalastyle:off argcount
@@ -1509,6 +1584,7 @@ object CommitInfo {
       readVersion: Option[Long],
       isolationLevel: Option[String],
       isBlindAppend: Option[Boolean],
+      dataChange: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
@@ -1524,6 +1600,7 @@ object CommitInfo {
       readVersion,
       isolationLevel,
       isBlindAppend,
+      dataChange,
       operationMetrics,
       userMetadata,
       tags,
@@ -1541,6 +1618,7 @@ object CommitInfo {
       readVersion: Option[Long],
       isolationLevel: Option[String],
       isBlindAppend: Option[Boolean],
+      dataChange: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
@@ -1566,6 +1644,7 @@ object CommitInfo {
       readVersion,
       isolationLevel,
       isBlindAppend,
+      dataChange,
       operationMetrics,
       userMetadata,
       tags,
@@ -1619,11 +1698,16 @@ sealed trait CheckpointOnlyAction extends Action
  *
  * @param path        root manifest path, relative to the table root.
  * @param sizeInBytes size of the root manifest file in bytes.
+ * @param version     table version this root reflects. Must be `<=` the enclosing
+ *                    [[Checkpoint.version]]; equal in a manifest commit, and less
+ *                    or equal in a standalone checkpoint (the gap is covered by
+ *                    inline file actions).
  * @param tags        additional metadata about the AMT. See [[ContentRoot.Tags]] for known keys.
  */
 case class ContentRoot(
     path: String,
     sizeInBytes: Long,
+    version: Long,
     tags: Map[String, String] = null) {
 
   private def tag(key: ContentRoot.Tags.KeyType): Option[String] =
@@ -1631,6 +1715,9 @@ case class ContentRoot(
 
   /** Whether this manifest tree was built incrementally, if recorded. */
   def isIncremental: Option[Boolean] = tag(ContentRoot.Tags.IS_INCREMENTAL).map(_.toBoolean)
+
+  /** Number of leaf manifests in this tree, if recorded; `0` means a root-only tree. */
+  def numLeaves: Option[Long] = tag(ContentRoot.Tags.NUM_LEAVES).map(_.toLong)
 
   /** The version of the most recent full (non-incremental) manifest rewrite, if recorded. */
   def lastManifestCommitWithFullRewrite: Option[Long] =
@@ -1660,15 +1747,19 @@ object ContentRoot {
   def apply(
       path: String,
       sizeInBytes: Long,
+      version: Long,
       isIncremental: Boolean,
-      lastManifestCommitWithFullRewrite: Long): ContentRoot = {
+      lastManifestCommitWithFullRewrite: Long,
+      numLeaves: Long): ContentRoot = {
     ContentRoot(
       path = path,
       sizeInBytes = sizeInBytes,
+      version = version,
       tags = Map(
         Tags.IS_INCREMENTAL.name -> isIncremental.toString,
         Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE.name ->
-          lastManifestCommitWithFullRewrite.toString
+          lastManifestCommitWithFullRewrite.toString,
+        Tags.NUM_LEAVES.name -> numLeaves.toString
       )
     )
   }
@@ -1681,6 +1772,8 @@ object ContentRoot {
     /** The version of the most recent full (non-incremental) manifest rewrite. */
     object LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE
       extends KeyType("lastManifestCommitWithFullRewrite")
+    /** Number of leaf manifests in the tree; `0` means a root-only tree. */
+    object NUM_LEAVES extends KeyType("numLeaves")
   }
 }
 
@@ -1722,7 +1815,8 @@ object SidecarType {
  *
  * @param version        version at which this checkpoint is valid. May belong to a previous
  *                       commit (the checkpoint can lag the enclosing commit).
- * @param contentRoot    pointer to the Iceberg v4 root manifest.
+ * @param contentRoot    pointer to the Iceberg v4 root manifest. `contentRoot.version` is
+ *                       the table version the tree reflects.
  * @param protocol       protocol snapshot at `version`. Must be non null.
  * @param metaData       metadata snapshot at `version`. Must be non null.
  * @param domainMetadata all [[DomainMetadata]] entries carried inline. An empty list means
@@ -1747,6 +1841,9 @@ case class Checkpoint(
   // AMT checkpoint sidecars must always declare their type.
   require(sidecars.forall(_.sidecarType.isDefined),
     "All sidecars in a Checkpoint must have a sidecarType.")
+  require(
+    contentRoot.version <= version,
+    s"contentRoot.version (${contentRoot.version}) must be <= checkpoint version ($version).")
 
   override def wrap: SingleAction = SingleAction(checkpoint = this)
 }

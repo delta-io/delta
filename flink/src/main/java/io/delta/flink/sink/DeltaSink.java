@@ -109,6 +109,7 @@ public class DeltaSink
         .withAttemptNumber(context.getTaskInfo().getAttemptNumber())
         .withDeltaTable(deltaTable)
         .withConf(conf)
+        .withInputSerializer(context.createInputSerializer())
         .withMetricGroup(context.metricGroup())
         .build();
   }

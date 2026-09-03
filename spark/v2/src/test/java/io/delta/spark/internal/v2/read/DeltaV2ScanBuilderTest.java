@@ -20,7 +20,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
@@ -33,6 +32,7 @@ import java.util.OptionalInt;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.sources.And;
 import org.apache.spark.sql.sources.EqualTo;
 import org.apache.spark.sql.sources.Filter;
@@ -245,6 +245,18 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
         new Filter[] {new EqualTo("dep_id", 1)},
         new Filter[0],
         new EqualTo("dep_id", 1));
+  }
+
+  @Test
+  public void testPruneColumnsRetainsFullyPushedFilterColumn(@TempDir File tempDir)
+      throws Exception {
+    DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
+    pushFilters(builder, new EqualTo("dep_id", 1));
+    builder.pruneColumns(new StructType().add("id", DataTypes.IntegerType, true /* nullable */));
+
+    Scan scan = builder.build();
+    assertEquals(
+        Arrays.asList("id", "dep_id", "dep_name"), Arrays.asList(scan.readSchema().fieldNames()));
   }
 
   @Test

@@ -17,13 +17,12 @@ package io.delta.spark.internal.v2.read;
 
 import static io.delta.spark.internal.v2.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.spark.internal.v2.DeltaV2JavaLogging;
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
@@ -43,15 +42,15 @@ import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.stats.DeltaScan;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.execution.datasources.v2.DeltaV2FilterTranslator;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
-import org.apache.spark.sql.types.StringType;
-import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.Option;
@@ -62,10 +61,11 @@ import scala.Option;
  * <p>This class must remain package-private so callers outside {@code v2.read} depend only on
  * Spark's public connector interfaces instead of coupling to Delta's internal V2 implementation.
  */
-class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
+class DeltaV2Scan extends DeltaV2JavaLogging
+    implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
-  private final DeltaSnapshotManager snapshotManager;
-  private final Snapshot initialSnapshot;
+  private final DeltaV2SnapshotManager snapshotManager;
+  private final io.delta.kernel.Snapshot initialSnapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -105,9 +105,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   private long totalRows = 0L;
   // true iff every AddFile in the scan had numRecords in its stats JSON.
   private boolean rowCountKnown = false;
-  // Estimated size in bytes accounting for column projection, used for query optimizer cost
-  // estimation
-  private long estimatedSizeInBytes = 0L;
+  private org.apache.spark.sql.delta.Snapshot plannedSnapshot = null;
   private volatile boolean planned = false;
 
   // Runtime predicates applied after planning (using Set for order-independent comparison)
@@ -116,8 +114,8 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
 
   // TODO(#6743): bundle scan-level schemas into a single ScanSchemaContext.
   public DeltaV2Scan(
-      DeltaSnapshotManager snapshotManager,
-      Snapshot initialSnapshot,
+      DeltaV2SnapshotManager snapshotManager,
+      io.delta.kernel.Snapshot initialSnapshot,
       StructType tableSchema,
       StructType dataSchema,
       StructType partitionSchema,
@@ -212,6 +210,11 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   // point and the Batch-only bookkeeping below goes away with it.
   @Override
   public Batch toBatch() {
+    return recordFrameProfileValue("batchScan.toBatch", this::createBatch);
+  }
+
+  /** Constructs the fallback batch without putting its multi-step body inside a Java lambda. */
+  private Batch createBatch() {
     if (isCDCRead) {
       throw new UnsupportedOperationException(
           "Batch reads with CDC (readChangeFeed / readChangeData) are not supported in the V2 "
@@ -261,7 +264,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog =
         MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
             spark,
-            (io.delta.kernel.internal.SnapshotImpl) latestSnapshot,
+            latestSnapshot,
             options,
             snapshotManager,
             KernelEngineFactory.createDefaultEngine(hadoopConf),
@@ -299,152 +302,94 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     return description.toString();
   }
 
+  /**
+   * Returns the catalog size when available, or the compression-adjusted post-pruning file size,
+   * without constructing row or column statistics.
+   *
+   * <p>Intentionally no {@code @Override}: Delta also compiles this source against supported Spark
+   * versions whose {@link SupportsReportStatistics} interface predates this optional method. The
+   * method still overrides the interface default when Delta is built against a Spark version that
+   * provides it.
+   */
+  public OptionalLong estimateSizeInBytes() {
+    return estimateSizeInBytesInternal();
+  }
+
+  /** Package-private entry point for Scala wrappers compiled together with this Java source. */
+  OptionalLong estimateSizeInBytesInternal() {
+    if (isZeroLimit()) {
+      return OptionalLong.of(0L);
+    }
+    if (catalogStats.isPresent()) {
+      return catalogStats.get().sizeInBytes();
+    }
+    return estimateSelectedFileSizeInBytes();
+  }
+
   @Override
   public Statistics estimateStatistics() {
-    ensurePlanned();
-    // Capture mutable scan state as final locals so the returned Statistics object reflects a
-    // consistent snapshot. A subsequent filter() call mutates rowCountKnown and totalRows
-    // (see ensurePlanned(runtimePredicates)), and we don't want those mutations to leak into a
-    // Statistics instance the caller is still holding.
-    final long plannedBytes = estimatedSizeInBytes;
-    final boolean rowCountKnownSnapshot = rowCountKnown;
-    final long totalRowsSnapshot = totalRows;
-
-    // When catalog stats are available and CBO is enabled, combine table-level stats
-    // (for columnStats) with planned file stats (for sizeInBytes and numRows).
-    // This mirrors V1's LogicalRelation.computeStats() which gates column stats on
-    // conf.cboEnabled || conf.planStatsEnabled.
-    if (arePlanStatsEnabled() && catalogStats.isPresent()) {
-      final Statistics stats = catalogStats.get();
-      return new Statistics() {
-        @Override
-        public OptionalLong sizeInBytes() {
-          // Planned file size is authoritative (even if 0 for an empty table)
-          return OptionalLong.of(plannedBytes);
-        }
-
-        @Override
-        public OptionalLong numRows() {
-          // Prefer per-file (post-prune) numRows when known. Fall back to catalog numRows
-          // when per-file is unavailable (e.g. some AddFile lacks numRecords). The catalog
-          // value is table-level and may be stale, but it's better than reporting unknown.
-          if (rowCountKnownSnapshot) {
-            return OptionalLong.of(totalRowsSnapshot);
-          }
-          return stats.numRows();
-        }
-
-        @Override
-        public Map<NamedReference, ColumnStatistics> columnStats() {
-          // TODO: After partition pruning, column stats (e.g. min, max, nullCount,
-          //  distinctCount) could be tightened based on the pruned file-level stats.
-          return stats.columnStats();
-        }
-      };
+    if (isZeroLimit()) {
+      return statistics(OptionalLong.of(0L), OptionalLong.of(0L), Collections.emptyMap());
     }
+    if (catalogHasNumRows()) {
+      final Statistics stats = catalogStats.get();
+      return statistics(OptionalLong.empty(), stats.numRows(), stats.columnStats());
+    }
+    return statistics(
+        estimateSelectedFileSizeInBytes(), OptionalLong.empty(), Collections.emptyMap());
+  }
 
-    // No catalog stats available or CBO disabled — return stats from planned files only
+  private OptionalLong estimateSelectedFileSizeInBytes() {
+    ensurePlanned();
+    // Do not scale the selected-file bytes by readSchema. Delta returns false from
+    // reflectsFullyPushedDownFilters(), so Spark re-adds fully pushed filters when adjusting
+    // statistics. Delta's scan builder retains filter-only columns in readSchema; when that makes
+    // the scan output wider than the query output, Spark also leaves the Project that restores the
+    // query output above the relation. The Filter and Project in Spark's logical plan, rather than
+    // this scan, own those statistics adjustments.
+    return OptionalLong.of(totalBytes);
+  }
+
+  private boolean isZeroLimit() {
+    return pushedLimit.isPresent() && pushedLimit.getAsInt() == 0;
+  }
+
+  private Statistics statistics(
+      OptionalLong sizeInBytes,
+      OptionalLong numRows,
+      Map<NamedReference, ColumnStatistics> columnStats) {
     return new Statistics() {
       @Override
       public OptionalLong sizeInBytes() {
-        return OptionalLong.of(plannedBytes);
+        return sizeInBytes;
       }
 
       @Override
       public OptionalLong numRows() {
-        return rowCountKnownSnapshot ? OptionalLong.of(totalRowsSnapshot) : OptionalLong.empty();
+        return numRows;
+      }
+
+      @Override
+      public Map<NamedReference, ColumnStatistics> columnStats() {
+        return columnStats;
       }
     };
   }
 
   /**
-   * Computes the estimated size in bytes accounting for column projection.
+   * Delta requires Spark to retain fully pushed predicates when adjusting scan statistics. In
+   * particular, catalog statistics describe the unfiltered table and must not be treated as if
+   * every connector-pushed predicate were already reflected.
    *
-   * <p>This mirrors what {@code SizeInBytesOnlyStatsPlanVisitor.visitUnaryNode} (from Spark code)
-   * would compute for a {@code Project} over a {@code LogicalRelation}: {@code sizeInBytes =
-   * childSizeInBytes * outputRowSize / childRowSize}
-   *
-   * <p>Where:
-   *
-   * <ul>
-   *   <li><b>childRowSize</b> = {@code ROW_OVERHEAD + dataSchema + partitionSchema} (equivalent to
-   *       LogicalRelation output)
-   *   <li><b>outputRowSize</b> = {@code ROW_OVERHEAD + readDataSchema + partitionSchema}
-   *       (equivalent to Project output)
-   * </ul>
-   *
-   * <p>When catalog column stats are available, uses per-column {@code avgLen} instead of {@code
-   * defaultSize()} for more accurate size estimation, mirroring {@code
-   * EstimationUtils.getSizePerRow()} behavior.
-   *
-   * <p>This provides consistent statistics with the v1 code path (LogicalRelation + visitUnaryNode
-   * from Spark code directory).
-   *
-   * @param totalBytes the total size in bytes of the planned files (raw physical size)
-   * @return the estimated size in bytes after accounting for column projection
+   * <p>Intentionally no {@code @Override}; see {@link #estimateSizeInBytes()}.
    */
-  private long computeEstimatedSizeWithColumnProjection(long totalBytes) {
-    if (totalBytes <= 0) {
-      return totalBytes;
-    }
-
-    // Row overhead constant, matching EstimationUtils.getSizePerRow (from Spark)
-    final int ROW_OVERHEAD = 8;
-
-    // Use avgLen from catalog column stats when available for more accurate estimation
-    Map<String, OptionalLong> avgLenByColumn = getAvgLenByColumn();
-
-    final long fullSchemaRowSize =
-        ROW_OVERHEAD
-            + getSchemaSize(dataSchema, avgLenByColumn)
-            + getSchemaSize(partitionSchema, avgLenByColumn);
-    final long outputRowSize = ROW_OVERHEAD + getSchemaSize(readSchema(), avgLenByColumn);
-
-    long estimatedBytes = (totalBytes * outputRowSize) / fullSchemaRowSize;
-
-    return Math.max(1L, estimatedBytes);
+  public boolean reflectsFullyPushedDownFilters() {
+    return reflectsFullyPushedDownFiltersInternal();
   }
 
-  /**
-   * Returns a map of column name to avgLen from catalog column stats, used to improve size
-   * estimation accuracy when catalog stats are available.
-   */
-  private Map<String, OptionalLong> getAvgLenByColumn() {
-    if (!catalogStats.isPresent()) {
-      return Collections.emptyMap();
-    }
-    Map<NamedReference, ColumnStatistics> colStats = catalogStats.get().columnStats();
-    if (colStats.isEmpty()) {
-      return Collections.emptyMap();
-    }
-    Map<String, OptionalLong> result = new HashMap<>();
-    for (Map.Entry<NamedReference, ColumnStatistics> entry : colStats.entrySet()) {
-      result.put(entry.getKey().fieldNames()[0], entry.getValue().avgLen());
-    }
-    return result;
-  }
-
-  /**
-   * Computes the estimated in-memory size for a schema, using avgLen from catalog stats when
-   * available, falling back to defaultSize(). Mirrors EstimationUtils.getSizePerRow(). For
-   * StringType columns with avgLen, adds UTF8String overhead (base + offset + numBytes = 12 bytes).
-   */
-  private static long getSchemaSize(StructType schema, Map<String, OptionalLong> avgLenByColumn) {
-    long size = 0;
-    for (StructField field : schema.fields()) {
-      OptionalLong avgLen = avgLenByColumn.getOrDefault(field.name(), OptionalLong.empty());
-      if (avgLen.isPresent()) {
-        if (field.dataType() instanceof StringType) {
-          // UTF8String: base + offset + numBytes (matching EstimationUtils.getSizePerRow)
-          size += avgLen.getAsLong() + 8 + 4;
-        } else {
-          size += avgLen.getAsLong();
-        }
-      } else {
-        size += field.dataType().defaultSize();
-      }
-    }
-    return size;
+  /** Package-private entry point for Scala wrappers compiled together with this Java source. */
+  boolean reflectsFullyPushedDownFiltersInternal() {
+    return false;
   }
 
   /**
@@ -485,8 +430,21 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     //     out AddFile.stats (DataSkippingReader.getFilesAndNumRecords defaults keepStats=false),
     //     but it does report the aggregate in DeltaScan.scanned.rows -- the very field V1's
     //     PreparedDeltaFileIndex.getNumOfRows reads. The aggregate fallback below picks it up.
-    final DeltaScan deltaScan =
-        Objects.requireNonNull(deltaScanSupplier.get(), "deltaScanSupplier returned null");
+    final Supplier<DeltaScan> selectFiles =
+        () -> Objects.requireNonNull(deltaScanSupplier.get(), "deltaScanSupplier returned null");
+    final DeltaScan deltaScan = recordFrameProfileValue("scan.awaitFileSelection", selectFiles);
+    final Runnable materializeFiles = () -> materializeSelectedFiles(deltaScan, tablePath);
+    recordFrameProfileAction("scan.materializeSelectedFiles", materializeFiles);
+  }
+
+  /**
+   * Converts the files selected by {@code deltaScan} to connector scan objects and aggregates scan
+   * size statistics.
+   */
+  private void materializeSelectedFiles(DeltaScan deltaScan, String tablePath) {
+    plannedSnapshot =
+        Objects.requireNonNull(
+            deltaScan.scannedSnapshot(), "deltaScan.scannedSnapshot returned null");
     rowCountKnown = arePlanStatsEnabled();
     final List<org.apache.spark.sql.delta.actions.AddFile> scanFiles =
         scala.jdk.javaapi.CollectionConverters.asJava(deltaScan.files());
@@ -527,9 +485,6 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
         totalRows = ((Number) scannedRows.get()).longValue();
       }
     }
-
-    // Pre-compute estimated size accounting for column projection
-    estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(totalBytes);
   }
 
   /**
@@ -539,7 +494,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   private synchronized void ensurePlanned(List<RuntimePredicate> runtimePredicates) {
     // First, ensure planning is done
     if (!planned) {
-      planScanFiles();
+      recordFrameProfileAction("scan.planFiles", this::planScanFiles);
       planned = true;
     }
 
@@ -577,14 +532,13 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
         }
       }
 
-      // Update partitionedFiles, totalBytes, totalRows, and estimatedSizeInBytes if any partition
-      // is filtered out
+      // Update the filtered file set and totalBytes; recompute totalRows only when per-file counts
+      // are available.
       if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
         this.partitionedFiles = runtimeFilteredPartitionedFiles;
         this.selectedFiles = runtimeFilteredFiles;
         this.totalBytes =
             runtimeFilteredPartitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
-        this.estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(this.totalBytes);
         if (perFileCountsAvailable) {
           // Recompute totalRows from per-file counts of files that survived pruning so
           // numRows() reports the post-prune count rather than a stale pre-filter value.
@@ -605,6 +559,11 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   private void ensurePlanned() {
     // Pass null to indicate no runtime predicate should be applied - just perform the scan planning
     ensurePlanned(null);
+  }
+
+  org.apache.spark.sql.delta.Snapshot plannedSnapshot() {
+    ensurePlanned();
+    return Objects.requireNonNull(plannedSnapshot, "plannedSnapshot is null after planning");
   }
 
   public StructType getDataSchema() {
@@ -689,27 +648,21 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   }
 
   /**
-   * Returns whether plan-time statistics should be collected and reported. Matches V1 behavior:
-   * {@code LogicalRelation.computeStats()} only surfaces stats when {@code spark.sql.cbo.enabled}
-   * or {@code spark.sql.cbo.planStats.enabled} is true.
+   * Returns whether Delta should collect per-file row counts for scan metadata. The scan builder
+   * evaluates the same condition when deciding whether to ask {@code filesForScan} to retain record
+   * counts; the two must stay in sync.
    *
-   * <p>Despite the row-count-flavored framing in V1, this gate controls multiple things in the V2
-   * scan path:
-   *
-   * <ul>
-   *   <li>whether {@code numRows()} is reported in {@link #estimateStatistics()}
-   *   <li>whether the catalog-stats branch is entered (which also governs {@code columnStats}
-   *       propagation from the catalog)
-   *   <li>whether per-file stats JSON is parsed in {@link #planScanFiles()}
-   * </ul>
-   *
-   * <p>The scan builder evaluates the same condition to decide whether to ask {@code filesForScan}
-   * for per-file record counts; the two must stay in sync.
-   *
-   * <p>Future readers touching any of these paths should treat this helper as load-bearing.
+   * <p>This does not gate {@link #estimateStatistics()}. Spark's {@code
+   * DataSourceV2ScanRelation.computeStats()} chooses between the full-statistics and size-only APIs
+   * based on CBO and plan-statistics settings. Once Spark calls either API, Delta returns that
+   * API's connector statistics independently of the planner-side gate.
    */
   private boolean arePlanStatsEnabled() {
     return sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
+  }
+  /** Returns whether the catalog-provided statistics include a numRows value. */
+  private boolean catalogHasNumRows() {
+    return catalogStats.isPresent() && catalogStats.get().numRows().isPresent();
   }
 
   @Override
