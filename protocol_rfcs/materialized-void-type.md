@@ -3,7 +3,7 @@
 
 The `materializedVoidType` reader/writer table feature adds support for materializing the `void` data type (also known as `NullType` in Spark, `UnknownType` in Iceberg, and `UNKNOWN` in Parquet) in data files. The feature does not gate the use of `void` in a Delta table schema: clients must continue to support `void` columns represented through the missing columns mechanism even when the feature is not supported.
 
-`void` has only one possible value: `NULL`. Writers commonly infer this type when they have no non-`NULL` values from which to infer a concrete type. Examples include `CREATE TABLE t AS SELECT NULL AS a` and schema evolution that adds an all-`NULL` column.
+`void` has only one possible value: `NULL`. Writers may assign this type to a `NULL` literal when the surrounding expression does not require a more specific type. Examples include `CREATE TABLE t AS SELECT NULL AS a` and schema evolution that adds an all-`NULL` column.
 
 Without this feature, clients omit `void` columns from data files and reconstruct them as all-`NULL` columns when reading. That representation breaks down for four schema shapes:
 
@@ -12,7 +12,7 @@ Without this feature, clients omit `void` columns from data files and reconstruc
 - a `void` used directly as an `array` element; or
 - a `void` used directly as a `map` key or value.
 
-Omitting the `void` columns in these cases would leave nothing to write for the table or enclosing `struct`, `array`, or `map`. The file would have nowhere to record whether an enclosing value is `NULL` or empty, or how many elements it contains. Writers must reject operations that would write new data files with one of these shapes.
+Omitting the `void` columns in these cases would leave nothing to write for the table or enclosing `struct`, `array`, or `map`. The data file would have nowhere to record whether an enclosing value is `NULL` or empty, or how many elements it contains. Writers must reject operations that would write new data files with one of these shapes.
 
 The `materializedVoidType` feature makes these shapes writable. A writer chooses enough `void` columns to preserve the structure and stores them with Parquet's [`UNKNOWN` logical type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#unknown-always-null). These are **structural** `void` columns. Only `void` columns in the restricted shapes above may be structural. Because older clients cannot read `UNKNOWN` columns, tables that use this representation must enable the reader/writer feature.
 
