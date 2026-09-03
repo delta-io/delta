@@ -16,9 +16,22 @@
 
 package io.sparkuctest;
 
+import io.delta.tables.DeltaTable;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import org.apache.spark.sql.Row;
 import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
@@ -138,19 +151,205 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   @Test
-  public void testMaintenanceOpsAllowedOnManagedTable() throws Exception {
+  public void testOptimizeRewritesManagedTableFiles() throws Exception {
     withNewTable(
-        "maintenance_allowed",
+        "optimize_rewrites_files",
         "id INT",
         TableType.MANAGED,
         tableName -> {
           sql("INSERT INTO %s VALUES (1)", tableName);
+          sql("INSERT INTO %s VALUES (2)", tableName);
+          sql("INSERT INTO %s VALUES (3)", tableName);
 
+          Map<String, List<Integer>> filesBefore = activeFileRows(tableName);
+          Assertions.assertThat(filesBefore.values())
+              .containsExactlyInAnyOrder(List.of(1), List.of(2), List.of(3));
+
+          long versionBefore = currentVersion(tableName);
           sql("OPTIMIZE %s", tableName);
-          sql("VACUUM %s", tableName);
+
+          Map<String, List<Integer>> filesAfter = activeFileRows(tableName);
+          Assertions.assertThat(filesAfter).hasSize(1);
+          Assertions.assertThat(filesAfter.values()).containsExactly(List.of(1, 2, 3));
+          Assertions.assertThat(filesAfter.keySet())
+              .doesNotContainAnyElementsOf(filesBefore.keySet());
+          Assertions.assertThat(currentVersion(tableName)).isEqualTo(versionBefore + 1);
+          assertLatestOperation(tableName, "OPTIMIZE");
+        });
+  }
+
+  @Test
+  public void testVacuumDeletesObsoleteManagedTableFiles() throws Exception {
+    withNewTable(
+        "vacuum_deletes_files",
+        "id INT",
+        TableType.MANAGED,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1)", tableName);
+          sql("INSERT INTO %s VALUES (2)", tableName);
+          sql("INSERT INTO %s VALUES (3)", tableName);
+
+          Set<String> obsoleteFiles = activeFileRows(tableName).keySet();
+          sql("OPTIMIZE %s", tableName);
+          Map<String, List<Integer>> activeFiles = activeFileRows(tableName);
+          Assertions.assertThat(activeFiles).hasSize(1);
+
+          String retentionCheck = "spark.databricks.delta.retentionDurationCheck.enabled";
+          String previousRetentionCheck = spark().conf().get(retentionCheck, "true");
+          spark().conf().set(retentionCheck, "false");
+          try {
+            Set<String> candidatesBefore = vacuumCandidateNames(tableName);
+            Set<String> obsoleteFileNames =
+                obsoleteFiles.stream().map(this::fileName).collect(Collectors.toSet());
+            Assertions.assertThat(candidatesBefore).containsAll(obsoleteFileNames);
+
+            sql("VACUUM %s RETAIN 0 HOURS", tableName);
+
+            Assertions.assertThat(vacuumCandidateNames(tableName))
+                .doesNotContainAnyElementsOf(obsoleteFileNames);
+            Assertions.assertThat(activeFileRows(tableName)).isEqualTo(activeFiles);
+            check(tableName, List.of(row("1"), row("2"), row("3")));
+          } finally {
+            spark().conf().set(retentionCheck, previousRetentionCheck);
+          }
+        });
+  }
+
+  @Test
+  public void testReorgPurgesManagedTableDeletionVector() throws Exception {
+    withNewTable(
+        "reorg_purges_deletion_vector",
+        "id INT",
+        TableType.MANAGED,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
+          sql("DELETE FROM %s WHERE id = 2", tableName);
+
+          Map<String, String> deleteMetrics = latestOperationMetrics(tableName, "DELETE");
+          Assertions.assertThat(Long.parseLong(deleteMetrics.get("numDeletionVectorsAdded")))
+              .isGreaterThan(0);
+          Map<String, List<Integer>> filesBefore = activeFileRows(tableName);
+          Assertions.assertThat(allRows(filesBefore)).containsExactly(1, 3);
+
           sql("REORG TABLE %s APPLY (PURGE)", tableName);
 
-          check(tableName, List.of(List.of("1")));
+          Map<String, String> reorgMetrics = latestOperationMetrics(tableName, "REORG");
+          long removedDeletionVectors =
+              Long.parseLong(reorgMetrics.get("numDeletionVectorsRemoved"));
+          long addedFiles = Long.parseLong(reorgMetrics.get("numAddedFiles"));
+          long removedFiles = Long.parseLong(reorgMetrics.get("numRemovedFiles"));
+          Assertions.assertThat(removedDeletionVectors).isGreaterThan(0);
+          Assertions.assertThat(addedFiles).isGreaterThan(0);
+          Assertions.assertThat(removedFiles).isGreaterThan(0);
+          Map<String, List<Integer>> filesAfter = activeFileRows(tableName);
+          Assertions.assertThat(allRows(filesAfter)).containsExactly(1, 3);
+          Assertions.assertThat(
+                  filesAfter.keySet().stream()
+                      .filter(path -> !filesBefore.containsKey(path))
+                      .count())
+              .isEqualTo(addedFiles);
+          Assertions.assertThat(
+                  filesBefore.keySet().stream()
+                      .filter(path -> !filesAfter.containsKey(path))
+                      .count())
+              .isEqualTo(removedFiles);
         });
+  }
+
+  @Test
+  public void testCheckpointDeletesExpiredManagedTableLogs() throws Exception {
+    Assumptions.assumeFalse(
+        isUCRemoteConfigured(), "This test changes timestamps in the local fake S3 filesystem.");
+    withNewTable(
+        "checkpoint_deletes_logs",
+        "id INT",
+        null,
+        TableType.MANAGED,
+        "'delta.checkpointInterval'='1', "
+            + "'delta.logRetentionDuration'='interval 0 seconds', "
+            + "'delta.deletedFileRetentionDuration'='interval 0 seconds'",
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1)", tableName);
+
+          Path logPath = localDeltaLogPath(tableName);
+          Path versionZero = logPath.resolve("00000000000000000000.json");
+          Path versionOne = logPath.resolve("00000000000000000001.json");
+          Assertions.assertThat(versionZero).exists();
+          Assertions.assertThat(versionOne).exists();
+          try (Stream<Path> files = Files.list(logPath)) {
+            for (Path path : files.filter(this::isVersionedLogFile).collect(Collectors.toList())) {
+              Files.setLastModifiedTime(path, FileTime.fromMillis(0));
+            }
+          }
+
+          sql("INSERT INTO %s VALUES (2)", tableName);
+
+          Assertions.assertThat(versionZero).doesNotExist();
+          Assertions.assertThat(versionOne).doesNotExist();
+          try (Stream<Path> files = Files.list(logPath)) {
+            Assertions.assertThat(files.filter(this::isCheckpointFile).count()).isGreaterThan(0);
+          }
+          check(tableName, List.of(row("1"), row("2")));
+        });
+  }
+
+  private Map<String, List<Integer>> activeFileRows(String tableName) {
+    Map<String, List<Integer>> rowsByFile = new HashMap<>();
+    for (Row row : spark().sql("SELECT input_file_name(), id FROM " + tableName).collectAsList()) {
+      rowsByFile.computeIfAbsent(row.getString(0), ignored -> new ArrayList<>()).add(row.getInt(1));
+    }
+    rowsByFile.values().forEach(Collections::sort);
+    return rowsByFile;
+  }
+
+  private Set<String> vacuumCandidateNames(String tableName) {
+    return sql("VACUUM %s RETAIN 0 HOURS DRY RUN", tableName).stream()
+        .map(row -> fileName(row.get(0)))
+        .collect(Collectors.toSet());
+  }
+
+  private List<Integer> allRows(Map<String, List<Integer>> rowsByFile) {
+    return rowsByFile.values().stream().flatMap(List::stream).sorted().collect(Collectors.toList());
+  }
+
+  private String fileName(String path) {
+    return Path.of(URI.create(path).getPath()).getFileName().toString();
+  }
+
+  private void assertLatestOperation(String tableName, String expectedOperation) {
+    latestOperationMetrics(tableName, expectedOperation);
+  }
+
+  private Map<String, String> latestOperationMetrics(String tableName, String expectedOperation) {
+    Row history =
+        DeltaTable.forName(spark(), tableName)
+            .history(1)
+            .select("operation", "operationMetrics")
+            .head();
+    Assertions.assertThat(history.getString(0)).isEqualTo(expectedOperation);
+    return history.getJavaMap(1);
+  }
+
+  private Path localDeltaLogPath(String tableName) {
+    String location =
+        sql("DESCRIBE FORMATTED %s", tableName).stream()
+            .filter(row -> row.size() >= 2 && "Location".equalsIgnoreCase(row.get(0).trim()))
+            .map(row -> row.get(1).trim())
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("Could not retrieve table location"));
+    URI locationUri = URI.create(location);
+    if ("file".equals(locationUri.getScheme())) {
+      return Path.of(locationUri).resolve("_delta_log");
+    }
+    Assertions.assertThat(locationUri.getHost()).as(location).isEqualTo(FAKE_S3_BUCKET);
+    return Path.of(locationUri.getPath()).resolve("_delta_log");
+  }
+
+  private boolean isVersionedLogFile(Path path) {
+    return path.getFileName().toString().matches("[0-9]{20}\\..*");
+  }
+
+  private boolean isCheckpointFile(Path path) {
+    return path.getFileName().toString().contains(".checkpoint.");
   }
 }
