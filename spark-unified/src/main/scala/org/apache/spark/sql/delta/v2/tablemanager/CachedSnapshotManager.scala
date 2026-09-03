@@ -20,26 +20,20 @@ import java.util.Optional
 
 import scala.jdk.OptionConverters._
 
-import org.apache.spark.sql.delta.Snapshot
-import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.v2.interop.{
-  DeltaV2Snapshot,
-  DeltaV2SnapshotManager
-}
-import io.delta.spark.internal.v2.kernel.KernelEngineFactory
-import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 // scalastyle:off import.ordering.noEmptyLine
 // scalastyle:off import.ordering.wrongOrderInGroup
 import io.delta.kernel.CommitRange
 import io.delta.kernel.engine.{Engine => KernelEngine}
-import io.delta.kernel.internal.{
-  DeltaHistoryManager,
-  SnapshotImpl => KernelSnapshot
-}
+import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl => KernelSnapshot}
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory
+import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
+
+import org.apache.spark.sql.delta.{DeltaIllegalStateException, Snapshot}
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.v2.interop.{DeltaV2Snapshot, DeltaV2SnapshotManager}
 
 import org.apache.hadoop.fs.Path
-
 // scalastyle:on import.ordering.noEmptyLine
 // scalastyle:on import.ordering.wrongOrderInGroup
 import org.apache.spark.sql.SparkSession
@@ -53,12 +47,11 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  *  - [[currentSnapshot]] is `null` until the first successful load.
  *  - [[tableId]] is captured on first load and validated on every
  *    subsequent install; a mismatch throws [[IllegalStateException]].
- *  - [[retire]] is idempotent and prevents further snapshot acquisition.
+ *  - [[retire]] is idempotent and drops this manager's cached snapshot.
  *  - Stale entries are refreshed through the uncached snapshot manager.
  *  - Incremental refresh strategies are layered by dependent modules.
  */
-private[tablemanager]
-class CachedSnapshotManager(
+private[tablemanager] class CachedSnapshotManager(
     val tablePath: Path,
     catalogTableOpt: Option[CatalogTable],
     sessionInvariantFsOptions: Map[String, String])
@@ -96,11 +89,13 @@ class CachedSnapshotManager(
       timestampMillis: Long,
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
-      canReturnEarliestCommit: Boolean
-  ): DeltaHistoryManager.Commit = {
+      canReturnEarliestCommit: Boolean): DeltaHistoryManager.Commit = {
     recordFrameProfile("Delta", "CachedSnapshotManager.getActiveCommitAtTime") {
-      withUncachedManager(_.getActiveCommitAtTime(timestampMillis, canReturnLastCommit,
-        mustBeRecreatable, canReturnEarliestCommit))
+      withUncachedManager(_.getActiveCommitAtTime(
+        timestampMillis,
+        canReturnLastCommit,
+        mustBeRecreatable,
+        canReturnEarliestCommit))
     }
   }
 
@@ -138,7 +133,9 @@ class CachedSnapshotManager(
   private[tablemanager] def acquireLatest(requiredFreshAfter: Long): KernelSnapshot = {
     recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.acquireLatest") {
       if (retired) {
-        return loadLatestUncached()
+        val kernelSnapshot = loadLatestUncached()
+        validateTableIdentity(kernelSnapshot)
+        return kernelSnapshot
       }
       val existing = currentSnapshot
       if (existing != null && lastValidatedAtMs >= requiredFreshAfter) {
@@ -199,7 +196,8 @@ class CachedSnapshotManager(
 
   // === Snapshot installation =================================================
 
-  private[tablemanager] def installSnapshot(refreshed: KernelSnapshot,
+  private[tablemanager] def installSnapshot(
+      refreshed: KernelSnapshot,
       validationStartedAt: Long): KernelSnapshot = synchronized {
     if (retired) {
       return refreshed
@@ -221,8 +219,10 @@ class CachedSnapshotManager(
     if (tableId == null) {
       tableId = snapshotTableId
     } else if (tableId != snapshotTableId) {
-      throw new IllegalStateException(
-        s"Table identity mismatch: expected $tableId but got $snapshotTableId")
+      throw new DeltaIllegalStateException(
+        errorClass = "INTERNAL_ERROR",
+        messageParameters = Array(
+          s"Table identity mismatch: expected $tableId but got $snapshotTableId"))
     }
   }
 
