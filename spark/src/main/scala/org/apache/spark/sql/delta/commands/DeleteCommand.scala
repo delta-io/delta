@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.stats.StatsCollectionUtils
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.SparkContext
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, EqualNullSafe, Expression, If, Literal, Not}
@@ -169,8 +169,6 @@ case class DeleteCommand(
       sparkSession: SparkSession,
       deltaLog: DeltaLog,
       txn: OptimisticTransaction): (Seq[Action], DeleteMetric) = {
-    import org.apache.spark.sql.delta.implicits._
-
     var numRemovedFiles: Long = 0
     var numAddedFiles: Long = 0
     var numAddedChangeFiles: Long = 0
@@ -317,7 +315,6 @@ case class DeleteCommand(
             // that only involves the affected files instead of all files.
             val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
             val data = DataFrameUtils.ofRows(sparkSession, newTarget)
-            val incrDeletedCountExpr = IncrementMetric(TrueLiteral, metrics("numDeletedRows"))
             val filesToRewrite =
               withStatusCode("DELTA", FINDING_TOUCHED_FILES_MSG) {
                 if (candidateFiles.isEmpty) {
@@ -326,15 +323,18 @@ case class DeleteCommand(
                   val filePathColumn =
                     if (conf.getConf(DeltaSQLConf.DELETE_USE_FILE_METADATA_COLUMN)) {
                       DeltaTableUtils.getFileMetadataColumn(data).getField(FileFormat.FILE_PATH)
-                    } else {
-                      input_file_name()
-                    }
-                  data.filter(Column(cond))
-                    .select(filePathColumn)
-                    .filter(Column(incrDeletedCountExpr))
-                    .distinct()
-                    .as[String]
+                  } else {
+                    input_file_name()
+                  }
+                  // Keep row counting in the same aggregate as file deduplication. A separate
+                  // IncrementMetric filter above the metadata projection triggers SPARK-59171.
+                  val filePathAndRowCounts = data.filter(Column(cond))
+                    .select(filePathColumn.as(DeleteCommand.FILE_NAME_COLUMN))
+                    .groupBy(DeleteCommand.FILE_NAME_COLUMN)
+                    .count()
                     .collect()
+                  metrics("numDeletedRows").set(filePathAndRowCounts.map(_.getLong(1)).sum)
+                  filePathAndRowCounts.map(_.getString(0))
                 }
               }
 

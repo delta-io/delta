@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.{SparkThrowable, SparkUnsupportedOperationException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanLike
+import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
@@ -532,7 +533,9 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       case f: FileSourceScanLike => f
     })
 
-    assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
+    assert(scans.head.schema.findNestedField(Seq("nested", "key")).nonEmpty)
+    assert(scans.head.schema.findNestedField(Seq("nested", "value")).isEmpty)
+    assert(scans.head.schema.findNestedField(Seq(FileFormat.FILE_PATH)).nonEmpty)
   }
 
   /**
