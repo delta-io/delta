@@ -172,44 +172,22 @@ class CachedSnapshotManagerSuite
 
   // === Retire lifecycle =======================================
 
-  test("retire discards current cached snapshot") {
-    withTempDir { dir =>
-      createDeltaTable(dir)
-      val mgr = createManager(dir)
-      val beforeRetire = mgr.loadLatestSnapshot()
+  test("retire does not change snapshot management behavior") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val mgr = createManager(dir)
+        val beforeRetire = mgr.loadLatestSnapshot()
 
-      mgr.retire()
+        mgr.retire()
+        mgr.retire()
+        appendToDeltaTable(dir)
 
-      val afterRetire = mgr.loadLatestSnapshot()
-      assert(afterRetire ne beforeRetire)
-    }
-  }
-
-  test("retire is idempotent") {
-    withTempDir { dir =>
-      createDeltaTable(dir)
-      val mgr = createManager(dir)
-      mgr.loadLatestSnapshot()
-
-      mgr.retire()
-      mgr.retire()
-
-      assert(mgr.loadLatestSnapshot().version == 0L)
-    }
-  }
-
-  test("loadLatestSnapshot after retire returns fresh uncached snapshot") {
-    withTempDir { dir =>
-      createDeltaTable(dir)
-      val mgr = createManager(dir)
-      mgr.loadLatestSnapshot()
-      mgr.retire()
-
-      val first = mgr.loadLatestSnapshot()
-      val second = mgr.loadLatestSnapshot()
-      assert(first.version == 0L)
-      assert(second.version == 0L)
-      assert(first ne second, "Retired manager should not cache snapshots")
+        val afterRetire = mgr.loadLatestSnapshot()
+        assert(beforeRetire.version == 0L)
+        assert(afterRetire.version == 1L)
+        assert(afterRetire ne beforeRetire)
+      }
     }
   }
 
@@ -338,47 +316,6 @@ class CachedSnapshotManagerSuite
         } finally {
           mgr.retire()
         }
-      }
-    }
-  }
-
-  test("retire during concurrent loads returns usable uncached snapshots") {
-    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
-      withTempDir { dir =>
-        createDeltaTable(dir)
-        val mgr = createManager(dir)
-        mgr.loadLatestSnapshot()
-
-        val ready = new java.util.concurrent.CountDownLatch(4)
-        val start = new java.util.concurrent.CountDownLatch(1)
-        val snapshots = new ConcurrentLinkedQueue[Snapshot]()
-        val failures = new ConcurrentLinkedQueue[Throwable]()
-        val loaders = (1 to 4).map { _ =>
-          new Thread(() => {
-            try {
-              ready.countDown()
-              start.await()
-              snapshots.add(mgr.loadLatestSnapshot())
-            } catch {
-              case failure: Throwable => failures.add(failure)
-            }
-          })
-        }
-        loaders.foreach(_.start())
-
-        ready.await()
-        start.countDown()
-        mgr.retire()
-
-        loaders.foreach(_.join())
-        assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
-        assert(snapshots.size() == loaders.size)
-        while (!snapshots.isEmpty) {
-          assert(DeltaV2Snapshot.getKernelSnapshot(snapshots.poll()).getVersion == 0L)
-        }
-        val firstAfterRetire = mgr.loadLatestSnapshot()
-        val secondAfterRetire = mgr.loadLatestSnapshot()
-        assert(firstAfterRetire ne secondAfterRetire)
       }
     }
   }

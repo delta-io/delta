@@ -47,7 +47,6 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  *  - [[currentSnapshot]] is `null` until the first successful load.
  *  - [[tableId]] is captured on first load and validated on every
  *    subsequent install; a mismatch throws [[IllegalStateException]].
- *  - [[retire]] is idempotent and drops this manager's cached snapshot.
  *  - Stale entries are refreshed through the uncached snapshot manager.
  *  - Incremental refresh strategies are layered by dependent modules.
  */
@@ -61,7 +60,6 @@ private[tablemanager] class CachedSnapshotManager(
   @volatile private var currentSnapshot: DeltaV2Snapshot = _
   @volatile private var tableId: String = _
   @volatile private var lastValidatedAtMs: Long = -1L
-  @volatile private var retired: Boolean = false
 
   // === DeltaV2SnapshotManager implementation ================================
 
@@ -119,22 +117,13 @@ private[tablemanager] class CachedSnapshotManager(
 
   // === Snapshot lifecycle ===================================================
 
-  def retire(): Unit = synchronized {
-    if (!retired) {
-      retired = true
-      currentSnapshot = null
-    }
-  }
+  // Eviction only drops the process cache's reference. Escaped managers remain fully functional.
+  def retire(): Unit = ()
 
   // === Acquisition ==========================================================
 
   private[tablemanager] def acquireLatest(requiredFreshAfter: Long): DeltaV2Snapshot = {
     recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.acquireLatest") {
-      if (retired) {
-        val kernelSnapshot = loadLatestUncached()
-        validateTableIdentity(kernelSnapshot)
-        return wrapSnapshot(kernelSnapshot)
-      }
       val existing = currentSnapshot
       if (existing != null && lastValidatedAtMs >= requiredFreshAfter) {
         return existing
@@ -205,9 +194,6 @@ private[tablemanager] class CachedSnapshotManager(
   private[tablemanager] def installSnapshot(
       refreshed: KernelSnapshot,
       validationStartedAt: Long): DeltaV2Snapshot = synchronized {
-    if (retired) {
-      return wrapSnapshot(refreshed)
-    }
     validateTableIdentity(refreshed)
     val existing = currentSnapshot
     if (existing != null && existing.version >= refreshed.getVersion) {
