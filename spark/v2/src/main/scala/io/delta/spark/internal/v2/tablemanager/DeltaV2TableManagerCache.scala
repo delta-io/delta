@@ -70,7 +70,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
       })
     } catch {
       case e @ (_: UncheckedExecutionException | _: ExecutionError | _: ExecutionException) =>
-        logWarning(s"Cache loader failed; unwrapping ${e.getClass.getSimpleName}", e.getCause)
+        logWarning(log"Cache loader failed; rethrowing original cause", e.getCause)
         throw e.getCause
     }
   }

@@ -381,6 +381,44 @@ class DeltaV2TableManagerCacheSuite
       }
     }
   }
+
+  test("process-global: first caller's size config remains effective") {
+    // Session A initializes the singleton with maxSize=1.
+    val sessionA = spark.newSession()
+    sessionA.conf.set(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "1")
+
+    // Session B would prefer a larger cache, but the singleton is already built.
+    val sessionB = spark.newSession()
+    sessionB.conf.set(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "1000")
+
+    withTempDir { dirA =>
+      withTempDir { dirB =>
+        val keyA = DeltaV2CacheKey.from(
+          sessionA, dirA.getCanonicalPath,
+          Collections.emptyMap())
+        val keyB = DeltaV2CacheKey.from(
+          sessionB, dirB.getCanonicalPath,
+          Collections.emptyMap())
+
+        // Session A loads key A -- this initializes the singleton (size 1).
+        val originalA = DeltaV2TableManagerCache.getOrCreate(
+          sessionA.sessionState.conf, keyA)
+
+        // Session B loads key B -- evicts key A under size-1 constraint.
+        DeltaV2TableManagerCache.getOrCreate(
+          sessionB.sessionState.conf, keyB)
+
+        // Re-lookup key A through the companion: must create a new instance
+        // because size-1 evicted the original, proving the first caller's
+        // config (size 1) governs, not the second caller's (size 1000).
+        val reloadedA = DeltaV2TableManagerCache.getOrCreate(
+          sessionA.sessionState.conf, keyA)
+        assert(reloadedA ne originalA,
+          "Key A should have been evicted under the first caller's " +
+            "maxSize=1 and reloaded as a new instance")
+      }
+    }
+  }
 }
 
 // === Test helpers (package-private, same-file) ====================
