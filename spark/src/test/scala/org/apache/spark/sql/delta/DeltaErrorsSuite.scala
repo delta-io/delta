@@ -39,7 +39,6 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.sql.DeltaSparkSessionExtension
-import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
 import org.mockito.Mockito.{mock, when}
@@ -3056,7 +3055,7 @@ trait DeltaErrorsSuiteBase
   test("catalog-managed maintenance operation uses the catalog allowlist") {
     val managedSnapshot = mock(classOf[SnapshotDescriptor])
     when(managedSnapshot.isCatalogOwned).thenReturn(true)
-    val property = UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY
+    val property = "delta.clientMaintenanceOperations"
 
     def tableWithOperations(value: String): CatalogTable = CatalogTable(
       identifier = TableIdentifier("table"),
