@@ -168,5 +168,5 @@ object AMTUtils {
 
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
   private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
-    ManifestBitmap.readFrom(bytes)
+    ManifestBitmap.fromSerializedByteArray(bytes)
 }

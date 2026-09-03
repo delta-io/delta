@@ -426,15 +426,15 @@ object AMTWriteHelper extends DeltaLogging {
    */
   private[amt] def modifiedOrDeletedTrackingForLeaf(
       oldEntry: DataManifestEntry,
-      mdvPositions: Seq[Long],
-      deletedPositions: Seq[Long],
-      replacedPositions: Seq[Long]): (Tracking, ManifestInfo) = {
+      mdvPositions: Seq[Int],
+      deletedPositions: Seq[Int],
+      replacedPositions: Seq[Int]): (Tracking, ManifestInfo) = {
     val cumulativeMdv = oldEntry.manifest_info.dv
-      .map(AMTUtils.deserializeMdv).getOrElse(ManifestBitmap.empty())
+      .map(AMTUtils.deserializeMdv).getOrElse(ManifestBitmap.fromPositions(Seq.empty))
     mdvPositions.foreach(cumulativeMdv.add)
-    def bitmapOf(positions: Seq[Long]): Option[Array[Byte]] = {
+    def bitmapOf(positions: Seq[Int]): Option[Array[Byte]] = {
       if (positions.isEmpty) None
-      else Some(AMTUtils.serializeMdv(ManifestBitmap(positions: _*)))
+      else Some(AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions)))
     }
     // Every masked / CDF position indexes an entry within this leaf, so no count can exceed the
     // leaf's entry count; a larger value signals a corrupt bitmap or a double-counted position.

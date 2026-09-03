@@ -227,14 +227,14 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       leaves = allLeafPointers,
       includeActionsInCommitJson = true)
     val numOldLeavesUpdated = carriedLeafPointers.count(p =>
-      leafPositions.newMDVPositionsByLeaf.getOrElse(p.location, Set.empty[Long]).nonEmpty)
+      leafPositions.newMDVPositionsByLeaf.getOrElse(p.location, Set.empty[Int]).nonEmpty)
     // Per-status breakdown over every leaf pointer in the new tree (carried + newly spilled).
     val leavesByStatus = allLeafPointers.groupBy(_.tracking.status).map {
       case (status, ps) => status -> ps.size
     }
     val numStaleDeletedLeavesDropped =
       oldAMTCheckpointProvider.leaves.count(_.tracking.status == Tracking.Status.Deleted)
-    def positionCount(byLeaf: Map[String, Set[Long]]): Int = byLeaf.valuesIterator.map(_.size).sum
+    def positionCount(byLeaf: Map[String, Set[Int]]): Int = byLeaf.valuesIterator.map(_.size).sum
     // Per-status breakdown over the new tree's root-resident DATA entries (live + remove entries).
     val rootEntriesByStatus = (rootLiveEntries ++ rootRemoveEntries)
       .groupBy(_.tracking.status).map { case (status, es) => status -> es.size }
@@ -290,7 +290,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     // A (leaf, position) can be superseded multiple times, e.g. a leaf file removed, re-added and
     // removed again. We use a Set to dedupe the positions so the count matches the number of bits
     // gained by the MDV or CDF bitmap.
-    def positionsByLeaf(backrefs: Seq[BackReference]): Map[String, Set[Long]] =
+    def positionsByLeaf(backrefs: Seq[BackReference]): Map[String, Set[Int]] =
       backrefs.map(br => br.manifest -> br.pos)
         .groupBy(_._1).map { case (leaf, pairs) => leaf -> pairs.map(_._2).toSet }
     val newMDVPositionsByLeaf = positionsByLeaf(mdvSupersededBackrefs)
@@ -300,11 +300,11 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       if (pointer.tracking.status == Tracking.Status.Deleted) None
       else {
         val newMdvPositions =
-          newMDVPositionsByLeaf.getOrElse(pointer.location, Set.empty[Long]).toSeq
+          newMDVPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
         val deletedPositions =
-          deletedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Long]).toSeq
+          deletedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
         val replacedPositions =
-          replacedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Long]).toSeq
+          replacedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
         Some(carryForwardOneLeaf(pointer, newMdvPositions, deletedPositions, replacedPositions))
       }
     }
@@ -315,9 +315,9 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
   // Visible for testing.
   private[amt] def carryForwardOneLeaf(
       pointer: DataManifestEntry,
-      newMdvPositions: Seq[Long],
-      deletedPositions: Seq[Long],
-      replacedPositions: Seq[Long]): DataManifestEntry = {
+      newMdvPositions: Seq[Int],
+      deletedPositions: Seq[Int],
+      replacedPositions: Seq[Int]): DataManifestEntry = {
     val liveFileCount = pointer.manifest_info.liveFilesCount
     val tombstoneFileCount = pointer.manifest_info.tombstoneFilesCount
     if (liveFileCount > 0 && tombstoneFileCount > 0) {
@@ -601,6 +601,6 @@ private class ProcessedActions(
 }
 
 private case class MDVAndCDFPositions(
-    newMDVPositionsByLeaf: Map[String, Set[Long]],
-    deleteCDFPositionByLeaf: Map[String, Set[Long]],
-    replaceCDFPositionByLeaf: Map[String, Set[Long]])
+    newMDVPositionsByLeaf: Map[String, Set[Int]],
+    deleteCDFPositionByLeaf: Map[String, Set[Int]],
+    replaceCDFPositionByLeaf: Map[String, Set[Int]])

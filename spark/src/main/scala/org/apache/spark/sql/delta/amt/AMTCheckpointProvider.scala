@@ -169,7 +169,7 @@ final class AMTCheckpointProvider(
       .where(col("entry.tracking.status").isin(Tracking.Status.liveEntryStatuses.toSeq: _*))
       .filter { entryWithLoc =>
         mdvBroadcast.value.get(entryWithLoc.leafPath)
-          .forall(bytes => !AMTUtils.deserializeMdv(bytes).contains(entryWithLoc.pos))
+          .forall(bytes => !AMTUtils.deserializeMdv(bytes).contains(entryWithLoc.pos.toInt))
       }
 
     dataEntries
@@ -184,7 +184,7 @@ final class AMTCheckpointProvider(
                 val absLeaf = SparkPath.fromUrlString(entryWithLoc.leafPath).toPath
                 val relManifest =
                   AMTUtils.relativizeManifestPathToTableRoot(fs, localTableRoot, absLeaf)
-                Some(BackReference(relManifest, entryWithLoc.pos))
+                Some(BackReference(relManifest, entryWithLoc.pos.toInt))
               }
               // Root entries have nothing above them to inherit from, so they resolve against an
               // empty parent.
