@@ -42,9 +42,9 @@ import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.catalyst.plans.logical.SupportsSubquery
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
-import org.apache.spark.sql.functions.input_file_name
 import org.apache.spark.sql.types.LongType
 
 trait DeleteCommandMetrics { self: LeafRunnableCommand =>
@@ -322,8 +322,9 @@ case class DeleteCommand(
                 if (candidateFiles.isEmpty) {
                   Array.empty[String]
                 } else {
+                  val metadataColumn = DeltaTableUtils.getFileMetadataColumn(data)
                   data.filter(Column(cond))
-                    .select(input_file_name())
+                    .select(metadataColumn.getField(FileFormat.FILE_PATH))
                     .filter(Column(incrDeletedCountExpr))
                     .distinct()
                     .as[String]
