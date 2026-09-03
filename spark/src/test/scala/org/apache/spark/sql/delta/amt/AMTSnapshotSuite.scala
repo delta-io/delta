@@ -1305,7 +1305,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
 
   /** Serializes a manifest DV bitmap over the given leaf entry positions. */
   private def mdvBytesFor(positions: Long*): Array[Byte] =
-    AMTUtils.serializeMdv(ManifestBitmap(positions: _*))
+    AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions.map(_.toInt)))
 
   /** An ADDED tracking envelope with no lineage/sequence numbers, matching the AMT writer. */
   private def addedTracking: Tracking = Tracking(
