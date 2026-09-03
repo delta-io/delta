@@ -43,8 +43,8 @@ private[tablemanager] class DeltaV2TableManagerCache(
   private val cache: Cache[DeltaV2CacheKey, DeltaV2TableManager] = {
     val listener: RemovalListener[DeltaV2CacheKey, DeltaV2TableManager] =
       notification => {
-        val composite = notification.getValue
-        if (composite != null) composite.retire()
+        val manager = notification.getValue
+        if (manager != null) manager.retire()
       }
     CacheBuilder.newBuilder()
       .maximumSize(maxSize)
@@ -70,8 +70,9 @@ private[tablemanager] class DeltaV2TableManagerCache(
       })
     } catch {
       case e @ (_: UncheckedExecutionException | _: ExecutionError | _: ExecutionException) =>
-        logWarning(log"Cache loader failed; rethrowing original cause", e.getCause)
-        throw e.getCause
+        val cause = Option(e.getCause).getOrElse(e)
+        logWarning(log"Cache loader failed; rethrowing original cause", cause)
+        throw cause
     }
   }
 

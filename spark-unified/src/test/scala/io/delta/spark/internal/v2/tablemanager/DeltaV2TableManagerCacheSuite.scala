@@ -17,8 +17,10 @@ package io.delta.spark.internal.v2.tablemanager
 
 import java.util.Collections
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
+import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import com.google.common.base.Ticker
 import org.apache.hadoop.fs.Path
 
@@ -236,20 +238,32 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("per-instance: invalidateByLogPath removes matching entries") {
-    val cache = new DeltaV2TableManagerCache(
-      maxSize = 1000, ttlMinutes = 60)
-    withTempDir { dirA =>
-      withTempDir { dirB =>
-        val keyA = makeKey(dirA.getCanonicalPath)
-        val keyB = makeKey(dirB.getCanonicalPath)
-        cache.getOrCreate(keyA)
-        cache.getOrCreate(keyB)
-        assert(cache.size() == 2)
-        cache.invalidateByLogPath(keyA.path)
-        assert(!cache.contains(keyA))
-        assert(cache.contains(keyB))
-      }
+  test("per-instance: invalidateByLogPath removes all entries with matching path") {
+    // Two distinct keys share the same qualified log path but differ in
+    // sessionInvariantFsOptions, proving removeIf matches every entry
+    // whose path equals the target -- not just a single-key invalidation.
+    val stubA = new StubTableManager("pathA")
+    val stubB = new StubTableManager("pathB")
+    val stubs = Iterator(stubA, stubB)
+    withTempDir { dir =>
+      val sharedLogPath =
+        makeKey(dir.getCanonicalPath).path
+      val keyA = DeltaV2CacheKey(
+        sharedLogPath, Map("fs.s3a.access.key" -> "AAA"))
+      val keyB = DeltaV2CacheKey(
+        sharedLogPath, Map("fs.s3a.access.key" -> "BBB"))
+      val cache = new DeltaV2TableManagerCache(
+        maxSize = 1000, ttlMinutes = 60,
+        managerFactory = (_, _) => stubs.next())
+      cache.getOrCreate(keyA)
+      cache.getOrCreate(keyB)
+      assert(cache.size() == 2)
+
+      cache.invalidateByLogPath(sharedLogPath)
+      assert(cache.size() == 0,
+        "both entries with the same path must be removed")
+      assert(stubA.retired, "first manager must be retired")
+      assert(stubB.retired, "second manager must be retired")
     }
   }
 
@@ -341,7 +355,52 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("process-global: single-flight initialization") {
+  test("per-instance: Guava per-key single-flight loader invokes factory once") {
+    // Holds the first loader mid-flight while a second caller requests the
+    // same key, proving Guava's per-key single-flight guarantees exactly
+    // one factory invocation and identical result for both callers.
+    val invocations = new AtomicInteger(0)
+    val loaderEntered = new CountDownLatch(1)
+    val loaderRelease = new CountDownLatch(1)
+    val stub = new StubTableManager("single-flight")
+
+    val cache = new DeltaV2TableManagerCache(
+      maxSize = 1000, ttlMinutes = 60,
+      managerFactory = (_, _) => {
+        invocations.incrementAndGet()
+        loaderEntered.countDown()
+        loaderRelease.await()
+        stub
+      })
+
+    withTempDir { dir =>
+      val key = makeKey(dir.getCanonicalPath)
+      // scalastyle:off sparkThreadPools
+      val executor = Executors.newFixedThreadPool(2)
+      // scalastyle:on sparkThreadPools
+      try {
+        val futureA = executor.submit(() => cache.getOrCreate(key))
+        assert(loaderEntered.await(10, TimeUnit.SECONDS),
+          "loader must be entered")
+        val futureB = executor.submit(() => cache.getOrCreate(key))
+        loaderRelease.countDown()
+
+        val resultA = futureA.get(10, TimeUnit.SECONDS)
+        val resultB = futureB.get(10, TimeUnit.SECONDS)
+        assert(invocations.get() == 1,
+          "factory must be invoked exactly once")
+        assert(resultA eq resultB,
+          "both callers must receive the same instance")
+      } finally {
+        executor.shutdownNow()
+      }
+    }
+  }
+
+  test("process-global: concurrent callers share same instance") {
+    // Serialized through the companion's synchronized block; the eq
+    // assertion validates shared-instance semantics, not concurrent
+    // loader single-flight (which is tested per-instance above).
     withTempDir { dir =>
       val sessionA = spark.newSession()
       val sessionB = spark.newSession()
@@ -375,7 +434,7 @@ class DeltaV2TableManagerCacheSuite
         start.countDown()
 
         assert(futureA.get() eq futureB.get(),
-          "Concurrent sessions must share one manager load")
+          "Concurrent sessions must share one cached instance")
       } finally {
         executor.shutdownNow()
       }
@@ -435,5 +494,7 @@ private[tablemanager] class TestTicker extends Ticker {
 private[tablemanager] class StubTableManager(val id: String)
     extends DeltaV2TableManager {
   @volatile var retired: Boolean = false
+  override def snapshotManager(): DeltaV2SnapshotManager =
+    throw new UnsupportedOperationException("stub")
   override def retire(): Unit = { retired = true }
 }

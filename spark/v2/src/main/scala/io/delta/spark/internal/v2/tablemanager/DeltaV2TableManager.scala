@@ -29,9 +29,7 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
  */
 private[v2] trait DeltaV2TableManager {
   /** Returns a per-request snapshot manager backed by this composite's shared snapshot state. */
-  def snapshotManager(): DeltaV2SnapshotManager = {
-    throw new UnsupportedOperationException("snapshotManager not implemented")
-  }
+  def snapshotManager(): DeltaV2SnapshotManager
 
   /**
    * Idempotently prevents future acquisitions and releases exclusively owned state when safe.

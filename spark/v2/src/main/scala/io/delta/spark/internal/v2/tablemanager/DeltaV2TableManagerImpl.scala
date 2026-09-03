@@ -15,6 +15,7 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
@@ -32,4 +33,9 @@ private[tablemanager] class DeltaV2TableManagerImpl(
 
   /** The table's data directory (parent of `_delta_log`), fully qualified. */
   def tablePath: Path = cacheKey.path.getParent
+
+  // Placeholder until snapshot lifecycle is implemented.
+  override def snapshotManager(): DeltaV2SnapshotManager =
+    throw new UnsupportedOperationException(
+      "snapshotManager not yet implemented")
 }
