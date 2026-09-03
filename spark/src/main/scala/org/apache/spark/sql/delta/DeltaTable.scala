@@ -484,9 +484,19 @@ object DeltaTableUtils extends PredicateHelper
    * test failure rather than as a user visible one: the batch runs once outside tests and the plan
    * it produces is correct. Disabling nested pruning here avoids depending on an optimizer result
    * that Spark itself reports as invalid, at the cost of not pruning nested fields for this one
-   * query. It is limited to conditions that reference a variant column, and should be removed once
-   * Spark makes nested schema pruning idempotent for this plan shape, tracked in
-   * https://github.com/apache/spark/issues/57659.
+   * query. It is limited to conditions that reference a variant column.
+   *
+   * Spark fixed this in SPARK-59171 by running `SchemaPruning` after `PushVariantIntoScan` in
+   * `SparkOptimizer.earlyScanPushDownRules`. That fix is only on Spark master: every Spark version
+   * this repo builds against (see `CrossSparkVersions.ALL_SPECS`) still orders `SchemaPruning`
+   * before `PushVariantIntoScan` and therefore still needs this workaround.
+   *
+   * When a Spark version containing SPARK-59171 is added, make this a no-op for that version
+   * rather than deleting it, since the older versions remain supported. Follow the shim pattern
+   * used elsewhere for cross-version differences (e.g. `VariantShreddingShims`): add a
+   * `needsVariantPruningWorkaround` shim returning `false` under the new version's
+   * `scala-shims/spark-X.Y` directory and `true` for the existing ones, then short-circuit here.
+   * This helper can be dropped entirely once no supported version predates the fix.
    */
   def withNestedSchemaPruningDisabledForVariant[T](
       spark: SparkSession,
