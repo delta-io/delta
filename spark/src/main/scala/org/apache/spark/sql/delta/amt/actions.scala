@@ -496,7 +496,7 @@ case class DataEntry(
       stats = stats,
       deletionVector = dv,
       baseRowId = tracking.first_row_id,
-      defaultRowCommitVersion = tracking.sequence_number,
+      defaultRowCommitVersion = tracking.file_sequence_number,
       tags = tags.orNull,
       amtPassthrough = AMTPassthrough.fromDataEntry(this))
   }
@@ -513,7 +513,7 @@ object DataEntry {
       // rowTracking-enabled table can reconstruct them on read.
       tracking = tracking.copy(
         first_row_id = add.baseRowId,
-        sequence_number = add.defaultRowCommitVersion),
+        file_sequence_number = add.defaultRowCommitVersion),
       // Iceberg field 103 is the physical record count of the file, not the live/logical
       // count after deletes; throw rather than guess when the AddFile carries no stats.
       record_count = add.numPhysicalRecords.getOrElse(
@@ -768,6 +768,25 @@ case class Tracking(
     s"Unsupported tracking status: $status.")
 }
 
+/**
+ * A leaf manifest may be written before the commit version is assigned, so the tracking fields that
+ * depend on the commit could be written null. The root `DATA_MANIFEST` entry pointing at that
+ * leaf is written at commit time with explicit values, and a reader recovers each leaf entry's
+ * tracking by filling its nulls from that parent. This lets a leaf be written once and reused
+ * across commit retries, since only the root has to be rewritten.
+ *
+ * Every `status` named below is the child [[DataEntry]]'s status, not the parent
+ * `DATA_MANIFEST` entry's status. The inheritable fields are:
+ *
+ *  - `file_sequence_number` (4): inherited when null and the status is `ADDED`.
+ *  - `first_row_id` (142): inherited when null, whatever the status, but not by simply copying the
+ *    parent's value down. An entry takes the parent's `first_row_id` plus the summed
+ *    `record_count` of the entries physically before it in the same leaf that were themselves
+ *    null.
+ *
+ * The `ADDED` restriction keeps the file sequence number correct. Leaf entries with `EXISTING`
+ * status must have an explicit `file_sequence_number` instead of inheriting.
+ */
 object Tracking {
   /**
    * Closed set of `status` values, matching Iceberg V4 integer codes.
@@ -785,7 +804,98 @@ object Tracking {
     val Replaced: Int = 3
     val Modified: Int = 4
     val all: Set[Int] = Set(Existing, Added, Deleted, Replaced, Modified)
+
+    /**
+     * Statuses that keep an entry in the active table state, for both entry kinds: on a
+     * [[DataEntry]] the data file is still part of the table, and on a [[DataManifestEntry]] the
+     * leaf may still hold live [[DataEntry]]s, so a scan has to read it.
+     */
+    val liveEntryStatuses: Set[Int] = Set(Existing, Added, Modified)
+
+    /** The spec name of a `status` code, for error messages. */
+    def nameOf(status: Int): String = status match {
+      case Existing => "EXISTING"
+      case Added => "ADDED"
+      case Deleted => "DELETED"
+      case Replaced => "REPLACED"
+      case Modified => "MODIFIED"
+      case other => s"UNKNOWN($other)"
+    }
   }
+
+  /**
+   * Fills the null tracking fields of a leaf entry from the root `DATA_MANIFEST` entry that
+   * references its leaf.
+   *
+   * @param childTracking The leaf entry's tracking, as read off disk.
+   * @param parentTracking The inheritable values of the root entry referencing this leaf.
+   * @param childEntryLocationForLogging The child entry's `location`, used only to describe a
+   *                                     malformed entry.
+   */
+  def resolve(
+      childTracking: Tracking,
+      parentTracking: InheritableTracking,
+      childEntryLocationForLogging: String): Tracking = {
+    if (parentTracking.isEmpty) {
+      childTracking
+    } else {
+      val parentFileSequenceNumber = parentTracking.file_sequence_number.getOrElse(
+        throw new IllegalStateException(
+          "tracking.file_sequence_number must not be null in AMT root DATA_MANIFEST entries."))
+      childTracking.copy(
+        file_sequence_number = inheritFileSequenceNumberOnAdded(
+          fieldValueInChild = childTracking.file_sequence_number,
+          parentFileSequenceNumber = parentFileSequenceNumber,
+          dataEntryStatus = childTracking.status,
+          childEntryLocationForLogging = childEntryLocationForLogging))
+    }
+  }
+
+  /**
+   * Resolves `file_sequence_number`, which the child leaf entry inherits when its own status is
+   * `ADDED`.
+   */
+  private def inheritFileSequenceNumberOnAdded(
+      fieldValueInChild: Option[Long],
+      parentFileSequenceNumber: Long,
+      dataEntryStatus: Int,
+      childEntryLocationForLogging: String): Option[Long] =
+    fieldValueInChild.orElse {
+      if (dataEntryStatus == Status.Added) {
+        Some(parentFileSequenceNumber)
+      } else {
+        throw new IllegalStateException(
+          s"Malformed AMT data entry '$childEntryLocationForLogging': " +
+            "tracking.file_sequence_number is null " +
+            s"but the entry's status is ${Status.nameOf(dataEntryStatus)}. Only ADDED entries " +
+            "inherit a file sequence number from the root DATA_MANIFEST entry; every other " +
+            "status must materialize it.")
+      }
+    }
+}
+
+/**
+ * The subset of a root `DATA_MANIFEST` entry's [[Tracking]] that the entries of the leaf it
+ * points at can inherit.
+ *
+ * Projecting the parent down to these values keeps the per-leaf parent map small enough
+ * to capture in a scan closure.
+ *
+ * @param file_sequence_number Parent's file sequence number.
+ */
+case class InheritableTracking(file_sequence_number: Option[Long]) {
+
+  /** True when the parent declares no value that any child could inherit. */
+  def isEmpty: Boolean = file_sequence_number.isEmpty
+}
+
+object InheritableTracking {
+  /** A parent that supplies nothing. */
+  val none: InheritableTracking = InheritableTracking(None)
+
+  /** The inheritable projection of a root `DATA_MANIFEST` entry. */
+  def apply(parent: DataManifestEntry): InheritableTracking =
+    InheritableTracking(file_sequence_number = parent.tracking.file_sequence_number)
 }
 
 /**

@@ -2697,7 +2697,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       Seq(1, 2, 3).toDF().write.delta(inputDir.toString)
 
-      val df = spark.readStream.delta(inputDir.toString)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       val stream = df.writeStream
         .option("checkpointLocation", checkpointDir.toString)
@@ -3379,20 +3379,19 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     withTable("srcTable") {
       withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>
         def readStream(startingVersion: Option[Long] = None): DataFrame = {
-          var dsr = spark.readStream
-          startingVersion.foreach { v =>
-            dsr = dsr.option("startingVersion", v)
-          }
-          dsr.table("srcTable")
+          val options = startingVersion
+            .map(version => Map("startingVersion" -> version.toString))
+            .getOrElse(Map.empty)
+          loadStreamWithOptions(srcTblDir.getCanonicalPath, options)
         }
 
-        sql(s"""
+        executeDml(s"""
              |CREATE TABLE srcTable (
              |  a STRING NOT NULL,
              |  b STRING NOT NULL
              |) USING DELTA LOCATION '${srcTblDir.getCanonicalPath}'
              |""".stripMargin)
-        sql("""
+        executeDml("""
             |INSERT INTO srcTable
             | VALUES ("a", "b")
             |""".stripMargin)
@@ -3414,12 +3413,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           // Write more data and drop NOT NULL constraint
           Execute { _ =>
             // A batch of Delta actions
-            sql("""
+            executeDml("""
               |INSERT INTO srcTable
               |VALUES ("c", "d")
               |""".stripMargin)
-            sql("ALTER TABLE srcTable ALTER COLUMN a DROP NOT NULL")
-            sql("""
+            executeDml("ALTER TABLE srcTable ALTER COLUMN a DROP NOT NULL")
+            executeDml("""
               |INSERT INTO srcTable
               |VALUES ("e", "f")
               |""".stripMargin)
@@ -3450,7 +3449,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           txn.commit(txn.metadata.copy(schemaString = newSchema.json) :: Nil,
             DeltaOperations.ManualUpdate)
         }
-        sql("""
+        executeDml("""
             |INSERT INTO srcTable
             |VALUES ("g", "h")
             |""".stripMargin)
