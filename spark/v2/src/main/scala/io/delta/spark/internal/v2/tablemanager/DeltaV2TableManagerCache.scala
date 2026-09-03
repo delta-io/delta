@@ -19,16 +19,15 @@ import java.util.concurrent.{ExecutionException, TimeUnit}
 
 import scala.jdk.CollectionConverters._
 
-import io.delta.spark.internal.v2.DeltaV2Logging
-
 import org.apache.spark.sql.delta.DeltaTableUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaFileSystemOptions, PathWithFileSystem}
-
+import io.delta.spark.internal.v2.DeltaV2Logging
 import com.google.common.base.Ticker
 import com.google.common.cache.{Cache, CacheBuilder, RemovalListener}
 import com.google.common.util.concurrent.{ExecutionError, UncheckedExecutionException}
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.internal.SQLConf
@@ -45,11 +44,11 @@ private[tablemanager] class DeltaV2TableManagerCache(
     managerFactory: (
         DeltaV2TableManagerCache.DeltaV2TableManagerCacheKey,
         Option[CatalogTable]) => DeltaV2TableManager =
-      (key, catalog) =>
-        new DeltaV2TableManagerImpl(
-          key.path.getParent,
-          key.sessionInvariantFsOptions,
-          catalog)) extends DeltaV2Logging {
+      (key, catalog) => new DeltaV2TableManagerImpl(
+        key.path.getParent,
+        key.sessionInvariantFsOptions,
+        catalog)
+) extends DeltaV2Logging {
   import DeltaV2TableManagerCache.DeltaV2TableManagerCacheKey
 
   private val cache: Cache[DeltaV2TableManagerCacheKey, DeltaV2TableManager] = {
@@ -71,15 +70,14 @@ private[tablemanager] class DeltaV2TableManagerCache(
   // the original Delta error class, SQLSTATE, and cause chain rather than exposing Guava wrappers.
   def getOrCreate(
       key: DeltaV2TableManagerCacheKey,
-      initialCatalogTableOpt: Option[CatalogTable] = None): DeltaV2TableManager = {
+      initialCatalogTableOpt: Option[CatalogTable] = None
+  ): DeltaV2TableManager = {
     try {
-      cache.get(
-        key,
-        () => {
-          recordFrameProfile("tableManagerCache.createManager") {
-            managerFactory(key, initialCatalogTableOpt)
-          }
-        })
+      cache.get(key, () => {
+        recordFrameProfile("tableManagerCache.createManager") {
+          managerFactory(key, initialCatalogTableOpt)
+        }
+      })
     } catch {
       case e @ (_: UncheckedExecutionException |
           _: ExecutionError | _: ExecutionException) =>
@@ -105,7 +103,8 @@ private[tablemanager] class DeltaV2TableManagerCache(
   def size(): Long = cache.size()
 
   def getIfPresent(
-      key: DeltaV2TableManagerCacheKey): Option[DeltaV2TableManager] =
+      key: DeltaV2TableManagerCacheKey
+  ): Option[DeltaV2TableManager] =
     Option(cache.getIfPresent(key))
 
   def contains(key: DeltaV2TableManagerCacheKey): Boolean =
@@ -185,11 +184,10 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
         spark: SparkSession,
         dataPath: String,
         options: java.util.Map[String, String],
-        catalogTableOpt: Option[CatalogTable] = None): DeltaV2TableManagerCacheKey = {
+        catalogTableOpt: Option[CatalogTable] = None
+    ): DeltaV2TableManagerCacheKey = {
       val sessionInvariantFsOptions = DeltaFileSystemOptions.buildFsOptions(
-        spark,
-        options.asScala.toMap,
-        catalogTableOpt)
+        spark, options.asScala.toMap, catalogTableOpt)
       val rawLogPath = DeltaTableUtils.safeConcatPaths(new Path(dataPath), "_delta_log")
       // Snapshot the session's Hadoop config with fs options overlaid.
       // Used only for qualification; not retained in the key.
@@ -226,13 +224,11 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
       spark: SparkSession,
       dataPath: String,
       options: java.util.Map[String, String],
-      initialCatalogTableOpt: Option[CatalogTable] = None): DeltaV2TableManager = {
+      initialCatalogTableOpt: Option[CatalogTable] = None
+  ): DeltaV2TableManager = {
     recordFrameProfile("tableManagerCache.forTable") {
       val key = DeltaV2TableManagerCacheKey.from(
-        spark,
-        dataPath,
-        options,
-        initialCatalogTableOpt)
+        spark, dataPath, options, initialCatalogTableOpt)
       val sqlConf = spark.sessionState.conf
       if (!isEnabled(sqlConf)) {
         return new DeltaV2TableManagerImpl(
@@ -250,7 +246,8 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
   private[tablemanager] def getOrCreate(
       sqlConf: SQLConf,
       key: DeltaV2TableManagerCacheKey,
-      initialCatalogTableOpt: Option[CatalogTable] = None): DeltaV2TableManager = {
+      initialCatalogTableOpt: Option[CatalogTable] = None
+  ): DeltaV2TableManager = {
     recordFrameProfile("tableManagerCache.getOrCreate") {
       if (!isEnabled(sqlConf)) {
         return new DeltaV2TableManagerImpl(
@@ -263,7 +260,8 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
   }
 
   private[tablemanager] def invalidate(
-      key: DeltaV2TableManagerCacheKey): Unit = {
+      key: DeltaV2TableManagerCacheKey
+  ): Unit = {
     instance.foreach(_.invalidate(key))
   }
 
@@ -295,7 +293,8 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
    * determines size and TTL for all subsequent callers.
    */
   private def getOrCreateInstance(
-      sqlConf: SQLConf): DeltaV2TableManagerCache = synchronized {
+      sqlConf: SQLConf
+  ): DeltaV2TableManagerCache = synchronized {
     instance.getOrElse {
       val maxSize = sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE)
       val ttlMinutes = sqlConf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES)

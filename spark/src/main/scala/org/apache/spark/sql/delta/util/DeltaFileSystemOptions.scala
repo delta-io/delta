@@ -58,10 +58,8 @@ object DeltaFileSystemOptions {
       options: Map[String, String],
       catalogTableOpt: Option[CatalogTable] = None): Map[String, String] = {
     val catalogStorageProps = extractCatalogTableFsOptions(catalogTableOpt)
-    if (
-      spark.sessionState.conf.getConf(
-        DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)
-    ) {
+    if (spark.sessionState.conf.getConf(
+        DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
       catalogStorageProps ++ filterHadoopOptions(options)
     } else {
       catalogStorageProps

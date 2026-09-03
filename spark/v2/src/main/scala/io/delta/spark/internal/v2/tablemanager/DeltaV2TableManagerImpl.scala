@@ -16,8 +16,8 @@
 package io.delta.spark.internal.v2.tablemanager
 
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
-
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
