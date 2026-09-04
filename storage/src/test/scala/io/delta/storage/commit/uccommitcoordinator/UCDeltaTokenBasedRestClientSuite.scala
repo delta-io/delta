@@ -237,7 +237,7 @@ class UCDeltaTokenBasedRestClientSuite
 
   test("loadTable returns recognized client maintenance operations") {
     val response = objectMapper.readTree(loadTableJson()).asInstanceOf[ObjectNode]
-    response.putArray("client-maintenance-operations")
+    response.putArray("allowed-maintenance-operations")
       .add("DATA_REORGANIZATION")
       .add("DATA_CLEANUP")
       .add("METADATA_CLEANUP")

@@ -620,7 +620,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     Optional<UniformMetadata> uniformMetadata =
         toStorageUniformMetadata(response.getUniform());
     List<DeltaMaintenanceOperation> responseMaintenanceOperations =
-        response.getClientMaintenanceOperations();
+        response.getAllowedMaintenanceOperations();
     List<String> clientMaintenanceOperations =
         responseMaintenanceOperations == null
             ? Collections.emptyList()
