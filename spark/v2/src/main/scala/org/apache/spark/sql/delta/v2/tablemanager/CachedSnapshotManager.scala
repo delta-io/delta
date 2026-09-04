@@ -25,7 +25,6 @@ import scala.jdk.OptionConverters._
 import io.delta.kernel.CommitRange
 import io.delta.kernel.engine.{Engine => KernelEngine}
 import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl => KernelSnapshot}
-import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 
@@ -81,61 +80,24 @@ private[tablemanager] class CachedSnapshotManager(
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
       canReturnEarliestCommit: Boolean): DeltaHistoryManager.Commit = {
-    recordFrameProfile("Delta", "CachedSnapshotManager.getActiveCommitAtTime") {
-      val kernelSnapshot =
-        DeltaV2Snapshot.getKernelSnapshot(acquireLatestWithConfiguredStaleness())
-      withEngine { kernelEngine =>
-        DeltaHistoryManager.getActiveCommitAtTimestamp(
-          kernelEngine,
-          kernelSnapshot,
-          kernelSnapshot.getLogPath,
-          timestampMillis,
-          mustBeRecreatable,
-          canReturnLastCommit,
-          canReturnEarliestCommit,
-          kernelSnapshot.getLogSegment.getAllCatalogCommits)
-      }
-    }
+    throw new UnsupportedOperationException(
+      "CachedSnapshotManager.getActiveCommitAtTime is not supported")
   }
 
   override def checkVersionExists(
       version: Long,
       mustBeRecreatable: Boolean,
       allowOutOfRange: Boolean): Unit = {
-    recordFrameProfile("Delta", "CachedSnapshotManager.checkVersionExists") {
-      val snapshot = acquireLatestWithConfiguredStaleness()
-      val kernelSnapshot = DeltaV2Snapshot.getKernelSnapshot(snapshot)
-      if (version > snapshot.version && !allowOutOfRange) {
-        throw new VersionNotFoundException(version, 0, snapshot.version)
-      }
-      withEngine { kernelEngine =>
-        val earliestCatalogVersion = getEarliestCatalogVersion(kernelSnapshot)
-        val earliestVersion = if (mustBeRecreatable) {
-          DeltaHistoryManager.getEarliestRecreatableCommit(
-            kernelEngine, kernelSnapshot.getLogPath, earliestCatalogVersion)
-        } else {
-          DeltaHistoryManager.getEarliestDeltaFile(
-            kernelEngine, kernelSnapshot.getLogPath, earliestCatalogVersion)
-        }
-        if (version < earliestVersion) {
-          throw new VersionNotFoundException(version, earliestVersion, snapshot.version)
-        }
-      }
-    }
+    throw new UnsupportedOperationException(
+      "CachedSnapshotManager.checkVersionExists is not supported")
   }
 
   override def getTableChanges(
       engine: KernelEngine,
       startVersion: Long,
       endVersion: Optional[java.lang.Long]): CommitRange = {
-    recordFrameProfile("Delta", "CachedSnapshotManager.getTableChanges") {
-      val effectiveEndVersion = if (endVersion.isPresent) {
-        endVersion
-      } else {
-        Optional.of(Long.box(acquireLatestWithConfiguredStaleness().version))
-      }
-      withUncachedManager(_.getTableChanges(engine, startVersion, effectiveEndVersion))
-    }
+    throw new UnsupportedOperationException(
+      "CachedSnapshotManager.getTableChanges is not supported")
   }
 
   // === Snapshot lifecycle ===================================================
@@ -245,19 +207,6 @@ private[tablemanager] class CachedSnapshotManager(
         messageParameters = Array(
           s"Table identity mismatch: expected $tableId but got $snapshotTableId"))
     }
-  }
-
-  private def getEarliestCatalogVersion(
-      kernelSnapshot: KernelSnapshot): Optional[java.lang.Long] = {
-    val commits = kernelSnapshot.getLogSegment.getAllCatalogCommits.iterator()
-    var earliestVersion: java.lang.Long = null
-    while (commits.hasNext) {
-      val version = commits.next().getVersion
-      if (earliestVersion == null || version < earliestVersion) {
-        earliestVersion = version
-      }
-    }
-    Optional.ofNullable(earliestVersion)
   }
 
 }

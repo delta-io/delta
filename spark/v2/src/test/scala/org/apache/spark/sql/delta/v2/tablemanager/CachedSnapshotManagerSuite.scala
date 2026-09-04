@@ -20,7 +20,6 @@ import java.io.File
 import java.util.Optional
 import java.util.concurrent.ConcurrentLinkedQueue
 
-import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.sql.DeltaSparkSessionExtension
 
@@ -143,6 +142,25 @@ class CachedSnapshotManagerSuite
         } finally {
           mgr.retire()
         }
+      }
+    }
+  }
+
+  test("previously returned snapshot remains usable after installing a newer snapshot") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val mgr = createManager(dir)
+        val previous = mgr.loadLatestSnapshot()
+        val previousFileCount = previous.allFiles.count()
+
+        appendToDeltaTable(dir)
+        val current = mgr.loadLatestSnapshot()
+
+        assert(previous.version == 0L)
+        assert(current.version == 1L)
+        assert(previous.allFiles.count() == previousFileCount)
+        assert(current.allFiles.count() > previousFileCount)
       }
     }
   }
@@ -283,63 +301,27 @@ class CachedSnapshotManagerSuite
     }
   }
 
-  test("delegates history, version, and commit-range requests") {
+  test("history, version, and commit-range operations are unsupported") {
     withTempDir { dir =>
       createDeltaTable(dir)
-      appendToDeltaTable(dir)
       val mgr = createManager(dir)
-      try {
-        val activeCommit = mgr.getActiveCommitAtTime(
+      intercept[UnsupportedOperationException] {
+        mgr.getActiveCommitAtTime(
           Long.MaxValue,
           /* canReturnLastCommit= */ true,
           /* mustBeRecreatable= */ true,
           /* canReturnEarliestCommit= */ false)
-        assert(activeCommit.getVersion == 1L)
-
-        mgr.checkVersionExists(1L, mustBeRecreatable = true, allowOutOfRange = false)
-        intercept[VersionNotFoundException] {
-          mgr.checkVersionExists(2L, mustBeRecreatable = true, allowOutOfRange = false)
-        }
-
-        // scalastyle:off deltahadoopconfiguration
-        val kernelEngine =
-          KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
-        // scalastyle:on deltahadoopconfiguration
-        val changes = mgr.getTableChanges(kernelEngine, 0L, Optional.of(1L))
-        assert(changes != null)
-      } finally {
-        mgr.retire()
       }
-    }
-  }
+      intercept[UnsupportedOperationException] {
+        mgr.checkVersionExists(0L, mustBeRecreatable = true, allowOutOfRange = false)
+      }
 
-  test("history and version checks honor cached snapshot staleness") {
-    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
-      withTempDir { dir =>
-        createDeltaTable(dir)
-        val mgr = createManager(dir)
-        mgr.loadLatestSnapshot()
-        appendToDeltaTable(dir)
-
-        val activeCommit = mgr.getActiveCommitAtTime(
-          Long.MaxValue,
-          /* canReturnLastCommit= */ true,
-          /* mustBeRecreatable= */ true,
-          /* canReturnEarliestCommit= */ false)
-        assert(activeCommit.getVersion == 0L)
-
-        val error = intercept[VersionNotFoundException] {
-          mgr.checkVersionExists(1L, mustBeRecreatable = true, allowOutOfRange = false)
-        }
-        assert(error.getLatest == 0L)
-
-        // scalastyle:off deltahadoopconfiguration
-        val kernelEngine =
-          KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
-        // scalastyle:on deltahadoopconfiguration
-        intercept[IllegalArgumentException] {
-          mgr.getTableChanges(kernelEngine, 1L, Optional.empty[java.lang.Long]())
-        }
+      // scalastyle:off deltahadoopconfiguration
+      val kernelEngine =
+        KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
+      // scalastyle:on deltahadoopconfiguration
+      intercept[UnsupportedOperationException] {
+        mgr.getTableChanges(kernelEngine, 0L, Optional.empty())
       }
     }
   }
@@ -359,7 +341,9 @@ class CachedSnapshotManagerSuite
           val threads = (1 to 8).map { _ =>
             new Thread(() => {
               try {
-                snapshots.add(mgr.loadLatestSnapshot())
+                val snapshot = mgr.loadLatestSnapshot()
+                assert(snapshot.allFiles.count() > 0L)
+                snapshots.add(snapshot)
               } catch {
                 case failure: Throwable => failures.add(failure)
               }
@@ -410,6 +394,46 @@ class CachedSnapshotManagerSuite
         } finally {
           mgr.retire()
         }
+      }
+    }
+  }
+
+  test("concurrent versioned loads reuse current and do not replace latest") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        appendToDeltaTable(dir)
+        appendToDeltaTable(dir)
+        val mgr = createManager(dir)
+        val cachedLatest = mgr.loadLatestSnapshot()
+        val currentResults = new ConcurrentLinkedQueue[Snapshot]()
+        val historicalResults = new ConcurrentLinkedQueue[Snapshot]()
+        val failures = new ConcurrentLinkedQueue[Throwable]()
+
+        val threads = (1 to 8).map { index =>
+          new Thread(() => {
+            try {
+              val result = if (index % 2 == 0) {
+                mgr.loadSnapshotAt(2L)
+              } else {
+                mgr.loadSnapshotAt(0L)
+              }
+              assert(result.allFiles.count() > 0L)
+              if (index % 2 == 0) currentResults.add(result) else historicalResults.add(result)
+            } catch {
+              case failure: Throwable => failures.add(failure)
+            }
+          })
+        }
+        threads.foreach(_.start())
+        threads.foreach(_.join())
+
+        assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
+        assert(currentResults.size() == 4)
+        assert(historicalResults.size() == 4)
+        while (!currentResults.isEmpty) assert(currentResults.poll() eq cachedLatest)
+        while (!historicalResults.isEmpty) assert(historicalResults.poll().version == 0L)
+        assert(mgr.loadLatestSnapshot() eq cachedLatest)
       }
     }
   }
