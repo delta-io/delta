@@ -23,7 +23,7 @@ class DeltaV2SourceTableAPISuite extends DeltaSourceTableAPISuite with V2ForceTe
 
   override protected def assertNoV1Fallback: Boolean = true
 
-  override protected def runSourceDataSetup(f: => Unit): Unit = inV1Mode(f)
+  override protected def withV1Mode(f: => Unit): Unit = inV1Mode(f)
 
   override protected def shouldPassTests: Set[String] =
     DeltaV2SourceTableAPISuite.PassingTests
