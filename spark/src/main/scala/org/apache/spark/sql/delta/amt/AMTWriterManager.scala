@@ -221,13 +221,13 @@ class AMTWriterManager(
     }
     val (result, singleMetric) =
       if (incremental && amtProviderOpt.isDefined) {
-        val oldAMTVersion = amtProviderOpt.get.checkpointAction.contentRoot.version
+        val amtProvider = amtProviderOpt.get
+        val oldAMTVersion = amtProvider.checkpointAction.contentRoot.version
         // The commits written after the old AMT, up to the last committed version.
         val intermediateLogCommits = preCommitLogSegment.deltas
           .filter(f => FileNames.getFileVersion(f) > oldAMTVersion)
         new IncrementalAMTWriter(spark, deltaLog).writeIncremental(
-          oldAMTVersion = oldAMTVersion,
-          oldAMTCheckpointProvider = amtProviderOpt.get,
+          oldAMTActionsProvider = new BaseAMTCheckpointActionsProvider(deltaLog, amtProvider),
           intermediateLogCommits = intermediateLogCommits,
           attemptVersion = commitVersion,
           actionsToCommit = currentTransactionInfo.actions,

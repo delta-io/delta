@@ -90,8 +90,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
    * Materializes the incremental manifest for `attemptVersion` and returns the inline
    * [[Checkpoint]] write result plus its metrics.
    *
-   * @param oldAMTVersion             version the previous AMT checkpoint describes.
-   * @param oldAMTCheckpointProvider  provider for the previous AMT (root, leaves, inline state).
+   * @param oldAMTActionsProvider     provider for the previous AMT (version, root files, leaves,
+   *                                  inline state); loaded once at the start of this write.
    * @param intermediateLogCommits    the commit log files written after the old AMT and up to the
    *                                  last committed version (the window between the old AMT and
    *                                  this commit), in commit order.
@@ -101,14 +101,14 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
    * @param trigger                   trigger name recorded in metrics.
    */
   def writeIncremental(
-      oldAMTVersion: Long,
-      oldAMTCheckpointProvider: AMTCheckpointProvider,
+      oldAMTActionsProvider: BaseAMTActionsProvider,
       intermediateLogCommits: Seq[FileStatus],
       attemptVersion: Long,
       actionsToCommit: Seq[Action],
       trigger: String): (AMTWriteResult, SingleAMTWriteMetrics) = {
     val startNanos = System.nanoTime()
-    val oldCheckpoint = oldAMTCheckpointProvider.checkpointAction
+    val oldAMT = oldAMTActionsProvider.load()
+    val oldAMTVersion = oldAMT.version
 
     // ---- Step 0: validate the window is contiguous and lines up with our assumptions. ----
     // The intermediate commits after the old AMT must contiguously cover
@@ -118,11 +118,10 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     // ---- Step 1: gather the actions of all three parts and process them. ----
     // 1.a: old AMT root -- its live root-resident files, plus its inline non-content state
     // (protocol, metadata, setTxns, domainMetadata). Leaf-resident files are NOT read here.
-    val fileActionsFromOldRoot = AMTCheckpointProvider.readLiveRootDataEntries(
-      deltaLog, oldCheckpoint)
+    val fileActionsFromOldRoot = oldAMT.fileActionsFromRoot
     val nonContentFromOldCheckpoint: Seq[Action] =
-      Seq[Action](oldCheckpoint.protocol, oldCheckpoint.metaData) ++
-        oldCheckpoint.txns ++ oldCheckpoint.domainMetadata
+      Seq[Action](oldAMT.protocol, oldAMT.metadata) ++
+        oldAMT.setTransactions ++ oldAMT.domainMetadatas
     // 1.b: the log commits / minor compactions committed after the old AMT, read in parallel (the
     // MinorCompactionHook primitive). Each segment delta file becomes a SingleCommit keyed by its
     // version (a compacted delta's version is its endVersion, via getFileVersion).
@@ -145,7 +144,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     // ---- Step 2: carry the old leaf pointers forward, patching MDV + CDF positions. ----
     val (carriedLeafPointers, leafPositions) =
       carryForwardLeaves(
-        oldAMTCheckpointProvider,
+        oldAMT.allLeafs,
         processedActions.mdvSupersededBackrefs,
         processedActions.cdfDeletedBackrefs,
         processedActions.cdfReplacedBackrefs)
@@ -204,8 +203,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
 
     // ---- Step 6: generate the Checkpoint action. ----
     // An incremental rewrite carries forward the previous tree's last-full-rewrite marker.
-    val lastFullRewriteVersion = oldCheckpoint.contentRoot
-      .lastManifestCommitWithFullRewrite.getOrElse(contentStateVersion)
+    val lastFullRewriteVersion =
+      oldAMT.lastManifestCommitWithFullRewrite.getOrElse(contentStateVersion)
     val contentRoot = ContentRoot(
       path = contentRootBase.path,
       sizeInBytes = contentRootBase.sizeInBytes,
@@ -233,7 +232,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       case (status, ps) => status -> ps.size
     }
     val numStaleDeletedLeavesDropped =
-      oldAMTCheckpointProvider.leaves.count(_.tracking.status == Tracking.Status.Deleted)
+      oldAMT.allLeafs.count(_.tracking.status == Tracking.Status.Deleted)
     def positionCount(byLeaf: Map[String, Set[Int]]): Int = byLeaf.valuesIterator.map(_.size).sum
     // Per-status breakdown over the new tree's root-resident DATA entries (live + remove entries).
     val rootEntriesByStatus = (rootLiveEntries ++ rootRemoveEntries)
@@ -282,7 +281,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
    * Returns the carried-forward pointers and an [[MDVAndCDFPositions]] that has been set per-leaf.
    */
   private def carryForwardLeaves(
-      provider: AMTCheckpointProvider,
+      oldLeaves: Seq[DataManifestEntry],
       mdvSupersededBackrefs: Seq[BackReference],
       cdfDeletedBackrefs: Seq[BackReference],
       cdfReplacedBackrefs: Seq[BackReference])
@@ -296,7 +295,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     val newMDVPositionsByLeaf = positionsByLeaf(mdvSupersededBackrefs)
     val deletedPositionsByLeaf = positionsByLeaf(cdfDeletedBackrefs)
     val replacedPositionsByLeaf = positionsByLeaf(cdfReplacedBackrefs)
-    val pointers = provider.leaves.flatMap { pointer =>
+    val pointers = oldLeaves.flatMap { pointer =>
       if (pointer.tracking.status == Tracking.Status.Deleted) None
       else {
         val newMdvPositions =
