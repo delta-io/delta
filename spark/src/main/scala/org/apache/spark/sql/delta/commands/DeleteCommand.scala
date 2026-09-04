@@ -320,16 +320,32 @@ case class DeleteCommand(
                 if (candidateFiles.isEmpty) {
                   Array.empty[String]
                 } else {
-                  val filePathColumn =
-                    if (conf.getConf(DeltaSQLConf.DELETE_USE_FILE_METADATA_COLUMN)) {
-                      DeltaTableUtils.getFileMetadataColumn(data).getField(FileFormat.FILE_PATH)
+                  val useFileMetadataColumn =
+                    conf.getConf(DeltaSQLConf.DELETE_USE_FILE_METADATA_COLUMN)
+                  val canUseFileMetadataColumn =
+                    useFileMetadataColumn &&
+                      data.queryExecution.analyzed
+                        .getMetadataAttributeByNameOpt(FileFormat.METADATA_NAME)
+                        .nonEmpty
+                  val filePathsOfMatchingRows = if (canUseFileMetadataColumn) {
+                    data.filter(Column(cond))
+                      .select(
+                        DeltaTableUtils.getFileMetadataColumn(data)
+                          .getField(FileFormat.FILE_PATH)
+                          .as(DeleteCommand.FILE_NAME_COLUMN))
+                  } else if (useFileMetadataColumn) {
+                    // Spark 4.0 and 4.1 do not expose metadata columns through temp views. Obtain
+                    // the file name before filtering because subquery filters can introduce joins.
+                    data.withColumn(DeleteCommand.FILE_NAME_COLUMN, input_file_name())
+                      .filter(Column(cond))
+                      .select(DeleteCommand.FILE_NAME_COLUMN)
                   } else {
-                    input_file_name()
+                    data.filter(Column(cond))
+                      .select(input_file_name().as(DeleteCommand.FILE_NAME_COLUMN))
                   }
                   // Keep row counting in the same aggregate as file deduplication. A separate
                   // IncrementMetric filter above the metadata projection triggers SPARK-59171.
-                  val filePathAndRowCounts = data.filter(Column(cond))
-                    .select(filePathColumn.as(DeleteCommand.FILE_NAME_COLUMN))
+                  val filePathAndRowCounts = filePathsOfMatchingRows
                     .groupBy(DeleteCommand.FILE_NAME_COLUMN)
                     .count()
                     .collect()

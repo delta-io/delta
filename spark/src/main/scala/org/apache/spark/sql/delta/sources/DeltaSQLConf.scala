@@ -2963,8 +2963,8 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELETE_USE_FILE_METADATA_COLUMN =
     buildConf("delete.useFileMetadataColumn")
       .internal()
-      .doc("Use the file metadata column instead of input_file_name() to identify files " +
-        "containing rows matched by DELETE.")
+      .doc("Use the file metadata column when available instead of input_file_name() to " +
+        "identify files containing rows matched by DELETE.")
       .booleanConf
       .createWithDefault(true)
 
