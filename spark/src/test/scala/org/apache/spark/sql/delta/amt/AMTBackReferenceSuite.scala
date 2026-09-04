@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.functions.col
 
 class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTestUtils {
@@ -32,13 +33,12 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
    *  is, so test assertions compare against the identical value. */
   private def relativeManifest(snapshot: Snapshot, absLeaf: Path): String = {
     val tableRoot = snapshot.deltaLog.dataPath
-    val fs = tableRoot.getFileSystem(snapshot.deltaLog.newDeltaHadoopConf())
-    AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, absLeaf)
+    AMTUtils.relativizeLocation(tableRoot.toString, absLeaf.toString)
   }
 
   /**
-   * The (relative leaf manifest, position) -> data-file location map for every live DATA entry
-   * across the snapshot's leaves, read straight from the leaf parquet via `_metadata.row_index`.
+   * The (relative leaf manifest, position) -> Delta AddFile path map for every live DATA entry
+   * across the snapshot's leaves, read from leaf parquet via `_metadata.row_index`.
    */
   private def leafLocationByBackRef(snapshot: Snapshot): Map[(String, Long), String] = {
     val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
@@ -49,7 +49,10 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
           .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
           .select(col("location"), col("_metadata.row_index").as("pos"))
           .collect()
-          .map(row => (relManifest, row.getLong(1)) -> row.getString(0))
+          .map { row =>
+            val deltaPath = SparkPath.fromPathString(row.getString(0)).urlEncoded
+            (relManifest, row.getLong(1)) -> deltaPath
+          }
       }.toMap
     }
   }
