@@ -20,6 +20,7 @@ import java.sql.Timestamp
 import java.util.Locale
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 
+import scala.collection.JavaConverters._
 import scala.util.matching.Regex
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -1175,6 +1176,222 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
         Seq("(date IS NULL)")
     )
   )
+
+  test("ASSERT retains string TRUNC inference for valid equality literals") {
+    withUnsafeStringTruncTable { table =>
+      withSQLConf(inferenceConfs("ASSERT"): _*) {
+        Seq(
+          "eventDateStr = '2022-04-01'",
+          "'2022-04-01' = eventDateStr").foreach { predicate =>
+          val filters = getPushedPartitionFilters(
+            sql(s"SELECT eventDateStr FROM $table WHERE $predicate").queryExecution)
+          (unsafeTruncPartitionColumns :+ "prefix").foreach { column =>
+            assert(hasFilterFor(filters, column),
+              s"Expected inferred equality filter for $predicate: ${filters.map(_.sql)}")
+          }
+        }
+
+        checkAnswer(
+          sql(s"SELECT eventDateStr FROM $table WHERE eventDateStr = '2022-04-01'"),
+          Row("2022-04-01"))
+      }
+    }
+  }
+
+  test("ASSERT suppresses unsafe string TRUNC inference") {
+    withUnsafeStringTruncTable { table =>
+      val rangePredicates = Seq(
+        "eventDateStr < '2022-04-01'",
+        "eventDateStr <= '2022-04-01'",
+        "eventDateStr > '2022-04-01'",
+        "eventDateStr >= '2022-04-01'",
+        "'2022-04-01' > eventDateStr",
+        "'2022-04-01' >= eventDateStr",
+        "'2022-04-01' < eventDateStr",
+        "'2022-04-01' <= eventDateStr")
+
+      withSQLConf(inferenceConfs("ASSERT"): _*) {
+        rangePredicates.foreach { predicate =>
+          val filters = getPushedPartitionFilters(
+            sql(s"SELECT eventDateStr FROM $table WHERE $predicate").queryExecution)
+          unsafeTruncPartitionColumns.foreach { column =>
+            assert(!hasFilterFor(filters, column),
+              s"Unexpected inferred filter for $predicate: ${filters.map(_.sql)}")
+          }
+          assert(hasFilterFor(filters, "prefix"),
+            s"Expected safe substring filter for $predicate: ${filters.map(_.sql)}")
+        }
+
+        val nullRelation = sql(s"SELECT * FROM $table WHERE eventDateStr IS NULL")
+        val (nullFilters, nullCandidates) = getFiltersAndInferenceCandidates(nullRelation)
+        (unsafeTruncPartitionColumns :+ "prefix").foreach { column =>
+          assert(hasFilterFor(nullFilters, column))
+        }
+        assertInferenceCandidates(
+          nullCandidates,
+          LoggedInferenceCandidate(
+            "SubstringPartitionExpr", "string", Seq("string"), None, "IsNull", false),
+          LoggedInferenceCandidate(
+            "TruncDatePartitionExpr", "string", Seq("date"), None, "IsNull", false, 2))
+
+        checkAnswer(
+          sql(s"SELECT eventDateStr FROM $table WHERE eventDateStr < '2022-04-01'"),
+          Row("10000-01-01"))
+
+        withSQLConf(SQLConf.ANSI_ENABLED.key -> "true") {
+          val relation = sql(s"SELECT * FROM $table WHERE eventDateStr = 'not-a-date'")
+          val (filters, candidates) = getFiltersAndInferenceCandidates(relation)
+          unsafeTruncPartitionColumns.foreach(column => assert(!hasFilterFor(filters, column)))
+          assert(hasFilterFor(filters, "prefix"))
+          assertInferenceCandidates(
+            candidates,
+            comparisonCandidate(
+              "SubstringPartitionExpr", "string", "string", "EqualTo", false),
+            comparisonCandidate(
+              "TruncDatePartitionExpr", "string", "date", "EqualTo", true, 2))
+          checkAnswer(relation.select("eventDateStr"), Row("not-a-date"))
+        }
+      }
+    }
+  }
+
+  test("typed string predicates only infer filters after string coercion") {
+    withUnsafeStringTruncTable { table =>
+      withSQLConf(inferenceConfs("ASSERT"): _*) {
+        Seq(
+          "eventDateStr < 20",
+          "eventDateStr < DATE '2022-04-01'",
+          "eventDateStr < TIMESTAMP '2022-04-01 00:00:00'").foreach { predicate =>
+          val relation = sql(s"SELECT eventDateStr FROM $table WHERE $predicate")
+          val (filters, candidates) = getFiltersAndInferenceCandidates(relation)
+          assert(filters.isEmpty,
+            s"Unexpected inferred filter for $predicate: ${filters.map(_.sql)}")
+          assert(candidates.isEmpty)
+        }
+
+        withSQLConf(
+            SQLConf.ANSI_ENABLED.key -> "false",
+            SQLConf.LEGACY_CAST_DATETIME_TO_STRING.key -> "true") {
+          Seq(
+            "eventDateStr < DATE '2022-04-01'",
+            "eventDateStr < TIMESTAMP '2022-04-01 00:00:00'").foreach { predicate =>
+            val relation = sql(s"SELECT eventDateStr FROM $table WHERE $predicate")
+            val (filters, candidates) = getFiltersAndInferenceCandidates(relation)
+            unsafeTruncPartitionColumns.foreach { column =>
+              assert(!hasFilterFor(filters, column),
+                s"Unexpected inferred filter for $predicate: ${filters.map(_.sql)}")
+            }
+            assert(hasFilterFor(filters, "prefix"),
+              s"Expected safe substring filter for $predicate: ${filters.map(_.sql)}")
+            assertInferenceCandidates(
+              candidates,
+              comparisonCandidate(
+                "SubstringPartitionExpr", "string", "string", "LessThan", false),
+              comparisonCandidate(
+                "TruncDatePartitionExpr", "string", "date", "LessThan", true, 2))
+          }
+        }
+      }
+    }
+  }
+
+  test("partition filter inference flags behaves correctly") {
+    withUnsafeStringTruncTable { table =>
+      Seq("OFF", "LOG_ONLY", "ASSERT").foreach { mode =>
+        withSQLConf(inferenceConfs(mode): _*) {
+          val relation = sql(s"SELECT * FROM $table WHERE eventDateStr < '2022-04-01'")
+          val (filters, candidates) = getFiltersAndInferenceCandidates(relation)
+
+          if (mode == "ASSERT") {
+            unsafeTruncPartitionColumns.foreach(column => assert(!hasFilterFor(filters, column)))
+          } else {
+            unsafeTruncPartitionColumns.foreach(column => assert(hasFilterFor(filters, column)))
+          }
+          assert(hasFilterFor(filters, "prefix"))
+
+          if (mode == "OFF") {
+            assert(candidates.isEmpty)
+          } else {
+            assertInferenceCandidates(
+              candidates,
+              comparisonCandidate(
+                "SubstringPartitionExpr", "string", "string", "LessThan", false),
+              comparisonCandidate(
+                "TruncDatePartitionExpr", "string", "date", "LessThan", true, 2))
+          }
+        }
+      }
+    }
+  }
+
+  test("ASSERT retains safe temporal partition filter inference") {
+    Seq(
+      ("eventDate DATE", "date DATE", "trunc(eventDate, 'month')",
+        "eventDate", "date", "date", "TruncDatePartitionExpr"),
+      ("eventDate DATE", "year INT", "year(eventDate)",
+        "eventDate", "year", "int", "YearPartitionExpr"),
+      ("eventDate DATE", "formatted STRING", "date_format(eventDate, 'yyyy-MM')",
+        "eventDate", "formatted", "string", "DateFormatPartitionExpr")
+    ).foreach {
+      case (sourceSchema, partitionSchema, generationExpression, sourceColumn,
+          partitionColumn, partitionDataType, descriptor) =>
+      withTableName("temporal_trunc_partition_filter") { table =>
+        createTable(
+          table,
+          None,
+          s"$sourceSchema, $partitionSchema",
+          Map(partitionColumn -> generationExpression),
+          Seq(partitionColumn))
+        withSQLConf(inferenceConfs("ASSERT"): _*) {
+          val relation = sql(s"SELECT * FROM $table WHERE $sourceColumn < '2022-04-01'")
+          val (filters, candidates) = getFiltersAndInferenceCandidates(relation)
+          assert(hasFilterFor(filters, partitionColumn))
+          assertInferenceCandidates(
+            candidates,
+            comparisonCandidate(
+              descriptor, "date", partitionDataType, "LessThan", false))
+        }
+      }
+    }
+  }
+
+  test("unsupported conversions do not produce partition filter inference") {
+    Seq(
+      ("value STRING", "intPart INT", "CAST(value AS INT)", "value < '20'"),
+      ("value STRING", "datePart DATE", "CAST(value AS DATE)",
+        "value < '2022-04-01'"),
+      ("value STRING", "timestampPart TIMESTAMP", "CAST(value AS TIMESTAMP)",
+        "value < '2022-04-01'"),
+      ("value STRING", "timestampPart TIMESTAMP", "DATE_TRUNC('YEAR', value)",
+        "value < '2022-04-01'"),
+      ("value INT", "doublePart DOUBLE", "CAST(value AS DOUBLE)", "value < 20"),
+      ("value BIGINT", "doublePart DOUBLE", "CAST(value AS DOUBLE)",
+        "value < CAST(20 AS BIGINT)"),
+      ("value DECIMAL(20, 0)", "doublePart DOUBLE", "CAST(value AS DOUBLE)",
+        "value < CAST(20 AS DECIMAL(20, 0))"))
+      .zipWithIndex
+      .foreach { case ((sourceSchema, partitionSchema, generationExpression, predicate), index) =>
+        withTableName(s"unsupported_conversion_partition_filter_$index") { table =>
+          val partitionColumn = partitionSchema.takeWhile(_ != ' ')
+          createTable(
+            table,
+            None,
+            s"$sourceSchema, $partitionSchema",
+            Map(partitionColumn -> generationExpression),
+            Seq(partitionColumn))
+
+          val metadata = DeltaLog.forTable(spark, TableIdentifier(table)).update().metadata
+          assert(!metadata.optimizablePartitionExpressions.contains("value"))
+          withSQLConf(inferenceConfs("LOG_ONLY"): _*) {
+            val relation = sql(s"SELECT * FROM $table WHERE $predicate")
+            val (filters, candidates) = getFiltersAndInferenceCandidates(relation)
+            assert(filters.isEmpty)
+            assert(candidates.isEmpty)
+          }
+        }
+      }
+  }
+
 
   test("five digits year in a year month day partition column") {
     withTempDir { tempDir =>
