@@ -28,7 +28,6 @@ import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADAT
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, lit, struct}
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.SerializableConfiguration
 
 /**
  * A [[CheckpointProvider]] backed by an AMT (Adaptive Metadata Tree) manifest tree.
@@ -148,7 +147,6 @@ final class AMTCheckpointProvider(
     // provider.
     val localTableRoot = tableRoot
     val encodedRootPath = SparkPath.fromPath(rootManifestAbsolutePath).urlEncoded
-    val serializableConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
     val parentTracking = parentTrackingByManifestPath
 
     val files = rootFile +: liveLeafFiles
@@ -174,7 +172,6 @@ final class AMTCheckpointProvider(
 
     dataEntries
       .mapPartitions { entries =>
-        val fs = localTableRoot.getFileSystem(serializableConf.value)
         entries.map { entryWithLoc =>
           entryWithLoc.entry.unwrap match {
             case data: DataEntry =>
@@ -183,7 +180,7 @@ final class AMTCheckpointProvider(
               } else {
                 val absLeaf = SparkPath.fromUrlString(entryWithLoc.leafPath).toPath
                 val relManifest =
-                  AMTUtils.relativizeManifestPathToTableRoot(fs, localTableRoot, absLeaf)
+                  AMTUtils.relativizeLocation(localTableRoot.toString, absLeaf.toString)
                 Some(BackReference(relManifest, entryWithLoc.pos.toInt))
               }
               // Root entries have nothing above them to inherit from, so they resolve against an
