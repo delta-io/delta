@@ -531,10 +531,11 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       val v3Stats = allStats.find(_.commitVersion == 3).getOrElse(fail("No stats for v3."))
       val metrics = v3Stats.amtWriteMetrics
         .getOrElse(fail("The follow-up commit's stats should carry AMT write metrics."))
-      assert(metrics.attempts.size == 1, s"Expected one AMT write attempt, got ${metrics.attempts}")
+      assert(metrics.writeAttempts.size == 1,
+        s"Expected one AMT write attempt, got ${metrics.writeAttempts}")
       // The first AMT has no prior tree to build on, so it is always a full rewrite.
-      assert(metrics.attempts.head.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
-      assert(metrics.attempts.head.materializeDurationMs >= 0L)
+      assert(metrics.writeAttempts.head.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
+      assert(metrics.writeAttempts.head.materializeDurationMs >= 0L)
     }
   }
 

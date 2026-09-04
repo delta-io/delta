@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
-import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, Metadata, Protocol, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, FileAction, Metadata, Protocol, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
 import org.apache.spark.sql.delta.util.DeltaEncoder
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -231,23 +232,28 @@ final class AMTCheckpointProvider(
     // Key by (path, dv) so a same-path replace is handled: the removed (path, oldDv) is checked
     // against the AMT, while the re-added (path, newDv) is a distinct key absent from the tree.
     val committedFiles = committedActions.collect {
-      case a: AddFile => (a.path, a.getLegacyDeletionVectorUniqueId) -> a.backReference
-      case r: RemoveFile => (r.path, r.getLegacyDeletionVectorUniqueId) -> r.backReference
+      case a: AddFile =>
+        a.toUniqueFileActionTuple(tableRoot, useObjectIdentity = true) -> a.backReference
+      case r: RemoveFile =>
+        r.toUniqueFileActionTuple(tableRoot, useObjectIdentity = true) -> r.backReference
     }
     if (committedFiles.isEmpty) return
 
     val expectedKeyToBackreferenceMap =
       liveAddSingleActions(spark, deltaLog)
         .collect()
-        .map(sa => (sa.add.path, sa.add.getLegacyDeletionVectorUniqueId) -> sa.add.backReference)
+        .map { singleAction =>
+          singleAction.add.toUniqueFileActionTuple(tableRoot, useObjectIdentity = true) ->
+            singleAction.add.backReference
+        }
         .toMap
 
     // Keys an intermediate commit (after this AMT) already re-committed. The first superseding
     // add/remove must carry a back reference; a 2nd superseding one of the same key need not.
     val intermediateCommittedKeys =
       deltaLog.getChanges(checkpointVersion + 1).flatMap(_._2).collect {
-        case a: AddFile => (a.path, a.getLegacyDeletionVectorUniqueId)
-        case r: RemoveFile => (r.path, r.getLegacyDeletionVectorUniqueId)
+        case a: AddFile => a.toUniqueFileActionTuple(tableRoot, useObjectIdentity = true)
+        case r: RemoveFile => r.toUniqueFileActionTuple(tableRoot, useObjectIdentity = true)
       }.toSet
 
     committedFiles.foreach { case (key, actual) =>
@@ -255,19 +261,115 @@ final class AMTCheckpointProvider(
         case Some(expected)
             if actual != expected && !(intermediateCommittedKeys.contains(key) && actual.isEmpty) =>
           throw new IllegalStateException(
-            s"AMT back reference for file '${key._1}' does not match the AMT. " +
+            s"AMT back reference for file '${key.fileURI}' does not match the AMT. " +
             s"Expected $expected but the committed action carried $actual.")
         case None if actual.isDefined =>
           throw new IllegalStateException(
-            s"File '${key._1}' carries a back reference $actual but is not present in the AMT " +
-            "tree, so it must not carry one.")
+            s"File '${key.fileURI}' carries a back reference $actual but is not present in " +
+            "the AMT tree, so it must not carry one.")
         case _ => // Matching, omitted after a window supersession, or absent+empty: as expected.
       }
     }
   }
+
+  private def getBackreferencesForFilePaths(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      filePaths: Set[String]): Map[UniqueFileActionTuple, Option[BackReference]] =
+    liveAddSingleActions(spark, deltaLog)
+      .where(col("add.path").isin(filePaths.toSeq: _*))
+      .collect()
+      .map { singleAction =>
+        singleAction.add.toUniqueFileActionTuple(tableRoot, useObjectIdentity = true) ->
+          singleAction.add.backReference
+      }
+      .toMap
+
+  /**
+   * Re-derives file actions' back references to match this (the latest) tree.
+   * The actions which have backreferences corresponding to leaves which
+   * hasn't changed (Same old leaf is still present with the new tree and MDV
+   * also hasn't changed) doesn't need to be re-calculated as the old
+   * backreferences are still valid.
+   */
+  private[delta] def reStampBackReferences(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      actions: Seq[Action]): AMTCheckpointProvider.ReStampedBackReferences = {
+    def existingBackReference(action: Action): Option[BackReference] = action match {
+      case a: AddFile => a.backReference
+      case r: RemoveFile => r.backReference
+      case _ => None
+    }
+    def isFileAction(action: Action): Boolean = action match {
+      case _: AddFile | _: RemoveFile => true
+      case _ => false
+    }
+    // An `isMasked(pos)` test over each referenced leaf's manifest DV (a leaf with no DV masks
+    // nothing), keyed by the leaf `location` a back reference's `manifest` holds. Only the leaves
+    // some back reference points at are deserialized.
+    val referencedManifests =
+      actions.iterator.flatMap(existingBackReference).map(_.manifest).toSet
+    val isMaskedByLocation: Map[String, Int => Boolean] = liveLeaves.iterator
+      .filter(leaf => referencedManifests.contains(leaf.location))
+      .map { leaf =>
+        val isMasked: Int => Boolean = leaf.manifestDV match {
+          case Some((dvBytes, _)) =>
+            val mdv = AMTUtils.deserializeMdv(dvBytes)
+            pos => mdv.contains(pos)
+          case None => _ => false
+        }
+        leaf.location -> isMasked
+      }.toMap
+    // A back reference is still valid iff its leaf is present in this tree and its position there
+    // is not MDV-masked. If an action has no back reference against the older tree, we recalculate
+    // it too, as the entry might have spilled from the root to a new leaf in the latest tree.
+    def stillValid(backReference: Option[BackReference]): Boolean =
+      backReference.exists { case BackReference(manifest, pos) =>
+        isMaskedByLocation.get(manifest).exists(isMasked => !isMasked(pos))
+      }
+    def needsReStamp(action: Action): Boolean = action match {
+      case a: AddFile => !stillValid(a.backReference)
+      case r: RemoveFile => !stillValid(r.backReference)
+      case _ => false
+    }
+    if (!actions.exists(needsReStamp)) {
+      return AMTCheckpointProvider.ReStampedBackReferences(
+        actions,
+        numActionsReusingBackref = actions.count(isFileAction),
+        numActionsRegeneratingBackref = 0)
+    }
+    val pathsToReStamp: Set[String] = actions.iterator.collect {
+      case a: AddFile if needsReStamp(a) => a.path
+      case r: RemoveFile if needsReStamp(r) => r.path
+    }.toSet
+    val keyToBackRef = getBackreferencesForFilePaths(spark, deltaLog, pathsToReStamp)
+    def backRefFor(action: FileAction): Option[BackReference] =
+      keyToBackRef.getOrElse(
+        action.toUniqueFileActionTuple(tableRoot, useObjectIdentity = true), None)
+    val restamped = actions.map {
+      case a: AddFile if needsReStamp(a) => a.copy(backReference = backRefFor(a))
+      case r: RemoveFile if needsReStamp(r) => r.copy(backReference = backRefFor(r))
+      case other => other
+    }
+    AMTCheckpointProvider.ReStampedBackReferences(
+      restamped,
+      numActionsReusingBackref = actions.count(a => isFileAction(a) && !needsReStamp(a)),
+      numActionsRegeneratingBackref = actions.count(needsReStamp))
+  }
 }
 
 object AMTCheckpointProvider {
+
+  /**
+   * @param actions                       the actions with re-derived back references where needed.
+   * @param numActionsReusingBackref      file actions whose existing back reference stayed valid.
+   * @param numActionsRegeneratingBackref file actions whose back reference was re-derived.
+   */
+  case class ReStampedBackReferences(
+      actions: Seq[Action],
+      numActionsReusingBackref: Int,
+      numActionsRegeneratingBackref: Int)
 
   /**
    * An [[AMTSingleAction]] entry paired with its physical read location in its manifest parquet.

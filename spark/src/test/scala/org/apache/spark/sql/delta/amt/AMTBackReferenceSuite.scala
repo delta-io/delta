@@ -442,6 +442,59 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
     }
   }
 
+  test("reStampBackReferences drops an MDV-masked back reference and keeps a live one") {
+    withTable("amt_restamp_mdv") {
+      val name = "amt_restamp_mdv"
+      // A tree with three full leaves; every seeded file is stamped with a leaf back reference.
+      val adds = emitStampedAddFiles(name)
+      val deltaLog = deltaLogForName(name)
+      val originalLeafLocations = amtProvider(deltaLog.update())
+        .getOrElse(fail("expected AMTCheckpointProvider")).leaves.map(_.location).toSet
+      val victim = adds.head
+      val keeper = adds.last
+      val victimBr = victim.backReference.getOrElse(fail("victim must be leaf-resident."))
+      val keeperBr = keeper.backReference.getOrElse(fail("keeper must be leaf-resident."))
+
+      // Remove the victim whole, then fold the removal into the tree with an incremental
+      // checkpoint. Its leaf keeps nine live entries, so it is carried forward at the SAME
+      // location with the victim's position MDV-masked -- the case a leaf-location-only gate
+      // would wrongly skip.
+      commitActions(name, Seq(victim.removeWithTimestamp()))
+      commitCheckpoint(deltaLog, incremental = true)
+
+      val winnerSnapshot = deltaLog.update()
+      val winner = amtProvider(winnerSnapshot).getOrElse(fail("expected AMTCheckpointProvider"))
+      assert(winner.leaves.map(_.location).toSet == originalLeafLocations,
+        "precondition: the winning tree must carry the leaves forward at the same locations.")
+      assert(winner.leaves.exists(_.location == victimBr.manifest),
+        "precondition: the victim's leaf must still be present (carried forward) in the winner.")
+      val livePaths = liveAddFiles(winnerSnapshot).map(_.path).toSet
+      assert(!livePaths.contains(victim.path),
+        "precondition: the victim's leaf entry must be MDV-masked (no longer live).")
+      assert(livePaths.contains(keeper.path),
+        "precondition: the keeper must still be live at its stamped leaf position.")
+
+      // Re-stamping tombstones for both against the winner tree: the victim's stale back reference
+      // must be dropped (its entry moved out of the leaf), the keeper's must be preserved.
+      val restamped = winner.reStampBackReferences(
+        spark, deltaLog, Seq(victim.removeWithTimestamp(), keeper.removeWithTimestamp())).actions
+      val backRefByPath =
+        restamped.collect { case r: RemoveFile => r.path -> r.backReference }.toMap
+      assert(backRefByPath(victim.path).isEmpty,
+        s"the MDV-masked victim's stale back reference must be dropped, was " +
+          s"${backRefByPath(victim.path)}.")
+      assert(backRefByPath(keeper.path).contains(keeperBr),
+        s"the still-live keeper's back reference must be preserved as $keeperBr, was " +
+          s"${backRefByPath(keeper.path)}.")
+
+      // When every back reference is still valid, the batch is returned untouched -- no live map is
+      // built and no action is re-stamped.
+      val keeperOnly = Seq(keeper.removeWithTimestamp())
+      assert(winner.reStampBackReferences(spark, deltaLog, keeperOnly).actions eq keeperOnly,
+        "a batch whose back references are all still valid must be returned as-is.")
+    }
+  }
+
   /**
    * Builds an AMT source with stamped files, runs `clone(src, tgt)`, then asserts every AddFile
    * committed to the target carries no back reference.

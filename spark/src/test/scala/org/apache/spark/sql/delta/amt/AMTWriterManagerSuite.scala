@@ -78,7 +78,8 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
         // The commit carries no user actions, so the tree describes state as of the read version.
         assert(result.contentRootVersion == snapshot.version)
         // The metric records the trigger name carried on the operation.
-        assert(manager.metrics.attempts.head.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
+        assert(manager.metrics.writeAttempts.head.trigger ==
+          AMTTriggerMode.CheckpointIntervalFull.name)
       }
     }
   }
@@ -129,7 +130,7 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
     }
   }
 
-  test("writeAMT hard-fails a log-only commit when the winner installed a new tree") {
+  test("writeAMT writes no tree for a log-only commit rebasing past a tree-installing winner") {
     withTable("amt_conflict_log_vs_tree") {
       val name = "amt_conflict_log_vs_tree"
       createAMTTable(name, checkpointInterval = 2)
@@ -138,17 +139,19 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       val (manager, snapshot) = managerFor(name)
       val baseTree = amtProvider(snapshot).map(_.checkpointAction).getOrElse(
         fail("the table must be AMT-backed for this case."))
-      // A winner installed a newer tree than the read snapshot's, so a log-only commit's back
-      // references are stale and it must hard-fail until they are re-derived (a later milestone).
+      // A winner installed a newer tree than the read snapshot's. writeAMT for a log-only commit no
+      // longer hard-fails on this -- it writes no tree; re-deriving the file actions' back
+      // references against the winner tree happens in doCommit's rebaseBackReferences, exercised
+      // end-to-end in AMTConflictResolutionSuite.
       val winnerTree = baseTree.copy(version = baseTree.version + 1)
       val retrySegment = snapshot.logSegment.copy(version = snapshot.version + 1)
-      intercept[ConcurrentWriteException] {
-        manager.writeAMT(
-          commitVersion = snapshot.version + 2,
-          currentTransactionInfo = txnInfoFor(
-            snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = Some(winnerTree)),
-          preCommitLogSegment = retrySegment)
-      }
+      val result = manager.writeAMT(
+        commitVersion = snapshot.version + 2,
+        currentTransactionInfo = txnInfoFor(
+          snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = Some(winnerTree)),
+        preCommitLogSegment = retrySegment)
+      assert(result.isEmpty,
+        "a log-only commit rebasing past a winner tree writes no AMT (re-derivation is elsewhere).")
     }
   }
 
