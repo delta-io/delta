@@ -16,12 +16,19 @@
 
 package io.delta.spark.internal.v2.kernel
 
+import io.delta.spark.internal.v2.KernelContext
 import org.apache.hadoop.conf.Configuration
 import io.delta.kernel.defaults.engine.{DefaultEngine => KernelDefaultEngine}
 import io.delta.kernel.engine.{Engine => KernelEngine}
 
 /** Factory for creating the default Kernel [[KernelEngine]] used by the DSv2 connector. */
 object KernelEngineFactory {
+
+  /** Builds the backend-appropriate default engine from `kernelContext`. */
+  private[v2] def createDefaultEngine(kernelContext: KernelContext): KernelEngine = {
+    val hadoopConf = kernelContext.materializeHadoopConf()
+    KernelDefaultEngine.create(hadoopConf)
+  }
 
   /** Builds the backend-appropriate default engine. */
   def createDefaultEngine(hadoopConf: Configuration): KernelEngine = {
