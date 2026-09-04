@@ -34,7 +34,7 @@ When this feature is supported, partition columns are physically written to Parq
  - The table must be on Writer Version 7, and a feature name `materializePartitionColumns` must exist in the table `protocol`'s `writerFeatures`.
 
 When supported:
- - When the writer feature `materializePartitionColumns` is set in the protocol, writers must materialize non-`void` partition column into any newly created data file.
+ - When the writer feature `materializePartitionColumns` is set in the protocol, writers must materialize non-`void` partition columns into any newly created data file.
 
 For schemas supported by [IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1) and [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v2), this mirrors their requirement to materialize partition columns. Those features do not allow `void`. As such, the `materializePartitionColumns` feature can be seen as a subset of the requirements imposed by those features, providing the partition column materialization guarantee independently without requiring full
   Iceberg compatibility.
