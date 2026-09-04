@@ -18,7 +18,10 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
-import org.apache.spark.sql.delta.storage.{HDFSLogStore, LogStore, S3SingleDriverLogStore}
+import scala.collection.JavaConverters._
+
+import io.delta.storage.HDFSLogStore
+import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -43,7 +46,7 @@ trait S3SingleDriverLogStoreSuiteBase extends LogStoreSuiteBase {
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
 
-  test("file system has priority over cache") {
+  test("file system writes are visible without invalidateCache") {
     withTempDir { dir =>
       val store = createLogStore(spark)
       val deltas = Seq(0, 1, 2).map(i => FileNames.unsafeDeltaFile(new Path(dir.toURI), i))
@@ -58,8 +61,9 @@ trait S3SingleDriverLogStoreSuiteBase extends LogStoreSuiteBase {
       fs.delete(delta2CRC, true)
 
       // magically create a different version of file 2 in the FileSystem only
-      val hackyStore = new HDFSLogStore(sparkConf, sessionHadoopConf)
-      hackyStore.write(deltas(2), Iterator("foo"), overwrite = true, sessionHadoopConf)
+      val hackyStore = new HDFSLogStore(sessionHadoopConf)
+      val overwrite = true
+      hackyStore.write(deltas(2), Iterator("foo").asJava, overwrite, sessionHadoopConf)
 
       // we should see "foo" (FileSystem value) instead of "two" (cache value)
       assert(store.read(deltas(2), sessionHadoopConf).head == "foo")
@@ -67,16 +71,4 @@ trait S3SingleDriverLogStoreSuiteBase extends LogStoreSuiteBase {
   }
 
   protected def shouldUseRenameToWriteCheckpoint: Boolean = false
-
-  /**
-   * S3SingleDriverLogStore.scala can invalidate cache
-   * S3SingleDriverLogStore.java cannot invalidate cache
-   */
-  protected def canInvalidateCache: Boolean
-}
-
-class S3SingleDriverLogStoreSuite extends S3SingleDriverLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[S3SingleDriverLogStore].getName
-
-  override protected def canInvalidateCache: Boolean = true
 }
