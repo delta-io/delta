@@ -24,16 +24,20 @@ import scala.collection.JavaConverters._
 import scala.util.matching.Regex
 
 // scalastyle:off import.ordering.noEmptyLine
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta._
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.{DELTA_COLLECT_STATS, GENERATED_COLUMN_PARTITION_FILTER_OPTIMIZATION_ENABLED}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.GENERATED_COLUMN_PARTITION_FILTER_INFERENCE_MODE
 import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.execution.{FileSourceScanLike, QueryExecution}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.TimestampType
 import org.apache.spark.util.ThreadUtils
 import org.apache.spark.util.Utils
@@ -52,6 +56,104 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
 
   protected def insertInto(path: String, df: DataFrame) = {
     df.write.format("delta").mode("append").save(path)
+  }
+
+  private case class LoggedInferenceCandidate(
+      descriptor: String,
+      sourceDataType: String,
+      partitionDataTypes: Seq[String],
+      literalDataType: Option[String],
+      operator: String,
+      hasKnownRisk: Boolean,
+      count: Int = 1)
+
+  private def inferenceConfs(
+      mode: String,
+      timeZone: Option[String] = None): Seq[(String, String)] = {
+    Seq(GENERATED_COLUMN_PARTITION_FILTER_INFERENCE_MODE.key -> mode) ++
+      timeZone.map(SQLConf.SESSION_LOCAL_TIMEZONE.key -> _)
+  }
+
+  private def trackPartitionFilterInference(
+      body: => Unit): Seq[LoggedInferenceCandidate] = {
+    Log4jUsageLogger.track(body)
+      .filter(_.tags.getOrElse("opType", "") ==
+        "delta.generatedColumns.partitionFilterInference")
+      .flatMap { record =>
+        JsonUtils.mapper.readTree(record.blob).path("candidateSignatures").elements().asScala
+          .map { candidate =>
+            LoggedInferenceCandidate(
+              descriptor = candidate.path("descriptor").asText(),
+              sourceDataType = candidate.path("sourceDataType").asText(),
+              partitionDataTypes = candidate.path("partitionDataTypes").elements().asScala
+                .map(_.asText()).toSeq,
+              literalDataType = Option(candidate.get("literalDataType")).map(_.asText()),
+              operator = candidate.path("operator").asText(),
+              hasKnownRisk = candidate.path("hasKnownRisk").asBoolean(),
+              count = candidate.path("count").asInt())
+          }
+      }
+      .distinct
+  }
+
+  private def getFiltersAndInferenceCandidates(
+      relation: DataFrame): (Seq[Expression], Seq[LoggedInferenceCandidate]) = {
+    var filters = Seq.empty[Expression]
+    val candidates = trackPartitionFilterInference {
+      filters = getPushedPartitionFilters(relation.queryExecution)
+    }
+    filters -> candidates
+  }
+
+  private def assertInferenceCandidates(
+      actual: Seq[LoggedInferenceCandidate],
+      expected: LoggedInferenceCandidate*): Unit = {
+    assert(actual.size === expected.size)
+    assert(actual.toSet === expected.toSet)
+  }
+
+  private def comparisonCandidate(
+      descriptor: String,
+      sourceDataType: String,
+      partitionDataType: String,
+      operator: String,
+      hasKnownRisk: Boolean,
+      count: Int = 1): LoggedInferenceCandidate = {
+    LoggedInferenceCandidate(
+      descriptor,
+      sourceDataType,
+      Seq(partitionDataType),
+      Some(sourceDataType),
+      operator,
+      hasKnownRisk,
+      count)
+  }
+
+  private def hasFilterFor(filters: Seq[Expression], column: String): Boolean = {
+    filters.exists(_.references.exists(_.name == column))
+  }
+
+  private val unsafeTruncPartitionColumns = Seq("date", "dateCopy")
+
+  private def withUnsafeStringTruncTable(testCode: String => Unit): Unit = {
+    withTableName("unsafe_string_trunc_partition_filter") { table =>
+      createTable(
+        table,
+        None,
+        "eventDateStr STRING, date DATE, dateCopy DATE, prefix STRING",
+        Map(
+          "date" -> "trunc(eventDateStr, 'quarter')",
+          "dateCopy" -> "trunc(eventDateStr, 'quarter')",
+          "prefix" -> "substring(eventDateStr, 1, 4)"),
+        unsafeTruncPartitionColumns :+ "prefix")
+      withSQLConf(
+          DELTA_COLLECT_STATS.key -> "false",
+          SQLConf.ANSI_ENABLED.key -> "false") {
+        sql(s"""INSERT INTO $table (eventDateStr) VALUES
+          |('10000-01-01'), ('2022-04-01'), ('not-a-date')""".stripMargin)
+      }
+      testCode(table)
+    }
   }
 
   /**
