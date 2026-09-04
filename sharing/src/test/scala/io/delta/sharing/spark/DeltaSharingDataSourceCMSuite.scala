@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.{
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.streaming.{StreamingQueryException, StreamTest, Trigger}
@@ -34,7 +35,8 @@ import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 
 // Unit tests to verify that delta format sharing support column mapping (CM).
 class DeltaSharingDataSourceCMSuite
-    extends DeltaSQLCommandTest
+    extends QueryTest
+    with DeltaSQLCommandTest
     with DeltaSharingTestSparkUtils
     with DeltaSharingDataSourceDeltaTestUtils
     with StreamTest {

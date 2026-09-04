@@ -32,6 +32,7 @@ import io.delta.sharing.client.model.{Table => DeltaSharingTable}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkEnv
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
@@ -55,7 +56,8 @@ import org.apache.spark.sql.types.{
 }
 
 class DeltaFormatSharingSourceSuite
-    extends DeltaSQLCommandTest
+    extends QueryTest
+    with DeltaSQLCommandTest
     with DeltaSharingTestSparkUtils
     with DeltaSharingDataSourceDeltaTestUtils
     with StreamTest {
