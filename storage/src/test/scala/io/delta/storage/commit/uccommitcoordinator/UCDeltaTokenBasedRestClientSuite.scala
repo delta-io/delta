@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.jdk.CollectionConverters._
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
@@ -228,6 +229,29 @@ class UCDeltaTokenBasedRestClientSuite
       assert(parsed.get("fields").size() === 2)
       assert(parsed.get("fields").get(0).get("name").asText() === "date")
       assert(parsed.get("fields").get(1).get("type").asText() === "integer")
+      assert(info.getClientMaintenanceOperations.isEmpty)
+      assert(!info.getStorageProperties.containsKey(
+        UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY))
+    }
+  }
+
+  test("loadTable returns recognized client maintenance operations") {
+    val response = objectMapper.readTree(loadTableJson()).asInstanceOf[ObjectNode]
+    response.putArray("allowed-maintenance-operations")
+      .add("DATA_REORGANIZATION")
+      .add("DATA_CLEANUP")
+      .add("METADATA_CLEANUP")
+    deltaHandler = (exchange, _) => sendJson(
+      exchange,
+      HttpStatus.SC_OK,
+      objectMapper.writeValueAsString(response))
+
+    withClient { c =>
+      val info = c.loadTable(testIdentifier)
+      assert(info.getClientMaintenanceOperations.asScala.toSeq === Seq(
+        "DATA_REORGANIZATION", "DATA_CLEANUP", "METADATA_CLEANUP"))
+      assert(!info.getStorageProperties.containsKey(
+        UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY))
     }
   }
 

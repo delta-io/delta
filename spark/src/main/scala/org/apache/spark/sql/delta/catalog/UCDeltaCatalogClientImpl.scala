@@ -617,12 +617,19 @@ private[catalog] class UCDeltaCatalogClientImpl(
             iceberg.getConvertedDeltaTimestamp
         )
       }.getOrElse(Map.empty[String, String])
+    val clientMaintenanceOperations = info.getClientMaintenanceOperations.asScala
+    val storageProperties = tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps
     // Match UCSingleCatalog's V1Table shape: pack tableConfig + credentials + UniForm into
     // `storage.properties`, leave `catalogTable.properties` empty. Required for
     // downstream streaming/routing compatibility.
     val storage = CatalogStorageFormat.empty.copy(
       locationUri = Some(new URI(info.getLocation)),
-      properties = tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps)
+      properties = if (clientMaintenanceOperations.isEmpty) {
+        storageProperties - UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY
+      } else {
+        storageProperties + (UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY ->
+          clientMaintenanceOperations.mkString(","))
+      })
     val catalogTable = CatalogTable(
       identifier = TableIdentifier(ident.name(), ident.namespace().headOption, Some(catalogName)),
       tableType = fromUcTableType(info.getTableType),
