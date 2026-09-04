@@ -16,12 +16,13 @@
 package io.delta.kernel.defaults.engine.hadoopio
 
 import java.io.File
+import java.nio.file.Files
 
 import io.delta.kernel.defaults.utils.TestUtils
-import io.delta.storage.LogStore
+import io.delta.storage.{CloseableIterator, LogStore}
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 import org.scalatest.funsuite.AnyFunSuite
 
 class HadoopOutputFileSuite extends AnyFunSuite with TestUtils {
@@ -41,7 +42,7 @@ class HadoopOutputFileSuite extends AnyFunSuite with TestUtils {
 
   test("abort() with useRename=false discards the write and publishes no file") {
     withTempDir { tempDir =>
-      val targetPath = new File(tempDir, "target.txt").getAbsolutePath
+      val targetPath = new File(tempDir, "target.txt").toURI.toString
       val outputFile = new HadoopOutputFile(confWithNonRenamingLogStore(), targetPath)
 
       val stream = outputFile.create( /* putIfAbsent = */ true)
@@ -57,7 +58,7 @@ class HadoopOutputFileSuite extends AnyFunSuite with TestUtils {
 
   test("normal write with useRename=false publishes the file") {
     withTempDir { tempDir =>
-      val targetPath = new File(tempDir, "target.txt").getAbsolutePath
+      val targetPath = new File(tempDir, "target.txt").toURI.toString
       val outputFile = new HadoopOutputFile(confWithNonRenamingLogStore(), targetPath)
 
       val content = "full-content".getBytes("UTF-8")
@@ -67,7 +68,7 @@ class HadoopOutputFileSuite extends AnyFunSuite with TestUtils {
 
       val publishedFile = new File(targetPath)
       assert(publishedFile.exists(), "a non-aborted write must publish a file at the target path")
-      assertResult(content.toSeq)(java.nio.file.Files.readAllBytes(publishedFile.toPath).toSeq)
+      assertResult(content.toSeq)(Files.readAllBytes(publishedFile.toPath).toSeq)
     }
   }
 }
@@ -78,7 +79,7 @@ class NonPartialWriteVisibleLogStore(initHadoopConf: Configuration)
 
   override def read(
       path: Path,
-      hadoopConf: Configuration): io.delta.kernel.utils.CloseableIterator[String] =
+      hadoopConf: Configuration): CloseableIterator[String] =
     throw new UnsupportedOperationException("not used in this test")
 
   override def write(
@@ -90,7 +91,7 @@ class NonPartialWriteVisibleLogStore(initHadoopConf: Configuration)
 
   override def listFrom(
       path: Path,
-      hadoopConf: Configuration): java.util.Iterator[org.apache.hadoop.fs.FileStatus] =
+      hadoopConf: Configuration): java.util.Iterator[FileStatus] =
     throw new UnsupportedOperationException("not used in this test")
 
   override def resolvePathOnPhysicalStorage(path: Path, hadoopConf: Configuration): Path =
