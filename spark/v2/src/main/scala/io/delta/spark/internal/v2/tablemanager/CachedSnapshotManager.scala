@@ -80,24 +80,21 @@ private[tablemanager] class CachedSnapshotManager(
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
       canReturnEarliestCommit: Boolean): DeltaHistoryManager.Commit = {
-    throw new UnsupportedOperationException(
-      "CachedSnapshotManager.getActiveCommitAtTime is not supported")
+    throw new UnsupportedOperationException("Cached manager does not support getActiveCommitAtTime")
   }
 
   override def checkVersionExists(
       version: Long,
       mustBeRecreatable: Boolean,
       allowOutOfRange: Boolean): Unit = {
-    throw new UnsupportedOperationException(
-      "CachedSnapshotManager.checkVersionExists is not supported")
+    throw new UnsupportedOperationException("Cached manager does not support checkVersionExists")
   }
 
   override def getTableChanges(
       engine: KernelEngine,
       startVersion: Long,
       endVersion: Optional[java.lang.Long]): CommitRange = {
-    throw new UnsupportedOperationException(
-      "CachedSnapshotManager.getTableChanges is not supported")
+    throw new UnsupportedOperationException("Cached manager does not support getTableChanges")
   }
 
   // === Snapshot lifecycle ===================================================
