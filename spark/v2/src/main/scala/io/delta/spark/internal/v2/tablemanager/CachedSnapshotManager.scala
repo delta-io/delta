@@ -61,9 +61,10 @@ private[tablemanager] class CachedSnapshotManager(
     extends DeltaV2SnapshotManager
     with DeltaLogging {
 
-  @volatile private var currentSnapshot: Snapshot = _
+  private case class CachedSnapshot(snapshot: Snapshot, validatedAtMs: Long)
+
+  @volatile private var currentSnapshot: CachedSnapshot = _
   @volatile private var tableId: String = _
-  @volatile private var lastValidatedAtMs: Long = -1L
 
   // === DeltaV2SnapshotManager implementation ================================
 
@@ -116,11 +117,11 @@ private[tablemanager] class CachedSnapshotManager(
     acquireLatest(freshAfter)
   }
 
-  private[tablemanager] def acquireLatest(requiredFreshAfter: Long): Snapshot = {
+  private def acquireLatest(requiredFreshAfter: Long): Snapshot = {
     recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.acquireLatest") {
       val existing = currentSnapshot
-      if (existing != null && lastValidatedAtMs >= requiredFreshAfter) {
-        return existing
+      if (existing != null && existing.validatedAtMs >= requiredFreshAfter) {
+        return existing.snapshot
       }
       rebuild()
     }
@@ -136,8 +137,8 @@ private[tablemanager] class CachedSnapshotManager(
 
   private def acquireSnapshotAt(version: Long): Snapshot = {
     val existing = currentSnapshot
-    if (existing != null && version == existing.version) {
-      return existing
+    if (existing != null && version == existing.snapshot.version) {
+      return existing.snapshot
     }
     val kernelSnapshot = loadSnapshotAtUncached(version)
     validateTableIdentity(kernelSnapshot)
@@ -149,7 +150,7 @@ private[tablemanager] class CachedSnapshotManager(
   private def wrapSnapshot(kernelSnapshot: KernelSnapshot): Snapshot =
     DeltaV2SnapshotManager.wrapKernelSnapshot(kernelSnapshot, tablePath.toString)
 
-  private[tablemanager] def loadLatestUncached(): KernelSnapshot = {
+  private def loadLatestUncached(): KernelSnapshot = {
     withUncachedManager { manager =>
       DeltaV2Snapshot.getKernelSnapshot(manager.loadLatestSnapshot())
     }
@@ -186,18 +187,17 @@ private[tablemanager] class CachedSnapshotManager(
       validationStartedAt: Long): Snapshot = synchronized {
     validateTableIdentity(refreshed)
     val existing = currentSnapshot
-    if (existing != null && existing.version >= refreshed.getVersion) {
-      lastValidatedAtMs = validationStartedAt
-      existing
+    if (existing != null && existing.snapshot.version >= refreshed.getVersion) {
+      currentSnapshot = CachedSnapshot(existing.snapshot, validationStartedAt)
+      existing.snapshot
     } else {
       val refreshedSnapshot = wrapSnapshot(refreshed)
-      currentSnapshot = refreshedSnapshot
-      lastValidatedAtMs = validationStartedAt
+      currentSnapshot = CachedSnapshot(refreshedSnapshot, validationStartedAt)
       refreshedSnapshot
     }
   }
 
-  private[tablemanager] def validateTableIdentity(snapshot: KernelSnapshot): Unit = synchronized {
+  private def validateTableIdentity(snapshot: KernelSnapshot): Unit = synchronized {
     val snapshotTableId = snapshot.getMetadata.getId
     if (tableId == null) {
       tableId = snapshotTableId

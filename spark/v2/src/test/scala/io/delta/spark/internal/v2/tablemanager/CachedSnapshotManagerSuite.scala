@@ -23,7 +23,11 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.sql.DeltaSparkSessionExtension
 
-import org.apache.spark.sql.delta.{DeltaUnsupportedOperationException, Snapshot}
+import org.apache.spark.sql.delta.{
+  DeltaIllegalStateException,
+  DeltaUnsupportedOperationException,
+  Snapshot
+}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
@@ -250,10 +254,10 @@ class CachedSnapshotManagerSuite
           JavaUtils.deleteRecursively(dir)
           createDeltaTable(dir)
 
-          val error = intercept[IllegalStateException] {
+          val error = intercept[DeltaIllegalStateException] {
             mgr.loadLatestSnapshot()
           }
-          assert(error.getMessage.contains("Table identity mismatch"))
+          assert(error.getErrorClass == "INTERNAL_ERROR")
         } finally {
           mgr.retire()
         }
@@ -272,7 +276,8 @@ class CachedSnapshotManagerSuite
           val firstSnap = mgr.loadLatestSnapshot()
           assert(firstSnap.version == 0L)
 
-          val secondSnap = mgr.loadLatestSnapshot()
+          val kernelSnapshot = DeltaV2Snapshot.getKernelSnapshot(firstSnap)
+          val secondSnap = mgr.installSnapshot(kernelSnapshot, System.currentTimeMillis())
           assert(firstSnap eq secondSnap, "Same version should keep existing instance")
         } finally {
           mgr.retire()
