@@ -1032,7 +1032,7 @@ trait DeltaDMLInMemoryTestUtils
 }
 
 trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
-  self: SharedSparkSession =>
+  self: SparkFunSuite =>
 
   protected var tempDir: File = _
 
