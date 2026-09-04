@@ -221,15 +221,17 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
     (liveAdds, tombstones)
   }
 
+  /** Decodes a manifest bitmap's set positions into a set (empty if the bytes are absent). */
+  private def bitmapPositions(bytes: Array[Byte]): Set[Long] =
+    ManifestBitmap.fromSerializedByteArray(bytes).toArrayForTesting.toSet
+
   /** The per-commit CDF `tracking.deleted_positions` off a leaf pointer (empty if unset). */
   protected def leafDeletedPositions(leaf: DataManifestEntry): Set[Long] =
-    leaf.tracking.deleted_positions
-      .map(ManifestBitmap.readFrom(_).toArray.toSet).getOrElse(Set.empty)
+    leaf.tracking.deleted_positions.map(bitmapPositions).getOrElse(Set.empty)
 
   /** The per-commit CDF `tracking.replaced_positions` off a leaf pointer (empty if unset). */
   protected def leafReplacedPositions(leaf: DataManifestEntry): Set[Long] =
-    leaf.tracking.replaced_positions
-      .map(ManifestBitmap.readFrom(_).toArray.toSet).getOrElse(Set.empty)
+    leaf.tracking.replaced_positions.map(bitmapPositions).getOrElse(Set.empty)
 
   /** The current snapshot's leaf pointers, keyed by relative location. */
   protected def leafPointers(snapshot: Snapshot): Map[String, DataManifestEntry] = {
@@ -456,8 +458,8 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
           .filter { case (status, _) => Tracking.Status.liveEntryStatuses.contains(status) }
           .values.sum
         val mdvDeclaredCardinality = leaf.manifest_info.dv_cardinality.getOrElse(0L)
-        val decoded =
-          leaf.manifest_info.dv.map(ManifestBitmap.readFrom).getOrElse(ManifestBitmap.empty())
+        val decoded = leaf.manifest_info.dv.map(ManifestBitmap.fromSerializedByteArray)
+          .getOrElse(ManifestBitmap.fromPositions(Seq.empty))
         assert(decoded.cardinality == mdvDeclaredCardinality,
           s"Leaf ${leaf.location}: dv_cardinality=$mdvDeclaredCardinality but the decoded MDV " +
             s"has ${decoded.cardinality} bits.")
@@ -465,7 +467,7 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
           s"Leaf ${leaf.location}: MDV cardinality ($mdvDeclaredCardinality) exceeds physical " +
             s"entries " +
             s"($physicalEntries).")
-        decoded.toArray.foreach { pos =>
+        decoded.toArrayForTesting.foreach { pos =>
           assert(pos >= 0 && pos < physicalEntries,
             s"Leaf ${leaf.location}: MDV position $pos is out of range [0, $physicalEntries).")
         }

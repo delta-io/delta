@@ -3006,6 +3006,33 @@ trait DeltaErrorsSuiteBase
     }
   }
 
+  test("raising error class without subclass when subclasses exist") {
+    // DELTA_METADATA_MISMATCH defines subclasses, so a fully-qualified subclass extends the
+    // main-class template. This guards that the test exercises the has-subclasses scenario.
+    val mainTemplate = DeltaThrowableHelper.getMainMessageTemplate("DELTA_METADATA_MISMATCH")
+    val subTemplate =
+      DeltaThrowableHelper.getSubMessageTemplate("DELTA_METADATA_MISMATCH.SCHEMA_MISMATCH")
+    assert(subTemplate.nonEmpty)
+    assert(DeltaThrowableHelper.getMessageTemplate("DELTA_METADATA_MISMATCH") == mainTemplate)
+    assert(DeltaThrowableHelper.getMessageTemplate("DELTA_METADATA_MISMATCH.SCHEMA_MISMATCH") ==
+      mainTemplate + " " + subTemplate)
+
+    val e = intercept[DeltaIllegalArgumentException] {
+      throw new DeltaIllegalArgumentException(errorClass = "DELTA_METADATA_MISMATCH")
+    }
+    assert(e.getErrorClass == "DELTA_METADATA_MISMATCH")
+    // Assert getMessage directly rather than via checkError: the point is to verify that getMessage
+    // itself renders a bare class that has subclasses, which checkError does not exercise.
+    assert(e.getMessage == "[DELTA_METADATA_MISMATCH] " + mainTemplate)
+
+    // getParameterNames must also resolve for a bare main class that has subclasses. Use
+    // DELTA_CONCURRENT_APPEND, whose main template and subclass both carry parameters.
+    assert(DeltaThrowableHelper.getParameterNames("DELTA_CONCURRENT_APPEND", errorSubClass = null)
+      .toSeq == Seq("operation", "tableName", "version"))
+    assert(DeltaThrowableHelper.getParameterNames("DELTA_CONCURRENT_APPEND", "WITH_PARTITION_HINT")
+      .toSeq == Seq("operation", "tableName", "version", "partitionValues", "docLink"))
+  }
+
   test("throwChangelogReadFailed preserves SparkThrowable cause and wraps others") {
     // A cause that already carries a Spark error class is rethrown unchanged.
     val sparkThrowableCause = new DeltaAnalysisException(

@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.icebergShaded
 import java.nio.ByteBuffer
 import java.time.Instant
 import java.time.format.DateTimeParseException
-import java.util.{Base64, List => JList, UUID}
+import java.util.{Base64, List => JList}
 
 import scala.collection.JavaConverters._
 import scala.reflect.runtime.universe
@@ -37,7 +37,6 @@ import shadedForDelta.org.apache.iceberg.Metrics
 import shadedForDelta.org.apache.iceberg.StructLike
 import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
 import shadedForDelta.org.apache.iceberg.hive.HiveCatalog
-import shadedForDelta.org.apache.iceberg.unityCatalog.{IcebergSnapshotIdGenerator, UnityCatalogTableOperations}
 import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
 
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier => SparkTableIdentifier}
@@ -350,28 +349,6 @@ object IcebergTransactionUtils
           instanceMirror.reflectField(specsField).set(newSpecs)
           instanceMirror.reflectField(specsByIdFiled).set(newSpecsById)
         }
-    }
-
-    /**
-     * Pre-assigns a deterministic snapshot ID for a given Iceberg transaction.
-     *
-     * This method ensures that when committing through Unity Catalog, the next
-     * snapshot ID is deterministically assigned based on the Delta version
-     * and the table identifier.
-     */
-    def preAssignSnapshotIdForTxn(txn: IcebergTransaction, version: Long, tableId: String): Unit = {
-      txn match {
-        case baseTxn: BaseTransaction => baseTxn.underlyingOps() match {
-          case unityCatalogOps: UnityCatalogTableOperations =>
-            unityCatalogOps.setPreAssignedNextSnapshotId(
-              IcebergSnapshotIdGenerator.encode(
-                version,
-                UUID.fromString(tableId)))
-          case _ => throw new IllegalStateException(
-            "Expected tableOps to be UnityCatalogTableOperations")
-        }
-        case _ => throw new IllegalStateException("Expected txn to be BaseTransaction")
-      }
     }
 
     /**
