@@ -42,8 +42,9 @@ class HadoopOutputFileSuite extends AnyFunSuite with TestUtils {
 
   test("abort() with useRename=false discards the write and publishes no file") {
     withTempDir { tempDir =>
-      val targetPath = new File(tempDir, "target.txt").toURI.toString
-      val outputFile = new HadoopOutputFile(confWithNonRenamingLogStore(), targetPath)
+      val targetFile = new File(tempDir, "target.txt")
+      val outputFile =
+        new HadoopOutputFile(confWithNonRenamingLogStore(), targetFile.toURI.toString)
 
       val stream = outputFile.create( /* putIfAbsent = */ true)
       stream.write("partial-content".getBytes("UTF-8"))
@@ -51,24 +52,24 @@ class HadoopOutputFileSuite extends AnyFunSuite with TestUtils {
       stream.close()
 
       assert(
-        !new File(targetPath).exists(),
+        !targetFile.exists(),
         "an aborted write with useRename=false must not publish a file at the target path")
     }
   }
 
   test("normal write with useRename=false publishes the file") {
     withTempDir { tempDir =>
-      val targetPath = new File(tempDir, "target.txt").toURI.toString
-      val outputFile = new HadoopOutputFile(confWithNonRenamingLogStore(), targetPath)
+      val targetFile = new File(tempDir, "target.txt")
+      val outputFile =
+        new HadoopOutputFile(confWithNonRenamingLogStore(), targetFile.toURI.toString)
 
       val content = "full-content".getBytes("UTF-8")
       val stream = outputFile.create( /* putIfAbsent = */ true)
       stream.write(content)
       stream.close()
 
-      val publishedFile = new File(targetPath)
-      assert(publishedFile.exists(), "a non-aborted write must publish a file at the target path")
-      assertResult(content.toSeq)(Files.readAllBytes(publishedFile.toPath).toSeq)
+      assert(targetFile.exists(), "a non-aborted write must publish a file at the target path")
+      assertResult(content.toSeq)(Files.readAllBytes(targetFile.toPath).toSeq)
     }
   }
 }
