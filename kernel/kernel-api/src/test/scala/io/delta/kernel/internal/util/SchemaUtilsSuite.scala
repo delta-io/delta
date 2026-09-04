@@ -1582,6 +1582,299 @@ class SchemaUtilsSuite extends AnyFunSuite {
     }
   }
 
+  test("validateUpdatedSchema succeeds when adding nullable struct with " +
+    "non-nullable inner field") {
+    val schemaBefore = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)))
+
+    val schemaAfter = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (
+        10,
+        new StructField(
+          "new_struct",
+          new StructType()
+            .add("inner", StringType.STRING, false, fieldMetadata(11, "inner")),
+          true)))
+
+    val schemaChanges = computeSchemaChangesById(schemaBefore, schemaAfter)
+    assert(
+      schemaChanges.addedFields().size() == 2,
+      s"Expected 2 added fields, got ${schemaChanges.addedFields().size()}")
+    assert(schemaChanges.removedFields().isEmpty)
+
+    validateUpdatedSchemaAndGetUpdatedSchema(
+      metadata(schemaBefore),
+      metadata(schemaAfter),
+      dummyProtocol,
+      emptySet(),
+      false /* allowNewRequiredFields */ )
+  }
+
+  test("validateUpdatedSchema succeeds when adding nullable struct with " +
+    "depth > 2 non-nullable chain") {
+    val schemaBefore = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)))
+
+    val schemaAfter = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (
+        10,
+        new StructField(
+          "top",
+          new StructType()
+            .add(
+              "mid",
+              new StructType()
+                .add("leaf", IntegerType.INTEGER, false, fieldMetadata(12, "leaf")),
+              false,
+              fieldMetadata(11, "mid")),
+          true)))
+
+    val schemaChanges = computeSchemaChangesById(schemaBefore, schemaAfter)
+    assert(schemaChanges.addedFields().size() == 3, "Expected 3 added fields (leaf, mid, top)")
+
+    validateUpdatedSchemaAndGetUpdatedSchema(
+      metadata(schemaBefore),
+      metadata(schemaAfter),
+      dummyProtocol,
+      emptySet(),
+      false /* allowNewRequiredFields */ )
+  }
+
+  test("validateUpdatedSchema succeeds when adding nullable array with " +
+    "non-nullable struct element fields") {
+    val schemaBefore = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)))
+
+    val schemaAfter = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (
+        10,
+        new StructField(
+          "arr",
+          new ArrayType(
+            new StructType()
+              .add("f", StringType.STRING, false, fieldMetadata(11, "f")),
+            false),
+          true)))
+
+    val schemaChanges = computeSchemaChangesById(schemaBefore, schemaAfter)
+    assert(schemaChanges.addedFields().size() == 2)
+
+    validateUpdatedSchemaAndGetUpdatedSchema(
+      metadata(schemaBefore),
+      metadata(schemaAfter),
+      dummyProtocol,
+      emptySet(),
+      false /* allowNewRequiredFields */ )
+  }
+
+  test("validateUpdatedSchema succeeds when adding nullable map with " +
+    "non-nullable struct value fields") {
+    val schemaBefore = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)))
+
+    val schemaAfter = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (
+        10,
+        new StructField(
+          "m",
+          new MapType(
+            StringType.STRING,
+            new StructType()
+              .add("f", StringType.STRING, false, fieldMetadata(11, "f")),
+            false),
+          true)))
+
+    val schemaChanges = computeSchemaChangesById(schemaBefore, schemaAfter)
+    assert(
+      schemaChanges.addedFields().size() == 2,
+      "Expected 2 added fields (m via map key, f via self)")
+
+    validateUpdatedSchemaAndGetUpdatedSchema(
+      metadata(schemaBefore),
+      metadata(schemaAfter),
+      dummyProtocol,
+      emptySet(),
+      false /* allowNewRequiredFields */ )
+  }
+
+  test("validateUpdatedSchema succeeds when adding nullable struct with " +
+    "deeply nested non-nullable field through map and array") {
+    val schemaBefore = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)))
+
+    val schemaAfter = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (
+        10,
+        new StructField(
+          "outer",
+          new StructType()
+            .add(
+              "m",
+              new MapType(
+                StringType.STRING,
+                new ArrayType(
+                  new StructType()
+                    .add("f", StringType.STRING, false, fieldMetadata(12, "f")),
+                  false),
+                false),
+              true,
+              fieldMetadata(11, "m")),
+          true)))
+
+    val schemaChanges = computeSchemaChangesById(schemaBefore, schemaAfter)
+    assert(
+      schemaChanges.addedFields().size() == 3,
+      s"Expected 3 added fields (m, f, outer), got ${schemaChanges.addedFields().size()}")
+    val addedFieldNames = (0 until schemaChanges.addedFields().size())
+      .map(i => schemaChanges.addedFields().get(i).getName).toSet
+    assert(
+      addedFieldNames == Set("m", "f", "outer"),
+      s"Expected {m, f, outer} in addedFields, got: $addedFieldNames")
+
+    validateUpdatedSchemaAndGetUpdatedSchema(
+      metadata(schemaBefore),
+      metadata(schemaAfter),
+      dummyProtocol,
+      emptySet(),
+      false /* allowNewRequiredFields */ )
+  }
+
+  test("validateUpdatedSchema succeeds when adding nullable struct with " +
+    "non-nullable inner field inside existing struct") {
+    val schemaBefore = newSchema(
+      (
+        1,
+        new StructField(
+          "parent",
+          new StructType()
+            .add("existing", IntegerType.INTEGER, true, fieldMetadata(2, "existing")),
+          true)))
+
+    val schemaAfter = newSchema(
+      (
+        1,
+        new StructField(
+          "parent",
+          new StructType()
+            .add("existing", IntegerType.INTEGER, true, fieldMetadata(2, "existing"))
+            .add(
+              "new_child",
+              new StructType()
+                .add("f", StringType.STRING, false, fieldMetadata(11, "f")),
+              true,
+              fieldMetadata(10, "new_child")),
+          true)))
+
+    val schemaChanges = computeSchemaChangesById(schemaBefore, schemaAfter)
+    assert(schemaChanges.updatedFields().size() >= 1, "Expected parent in updatedFields")
+    val addedFieldNames = (0 until schemaChanges.addedFields().size())
+      .map(i => schemaChanges.addedFields().get(i).getName).toSet
+    assert(
+      addedFieldNames.contains("f") && addedFieldNames.contains("new_child"),
+      s"Expected f and new_child in addedFields, got: $addedFieldNames")
+    assert(
+      !addedFieldNames.contains("parent"),
+      "parent should be in updatedFields, not addedFields")
+
+    validateUpdatedSchemaAndGetUpdatedSchema(
+      metadata(schemaBefore),
+      metadata(schemaAfter),
+      dummyProtocol,
+      emptySet(),
+      false /* allowNewRequiredFields */ )
+  }
+
+  test("validateUpdatedSchema fails when adding non-nullable struct " +
+    "with non-nullable inner field") {
+    val schemaBefore = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)))
+
+    val schemaAfter = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (
+        10,
+        new StructField(
+          "new_struct",
+          new StructType()
+            .add("inner", StringType.STRING, false, fieldMetadata(11, "inner")),
+          false /* NOT NULL struct — this must fail */ )))
+
+    val e = intercept[KernelException] {
+      validateUpdatedSchemaAndGetUpdatedSchema(
+        metadata(schemaBefore),
+        metadata(schemaAfter),
+        dummyProtocol,
+        emptySet(),
+        false /* allowNewRequiredFields */ )
+    }
+    assert(
+      e.getMessage.contains("Cannot add non-nullable field"),
+      s"Expected non-nullable rejection, got: ${e.getMessage}")
+  }
+
+  test("validateUpdatedSchema fails on the non-nullable parent struct " +
+    "not its skipSet child") {
+    val schemaBefore = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)))
+
+    val schemaAfter = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (
+        10,
+        new StructField(
+          "new_struct",
+          new StructType()
+            .add("inner", StringType.STRING, false, fieldMetadata(11, "inner")),
+          false /* NOT NULL struct */ )))
+
+    val e = intercept[KernelException] {
+      validateUpdatedSchemaAndGetUpdatedSchema(
+        metadata(schemaBefore),
+        metadata(schemaAfter),
+        dummyProtocol,
+        emptySet(),
+        false /* allowNewRequiredFields */ )
+    }
+    assert(
+      e.getMessage.contains("new_struct"),
+      s"Expected failure on 'new_struct', got: ${e.getMessage}")
+  }
+
+  test("validateUpdatedSchema fails when new nullable struct has inner field " +
+    "with fieldId <= maxFieldId") {
+    val schemaBefore = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (5, new StructField("data", StringType.STRING, true)))
+
+    val schemaAfter = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (5, new StructField("data", StringType.STRING, true)),
+      (
+        10,
+        new StructField(
+          "new_struct",
+          new StructType()
+            .add("inner", StringType.STRING, true, fieldMetadata(3, "inner")),
+          true)))
+
+    val e = intercept[IllegalArgumentException] {
+      validateUpdatedSchemaAndGetUpdatedSchema(
+        metadata(schemaBefore),
+        metadata(schemaAfter),
+        dummyProtocol,
+        emptySet(),
+        false /* allowNewRequiredFields */ )
+    }
+    assert(
+      e.getMessage.contains("Cannot add a new column with a fieldId <= maxFieldId"),
+      s"Expected fieldId rejection, got: ${e.getMessage}")
+  }
+
   private val validateMetadataChange = Table(
     ("schemaBefore", "schemaWithAddedField"),
     // Adding column comment to id column
