@@ -25,7 +25,7 @@ class CatalogManagedStreamingV2Suite
 
   override protected def assertNoV1Fallback: Boolean = true
 
-  override protected def runDataSetup(f: => Unit): Unit = inV1Mode(f)
+  override protected def withV1Mode(f: => Unit): Unit = inV1Mode(f)
 
   override protected def shouldPassTests: Set[String] =
     CatalogManagedStreamingV2Suite.PassingTests

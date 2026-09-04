@@ -65,8 +65,8 @@ trait CatalogManagedStreamingSuiteBase
   }
 
 
-  /** Runs test-data setup that is separate from the streaming connector operation. */
-  protected def runDataSetup(f: => Unit): Unit = f
+  /** Runs test-data setup through V1 when a subclass forces Delta V2. */
+  protected def withV1Mode(f: => Unit): Unit = f
 
   /**
    * Provides a checkpoint location for streaming tests. Defaults to a local temp dir; subclasses
@@ -94,7 +94,7 @@ trait CatalogManagedStreamingSuiteBase
         testStream(df)(
           StartStream(checkpointLocation = checkpointPath),
           Execute{ _ =>
-            runDataSetup {
+            withV1Mode {
               Seq(1, 2).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
             }
           },
@@ -179,7 +179,7 @@ trait CatalogManagedStreamingSuiteBase
           assertNumGetCommitsCalled(expectedNumGetCommits)
 
           try {
-            runDataSetup {
+            withV1Mode {
               Seq(1).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
             }
             query.processAllAvailable()
@@ -194,7 +194,7 @@ trait CatalogManagedStreamingSuiteBase
             assertNumCommitsCalled(expectedNumCommits)
             assertNumGetCommitsCalled(expectedNumGetCommits)
 
-            runDataSetup {
+            withV1Mode {
               Seq(2).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
             }
             query.processAllAvailable()
