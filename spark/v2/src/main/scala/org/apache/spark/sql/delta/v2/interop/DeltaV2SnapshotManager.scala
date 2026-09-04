@@ -108,8 +108,13 @@ object DeltaV2SnapshotManager {
     wrapKernelSnapshot(kernelSnapshot, tablePath, None)
   }
 
-  /** Wraps a Kernel snapshot while preserving its resolved catalog context. */
-  private[v2] def wrapKernelSnapshot(
+  /**
+   * Wraps a Kernel snapshot while preserving its resolved catalog context.
+   *
+   * Public because the cached manager lives under `io.delta.spark.internal.v2`, outside this
+   * object's `org.apache.spark.sql.delta.v2` package hierarchy.
+   */
+  def wrapKernelSnapshot(
       kernelSnapshot: SnapshotImpl,
       tablePath: String,
       catalogTableOpt: Option[CatalogTable]): DeltaV2Snapshot = {

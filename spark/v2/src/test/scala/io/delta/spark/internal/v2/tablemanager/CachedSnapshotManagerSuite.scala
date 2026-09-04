@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.v2.tablemanager
+package io.delta.spark.internal.v2.tablemanager
 
 import java.io.File
 import java.util.Optional
@@ -30,10 +30,10 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 
 import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkConf
+import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.Utils
 
 class CachedSnapshotManagerSuite
     extends QueryTest
@@ -247,7 +247,7 @@ class CachedSnapshotManagerSuite
         val mgr = createManager(dir)
         try {
           mgr.loadLatestSnapshot()
-          Utils.deleteRecursively(dir)
+          JavaUtils.deleteRecursively(dir)
           createDeltaTable(dir)
 
           val error = intercept[IllegalStateException] {
