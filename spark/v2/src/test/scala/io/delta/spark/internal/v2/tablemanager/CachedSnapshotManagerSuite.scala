@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.sql.DeltaSparkSessionExtension
 
-import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.{DeltaUnsupportedOperationException, Snapshot}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
@@ -305,24 +305,27 @@ class CachedSnapshotManagerSuite
     withTempDir { dir =>
       createDeltaTable(dir)
       val mgr = createManager(dir)
-      intercept[UnsupportedOperationException] {
+      val historyError = intercept[DeltaUnsupportedOperationException] {
         mgr.getActiveCommitAtTime(
           Long.MaxValue,
           /* canReturnLastCommit= */ true,
           /* mustBeRecreatable= */ true,
           /* canReturnEarliestCommit= */ false)
       }
-      intercept[UnsupportedOperationException] {
+      assert(historyError.getErrorClass == "INTERNAL_ERROR")
+      val versionError = intercept[DeltaUnsupportedOperationException] {
         mgr.checkVersionExists(0L, mustBeRecreatable = true, allowOutOfRange = false)
       }
+      assert(versionError.getErrorClass == "INTERNAL_ERROR")
 
       // scalastyle:off deltahadoopconfiguration
       val kernelEngine =
         KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
       // scalastyle:on deltahadoopconfiguration
-      intercept[UnsupportedOperationException] {
+      val changesError = intercept[DeltaUnsupportedOperationException] {
         mgr.getTableChanges(kernelEngine, 0L, Optional.empty())
       }
+      assert(changesError.getErrorClass == "INTERNAL_ERROR")
     }
   }
 

@@ -28,7 +28,11 @@ import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl => KernelSnap
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 
-import org.apache.spark.sql.delta.{DeltaIllegalStateException, Snapshot}
+import org.apache.spark.sql.delta.{
+  DeltaIllegalStateException,
+  DeltaUnsupportedOperationException,
+  Snapshot
+}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.v2.interop.{DeltaV2Snapshot, DeltaV2SnapshotManager}
@@ -80,21 +84,21 @@ private[tablemanager] class CachedSnapshotManager(
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
       canReturnEarliestCommit: Boolean): DeltaHistoryManager.Commit = {
-    throw new UnsupportedOperationException("Cached manager does not support getActiveCommitAtTime")
+    unsupportedOperation("getActiveCommitAtTime")
   }
 
   override def checkVersionExists(
       version: Long,
       mustBeRecreatable: Boolean,
       allowOutOfRange: Boolean): Unit = {
-    throw new UnsupportedOperationException("Cached manager does not support checkVersionExists")
+    unsupportedOperation("checkVersionExists")
   }
 
   override def getTableChanges(
       engine: KernelEngine,
       startVersion: Long,
       endVersion: Optional[java.lang.Long]): CommitRange = {
-    throw new UnsupportedOperationException("Cached manager does not support getTableChanges")
+    unsupportedOperation("getTableChanges")
   }
 
   // === Snapshot lifecycle ===================================================
@@ -203,6 +207,12 @@ private[tablemanager] class CachedSnapshotManager(
         messageParameters = Array(
           s"Table identity mismatch: expected $tableId but got $snapshotTableId"))
     }
+  }
+
+  private def unsupportedOperation(operation: String): Nothing = {
+    throw new DeltaUnsupportedOperationException(
+      errorClass = "INTERNAL_ERROR",
+      messageParameters = Array(s"Cached manager does not support $operation"))
   }
 
 }
