@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeat
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
-import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook}
+import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook, UpdateCatalogBase}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -382,8 +382,57 @@ case class CreateDeltaTableCommand(
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
       val (taggedCommitData, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
+      if (IcebergCompat.isGeqEnabled(txn.metadata, 3) && txn.readVersion == -1) {
+        // split CTAS to first CREATE (v0) then WRITE (v1) to align iceberg snapshot sequence number
+        // which starts from 1
+        val createOp = DeltaOperations.CreateTable(txn.metadata, isManagedTable, asSelect = false,
+          clusterBy = ClusteredTableUtils.getLogicalClusteringColumnNames(
+            txn, taggedCommitData.actions)
+        )
+
+        val isCatalogOwnedEnabled = CatalogOwnedTableUtils.shouldEnableCatalogOwned(
+          spark = sparkSession,
+          propertyOverrides = tableWithLocation.properties)
+        if (isCatalogOwnedEnabled) {
+          // Do *not* include CatalogOwnedTableFeature in the first dummy commit.
+          // The 0th commit does not update the catalog, but the subsequent 1st commit
+          // will attempt to go through UC for CCv2 tables by default.
+          // Since we only send the CREATE_TABLE RPC to UC via [[runPostCommitUpdates]],
+          // the 1st commit would fail because UC doesn't yet have the table in its registry.
+          CatalogOwnedTableUtils.setTxnProtocol(txn, withCatalogOwnedTableFeature = false)
+        }
+
+        txn.commit(Seq(), createOp)
+        // We can pass tableWithLocation to startTransaction here b/c we unregister the related
+        // post commit hooks (e.g., UpdateCatalog hook) below.
+        val newTxn = txn.deltaLog.startTransaction(Some(tableWithLocation))
+        newTxn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
+        newTxn.unregisterPostCommitHooksWhere(hook => hook.isInstanceOf[UpdateCatalogBase])
+
+        val writeOp = DeltaOperations.Write(
+          mode = mode,
+          partitionBy = Option(table.partitionColumnNames),
+          predicate = None,
+          userMetadata = options.userMetadata
+          , isDynamicPartitionOverwrite =
+            if (Try(options.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None,
+          canOverwriteSchema = if (options.canOverwriteSchema) Some(true) else None,
+          canMergeSchema = if (options.canMergeSchema) Some(true) else None
+        )
+
+        if (isCatalogOwnedEnabled) {
+          // Re-enable CatalogOwnedTableFeature for the second commit with newTxn.
+          CatalogOwnedTableUtils.setTxnProtocol(newTxn, withCatalogOwnedTableFeature = true)
+        }
+
+        InsertAtomicReplaceExecutionObserver.getObserver.commit {
+          newTxn.commit(taggedCommitData.actions, writeOp, tags = taggedCommitData.stringTags)
+        }
+        txnToReturn = newTxn
+      } else {
       InsertAtomicReplaceExecutionObserver.getObserver.commit {
         txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
+      }
       }
     }
     txnToReturn
