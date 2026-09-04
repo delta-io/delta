@@ -567,7 +567,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin
       executeMerge(
         tgt = s"delta.`$target` t",
         src = s"delta.`$source` s",
-        cond = "t.id = s.id AND t.part = 4",
+        cond = "t.id = s.id",
         clauses = deleteNotMatched("part = 4"))
 
       var df = spark.sql(s"DESCRIBE HISTORY delta.`$target` LIMIT 1")
@@ -617,8 +617,8 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin
         executeMerge(
           tgt = s"delta.`$target` t",
           src = s"delta.`$source` s",
-          cond = "t.id = s.id AND t.part = 4",
-          clauses = deleteNotMatched("part = 4"))
+          cond = "t.id = s.id AND t.part = 2",
+          clauses = deleteNotMatched("part = 2"))
         Array.empty[Row]
       }
 

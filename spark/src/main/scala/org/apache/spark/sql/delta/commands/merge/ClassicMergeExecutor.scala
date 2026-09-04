@@ -92,11 +92,17 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         .map(_.condition.getOrElse(Literal.TrueLiteral))
         .reduce(Or)
 
-      // Combine all the matched predicates back into a single expression, but it needs to be
-      // Or'd with the not matched by source columns as a single filter. No matched filters
-      // means match everything with true literal
-      val matchedPredicate = dataSkippingFilters.reduceOption(And).getOrElse(Literal.TrueLiteral)
-      dataSkippingFilters = Seq(Or(matchedPredicate, notMatchedBySourcePredicate))
+      if (matchedClauses.isEmpty && notMatchedClauses.isEmpty) {
+        // No actions apply to rows matched by the source, so only rows eligible for a
+        // NOT MATCHED BY SOURCE action need to be considered.
+        dataSkippingFilters = Seq(notMatchedBySourcePredicate)
+      } else {
+        // Combine all the matched predicates back into a single expression, but it needs to be
+        // Or'd with the not matched by source columns as a single filter. No matched filters
+        // means match everything with true literal.
+        val matchedPredicate = dataSkippingFilters.reduceOption(And).getOrElse(Literal.TrueLiteral)
+        dataSkippingFilters = Seq(Or(matchedPredicate, notMatchedBySourcePredicate))
+      }
     }
     val dataSkippedFiles = deltaTxn.filterFiles(dataSkippingFilters, keepNumRecords = true)
 
