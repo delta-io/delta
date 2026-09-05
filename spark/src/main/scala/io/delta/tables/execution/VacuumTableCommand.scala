@@ -16,7 +16,7 @@
 
 package io.delta.tables.execution
 
-import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -33,9 +33,13 @@ import org.apache.spark.sql.types.StringType
  * The `vacuum` command implementation for Spark SQL. Example SQL:
  * {{{
  *    VACUUM ('/path/to/dir' | delta.`/path/to/dir`)
- *    [USING INVENTORY (delta.`/path/to/dir`| ( sub_query ))]
+ *    [USING INVENTORY (<table_identifier> | ( <sub_query> ))]
  *    [RETAIN number HOURS] [DRY RUN];
  * }}}
+ *
+ * The inventory source (table identifier or subquery) is consumed as a
+ * DataFrame and validated against `VacuumCommand.INVENTORY_SCHEMA`. It does
+ * not need to be a Delta table.
  */
 case class VacuumTableCommand(
     override val child: LogicalPlan,
@@ -61,8 +65,8 @@ case class VacuumTableCommand(
         DeltaTableIdentifier(path = Some(deltaTable.path.toString)))
     }
     val inventory = inventoryTable.map(sparkSession.sessionState.analyzer.execute)
-        .map(p => Some(getDeltaTable(p, "VACUUM").toDf(sparkSession)))
-        .getOrElse(inventoryQuery.map(sparkSession.sql))
+      .map(plan => Some(Dataset.ofRows(sparkSession, plan)))
+      .getOrElse(inventoryQuery.map(sparkSession.sql))
     VacuumCommand.gc(sparkSession, deltaTable, dryRun, horizonHours,
       inventory, vacuumType).collect()
   }
