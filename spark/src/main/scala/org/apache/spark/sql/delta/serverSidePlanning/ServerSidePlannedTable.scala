@@ -20,6 +20,7 @@ import java.util
 import java.util.Locale
 
 import scala.collection.JavaConverters._
+import scala.util.Try
 
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.SparkSession
@@ -367,16 +368,23 @@ class ServerSidePlannedScan(
   // Call the server-side planning API to get the scan plan with files AND credentials.
   // Close the client after planning - the scan plan contains all data needed for partition
   // creation and reading, so the client (and its HTTP connection) is no longer needed.
-  private lazy val scanPlan: ScanPlan = {
-    val plan = planningClient.planScan(
-      databaseName,
-      tableName,
-      combinedFilter,
-      projectionColumnNames,
-      limit)
+  // Close after Try so a failed plan still releases the HTTP pool. Memoize the Try: a
+  // throwing lazy val is not cached, so a later access after failure would call planScan
+  // again on an already-closed client.
+  private lazy val scanPlanAttempt: Try[ScanPlan] = {
+    val planned = Try {
+      planningClient.planScan(
+        databaseName,
+        tableName,
+        combinedFilter,
+        projectionColumnNames,
+        limit)
+    }
     planningClient.close()
-    plan
+    planned
   }
+
+  private def scanPlan: ScanPlan = scanPlanAttempt.get
 
   // Explicitly signal that columnar is unsupported to prevent early enumeration of the partitions
   override def columnarSupportMode(): Scan.ColumnarSupportMode =

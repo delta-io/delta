@@ -468,6 +468,21 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     assert(config.isEmpty)
   }
 
+  test("extractPlanningProperties: poll settings from catalog config") {
+    val cat = "pollConfigCat"
+    withSQLConf(
+      s"spark.sql.catalog.$cat.rest-scan-planning.poll-timeout-ms" -> "600000",
+      s"spark.sql.catalog.$cat.rest-scan-planning.poll-num-retries" -> "20",
+      s"spark.sql.catalog.$cat.uri" -> "https://catalog.example.com",
+      s"spark.sql.catalog.$cat.auth.token" -> "secret"
+    ) {
+      val properties = UnityCatalogMetadata.extractPlanningProperties(spark, cat)
+      assert(properties == Map(
+        "rest-scan-planning.poll-timeout-ms" -> "600000",
+        "rest-scan-planning.poll-num-retries" -> "20"))
+    }
+  }
+
   test("simple EqualTo filter pushed to planning client") {
     withPushdownCapturingEnabled {
       sql("SELECT id, name, value FROM test_db.shared_test WHERE id = 2").collect()

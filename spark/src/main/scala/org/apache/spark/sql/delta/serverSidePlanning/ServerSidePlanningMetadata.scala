@@ -39,6 +39,11 @@ private[serverSidePlanning] trait ServerSidePlanningMetadata {
   def tokenSupplier: Option[() => String]
 
   /**
+   * Client-provided properties for configuring server-side planning.
+   */
+  def planningProperties: Map[String, String]
+
+  /**
    * Catalog name for configuration lookups.
    */
   def catalogName: String
@@ -59,6 +64,7 @@ private[serverSidePlanning] case class DefaultMetadata(
     tableProps: Map[String, String] = Map.empty) extends ServerSidePlanningMetadata {
   override def planningEndpointUri: String = ""
   override def tokenSupplier: Option[() => String] = None
+  override def planningProperties: Map[String, String] = Map.empty
   override def tableProperties: Map[String, String] = tableProps
 }
 
