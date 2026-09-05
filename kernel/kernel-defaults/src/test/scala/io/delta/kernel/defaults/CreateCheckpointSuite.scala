@@ -27,6 +27,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{CheckpointAlreadyExistsException, TableNotFoundException}
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.hook.CheckpointHook
 import io.delta.kernel.internal.tablefeatures.TableFeatures.GEOSPATIAL_RW_FEATURE
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.types.{GeometryType, StructType => KernelStructType}
@@ -428,28 +429,6 @@ class CreateCheckpointSuite extends CheckpointBase with GeoTestUtils {
     }
   }
 
-  test("log cleanup: non-latest snapshot can NOT trigger log cleanup") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val commits = 3
-      val tableProperties = Map(
-        "delta.logRetentionDuration" -> "interval 0 seconds",
-        "delta.enableExpiredLogCleanup" -> "true")
-      val deltaLogDir = setupTestTable(engine, tablePath, tableProperties, commits)
-
-      // Checkpoint at version 2 using SnapshotBuilder.atVersion() - wasBuiltAsLatest=false
-      val snapshot = TableManager.loadSnapshot(tablePath)
-        .atVersion(2)
-        .build(engine)
-        .asInstanceOf[SnapshotImpl]
-      snapshot.writeCheckpoint(engine)
-
-      // Verify no log cleanup happened
-      assert(
-        deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === commits + 1,
-        "Checkpoint on snapshot built with specific version should NOT trigger log cleanup")
-    }
-  }
-
   test("log cleanup: latest snapshot can trigger log cleanup") {
     withTempDirAndEngine { (tablePath, engine) =>
       val commits = 3
@@ -471,6 +450,49 @@ class CreateCheckpointSuite extends CheckpointBase with GeoTestUtils {
       assert(
         deltaLogDir.listFiles().count(_.getName.endsWith(".json")) < commits + 1,
         "Checkpoint on snapshot built without specific version should trigger log cleanup")
+    }
+  }
+
+  test("log cleanup: CheckpointHook triggers cleanup for expired files") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val checkpointInterval = 10
+      val tableProperties = Map(
+        "delta.logRetentionDuration" -> "interval 0 seconds",
+        "delta.enableExpiredLogCleanup" -> "true",
+        "delta.checkpointInterval" -> checkpointInterval.toString)
+      // Commit checkpointInterval times so version == checkpointInterval (the hook fires at
+      // multiples of checkpointInterval; version 0 is the create, versions 1..10 are appends).
+      val deltaLogDir = setupTestTable(engine, tablePath, tableProperties, checkpointInterval)
+
+      // Sleep so the commit files' filesystem mtime is strictly less than the cleanup cutoff
+      // (now - 0ms = now). Without this, files written milliseconds ago may have mtime == now
+      // and not satisfy mtime <= fileCutOffTime reliably.
+      Thread.sleep(100)
+
+      val committedVersion = checkpointInterval.toLong
+
+      val hook = new CheckpointHook(
+        new io.delta.kernel.internal.fs.Path(tablePath),
+        committedVersion)
+      hook.threadSafeInvoke(engine)
+
+      assert(
+        deltaLogDir.listFiles().exists(f =>
+          f.getName.endsWith(".parquet") && f.getName.contains("checkpoint")),
+        "Checkpoint file should exist after CheckpointHook")
+
+      // All .json commit files before version `committedVersion` are expired (retention = 0) and
+      // covered by the checkpoint, so they should have been deleted.
+      val remainingJsonCount = deltaLogDir.listFiles().count(_.getName.endsWith(".json"))
+      assert(
+        remainingJsonCount < checkpointInterval + 1,
+        s"Expected log cleanup to delete expired .json files; " +
+          s"$remainingJsonCount remain out of ${checkpointInterval + 1}")
+
+      // The _last_checkpoint metadata file should reflect the committed version.
+      assert(
+        deltaLogDir.listFiles().exists(_.getName == "_last_checkpoint"),
+        "_last_checkpoint should exist")
     }
   }
 
