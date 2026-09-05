@@ -2067,6 +2067,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_REQUIRE_CLUSTERING =
+    buildConf("skipping.partitionLikeDataSkipping.requireClusteredTable")
+      .internal()
+      .doc("If true, partition-like data skipping is only attempted on tables with liquid " +
+        "clustering enabled, since those tables are most likely to have a large fraction of " +
+        "files with matching min-max values on the referenced columns. If false, partition-like " +
+        "data skipping may also be attempted on non-clustered tables. This can recover file " +
+        "skipping for filters where Spark's implicit type coercion wrapped a column reference " +
+        "in a Cast (e.g. comparing a string column against an unquoted numeric literal), since " +
+        "the safety of partition-like data skipping does not actually depend on clustering.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS =
     buildConf("skipping.partitionLikeDataSkipping.additionalSupportedExpressions")
       .internal()
