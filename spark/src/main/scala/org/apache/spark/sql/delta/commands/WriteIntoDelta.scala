@@ -21,6 +21,7 @@ import scala.util.Try
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.hooks.InflightDMLRegistry
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
@@ -103,6 +104,13 @@ case class WriteIntoDelta(
 
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
+    // Async Auto Compaction DML yield: for OVERWRITE (which rewrites files in bulk), register
+    // this write so concurrent async AC yields. APPEND skips this because appends never
+    // conflict with AC.
+    val writeTableId =
+      if (isOverwriteOperation) Some(deltaLog.unsafeVolatileTableId) else None
+    writeTableId.foreach(InflightDMLRegistry.acquire)
+    try {
     deltaLog.withNewTransaction(catalogTableOpt) { txn =>
       if (hasBeenExecuted(txn, sparkSession, Some(options))) {
         return Seq.empty
@@ -128,6 +136,9 @@ case class WriteIntoDelta(
       }
     }
     Seq.empty
+    } finally {
+      writeTableId.foreach(InflightDMLRegistry.release)
+    }
   }
 
   override def writeAndReturnCommitData(
