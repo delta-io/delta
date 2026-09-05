@@ -52,7 +52,8 @@ import org.apache.spark.sql.types.{IntegerType, LongType, NullType, StringType, 
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
-class DeltaSourceSuite extends DeltaSourceSuiteBase
+class DeltaSourceSuite
+  extends DeltaSourceSuiteBase
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
 

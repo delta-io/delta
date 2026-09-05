@@ -50,7 +50,7 @@ trait MergeIntoMaterializeSourceMixin
     with DeltaSQLTestUtils
     with DeltaTestUtilsBase {
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     // trigger source materialization in all tests
     spark.conf.set(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key, "all")

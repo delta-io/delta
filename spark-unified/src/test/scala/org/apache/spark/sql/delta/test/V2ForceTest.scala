@@ -126,8 +126,4 @@ trait V2ForceTest extends DeltaSQLCommandTest with AdaptiveSparkPlanHelper {
 
   /** Run a SQL statement through the V1 connector. */
   protected def executeInV1Mode(sqlText: String): Unit = inV1Mode(sql(sqlText))
-
-  override def afterAll(): Unit = {
-    super.afterAll()
-  }
 }
