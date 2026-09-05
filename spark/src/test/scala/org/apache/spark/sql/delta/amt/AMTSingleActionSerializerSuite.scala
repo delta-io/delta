@@ -92,7 +92,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       "content_type", "format_version", "location", "file_format", "tracking",
       "deletion_vector", "spec_id", "partition", "sort_order_id", "record_count",
       "file_size_in_bytes", "content_stats", "manifest_info", "key_metadata",
-      "split_offsets"))
+      "split_offsets", "tags"))
   }
 
   test("closed constant sets match Iceberg V4 integer codes") {
@@ -108,11 +108,60 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     val add = sampleAddFile
     val entry = AMTSingleAction.fromAddFile(add, addedTracking, tableRoot)
     assert(entry.content_type == AMTSingleAction.ContentType.Type.Data)
-    assert(entry.location == add.path)
+    assert(entry.location == "part-00000.parquet")
     assert(entry.record_count == add.numPhysicalRecords.get)
     assert(entry.file_size_in_bytes == add.size)
     assert(entry.manifest_info.isEmpty)
     assert(entry.tracking == addedTracking)
+  }
+
+  test("fromAddFile decodes Delta paths into raw DATA locations") {
+    val add = sampleAddFile.copy(path = "dir/part%20with%25percent.parquet")
+    val entry = AMTSingleAction.fromAddFile(add, addedTracking, tableRoot)
+    assert(entry.location == "dir/part with%percent.parquet")
+  }
+
+  test("toAddFile encodes raw DATA locations into Delta paths") {
+    val add = DataEntry(
+      location = "dir/part with%percent.parquet",
+      file_format = AMTSingleAction.FileFormatParquet,
+      tracking = addedTracking,
+      record_count = 10L,
+      file_size_in_bytes = 100L).toAddFile(tableRoot)
+    assert(add.path == "dir/part%20with%25percent.parquet")
+  }
+
+  test("fromAddFile relativizes absolute in-table Delta paths") {
+    val deltaPath = "file:/tmp/amt-test-table/dir/part%20with%20space.parquet"
+    val entry = AMTSingleAction.fromAddFile(
+      sampleAddFile.copy(path = deltaPath),
+      addedTracking,
+      tableRoot
+    )
+    assert(entry.location == "dir/part with space.parquet")
+    assert(entry.unwrap.asInstanceOf[DataEntry].toAddFile(tableRoot).path ==
+      "dir/part%20with%20space.parquet")
+  }
+
+  test("toAddFile keeps a relative in-table location relative") {
+    val add = DataEntry(
+      location = "dir/part with space.parquet",
+      file_format = AMTSingleAction.FileFormatParquet,
+      tracking = addedTracking,
+      record_count = 10L,
+      file_size_in_bytes = 100L).toAddFile(tableRoot)
+    assert(add.path == "dir/part%20with%20space.parquet")
+  }
+
+  test("DATA location conversion preserves out-of-root absolute Delta paths") {
+    val deltaPath = "file:/tmp/other-table/dir/part%20with%20space.parquet"
+    val entry = AMTSingleAction.fromAddFile(
+      sampleAddFile.copy(path = deltaPath),
+      addedTracking,
+      tableRoot
+    )
+    assert(entry.location == "file:/tmp/other-table/dir/part with space.parquet")
+    assert(entry.unwrap.asInstanceOf[DataEntry].toAddFile(tableRoot).path == deltaPath)
   }
 
   test("DataManifestEntry wraps to a DATA_MANIFEST root entry") {
@@ -139,6 +188,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       deletion_vector: Option[DeletionVector] = None,
       sort_order_id: Option[Int] = None,
       manifest_info: Option[ManifestInfo] = None,
+      tags: Option[Map[String, String]] = None,
       tracking: Tracking = addedTracking): AMTSingleAction = AMTSingleAction(
     content_type = content_type,
     format_version = AMTSingleAction.FormatVersionV4,
@@ -154,7 +204,8 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     content_stats = None,
     manifest_info = manifest_info,
     key_metadata = None,
-    split_offsets = None)
+    split_offsets = None,
+    tags = tags)
 
   private def assertRejected(substring: String)(build: => AMTSingleAction): Unit = {
     val ex = intercept[IllegalArgumentException](build)
@@ -228,7 +279,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
 
   test("parquet round-trip preserves every binary field") {
     // Binary columns are `Array[Byte]`, whose case-class `==` is reference equality, so this
-    // asserts the bytes structurally. Populate all five Option[Array[Byte]] fields across the
+    // asserts the bytes structurally. Populate all four Option[Array[Byte]] fields across the
     // row and its sub-structs on a single DATA_MANIFEST entry (the only kind that reaches
     // `manifest_info.dv`) so none is silently dropped by wrap/unwrap or the encoder.
     withTempDir { dir =>
@@ -236,7 +287,6 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       val deletedPos = Array[Byte](5, 6)
       val replacedPos = Array[Byte](7, 8, 9)
       val manifestDv = Array[Byte](10, 11)
-      val rawStats = Array[Byte](12, 13, 14)
       val entry = DataManifestEntry(
         location = "dm.parquet",
         file_format = AMTSingleAction.FileFormatParquet,
@@ -245,7 +295,6 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
         record_count = 1L,
         file_size_in_bytes = 1L,
         manifest_info = sampleManifestInfo.copy(dv = Some(manifestDv), dv_cardinality = Some(2L)),
-        content_stats = Some(ContentStats(Some(rawStats))),
         key_metadata = Some(keyMeta)).wrap
       val path = new java.io.File(dir, "binary").getCanonicalPath
       spark.createDataset(Seq(entry)).write.parquet(path)
@@ -259,8 +308,6 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
         "tracking.replaced_positions did not round-trip.")
       assert(r.manifest_info.flatMap(_.dv).exists(_.sameElements(manifestDv)),
         "manifest_info.dv did not round-trip.")
-      assert(r.content_stats.flatMap(_.raw_stats).exists(_.sameElements(rawStats)),
-        "content_stats.raw_stats did not round-trip.")
     }
   }
 
@@ -397,6 +444,50 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(restored.format_version == AMTSingleAction.FormatVersionV4)
   }
 
+  private val sampleTags: Map[String, String] =
+    Map(AddFile.Tags.INSERTION_TIME.name -> "123", "custom" -> "value")
+
+  test("validate rejects tags on a non-data entry") {
+    assertRejected("tags must be null")(
+      mkEntry(
+        content_type = AMTSingleAction.ContentType.Type.DataManifest,
+        manifest_info = Some(sampleManifestInfo),
+        tags = Some(sampleTags)))
+  }
+
+  test("fromAddFile preserves AddFile tags and drops an empty map") {
+    val withTags = DataEntry.fromAddFile(sampleAddFile.copy(tags = sampleTags), addedTracking,
+      tableRoot)
+    assert(withTags.tags.contains(sampleTags))
+    // A null or empty tag map is indistinguishable from no tags.
+    assert(DataEntry.fromAddFile(sampleAddFile, addedTracking, tableRoot).tags.isEmpty)
+    assert(DataEntry.fromAddFile(sampleAddFile.copy(tags = Map.empty[String, String]),
+      addedTracking, tableRoot).tags.isEmpty)
+  }
+
+  test("DataEntry round-trips tags through toAddFile -> fromAddFile") {
+    val entry = DataEntry(
+      location = "f.parquet", file_format = AMTSingleAction.FileFormatParquet,
+      tracking = addedTracking, record_count = 10L, file_size_in_bytes = 100L,
+      tags = Some(sampleTags))
+    val add = entry.toAddFile(tableRoot)
+    assert(add.tags != null && add.tags == sampleTags, "tags must be carried onto the AddFile")
+    val restored = DataEntry.fromAddFile(add, addedTracking, tableRoot)
+    assert(restored.tags.contains(sampleTags))
+  }
+
+  test("parquet round-trip preserves tags") {
+    withTempDir { dir =>
+      val entry = AMTSingleAction.fromAddFile(
+        sampleAddFile.copy(tags = sampleTags), addedTracking, tableRoot)
+      val path = new java.io.File(dir, "tags").getCanonicalPath
+      spark.createDataset(Seq(entry)).write.parquet(path)
+      val read = spark.read.parquet(path).as[AMTSingleAction].collect()
+      assert(read.length == 1)
+      assert(read.head.tags.contains(sampleTags), "tags did not round-trip through parquet.")
+    }
+  }
+
   test("amtPassthrough round-trips through the commit JSON") {
     val add = entryWithPassthrough.toAddFile(tableRoot)
     assert(add.amtPassthrough.isDefined)
@@ -517,5 +608,23 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
 
     // A present struct whose fields are all null -> present but empty.
     assert(AMTPassthrough.fromRow(rowWith(structRow()), indices).contains(AMTPassthrough()))
+  }
+
+  test("toAddFile keeps numRecords physical for a file with a deletion vector") {
+    // Iceberg's record_count and Delta's numRecords are both physical counts, so neither
+    // fromAddFile nor toAddFile may adjust for the DV -- AddFile subtracts the cardinality itself
+    // when it derives numLogicalRecords. Adjusting in either place would double-count.
+    // AMT only supports on-disk deletion vectors.
+    val dv = DeletionVectorDescriptor.onDiskWithUuidRelativePath(
+      id = UUID.randomUUID(), sizeInBytes = 20, cardinality = 4L, offset = Some(8))
+    val add = sampleAddFile.copy(stats = """{"numRecords":10}""", deletionVector = dv)
+    assert(add.numPhysicalRecords.contains(10L))
+    assert(add.numLogicalRecords.contains(6L))
+
+    val entry = DataEntry.fromAddFile(add, addedTracking, tableRoot)
+    assert(entry.record_count == 10L, "record_count is the physical count")
+    val roundTripped = entry.toAddFile(tableRoot)
+    assert(roundTripped.numPhysicalRecords.contains(10L))
+    assert(roundTripped.numLogicalRecords.contains(6L))
   }
 }

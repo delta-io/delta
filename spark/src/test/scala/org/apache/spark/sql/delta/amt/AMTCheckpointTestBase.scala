@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.amt
 
 import java.io.File
 
+import scala.collection.immutable.ListMap
+
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CommitStats, DeltaLog, DeltaOperations, Snapshot}
@@ -29,10 +31,10 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.types.{BinaryType, BooleanType, ByteType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
+import org.apache.spark.sql.types.{ArrayType, BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
 
 /**
  * Shared fixtures for AMT (`adaptiveMetadata-preview`) test suites: table creation, manifest-tree
@@ -69,6 +71,19 @@ trait AMTCheckpointTestBase
     snapshot.checkpointProvider match {
       case amt: AMTCheckpointProvider => Some(amt)
       case _ => None
+    }
+
+  /**
+   * Runs `body` on the DATA (content_type=0) entry rows across `paths`, read straight off disk
+   * (pass a provider's manifest paths -- its root and/or live leaves). The read runs with the
+   * path-based Delta format check disabled, and `body` runs inside that scope, so its terminal
+   * action reads under the disabled check.
+   */
+  protected def withManifestDataEntries[T](paths: Seq[String])(body: DataFrame => T): T =
+    allowReadWithinDeltaLog {
+      body(
+        spark.read.parquet(paths: _*)
+          .where(col("content_type") === AMTSingleAction.ContentType.Type.Data))
     }
 
   /** The [[DeltaLog]] for a catalog-managed table accessed by name. */
@@ -135,70 +150,100 @@ trait AMTCheckpointTestBase
     snapshot.allFiles.collect().toSeq
 
   /**
-   * Partition spec covering one column per partition type Delta supports.
+   * Test column fixture
    */
-  protected val allTypesPartitionSchema: StructType = StructType(Seq(
-    StructField("p_int", IntegerType),
-    StructField("p_long", LongType),
-    StructField("p_short", ShortType),
-    StructField("p_byte", ByteType),
-    StructField("p_str", StringType),
-    StructField("p_date", DateType),
-    StructField("p_ts", TimestampType),
-    StructField("p_ts_ntz", TimestampNTZType),
-    StructField("p_dec", DecimalType(9, 3)),
-    StructField("p_bool", BooleanType),
-    StructField("p_float", FloatType),
-    StructField("p_double", DoubleType),
-    StructField("p_binary", BinaryType)))
+  protected case class TestColumn(
+      name: String,
+      dataType: DataType,
+      valueExpr: String,
+      partitionable: Boolean) {
+    /** This column as a `StructField`, its name prefixed (e.g. `p_`, `c_`, `d_`). */
+    def structField(prefix: String): StructField = StructField(prefix + name, dataType)
 
-  /** `allTypesPartitionSchema` as SQL column definitions, for a `CREATE TABLE` schema. */
-  protected def allTypesPartitionColumns: Seq[String] =
-    allTypesPartitionSchema.map(f => s"${f.name} ${f.dataType.sql}")
-
-  /**
-   * One projection over `range`'s `id` per column of [[allTypesPartitionSchema]], giving each row a
-   * distinct value in every partition column.
-   */
-  protected def allTypesPartitionExprs: Seq[String] = allTypesPartitionSchema.map { field =>
-    field.dataType match {
-      case StringType => "CONCAT('r', CAST(id AS STRING))"
-      case DateType => "DATE '2026-07-25' + CAST(id AS INT)"
-      case TimestampType =>
-        "TIMESTAMP '2026-07-25 01:02:03.456' + MAKE_INTERVAL(0, 0, 0, CAST(id AS INT))"
-      case TimestampNTZType =>
-        "CAST(TIMESTAMP_NTZ '2026-07-25 01:02:03.456' + " +
-          "MAKE_INTERVAL(0, 0, 0, CAST(id AS INT)) AS TIMESTAMP_NTZ)"
-      case BooleanType => "CAST(id % 2 AS BOOLEAN)"
-      case BinaryType => "CAST(CONCAT('b', CAST(id AS STRING)) AS BINARY)"
-      case d: DecimalType => s"CAST(id AS ${d.sql}) / 8"
-      case other => s"CAST(id AS ${other.sql})"
-    }
+    /** This column as a `<name> <type>` SQL column definition, its name prefixed. */
+    def columnDef(prefix: String): String = s"$prefix$name ${dataType.sql}"
   }
 
   /**
-   * Creates an AMT table partitioned by every column of [[allTypesPartitionSchema]] and appends
-   * `numFiles` single-row files, one distinct partition value per row per column, then runs `body`
-   * with the table's [[DeltaLog]]. No checkpoint is committed -- the caller decides which
-   * checkpoint shape it needs.
+   * Every type the AMT fixtures exercise, keyed by column [[TestColumn.name]].
    */
-  protected def withAllPartitionTypesTable(
+  protected val allTypeColumns: ListMap[String, TestColumn] = {
+    val columns = Seq(
+      TestColumn("int", IntegerType, "CAST(id AS INT)", partitionable = true),
+      TestColumn("long", LongType, "CAST(id AS LONG)", partitionable = true),
+      TestColumn("short", ShortType, "CAST(id AS SHORT)", partitionable = true),
+      TestColumn("byte", ByteType, "CAST(id AS BYTE)", partitionable = true),
+      TestColumn("str", StringType, "CONCAT('row', CAST(id AS STRING))", partitionable = true),
+      TestColumn("date", DateType, "DATE '2026-07-25' + CAST(id AS INT)", partitionable = true),
+      TestColumn(
+        "ts",
+        TimestampType,
+        "TIMESTAMP '2026-07-25 01:02:03.456' + MAKE_INTERVAL(0, 0, 0, CAST(id AS INT))",
+        partitionable = true),
+      TestColumn(
+        "ts_ntz",
+        TimestampNTZType,
+        "CAST(TIMESTAMP_NTZ '2026-07-25 01:02:03.456' + " +
+          "MAKE_INTERVAL(0, 0, 0, CAST(id AS INT)) AS TIMESTAMP_NTZ)",
+        partitionable = true),
+      TestColumn("dec", DecimalType(9, 3), "CAST(id AS DECIMAL(9,3)) / 8", partitionable = true),
+      TestColumn("bool", BooleanType, "CAST(id % 2 AS BOOLEAN)", partitionable = true),
+      TestColumn("float", FloatType, "CAST(id AS FLOAT)", partitionable = true),
+      TestColumn("double", DoubleType, "CAST(id AS DOUBLE)", partitionable = true),
+      TestColumn(
+        "binary",
+        BinaryType,
+        "CAST(CONCAT('b', CAST(id AS STRING)) AS BINARY)",
+        partitionable = true),
+      TestColumn(
+        "arr",
+        ArrayType(StringType),
+        "array(CONCAT('a', CAST(id AS STRING)))",
+        partitionable = false),
+      TestColumn(
+        "nested",
+        StructType(Seq(StructField("inner", IntegerType))),
+        "named_struct('inner', CAST(id AS INT))",
+        partitionable = false))
+    ListMap(columns.map(c => c.name -> c): _*)
+  }
+
+  protected def partitionableTestColumns: Seq[TestColumn] =
+    allTypeColumns.values.filter(_.partitionable).toSeq
+
+  protected def allTypeColumnDefinitions: Seq[String] =
+    allTypeColumns.values.map(_.columnDef("c_")).toSeq
+
+  protected def allTypeColumnExprs: Seq[String] =
+    allTypeColumns.values.map(_.valueExpr).toSeq
+
+  /**
+   * Creates an AMT table exercising every partition type (the `p_`-prefixed
+   * [[partitionableTestColumns]]) alongside the `d_`-prefixed data columns that content stats are
+   * collected on. Appends `numFiles` single-row files (one distinct value per row per column), and
+   * runs `body` with the table's [[DeltaLog]].
+   */
+  protected def withAllTypesTable(
       tableName: String,
       numFiles: Int,
-      maxEntriesPerLeaf: Int)(body: DeltaLog => Unit): Unit = {
-    val dataColumns = Seq("d_int INT", "d_str STRING")
+      maxEntriesPerLeaf: Int = entriesPerLeaf)(body: DeltaLog => Unit): Unit = {
+    // Every type, so the content-stats goldens cover the full set of data columns.
+    val dataColumns: Seq[TestColumn] = allTypeColumns.values.toSeq
     withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> maxEntriesPerLeaf.toString) {
       withTable(tableName) {
         createAMTTable(
           tableName,
           checkpointInterval = Int.MaxValue,
-          tableSchema = (dataColumns ++ allTypesPartitionColumns).mkString(", "),
-          partitionColumns = allTypesPartitionSchema.map(_.name))
-        appendRowsAsSeparateFiles(
-          tableName,
-          numFiles = numFiles,
-          columnExprs =
-            Seq("CAST(id AS INT)", "CONCAT('d', CAST(id AS STRING))") ++ allTypesPartitionExprs)
+          tableSchema =
+            (dataColumns.map(_.columnDef("d_")) ++ partitionableTestColumns.map(_.columnDef("p_")))
+              .mkString(", "),
+          partitionColumns = partitionableTestColumns.map("p_" + _.name))
+        if (numFiles > 0) {
+          appendRowsAsSeparateFiles(
+            tableName,
+            numFiles = numFiles,
+            columnExprs = (dataColumns ++ partitionableTestColumns).map(_.valueExpr))
+        }
         body(deltaLogForName(tableName))
       }
     }
@@ -273,7 +318,11 @@ trait AMTCheckpointTestBase
    *
    * @param scenario the placement and materialization strategy used by the test
    * @param tableName the catalog-managed table created by the harness
-   * @param preCheckpointSnapshot the snapshot after `setup` and before the tested checkpoint
+   * @param postSetupSnapshot the snapshot after `setup`
+   * @param preCheckpointSnapshot the snapshot immediately before the checkpoint is constructed: for
+   *                              deferred scenarios, after the trigger's data commit but before the
+   *                              checkpoint commit; for inline scenarios, the same as
+   *                              `postSetupSnapshot`.
    * @param manifestCommitVersion the commit carrying `checkpoint`; this equals
    *                              `checkpoint.version` for inline checkpoints and
    *                              `checkpoint.version + 1` for deferred checkpoints
@@ -284,6 +333,7 @@ trait AMTCheckpointTestBase
   protected case class AMTCheckpointScenarioContext(
       scenario: AMTCheckpointScenario,
       tableName: String,
+      postSetupSnapshot: Snapshot,
       preCheckpointSnapshot: Snapshot,
       manifestCommitVersion: Long,
       checkpoint: Checkpoint,
@@ -361,7 +411,7 @@ trait AMTCheckpointTestBase
     import AMTCheckpointScenario._
 
     val deltaLog = deltaLogForName(tableName)
-    val preCheckpointSnapshot = deltaLog.update()
+    val postSetupSnapshot = deltaLog.update()
 
     def runCheckpointTrigger(): Unit = {
       inlineCheckpointTriggerActionsOrSQL.map(_(tableName)).foreach {
@@ -372,19 +422,27 @@ trait AMTCheckpointTestBase
       }
     }
 
-    scenario match {
+    // The snapshot immediately before the checkpoint is constructed. For deferred scenarios this is
+    // taken after the trigger's data commit but before the checkpoint commit, so it can be compared
+    // against the post-checkpoint snapshot. Inline scenarios write the checkpoint in the same
+    // commit that adds data, so there is no distinct pre-construction state; it stays the
+    // pre-trigger snapshot (and callers skip the before/after comparison for inline).
+    val preCheckpointSnapshot: Snapshot = scenario match {
       case InlineIncremental =>
         withSQLConf(
             DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
               -> "1") {
           runCheckpointTrigger()
         }
+        postSetupSnapshot
       case _ =>
         runCheckpointTrigger()
+        val beforeConstruction = deltaLog.update()
         commitCheckpoint(deltaLog, incremental = scenario.isIncremental)
+        beforeConstruction
     }
 
-    val checkpointedVersion = preCheckpointSnapshot.version +
+    val checkpointedVersion = postSetupSnapshot.version +
       (if (inlineCheckpointTriggerActionsOrSQL.isDefined) 1L else 0L)
     val manifestCommitVersion = checkpointedVersion + (if (scenario.isInline) 0L else 1L)
     val postCheckpointSnapshot = deltaLog.update()
@@ -395,6 +453,7 @@ trait AMTCheckpointTestBase
     AMTCheckpointScenarioContext(
       scenario = scenario,
       tableName = tableName,
+      postSetupSnapshot = postSetupSnapshot,
       preCheckpointSnapshot = preCheckpointSnapshot,
       manifestCommitVersion = manifestCommitVersion,
       checkpoint = checkpoint,
@@ -448,8 +507,51 @@ trait AMTCheckpointTestBase
       .map(e => JsonUtils.fromJson[CommitStats](e.blob))
       .find(_.commitVersion == commitVersion)
       .flatMap(_.amtWriteMetrics)
-      .flatMap(_.attempts.headOption)
+      .flatMap(_.writeAttempts.headOption)
       .flatMap(_.incrementalWriteMetrics)
+  }
+
+  /**
+   * Like [[trackIncrementalAMTWriteMetrics]] but returns one entry per attempt that made an
+   * incremental write, in attempt order -- a conflict retry materializes the tree more than once,
+   * so this exposes each attempt's shape. `commitVersion` is by-name so callers can pass the final
+   * committed version, which is only known after `commit` runs.
+   */
+  protected def trackIncrementalAMTWriteMetricsPerAttempt(
+      commitVersion: => Long)(commit: => Unit): Seq[IncrementalAMTWriteMetrics] = {
+    val events = Log4jUsageLogger.track {
+      commit
+    }
+    val version = commitVersion
+    events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains("delta.commit.stats"))
+      .map(e => JsonUtils.fromJson[CommitStats](e.blob))
+      .find(_.commitVersion == version)
+      .toSeq
+      .flatMap(_.amtWriteMetrics.toSeq)
+      .flatMap(_.writeAttempts)
+      .flatMap(_.incrementalWriteMetrics)
+  }
+
+  /**
+   * Runs `commit` and returns the [[BackRefRebaseMetrics]] logged for the commit at
+   * `commitVersion` -- one entry per conflict round that re-derived back references against a
+   * newly installed tree. `commitVersion` is by-name so callers can pass the final committed
+   * version, which is only known after `commit` runs.
+   */
+  protected def trackBackrefRebaseMetricsAt(
+      commitVersion: => Long)(commit: => Unit): Seq[BackRefRebaseMetrics] = {
+    val events = Log4jUsageLogger.track {
+      commit
+    }
+    val version = commitVersion
+    events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains("delta.commit.stats"))
+      .map(e => JsonUtils.fromJson[CommitStats](e.blob))
+      .find(_.commitVersion == version)
+      .toSeq
+      .flatMap(_.amtWriteMetrics.toSeq)
+      .flatMap(_.backrefRebaseAttempts)
   }
 
   private def assertAMTCheckpointScenarioInvariants(
@@ -461,7 +563,7 @@ trait AMTCheckpointTestBase
     val expectedLastFull = scenario match {
       case AMTCheckpointScenario.InlineIncremental |
           AMTCheckpointScenario.DeferredIncremental =>
-        val bootstrap = amtProvider(context.preCheckpointSnapshot).getOrElse(
+        val bootstrap = amtProvider(context.postSetupSnapshot).getOrElse(
           fail("incremental scenario must bootstrap a full checkpoint"))
         bootstrap.checkpointAction.contentRoot.lastManifestCommitWithFullRewrite.get
       case AMTCheckpointScenario.DeferredFull => checkpoint.version
@@ -520,11 +622,13 @@ trait AMTCheckpointTestBase
   }
 
   /** Forces every write to inline its AMT incrementally (a low action-count threshold). */
-  protected def withInline[T](body: => T): T =
+  protected def withInline[T](body: => T): T = withInlineThreshold(1)(body)
+
+  /** Runs `body` with the inline-manifest threshold at `n` actions. */
+  protected def withInlineThreshold[T](n: Int)(body: => T): T =
     withSQLConf(
-      DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key -> "1") {
-      body
-    }
+      DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+        -> n.toString)(body)
 
   /**
    * Runs the test with inline writes forced (a low action-count threshold).
@@ -580,14 +684,18 @@ trait AMTCheckpointTestBase
    * this can exceed the live file count. To assert the tree captures exactly the live file set,
    * call [[assertReconstructsLiveFileSet]] instead.
    */
-  protected def currentLeafDataEntries(snapshot: Snapshot): Long = {
-    val provider = amtProvider(snapshot)
-      .getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
-      provider.liveLeafManifestAbsolutePaths.map { leafPath =>
-        spark.read.parquet(leafPath.toString)
-          .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
-          .count()
-      }.sum
+  protected def leafLiveDataEntryCount(snapshot: Snapshot): Long =
+    leafLiveDataEntryCount(amtProvider(snapshot)
+      .getOrElse(fail("Snapshot has no AMTCheckpointProvider.")))
+
+  /**
+   * Total DATA (content_type=0) entry rows across `provider`'s live leaves, 0 when the tree is
+   * leafless. Like the [[Snapshot]]-based overload but driven by a provider a test built directly
+   * (e.g. from a checkpoint), where no owning [[Snapshot]] exists.
+   */
+  protected def leafLiveDataEntryCount(provider: AMTCheckpointProvider): Long = {
+    val leaves = provider.liveLeafManifestAbsolutePaths.map(_.toString)
+    if (leaves.isEmpty) 0L else withManifestDataEntries(leaves)(_.count())
   }
 
 
@@ -595,7 +703,7 @@ trait AMTCheckpointTestBase
    * The number of live files the CURRENT snapshot's AMT reconstructs across the WHOLE tree -- root
    * and leaves. Goes through the provider's own reconstruction, which drops MDV-masked leaf entries
    * and `tracking=removed` root tombstones, so it equals `snapshot.allFiles.count()` on both full
-   * and incremental trees. Unlike [[currentLeafDataEntries]], it counts live files stored directly
+   * and incremental trees. Unlike [[leafLiveDataEntryCount]], it counts live files stored directly
    * in the root too (as an incremental commit does below the spill threshold).
    *
    * Prefer [[assertReconstructsLiveFileSet]] when the test runs through
@@ -644,9 +752,7 @@ object AMTLeafComparisons {
       "tracking.replaced_positions differ")
     assert(sameBytes(actual.manifest_info.dv, expected.manifest_info.dv), "manifest_info.dv differ")
     assert(sameBytes(actual.key_metadata, expected.key_metadata), "key_metadata differ")
-    assert(sameBytes(
-        actual.content_stats.flatMap(_.raw_stats), expected.content_stats.flatMap(_.raw_stats)),
-      "content_stats.raw_stats differ")
+    assert(actual.content_stats == expected.content_stats, "content_stats differ")
   }
 
   /** Asserts two leaf sequences are field-by-field equal (see [[assertLeafEquals]]). */

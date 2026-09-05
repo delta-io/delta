@@ -612,6 +612,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "fullRewriteCheckpointIntervalMultiplier must be positive.")
       .createWithDefault(5)
 
+  val AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED =
+    buildConf("amt.snapshotDiscovery.asyncCommitInfoRead.enabled")
+      .internal()
+      .doc("When enabled, an async CommitInfo read will be kicked off during snapshot creation " +
+        "in parallel with the CRC read. Enabling it could cause slight performance overhead on " +
+        "non-AMT tables when CRC is absent, and extra checkpoint threadpool contention. " +
+        "Disabling it could result in missing file actions in snapshot discovery for AMT tables.")
+      .booleanConf
+      .createWithDefault(DeltaUtils.isTesting)
+
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
       .internal()
@@ -1680,6 +1690,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("If enabled, delta log snapshot will read the protocol, metadata, and ICT " +
         "(if applicable) from the checksum file and use those to avoid a spark job over the " +
         "checkpoint for the two rows of protocol and metadata")
+      .booleanConf
+      .createWithDefault(true)
+
+  val USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED =
+    buildConf("readSnapshotStateFromChecksum.enabled")
+      .internal()
+      .doc("If enabled, snapshot state fields (file/record counts, set transactions, domain " +
+        "metadata, and histograms) are read from the checksum file when it contains them, " +
+        "avoiding a spark job aggregating over the state reconstruction. Fields the checksum " +
+        "does not carry, and snapshots without a checksum file, fall back to state " +
+        "reconstruction.")
       .booleanConf
       .createWithDefault(true)
 

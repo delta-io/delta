@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitStats, Commit
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
-import org.apache.spark.sql.delta.amt.AMTWriteMetrics
+import org.apache.spark.sql.delta.amt.AMTMetrics
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -56,12 +56,10 @@ trait TransactionHelper extends DeltaLogging {
   def newDeltaHadoopConf(): Configuration = deltaLog.newDeltaHadoopConf()
 
   /** Canonical name of the commit log store class for commit-stats telemetry. */
-  private def commitLogStoreClassName: String =
-    Option(deltaLog).map(_.store.getClass.getCanonicalName).getOrElse("")
+  protected def commitLogStoreClassName: String = deltaLog.store.getClass.getCanonicalName
 
   /** Value used for the `TAG_LOG_STORE_CLASS` operation tag. */
-  private[delta] def commitLogStoreClassNameForTag: String =
-    Option(deltaLog).map(_.store.getClass.getName).getOrElse("")
+  protected[delta] def commitLogStoreClassNameForTag: String = deltaLog.store.getClass.getName
 
   def catalogTable: Option[CatalogTable]
   def snapshot: Snapshot
@@ -386,7 +384,7 @@ trait TransactionHelper extends DeltaLogging {
         fileSizeHistogramOpt: Option[FileSizeHistogram],
         commitInfoOpt: Option[CommitInfo],
         commitSizeBytes: Long,
-        amtWriteMetricsOpt: Option[AMTWriteMetrics] = None,
+        amtWriteMetricsOpt: Option[AMTMetrics] = None,
         isIdempotentRetry: Boolean = false): Unit = {
       assertStateBeforeFinalization()
 

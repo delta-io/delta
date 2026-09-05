@@ -62,7 +62,7 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
       .map(e => JsonUtils.fromJson[CommitStats](e.blob))
       .find(_.commitVersion == version)
       .flatMap(_.amtWriteMetrics)
-      .flatMap(_.attempts.headOption)
+      .flatMap(_.writeAttempts.headOption)
       .getOrElse(fail(s"No AMT write metrics logged for version $version."))
   }
 

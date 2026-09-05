@@ -16,8 +16,10 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, LogSegment, MaintenanceOperation, Snapshot}
-import org.apache.spark.sql.delta.actions.{Action, Checkpoint}
+import java.util.concurrent.TimeUnit
+
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, LogSegment, MaintenanceOperation, Snapshot}
+import org.apache.spark.sql.delta.actions.{Action, Checkpoint, FileAction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -53,9 +55,18 @@ object AMTTriggerMode {
     isIncremental = true)
 }
 
-/** Metrics describing an AMT (Adaptive Metadata Tree) write, one entry per attempt. */
-case class AMTWriteMetrics(
-    private[delta] var attempts: Seq[SingleAMTWriteMetrics] = Seq.empty)
+/** Aggregated AMT metrics collected across all attempts of a single [[AMTWriterManager]]. */
+case class AMTMetrics(
+    private[delta] var writeAttempts: Seq[SingleAMTWriteMetrics] = Seq.empty,
+    private[delta] var backrefRebaseAttempts: Seq[BackRefRebaseMetrics] = Seq.empty)
+
+/** Metrics for one back-reference rebase pass (see [[AMTWriterManager.rebaseBackReferences]]). */
+case class BackRefRebaseMetrics(
+    oldAMTVersion: Long,
+    newAMTVersion: Long,
+    totalTimeTakenMs: Long,
+    numActionsReusingBackref: Int,
+    numActionsRegeneratingBackref: Int)
 
 /** Metrics for a single AMT write attempt (one per commit attempt that materializes a tree). */
 case class SingleAMTWriteMetrics(
@@ -102,6 +113,21 @@ case class AMTWriteResult(
     leaves: Seq[DataManifestEntry],
     includeActionsInCommitJson: Boolean)
 
+/** A lazily-materialized [[AMTCheckpointProvider]] for `checkpointOpt`. */
+class LazyAMTCheckpointProvider(
+    checkpointOpt: Option[Checkpoint],
+    readSnapshot: Snapshot,
+    manifestCommitVersion: Long) {
+  lazy val providerOpt: Option[AMTCheckpointProvider] = checkpointOpt.map { checkpoint =>
+    readSnapshot.checkpointProvider match {
+      case amt: AMTCheckpointProvider if amt.checkpointAction.version == checkpoint.version => amt
+      case _ =>
+        AMTCheckpointProvider.fromCheckpoint(
+          readSnapshot.deltaLog, checkpoint, manifestCommitVersion)
+    }
+  }
+}
+
 /**
  * Orchestrates write of an AMT for a given transaction (including reattempts on a conflict).
  */
@@ -112,8 +138,28 @@ class AMTWriterManager(
   private def spark: SparkSession = SparkSession.active
   private def deltaLog: DeltaLog = readSnapshot.deltaLog
 
-  val metrics = AMTWriteMetrics()
+  val metrics = AMTMetrics()
   private var lastAMTWriteResultOpt: Option[AMTWriteResult] = None
+
+  /** The read snapshot's own AMT checkpoint, if it is AMT-backed. */
+  private def readSnapshotAMTCheckpointOpt: Option[Checkpoint] = {
+    if (!AMTUtils.amtEnabled(readSnapshot)) return None
+    readSnapshot.checkpointProvider match {
+      case amt: AMTCheckpointProvider => Some(amt.checkpointAction)
+      case _ => None
+    }
+  }
+
+  /**
+   * The AMT Checkpoint Provider corresponding to the last manifest commit corresponding to
+   * OptimisticTransaction.preCommitLogSegment.
+   * This is updated after every round of [[ConflictChecker]] rebase.
+   */
+  private var preCommitLatestAMTCheckpointProvider: LazyAMTCheckpointProvider =
+    new LazyAMTCheckpointProvider(readSnapshotAMTCheckpointOpt, readSnapshot, readSnapshot.version)
+
+  /** The folded AMT tree version the committed actions were last re-stamped against. */
+  private var lastRebasedAMTVersion: Option[Long] = None
 
   /**
    * Builds the AMT write for a commit attempt, or `None` when no AMT should be written. Serves both
@@ -128,7 +174,7 @@ class AMTWriterManager(
       commitVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       preCommitLogSegment: LogSegment): Option[AMTWriteResult] = {
-    if (!amtEnabled(commitVersion)) return None
+    if (!AMTUtils.amtEnabled(readSnapshot)) return None
     val actionsToCommit = currentTransactionInfo.actions
     // Whether this attempt would (re)write a manifest tree.
     val writesTree = initialOperation match {
@@ -137,10 +183,18 @@ class AMTWriterManager(
     }
 
     if (preCommitLogSegment.version > readSnapshot.version) {
-      // A concurrent commit won our target version and we are rebasing. A commit that writes no
-      // tree, and that lost only to commits that wrote no tree, is safe to rebase as-is; anything
-      // else needs the tree and back-reference rebase that is not implemented yet.
-      if (writesTree || winningCommitInstalledNewAMTTree(currentTransactionInfo)) {
+      // A concurrent commit won our target version and we are rebasing. In the table below a
+      // "new-tree commit" is a winner that installed a new AMT tree (an OPTIMIZE checkpoint or a
+      // large inline commit); scenarios handled:
+      //   Winning commit  | Losing commit     | Action taken
+      //   Log commit      | Log commit        | usual conflict checking; back refs stay valid
+      //   Log commit      | Inline AMT commit | rebuild the inline tree; back refs stay valid
+      //   New-tree commit | Log commit        | rebase onto the new tree; re-derive back refs
+      //   New-tree commit | Inline AMT commit | re-seat + rebuild; re-derive back refs
+      // All other scenarios are not handled.
+      val losingOptimizeCheckpoint =
+        initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]
+      if (losingOptimizeCheckpoint) {
         throw DeltaErrors.concurrentWriteException(conflictingCommit = None)
       }
     }
@@ -181,9 +235,7 @@ class AMTWriterManager(
     actionsToCommit.size.toLong >= largeCommitActionsCountThresholdForInlineManifestCommit &&
       AMTWriteHelper.previousAMTContentRoot(readSnapshot).isDefined
 
-  /**
-   * True when conflict resolution folded in a winning commit that installed a new AMT tree.
-   */
+  /** True when there was a winning manifest commit concurrent to this transaction */
   private def winningCommitInstalledNewAMTTree(
       currentTransactionInfo: CurrentTransactionInfo): Boolean = {
     val readSnapshotAMTVersion = readSnapshot.lastManifestCommitOpt.map(_.contentRootVersion)
@@ -211,19 +263,22 @@ class AMTWriterManager(
       preCommitLogSegment: LogSegment,
       incremental: Boolean,
       trigger: String): AMTWriteResult = {
-    val amtProviderOpt = readSnapshot.checkpointProvider match {
-      case amt: AMTCheckpointProvider => Some(amt)
-      case _ => None
-    }
+    val amtProviderOpt = preCommitLatestAMTCheckpointProvider.providerOpt
+    assert(
+      amtProviderOpt.map(_.checkpointAction.version) ==
+        currentTransactionInfo.preCommitLatestAMTCheckpointOpt.map(_.version),
+      s"Cached AMT provider ${amtProviderOpt.map(_.checkpointAction.version)} is out of sync " +
+        "with preCommitLatestAMTCheckpointOpt " +
+        s"${currentTransactionInfo.preCommitLatestAMTCheckpointOpt.map(_.version)}.")
     val (result, singleMetric) =
       if (incremental && amtProviderOpt.isDefined) {
-        val oldAMTVersion = amtProviderOpt.get.checkpointAction.contentRoot.version
+        val amtProvider = amtProviderOpt.get
+        val oldAMTVersion = amtProvider.checkpointAction.contentRoot.version
         // The commits written after the old AMT, up to the last committed version.
         val intermediateLogCommits = preCommitLogSegment.deltas
           .filter(f => FileNames.getFileVersion(f) > oldAMTVersion)
         new IncrementalAMTWriter(spark, deltaLog).writeIncremental(
-          oldAMTVersion = oldAMTVersion,
-          oldAMTCheckpointProvider = amtProviderOpt.get,
+          oldAMTActionsProvider = new BaseAMTCheckpointActionsProvider(deltaLog, amtProvider),
           intermediateLogCommits = intermediateLogCommits,
           attemptVersion = commitVersion,
           actionsToCommit = currentTransactionInfo.actions,
@@ -240,7 +295,7 @@ class AMTWriterManager(
           postCommitMetadata = currentTransactionInfo.metadata,
           trigger = trigger)
       }
-    metrics.attempts :+= singleMetric
+    metrics.writeAttempts :+= singleMetric
     result
   }
 
@@ -253,7 +308,7 @@ class AMTWriterManager(
       postCommitSnapshot: Snapshot): MaintenanceOperation = {
     // if the commit itself was to do a checkpoint, don't schedule any maintenance as part
     // of its post-commit hook.
-    if (!amtEnabled(commitVersion)
+    if (!AMTUtils.amtEnabled(readSnapshot)
         || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
       return MaintenanceOperation()
     }
@@ -276,7 +331,7 @@ class AMTWriterManager(
       commitVersion: Long,
       postCommitSnapshot: Snapshot): MaintenanceOperation = {
     // The follow-up OPTIMIZE CHECKPOINT commit itself must never schedule more maintenance.
-    if (!amtEnabled(commitVersion)
+    if (!AMTUtils.amtEnabled(readSnapshot)
         || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
       return MaintenanceOperation()
     }
@@ -360,15 +415,6 @@ class AMTWriterManager(
       }
   }
 
-  /**
-   * Whether AMT write is possible at all for this commit.
-   * Note: We don't create AMT at commit 0 as of now but this could be relaxed in future.
-   */
-  private def amtEnabled(commitVersion: Long): Boolean = {
-    if (commitVersion <= 0) return false
-    readSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
-  }
-
   private def largeCommitActionsCountThresholdForInlineManifestCommit: Long =
     spark.sessionState.conf.getConf(
       DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT)
@@ -376,4 +422,78 @@ class AMTWriterManager(
   private def fullRewriteCheckpointIntervalMultiplier: Int =
     spark.sessionState.conf.getConf(
       DeltaSQLConf.AMT_FULL_REWRITE_CHECKPOINT_INTERVAL_MULTIPLIER)
+
+  /**
+   * Updates the pre-commit AMTCheckpointProvider after resolving conflicts via [[ConflictChecker]].
+   */
+  def updatePreCommitLatestAMTCheckpointProvider(
+      currentTransactionInfo: CurrentTransactionInfo): Unit = {
+    val manifestCommitVersion = currentTransactionInfo.commitInfo
+      .flatMap(_.lastManifestCommit).map(_.version)
+      .orElse(currentTransactionInfo.preCommitLatestAMTCheckpointOpt.map(_.version)).getOrElse(0L)
+    preCommitLatestAMTCheckpointProvider = new LazyAMTCheckpointProvider(
+      currentTransactionInfo.preCommitLatestAMTCheckpointOpt, readSnapshot, manifestCommitVersion)
+  }
+
+  /**
+   * Re-derives the file actions' back references against the AMT this attempt builds on. Only runs
+   * on a rebase where a winning commit installed a new tree; `reStampBackReferences` re-derives
+   * each file action whose back reference that tree invalidated (a leaf it dropped or a position it
+   * newly MDV-masked because the file moved or was removed) and leaves the rest -- those still
+   * pointing at a live leaf entry -- unchanged. A blind append is skipped entirely: it only adds
+   * brand-new files, so none of its actions can point at a leaf the winner's tree invalidated.
+   */
+  def rebaseBackReferences(
+      currentTransactionInfo: CurrentTransactionInfo): CurrentTransactionInfo = {
+    val actions = currentTransactionInfo.actions
+    if (!AMTUtils.amtEnabled(readSnapshot) ||
+        !winningCommitInstalledNewAMTTree(currentTransactionInfo)) {
+      return currentTransactionInfo
+    }
+    // A blind append only adds brand-new files and reads or removes nothing, so none of its actions
+    // reference a leaf the winner's tree could have dropped or MDV-masked. Those new files are
+    // absent from the winner's tree and get a fresh back reference when this attempt's own tree
+    // folds them in, so skip the re-stamp rather than re-deriving back references that do not exist
+    // in the winner's tree.
+    if (currentTransactionInfo.commitInfo.flatMap(_.isBlindAppend).getOrElse(false)) {
+      return currentTransactionInfo
+    }
+    // A commit with no file actions has no back references to re-derive, so short-circuit before
+    // materializing the winning tree's (potentially expensive) AMT provider.
+    if (!actions.exists(_.isInstanceOf[FileAction])) {
+      return currentTransactionInfo
+    }
+    val foldedAMTVersion = currentTransactionInfo.preCommitLatestAMTCheckpointOpt.map(_.version)
+    if (foldedAMTVersion == lastRebasedAMTVersion) {
+      // No new tree was installed since the last rebase, so the actions are already re-stamped
+      // against it -- nothing to re-derive.
+      return currentTransactionInfo
+    }
+    // The tree the actions were last stamped against: the previous rebase target, or -- on the
+    // first rebase -- the read snapshot's own tree, which is what the writer originally stamped.
+    val oldAMTVersion = lastRebasedAMTVersion
+      .orElse(readSnapshot.lastManifestCommitOpt.map(_.contentRootVersion))
+      .getOrElse(0L)
+    val foldedContentRootVersion =
+      currentTransactionInfo.preCommitLatestAMTCheckpointOpt.map(_.contentRoot.version)
+    val providerContentRootVersion =
+      preCommitLatestAMTCheckpointProvider.providerOpt.map(_.checkpointAction.contentRoot.version)
+    assert(foldedContentRootVersion == providerContentRootVersion,
+      "the cached AMT provider must correspond to the transaction's folded AMT checkpoint.")
+    val startNs = System.nanoTime()
+    val restampedActions = preCommitLatestAMTCheckpointProvider.providerOpt match {
+      case Some(provider) =>
+        val result = provider.reStampBackReferences(spark, deltaLog, actions)
+        metrics.backrefRebaseAttempts :+= BackRefRebaseMetrics(
+          oldAMTVersion = oldAMTVersion,
+          newAMTVersion = foldedAMTVersion.getOrElse(oldAMTVersion),
+          totalTimeTakenMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs),
+          numActionsReusingBackref = result.numActionsReusingBackref,
+          numActionsRegeneratingBackref = result.numActionsRegeneratingBackref)
+        result.actions
+      case None => actions
+    }
+    lastRebasedAMTVersion = foldedAMTVersion
+    currentTransactionInfo.copy(actions = restampedActions)
+  }
 }

@@ -127,7 +127,10 @@ trait SnapshotManagement { self: DeltaLog =>
     val files =
       filesOpt.map {
       _.flatMap {
-        case DeltaFile(f, fileVersion) =>
+        // Use BackfilledDeltaFile, not the permissive DeltaFile: a raw listing must not promote
+        // staged commits (`_staged_commits/N.<uuid>.json`) to commits. They are ratified by the
+        // commit coordinator (getCommits), and enter the log segment separately via the caller.
+        case BackfilledDeltaFile(f, fileVersion) =>
           Some((f, FileType.DELTA, fileVersion))
         case CompactedDeltaFile(f, startVersion, endVersion)
             if includeMinorCompactions && versionToLoad.forall(endVersion <= _) =>
@@ -757,10 +760,14 @@ trait SnapshotManagement { self: DeltaLog =>
       log"Loading version ${MDC(DeltaLogKeys.VERSION, initSegment.version)}" + startingFrom)
     createSnapshotFromGivenOrEquivalentLogSegment(
         initSegment, tableCommitCoordinatorClientOpt, catalogTableOpt) { segment =>
+      // Start reading the latest commit's CommitInfo (the fallback source of the last manifest
+      // commit reference, used when no CRC is available) in parallel with the CRC read below.
+      val lastCommitInfoFutureOpt = maybeReadLastCommitInfoAsync(
+        segment, shouldReconcileAMTCheckpointProvider)
       val checksumOptAfterRead = checksumOpt.orElse(
         readChecksum(segment.version, lastSeenChecksumFileStatusOpt))
       val finalLogSegment = if (shouldReconcileAMTCheckpointProvider) {
-        reconcileAMTCheckpointProvider(segment, checksumOptAfterRead)
+        reconcileAMTCheckpointProvider(segment, checksumOptAfterRead, lastCommitInfoFutureOpt)
       } else {
         segment
       }
@@ -1723,9 +1730,12 @@ trait SnapshotManagement { self: DeltaLog =>
 }
 
 object SnapshotManagement extends DeltaLogging {
-  // A thread pool for reading checkpoint files and collecting checkpoint v2 actions like
+  // A thread pool for checkpoint resolution.
+  // For v2 checkpoints, we use it to read the checkpoint files and collect the v2 actions like
   // checkpointMetadata, sidecarFiles.
-  private[delta] lazy val checkpointV2ThreadPool = {
+  // For AMT checkpoints, we use it to read the latest commit's CommitInfo during snapshot
+  // construction, as a fallback source when CRC is absent.
+  private[delta] lazy val checkpointThreadPool = {
     val numThreads = SparkSession.active.sessionState.conf.getConf(
       DeltaSQLConf.CHECKPOINT_V2_DRIVER_THREADPOOL_PARALLELISM)
     DeltaThreadPool("checkpointV2-threadpool", numThreads)

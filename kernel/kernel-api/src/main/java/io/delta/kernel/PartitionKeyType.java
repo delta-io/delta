@@ -13,14 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.internal.v2.catalog
+package io.delta.kernel;
 
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import io.delta.kernel.annotation.Evolving;
 
 /**
- * Scala inheritance bridge for the Java [[DeltaV2Table]]. This lets the table use the scoped
- * profiling helpers on [[DeltaLogging]] without duplicating them in a companion object.
+ * Indicates whether the partition-column keys of a {@code partitionValues} map are logical or
+ * physical column names.
  */
-private[catalog] abstract class DeltaV2TableLogging
-  extends DeltaV2TableShims
-  with DeltaLogging
+@Evolving
+public enum PartitionKeyType {
+  LOGICAL,
+  PHYSICAL
+}

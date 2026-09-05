@@ -79,9 +79,22 @@ object DeltaThrowableHelper
    */
   def getMessage(errorClass: String, messageParameters: Array[String]): String = {
     validateParameterValues(errorClass, errorSubClass = null, messageParameters)
-    val template = errorClassReader.getMessageTemplate(errorClass)
+    val template = getMessageTemplate(errorClass)
     val message = formatMessage(errorClass, messageParameters, template)
     s"[$errorClass] $message"
+  }
+
+  /**
+   * This is a temporary workaround for SPARK-58999. It bypasses a limitation in Spark, and allows
+   * us to raise an error that uses only the main error class, even if the given error class has
+   * available subclasses.
+   */
+  private[delta] def getMessageTemplate(errorClass: String): String = {
+    if (errorClass.contains(".")) {
+      errorClassReader.getMessageTemplate(errorClass)
+    } else {
+      getMainMessageTemplate(errorClass)
+    }
   }
 
   private def formatMessage(
@@ -174,7 +187,7 @@ object DeltaThrowableHelper
     } else {
       errorClass + "." + errorSubClass
     }
-    val parameterizedMessage = errorClassReader.getMessageTemplate(wholeErrorClass)
+    val parameterizedMessage = getMessageTemplate(wholeErrorClass)
     parsePrameterNamesFromParameterizedMessage(parameterizedMessage)
   }
 

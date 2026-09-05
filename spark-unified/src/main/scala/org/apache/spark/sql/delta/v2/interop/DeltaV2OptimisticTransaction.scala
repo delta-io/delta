@@ -39,7 +39,7 @@ import io.delta.kernel.expressions.{Literal => KernelLiteral}
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshotImpl}
 import io.delta.kernel.internal.util.{PartitionUtils => KernelPartitionUtils, Utils => KernelUtils}
 import io.delta.kernel.statistics.{DataFileStatistics => KernelDataFileStatistics}
-import io.delta.kernel.types.{StringType => KernelStringType, StructType => KernelStructType}
+import io.delta.kernel.types.{StringType => KernelStringType}
 import io.delta.kernel.utils.{CloseableIterable => KernelCloseableIterable, DataFileStatus => KernelDataFileStatus}
 
 // scalastyle:on import.ordering.noEmptyLine
@@ -100,6 +100,11 @@ private[v2] class DeltaV2OptimisticTransaction(
 
   /** A Kernel-backed transaction has no V1 DeltaLog to source a clock from; use a system clock. */
   override def clock: Clock = new SystemClock
+
+
+  /** No log store implemented, emit empty. */
+  override protected def commitLogStoreClassName: String = ""
+  override protected[delta] def commitLogStoreClassNameForTag: String = ""
 
 
   override def registerPostCommitHook(hook: PostCommitHook): Unit = {
@@ -253,7 +258,8 @@ private[v2] class DeltaV2OptimisticTransaction(
         DeltaFileOperations.absolutePath(dataPathStr, addFile.path).toString,
         addFile.size,
         addFile.modificationTime,
-        kernelStatistics(addFile.stats, kernelSchema))
+        Option(addFile.stats).map(KernelDataFileStatistics.deserializeFromJson(_, kernelSchema))
+          .getOrElse(Optional.empty[KernelDataFileStatistics]()))
 
     new KernelCloseableIterable[KernelRow] {
       override def iterator() = {
@@ -273,16 +279,5 @@ private[v2] class DeltaV2OptimisticTransaction(
 
       override def close(): Unit = {}
     }
-  }
-
-  /**
-   * Carries the FULL AddFile stats JSON (numRecords/min/max/nullCount/tightBounds) into the
-   * kernel add action.
-   */
-  private def kernelStatistics(
-      statsJson: String,
-      kernelSchema: KernelStructType): Optional[KernelDataFileStatistics] = {
-    if (statsJson == null) return Optional.empty()
-    KernelDataFileStatistics.deserializeFromJson(statsJson, kernelSchema)
   }
 }

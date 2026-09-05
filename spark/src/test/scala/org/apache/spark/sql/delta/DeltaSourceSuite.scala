@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{File, FileInputStream, OutputStream, PrintWriter, StringWriter}
+import java.io.{File, FileInputStream, FileNotFoundException, OutputStream, PrintWriter, StringWriter}
 import java.net.URI
 import java.sql.Timestamp
 import java.util.UUID
@@ -40,7 +40,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 import org.scalatest.time.{Seconds, Span}
 
-import org.apache.spark.{SparkConf, SparkThrowable}
+import org.apache.spark.{SparkConf, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
@@ -2282,15 +2282,18 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             assert(e.getMessage.contains(
               "unexpectedly still requires additional file-system listing"))
           } else {
-            // getBatch reads versions 0-1 (version 2 is gone), so maxVersionSeen = 1.
-            // lastExpectedVersion = 2 in both cases:
-            //   mid-version:  endOffset=(v2, index=0) -> lastExpectedVersion = 2
-            //   fully consumed: endOffset=(v3, BASE_INDEX) -> lastExpectedVersion = 3 - 1 = 2
-            val e = intercept[DeltaIllegalStateException] {
+            // With the parallel CommitInfo read, getBatch's `update()` call eagerly reads the last
+            // commit's file during snapshot construction to source the AMT manifest reference.
+            // Because v2's commit file was deleted, that read fails as a SparkException wrapping a
+            // FileNotFoundException before the streaming's DELTA_STREAMING_TRAILING_COMMIT_MISSING
+            // check fires.
+            val e = intercept[SparkException] {
               source.getBatch(startOffsetOption = None, endOffset)
             }
-            checkError(e, "DELTA_STREAMING_TRAILING_COMMIT_MISSING", "42K03",
-              Map("expectedVersion" -> "2", "seenVersion" -> "1"))
+            assert(
+              Iterator.iterate[Throwable](e)(_.getCause).takeWhile(_ != null)
+                .exists(_.isInstanceOf[FileNotFoundException]),
+              s"expected a FileNotFoundException in the cause chain, got: $e")
           }
         }
       }
@@ -2694,7 +2697,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       Seq(1, 2, 3).toDF().write.delta(inputDir.toString)
 
-      val df = spark.readStream.delta(inputDir.toString)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       val stream = df.writeStream
         .option("checkpointLocation", checkpointDir.toString)
@@ -3376,20 +3379,19 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     withTable("srcTable") {
       withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>
         def readStream(startingVersion: Option[Long] = None): DataFrame = {
-          var dsr = spark.readStream
-          startingVersion.foreach { v =>
-            dsr = dsr.option("startingVersion", v)
-          }
-          dsr.table("srcTable")
+          val options = startingVersion
+            .map(version => Map("startingVersion" -> version.toString))
+            .getOrElse(Map.empty)
+          loadStreamWithOptions(srcTblDir.getCanonicalPath, options)
         }
 
-        sql(s"""
+        executeDml(s"""
              |CREATE TABLE srcTable (
              |  a STRING NOT NULL,
              |  b STRING NOT NULL
              |) USING DELTA LOCATION '${srcTblDir.getCanonicalPath}'
              |""".stripMargin)
-        sql("""
+        executeDml("""
             |INSERT INTO srcTable
             | VALUES ("a", "b")
             |""".stripMargin)
@@ -3411,12 +3413,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           // Write more data and drop NOT NULL constraint
           Execute { _ =>
             // A batch of Delta actions
-            sql("""
+            executeDml("""
               |INSERT INTO srcTable
               |VALUES ("c", "d")
               |""".stripMargin)
-            sql("ALTER TABLE srcTable ALTER COLUMN a DROP NOT NULL")
-            sql("""
+            executeDml("ALTER TABLE srcTable ALTER COLUMN a DROP NOT NULL")
+            executeDml("""
               |INSERT INTO srcTable
               |VALUES ("e", "f")
               |""".stripMargin)
@@ -3447,7 +3449,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           txn.commit(txn.metadata.copy(schemaString = newSchema.json) :: Nil,
             DeltaOperations.ManualUpdate)
         }
-        sql("""
+        executeDml("""
             |INSERT INTO srcTable
             |VALUES ("g", "h")
             |""".stripMargin)

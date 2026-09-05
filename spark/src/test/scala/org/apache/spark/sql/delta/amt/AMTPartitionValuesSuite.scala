@@ -16,13 +16,12 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.types.{BooleanType, DataType, DateType, DecimalType, IntegerType, LongType, MapType, MetadataBuilder, StringType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.types.{BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
 
 /**
  * Tests for [[AMTPartitionValues]], the converter between Delta's physical-name partition string
@@ -60,106 +59,61 @@ class AMTPartitionValuesSuite extends AMTCheckpointTestBase {
     Seq(sampleAddFile.copy(partitionValues = partitionValues))
       .map(DataEntry.fromAddFile(_, addedTracking, tableRoot).wrap).toDS().toDF()
 
-  /** A partition column whose physical name differs from its logical one, as column mapping
-   *  assigns them. */
-  private def partitionColumn(logical: String, physical: String, dataType: DataType) =
-    StructField(logical, dataType, nullable = true,
-      new MetadataBuilder()
-        .putString(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, physical)
-        .build())
-
-  test("partition adapter writes typed logical values and restores the physical-name map") {
-    val partitionSchema = StructType(Seq(
-      partitionColumn("region", "col-1", IntegerType),
-      partitionColumn("day", "col-2", DateType),
-      partitionColumn("name", "col-3", StringType),
-      partitionColumn("count", "col-4", LongType),
-      partitionColumn("active", "col-5", BooleanType),
-      partitionColumn("amount", "col-6", DecimalType(9, 3)),
-      partitionColumn("at", "col-7", TimestampType)))
-    // The values a Delta log would hold for these columns. `col-7` is already UTC-normalized
-    // because that is the form `literalToNormalizedString` writes a timestamp in; the round trip
-    // below is only lossless for the form the writer actually produces.
-    val logged = Map(
-      "col-1" -> "7",
-      "col-2" -> "2026-07-25",
-      "col-3" -> "us-west-2",
-      "col-4" -> "9007199254740993",
-      "col-5" -> "true",
-      "col-6" -> "1.250",
-      "col-7" -> "2026-07-25T08:02:03.456000Z")
-    val input = entryWith(logged)
-
-    // The persisted struct is keyed by *logical* name and typed, while the source map was keyed by
-    // physical name with string values.
-    val persistedDF = AMTPartitionValues.forWrite(input, partitionSchema)
-    assert(persistedDF.schema("partition").dataType.asInstanceOf[StructType]
-      .map(f => f.name -> f.dataType) == partitionSchema.map(f => f.name -> f.dataType))
-
-    val partition = persistedDF.select("partition.*").head()
-    assert(partition.getInt(0) == 7)
-    assert(partition.getDate(1).toString == "2026-07-25")
-    assert(partition.getString(2) == "us-west-2")
-    // Wider than a Double can hold exactly, so this also shows the value is not going through one.
-    assert(partition.getLong(3) == 9007199254740993L)
-    assert(partition.getBoolean(4))
-    assert(partition.getDecimal(5) == new java.math.BigDecimal("1.250"))
-    assert(partition.getTimestamp(6).toInstant.toString == "2026-07-25T08:02:03.456Z")
-
-    // The whole struct collects as a nested Row of typed values, not as a map of strings.
-    val persistedRow = persistedDF.select("partition").collect().head.getStruct(0)
-    assert(persistedRow.schema.fieldNames.toSeq == partitionSchema.map(_.name))
-    assert(persistedRow.getInt(0) == 7)
-
-    // Reading it back restores exactly the physical-name string map the Delta log held.
-    val restoredDF = AMTPartitionValues.forRead(persistedDF, partitionSchema)
-    assert(restoredDF.select("partition").collect().toSeq == Seq(Row(logged)))
-    val restored = restoredDF.select(col("partition")).as[Map[String, String]].head()
-    assert(restored == logged)
-  }
-
-  test("partition adapter rejects an invalid non-null typed value") {
-    val schema = StructType(Seq(StructField("p", IntegerType)))
-    val input = entryWith(Map("p" -> "not-an-int"))
-
-    // `forWrite` casts with ANSI on, so an unparseable value fails the write rather than silently
-    // persisting a null partition value.
-    val error = intercept[Exception] {
-      AMTPartitionValues.forWrite(input, schema).collect()
-    }
-    assert(error.toString.contains("CAST_INVALID_INPUT"))
-  }
-
   /**
-   * The physical-name partition-value maps `forRead` reconstructs from the manifest tree's DATA
-   * entries.
+   * Asserts the persisted `partition` field for column `name` has exactly the `expected` Iceberg
+   * type and the string form of its value.
    */
-  private def reconstructPartitionValues(
-      manifests: Seq[String],
-      partitionSchema: StructType): Set[Map[String, String]] =
-    allowReadWithinDeltaLog {
-      val entries = spark.read.parquet(manifests: _*)
-        .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
-      AMTPartitionValues.forRead(entries, partitionSchema)
-        .select(col("partition"))
-        .collect()
-        .map(_.getMap[String, String](0).toMap)
-        .toSet
+  private def assertPartitionField(
+      persisted: DataFrame,
+      name: String,
+      expected: (DataType, String)): Unit = {
+    val field = persisted.schema("partition").dataType.asInstanceOf[StructType](name)
+    val row = persisted.select(s"partition.$name").head()
+    val actual = (field.dataType, String.valueOf(row.get(0)))
+    assert(actual == expected, s"partition.$name\n  expected=$expected\n  actual=$actual")
+  }
+
+  test("forWrite persists partition values as the typed struct, keyed by logical name") {
+    withAllTypesTable("amt_partition_write", numFiles = 1) { deltaLog =>
+      val snapshot = deltaLog.update()
+      val partitionSchema = snapshot.metadata.partitionSchema
+      val add = liveAddFiles(snapshot).head
+      val entry = DataEntry.fromAddFile(
+        add, AMTWriteHelper.addedTrackingForDataEntry(), deltaLog.dataPath)
+      val input = Seq(entry.wrap).toDS().toDF()
+      val persisted = AMTPartitionValues.forWrite(input, partitionSchema)
+
+      // The struct keeps the partition columns' *logical* names, though the source map is keyed by
+      // physical name -- an Iceberg reader resolves them by field id, so the name is informational.
+      val partition = persisted.schema("partition").dataType.asInstanceOf[StructType]
+      assert(partition.fieldNames.toSeq == partitionableTestColumns.map("p_" + _.name))
+
+      assertPartitionField(persisted, "p_int", (IntegerType, "0"))
+      assertPartitionField(persisted, "p_long", (LongType, "0"))
+      assertPartitionField(persisted, "p_short", (ShortType, "0"))
+      assertPartitionField(persisted, "p_byte", (ByteType, "0"))
+      assertPartitionField(persisted, "p_str", (StringType, "row0"))
+      assertPartitionField(persisted, "p_date", (DateType, "2026-07-25"))
+      assertPartitionField(persisted, "p_ts", (TimestampType, "2026-07-25 01:02:03.456"))
+      assertPartitionField(persisted, "p_ts_ntz", (TimestampNTZType, "2026-07-25T01:02:03.456"))
+      assertPartitionField(persisted, "p_dec", (DecimalType(9, 3), "0.000"))
+      assertPartitionField(persisted, "p_bool", (BooleanType, "false"))
+      assertPartitionField(persisted, "p_float", (FloatType, "0.0"))
+      assertPartitionField(persisted, "p_double", (DoubleType, "0.0"))
+      // Binary's string form is not stable, so assert only that it keeps its type.
+      assert(partition("p_binary").dataType == BinaryType,
+        s"p_binary should stay binary: ${partition("p_binary")}")
     }
+  }
 
   test("forRead reproduces the partition values the delta log holds, for every type") {
-    val numFiles = 4
-    withAllPartitionTypesTable(
-        "amt_partition_roundtrip", numFiles = numFiles, maxEntriesPerLeaf = 2) { deltaLog =>
+    withAllTypesTable("amt_partition_roundtrip", numFiles = leafPackedFiles) { deltaLog =>
       commitCheckpoint(deltaLog, incremental = false)
       val snapshot = deltaLog.update()
       val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
       val partitionSchema = snapshot.metadata.partitionSchema
-      // A full rewrite can hash every file into one Spark partition. In that valid representation,
-      // the sole leaf is promoted to the root and there are no leaf pointers to read.
-      val manifests = provider.topLevelFiles.map(_.getPath.toString) ++
-        provider.liveLeafManifestAbsolutePaths.map(_.toString)
-      assert(manifests.nonEmpty, "Expected at least a root manifest.")
+      val leaves = provider.liveLeafManifestAbsolutePaths.map(_.toString)
+      assert(leaves.nonEmpty, "Expected at least one leaf manifest.")
 
       // Read the commit json directly rather than going through the snapshot: an AMT snapshot
       // reconstructs its AddFiles through `forRead`, so comparing against it would compare
@@ -174,12 +128,32 @@ class AMTPartitionValuesSuite extends AMTCheckpointTestBase {
         .collect()
         .map(_.getMap[String, String](0).toMap)
         .toSet
-      assert(logged.size == numFiles, s"Expected one logged add per file, got ${logged.size}.")
+      assert(logged.size == leafPackedFiles,
+        s"Expected one logged add per file, got ${logged.size}.")
 
-      val reconstructed = reconstructPartitionValues(manifests, partitionSchema)
+      // forRead reconstructs the physical-name partition-value map from the leaves' DATA entries.
+      val reconstructed = withManifestDataEntries(leaves) { entries =>
+        AMTPartitionValues.forRead(entries, partitionSchema)
+          .select(col("partition"))
+          .collect()
+          .map(_.getMap[String, String](0).toMap)
+          .toSet
+      }
       assert(reconstructed == logged,
         s"forRead did not reproduce the logged partition values.\n" +
           s"  logged=$logged\n  reconstructed=$reconstructed")
     }
+  }
+
+  test("partition adapter rejects an invalid non-null typed value") {
+    val schema = StructType(Seq(StructField("p", IntegerType)))
+    val input = entryWith(Map("p" -> "not-an-int"))
+
+    // `forWrite` casts with ANSI on, so an unparseable value fails the write rather than silently
+    // persisting a null partition value.
+    val error = intercept[Exception] {
+      AMTPartitionValues.forWrite(input, schema).collect()
+    }
+    assert(error.toString.contains("CAST_INVALID_INPUT"))
   }
 }

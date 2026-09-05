@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.functions.col
 
 class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTestUtils {
@@ -32,24 +33,28 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
    *  is, so test assertions compare against the identical value. */
   private def relativeManifest(snapshot: Snapshot, absLeaf: Path): String = {
     val tableRoot = snapshot.deltaLog.dataPath
-    val fs = tableRoot.getFileSystem(snapshot.deltaLog.newDeltaHadoopConf())
-    AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, absLeaf)
+    AMTUtils.relativizeLocation(tableRoot.toString, absLeaf.toString)
   }
 
   /**
-   * The (relative leaf manifest, position) -> data-file location map for every live DATA entry
-   * across the snapshot's leaves, read straight from the leaf parquet via `_metadata.row_index`.
+   * The (relative leaf manifest, position) -> Delta AddFile path map for every live DATA entry
+   * across the snapshot's leaves, read from leaf parquet via `_metadata.row_index`.
    */
   private def leafLocationByBackRef(snapshot: Snapshot): Map[(String, Long), String] = {
     val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
+    allowReadWithinDeltaLog {
       provider.liveLeafManifestAbsolutePaths.flatMap { leafPath =>
         val relManifest = relativeManifest(snapshot, leafPath)
         spark.read.parquet(leafPath.toString)
           .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
           .select(col("location"), col("_metadata.row_index").as("pos"))
           .collect()
-          .map(row => (relManifest, row.getLong(1)) -> row.getString(0))
+          .map { row =>
+            val deltaPath = SparkPath.fromPathString(row.getString(0)).urlEncoded
+            (relManifest, row.getLong(1)) -> deltaPath
+          }
       }.toMap
+    }
   }
 
   /** All actions committed after `afterVersion`, up to the latest version. */
@@ -142,7 +147,7 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
       assert(leafPaths.contains(br.manifest),
         s"Back-ref manifest ${br.manifest} must be one of the tree's leaves $leafPaths.")
       // The back-ref must point at exactly the leaf entry describing this data file.
-      assert(groundTruth.get((br.manifest, br.pos)).contains(add.path),
+      assert(groundTruth.get((br.manifest, br.pos.toLong)).contains(add.path),
         s"Back-ref (${br.manifest}, ${br.pos}) must resolve to the entry for ${add.path}.")
     }
   }
@@ -431,12 +436,65 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
   test("commit fails when a present file's tombstone carries the wrong back reference") {
     withTable("amt_commit_wrong") {
       val adds = emitStampedAddFiles("amt_commit_wrong")
-      val wrongBr = adds.head.backReference.get.copy(pos = adds.head.backReference.get.pos + 1000L)
+      val wrongBr = adds.head.backReference.get.copy(pos = adds.head.backReference.get.pos + 1000)
       val wrong = adds.head.removeWithTimestamp().copy(backReference = Some(wrongBr))
       val ex = intercept[IllegalStateException] {
         commitActions("amt_commit_wrong", Seq(wrong))
       }
       assert(ex.getMessage.contains("does not match the AMT"))
+    }
+  }
+
+  test("reStampBackReferences drops an MDV-masked back reference and keeps a live one") {
+    withTable("amt_restamp_mdv") {
+      val name = "amt_restamp_mdv"
+      // A tree with three full leaves; every seeded file is stamped with a leaf back reference.
+      val adds = emitStampedAddFiles(name)
+      val deltaLog = deltaLogForName(name)
+      val originalLeafLocations = amtProvider(deltaLog.update())
+        .getOrElse(fail("expected AMTCheckpointProvider")).leaves.map(_.location).toSet
+      val victim = adds.head
+      val keeper = adds.last
+      val victimBr = victim.backReference.getOrElse(fail("victim must be leaf-resident."))
+      val keeperBr = keeper.backReference.getOrElse(fail("keeper must be leaf-resident."))
+
+      // Remove the victim whole, then fold the removal into the tree with an incremental
+      // checkpoint. Its leaf keeps nine live entries, so it is carried forward at the SAME
+      // location with the victim's position MDV-masked -- the case a leaf-location-only gate
+      // would wrongly skip.
+      commitActions(name, Seq(victim.removeWithTimestamp()))
+      commitCheckpoint(deltaLog, incremental = true)
+
+      val winnerSnapshot = deltaLog.update()
+      val winner = amtProvider(winnerSnapshot).getOrElse(fail("expected AMTCheckpointProvider"))
+      assert(winner.leaves.map(_.location).toSet == originalLeafLocations,
+        "precondition: the winning tree must carry the leaves forward at the same locations.")
+      assert(winner.leaves.exists(_.location == victimBr.manifest),
+        "precondition: the victim's leaf must still be present (carried forward) in the winner.")
+      val livePaths = liveAddFiles(winnerSnapshot).map(_.path).toSet
+      assert(!livePaths.contains(victim.path),
+        "precondition: the victim's leaf entry must be MDV-masked (no longer live).")
+      assert(livePaths.contains(keeper.path),
+        "precondition: the keeper must still be live at its stamped leaf position.")
+
+      // Re-stamping tombstones for both against the winner tree: the victim's stale back reference
+      // must be dropped (its entry moved out of the leaf), the keeper's must be preserved.
+      val restamped = winner.reStampBackReferences(
+        spark, deltaLog, Seq(victim.removeWithTimestamp(), keeper.removeWithTimestamp())).actions
+      val backRefByPath =
+        restamped.collect { case r: RemoveFile => r.path -> r.backReference }.toMap
+      assert(backRefByPath(victim.path).isEmpty,
+        s"the MDV-masked victim's stale back reference must be dropped, was " +
+          s"${backRefByPath(victim.path)}.")
+      assert(backRefByPath(keeper.path).contains(keeperBr),
+        s"the still-live keeper's back reference must be preserved as $keeperBr, was " +
+          s"${backRefByPath(keeper.path)}.")
+
+      // When every back reference is still valid, the batch is returned untouched -- no live map is
+      // built and no action is re-stamped.
+      val keeperOnly = Seq(keeper.removeWithTimestamp())
+      assert(winner.reStampBackReferences(spark, deltaLog, keeperOnly).actions eq keeperOnly,
+        "a batch whose back references are all still valid must be returned as-is.")
     }
   }
 

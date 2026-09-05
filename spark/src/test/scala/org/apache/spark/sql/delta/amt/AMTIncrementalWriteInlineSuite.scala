@@ -82,7 +82,7 @@ class AMTIncrementalWriteInlineSuite extends AMTIncrementalWriteTestBase with Gr
           initialIdRangeInLeaf = 1 to 30).map(_.location).toSet
         assert(leavesBefore.size >= 2,
           s"Need a tree-shaped bootstrap; got ${leavesBefore.size} leaves.")
-        val physicalEntriesBefore = currentLeafDataEntries(amtDeltaLog.update())
+        val physicalEntriesBefore = leafLiveDataEntryCount(amtDeltaLog.update())
         assert(physicalEntriesBefore == 30,
           "Every bootstrap file is spread across the AMT's leaves.")
 
@@ -100,7 +100,7 @@ class AMTIncrementalWriteInlineSuite extends AMTIncrementalWriteTestBase with Gr
           inlineAMTCommitActions = Some(Seq(removeOf(amtDeltaLog, 1))))
         assert(leafPointers(amtDeltaLog.update()).keySet == leavesBefore,
           "The delete must carry every leaf forward, not rewrite or drop one.")
-        assert(currentLeafDataEntries(amtDeltaLog.update()) == physicalEntriesBefore,
+        assert(leafLiveDataEntryCount(amtDeltaLog.update()) == physicalEntriesBefore,
           "The carried leaf keeps every physical entry; a delete only sets the MDV.")
       }
     }

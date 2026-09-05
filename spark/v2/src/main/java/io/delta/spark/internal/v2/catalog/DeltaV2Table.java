@@ -90,7 +90,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.jdk.javaapi.CollectionConverters;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class DeltaV2Table extends DeltaV2TableLogging
+public class DeltaV2Table extends DeltaV2TableShimsWithLogging
     implements Table,
         SupportsRead,
         SupportsWrite,
@@ -247,10 +247,13 @@ public class DeltaV2Table extends DeltaV2TableLogging
     this.kernelEngine = KernelEngineFactory.createDefaultEngine(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     try {
-      this.initialSnapshot =
-          timeTravelVersion.isPresent()
-              ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
-              : snapshotManager.loadLatestSnapshot();
+      if (timeTravelVersion.isPresent()) {
+        this.initialSnapshot =
+            loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong());
+      } else {
+        this.initialSnapshot =
+            recordFrameProfileValue("snapshot.loadLatest", snapshotManager::loadLatestSnapshot);
+      }
     } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
       // Rethrow as the Delta-module wrapper so catalog/interop layer never names a Kernel type.
       throw new TableNotFoundException(tablePath);
@@ -552,8 +555,8 @@ public class DeltaV2Table extends DeltaV2TableLogging
   private Snapshot loadSnapshotAtCheckedVersion(DeltaV2SnapshotManager manager, long version) {
     manager.checkVersionExists(
         version, /* mustBeRecreatable = */ true, /* allowOutOfRange = */ false);
-    return recordFrameProfileValue(
-        "Delta", "DeltaV2.snapshot.loadAtVersion", () -> manager.loadSnapshotAt(version));
+    final Supplier<Snapshot> loadSnapshot = () -> manager.loadSnapshotAt(version);
+    return recordFrameProfileValue("snapshot.loadAtVersion", loadSnapshot);
   }
 
   @Override

@@ -16,13 +16,8 @@
 
 package org.apache.spark.sql.delta.amt
 
-import java.util.UUID
-
-import scala.util.Try
-
 import org.apache.spark.sql.delta.DeltaColumnMapping
-import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor}
-import org.apache.spark.sql.delta.stats.DeltaStatistics
+import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.core.JsonParser
@@ -30,6 +25,7 @@ import com.fasterxml.jackson.databind.{DeserializationContext, JsonDeserializer}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
@@ -56,6 +52,9 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
  *                      for tables written by both Delta and Iceberg.
+ * @param tags Delta [[AddFile]] tags. They have no Iceberg V4 slot, so the field is a Delta-private
+ *             extension carried on DATA entries only, so a file's tags survive a manifest round
+ *             trip.
  */
 case class AMTSingleAction(
     content_type: Int,                          // ID: 134, required.
@@ -69,10 +68,11 @@ case class AMTSingleAction(
     sort_order_id: Option[Int],                 // ID: 140, optional (only when content_type=0).
     record_count: Long,                         // ID: 103, required.
     file_size_in_bytes: Long,                   // ID: 104, required.
-    content_stats: Option[ContentStats],        // ID: 146, optional.
+    content_stats: Option[String],              // ID: 146, optional.
     manifest_info: Option[ManifestInfo],        // ID: 150, required for DATA_MANIFEST.
     key_metadata: Option[Array[Byte]],          // ID: 131, optional.
-    split_offsets: Option[Seq[Long]]            // ID: 132, optional.
+    split_offsets: Option[Seq[Long]],           // ID: 132, optional.
+    tags: Option[Map[String, String]]           // Delta-private id (only when content_type=0).
 ) {
   AMTSingleAction.validate(this)
 
@@ -96,6 +96,7 @@ case class AMTSingleAction(
         content_stats = content_stats,
         key_metadata = key_metadata,
         split_offsets = split_offsets,
+        tags = tags,
         format_version = format_version)
     case AMTSingleAction.ContentType.Type.DataManifest =>
       DataManifestEntry(
@@ -169,6 +170,9 @@ object AMTSingleAction {
     require(action.content_type == ContentType.Type.Data || action.sort_order_id.isEmpty,
       s"sort_order_id must be null when content_type != ${ContentType.Type.Data}; " +
         s"got content_type=${action.content_type}.")
+    require(action.content_type == ContentType.Type.Data || action.tags.isEmpty,
+      s"tags must be null when content_type != ${ContentType.Type.Data}; " +
+        s"got content_type=${action.content_type}.")
     if (ContentType.isRootOnly(action.content_type)) {
       (action.tracking.sequence_number, action.tracking.file_sequence_number) match {
         case (Some(a), Some(b)) => require(a == b,
@@ -197,6 +201,20 @@ object AMTSingleAction {
   private def optional(id: Long, name: String): AMTFieldSpec =
     AMTFieldSpec(name, id, required = false)
 
+  /**
+   * Field ids for the Delta-private `tags` map. Delta's [[AddFile]] tags have no Iceberg V4 slot,
+   * so they are stamped from the top of the id space, just below Iceberg's reserved band. The V4
+   * spec forbids field ids greater than `Int.MaxValue - 200` (2147483447), reserving that range for
+   * metadata columns (`_file`, `_row_id`, ...); anchoring `tags` at `Int.MaxValue - 300` keeps it a
+   * legal, non-reserved id that does not collide with any other id this schema assigns in practice.
+   * The one theoretical exception is `content_stats` (ids grow as 10000 + 200 * columnId): a table
+   * would need more than ~10.7M stats-collected columns for those ids to reach this band, which is
+   * not realistic.
+   */
+  private[amt] val TagsFieldId: Long = Int.MaxValue.toLong - 300L
+  private val TAGS_KEY_FIELD_ID: Long = TagsFieldId + 1L
+  private val TAGS_VALUE_FIELD_ID: Long = TagsFieldId + 2L
+
   /** Iceberg V4 field specs for the top-level [[AMTSingleAction]] fields. */
   private val topLevelFields: Seq[AMTFieldSpec] = Seq(
     required(134L, "content_type"),
@@ -213,7 +231,8 @@ object AMTSingleAction {
     optional(146L, "content_stats"),
     optional(150L, "manifest_info"),
     optional(131L, "key_metadata"),
-    optional(132L, "split_offsets"))
+    optional(132L, "split_offsets"),
+    optional(TagsFieldId, "tags"))
 
   /** Iceberg V4 field specs for the scalar fields of the nested [[Tracking]] struct. */
   private val trackingFields: Seq[AMTFieldSpec] = Seq(
@@ -273,7 +292,9 @@ object AMTSingleAction {
       children.map(f => s"$parent.${f.name}" -> f.id.toInt)
     }
     val nestedContainers = Map(
-      "split_offsets.element" -> SPLIT_OFFSETS_ELEMENT_FIELD_ID.toInt)
+      "split_offsets.element" -> SPLIT_OFFSETS_ELEMENT_FIELD_ID.toInt,
+      "tags.key" -> TAGS_KEY_FIELD_ID.toInt,
+      "tags.value" -> TAGS_VALUE_FIELD_ID.toInt)
     (topLevel ++ nested ++ nestedContainers).toMap
   }
 
@@ -297,16 +318,15 @@ object AMTSingleAction {
     val builder = new MetadataBuilder()
       .withMetadata(field.metadata)
       .putLong(ParquetUtils.FIELD_ID_METADATA_KEY, spec.id)
-    // Attach nested (element) ids for list-bearing fields.
-    // DeltaParquetWriteSupport reads these off the list field itself, keyed `<field>.element`.
-    listElementFieldId(field.name).foreach { elementId =>
+    // Attach nested (list-element / map key-value) ids for container-typed fields.
+    // DeltaParquetWriteSupport reads these off the field itself, keyed by the relative path
+    // (`<field>.element` for a list, `<field>.key` / `<field>.value` for a map).
+    val nestedIds = nestedFieldIds(field.name)
+    if (nestedIds.nonEmpty) {
+      val nestedBuilder = new MetadataBuilder()
+      nestedIds.foreach { case (relativePath, id) => nestedBuilder.putLong(relativePath, id) }
       builder.putMetadata(
-        DeltaColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY,
-        new MetadataBuilder()
-          .putLong(
-            Seq(field.name, DeltaColumnMapping.PARQUET_LIST_ELEMENT_FIELD_NAME).mkString("."),
-            elementId)
-          .build())
+        DeltaColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY, nestedBuilder.build())
     }
     // Rewrite the field's data type by applying nested-struct field specs (id + nullability).
     val stampedDataType = field.dataType match {
@@ -333,10 +353,19 @@ object AMTSingleAction {
       metadata = builder.build())
   }
 
-  /** List-element field id for a top-level list field, or None if not a list field. */
-  private def listElementFieldId(fieldName: String): Option[Long] = fieldName match {
-    case "split_offsets" => Some(SPLIT_OFFSETS_ELEMENT_FIELD_ID)
-    case _ => None
+  /**
+   * Nested (list-element / map key-value) field ids for a top-level container field.
+   */
+  private def nestedFieldIds(fieldName: String): Seq[(String, Long)] = fieldName match {
+    case "split_offsets" =>
+      Seq(
+        s"$fieldName.${DeltaColumnMapping.PARQUET_LIST_ELEMENT_FIELD_NAME}" ->
+          SPLIT_OFFSETS_ELEMENT_FIELD_ID)
+    case "tags" =>
+      Seq(
+        s"$fieldName.${DeltaColumnMapping.PARQUET_MAP_KEY_FIELD_NAME}" -> TAGS_KEY_FIELD_ID,
+        s"$fieldName.${DeltaColumnMapping.PARQUET_MAP_VALUE_FIELD_NAME}" -> TAGS_VALUE_FIELD_ID)
+    case _ => Seq.empty
   }
 
   /**
@@ -364,15 +393,21 @@ object AMTSingleAction {
 
   /**
    * The [[AMTSingleAction]] schema as written to disk, which differs from the encoder's in-memory
-   * schema in four ways: every mapped field carries its Iceberg field id, required/optional is
-   * driven by the field spec rather than the encoder, `partition` holds the table's typed partition
-   * struct instead of a string map, and `partition` is absent entirely for an unpartitioned table.
+   * schema: every mapped field carries its Iceberg field id, required/optional is driven by the
+   * field spec rather than the encoder, and the two per-table fields take their table-dependent
+   * shape -- `partition` holds the typed partition struct (absent entirely for an unpartitioned
+   * table), and `content_stats` holds the typed per-column statistics struct.
    */
-  def persistedSchema(partitionSchema: StructType): StructType =
+  def persistedSchema(metadata: Metadata, protocol: Protocol): StructType =
     StructType(staticStampedSchema.flatMap {
       case field if field.name == "partition" =>
-        if (partitionSchema.isEmpty) None
-        else Some(field.copy(dataType = AMTPartitionValues.persistedSchema(partitionSchema)))
+        if (metadata.partitionSchema.isEmpty) None
+        else Some(field.copy(
+          dataType = AMTPartitionValues.persistedSchema(metadata.partitionSchema)))
+      case field if field.name == "content_stats" =>
+        val contentStatsSchema = AMTContentStats.persistedSchema(metadata, protocol)
+        if (contentStatsSchema.isEmpty) None
+        else Some(field.copy(dataType = contentStatsSchema))
       case field => Some(field)
     })
 }
@@ -410,6 +445,7 @@ sealed trait AMTAction {
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
  *                      for tables written by both Delta and Iceberg.
+ * @param tags Delta [[AddFile]] tags, preserved verbatim across the manifest round trip.
  * @param format_version Iceberg writer format version; 4 for V4.
  */
 case class DataEntry(
@@ -422,9 +458,10 @@ case class DataEntry(
     deletion_vector: Option[DeletionVector] = None,
     spec_id: Option[Int] = None,
     sort_order_id: Option[Int] = None,
-    content_stats: Option[ContentStats] = None,
+    content_stats: Option[String] = None,
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
+    tags: Option[Map[String, String]] = None,
     format_version: Int = AMTSingleAction.FormatVersionV4)
   extends AMTAction {
 
@@ -445,15 +482,15 @@ case class DataEntry(
     content_stats = content_stats,
     manifest_info = None,
     key_metadata = key_metadata,
-    split_offsets = split_offsets)
+    split_offsets = split_offsets,
+    tags = tags)
 
   def toAddFile(tableRoot: Path): AddFile = {
     val dv = deletion_vector.map(DeletionVector.toDescriptor(_, tableRoot)).orNull
-    // `record_count` (Iceberg field 103) and the Delta `numRecords` statistic are both the physical
-    // row count (total records in the file, including DV-deleted rows), so store it directly.
-    val stats = s"""{"${DeltaStatistics.NUM_RECORDS}":$record_count}"""
+    val stats = AMTContentStats.toStatsJson(content_stats, record_count)
     AddFile(
-      path = location,
+      // RFC-2396 encoding used by Delta.
+      path = SparkPath.fromPathString(location).urlEncoded,
       partitionValues = partition.getOrElse(Map.empty),
       size = file_size_in_bytes,
       modificationTime = 0L,
@@ -461,7 +498,8 @@ case class DataEntry(
       stats = stats,
       deletionVector = dv,
       baseRowId = tracking.first_row_id,
-      defaultRowCommitVersion = tracking.sequence_number,
+      defaultRowCommitVersion = tracking.file_sequence_number,
+      tags = tags.orNull,
       amtPassthrough = AMTPassthrough.fromDataEntry(this))
   }
 }
@@ -471,13 +509,15 @@ object DataEntry {
   def fromAddFile(add: AddFile, tracking: Tracking, tableRoot: Path): DataEntry = {
     val passthrough = add.amtPassthrough
     DataEntry(
-      location = add.path,
+      // RFC-2396 to Iceberg raw path conversion.
+      location = AMTUtils.relativizeLocation(
+        tableRoot.toString, SparkPath.fromUrlString(add.path).toPath.toString),
       file_format = AMTSingleAction.FileFormatParquet,
       // Round-trip the AddFile's row-tracking fields through the Iceberg tracking envelope so a
       // rowTracking-enabled table can reconstruct them on read.
       tracking = tracking.copy(
         first_row_id = add.baseRowId,
-        sequence_number = add.defaultRowCommitVersion),
+        file_sequence_number = add.defaultRowCommitVersion),
       // Iceberg field 103 is the physical record count of the file, not the live/logical
       // count after deletes; throw rather than guess when the AddFile carries no stats.
       record_count = add.numPhysicalRecords.getOrElse(
@@ -491,7 +531,8 @@ object DataEntry {
       sort_order_id = passthrough.flatMap(_.sort_order_id),
       key_metadata = passthrough.flatMap(_.key_metadata),
       split_offsets = passthrough.flatMap(_.split_offsets),
-      content_stats = None)
+      tags = Option(add.tags).map(_.toMap).filter(_.nonEmpty),
+      content_stats = AMTContentStats.fromStatsJson(add.stats))
   }
 }
 
@@ -642,7 +683,7 @@ case class DataManifestEntry(
     manifest_info: ManifestInfo,
     partition: Option[Map[String, String]] = None,
     spec_id: Option[Int] = None,
-    content_stats: Option[ContentStats] = None,
+    content_stats: Option[String] = None,
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
     format_version: Int = AMTSingleAction.FormatVersionV4)
@@ -665,7 +706,8 @@ case class DataManifestEntry(
     content_stats = content_stats,
     manifest_info = Some(manifest_info),
     key_metadata = key_metadata,
-    split_offsets = split_offsets)
+    split_offsets = split_offsets,
+    tags = None)
 
   /** Absolute [[Path]] to the referenced leaf manifest, resolving `location` against the root. */
   @JsonIgnore
@@ -730,6 +772,25 @@ case class Tracking(
     s"Unsupported tracking status: $status.")
 }
 
+/**
+ * A leaf manifest may be written before the commit version is assigned, so the tracking fields that
+ * depend on the commit could be written null. The root `DATA_MANIFEST` entry pointing at that
+ * leaf is written at commit time with explicit values, and a reader recovers each leaf entry's
+ * tracking by filling its nulls from that parent. This lets a leaf be written once and reused
+ * across commit retries, since only the root has to be rewritten.
+ *
+ * Every `status` named below is the child [[DataEntry]]'s status, not the parent
+ * `DATA_MANIFEST` entry's status. The inheritable fields are:
+ *
+ *  - `file_sequence_number` (4): inherited when null and the status is `ADDED`.
+ *  - `first_row_id` (142): inherited when null, whatever the status, but not by simply copying the
+ *    parent's value down. An entry takes the parent's `first_row_id` plus the summed
+ *    `record_count` of the entries physically before it in the same leaf that were themselves
+ *    null.
+ *
+ * The `ADDED` restriction keeps the file sequence number correct. Leaf entries with `EXISTING`
+ * status must have an explicit `file_sequence_number` instead of inheriting.
+ */
 object Tracking {
   /**
    * Closed set of `status` values, matching Iceberg V4 integer codes.
@@ -747,7 +808,98 @@ object Tracking {
     val Replaced: Int = 3
     val Modified: Int = 4
     val all: Set[Int] = Set(Existing, Added, Deleted, Replaced, Modified)
+
+    /**
+     * Statuses that keep an entry in the active table state, for both entry kinds: on a
+     * [[DataEntry]] the data file is still part of the table, and on a [[DataManifestEntry]] the
+     * leaf may still hold live [[DataEntry]]s, so a scan has to read it.
+     */
+    val liveEntryStatuses: Set[Int] = Set(Existing, Added, Modified)
+
+    /** The spec name of a `status` code, for error messages. */
+    def nameOf(status: Int): String = status match {
+      case Existing => "EXISTING"
+      case Added => "ADDED"
+      case Deleted => "DELETED"
+      case Replaced => "REPLACED"
+      case Modified => "MODIFIED"
+      case other => s"UNKNOWN($other)"
+    }
   }
+
+  /**
+   * Fills the null tracking fields of a leaf entry from the root `DATA_MANIFEST` entry that
+   * references its leaf.
+   *
+   * @param childTracking The leaf entry's tracking, as read off disk.
+   * @param parentTracking The inheritable values of the root entry referencing this leaf.
+   * @param childEntryLocationForLogging The child entry's `location`, used only to describe a
+   *                                     malformed entry.
+   */
+  def resolve(
+      childTracking: Tracking,
+      parentTracking: InheritableTracking,
+      childEntryLocationForLogging: String): Tracking = {
+    if (parentTracking.isEmpty) {
+      childTracking
+    } else {
+      val parentFileSequenceNumber = parentTracking.file_sequence_number.getOrElse(
+        throw new IllegalStateException(
+          "tracking.file_sequence_number must not be null in AMT root DATA_MANIFEST entries."))
+      childTracking.copy(
+        file_sequence_number = inheritFileSequenceNumberOnAdded(
+          fieldValueInChild = childTracking.file_sequence_number,
+          parentFileSequenceNumber = parentFileSequenceNumber,
+          dataEntryStatus = childTracking.status,
+          childEntryLocationForLogging = childEntryLocationForLogging))
+    }
+  }
+
+  /**
+   * Resolves `file_sequence_number`, which the child leaf entry inherits when its own status is
+   * `ADDED`.
+   */
+  private def inheritFileSequenceNumberOnAdded(
+      fieldValueInChild: Option[Long],
+      parentFileSequenceNumber: Long,
+      dataEntryStatus: Int,
+      childEntryLocationForLogging: String): Option[Long] =
+    fieldValueInChild.orElse {
+      if (dataEntryStatus == Status.Added) {
+        Some(parentFileSequenceNumber)
+      } else {
+        throw new IllegalStateException(
+          s"Malformed AMT data entry '$childEntryLocationForLogging': " +
+            "tracking.file_sequence_number is null " +
+            s"but the entry's status is ${Status.nameOf(dataEntryStatus)}. Only ADDED entries " +
+            "inherit a file sequence number from the root DATA_MANIFEST entry; every other " +
+            "status must materialize it.")
+      }
+    }
+}
+
+/**
+ * The subset of a root `DATA_MANIFEST` entry's [[Tracking]] that the entries of the leaf it
+ * points at can inherit.
+ *
+ * Projecting the parent down to these values keeps the per-leaf parent map small enough
+ * to capture in a scan closure.
+ *
+ * @param file_sequence_number Parent's file sequence number.
+ */
+case class InheritableTracking(file_sequence_number: Option[Long]) {
+
+  /** True when the parent declares no value that any child could inherit. */
+  def isEmpty: Boolean = file_sequence_number.isEmpty
+}
+
+object InheritableTracking {
+  /** A parent that supplies nothing. */
+  val none: InheritableTracking = InheritableTracking(None)
+
+  /** The inheritable projection of a root `DATA_MANIFEST` entry. */
+  def apply(parent: DataManifestEntry): InheritableTracking =
+    InheritableTracking(file_sequence_number = parent.tracking.file_sequence_number)
 }
 
 /**
@@ -849,19 +1001,3 @@ case class ManifestInfo(
   /** Tombstone file entries: DELETED and REPLACED. */
   def tombstoneFilesCount: Int = deleted_files_count + replaced_files_count
 }
-
-/**
- * Column-level statistics carrier. Iceberg V4 leaves the inner shape
- * up to the caller (it depends on the table schema). A future PR introduces
- * the Delta-stats mapping.
- *
- * The single nullable `raw_stats` field is deliberate: an empty case class encodes to an
- * empty Parquet group, which the Parquet data source rejects
- * (`EMPTY_SCHEMA_NOT_SUPPORTED_FOR_DATASOURCE`). One nullable column keeps
- * `AMTSingleAction` Parquet-writable without committing to the final stats shape; M1
- * writers leave it `None`.
- *
- *
- * @param raw_stats Column-stats payload; M1 writers leave it None.
- */
-case class ContentStats(raw_stats: Option[Array[Byte]] = None)

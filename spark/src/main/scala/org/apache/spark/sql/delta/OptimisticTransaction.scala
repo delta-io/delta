@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUtils, AMTWriteMetrics, AMTWriteResult, AMTWriterManager}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTMetrics, AMTUtils, AMTWriteResult, AMTWriterManager}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -139,7 +139,7 @@ case class CommitStats(
   numOfDomainMetadatas: Long = 0,
   txnId: Option[String] = None,
   /** Metrics for the inline AMT (Adaptive Metadata Tree) write, if this commit emitted one. */
-  amtWriteMetrics: Option[AMTWriteMetrics] = None
+  amtWriteMetrics: Option[AMTMetrics] = None
 )
 
 /**
@@ -1093,7 +1093,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
    */
   private def enableAdaptiveMetadataDependentFeatures(metadata: Metadata): Metadata = {
     val adaptiveMetadataEnabled =
-      protocol.isFeatureSupported(AdaptiveMetadataTableFeature) ||
+      AMTUtils.amtEnabled(metadata, protocol) ||
         TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
           metadata.configuration, AdaptiveMetadataTableFeature)
     if (!adaptiveMetadataEnabled) {
@@ -1101,7 +1101,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     val existingTableHasAdaptiveMetadata =
-      snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+      AMTUtils.amtEnabled(snapshot)
     if (!isCreatingNewTable && !existingTableHasAdaptiveMetadata) {
       throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(AdaptiveMetadataTableFeature.name)
     }
@@ -2463,7 +2463,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
 
     // If the table has AMT enabled, do not emit a classic checkpoint.
-    if (currentSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+    if (AMTUtils.amtEnabled(currentSnapshot)) {
       return currentSnapshot
     }
 
@@ -2787,7 +2787,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
           val (postCommitSnapshot, committedTransactionInfo) = if (!shouldCheckForConflicts) {
             doCommit(
               commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel,
-              amtWriterManager)
+              amtWriterManager
+            )
           } else recordDeltaOperation(deltaLog, "delta.commit.retry") {
             // The [[CurrentTransactionInfo]] might keep on getting updated while resolving
             // conflicts against the already committed concurrent transactions. This can happen
@@ -2795,7 +2796,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
             // readFiles or we might rollback the no-data-change transaction and update our actions
             // that we want to commit.
             val (newCommitVersion, newCurrentTransactionInfo) = checkForConflicts(
-              commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
+              commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel,
+              amtWriterManager)
             // Check if we may have already committed this version but retried due to
             // a transient error. If that's the case, just return success.
             newCurrentTransactionInfo.idempotentCommitAlreadyLandedAt match {
@@ -2833,7 +2835,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
             updatedCurrentTransactionInfo = newCurrentTransactionInfo
             doCommit(
               commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel,
-              amtWriterManager)
+              amtWriterManager
+            )
           }
           return (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo)
         } catch {
@@ -2889,7 +2892,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
       isolationLevel: IsolationLevel,
-      amtWriterManager: AMTWriterManager): (Snapshot, CurrentTransactionInfo) = {
+      amtWriterManager: AMTWriterManager
+  ): (Snapshot, CurrentTransactionInfo) = {
     val targetCatalogTable = catalogTable
     // If the table requires atomic Iceberg metadata generation
     // , generate iceberg metadata and update the transaction info.
@@ -3013,7 +3017,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       isIdempotentRetry = isIdempotentRetry)
     val postCommitReconstructionTime = System.nanoTime()
     maintenanceOperation = if (
-        !postCommitSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+        !AMTUtils.amtEnabled(postCommitSnapshot)) {
       MaintenanceOperation(
         shouldCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot))
     } else if (amtWriteResultOpt.isEmpty) {
@@ -3063,7 +3067,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
       fileSizeHistogramOpt = postCommitSnapshot.checksumOpt.flatMap(_.fileSizeHistogram),
       commitInfoOpt = committedTransactionInfo.commitInfo,
       commitSizeBytes = commitSizeBytes,
-      amtWriteMetricsOpt = Option.when(amtWriterManager.metrics.attempts.nonEmpty)(
+      amtWriteMetricsOpt = Option.when(
+        amtWriterManager.metrics.writeAttempts.nonEmpty ||
+          amtWriterManager.metrics.backrefRebaseAttempts.nonEmpty)(
         amtWriterManager.metrics),
       isIdempotentRetry = isIdempotentRetry
     )
@@ -3253,7 +3259,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       checkVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
-      commitIsolationLevel: IsolationLevel)
+      commitIsolationLevel: IsolationLevel,
+      amtWriterManager: AMTWriterManager)
     : (Long, CurrentTransactionInfo) = recordDeltaOperation(
         deltaLog,
         "delta.commit.retry.conflictCheck",
@@ -3297,12 +3304,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
           currentTransactionInfo
         }
         else {
-          resolveConflicts(
+          val currentTransactionInfoAfterResolvingConflicts = resolveConflicts(
             currentTransactionInfo = currentTransactionInfo,
             firstWinningVersion = expected.head,
             lastWinningVersion = expected.last,
             conflictingCommitFiles = fileStatuses,
             commitIsolationLevel = commitIsolationLevel)
+          // On an AMT rebase where a winning commit installed a new tree, re-point the writer's
+          // cached AMT provider at the folded tree, then re-derive the committed file actions' back
+          // references against it (a no-op otherwise).
+          amtWriterManager.updatePreCommitLatestAMTCheckpointProvider(
+            currentTransactionInfoAfterResolvingConflicts)
+          amtWriterManager.rebaseBackReferences(currentTransactionInfoAfterResolvingConflicts)
         }
       }
 

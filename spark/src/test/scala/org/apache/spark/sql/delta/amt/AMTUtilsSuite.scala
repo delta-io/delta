@@ -16,15 +16,13 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.hadoop.conf.Configuration
+import org.apache.spark.sql.delta.AdaptiveMetadataTableFeature
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkFunSuite
 
 class AMTUtilsSuite extends SparkFunSuite {
-
-  private val tableRoot = new Path("file:/tables/t1")
-  private val fs = tableRoot.getFileSystem(new Configuration())
 
   test("hasScheme: follows URI scheme grammar") {
     assert(AMTUtils.hasScheme("s3://bucket/path"))
@@ -88,26 +86,6 @@ class AMTUtilsSuite extends SparkFunSuite {
       "data/00000-0.parquet")
   }
 
-  test("relativizeManifestPathToTableRoot: a file under the table root becomes relative") {
-    val leaf = new Path("file:/tables/t1/metadata/leaf-1.parquet")
-    assert(AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, leaf) ===
-      "metadata/leaf-1.parquet")
-  }
-
-  test("relativizeManifestPathToTableRoot: a file outside the table root stays absolute") {
-    val outside = new Path("file:/other/metadata/leaf-1.parquet")
-    assert(AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, outside) ===
-      "file:/other/metadata/leaf-1.parquet")
-  }
-
-  test("relativizeManifestPathToTableRoot: result is raw, not URL-encoded") {
-    val leaf = new Path("file:/tables/t1/metadata/leaf a.parquet")
-    val relative = AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, leaf)
-    assert(relative === "metadata/leaf a.parquet",
-      s"space must stay raw, not percent-encoded; got $relative")
-    assert(!relative.contains("%20"))
-  }
-
   test("absolutePathForManifestFile: a relative location joins raw onto the table root") {
     val resolved = AMTUtils.absolutePathForManifestFile(
       new Path("s3://bucket/tables/t1"), "metadata/leaf a.parquet")
@@ -125,7 +103,16 @@ class AMTUtilsSuite extends SparkFunSuite {
   test("relativize then absolutize round-trips a file under the table root") {
     val root = new Path("file:/tables/t1")
     val leaf = new Path("file:/tables/t1/metadata/leaf-1.parquet")
-    val relative = AMTUtils.relativizeManifestPathToTableRoot(fs, root, leaf)
+    val relative = AMTUtils.relativizeLocation(root.toString, leaf.toString)
     assert(AMTUtils.absolutePathForManifestFile(root, relative) === leaf)
+  }
+
+  test("amtEnabled: true when the protocol supports the AMT feature") {
+    val protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    assert(AMTUtils.amtEnabled(Metadata(), protocol))
+  }
+
+  test("amtEnabled: false when the protocol lacks the AMT feature") {
+    assert(!AMTUtils.amtEnabled(Metadata(), Protocol()))
   }
 }
