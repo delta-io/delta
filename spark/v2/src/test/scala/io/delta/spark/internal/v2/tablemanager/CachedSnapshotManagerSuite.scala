@@ -17,18 +17,22 @@ package io.delta.spark.internal.v2.tablemanager
 
 import java.io.File
 import java.util.Optional
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.{ConcurrentLinkedQueue, CountDownLatch, TimeUnit}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 
+// format: off
+// scalastyle:off import.ordering.noEmptyLine
+// scalastyle:off import.ordering.wrongOrderInGroup
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
+
 import io.delta.sql.DeltaSparkSessionExtension
 
-import org.apache.spark.sql.delta.{
-  DeltaIllegalStateException,
-  DeltaUnsupportedOperationException,
-  Snapshot
-}
+import org.apache.spark.sql.delta.DeltaIllegalStateException
+import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 
 import org.apache.hadoop.fs.Path
@@ -38,20 +42,20 @@ import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 import org.apache.spark.sql.test.SharedSparkSession
+// scalastyle:on import.ordering.noEmptyLine
+// scalastyle:on import.ordering.wrongOrderInGroup
 
 class CachedSnapshotManagerSuite
     extends QueryTest
-    with SharedSparkSession {
+    with SharedSparkSession
+{
 
   override protected def sparkConf: SparkConf = {
     super.sparkConf
-      .set(
-        StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
-        classOf[DeltaSparkSessionExtension].getName)
-      .set(
-        SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
-        classOf[DeltaCatalog].getName)
+      .set(StaticSQLConf.SPARK_SESSION_EXTENSIONS.key, classOf[DeltaSparkSessionExtension].getName)
+      .set(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, classOf[DeltaCatalog].getName)
   }
+// format: on
 
   private def createDeltaTable(dir: File, numRows: Int = 10): Unit = {
     spark.range(numRows).write.format("delta").save(dir.getCanonicalPath)
@@ -181,6 +185,7 @@ class CachedSnapshotManagerSuite
         val snapV1 = mgr.loadSnapshotAt(1L)
         assert(DeltaV2Snapshot.getKernelSnapshot(snapV0).getVersion == 0L)
         assert(DeltaV2Snapshot.getKernelSnapshot(snapV1).getVersion == 1L)
+        assert(mgr.loadLatestSnapshot() eq snapV1)
       } finally {
         mgr.retire()
       }
@@ -188,23 +193,27 @@ class CachedSnapshotManagerSuite
   }
 
   test("loadSnapshotAt reuses the matching cached snapshot") {
-    withTempDir { dir =>
-      createDeltaTable(dir)
-      appendToDeltaTable(dir)
-      val mgr = createManager(dir)
-      try {
-        val cached = mgr.loadLatestSnapshot()
-        assert(cached.version == 1L)
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        appendToDeltaTable(dir)
+        val mgr = createManager(dir)
+        try {
+          val cached = mgr.loadLatestSnapshot()
+          assert(cached.version == 1L)
+          appendToDeltaTable(dir)
 
-        val loaded = mgr.loadSnapshotAt(1L)
-        assert(loaded eq cached, "Matching version should reuse the cached snapshot")
-      } finally {
-        mgr.retire()
+          val loaded = mgr.loadSnapshotAt(1L)
+          assert(loaded eq cached, "Matching version should reuse the cached snapshot")
+          assert(mgr.loadLatestSnapshot().version == 2L)
+        } finally {
+          mgr.retire()
+        }
       }
     }
   }
 
-  test("loadSnapshotAt does not replace a non-stale cached latest snapshot") {
+  test("newer loadSnapshotAt refreshes latest despite a non-stale cached snapshot") {
     withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
       withTempDir { dir =>
         createDeltaTable(dir)
@@ -215,29 +224,132 @@ class CachedSnapshotManagerSuite
         val versioned = mgr.loadSnapshotAt(1L)
         val latestAgain = mgr.loadLatestSnapshot()
         assert(versioned.version == 1L)
+        assert(versioned eq latestAgain)
+        assert(latestAgain ne cachedLatest)
+      }
+    }
+  }
+
+  test("newer loadSnapshotAt keeps a refreshed later snapshot cached") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val mgr = createManager(dir)
+        val cachedLatest = mgr.loadLatestSnapshot()
+        appendToDeltaTable(dir)
+        appendToDeltaTable(dir)
+
+        val versioned = mgr.loadSnapshotAt(1L)
+        val latestAgain = mgr.loadLatestSnapshot()
+        assert(versioned.version == 1L)
+        assert(latestAgain.version == 2L)
+        assert(latestAgain ne versioned)
+        assert(latestAgain ne cachedLatest)
+      }
+    }
+  }
+
+  test("older loadSnapshotAt preserves a non-stale cached latest snapshot") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        appendToDeltaTable(dir)
+        val mgr = createManager(dir)
+        val cachedLatest = mgr.loadLatestSnapshot()
+        appendToDeltaTable(dir)
+
+        val versioned = mgr.loadSnapshotAt(0L)
+        val latestAgain = mgr.loadLatestSnapshot()
+        assert(versioned.version == 0L)
         assert(latestAgain eq cachedLatest)
-        assert(latestAgain.version == 0L)
+        assert(latestAgain.version == 1L)
+      }
+    }
+  }
+
+  test("older loadSnapshotAt refreshes a stale cached latest snapshot") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        appendToDeltaTable(dir)
+        val mgr = createManager(dir)
+        val cachedLatest = mgr.loadLatestSnapshot()
+        appendToDeltaTable(dir)
+
+        val versioned = mgr.loadSnapshotAt(0L)
+        val latestAgain = mgr.loadLatestSnapshot()
+        assert(versioned.version == 0L)
+        assert(latestAgain.version == 2L)
+        assert(latestAgain ne versioned)
+        assert(latestAgain ne cachedLatest)
       }
     }
   }
 
   // === Retire lifecycle =======================================
 
-  test("retire does not change snapshot management behavior") {
-    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
-      withTempDir { dir =>
-        createDeltaTable(dir)
-        val mgr = createManager(dir)
-        val beforeRetire = mgr.loadLatestSnapshot()
+  Seq("0", "60000").foreach { stalenessLimit =>
+    test(s"retire preserves newer exact-version refresh with staleness $stalenessLimit") {
+      withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> stalenessLimit) {
+        withTempDir { dir =>
+          createDeltaTable(dir)
+          val mgr = createManager(dir)
+          val beforeRetire = mgr.loadLatestSnapshot()
 
-        mgr.retire()
-        mgr.retire()
-        appendToDeltaTable(dir)
+          mgr.retire()
+          appendToDeltaTable(dir)
 
-        val afterRetire = mgr.loadLatestSnapshot()
-        assert(beforeRetire.version == 0L)
-        assert(afterRetire.version == 1L)
-        assert(afterRetire ne beforeRetire)
+          val afterRetire = mgr.loadSnapshotAt(1L)
+          assert(beforeRetire.version == 0L)
+          assert(afterRetire.version == 1L)
+          assert(afterRetire ne beforeRetire)
+          assert(mgr.loadLatestSnapshot() eq afterRetire)
+        }
+      }
+    }
+
+    test(s"retire preserves newer historical refresh with staleness $stalenessLimit") {
+      withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> stalenessLimit) {
+        withTempDir { dir =>
+          createDeltaTable(dir)
+          val mgr = createManager(dir)
+          val beforeRetire = mgr.loadLatestSnapshot()
+
+          mgr.retire()
+          appendToDeltaTable(dir)
+          appendToDeltaTable(dir)
+
+          val historical = mgr.loadSnapshotAt(1L)
+          val latest = mgr.loadLatestSnapshot()
+          assert(beforeRetire.version == 0L)
+          assert(historical.version == 1L)
+          assert(latest.version == 2L)
+          assert(latest ne historical)
+          assert(latest ne beforeRetire)
+        }
+      }
+    }
+
+    test(s"retire preserves latest refresh when requested version is missing: $stalenessLimit") {
+      withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> stalenessLimit) {
+        withTempDir { dir =>
+          createDeltaTable(dir)
+          val mgr = createManager(dir)
+          val beforeRetire = mgr.loadLatestSnapshot()
+
+          mgr.retire()
+          appendToDeltaTable(dir)
+
+          val error = intercept[VersionNotFoundException] {
+            mgr.loadSnapshotAt(2L)
+          }
+          assert(error.getUserVersion == 2L)
+          assert(error.getEarliest == 0L)
+          assert(error.getLatest == 1L)
+          val latest = mgr.loadLatestSnapshot()
+          assert(latest.version == 1L)
+          assert(latest ne beforeRetire)
+        }
       }
     }
   }
@@ -277,7 +389,7 @@ class CachedSnapshotManagerSuite
           assert(firstSnap.version == 0L)
 
           val kernelSnapshot = DeltaV2Snapshot.getKernelSnapshot(firstSnap)
-          val secondSnap = mgr.installSnapshot(kernelSnapshot, System.currentTimeMillis())
+          val secondSnap = mgr.install(kernelSnapshot, System.currentTimeMillis())
           assert(firstSnap eq secondSnap, "Same version should keep existing instance")
         } finally {
           mgr.retire()
@@ -298,7 +410,7 @@ class CachedSnapshotManagerSuite
           val current = mgr.loadLatestSnapshot()
           assert(current.version == 1L)
 
-          assert(mgr.installSnapshot(stale, System.currentTimeMillis()) eq current)
+          assert(mgr.install(stale, System.currentTimeMillis()) eq current)
         } finally {
           mgr.retire()
         }
@@ -324,8 +436,7 @@ class CachedSnapshotManagerSuite
       assert(versionError.getErrorClass == "INTERNAL_ERROR")
 
       // scalastyle:off deltahadoopconfiguration
-      val kernelEngine =
-        KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
+      val kernelEngine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
       // scalastyle:on deltahadoopconfiguration
       val changesError = intercept[DeltaUnsupportedOperationException] {
         mgr.getTableChanges(kernelEngine, 0L, Optional.empty())
@@ -336,35 +447,60 @@ class CachedSnapshotManagerSuite
 
   // === Concurrency correctness ================================
 
-  test("concurrent loadLatestSnapshot converges to latest version") {
+  test("concurrent appends and loadLatestSnapshot calls observe monotonically newer versions") {
     withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
       withTempDir { dir =>
         createDeltaTable(dir)
-        appendToDeltaTable(dir)
-        appendToDeltaTable(dir)
         val mgr = createManager(dir)
         try {
-          val snapshots = new ConcurrentLinkedQueue[Snapshot]()
           val failures = new ConcurrentLinkedQueue[Throwable]()
-          val threads = (1 to 8).map { _ =>
+          val committedVersion = new AtomicLong(mgr.loadLatestSnapshot().version)
+          val maxVersionSeen = new AtomicLong(committedVersion.get())
+          val writerDone = new AtomicBoolean(false)
+          val versionObserved = Array.fill(3)(new CountDownLatch(1))
+          val readers = (1 to 4).map { _ =>
             new Thread(() => {
               try {
-                val snapshot = mgr.loadLatestSnapshot()
-                assert(snapshot.allFiles.count() > 0L)
-                snapshots.add(snapshot)
+                var lastSeenVersion = -1L
+                while (!writerDone.get() || lastSeenVersion < committedVersion.get()) {
+                  val minimumVersion = maxVersionSeen.get()
+                  val observedVersion = mgr.loadLatestSnapshot().version
+                  assert(observedVersion >= lastSeenVersion)
+                  assert(observedVersion >= minimumVersion)
+                  lastSeenVersion = observedVersion
+                  maxVersionSeen.getAndUpdate(current => math.max(current, observedVersion))
+                  if (observedVersion > 0L) {
+                    versionObserved((observedVersion - 1L).toInt).countDown()
+                  }
+                }
               } catch {
                 case failure: Throwable => failures.add(failure)
               }
             })
           }
+          val appender = new Thread(() => {
+            try {
+              (1L to 3L).foreach { version =>
+                appendToDeltaTable(dir)
+                committedVersion.set(version)
+                val observed = versionObserved((version - 1L).toInt).await(30L, TimeUnit.SECONDS)
+                assert(observed, s"No reader observed committed version $version")
+              }
+            } catch {
+              case failure: Throwable => failures.add(failure)
+            } finally {
+              writerDone.set(true)
+            }
+          })
+          val threads = appender +: readers
           threads.foreach(_.start())
           threads.foreach(_.join())
 
           assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
-          assert(snapshots.size() == threads.size)
-          while (!snapshots.isEmpty) {
-            assert(DeltaV2Snapshot.getKernelSnapshot(snapshots.poll()).getVersion == 2L)
-          }
+          val latest = mgr.loadLatestSnapshot()
+          assert(latest.version == 3L)
+          assert(latest.allFiles.count() > 0L)
+          assert(maxVersionSeen.get() == latest.version)
         } finally {
           mgr.retire()
         }
@@ -406,28 +542,30 @@ class CachedSnapshotManagerSuite
     }
   }
 
-  test("concurrent versioned loads reuse current and do not replace latest") {
+  test("concurrent versioned loads advance and preserve the latest cached snapshot") {
     withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
       withTempDir { dir =>
         createDeltaTable(dir)
-        appendToDeltaTable(dir)
-        appendToDeltaTable(dir)
         val mgr = createManager(dir)
-        val cachedLatest = mgr.loadLatestSnapshot()
+        val initial = mgr.loadLatestSnapshot()
+        appendToDeltaTable(dir)
+        appendToDeltaTable(dir)
         val currentResults = new ConcurrentLinkedQueue[Snapshot]()
+        val intermediateResults = new ConcurrentLinkedQueue[Snapshot]()
         val historicalResults = new ConcurrentLinkedQueue[Snapshot]()
         val failures = new ConcurrentLinkedQueue[Throwable]()
 
-        val threads = (1 to 8).map { index =>
+        val threads = (1 to 12).map { index =>
           new Thread(() => {
             try {
-              val result = if (index % 2 == 0) {
-                mgr.loadSnapshotAt(2L)
-              } else {
-                mgr.loadSnapshotAt(0L)
+              val requestedVersion = index % 3
+              val result = mgr.loadSnapshotAt(requestedVersion)
+              assert(result.version == requestedVersion)
+              requestedVersion match {
+                case 0 => historicalResults.add(result)
+                case 1 => intermediateResults.add(result)
+                case 2 => currentResults.add(result)
               }
-              assert(result.allFiles.count() > 0L)
-              if (index % 2 == 0) currentResults.add(result) else historicalResults.add(result)
             } catch {
               case failure: Throwable => failures.add(failure)
             }
@@ -438,8 +576,14 @@ class CachedSnapshotManagerSuite
 
         assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
         assert(currentResults.size() == 4)
+        assert(intermediateResults.size() == 4)
         assert(historicalResults.size() == 4)
+        val cachedLatest = mgr.loadLatestSnapshot()
+        assert(cachedLatest.version == 2L)
+        assert(cachedLatest ne initial)
+        assert(cachedLatest.allFiles.count() > 0L)
         while (!currentResults.isEmpty) assert(currentResults.poll() eq cachedLatest)
+        while (!intermediateResults.isEmpty) assert(intermediateResults.poll().version == 1L)
         while (!historicalResults.isEmpty) assert(historicalResults.poll().version == 0L)
         assert(mgr.loadLatestSnapshot() eq cachedLatest)
       }

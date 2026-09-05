@@ -19,6 +19,7 @@ import java.util.Optional
 
 import scala.jdk.OptionConverters._
 
+// format: off
 // scalastyle:off import.ordering.noEmptyLine
 // scalastyle:off import.ordering.wrongOrderInGroup
 import io.delta.kernel.CommitRange
@@ -27,14 +28,13 @@ import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl => KernelSnap
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 
-import org.apache.spark.sql.delta.{
-  DeltaIllegalStateException,
-  DeltaUnsupportedOperationException,
-  Snapshot
-}
+import org.apache.spark.sql.delta.DeltaIllegalStateException
+import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.v2.interop.{DeltaV2Snapshot, DeltaV2SnapshotManager}
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 
 import org.apache.hadoop.fs.Path
 
@@ -42,6 +42,7 @@ import org.apache.hadoop.fs.Path
 // scalastyle:on import.ordering.wrongOrderInGroup
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+// format: on
 
 /**
  * Table-scoped snapshot manager that caches the [[DeltaV2Snapshot]]
@@ -85,21 +86,27 @@ private[tablemanager] class CachedSnapshotManager(
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
       canReturnEarliestCommit: Boolean): DeltaHistoryManager.Commit = {
-    unsupportedOperation("getActiveCommitAtTime")
+    throw new DeltaUnsupportedOperationException(
+      errorClass = "INTERNAL_ERROR",
+      messageParameters = Array("Cached manager does not support getActiveCommitAtTime"))
   }
 
   override def checkVersionExists(
       version: Long,
       mustBeRecreatable: Boolean,
       allowOutOfRange: Boolean): Unit = {
-    unsupportedOperation("checkVersionExists")
+    throw new DeltaUnsupportedOperationException(
+      errorClass = "INTERNAL_ERROR",
+      messageParameters = Array("Cached manager does not support checkVersionExists"))
   }
 
   override def getTableChanges(
       engine: KernelEngine,
       startVersion: Long,
       endVersion: Optional[java.lang.Long]): CommitRange = {
-    unsupportedOperation("getTableChanges")
+    throw new DeltaUnsupportedOperationException(
+      errorClass = "INTERNAL_ERROR",
+      messageParameters = Array("Cached manager does not support getTableChanges"))
   }
 
   // === Snapshot lifecycle ===================================================
@@ -131,7 +138,7 @@ private[tablemanager] class CachedSnapshotManager(
     recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.rebuild") {
       val validationStartedAt = System.currentTimeMillis()
       val refreshed = loadLatestUncached()
-      installSnapshot(refreshed, validationStartedAt)
+      install(refreshed, validationStartedAt)
     }
   }
 
@@ -139,6 +146,20 @@ private[tablemanager] class CachedSnapshotManager(
     val existing = currentSnapshot
     if (existing != null && version == existing.snapshot.version) {
       return existing.snapshot
+    }
+    val latest = if (existing == null || version > existing.snapshot.version) {
+      rebuild()
+    } else {
+      acquireLatestWithConfiguredStaleness()
+    }
+    if (version > latest.version) {
+      withUncachedManager { manager =>
+        manager.checkVersionExists(version, mustBeRecreatable = true, allowOutOfRange = false)
+      }
+      return acquireSnapshotAt(version)
+    }
+    if (version == latest.version) {
+      return latest
     }
     val kernelSnapshot = loadSnapshotAtUncached(version)
     validateTableIdentity(kernelSnapshot)
@@ -182,20 +203,19 @@ private[tablemanager] class CachedSnapshotManager(
 
   // === Snapshot installation =================================================
 
-  private[tablemanager] def installSnapshot(
-      refreshed: KernelSnapshot,
-      validationStartedAt: Long): Snapshot = synchronized {
-    validateTableIdentity(refreshed)
-    val existing = currentSnapshot
-    if (existing != null && existing.snapshot.version >= refreshed.getVersion) {
-      currentSnapshot = CachedSnapshot(existing.snapshot, validationStartedAt)
-      existing.snapshot
-    } else {
-      val refreshedSnapshot = wrapSnapshot(refreshed)
-      currentSnapshot = CachedSnapshot(refreshedSnapshot, validationStartedAt)
-      refreshedSnapshot
+  private[tablemanager] def install(kernelSnapshot: KernelSnapshot, validatedAt: Long): Snapshot =
+    synchronized {
+      validateTableIdentity(kernelSnapshot)
+      val existing = currentSnapshot
+      if (existing != null && existing.snapshot.version >= kernelSnapshot.getVersion) {
+        currentSnapshot = CachedSnapshot(existing.snapshot, validatedAt)
+        existing.snapshot
+      } else {
+        val refreshedSnapshot = wrapSnapshot(kernelSnapshot)
+        currentSnapshot = CachedSnapshot(refreshedSnapshot, validatedAt)
+        refreshedSnapshot
+      }
     }
-  }
 
   private def validateTableIdentity(snapshot: KernelSnapshot): Unit = synchronized {
     val snapshotTableId = snapshot.getMetadata.getId
@@ -207,12 +227,6 @@ private[tablemanager] class CachedSnapshotManager(
         messageParameters = Array(
           s"Table identity mismatch: expected $tableId but got $snapshotTableId"))
     }
-  }
-
-  private def unsupportedOperation(operation: String): Nothing = {
-    throw new DeltaUnsupportedOperationException(
-      errorClass = "INTERNAL_ERROR",
-      messageParameters = Array(s"Cached manager does not support $operation"))
   }
 
 }
