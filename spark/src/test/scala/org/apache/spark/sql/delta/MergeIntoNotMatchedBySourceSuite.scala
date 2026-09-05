@@ -607,7 +607,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin
       }
   }
 
-  test("files touched - not matched by source") {
+  test("files touched - not matched by source", NameBasedAccessIncompatible) {
     withTempDir { tempDir =>
       val source = s"$tempDir/source"
       val target = s"$tempDir/target"
@@ -647,7 +647,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin
     }
   }
 
-  test("concurrent disjoint not matched by source filter") {
+  test("concurrent disjoint not matched by source filter", NameBasedAccessIncompatible) {
     withTempDir { tempDir =>
       val source = s"$tempDir/source"
       val target = s"$tempDir/target"
