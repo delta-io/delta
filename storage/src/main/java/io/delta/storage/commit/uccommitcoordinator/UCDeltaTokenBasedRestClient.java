@@ -104,6 +104,18 @@ import org.apache.hadoop.fs.Path;
  */
 public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
+  private static final org.slf4j.Logger LOG =
+      org.slf4j.LoggerFactory.getLogger(UCDeltaTokenBasedRestClient.class);
+
+  /**
+   * Table IDs whose catalog has rejected an external {@code delta.clustering} domain-metadata
+   * update (e.g. Databricks Unity Catalog tables with CLUSTER BY AUTO, error 5115). Once a table
+   * lands here, subsequent commits skip the clustering update up front instead of paying a
+   * rejected round-trip each time. Scoped to this client instance (one catalog endpoint).
+   */
+  private final java.util.Set<String> tablesRejectingClusteringUpdates =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+
   private static final int HTTP_BAD_REQUEST = 400;
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
@@ -286,13 +298,78 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           .action("set-protocol")
           .protocol(toSDKDeltaProtocol(newProtocol.get())));
     }
-    addDomainMetadataUpdateActions(request, transactionDomainMetadata);
+    // Catalogs that own table clustering (e.g. Databricks Unity Catalog tables with
+    // CLUSTER BY AUTO) reject delta.clustering domain-metadata updates from external writers
+    // (INVALID_PARAMETER_VALUE, error 5115), which would fail the whole commit. Optimistically
+    // send the full update; if the catalog rejects specifically the clustering domain, retry
+    // once without it and remember the rejection for this table. The clustering domain metadata
+    // is still committed to the Delta log itself, so engine-side clustering is unaffected --
+    // only the catalogs mirrored clustering columns are left to the catalog that owns them.
+    boolean skipClustering = tablesRejectingClusteringUpdates.contains(tableId);
+    List<AbstractDomainMetadata> domainMetadataToSend = skipClustering
+        ? withoutClusteringDomain(transactionDomainMetadata)
+        : transactionDomainMetadata;
+    addDomainMetadataUpdateActions(request, domainMetadataToSend);
 
     try {
       deltaTablesApi.updateTable(name.catalog, name.schema, name.table, request);
     } catch (ApiException e) {
-      handleUpdateTableException(e, name.catalog, name.schema, name.table);
+      List<AbstractDomainMetadata> retryDomainMetadata =
+          withoutClusteringDomain(transactionDomainMetadata);
+      boolean droppedClustering =
+          retryDomainMetadata.size() != transactionDomainMetadata.size();
+      if (!skipClustering && droppedClustering && isClusteringUpdateRejection(e)) {
+        LOG.warn("Catalog rejected external delta.clustering domain-metadata update for table "
+            + "{} ({}.{}.{}); retrying commit without it. Clustering metadata is still "
+            + "recorded in the Delta log.",
+            tableId, name.catalog, name.schema, name.table);
+        tablesRejectingClusteringUpdates.add(tableId);
+        DeltaUpdateTableRequest retryRequest = new DeltaUpdateTableRequest();
+        request.getRequirements().forEach(retryRequest::addRequirementsItem);
+        request.getUpdates().stream()
+            .filter(u -> !(u instanceof DeltaSetDomainMetadataUpdate)
+                && !(u instanceof DeltaRemoveDomainMetadataUpdate))
+            .forEach(retryRequest::addUpdatesItem);
+        addDomainMetadataUpdateActions(retryRequest, retryDomainMetadata);
+        try {
+          deltaTablesApi.updateTable(name.catalog, name.schema, name.table, retryRequest);
+        } catch (ApiException retryException) {
+          handleUpdateTableException(retryException, name.catalog, name.schema, name.table);
+        }
+      } else {
+        handleUpdateTableException(e, name.catalog, name.schema, name.table);
+      }
     }
+  }
+
+  /** {@code transactionDomainMetadata} minus any {@code delta.clustering} entries. */
+  private static List<AbstractDomainMetadata> withoutClusteringDomain(
+      List<AbstractDomainMetadata> transactionDomainMetadata) {
+    List<AbstractDomainMetadata> filtered = new ArrayList<>(transactionDomainMetadata.size());
+    for (AbstractDomainMetadata dm : transactionDomainMetadata) {
+      if (!DeltaDomainMetadataUpdates.JSON_PROPERTY_DELTA_CLUSTERING.equals(dm.getDomain())) {
+        filtered.add(dm);
+      }
+    }
+    return filtered;
+  }
+
+  /**
+   * Whether this failure is the catalog refusing an external {@code delta.clustering}
+   * domain-metadata update, as opposed to any other invalid request. UC returns no structured
+   * error code for this, so match the shape: HTTP 400 with a body that names the clustering
+   * domain as not allowed/permitted (Databricks emits
+   * "INVALID_PARAMETER_VALUE: Update to Delta domain metadata delta.clustering is not allowed.
+   * (5115)").
+   */
+  private static boolean isClusteringUpdateRejection(ApiException e) {
+    if (e.getCode() != HTTP_BAD_REQUEST) {
+      return false;
+    }
+    String body = e.getResponseBody();
+    return body != null
+        && body.contains(DeltaDomainMetadataUpdates.JSON_PROPERTY_DELTA_CLUSTERING)
+        && (body.contains("not allowed") || body.contains("not permitted"));
   }
 
   @Override
