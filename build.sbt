@@ -1066,8 +1066,10 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "com.google.code.findbugs" % "jsr305" % "3.0.2",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.13.2" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test",
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
+      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
       "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.25.3" % "test",
       "org.apache.logging.log4j" % "log4j-core" % "2.25.3" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
