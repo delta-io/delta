@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 
@@ -147,19 +148,16 @@ private[tablemanager] class CachedSnapshotManager(
     if (existing != null && version == existing.snapshot.version) {
       return existing.snapshot
     }
-    val latest = if (existing == null || version > existing.snapshot.version) {
+    val upperBound = if (existing == null || version > existing.snapshot.version) {
       rebuild()
     } else {
       acquireLatestWithConfiguredStaleness()
     }
-    if (version > latest.version) {
-      withUncachedManager { manager =>
-        manager.checkVersionExists(version, mustBeRecreatable = true, allowOutOfRange = false)
-      }
-      return acquireSnapshotAt(version)
+    if (version > upperBound.version) {
+      throw new VersionNotFoundException(version, 0, upperBound.version)
     }
-    if (version == latest.version) {
-      return latest
+    if (version == upperBound.version) {
+      return upperBound
     }
     val kernelSnapshot = loadSnapshotAtUncached(version)
     validateTableIdentity(kernelSnapshot)
