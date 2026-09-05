@@ -1,0 +1,100 @@
+name: "Delta Spark V2 Connector: Post Results"
+# Runs in base repo context when the test workflow completes, so GITHUB_TOKEN
+# has write access to post PR comments (including on fork PRs).
+on:
+  workflow_run:
+    workflows: ["Delta Spark V2 Connector"]
+    types: [completed]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  comment:
+    name: "Post V2 Connector Results"
+    runs-on: ubuntu-24.04
+    if: github.event.workflow_run.event == 'pull_request'
+    steps:
+      - name: Download test result artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: v2-test-results-shard-*
+          merge-multiple: true
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get PR number
+        id: pr
+        run: |
+          PR_NUMBER=$(echo '${{ toJSON(github.event.workflow_run.pull_requests) }}' | python3 -c "
+          import json, sys
+          prs = json.load(sys.stdin)
+          print(prs[0]['number'] if prs else '')
+          ")
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "PR number: $PR_NUMBER"
+
+      - name: Build comment body
+        if: steps.pr.outputs.number != ''
+        run: |
+          python3 - <<'PYEOF'
+          import json, glob
+
+          all_failed = []
+          for f in sorted(glob.glob("failed-tests-shard-*.json")):
+              with open(f) as fh:
+                  all_failed.extend(json.load(fh))
+
+          total_tests = total_passed = total_failed = total_skipped = 0
+          for f in sorted(glob.glob("summary-shard-*.json")):
+              with open(f) as fh:
+                  s = json.load(fh)
+                  total_tests += s.get("tests", 0)
+                  total_passed += s.get("passed", 0)
+                  total_failed += s.get("failed", 0)
+                  total_skipped += s.get("skipped", 0)
+
+          if total_tests == 0 and all_failed:
+              total_failed = len(all_failed)
+              total_passed = 0
+
+          icon = "✅" if total_failed == 0 else "⚠️"
+
+          lines = []
+          lines.append(f"## {icon} Delta Spark V2 Connector Test Results")
+          lines.append("")
+          lines.append(f"**Mode:** `DELTA_V2_ENABLE_MODE=STRICT` ALL TESTS USE V2 CONNECTOR")
+          lines.append("")
+          lines.append(f"**{total_passed} passed**, {total_failed} failed, {total_skipped} skipped")
+          lines.append("")
+          if total_failed == 0:
+              lines.append("All tests passed! 🎉")
+          else:
+              lines.append(f"**{total_failed} test(s) failed:**")
+              lines.append("")
+              lines.append("<details>")
+              lines.append("<summary>Click to expand failed tests</summary>")
+              lines.append("")
+              lines.append("| Test | Message |")
+              lines.append("|------|---------|")
+              for t in all_failed[:10]:
+                  name = t["name"].replace("|", "\\|")
+                  msg = t["message"].replace("|", "\\|").replace("\n", " ")[:150]
+                  lines.append(f"| `{name}` | {msg} |")
+              if total_failed > 10:
+                  lines.append(f"| ... | *and {total_failed - 10} more* |")
+              lines.append("")
+              lines.append("</details>")
+
+          with open("comment_body.md", "w") as f:
+              f.write("\n".join(lines))
+          print(open("comment_body.md").read())
+          PYEOF
+
+      - name: Post PR comment
+        if: steps.pr.outputs.number != ''
+        uses: mshick/add-pr-comment@v2
+        with:
+          issue: ${{ steps.pr.outputs.number }}
+          message-path: comment_body.md
+          message-id: v2-connector-test-results
