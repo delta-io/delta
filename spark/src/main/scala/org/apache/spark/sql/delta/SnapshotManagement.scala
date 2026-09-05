@@ -36,6 +36,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
@@ -122,7 +123,7 @@ trait SnapshotManagement { self: DeltaLog =>
     val filesOpt = try {
       Some(listFrom(startVersion)).filterNot(_.isEmpty)
     } catch {
-      case _: FileNotFoundException => None
+      case e if DeltaFileOperations.isFileNotFoundException(e) => None
     }
     val files =
       filesOpt.map {
