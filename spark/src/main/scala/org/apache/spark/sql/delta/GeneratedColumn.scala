@@ -19,17 +19,22 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
+import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils.quoteIdentifier
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.GeneratedColumnPartitionFilterInferenceMode
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, Column, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.Analyzer
 import org.apache.spark.sql.catalyst.expressions._
@@ -38,12 +43,13 @@ import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
 import org.apache.spark.sql.catalyst.optimizer.CollapseProject
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.catalyst.util.{quoteIfNeeded, CaseInsensitiveMap, CharVarcharCodegenUtils}
+import org.apache.spark.sql.catalyst.util.{quoteIfNeeded, CaseInsensitiveMap, CharVarcharCodegenUtils, DateTimeUtils}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.types.{Metadata => FieldMetadata}
+import org.apache.spark.unsafe.types.UTF8String
 /**
  * Provide utility methods to implement Generated Columns for Delta. Users can use the following
  * SQL syntax to create a table with generated columns.
@@ -502,6 +508,134 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     }
   }
 
+  private case class PartitionFilterCandidate(
+      expression: Expression,
+      descriptor: OptimizablePartitionExpression,
+      sourceDataType: DataType,
+      sourcePredicate: Expression) {
+
+    val sourceLiteral: Option[Literal] = sourcePredicate match {
+      case comparison: BinaryComparison => comparison.right match {
+        case literal: Literal => Some(literal)
+        case _ => None
+      }
+      case _ => None
+    }
+
+    val operatorName: String = sourcePredicate.getClass.getSimpleName
+  }
+
+  private case class PartitionFilterCandidateSummary(
+      descriptor: String,
+      sourceDataType: String,
+      partitionDataTypes: Seq[String],
+      literalDataType: Option[String],
+      operator: String,
+      hasKnownRisk: Boolean,
+      count: Int = 1)
+
+  private case class PartitionFilterInferenceEvent(
+      candidateSignatures: Seq[PartitionFilterCandidateSummary])
+
+  /** Returns the partition-column data types referenced by a candidate expression. */
+  private def partitionDataTypes(candidate: PartitionFilterCandidate): Seq[String] = {
+    candidate.expression.references.toSeq
+      .map(_.dataType.catalogString)
+      .distinct
+      .sorted
+  }
+
+  /** Returns whether a literal is compatible with string-to-date conversion. */
+  private def stringLiteralCanCastToDate(literal: Literal): Boolean = {
+    literal.dataType match {
+      case _: StringType =>
+        DateTimeUtils.stringToDate(literal.value.asInstanceOf[UTF8String]).isDefined
+      case _ => true
+    }
+  }
+
+  /**
+   * Returns whether a candidate inference is unsafe.
+   *
+   * String `TRUNC` inference is unsafe when its generated date predicate does not preserve the
+   * source predicate. Date truncation changes range ordering, while an unparseable equality literal
+   * may fail under ANSI evaluation even though the original comparison is between strings.
+   */
+  private def isUnsafeInference(candidate: PartitionFilterCandidate): Boolean = {
+    // Match the source predicates used by `OptimizablePartitionExpression` to generate candidates.
+    val isStringTrunc = candidate.descriptor.isInstanceOf[TruncDatePartitionExpr] &&
+      candidate.sourceDataType == StringType
+    isStringTrunc && (candidate.sourcePredicate match {
+      case _: LessThan | _: LessThanOrEqual | _: GreaterThan | _: GreaterThanOrEqual => true
+      case _: EqualTo =>
+        candidate.sourceLiteral.exists(value => !stringLiteralCanCastToDate(value))
+      case _ => false
+    })
+  }
+
+  /** Returns whether the candidate matches a known inference risk. */
+  private def hasKnownInferenceRisk(candidate: PartitionFilterCandidate): Boolean = {
+    isUnsafeInference(candidate)
+  }
+
+  /** Builds the telemetry signature for an inferred predicate. */
+  private def candidateSignature(
+      candidate: PartitionFilterCandidate): PartitionFilterCandidateSummary = {
+    val partitionTypes = partitionDataTypes(candidate)
+    PartitionFilterCandidateSummary(
+      descriptor = candidate.descriptor.getClass.getSimpleName,
+      sourceDataType = candidate.sourceDataType.catalogString,
+      partitionDataTypes = partitionTypes,
+      literalDataType = candidate.sourceLiteral.map(_.dataType.catalogString),
+      operator = candidate.operatorName,
+      hasKnownRisk = hasKnownInferenceRisk(candidate))
+  }
+
+  /** Records predicate signatures and their occurrence counts in a Delta event. */
+  private def recordPartitionFilterInferenceCandidates(
+      snapshot: SnapshotDescriptor,
+      candidates: Seq[PartitionFilterCandidate]): Unit = {
+    val signatureCounts = candidates.map(candidateSignature).groupBy(identity).toSeq
+      .map { case (signature, matching) =>
+        signature.copy(count = matching.size)
+      }
+      .sortBy(_.toString)
+    recordDeltaEvent(
+      snapshot,
+      "delta.generatedColumns.partitionFilterInference",
+      data = PartitionFilterInferenceEvent(signatureCounts))
+  }
+
+  /**
+   * Applies the configured rollout mode to candidate inferences.
+   *
+   * LOG_ONLY / ASSERT modes record telemetry, and ASSERT also filters candidates classified by
+   * `isUnsafeInference`. Rollout failures retain the original candidates.
+   */
+  private def applyPartitionFilterInferenceRollout(
+      spark: SparkSession,
+      snapshot: SnapshotDescriptor,
+      candidates: Seq[PartitionFilterCandidate]): Seq[PartitionFilterCandidate] = {
+    if (candidates.isEmpty) return candidates
+
+    val conf = spark.sessionState.conf
+    val mode = GeneratedColumnPartitionFilterInferenceMode.fromConf(conf)
+    if (mode == GeneratedColumnPartitionFilterInferenceMode.OFF) {
+      return candidates
+    }
+
+    val suppressUnsafeInference = mode == GeneratedColumnPartitionFilterInferenceMode.ASSERT
+    try {
+      recordPartitionFilterInferenceCandidates(snapshot, candidates)
+      if (suppressUnsafeInference) candidates.filterNot(isUnsafeInference) else candidates
+    } catch {
+      case NonFatal(e) =>
+        logWarning(log"Failed to apply generated-column partition-filter inference rollout: " +
+          log"${MDC(DeltaLogKeys.EXCEPTION, e)}")
+        candidates
+    }
+  }
+
   def partitionFilterOptimizationEnabled(spark: SparkSession): Boolean = {
     spark.sessionState.conf
       .getConf(DeltaSQLConf.GENERATED_COLUMN_PARTITION_FILTER_OPTIMIZATION_ENABLED)
@@ -557,37 +691,63 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
      */
     def toPartitionFilter(
         nameParts: Seq[String],
-        func: (OptimizablePartitionExpression) => Option[Expression]): Seq[Expression] = {
+        sourceDataType: DataType,
+        sourcePredicate: Expression,
+        func: (OptimizablePartitionExpression) => Option[Expression])
+        : Seq[PartitionFilterCandidate] = {
       optimizablePartitionExpressions.get(createFieldPath(nameParts)).toSeq.flatMap { exprs =>
-        exprs.flatMap(expr => func(expr))
+        exprs.flatMap { descriptor =>
+          func(descriptor).map { expression =>
+            PartitionFilterCandidate(
+              expression,
+              descriptor,
+              sourceDataType,
+              sourcePredicate)
+          }
+        }
       }
     }
 
-    val partitionFilters = dataFilters.flatMap { filter =>
+    val partitionFilterCandidates = dataFilters.flatMap { filter =>
       preprocess(filter) match {
-        case LessThan(ExtractBaseColumn(nameParts, _), lit: Literal) =>
-          toPartitionFilter(nameParts, _.lessThan(lit))
-        case LessThanOrEqual(ExtractBaseColumn(nameParts, _), lit: Literal) =>
-          toPartitionFilter(nameParts, _.lessThanOrEqual(lit))
-        case EqualTo(ExtractBaseColumn(nameParts, _), lit: Literal) =>
-          toPartitionFilter(nameParts, _.equalTo(lit))
-        case GreaterThan(ExtractBaseColumn(nameParts, _), lit: Literal) =>
-          toPartitionFilter(nameParts, _.greaterThan(lit))
-        case GreaterThanOrEqual(ExtractBaseColumn(nameParts, _), lit: Literal) =>
-          toPartitionFilter(nameParts, _.greaterThanOrEqual(lit))
-        case IsNull(ExtractBaseColumn(nameParts, _)) =>
-          toPartitionFilter(nameParts, _.isNull())
+        case predicate @ LessThan(ExtractBaseColumn(nameParts, sourceType), lit: Literal) =>
+          toPartitionFilter(nameParts, sourceType, predicate,
+            _.lessThan(lit))
+        case predicate @ LessThanOrEqual(
+            ExtractBaseColumn(nameParts, sourceType), lit: Literal) =>
+          toPartitionFilter(nameParts, sourceType, predicate,
+            _.lessThanOrEqual(lit))
+        case predicate @ EqualTo(ExtractBaseColumn(nameParts, sourceType), lit: Literal) =>
+          toPartitionFilter(nameParts, sourceType, predicate,
+            _.equalTo(lit))
+        case predicate @ GreaterThan(ExtractBaseColumn(nameParts, sourceType), lit: Literal) =>
+          toPartitionFilter(nameParts, sourceType, predicate,
+            _.greaterThan(lit))
+        case predicate @ GreaterThanOrEqual(
+            ExtractBaseColumn(nameParts, sourceType), lit: Literal) =>
+          toPartitionFilter(nameParts, sourceType, predicate,
+            _.greaterThanOrEqual(lit))
+        case predicate @ IsNull(ExtractBaseColumn(nameParts, sourceType)) =>
+          toPartitionFilter(nameParts, sourceType, predicate, _.isNull())
         case _ => Nil
       }
     }
 
-    val resolvedPartitionFilters = resolveReferencesForExpressions(spark, partitionFilters, delta)
+    val resolvedExpressions = resolveReferencesForExpressions(
+      spark, partitionFilterCandidates.map(_.expression), delta)
+    val resolvedCandidates = partitionFilterCandidates.zip(resolvedExpressions)
+      .map { case (candidate, resolvedExpression) =>
+        candidate.copy(expression = resolvedExpression)
+      }
+    val retainedCandidates = applyPartitionFilterInferenceRollout(
+      spark, snapshot, resolvedCandidates)
+    val resolvedPartitionFilters = retainedCandidates.map(_.expression)
 
     if (log.isDebugEnabled) {
       logDebug("User provided data filters:")
       dataFilters.foreach(f => logDebug(f.sql))
       logDebug("Auto generated partition filters:")
-      partitionFilters.foreach(f => logDebug(f.sql))
+      partitionFilterCandidates.foreach(candidate => logDebug(candidate.expression.sql))
       logDebug("Resolved generated partition filters:")
       resolvedPartitionFilters.foreach(f => logDebug(f.sql))
     }
