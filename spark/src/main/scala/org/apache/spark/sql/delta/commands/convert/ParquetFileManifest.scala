@@ -50,7 +50,17 @@ class ManualListingFileManifest(
 
     val conf = spark.sparkContext.broadcast(serializableConf)
     val fetchConfig = parquetSchemaFetchConfig
-    val files = doList().mapPartitions { iter =>
+    // recursiveListDirs parcels files by top-level directory, so a large partition dir becomes a
+    // single skewed task reading all its footers. Rebalance across tasks by file count (footer
+    // reads are ~constant cost per file) before reading footers.
+    val listed = doList()
+    val balanced =
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_REBALANCE_FILE_LISTING)) {
+        listed.repartition(spark.sparkContext.defaultParallelism)
+      } else {
+        listed
+      }
+    val files = balanced.mapPartitions { iter =>
       val fileStatuses = iter.toSeq
       val pathToStatusMapping = fileStatuses.map { fileStatus =>
         fileStatus.path -> fileStatus
