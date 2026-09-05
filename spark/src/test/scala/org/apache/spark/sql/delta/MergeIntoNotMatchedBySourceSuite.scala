@@ -550,6 +550,63 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin
     }
   }
 
+  test("matched and not matched clauses with not matched by source", NameBasedAccessIncompatible) {
+    withTempDir { tempDir =>
+      val source = s"$tempDir/source"
+      val target = s"$tempDir/target"
+      Seq((-1, -10), (0, 0), (1, 10), (2, 20), (3, 30)).toDF("key", "value")
+        .coalesce(1)
+        .write
+        .format("delta")
+        .partitionBy("key")
+        .save(target)
+      Seq((1, 100), (5, 50)).toDF("key", "value").write.format("delta").save(source)
+
+      executeMerge(
+        tgt = s"delta.`$target` t",
+        src = s"delta.`$source` s",
+        cond = "s.key = t.key AND t.key >= 0",
+        clauses =
+          update(set = "t.value = s.value"),
+          insert(values = "*"),
+          deleteNotMatched(condition = "t.key = 0"))
+
+      checkAnswer(
+        readDeltaTableByIdentifier(s"delta.`$target`"),
+        Seq((-1, -10), (1, 100), (2, 20), (3, 30), (5, 50)).toDF("key", "value"))
+
+      // The target-only part of the merge condition and the NOT MATCHED BY SOURCE condition
+      // are combined with OR, so the file for key=-1 is not touched.
+      if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
+        checkAnswer(
+          spark.sql(s"DESCRIBE HISTORY delta.`$target` LIMIT 1").select(
+            "operation",
+            "operationMetrics.numTargetFilesRemoved"),
+          Seq(("MERGE", "4")).toDF())
+      }
+    }
+  }
+
+  test("multiple not matched by source clauses including an unconditional clause") {
+    withKeyValueData(
+      source = Nil,
+      target = (0, 0) :: (1, 1) :: (2, 2) :: (3, 3) :: Nil,
+      isKeyPartitioned = true) { case (sourceName, targetName) =>
+        executeMerge(
+          tgt = s"$targetName t",
+          src = s"$sourceName s",
+          cond = "s.key = t.key",
+          clauses =
+            updateNotMatched(condition = "t.key = 0", set = "t.value = t.value + 10"),
+            deleteNotMatched(condition = "t.key = 1"),
+            updateNotMatched(set = "t.value = t.value + 1"))
+
+        checkAnswer(
+          readDeltaTableByIdentifier(targetName),
+          Seq((0, 10), (2, 3), (3, 4)).toDF("key", "value"))
+      }
+  }
+
   test("files touched - not matched by source") {
     withTempDir { tempDir =>
       val source = s"$tempDir/source"
