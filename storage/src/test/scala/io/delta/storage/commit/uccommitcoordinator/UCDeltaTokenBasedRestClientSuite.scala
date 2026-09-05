@@ -20,6 +20,7 @@ import java.net.{InetSocketAddress, URI}
 import java.nio.charset.StandardCharsets
 import java.util.{Collections, Optional, Set => JSet, UUID}
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 import scala.jdk.CollectionConverters._
 
@@ -49,6 +50,9 @@ class UCDeltaTokenBasedRestClientSuite
 
   private var server: HttpServer = _
   private var serverUri: String = _
+  private var configJson: String = _
+  private val configRequests = new AtomicInteger()
+  private val configQuery = new AtomicReference[String]()
   private var deltaHandler: (HttpExchange, String) => Unit = _
   private val objectMapper = new ObjectMapper()
 
@@ -62,6 +66,10 @@ class UCDeltaTokenBasedRestClientSuite
       val path = exchange.getRequestURI.getPath
       if (path.contains("/metastore_summary")) {
         sendJson(exchange, HttpStatus.SC_OK, metastoreJson)
+      } else if (path.endsWith("/delta/v1/config")) {
+        configRequests.incrementAndGet()
+        configQuery.set(exchange.getRequestURI.getRawQuery)
+        sendJson(exchange, HttpStatus.SC_OK, configJson)
       } else if (deltaHandler != null) {
         deltaHandler(exchange, body)
       } else {
@@ -75,7 +83,12 @@ class UCDeltaTokenBasedRestClientSuite
   }
 
   override def afterAll(): Unit = if (server != null) server.stop(0)
-  override def beforeEach(): Unit = { deltaHandler = null }
+  override def beforeEach(): Unit = {
+    configJson = """{"endpoints":[],"protocol-version":"1.0"}"""
+    configRequests.set(0)
+    configQuery.set(null)
+    deltaHandler = null
+  }
 
   // --------------- helpers ---------------
 
@@ -203,6 +216,47 @@ class UCDeltaTokenBasedRestClientSuite
 
   test("getMetastoreId returns ID on success") {
     withClient(c => assert(c.getMetastoreId() === testMetastoreId))
+  }
+
+  // --------------- protocol negotiation ---------------
+
+  test("negotiates protocol once before the first Delta API operation") {
+    deltaHandler = (exchange, _) => {
+      if (exchange.getRequestURI.getPath.endsWith("/staging-tables")) {
+        sendJson(exchange, HttpStatus.SC_OK,
+          s"""{"table-id":"$testTableId","table-type":"MANAGED",""" +
+            """"location":"s3://bucket/staging"}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+
+    val config = clientConfig
+    config.put("credentialVending.enabled", "false")
+    val client = new UCDeltaTokenBasedRestClient(config, null)
+    try {
+      client.createStagingTable(testIdentifier)
+      client.loadTable(testIdentifier)
+    } finally {
+      client.close()
+    }
+
+    assert(configRequests.get() === 1)
+    assert(configQuery.get().contains(s"catalog=$testCatalog"))
+    assert(configQuery.get().contains("protocol-versions=1.0"))
+  }
+
+  test("rejects an unsupported or malformed selected protocol version") {
+    Seq("1.1", "invalid").foreach { selectedVersion =>
+      configJson = s"""{"endpoints":[],"protocol-version":"$selectedVersion"}"""
+      withClient { client =>
+        val e = intercept[java.io.IOException] {
+          client.loadTable(testIdentifier)
+        }
+        assert(e.getMessage.contains("unsupported Delta API protocol version"))
+        assert(e.getMessage.contains(selectedVersion))
+      }
+    }
   }
 
   // --------------- loadTable ---------------
