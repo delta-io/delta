@@ -36,6 +36,7 @@ class TypeWideningAlterTableSuite
     with ParquetTest
     with TypeWideningTestMixin
     with DeltaDMLTestUtilsNameBased
+    with org.apache.spark.sql.test.SharedSparkSession
 
 trait TypeWideningAlterTableTests extends QueryTest
     with QueryErrorsBase

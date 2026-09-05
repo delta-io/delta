@@ -29,7 +29,9 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.SnapshotImpl
 
-class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
+import org.apache.spark.sql.catalyst.SQLConfHelper
+
+class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest with SQLConfHelper {
 
   // scalastyle:off deltahadoopconfiguration
   private def engine: Engine =
@@ -147,7 +149,7 @@ class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
       withTempDir { dir =>
         val path = dir.getAbsolutePath
         spark.range(10).repartition(1).write.format("delta").save(path)
-        sql(s"DELETE FROM delta.`$path` WHERE id = 0")
+        spark.sql(s"DELETE FROM delta.`$path` WHERE id = 0")
         val (kernelFiles, v1Files) = allFilesFor(path)
 
         assert(v1Files.exists(_.deletionVector != null))

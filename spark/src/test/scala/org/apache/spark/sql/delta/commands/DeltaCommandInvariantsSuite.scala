@@ -20,7 +20,8 @@ import scala.util.{Failure, Success, Try}
 
 import com.databricks.spark.util.Log4jUsageLogger
 
-import org.apache.spark.{SparkFunSuite, SparkThrowable}
+import org.apache.spark.SparkThrowable
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -28,7 +29,7 @@ import org.apache.spark.sql.delta.DeltaOperations.EmptyCommit
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 
-class DeltaCommandInvariantsSuite extends SparkFunSuite with DeltaSQLCommandTest {
+class DeltaCommandInvariantsSuite extends SharedSparkSession with DeltaSQLCommandTest {
 
   for {
     shouldSucceed <- BOOLEAN_DOMAIN

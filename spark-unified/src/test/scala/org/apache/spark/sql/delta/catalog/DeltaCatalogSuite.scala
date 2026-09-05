@@ -16,12 +16,14 @@
 
 package org.apache.spark.sql.delta.catalog
 
-import io.delta.spark.internal.v2.catalog.DeltaV2Table
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-
 import java.io.File
 import java.util.Locale
+
+import io.delta.spark.internal.v2.catalog.DeltaV2Table
+
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.test.SharedSparkSession
 
 /**
  * Unit tests for DeltaCatalog's V2 connector routing logic.
@@ -31,7 +33,7 @@ import java.util.Locale
  * - STRICT mode: Kernel's DeltaV2Table (V2 connector)
  * - NONE mode (default): DeltaTableV2 (V1 connector)
  */
-class DeltaCatalogSuite extends DeltaSQLCommandTest {
+class DeltaCatalogSuite extends DeltaSQLCommandTest with SharedSparkSession {
 
   private val modeTestCases = Seq(
     ("STRICT", classOf[DeltaV2Table], "Kernel DeltaV2Table"),
