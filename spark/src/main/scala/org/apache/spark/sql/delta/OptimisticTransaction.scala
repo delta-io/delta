@@ -2787,7 +2787,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
           val (postCommitSnapshot, committedTransactionInfo) = if (!shouldCheckForConflicts) {
             doCommit(
               commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel,
-              amtWriterManager)
+              amtWriterManager
+            )
           } else recordDeltaOperation(deltaLog, "delta.commit.retry") {
             // The [[CurrentTransactionInfo]] might keep on getting updated while resolving
             // conflicts against the already committed concurrent transactions. This can happen
@@ -2833,7 +2834,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
             updatedCurrentTransactionInfo = newCurrentTransactionInfo
             doCommit(
               commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel,
-              amtWriterManager)
+              amtWriterManager
+            )
           }
           return (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo)
         } catch {
@@ -2889,7 +2891,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
       isolationLevel: IsolationLevel,
-      amtWriterManager: AMTWriterManager): (Snapshot, CurrentTransactionInfo) = {
+      amtWriterManager: AMTWriterManager
+  ): (Snapshot, CurrentTransactionInfo) = {
     val targetCatalogTable = catalogTable
     // If the table requires atomic Iceberg metadata generation
     // , generate iceberg metadata and update the transaction info.

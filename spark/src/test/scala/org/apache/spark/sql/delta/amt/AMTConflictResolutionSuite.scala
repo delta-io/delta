@@ -83,14 +83,76 @@ class AMTConflictResolutionSuite
       val name = "amt_conflict_tree_writer_loses"
       val deltaLog = setupAMTTable(name)
 
-      // A writes a tree (OPTIMIZE CHECKPOINT); B is a plain append that wins A's target version.
+      // A is an OPTIMIZE checkpoint (a maintenance tree write); B is a plain append that wins A's
+      // target version. Rebasing a losing maintenance checkpoint is deferred (it can be rescheduled
+      // against the new snapshot instead), so A still hard-fails.
       val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
         optimizeCheckpointTxn(deltaLog),
         appendTxn(name, id = 100))
-
-      // B commits cleanly; A loses and, because it (re)writes a tree, still hard-fails.
       ThreadUtils.awaitResult(futureB, Duration.Inf)
       assertConcurrentWriteFailure(futureA)
+    }
+  }
+
+  test("Winning Commit [Log Commit] vs Losing commit [inline-incremental commit] - Success") {
+    withTable("amt_conflict_inline_rebase") {
+      val name = "amt_conflict_inline_rebase"
+      val deltaLog = setupAMTTable(name)
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // Threshold 6: A's 10-file insert inlines its AMT tree, while B's single-file append (a
+      // couple of actions) stays log-only. So A is a tree writer losing to a log-only winner -- it
+      // must rebase and rebuild its tree with B folded into the incremental window rather than
+      // hard-failing. Capture A's per-attempt AMT write metrics to inspect the window growth.
+      val perAttempt = trackIncrementalAMTWriteMetricsPerAttempt(deltaLog.update().version) {
+        withInlineThreshold(6) {
+          val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+            () => { appendRowsAsSeparateFiles(name, numFiles = 10, startId = 100); Array.empty },
+            appendTxn(name, id = 200))
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          ThreadUtils.awaitResult(futureA, Duration.Inf)
+        }
+      }
+
+      // Reading the live set back goes through A's rebased inline tree, so a correct id set proves
+      // the tree folded the winning append.
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore ++ (100 to 109).toSet ++ Set(200),
+        s"both commits must survive the rebase; before=$liveIdsBefore after=$liveIdsAfter")
+      // A's commit rode an inline AMT checkpoint, confirming it took the tree-writing rebase path.
+      val latest = deltaLog.update()
+      assert(checkpointAt(deltaLog, latest.version).isDefined,
+        "the rebased inline commit must carry an AMT checkpoint at its version.")
+      assert(amtProvider(latest).isDefined, "the table must remain AMT-backed after the rebase.")
+
+      // A materialized its tree exactly twice -- once on its first attempt and once on the rebase
+      // -- and the rebase's incremental window folds in exactly one extra commit, the winning
+      // append, so its numIntermediateCommits is precisely one more than the first attempt's.
+      val numIntermediateCommits = perAttempt.map(_.numIntermediateCommits)
+      assert(numIntermediateCommits.size == 2,
+        s"A must materialize exactly twice (first attempt + rebase); got $numIntermediateCommits")
+      assert(numIntermediateCommits(1) == numIntermediateCommits(0) + 1,
+        "the rebase must fold exactly one more intermediate commit (the winning append) than the " +
+          s"first attempt; got $numIntermediateCommits")
+    }
+  }
+
+  test("Winning Commit [Manifest Commit] vs Losing commit [inline-incremental commit]" +
+    " - FAILS") {
+    withTable("amt_conflict_inline_vs_tree_winner") {
+      val name = "amt_conflict_inline_vs_tree_winner"
+      val deltaLog = setupAMTTable(name)
+
+      // A's 10-file insert inlines a tree; B installs a new tree (OPTIMIZE CHECKPOINT) and wins A's
+      // target version. The winner's tree moves A's base, so A hard-fails until the base re-seat
+      // lands.
+      withInlineThreshold(6) {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+          () => { appendRowsAsSeparateFiles(name, numFiles = 10, startId = 100); Array.empty },
+          optimizeCheckpointTxn(deltaLog))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        assertConcurrentWriteFailure(futureA)
+      }
     }
   }
 

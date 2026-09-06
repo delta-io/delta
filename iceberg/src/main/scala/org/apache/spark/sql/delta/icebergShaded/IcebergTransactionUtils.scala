@@ -218,8 +218,8 @@ object IcebergTransactionUtils
             getMicrosSinceEpoch(utcInstant)
         }
       case _ =>
-        throw DeltaErrors.universalFormatConversionFailedException(
-          version, "iceberg", "Unexpected partition data type " + elemType)
+        throw DeltaErrors.universalFormatConversionFailedUnexpectedPartitionDataTypeException(
+          version, "iceberg", elemType)
     }
   }
 

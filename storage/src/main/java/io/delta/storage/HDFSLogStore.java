@@ -42,6 +42,7 @@ import org.slf4j.LoggerFactory;
  */
 public class HDFSLogStore extends HadoopFileSystemLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(HDFSLogStore.class);
+    private static final Object LOCAL_FS_WRITE_LOCK = new Object();
     public static final String NO_ABSTRACT_FILE_SYSTEM_EXCEPTION_MESSAGE = "No AbstractFileSystem";
 
     public HDFSLogStore(Configuration hadoopConf) {
@@ -58,8 +59,9 @@ public class HDFSLogStore extends HadoopFileSystemLogStore {
         if (isLocalFs) {
             // We need to add `synchronized` for RawLocalFileSystem as its rename will not throw an
             // exception when the target file exists. Hence we must make sure `exists + rename` in
-            // `writeInternal` for RawLocalFileSystem is atomic in our tests.
-            synchronized(this) {
+            // `writeInternal` for RawLocalFileSystem is atomic across log store instances in our
+            // tests.
+            synchronized(LOCAL_FS_WRITE_LOCK) {
                 writeInternal(path, actions, overwrite, hadoopConf);
             }
         } else {

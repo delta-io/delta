@@ -137,10 +137,14 @@ class AMTWriterManager(
     }
 
     if (preCommitLogSegment.version > readSnapshot.version) {
-      // A concurrent commit won our target version and we are rebasing. A commit that writes no
-      // tree, and that lost only to commits that wrote no tree, is safe to rebase as-is; anything
-      // else needs the tree and back-reference rebase that is not implemented yet.
-      if (writesTree || winningCommitInstalledNewAMTTree(currentTransactionInfo)) {
+      // A concurrent commit won our target version and we are rebasing. Scenarios handled:
+      //   Winning commit | Losing commit     | Action taken
+      //   Log commit     | Log commit        | usual conflict checking; back references stay valid
+      //   Log commit     | Inline AMT commit | regenerate the inline AMT tree; no back-ref changes
+      // All other scenarios are not handled.
+      val losingOptimizeCheckpoint =
+        initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]
+      if (losingOptimizeCheckpoint || winningCommitInstalledNewAMTTree(currentTransactionInfo)) {
         throw DeltaErrors.concurrentWriteException(conflictingCommit = None)
       }
     }
