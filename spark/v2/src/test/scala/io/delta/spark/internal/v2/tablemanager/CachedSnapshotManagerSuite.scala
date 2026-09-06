@@ -25,12 +25,12 @@ import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 // scalastyle:off import.ordering.wrongOrderInGroup
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 
-import io.delta.sql.DeltaSparkSessionExtension
+import io.delta.sql.{DeltaSparkSessionExtensionV1 => DeltaSparkSessionExtension}
 
 import org.apache.spark.sql.delta.DeltaIllegalStateException
 import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
 import org.apache.spark.sql.delta.Snapshot
-import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.catalog.{DeltaCatalogV1 => DeltaCatalog}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
