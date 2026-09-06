@@ -1,0 +1,9 @@
+## Delta Lake Samples
+In this folder there are samples taken from the delta.io quickstart guide and docs. They are available in both Scala and Python and can be run if the presidens are satisfied.
+
+### Preview
+* See [Set up Apache Spark with Delta Lake](https://docs.delta.io/latest/quick-start.html#set-up-apache-spark-with-delta-lake).
+
+### In
+* To run an Sample on Python run `spark-submit --packages io.delta:delta-spark_2.12:{Delta Lake version} PATH/TO/EXAMPLE`
+* To run the Scala Samples, `cd Samples/scala` and run `./build/sbt "runMain Sample.{Sample class name}"` e.g. `./build/sbt "runMain sample.Quickstart"`
