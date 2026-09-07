@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.DeltaTimeTravelSuite
  *
  * Table setup is rerouted to the V1 connector via [[DeltaTimeTravelSuite.setupSql]] /
  * [[DeltaTimeTravelSuite.runSetup]], so the time travel read itself is what runs under V2.
- * [[V2ForceTest]] also ensures that no test is silently executing a V1 file-source scan.
+ * [[V2ForceTest]] attempts to guard against a test silently executing a V1 Delta file-source scan.
  */
 class DeltaTimeTravelV2Suite extends DeltaTimeTravelSuite with V2ForceTest {
 
@@ -54,20 +54,21 @@ class DeltaTimeTravelV2Suite extends DeltaTimeTravelSuite with V2ForceTest {
   )
 
   override protected def shouldFailTests: Set[String] = Set(
-    // Path-based time travel not supported yet.
+    // Writes to a directory named `base@v0` and both assertions are regular reads, so whole test
+    // stays in V1.
     "don't time travel a valid delta path with @ syntax",
-    "scans on different versions of same table are executed correctly",
-    // Path-based schema/partition-evolution reads.
-    "time travel with schema changes - should instantiate old schema",
-    "time travel with partition changes - should instantiate old schema",
+    // Path-based DataFrame reads not supported
     "as of timestamp in between commits should use commit before timestamp",
     "as of timestamp on exact timestamp",
     "as of timestamp on invalid timestamp",
     "as of exact timestamp after last commit should fail",
-    "as of with versions",
     "time travelling with adjusted timestamps",
-    // Catalog reads cross-checked against a path-based V1 oracle.
+    "scans on different versions of same table are executed correctly",
     "time travel support in SQL",
+    "as of with versions",
+    // Path-based schema/partition-evolution reads.
+    "time travel with schema changes - should instantiate old schema",
+    "time travel with partition changes - should instantiate old schema",
     // Write / maintenance surfaces not supported.
     "Block time travel beyond deletedFileRetention",
     "Block CDC beyond deletedFileRetention",

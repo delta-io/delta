@@ -432,10 +432,7 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
       // check that both session configs are set
       numOptions = txnVersion.size + txnAppId.size
       if (numOptions != 0 && numOptions != 2) {
-        throw DeltaErrors.invalidIdempotentWritesOptionsException(
-          "Both spark.databricks.delta.write.txnAppId and " +
-            "spark.databricks.delta.write.txnVersion must be specified for " +
-            "idempotent Delta writes")
+        throw DeltaErrors.invalidIdempotentWritesMissingSessionConfsException()
       }
       fromSessionConf = true
     }

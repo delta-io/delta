@@ -28,6 +28,7 @@ import java.io.File;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -120,8 +121,9 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
 
   private DeltaV2DataWriterFactory dataWriterFactory(String path) {
     Snapshot snapshot =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf())
-            .loadLatestSnapshot();
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
+            new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf())
+                .loadLatestSnapshot());
     DeltaV2BatchWrite write =
         new DeltaV2BatchWrite(
             defaultEngine,
@@ -129,6 +131,7 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
             path,
             snapshot,
             TABLE_SCHEMA,
+            new StructType(),
             WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()));
     return (DeltaV2DataWriterFactory)
         write.createBatchWriterFactory(WriteTestUtils.physicalWriteInfo(1));

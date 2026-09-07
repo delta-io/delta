@@ -750,6 +750,7 @@ class UCCatalogManagedCommitterSuite
       // ===== THEN =====
       assert(ex.isRetryable && !ex.isConflict)
       assert(ex.getMessage.contains("Failed to write delta file due to: Network hiccup"))
+      assert(ucClient.getLastFinalizeCreateRecord.isEmpty)
     }
   }
 

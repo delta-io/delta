@@ -31,7 +31,8 @@ class AdaptiveMetadataActionsSerializerSuite extends SparkFunSuite {
 
   private val sampleRoot = ContentRoot(
     path = "metadata/root-abc.parquet",
-    sizeInBytes = 4096L)
+    sizeInBytes = 4096L,
+    version = 1L)
 
   private val sampleProtocol = Protocol(minReaderVersion = 3, minWriterVersion = 7)
   private val sampleMetadata = Metadata(id = "metadata-id", name = "t")
@@ -57,15 +58,17 @@ class AdaptiveMetadataActionsSerializerSuite extends SparkFunSuite {
   test("ContentRoot: ser-de") {
     val root = ContentRoot(
       path = "metadata/root-abc.parquet",
-      sizeInBytes = 4096L)
+      sizeInBytes = 4096L,
+      version = 1L)
     val json = JsonUtils.toJson(root)
     assert(json ===
-      """{"path":"metadata/root-abc.parquet","sizeInBytes":4096}""")
+      """{"path":"metadata/root-abc.parquet","sizeInBytes":4096,"version":1}""")
     val pretty = JsonUtils.toPrettyJson(root)
     assert(pretty ===
       """{
         |  "path" : "metadata/root-abc.parquet",
-        |  "sizeInBytes" : 4096
+        |  "sizeInBytes" : 4096,
+        |  "version" : 1
         |}""".stripMargin)
     assert(JsonUtils.fromJson[ContentRoot](json) === root)
     assert(JsonUtils.fromJson[ContentRoot](pretty) === root)
@@ -74,10 +77,37 @@ class AdaptiveMetadataActionsSerializerSuite extends SparkFunSuite {
   test("ContentRoot: serde handles Long.MaxValue size") {
     val root = ContentRoot(
       path = "metadata/root-big.parquet",
-      sizeInBytes = Long.MaxValue)
+      sizeInBytes = Long.MaxValue,
+      version = Long.MaxValue)
     val json = JsonUtils.toJson(root)
     val roundTripped = JsonUtils.fromJson[ContentRoot](json)
     assert(roundTripped === root)
+  }
+
+  test("ContentRoot: tags round-trip and expose typed accessors") {
+    val root = ContentRoot(
+      path = "metadata/root-abc.parquet",
+      sizeInBytes = 4096L,
+      version = 7L,
+      isIncremental = true,
+      lastManifestCommitWithFullRewrite = 7L,
+      numLeaves = 3L)
+    assert(root.version === 7L)
+    assert(root.isIncremental === Some(true))
+    assert(root.lastManifestCommitWithFullRewrite === Some(7L))
+    assert(root.numLeaves === Some(3L))
+    val roundTripped = JsonUtils.fromJson[ContentRoot](JsonUtils.toJson(root))
+    assert(roundTripped === root)
+    assert(roundTripped.version === 7L)
+    assert(roundTripped.isIncremental === Some(true))
+    assert(roundTripped.lastManifestCommitWithFullRewrite === Some(7L))
+    assert(roundTripped.numLeaves === Some(3L))
+  }
+
+  test("ContentRoot: accessors are None when tags are absent") {
+    assert(sampleRoot.isIncremental.isEmpty)
+    assert(sampleRoot.lastManifestCommitWithFullRewrite.isEmpty)
+    assert(sampleRoot.numLeaves.isEmpty)
   }
 
   // ============================================================================================
@@ -187,7 +217,8 @@ class AdaptiveMetadataActionsSerializerSuite extends SparkFunSuite {
         |    "version" : 1,
         |    "contentRoot" : {
         |      "path" : "metadata/root-abc.parquet",
-        |      "sizeInBytes" : 4096
+        |      "sizeInBytes" : 4096,
+        |      "version" : 1
         |    },
         |    "protocol" : {
         |      "minReaderVersion" : 3,
@@ -244,7 +275,7 @@ class AdaptiveMetadataActionsSerializerSuite extends SparkFunSuite {
       SetTransaction(appId = "app-2", version = 8L, lastUpdated = None))
     val cp = Checkpoint(
       version = 41L,
-      contentRoot = sampleRoot,
+      contentRoot = sampleRoot.copy(version = 41L),
       protocol = protocol,
       metaData = sampleMetadata,
       domainMetadata = dm,
@@ -256,7 +287,8 @@ class AdaptiveMetadataActionsSerializerSuite extends SparkFunSuite {
         |    "version" : 41,
         |    "contentRoot" : {
         |      "path" : "metadata/root-abc.parquet",
-        |      "sizeInBytes" : 4096
+        |      "sizeInBytes" : 4096,
+        |      "version" : 41
         |    },
         |    "protocol" : {
         |      "minReaderVersion" : 3,
@@ -313,7 +345,8 @@ class AdaptiveMetadataActionsSerializerSuite extends SparkFunSuite {
         |    "version" : 1,
         |    "contentRoot" : {
         |      "path" : "metadata/root-abc.parquet",
-        |      "sizeInBytes" : 4096
+        |      "sizeInBytes" : 4096,
+        |      "version" : 1
         |    },
         |    "protocol" : {
         |      "minReaderVersion" : 3,
@@ -396,5 +429,33 @@ class AdaptiveMetadataActionsSerializerSuite extends SparkFunSuite {
     assert(parsed === cp)
     assert(parsed.sidecars.length === 2)
     assert(parsed.sidecars.forall(_.sidecarType.contains(SidecarType.Type.DomainMetadata)))
+  }
+
+  test("Checkpoint: contentRoot.version may lag checkpoint.version") {
+    val cp = Checkpoint(
+      version = 10L,
+      contentRoot = sampleRoot.copy(version = 5L),
+      protocol = sampleProtocol,
+      metaData = sampleMetadata,
+      domainMetadata = Seq.empty,
+      txns = Seq.empty,
+      sidecars = Seq.empty)
+    val parsed = Action.fromJson(cp.json).asInstanceOf[Checkpoint]
+    assert(parsed.contentRoot.version === 5L)
+    assert(parsed.version === 10L)
+  }
+
+  test("Checkpoint: rejects contentRoot.version ahead of checkpoint.version") {
+    val ex = intercept[IllegalArgumentException] {
+      Checkpoint(
+        version = 1L,
+        contentRoot = sampleRoot.copy(version = 2L),
+        protocol = sampleProtocol,
+        metaData = sampleMetadata,
+        domainMetadata = Seq.empty,
+        txns = Seq.empty,
+        sidecars = Seq.empty)
+    }
+    assert(ex.getMessage.contains("contentRoot.version"))
   }
 }

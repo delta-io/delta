@@ -326,6 +326,24 @@ class OptimisticTransactionSuite
     }
   }
 
+  test("logPath resolves to deltaLog.logPath") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val txn = log.startTransaction()
+      assert(txn.logPath === log.logPath)
+    }
+  }
+
+  test("newDeltaHadoopConf resolves to deltaLog.newDeltaHadoopConf") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val txn = log.startTransaction()
+      def asMap(conf: org.apache.hadoop.conf.Configuration): Map[String, String] =
+        conf.iterator().asScala.map(e => e.getKey -> e.getValue).toMap
+      assert(asMap(txn.newDeltaHadoopConf()) === asMap(log.newDeltaHadoopConf()))
+    }
+  }
+
   test("enabling Coordinated Commits on an existing table should create commit dir") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
@@ -1177,7 +1195,8 @@ class OptimisticTransactionSuite
               newProtocolOpt = None,
               op = DeltaOperations.Restore(Some(0), None),
               context = Map.empty,
-              metrics = Map.empty)
+              metrics = Map.empty,
+              dataChange = Some(true))
           }
           if (conflict) {
             assert(e.isInstanceOf[ConcurrentWriteException])
@@ -1812,7 +1831,8 @@ class OptimisticTransactionSuite
               newProtocolOpt = None,
               op = DeltaOperations.ManualUpdate,
               context = Map.empty,
-              metrics = Map.empty)
+              metrics = Map.empty,
+              dataChange = Some(true))
           } else {
             log.startTransaction().commit(mixedActions, ManualUpdate)
           }

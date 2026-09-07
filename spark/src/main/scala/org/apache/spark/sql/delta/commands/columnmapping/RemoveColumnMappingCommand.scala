@@ -41,6 +41,11 @@ class RemoveColumnMappingCommand(
    */
   def run(spark: SparkSession, removeColumnMappingTableProperty: Boolean): Unit = {
     deltaLog.withNewTransaction(catalogOpt) { txn =>
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_REORGANIZATION,
+        txn.snapshot,
+        txn.catalogTable)
+
       val originalFiles = txn.filterFiles()
       val originalData = buildDataFrame(txn, originalFiles)
       val originalSchema = txn.snapshot.schema

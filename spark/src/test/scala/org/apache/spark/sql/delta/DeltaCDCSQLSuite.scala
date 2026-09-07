@@ -475,3 +475,6 @@ class DeltaCDCSQLWithCatalogOwnedBatch2Suite extends DeltaCDCSQLSuite {
 class DeltaCDCSQLWithCatalogOwnedBatch100Suite extends DeltaCDCSQLSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
+
+// Routes cdcRead through the V2 changelog SQL surface. See [[ChangelogV2CdcReadMixin]].
+class DeltaCDCSQLChangelogV2Suite extends DeltaCDCSQLSuite with ChangelogV2CdcReadMixin

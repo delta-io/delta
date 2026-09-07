@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.util
 
+import org.apache.spark.sql.delta.LogSegment
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.hadoop.fs.Path
@@ -82,5 +83,12 @@ object DeltaCommitFileProvider {
       .collect { case UnbackfilledDeltaFile(_, version, uuid) => version -> uuid }
       .toMap
     new DeltaCommitFileProvider(snapshot.path.toString, snapshot.version, uuids)
+  }
+
+  def apply(logPath: Path, logSegment: LogSegment): DeltaCommitFileProvider = {
+    val uuids = logSegment.deltas
+      .collect { case UnbackfilledDeltaFile(_, version, uuid) => version -> uuid }
+      .toMap
+    new DeltaCommitFileProvider(logPath.toString, logSegment.version, uuids)
   }
 }

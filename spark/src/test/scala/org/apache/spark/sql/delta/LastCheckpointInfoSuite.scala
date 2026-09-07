@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.actions.{Checkpoint, ContentRoot, Metadata, Protocol}
+import org.apache.spark.sql.delta.amt.{AMTLeafComparisons, AMTSingleAction, AMTWriteResult, DataManifestEntry, ManifestInfo, Tracking}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -234,6 +236,240 @@ class LastCheckpointInfoSuite extends SharedSparkSession
       === LastCheckpointInfo.serializeToJson(ci2, addChecksum = true))
   }
 
+  /** A [[Checkpoint]] action describing `version`, with a root manifest at `rootPath`. */
+  private def sampleCheckpointAction(
+      version: Long = 1L,
+      rootPath: String = "metadata/root-abc.parquet",
+      rootSizeInBytes: Long = 4096L): Checkpoint = Checkpoint(
+    version = version,
+    contentRoot = ContentRoot(path = rootPath, sizeInBytes = rootSizeInBytes, version = version),
+    protocol = Protocol(minReaderVersion = 3, minWriterVersion = 7),
+    metaData = Metadata(id = "metadata-id", name = "t"),
+    domainMetadata = Nil,
+    txns = Nil,
+    sidecars = Nil)
+
+  private def sampleAMTCheckpoint(
+      version: Long = 1L,
+      leaves: Seq[DataManifestEntry] =
+        Seq(sampleLeaf("metadata/leaf-1.parquet"))): LastAMTCheckpoint =
+    LastAMTCheckpoint(
+      manifestCommitVersion = version,
+      checkpoint = Some(sampleCheckpointAction(version)),
+      leaves = Some(leaves))
+
+  /**
+   * A leaf pointer carrying `recordCount` entries and occupying `sizeInBytes` on disk. Every
+   * optional field is populated with a distinct non-empty value so the round-trip tests actually
+   * exercise their serialization -- in particular the byte-array fields (`key_metadata`,
+   * `deleted_positions`, `dv`) whose base64 encoding is easy to get wrong.
+   */
+  private def sampleLeaf(
+      location: String,
+      recordCount: Long = 1L,
+      sizeInBytes: Long = 1024L): DataManifestEntry = DataManifestEntry(
+    location = location,
+    file_format = AMTSingleAction.FileFormatParquet,
+    tracking = Tracking(
+      status = Tracking.Status.Added,
+      snapshot_id = Some(11L),
+      dv_snapshot_id = Some(12L),
+      sequence_number = Some(13L),
+      file_sequence_number = Some(14L),
+      first_row_id = Some(15L),
+      deleted_positions = Some(Array[Byte](1, 2, 3)),
+      replaced_positions = Some(Array[Byte](4, 5))),
+    record_count = recordCount,
+    file_size_in_bytes = sizeInBytes,
+    manifest_info = ManifestInfo(
+      added_files_count = recordCount.toInt,
+      existing_files_count = 2,
+      deleted_files_count = 3,
+      replaced_files_count = 4,
+      modified_files_count = 5,
+      added_rows_count = 100L,
+      existing_rows_count = 200L,
+      deleted_rows_count = 300L,
+      replaced_rows_count = 400L,
+      modified_rows_count = 500L,
+      min_sequence_number = 7L,
+      dv = Some(Array[Byte](9, 8, 7)),
+      dv_cardinality = Some(5L)),
+    partition = Some(Map("part_col" -> "part_val")),
+    spec_id = Some(1),
+    content_stats = Some("""{"minValues":{"col-1":1}}"""),
+    key_metadata = Some(Array[Byte](16, 17, 18)),
+    split_offsets = Some(Seq(0L, 128L, 256L)))
+
+  private def sampleAMTWriteResult(
+      contentRootVersion: Long = 1L,
+      leaves: Seq[DataManifestEntry] = Seq(sampleLeaf("metadata/leaf-1.parquet"))): AMTWriteResult =
+    AMTWriteResult(
+      contentRootVersion = contentRootVersion,
+      checkpoint = sampleCheckpointAction(contentRootVersion),
+      leaves = leaves,
+      includeActionsInCommitJson = true)
+
+  /** Reads `_last_checkpoint` back as raw json. */
+  private def readLastCheckpointFileAsJson(log: DeltaLog): String = {
+    val fs = log.LAST_CHECKPOINT.getFileSystem(log.newDeltaHadoopConf())
+    val is = fs.open(log.LAST_CHECKPOINT)
+    try {
+      IOUtils.toString(is, "UTF-8")
+    } finally {
+      is.close()
+    }
+  }
+
+  ////////////////////////////////////////
+  // writeLastCheckpointFileForAMT
+  ////////////////////////////////////////
+
+  test("writeLastCheckpointFileForAMT - writes an AMT-format _last_checkpoint") {
+    withTempDir { dir =>
+      spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+      val log = DeltaLog.forTable(spark, dir)
+      val writeResult = sampleAMTWriteResult(contentRootVersion = 3)
+
+      log.writeLastCheckpointFileForAMT(manifestCommitVersion = 4, writeResult)
+
+      val info = log.readLastCheckpointFile().getOrElse(
+        fail("writeLastCheckpointFileForAMT must produce a readable _last_checkpoint."))
+      // The pointer describes the manifest tree's content-root version, and records the leaf count
+      // in `parts`.
+      assert(info.version == 3)
+      assert(info.parts == Some(writeResult.leaves.size))
+      // `size` (action count) and `numOfAddFiles` are intentionally unavailable for AMT.
+      assert(info.size == -1)
+      assert(info.numOfAddFiles.isEmpty)
+      // The embedded Checkpoint action survives the round trip, so a cold reader can locate the
+      // root manifest without reading the commit json.
+      val amt = info.amtCheckpoint.getOrElse(fail("The written info must carry an amtCheckpoint."))
+      assert(amt.checkpoint == Some(writeResult.checkpoint))
+      assert(amt.manifestCommitVersion == 4)
+      assert(amt.checkpoint.map(_.contentRoot.path) == Some("metadata/root-abc.parquet"))
+      AMTLeafComparisons.assertLeavesEqual(amt.leaves.get, writeResult.leaves)
+    }
+  }
+
+  test("writeLastCheckpointFileForAMT - records the leaf count") {
+    withTempDir { dir =>
+      spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+      val log = DeltaLog.forTable(spark, dir)
+      val leaves = Seq(sampleLeaf("metadata/leaf-1.parquet"), sampleLeaf("metadata/leaf-2.parquet"))
+      log.writeLastCheckpointFileForAMT(
+        manifestCommitVersion = 4, sampleAMTWriteResult(contentRootVersion = 3, leaves = leaves))
+
+      val info = log.readLastCheckpointFile().get
+      assert(info.parts == Some(2), "`parts` carries the number of leaves for an AMT checkpoint.")
+      assert(info.version == 3, "`version` carries the content root version.")
+      assert(info.amtCheckpoint.map(_.manifestCommitVersion) == Some(4L))
+    }
+  }
+
+  test("writeLastCheckpointFileForAMT - overwrites the previous pointer") {
+    withTempDir { dir =>
+      spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+      val log = DeltaLog.forTable(spark, dir)
+
+      log.writeLastCheckpointFileForAMT(
+        manifestCommitVersion = 4, sampleAMTWriteResult(contentRootVersion = 3))
+      assert(log.readLastCheckpointFile().map(_.version) == Some(3L))
+
+      // A later manifest commit replaces the pointer wholesale: `_last_checkpoint` names only the
+      // latest checkpoint, so the newer content root must win.
+      val newer = AMTWriteResult(
+        contentRootVersion = 5,
+        checkpoint = sampleCheckpointAction(version = 5, rootPath = "metadata/root-def.parquet"),
+        leaves = Seq(sampleLeaf("metadata/leaf-9.parquet")),
+        includeActionsInCommitJson = true)
+      log.writeLastCheckpointFileForAMT(manifestCommitVersion = 6, newer)
+
+      val info = log.readLastCheckpointFile().get
+      assert(info.version == 5)
+      assert(info.amtCheckpoint.flatMap(_.checkpoint).map(_.contentRoot.path)
+        == Some("metadata/root-def.parquet"))
+      assert(info.amtCheckpoint.map(_.manifestCommitVersion) == Some(6))
+    }
+  }
+
+  test("writeLastCheckpointFileForAMT - honors the checksum config") {
+    withTempDir { dir =>
+      spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+      val log = DeltaLog.forTable(spark, dir)
+      val writeResult = sampleAMTWriteResult(contentRootVersion = 1)
+
+      withSQLConf(DeltaSQLConf.LAST_CHECKPOINT_CHECKSUM_ENABLED.key -> "true") {
+        log.writeLastCheckpointFileForAMT(manifestCommitVersion = 1, writeResult)
+        assert(readLastCheckpointFileAsJson(log).contains("checksum"))
+      }
+
+      withSQLConf(DeltaSQLConf.LAST_CHECKPOINT_CHECKSUM_ENABLED.key -> "false") {
+        log.writeLastCheckpointFileForAMT(manifestCommitVersion = 1, writeResult)
+        assert(!readLastCheckpointFileAsJson(log).contains("checksum"))
+      }
+    }
+  }
+
+  test("LastCheckpointInfo - amtCheckpoint serialize/deserialize round-trip") {
+    val ci = LastCheckpointInfo(version = 1, size = -1, parts = None, sizeInBytes = None,
+      numOfAddFiles = None, checkpointSchema = None,
+      checkpointType = Some(LastCheckpointInfo.CheckpointType.AMT),
+      amtCheckpoint = Some(sampleAMTCheckpoint()))
+    val json = LastCheckpointInfo.serializeToJson(ci, addChecksum = true)
+    val deserialized = LastCheckpointInfo.deserializeFromJson(json, validate = true)
+    val amt = deserialized.amtCheckpoint.getOrElse(fail("round-trip dropped the amtCheckpoint."))
+    val expectedAmt = ci.amtCheckpoint.get
+    assert(amt.manifestCommitVersion == expectedAmt.manifestCommitVersion)
+    assert(amt.checkpoint == expectedAmt.checkpoint) // Checkpoint carries no Array[Byte] fields.
+    AMTLeafComparisons.assertLeavesEqual(amt.leaves.get, expectedAmt.leaves.get)
+    assert(deserialized.checkpointType == Some(LastCheckpointInfo.CheckpointType.AMT))
+    // Compare the rest non-array fields by `==`.
+    assert(deserialized.copy(amtCheckpoint = None, checkpointType = None, checksum = None)
+      == ci.copy(amtCheckpoint = None, checkpointType = None))
+  }
+
+  test("LastCheckpointInfo - checkpointType serializes as a bare string") {
+    val ci = LastCheckpointInfo(version = 1, size = -1, parts = None, sizeInBytes = None,
+      numOfAddFiles = None, checkpointSchema = None,
+      checkpointType = Some(LastCheckpointInfo.CheckpointType.AMT),
+      amtCheckpoint = Some(sampleAMTCheckpoint()))
+    val json = LastCheckpointInfo.serializeToJson(ci, addChecksum = false)
+    // The type must land as its bare `name`, not as a nested `{"name":...}` object. Jackson would
+    // bean-serialize the sealed type without `@JsonValue`, which also changes the checksum shape
+    // (one `"checkpointType"` entry instead of a `"checkpointType"+"name"` entry) and breaks
+    // deserialization.
+    assert(json.contains(s""""checkpointType":"${LastCheckpointInfo.CheckpointType.AMT.name}""""),
+      s"Expected a bare-string checkpointType in: $json")
+    assert(!json.contains(""""checkpointType":{"""),
+      s"checkpointType must not serialize as an object: $json")
+
+    // And it deserializes back to the same singleton, with the checksum validating over it.
+    val withChecksum = LastCheckpointInfo.serializeToJson(ci, addChecksum = true)
+    val deserialized = LastCheckpointInfo.deserializeFromJson(withChecksum, validate = true)
+    assert(deserialized.checkpointType == Some(LastCheckpointInfo.CheckpointType.AMT))
+  }
+
+  test("LastCheckpointInfo - an unknown checkpointType decodes to UNKNOWN") {
+    val ci = LastCheckpointInfo(version = 1, size = -1, parts = None, sizeInBytes = None,
+      numOfAddFiles = None, checkpointSchema = None,
+      checkpointType = Some(LastCheckpointInfo.CheckpointType.UNKNOWN),
+      amtCheckpoint = Some(sampleAMTCheckpoint()))
+    val json = LastCheckpointInfo.serializeToJson(ci, addChecksum = false)
+    val forged = json.replace(
+      s""""checkpointType":"${LastCheckpointInfo.CheckpointType.UNKNOWN.name}"""",
+      """"checkpointType":"SomeFutureTree"""")
+    val deserialized = LastCheckpointInfo.deserializeFromJson(forged, validate = false)
+    assert(deserialized.checkpointType == Some(LastCheckpointInfo.CheckpointType.UNKNOWN),
+      s"An unrecognized checkpointType must decode to UNKNOWN, got ${deserialized.checkpointType}.")
+    // The amtCheckpoint alongside the unknown type must still be decoded, not dropped.
+    val amt = deserialized.amtCheckpoint.getOrElse(
+      fail("The amtCheckpoint must survive an unknown checkpointType."))
+    assert(amt.manifestCommitVersion == ci.amtCheckpoint.get.manifestCommitVersion)
+    assert(amt.checkpoint == ci.amtCheckpoint.get.checkpoint)
+    AMTLeafComparisons.assertLeavesEqual(amt.leaves.get, ci.amtCheckpoint.get.leaves.get)
+  }
+
   test("LastCheckpointInfo - json with duplicate keys should fail") {
     val jsonString =
       """{"version":1,"size":3,"parts":3,"checksum":"d84a0aa11c93304d57feca6acaceb7fb","size":2}"""
@@ -250,25 +486,15 @@ class LastCheckpointInfoSuite extends SharedSparkSession
       spark.range(10).write.format("delta").save(dir.getAbsolutePath)
       val log = DeltaLog.forTable(spark, dir)
 
-      def readLastCheckpointFile(): String = {
-        val fs = log.LAST_CHECKPOINT.getFileSystem(log.newDeltaHadoopConf())
-        val is = fs.open(log.LAST_CHECKPOINT)
-        try {
-          IOUtils.toString(is, "UTF-8")
-        } finally {
-          is.close()
-        }
-      }
-
       withSQLConf(DeltaSQLConf.LAST_CHECKPOINT_CHECKSUM_ENABLED.key -> "true") {
         DeltaLog.forTable(spark, dir).checkpoint()
-        assert(readLastCheckpointFile().contains("checksum"))
+        assert(readLastCheckpointFileAsJson(log).contains("checksum"))
       }
 
       spark.range(10).write.mode("append").format("delta").save(dir.getAbsolutePath)
       withSQLConf(DeltaSQLConf.LAST_CHECKPOINT_CHECKSUM_ENABLED.key -> "false") {
         DeltaLog.forTable(spark, dir).checkpoint()
-        assert(!readLastCheckpointFile().contains("checksum"))
+        assert(!readLastCheckpointFileAsJson(log).contains("checksum"))
       }
     }
   }

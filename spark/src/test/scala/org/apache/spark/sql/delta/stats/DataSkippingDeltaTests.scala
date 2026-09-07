@@ -242,6 +242,11 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       }
     }
   }
+}
+
+trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
+{
+  import testImplicits._
 
   testSkipping(
     "top level, single 1",
@@ -2367,7 +2372,6 @@ trait DataSkippingDeltaTestsBase extends QueryTest
 
 }
 
-trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 /** Tests code paths within DataSkippingReader.scala */
 trait DataSkippingDeltaV1Tests
   extends DataSkippingDeltaTests

@@ -228,8 +228,11 @@ abstract class CloneTableBase(
       var actions: Iterator[Action] =
         addFileIter.map { fileToCopy =>
           val copiedFile = fileToCopy.copy(dataChange = dataChangeInFileAction)
-          // CLONE does not preserve Row IDs and Commit Versions
-          copiedFile.copy(baseRowId = None, defaultRowCommitVersion = None)
+          // CLONE does not preserve Row IDs and Commit Versions, nor the source table's AMT
+          // back reference and passthrough.
+          copiedFile.copy(
+            baseRowId = None, defaultRowCommitVersion = None, backReference = None,
+            amtPassthrough = None)
         }
       sourceTable.snapshot.foreach { sourceSnapshot =>
         // Handle DomainMetadata for cloning a table.
@@ -257,6 +260,11 @@ abstract class CloneTableBase(
         }
       }
 
+      // Every file action above is stamped with `dataChangeInFileAction`, so the commit changes
+      // data exactly when that is true and there is at least one file action.
+      val fileActionCount = addedFileCount
+      val commitDataChange = dataChangeInFileAction && fileActionCount > 0
+
       recordDeltaOperation(
         destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
         txn.commitLarge(
@@ -265,7 +273,8 @@ abstract class CloneTableBase(
           Some(newProtocol),
           deltaOperation,
           context,
-          commitOpMetrics.mapValues(_.toString()).toMap)
+          commitOpMetrics.mapValues(_.toString()).toMap,
+          dataChange = Some(commitDataChange))
       }
 
       val cloneLogData = getOperationMetricsForEventRecord(opMetrics) ++ Map(

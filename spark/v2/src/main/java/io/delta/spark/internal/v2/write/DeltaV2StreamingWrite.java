@@ -27,12 +27,13 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.util.function.Function;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.connector.write.streaming.StreamingDataWriterFactory;
 import org.apache.spark.sql.connector.write.streaming.StreamingWrite;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,7 +62,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
   private static final Logger logger = LoggerFactory.getLogger(DeltaV2StreamingWrite.class);
 
   private final Engine engine;
-  private final DeltaSnapshotManager snapshotManager;
+  private final DeltaV2SnapshotManager snapshotManager;
   private final String queryId;
   private final DeltaV2DataWriterFactory dataWriterFactory;
   // The write state's schema/protocol baseline; the per-epoch guard fails if the table diverges.
@@ -79,7 +80,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
   DeltaV2StreamingWrite(
       Engine engine,
       Snapshot initialSnapshot,
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       String queryId,
       Function<Transaction, DeltaV2DataWriterFactory> dataWriterFactoryBuilder) {
     this.engine = requireNonNull(engine, "engine is null");
@@ -110,8 +111,13 @@ class DeltaV2StreamingWrite implements StreamingWrite {
 
   @Override
   public void commit(long epochId, WriterCommitMessage[] messages) {
-    // Refresh so this epoch commits at latest+1.
-    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
+    // TODO: Expose streaming transaction construction and latest transaction-version lookup
+    // through the snapshot facade so this path does not depend on SnapshotImpl.
+    // Kernel-only: needs SnapshotImpl.buildUpdateTableTransaction
+    // (TransactionBuilder) for the streaming commit, and
+    // getLatestTransactionVersion for the epoch-skip check.
+    SnapshotImpl latestSnapshot =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
 
     // TODO(#7140): no implicit type cast and mergeSchema. Fail loudly on a concurrent
     // schema/protocol change.

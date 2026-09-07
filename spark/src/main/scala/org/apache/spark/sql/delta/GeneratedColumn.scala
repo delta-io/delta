@@ -122,6 +122,19 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
   }
 
   /**
+   * Returns whether the table has a generated column that has a NullType data type.
+   *
+   * @param protocol the table protocol.
+   * @param schema the table schema.
+   * @return whether the table has a generated column that has a NullType data type.
+   */
+  def hasGeneratedNullTypeColumn(protocol: Protocol, schema: StructType): Boolean = {
+    schema.exists { f =>
+      isGeneratedColumn(protocol, f) && f.dataType.isInstanceOf[NullType]
+    }
+  }
+
+  /**
    * Whether the table has generated columns. A table has generated columns only if its
    * protocol satisfies Generated Column (listed in Table Features or supported implicitly) and
    * some of columns in the table schema contain generation expressions.

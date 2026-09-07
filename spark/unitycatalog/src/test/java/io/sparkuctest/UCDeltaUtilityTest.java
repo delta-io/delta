@@ -150,15 +150,15 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
 
           assertThatThrownBy(() -> sql("OPTIMIZE %s", tableName))
               .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
-              .hasMessageContaining("OPTIMIZE");
+              .hasMessageContaining("DATA_REORGANIZATION");
 
           assertThatThrownBy(() -> sql("VACUUM %s", tableName))
               .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
-              .hasMessageContaining("VACUUM");
+              .hasMessageContaining("DATA_CLEANUP");
 
           assertThatThrownBy(() -> sql("REORG TABLE %s APPLY (PURGE)", tableName))
               .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
-              .hasMessageContaining("OPTIMIZE");
+              .hasMessageContaining("DATA_REORGANIZATION");
         });
   }
 }

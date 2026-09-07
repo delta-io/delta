@@ -93,6 +93,8 @@ class AdaptiveMetadataTableFeatureSuite
       val protocol = protocolOf("amt_supported")
       assert(protocol.isFeatureSupported(AdaptiveMetadataTableFeature),
         s"Protocol must record adaptiveMetadata-preview as supported. Got: $protocol")
+      assert(AMTUtils.amtEnabled(metadataOf("amt_supported"), protocol),
+        s"AMTUtils.amtEnabled must report the table as AMT-enabled. Got: $protocol")
       // Every required feature (and their transitive dependencies) must be present.
       dependentFeatures(AdaptiveMetadataTableFeature).foreach { f =>
         assert(protocol.readerAndWriterFeatureNames.contains(f.name),

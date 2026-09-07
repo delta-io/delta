@@ -24,6 +24,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.DeltaOperations.{OP_SET_TBLPROPERTIES, ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -69,8 +70,10 @@ private[delta] case class CurrentTransactionInfo(
     val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
     val op: DeltaOperations.Operation,
-    val preCommitLatestAMTCheckpointOpt: Option[Checkpoint] = None
+    val preCommitLatestAMTCheckpointOpt: Option[Checkpoint] = None,
+    val currentCommitAttemptAMTCheckpointOpt: Option[Checkpoint] = None
     , val convertedIcebergMetadata: Option[UniformMetadata] = None
+    , idempotentCommitAlreadyLandedAt: Option[Long] = None
  ) {
 
   /**
@@ -309,12 +312,11 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     resolveTimestampOrderingConflicts()
 
-    // If the winning commit emitted an inline AMT checkpoint, it is now the latest checkpoint
-    // before the next commit attempt.
-    winningCommitSummary.amtCheckpoint.foreach { checkpoint =>
-      currentTransactionInfo =
-        currentTransactionInfo.copy(preCommitLatestAMTCheckpointOpt = Some(checkpoint))
-    }
+    // Fold the winning commit into our transaction info before the next attempt: this advances
+    // `preCommitLatestAMTCheckpointOpt` to the winner's inline AMT checkpoint (when the winner
+    // wrote one) and clears `currentCommitAttemptAMTCheckpointOpt`.
+    currentTransactionInfo =
+      AMTUtils.updateCurrentTransactionInfo(currentTransactionInfo, winningCommitSummary)
 
     logMetrics()
     currentTransactionInfo
@@ -1262,9 +1264,8 @@ private[delta] class ConflictChecker(
         case (domain, _) if RowTrackingMetadataDomain.isSameDomain(domain) => domain
         case (_, Some(_)) =>
           // Any conflict not specifically handled by a previous case must fail the transaction.
-          throw new io.delta.exceptions.ConcurrentTransactionException(
-            s"A conflicting metadata domain ${domainMetadataFromCurrentTransaction.domain} is " +
-              "added.")
+          throw DeltaErrors.conflictingMetadataDomainException(
+            domainMetadataFromCurrentTransaction.domain)
       }
 
     val mergedDomainMetadata = mutable.Buffer.empty[DomainMetadata]
@@ -1622,7 +1623,7 @@ private[delta] object ConflictChecker extends DeltaLogging {
     actions.map { action =>
       action match {
         case add: AddFile =>
-          val dvId = add.getDeletionVectorUniqueId
+          val dvId = add.getLegacyDeletionVectorUniqueId
           addPaths.put(add.path, dvId).foreach { existingDVId =>
             failDuplicate("add", add.path, dvId, existingDVId)
           }
@@ -1633,7 +1634,7 @@ private[delta] object ConflictChecker extends DeltaLogging {
             }
           }
         case remove: RemoveFile =>
-          val dvId = remove.getDeletionVectorUniqueId
+          val dvId = remove.getLegacyDeletionVectorUniqueId
           removePaths.put(remove.path, dvId).foreach { existingDVId =>
             failDuplicate("remove", remove.path, dvId, existingDVId)
           }

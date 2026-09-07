@@ -44,10 +44,12 @@ class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = Some(true),
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = Some(Map("k1" -> "v1")),
-      txnId = Some("123")
+      txnId = Some("123"),
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
     ).copy(engineInfo = None)
 
     val inMemoryCommitInfo = commitInfo.copy(operationParameters = operation.jsonEncodedValues)
@@ -172,7 +174,8 @@ class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
       auto = true,
       clusterBy = Some(Seq("col3")),
       isFull = false)),
-    "OptimizeCheckpoint" -> (() => DeltaOperations.OptimizeCheckpoint()),
+    "OptimizeCheckpoint" -> (() =>
+      DeltaOperations.OptimizeCheckpoint(incremental = false, triggerName = "CHECKPOINT_INTERVAL")),
     "Clone" -> (() => DeltaOperations.Clone(
       source = "s3://bucket/path/to/table",
       sourceVersion = 10L)),
@@ -219,6 +222,63 @@ class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
     )
   }
 
+  private def createEmptyCommitInfo(): CommitInfo = {
+    CommitInfo(
+      version = None,
+      time = 0L,
+      operation = null,
+      inCommitTimestamp = None,
+      operationParameters = Map.empty,
+      commandContext = Map.empty,
+      readVersion = None,
+      isolationLevel = None,
+      isBlindAppend = None,
+      dataChange = None,
+      operationMetrics = None,
+      userMetadata = None,
+      tags = None,
+      txnId = None,
+      lastManifestCommit = None)
+  }
+
+  test("CommitInfo round-trips lastManifestCommit and omits it when None") {
+    val base = createEmptyCommitInfo()
+    val lmf = LastManifestCommit(version = 43, contentRootVersion = 41)
+
+    assert(!base.json.contains("lastManifestCommit"))
+    val roundTrippedCommitInfo = Action.fromJson(base.json).asInstanceOf[CommitInfo]
+    assert(roundTrippedCommitInfo.lastManifestCommit.isEmpty)
+
+    val baseWithLmf = base.copy(lastManifestCommit = Some(lmf))
+    val roundTrippedCommitInfoWithLmf = Action.fromJson(baseWithLmf.json).asInstanceOf[CommitInfo]
+    assert(roundTrippedCommitInfoWithLmf.lastManifestCommit.contains(lmf))
+  }
+
+  test("CommitInfo round-trips dataChange and omits it when None") {
+    val base = createEmptyCommitInfo()
+    assert(base.dataChange.isEmpty)
+    assert(!base.json.contains("dataChange"))
+    assert(Action.fromJson(base.json).asInstanceOf[CommitInfo].dataChange.isEmpty)
+
+    Seq(true, false).foreach { dataChange =>
+      val withDataChange = base.copy(dataChange = Some(dataChange))
+      assert(withDataChange.json.contains(s""""dataChange":$dataChange"""))
+      val roundTripped = Action.fromJson(withDataChange.json).asInstanceOf[CommitInfo]
+      assert(roundTripped.dataChange.contains(dataChange))
+      assert(roundTripped === withDataChange)
+    }
+  }
+
+  test("CommitInfo written before dataChange existed deserializes to None") {
+    // A commit file produced by a writer that predates the field: it must keep deserializing, and
+    // readers must see `None` so that they fall back to inspecting the file actions.
+    val legacyJson =
+      """{"commitInfo":{"timestamp":123,"operation":"WRITE","operationParameters":{},""" +
+        """"readVersion":23,"isolationLevel":"WriteSerializable","isBlindAppend":true}}"""
+    val commitInfo = Action.fromJson(legacyJson).asInstanceOf[CommitInfo]
+    assert(commitInfo.dataChange.isEmpty)
+    assert(commitInfo.isBlindAppend.contains(true))
+  }
 }
 
 /**

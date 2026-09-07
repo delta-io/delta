@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.schema
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaConfigs, DeltaLog}
+import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaConfigs, DeltaLog, DeltaTableProvider}
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.ValidateCheckConstraintsMode
@@ -36,7 +36,8 @@ import org.apache.spark.sql.types.{ArrayType, BooleanType, IntegerType, MapType,
 class CheckConstraintsSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with DeltaSQLTestUtils {
+    with DeltaSQLTestUtils
+    with DeltaTableProvider {
 
 
   import testImplicits._
@@ -49,7 +50,7 @@ class CheckConstraintsSuite extends QueryTest
         Seq(
           (1, "a"), (2, "b"), (3, "c"),
           (4, "d"), (5, "e"), (6, "f")
-        ).toDF("num", "text").write.format("delta").saveAsTable("checkConstraintsTest")
+        ).toDF("num", "text").write.format(writeFormat).saveAsTable("checkConstraintsTest")
         thunk("checkConstraintsTest")
       }
     }
@@ -79,13 +80,10 @@ class CheckConstraintsSuite extends QueryTest
   test("Checking incorrect constraints added through table property in CREATE TABLE errors out") {
     val tableName = "test_tbl"
     withTable(tableName) {
-      sql(
-        s"""
-           |CREATE TABLE $tableName (
-           |id INT,
-           |event_date DATE
-           |) USING DELTA
-           |TBLPROPERTIES('delta.constraints.ch' = 'event_date < 2025-06-12');""".stripMargin)
+      sql(createTableSQL(
+        tableName,
+        "id INT, event_date DATE",
+        props = Map("delta.constraints.ch" -> "event_date < 2025-06-12")))
 
       val e = intercept[AnalysisException] {
         sql(s"INSERT INTO $tableName VALUES(1, '2025-06-11')")
@@ -102,14 +100,10 @@ class CheckConstraintsSuite extends QueryTest
       withTable(tableName) {
         checkError(
           exception = intercept[AnalysisException] {
-            sql(
-              s"""
-                 |CREATE TABLE $tableName (
-                 |id INT,
-                 |value STRING
-                 |) USING DELTA
-                 |TBLPROPERTIES('delta.constraints.invalid' = 'non_existent_column > 0')
-                 |""".stripMargin)
+            sql(createTableSQL(
+              tableName,
+              "id INT, value STRING",
+              props = Map("delta.constraints.invalid" -> "non_existent_column > 0")))
           },
           "DELTA_INVALID_CHECK_CONSTRAINT_REFERENCES",
           parameters = Map("colName" -> "`non_existent_column`")
@@ -125,14 +119,10 @@ class CheckConstraintsSuite extends QueryTest
       withTable(tableName) {
         checkError(
           exception = intercept[AnalysisException] {
-            sql(
-              s"""
-                 |CREATE TABLE $tableName (
-                 |id INT,
-                 |value STRING
-                 |) USING DELTA
-                 |TBLPROPERTIES('delta.constraints.nonbool' = 'id + 1')
-                 |""".stripMargin)
+            sql(createTableSQL(
+              tableName,
+              "id INT, value STRING",
+              props = Map("delta.constraints.nonbool" -> "id + 1")))
           },
           "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT",
           parameters = Map(
@@ -149,14 +139,10 @@ class CheckConstraintsSuite extends QueryTest
         ValidateCheckConstraintsMode.ASSERT.toString) {
       val tableName = "test_create_valid_constraint"
       withTable(tableName) {
-        sql(
-          s"""
-             |CREATE TABLE $tableName (
-             |id INT,
-             |value STRING
-             |) USING DELTA
-             |TBLPROPERTIES('delta.constraints.positive_id' = 'id > 0')
-             |""".stripMargin)
+        sql(createTableSQL(
+          tableName,
+          "id INT, value STRING",
+          props = Map("delta.constraints.positive_id" -> "id > 0")))
       }
     }
   }
@@ -425,7 +411,7 @@ class CheckConstraintsSuite extends QueryTest
             StructField("m", MapType(IntegerType, IntegerType, valueContainsNull = true)),
             StructField("arr", ArrayType(IntegerType, containsNull = true)))))))
         spark.createDataFrame(rows.toList.asJava, schema)
-          .write.format("delta").saveAsTable("checkConstraintsTest")
+          .write.format(writeFormat).saveAsTable("checkConstraintsTest")
 
         // Constraints checking for a null value should work.
         sql("ALTER TABLE checkConstraintsTest ADD CONSTRAINT textNull CHECK (text IS NULL)")
@@ -453,7 +439,7 @@ class CheckConstraintsSuite extends QueryTest
         newRows.foreach { r =>
           e = intercept[InvariantViolationException] {
             spark.createDataFrame(List(r).asJava, schema)
-              .write.format("delta").mode("append").saveAsTable("checkConstraintsTest")
+              .write.format(writeFormat).mode("append").saveAsTable("checkConstraintsTest")
           }
           errorContains(e.getMessage,
             "CHECK constraint arr0 (nested.arr[0] < 100) violated by row")
@@ -464,10 +450,10 @@ class CheckConstraintsSuite extends QueryTest
         sql("ALTER TABLE checkConstraintsTest DROP CONSTRAINT arr0")
         newRows.foreach { r =>
           spark.createDataFrame(List(r).asJava, schema)
-            .write.format("delta").mode("append").saveAsTable("checkConstraintsTest")
+            .write.format(writeFormat).mode("append").saveAsTable("checkConstraintsTest")
         }
         checkAnswer(
-          spark.read.format("delta").table("checkConstraintsTest").select("id"),
+          spark.read.format(writeFormat).table("checkConstraintsTest").select("id"),
           (0 to 12).toDF("id"))
       }
     }
@@ -492,7 +478,7 @@ class CheckConstraintsSuite extends QueryTest
             StructField("m", MapType(IntegerType, IntegerType, valueContainsNull = false)),
             StructField("arr", ArrayType(IntegerType, containsNull = false)))))))
         spark.createDataFrame(rows.toList.asJava, schema)
-          .write.format("delta").saveAsTable("checkConstraintsTest")
+          .write.format(writeFormat).saveAsTable("checkConstraintsTest")
         sql("ALTER TABLE checkConstraintsTest ADD CONSTRAINT arrLen CHECK (SIZE(nested.arr) = 3)")
         sql("ALTER TABLE checkConstraintsTest ADD CONSTRAINT mapIntegrity " +
           "CHECK (nested.m[id] = id)")
@@ -510,7 +496,7 @@ class CheckConstraintsSuite extends QueryTest
   // TODO: https://github.com/delta-io/delta/issues/831
   test("SET NOT NULL constraint fails") {
     withTable("my_table") {
-      sql("CREATE TABLE my_table (id INT) USING DELTA;")
+      sql(createTableSQL("my_table", "id INT"))
       sql("INSERT INTO my_table VALUES (1);")
       val e = intercept[AnalysisException] {
         sql("ALTER TABLE my_table CHANGE COLUMN id SET NOT NULL;")
@@ -521,7 +507,7 @@ class CheckConstraintsSuite extends QueryTest
 
   testQuietly("ending semi-colons no longer makes ADD, DROP constraint commands fail") {
     withTable("my_table") {
-      sql("CREATE TABLE my_table (birthday DATE) USING DELTA;")
+      sql(createTableSQL("my_table", "birthday DATE"))
       sql("INSERT INTO my_table VALUES ('2021-11-11');")
 
       sql("ALTER TABLE my_table ADD CONSTRAINT aaa CHECK (birthday > '1900-01-01')")
@@ -538,14 +524,10 @@ class CheckConstraintsSuite extends QueryTest
         ValidateCheckConstraintsMode.ASSERT.toString,
       SQLConf.READ_SIDE_CHAR_PADDING.key -> "true") {
       withTable("charVarcharConstraintTest") {
-        sql(
-          """CREATE TABLE charVarcharConstraintTest (
-            |  id INT,
-            |  name VARCHAR(50),
-            |  code CHAR(10)
-            |) USING DELTA
-            |TBLPROPERTIES('delta.constraints.positive_id' = 'id > 0')
-            |""".stripMargin)
+        sql(createTableSQL(
+          "charVarcharConstraintTest",
+          "id INT, name VARCHAR(50), code CHAR(10)",
+          props = Map("delta.constraints.positive_id" -> "id > 0")))
         sql("INSERT INTO charVarcharConstraintTest VALUES (1, 'test', 'ABC')")
         checkAnswer(
           sql("SELECT id, name, code FROM charVarcharConstraintTest"),
@@ -556,7 +538,7 @@ class CheckConstraintsSuite extends QueryTest
 
   test("constraint induced by varchar") {
     withTable("table") {
-      sql("CREATE TABLE table (id INT, value VARCHAR(12)) USING DELTA")
+      sql(createTableSQL("table", "id INT, value VARCHAR(12)"))
       sql("INSERT INTO table VALUES (1, 'short string')")
       val exception = intercept[DeltaInvariantViolationException] {
         sql("INSERT INTO table VALUES (2, 'a very long string')")
@@ -576,8 +558,8 @@ class CheckConstraintsSuite extends QueryTest
     withSQLConf(
         DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> false.toString) {
       withTable("table") {
-        sql("CREATE TABLE table (a INT, b INT) USING DELTA " +
-          "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+        sql(createTableSQL("table", "a INT, b INT",
+          props = Map("delta.feature.checkConstraints" -> "supported")))
         sql("ALTER TABLE table ADD CONSTRAINT c1 CHECK (a > 0)")
         sql("ALTER TABLE table ADD CONSTRAINT c2 CHECK (b > 0)")
 
@@ -622,8 +604,8 @@ class CheckConstraintsSuite extends QueryTest
         ValidateCheckConstraintsMode.ASSERT.toString) {
         val testTable = "tbl"
         withTable(testTable) {
-          sql(s"CREATE TABLE $testTable (id STRING, value BOOLEAN) USING DELTA " +
-            "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+          sql(createTableSQL(testTable, "id STRING, value BOOLEAN",
+            props = Map("delta.feature.checkConstraints" -> "supported")))
           sql(s"ALTER TABLE $testTable ADD CONSTRAINT c1 CHECK (value == $expression(id, 'A'))")
           sql(s"INSERT INTO $testTable VALUES ('ABA', true), ('DEF', false)")
         }
@@ -636,8 +618,8 @@ class CheckConstraintsSuite extends QueryTest
       ValidateCheckConstraintsMode.ASSERT.toString) {
       val testTable = "like_any_all_test"
       withTable(testTable) {
-        sql(s"CREATE TABLE $testTable (id INT, name STRING, code STRING) USING DELTA " +
-          "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+        sql(createTableSQL(testTable, "id INT, name STRING, code STRING",
+          props = Map("delta.feature.checkConstraints" -> "supported")))
         sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_like_any " +
           "CHECK (name LIKE ANY ('%test%', '%prod%'))")
         sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_not_like_any " +
@@ -659,8 +641,8 @@ class CheckConstraintsSuite extends QueryTest
       ValidateCheckConstraintsMode.ASSERT.toString) {
       val testTable = "array_funcs_test"
       withTable(testTable) {
-        sql(s"CREATE TABLE $testTable (id INT, tags ARRAY<STRING>) USING DELTA " +
-          "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+        sql(createTableSQL(testTable, "id INT, tags ARRAY<STRING>",
+          props = Map("delta.feature.checkConstraints" -> "supported")))
         sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_array_size " +
           "CHECK (array_size(tags) > 0)")
         sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_array_compact " +
@@ -678,8 +660,8 @@ class CheckConstraintsSuite extends QueryTest
       ValidateCheckConstraintsMode.ASSERT.toString) {
       val testTable = "array_modify_funcs_test"
       withTable(testTable) {
-        sql(s"CREATE TABLE $testTable (id INT, tags ARRAY<STRING>) USING DELTA " +
-          "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+        sql(createTableSQL(testTable, "id INT, tags ARRAY<STRING>",
+          props = Map("delta.feature.checkConstraints" -> "supported")))
         sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_array_append " +
           "CHECK (array_size(array_append(tags, 'x')) > 1)")
         sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_array_prepend " +
@@ -699,8 +681,8 @@ class CheckConstraintsSuite extends QueryTest
       ValidateCheckConstraintsMode.ASSERT.toString) {
       val testTable = "tbl"
       withTable(testTable) {
-        sql(s"CREATE TABLE $testTable (id INT) USING DELTA " +
-          "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+        sql(createTableSQL(testTable, "id INT",
+          props = Map("delta.feature.checkConstraints" -> "supported")))
         checkError(
           exception = intercept[AnalysisException] {
             sql(s"ALTER TABLE $testTable ADD CONSTRAINT c1 " +
@@ -719,8 +701,8 @@ class CheckConstraintsSuite extends QueryTest
         val testTable = "check_external_udf_test"
         withTable(testTable) {
           withUserDefinedFunction("external_udf" -> true) {
-            sql(s"CREATE TABLE $testTable (id INT, value INT) USING DELTA " +
-              "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+            sql(createTableSQL(testTable, "id INT, value INT",
+              props = Map("delta.feature.checkConstraints" -> "supported")))
 
             spark.udf.register("external_udf", (x: Int) => x > 0)
 

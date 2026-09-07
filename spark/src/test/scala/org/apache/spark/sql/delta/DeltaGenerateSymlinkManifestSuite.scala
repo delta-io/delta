@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.DeltaOperations.Delete
 import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
 import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.conf.Configuration
@@ -45,6 +45,7 @@ class DeltaGenerateSymlinkManifestSuite
 
 trait DeltaGenerateSymlinkManifestSuiteBase
   extends DeltaGenerateSymlinkManifestTestHelper
+  with DeltaSQLTestUtils
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews {
 
@@ -75,6 +76,35 @@ trait DeltaGenerateSymlinkManifestSuiteBase
 
       spark.sql(s"GENERATE symlink_ForMat_Manifest FOR TABLE $tableName")
       assertManifest(tableName, expectSameFiles = true, expectedNumFiles = 7)
+    }
+  }
+
+  test("symlink manifest generation is blocked for a catalog-managed table") {
+    withCatalogManagedTable(createTable = false) { tableName =>
+      spark.sql(s"CREATE TABLE $tableName (id INT) USING delta TBLPROPERTIES " +
+        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported', " +
+        "'delta.enableDeletionVectors' = 'false')")
+      assertManifest(tableName, expectSameFiles = false, expectedNumFiles = 0)
+
+      checkError(
+        intercept[DeltaUnsupportedOperationException] {
+          spark.sql(s"GENERATE symlink_format_manifest FOR TABLE $tableName")
+        },
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "GENERATE_SYMLINK_FORMAT_MANIFEST"))
+      assertManifest(tableName, expectSameFiles = false, expectedNumFiles = 0)
+
+      spark.sql(
+        s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.key}' = 'true')")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val versionBefore = deltaLog.update().version
+
+      spark.sql(s"INSERT INTO $tableName VALUES (1)")
+
+      assert(deltaLog.update().version === versionBefore + 1)
+      assertManifest(tableName, expectSameFiles = false, expectedNumFiles = 0)
+      checkAnswer(spark.table(tableName), Row(1))
     }
   }
 
@@ -874,4 +904,3 @@ class SymlinkManifestFailureTestFileSystem extends RawLocalFileSystem {
 object SymlinkManifestFailureTestFileSystem {
   val SCHEME = "testScheme"
 }
-

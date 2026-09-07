@@ -25,7 +25,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
-import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog, DeltaOperations, MaintenanceOperation}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -62,7 +62,7 @@ class UpdateMetricsHookSuite extends QueryTest
       committedVersion = 0L, committedActions = actions,
       postCommitSnapshot = deltaLog.snapshot,
       postCommitHooks = Seq.empty, txnExecutionTimeMs = 0L,
-      needsCheckpoint = false, partitionsAddedToOpt = None,
+      maintenanceOperation = MaintenanceOperation(), partitionsAddedToOpt = None,
       isBlindAppend = true)
   }
 
@@ -219,6 +219,7 @@ class UpdateMetricsHookSuite extends QueryTest
         operationParameters = Map.empty, job = None, notebook = None,
         clusterId = None, readVersion = None, isolationLevel = None,
         isBlindAppend = Some(true),
+        dataChange = None,
         operationMetrics = Some(Map("numOutputRows" -> "50")),
         userMetadata = None, tags = None, engineInfo = None,
         txnId = None, lastManifestCommit = None)

@@ -48,8 +48,8 @@ trait V2ForceTest extends DeltaSQLCommandTest with AdaptiveSparkPlanHelper {
   private val testsRun: mutable.Set[String] = mutable.Set.empty
 
   /**
-   * When true, each `shouldPass` test additionally asserts that it does not silently fall back to
-   * the V1 Delta file-source scan under STRICT mode. Off by default.
+   * When true, each `shouldPass` test additionally checks that no executed plan contains a V1
+   * Delta file-source scan (this does not catch reads that are metadata-only). Off by default.
    */
   protected def assertNoV1Fallback: Boolean = false
 

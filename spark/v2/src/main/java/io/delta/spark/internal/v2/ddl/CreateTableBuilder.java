@@ -19,11 +19,11 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.TableManager;
 import io.delta.kernel.Transaction;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
@@ -89,7 +89,7 @@ public final class CreateTableBuilder {
         DDLUtils.filterProperties(properties),
         comment,
         dataLayoutSpec,
-        DefaultEngine.create(hadoopConf),
+        KernelEngineFactory.createDefaultEngine(hadoopConf),
         ucTableInfo,
         txnBuilder);
   }

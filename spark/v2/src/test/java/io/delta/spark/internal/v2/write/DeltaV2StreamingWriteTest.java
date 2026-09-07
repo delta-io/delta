@@ -32,12 +32,15 @@ import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.connector.write.streaming.StreamingDataWriterFactory;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Unit tests for {@link DeltaV2StreamingWrite}; the streaming counterpart of DeltaV2BatchWriteTest.
@@ -50,6 +53,21 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             DataTypes.createStructField("id", DataTypes.IntegerType, true),
             DataTypes.createStructField("name", DataTypes.StringType, true)
           });
+
+  // Table (value INT) partitioned by (part STRING). The write row layout is the full table schema
+  // [value, part]; the writer projects [value] into the Parquet body and routes on [part].
+  private static final StructType PARTITIONED_FULL_SCHEMA =
+      DataTypes.createStructType(
+          new StructField[] {
+            DataTypes.createStructField("value", DataTypes.IntegerType, true),
+            DataTypes.createStructField("part", DataTypes.StringType, true)
+          });
+  private static final StructType PARTITIONED_DATA_SCHEMA =
+      DataTypes.createStructType(
+          new StructField[] {DataTypes.createStructField("value", DataTypes.IntegerType, true)});
+  private static final StructType PARTITIONED_PART_SCHEMA =
+      DataTypes.createStructType(
+          new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
 
   @Test
   public void testUseCommitCoordinator_isFalse(@TempDir File tempDir) {
@@ -206,6 +224,146 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
   }
 
   /**
+   * Partitioned streaming write across two epochs. The partition routing lives in the shared
+   * DeltaV2DataWriter (covered in depth by DeltaV2BatchWriteTest); this asserts it also holds on
+   * the streaming path -- each epoch rotates files at the partition boundary and records partition
+   * values, so distinct epochs accumulate into the right Hive-style directories.
+   */
+  @Test
+  public void testCommit_partitioned_appendsAcrossEpochs(@TempDir File tempDir) throws Exception {
+    String path = createPartitionedTable(tempDir, "streaming_partitioned");
+    DeltaV2StreamingWrite write = newPartitionedWrite(path);
+
+    // Each epoch spans two partitions (rows pre-sorted by part, as Spark's required ordering
+    // delivers), so the writer must rotate the open file at the boundary within an epoch.
+    write.commit(
+        0L, new WriterCommitMessage[] {writePartitionedEpoch(write, 0L, 10, "a", 20, "b")});
+    write.commit(
+        1L, new WriterCommitMessage[] {writePartitionedEpoch(write, 1L, 11, "a", 30, "c")});
+
+    List<Row> rows = spark.read().format("delta").load(path).orderBy("value").collectAsList();
+    assertEquals(4, rows.size(), "distinct epochs must accumulate");
+    assertEquals(10, rows.get(0).getInt(rows.get(0).fieldIndex("value")));
+    assertEquals("a", rows.get(0).getString(rows.get(0).fieldIndex("part")));
+
+    // Partition directories from both epochs exist (Kernel owns the col=val/ encoding).
+    assertTrue(new File(path, "part=a").isDirectory(), "expected partition dir part=a");
+    assertTrue(new File(path, "part=b").isDirectory(), "expected partition dir part=b");
+    assertTrue(new File(path, "part=c").isDirectory(), "expected partition dir part=c");
+
+    // Partition-predicate read returns only that partition (across both epochs), proving
+    // AddFile.partitionValues were recorded on the streaming path.
+    List<Row> onlyA =
+        spark
+            .read()
+            .format("delta")
+            .load(path)
+            .filter("part = 'a'")
+            .orderBy("value")
+            .collectAsList();
+    assertEquals(2, onlyA.size());
+    assertEquals(10, onlyA.get(0).getInt(onlyA.get(0).fieldIndex("value")));
+    assertEquals(11, onlyA.get(1).getInt(onlyA.get(1).fieldIndex("value")));
+  }
+
+  /**
+   * The same partition value arriving in separate epochs accumulates into the one partition
+   * directory; the writer holds no cross-epoch memory, so each epoch independently routes to it.
+   */
+  @Test
+  public void testCommit_partitioned_samePartitionValueAcrossEpochs(@TempDir File tempDir)
+      throws Exception {
+    String path = createPartitionedTable(tempDir, "streaming_partitioned_same_value");
+    DeltaV2StreamingWrite write = newPartitionedWrite(path);
+
+    write.commit(0L, new WriterCommitMessage[] {writePartitionedEpoch(write, 0L, 10, "a")});
+    write.commit(1L, new WriterCommitMessage[] {writePartitionedEpoch(write, 1L, 11, "a")});
+
+    assertTrue(new File(path, "part=a").isDirectory(), "expected partition dir part=a");
+    List<Row> partA =
+        spark
+            .read()
+            .format("delta")
+            .load(path)
+            .filter("part = 'a'")
+            .orderBy("value")
+            .collectAsList();
+    assertEquals(2, partA.size(), "same partition value across epochs must accumulate");
+    assertEquals(10, partA.get(0).getInt(partA.get(0).fieldIndex("value")));
+    assertEquals(11, partA.get(1).getInt(partA.get(1).fieldIndex("value")));
+  }
+
+  /**
+   * Partitioned streaming write to a column-mapped table across two epochs; asserts each partition
+   * lands in a physical {@code col-<uuid>=<value>} directory (not the logical {@code part=<value>}
+   * one). Streaming counterpart of V2WriteTest.writeToPartitionedColumnMappingTable.
+   */
+  @ParameterizedTest(name = "columnMappingMode={0}")
+  @ValueSource(strings = {"name", "id"})
+  public void testCommit_partitionedColumnMapping_appendsAcrossEpochs(
+      String mappingMode, @TempDir File tempDir) throws Exception {
+    // Unique name per mode: the shared session's catalog persists across invocations, so a shared
+    // name would collide on the second run.
+    String path =
+        createPartitionedColumnMappingTable(
+            tempDir, "streaming_partitioned_cm_" + mappingMode, mappingMode);
+    DeltaV2StreamingWrite write = newPartitionedWrite(path);
+
+    // Each epoch spans two partitions (rows pre-sorted by part), exercising file rotation at the
+    // partition boundary.
+    write.commit(
+        0L, new WriterCommitMessage[] {writePartitionedEpoch(write, 0L, 10, "a", 20, "b")});
+    write.commit(
+        1L, new WriterCommitMessage[] {writePartitionedEpoch(write, 1L, 11, "a", 30, "c")});
+
+    List<Row> rows = spark.read().format("delta").load(path).orderBy("value").collectAsList();
+    assertEquals(4, rows.size(), "distinct epochs must accumulate");
+    assertEquals(10, rows.get(0).getInt(rows.get(0).fieldIndex("value")));
+    assertEquals("a", rows.get(0).getString(rows.get(0).fieldIndex("part")));
+
+    // Both epochs' partitions use physical col-<uuid>=<value> dirs, never logical part=<value>.
+    assertPhysicalColumnMappedPartitionDir(path, "a");
+    assertPhysicalColumnMappedPartitionDir(path, "b");
+    assertPhysicalColumnMappedPartitionDir(path, "c");
+
+    // Partition-predicate read returns only that partition across both epochs.
+    List<Row> onlyA =
+        spark
+            .read()
+            .format("delta")
+            .load(path)
+            .filter("part = 'a'")
+            .orderBy("value")
+            .collectAsList();
+    assertEquals(2, onlyA.size());
+    assertEquals(10, onlyA.get(0).getInt(onlyA.get(0).fieldIndex("value")));
+    assertEquals(11, onlyA.get(1).getInt(onlyA.get(1).fieldIndex("value")));
+  }
+
+  /**
+   * A null partition value lands in {@code __HIVE_DEFAULT_PARTITION__} under the physical {@code
+   * col-<uuid>} parent and reads back as null.
+   */
+  @Test
+  public void testCommit_partitionedColumnMapping_nullPartitionValue(@TempDir File tempDir)
+      throws Exception {
+    String path =
+        createPartitionedColumnMappingTable(tempDir, "streaming_partitioned_cm_null", "name");
+    DeltaV2StreamingWrite write = newPartitionedWrite(path);
+
+    write.commit(0L, new WriterCommitMessage[] {writePartitionedEpoch(write, 0L, 10, null)});
+
+    List<Row> rows = spark.read().format("delta").load(path).collectAsList();
+    assertEquals(1, rows.size());
+    assertEquals(10, rows.get(0).getInt(rows.get(0).fieldIndex("value")));
+    assertTrue(
+        rows.get(0).isNullAt(rows.get(0).fieldIndex("part")), "null partition must read back null");
+
+    // The null value is Hive-encoded under the physical col-<uuid> parent, not a logical part=.
+    assertPhysicalColumnMappedPartitionDir(path, "__HIVE_DEFAULT_PARTITION__");
+  }
+
+  /**
    * Runs the executor-side writer for one epoch and returns its commit message. {@code idNamePairs}
    * is a flat list of (int id, String name) values.
    */
@@ -221,6 +379,23 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
     return writer.commit();
   }
 
+  /**
+   * Runs the executor-side writer for one epoch over full rows [value, part]. {@code
+   * valuePartPairs} is a flat list of (int value, String part), supplied already sorted by {@code
+   * part}.
+   */
+  private WriterCommitMessage writePartitionedEpoch(
+      DeltaV2StreamingWrite write, long epochId, Object... valuePartPairs) throws Exception {
+    DataWriter<InternalRow> writer =
+        write
+            .createStreamingWriterFactory(WriteTestUtils.physicalWriteInfo(1))
+            .createWriter(0, 0L, epochId);
+    for (int i = 0; i < valuePartPairs.length; i += 2) {
+      writer.write(InternalRowTestUtils.row(valuePartPairs[i], valuePartPairs[i + 1]));
+    }
+    return writer.commit();
+  }
+
   private String createTable(File tempDir, String tableName) {
     String path = tempDir.getAbsolutePath();
     spark.sql(
@@ -232,7 +407,8 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
   private DeltaV2StreamingWrite newWrite(String path) {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
-    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    Snapshot snapshot =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
     DeltaV2Write write =
@@ -243,7 +419,72 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             snapshot,
             snapshotManager,
             TABLE_SCHEMA,
+            new StructType(),
             info);
     return (DeltaV2StreamingWrite) write.toStreaming();
+  }
+
+  private String createPartitionedTable(File tempDir, String tableName) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (value INT, part STRING) USING delta PARTITIONED BY (part) "
+                + "LOCATION '%s'",
+            tableName, path));
+    return path;
+  }
+
+  private DeltaV2StreamingWrite newPartitionedWrite(String path) {
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    Snapshot snapshot =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
+    LogicalWriteInfo info =
+        WriteTestUtils.logicalWriteInfo(PARTITIONED_FULL_SCHEMA, CaseInsensitiveStringMap.empty());
+    DeltaV2Write write =
+        new DeltaV2Write(
+            defaultEngine,
+            spark.sessionState().newHadoopConf(),
+            path,
+            snapshot,
+            snapshotManager,
+            PARTITIONED_DATA_SCHEMA,
+            PARTITIONED_PART_SCHEMA,
+            info);
+    return (DeltaV2StreamingWrite) write.toStreaming();
+  }
+
+  /**
+   * Creates a (value INT, part STRING) table partitioned by {@code part} with column mapping in
+   * {@code mappingMode} ({@code name} or {@code id}). The logical schema matches {@link
+   * #PARTITIONED_FULL_SCHEMA}, so {@link #newPartitionedWrite} can drive it.
+   */
+  private String createPartitionedColumnMappingTable(
+      File tempDir, String tableName, String mappingMode) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (value INT, part STRING) USING delta PARTITIONED BY (part) "
+                + "LOCATION '%s' TBLPROPERTIES ('delta.columnMapping.mode' = '%s')",
+            tableName, path, mappingMode));
+    return path;
+  }
+
+  /**
+   * Asserts a physical {@code col-<uuid>=<value>} partition directory exists under {@code
+   * tablePath} and that no logical {@code part=<value>} directory was written instead (which would
+   * be a column-mapping regression). Mirrors V2WriteTest.assertPhysicalPartitionDirExists.
+   */
+  private void assertPhysicalColumnMappedPartitionDir(String tablePath, String value) {
+    File[] physical =
+        new File(tablePath).listFiles((d, n) -> n.startsWith("col-") && n.endsWith("=" + value));
+    assertTrue(
+        physical != null && physical.length == 1,
+        "Expected one physical partition directory col-*=" + value);
+    File[] logical =
+        new File(tablePath).listFiles((d, n) -> !n.startsWith("col-") && n.endsWith("=" + value));
+    assertTrue(
+        logical == null || logical.length == 0,
+        "Did not expect a logical partition directory ending in '=" + value + "'");
   }
 }

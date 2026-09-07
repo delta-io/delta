@@ -801,6 +801,12 @@
     ],
     "sqlState" : "56038"
   },
+  "DELTA_CONFLICTING_METADATA_DOMAIN" : {
+    "message" : [
+      "A concurrent transaction added a conflicting metadata domain <domain>."
+    ],
+    "sqlState" : "2D521"
+  },
   "DELTA_CONFLICT_SET_COLUMN" : {
     "message" : [
       "There is a conflict from these SET columns: <columnList>."
@@ -1839,8 +1845,20 @@
   },
   "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS" : {
     "message" : [
-      "Invalid options for idempotent Dataframe writes: <reason>"
+      "Invalid options for idempotent DataFrame writes:"
     ],
+    "subClass" : {
+      "MISSING_DATAFRAME_WRITE_OPTIONS" : {
+        "message" : [
+          "Both txnVersion and txnAppId must be specified for idempotent DataFrame writes."
+        ]
+      },
+      "MISSING_SESSION_CONFS" : {
+        "message" : [
+          "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion must be specified for idempotent Delta writes."
+        ]
+      }
+    },
     "sqlState" : "42616"
   },
   "DELTA_INVALID_INTERVAL" : {
@@ -2313,8 +2331,20 @@
   },
   "DELTA_NON_PARTITION_COLUMN_ABSENT" : {
     "message" : [
-      "Data written into Delta needs to contain at least one non-partitioned column.<details>"
+      "Data written into Delta needs to contain at least one non-partitioned column."
     ],
+    "subClass" : {
+      "ALL_PARTITION_COLUMNS" : {
+        "message" : [
+          "All of the provided columns are partition columns."
+        ]
+      },
+      "NULL_TYPE_COLUMNS_DROPPED" : {
+        "message" : [
+          "Columns which are of NullType have been dropped."
+        ]
+      }
+    },
     "sqlState" : "KD005"
   },
   "DELTA_NON_PARTITION_COLUMN_REFERENCE" : {
@@ -2627,9 +2657,21 @@
   },
   "DELTA_REPLACE_WHERE_MISMATCH" : {
     "message" : [
-      "Written data does not conform to partial table overwrite condition or constraint '<replaceWhere>'.",
-      "<message>"
+      "Written data does not conform to partial table overwrite condition or constraint '<replaceWhere>'."
     ],
+    "subClass" : {
+      "INVALID_PARTITIONS" : {
+        "message" : [
+          "Invalid data would be written to partitions <badPartitions>."
+        ]
+      },
+      "INVARIANT_VIOLATION" : {
+        "message" : [
+          "<invariantViolationMessage>",
+          ""
+        ]
+      }
+    },
     "sqlState" : "44000"
   },
   "DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
@@ -3147,14 +3189,44 @@
   },
   "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED" : {
     "message" : [
-      "Failed to convert the table version <version> to the universal format <format>. <message>"
+      "Failed to convert the table version <version> to the universal format <format>."
     ],
+    "subClass" : {
+      "CAUSED_BY_ERROR" : {
+        "message" : [
+          "<causeErrorMessage>",
+          ""
+        ]
+      },
+      "UNEXPECTED_PARTITION_DATA_TYPE" : {
+        "message" : [
+          "Unexpected partition data type <dataType>."
+        ]
+      }
+    },
     "sqlState" : "KD00E"
   },
   "DELTA_UNIVERSAL_FORMAT_VIOLATION" : {
     "message" : [
-      "The validation of Universal Format (<format>) has failed: <violation>"
+      "The validation of Universal Format (<format>) has failed:"
     ],
+    "subClass" : {
+      "HUDI_DELETE_VECTORS_NOT_SUPPORTED" : {
+        "message" : [
+          "Requires deletion vectors to be disabled."
+        ]
+      },
+      "HUDI_UNSUPPORTED_DATA_TYPE" : {
+        "message" : [
+          "DataType <dataType> is not currently supported."
+        ]
+      },
+      "ICEBERG_COMPAT_REQUIRED" : {
+        "message" : [
+          "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) to be enabled on an existing table. Supported versions are IcebergCompatV1 and IcebergCompatV2."
+        ]
+      }
+    },
     "sqlState" : "KD00E"
   },
   "DELTA_UNKNOWN_CONFIGURATION" : {

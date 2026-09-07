@@ -144,7 +144,7 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           if (mayHaveDVs) {
             normalizedDf.withColumn(
               dvIdColumnName,
-              DeletionVectorDescriptor.uniqueIdExpression(dvAccessColumn))
+              DeletionVectorDescriptor.legacyUniqueIdExpression(dvAccessColumn))
           } else {
             normalizedDf.withColumn(dvIdColumnName, lit(null))
           }
@@ -222,13 +222,17 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
         val actions = addActions ++ removeActions ++
           DomainMetadataUtils.handleDomainMetadataForRestoreTable(snapshotToRestore, latestSnapshot)
 
+        val restoreChangesData =
+          metrics.getOrElse(NUM_RESTORED_FILES, 0L) + metrics.getOrElse(NUM_REMOVED_FILES, 0L) > 0
+
         txn.commitLarge(
           spark,
           actions,
           Some(newProtocol),
           DeltaOperations.Restore(version, timestamp),
           Map.empty,
-          metrics.mapValues(_.toString).toMap)
+          metrics.mapValues(_.toString).toMap,
+          dataChange = Some(restoreChangesData))
 
         Seq(Row(
           metrics.get(TABLE_SIZE_AFTER_RESTORE),

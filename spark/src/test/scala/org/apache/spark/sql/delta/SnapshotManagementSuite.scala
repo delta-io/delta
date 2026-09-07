@@ -37,6 +37,8 @@ import io.delta.storage.commit.{Commit, CommitCoordinatorClient, GetCommitsRespo
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
+import org.mockito.ArgumentMatchers.{any, anyLong}
+import org.mockito.Mockito.{doReturn, spy}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkException
@@ -620,6 +622,62 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
           catalogTableOpt = None,
           oldLogSegment.checkpointProvider) === latestSnapshot.logSegment)
       }
+    }
+  }
+
+  private def hasDeltaEvent(records: Seq[UsageRecord], opType: String): Boolean = {
+    records.exists(_.tags.get("opType").contains(opType))
+  }
+
+  test("updateAfterCommit retries a stale listing: throws when exhausted, else resolves") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(1).write.format("delta").save(path)
+      val log = DeltaLog.forTable(spark, new Path(path))
+      val staleSegment = log.unsafeVolatileSnapshot.logSegment
+
+      // Spy now, while the in-memory snapshot is at v0.
+      val spyLog = spy(log)
+      spark.range(1).write.format("delta").mode("append").save(path)
+
+      val freshSnapshot = log.unsafeVolatileSnapshot
+      val freshSegment = freshSnapshot.logSegment
+      val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+      val commit =
+        new Commit(1, fs.getFileStatus(DeltaCommitFileProvider(freshSnapshot).deltaFile(1)), 0)
+
+      // With retries disabled, a persistently stale listing throws and logs inconsistentList.
+      doReturn(staleSegment, Nil: _*).when(spyLog)
+        .getLogSegmentAfterCommit(anyLong(), any(), any(), any(), any(), any(), any(), any())
+      withSQLConf(DeltaSQLConf.DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES.key -> "0") {
+        val records = Log4jUsageLogger.track {
+          val e = intercept[DeltaIllegalStateException] {
+            spyLog.updateAfterCommit(
+              committedVersion = 1,
+              commitOpt = Some(commit),
+              newChecksumOpt = None,
+              preCommitLogSegment = staleSegment,
+              catalogTableOpt = None)
+          }
+          assert(e.getErrorClass == "DELTA_INVALID_COMMITTED_VERSION")
+        }
+        assert(hasDeltaEvent(records, "delta.assertions.commit.inconsistentList"))
+        assert(!hasDeltaEvent(records, "delta.commit.mitigatedInconsistentList"))
+      }
+
+      // A listing that catches up on retry succeeds and logs an event instead of throwing.
+      doReturn(staleSegment, freshSegment).when(spyLog)
+        .getLogSegmentAfterCommit(anyLong(), any(), any(), any(), any(), any(), any(), any())
+      val records = Log4jUsageLogger.track {
+        spyLog.updateAfterCommit(
+          committedVersion = 1,
+          commitOpt = Some(commit),
+          newChecksumOpt = None,
+          preCommitLogSegment = staleSegment,
+          catalogTableOpt = None)
+      }
+      assert(hasDeltaEvent(records, "delta.commit.mitigatedInconsistentList"))
+      assert(!hasDeltaEvent(records, "delta.assertions.commit.inconsistentList"))
     }
   }
 

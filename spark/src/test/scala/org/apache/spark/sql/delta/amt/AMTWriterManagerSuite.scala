@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.actions.{Action, Checkpoint}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.exceptions.ConcurrentWriteException
 
 /**
@@ -35,8 +37,12 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
   }
 
   // A minimal transaction info over `snapshot` carrying `actions`, for direct writeAMT calls.
+  // `preCommitLatestAMTCheckpointOpt` models the base AMT the attempt would build on: on a rebase
+  // it is the tree the conflict fold advanced to (the winner's, if the winner wrote one).
   private def txnInfoFor(
-      snapshot: Snapshot, actions: Seq[org.apache.spark.sql.delta.actions.Action]) =
+      snapshot: Snapshot,
+      actions: Seq[Action],
+      preCommitLatestAMTCheckpointOpt: Option[Checkpoint] = None) =
     CurrentTransactionInfo(
       txnId = "txn",
       readPredicates = Vector.empty,
@@ -51,68 +57,46 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       readRowIdHighWatermark = 0L,
       catalogTable = None,
       domainMetadata = Seq.empty,
-      op = DeltaOperations.ManualUpdate)
+      op = DeltaOperations.ManualUpdate,
+      preCommitLatestAMTCheckpointOpt = preCommitLatestAMTCheckpointOpt)
 
-  test("writeAMT throws UnsupportedOperationException for an OPTIMIZE checkpoint operation") {
+  test("writeAMT performs a clustered full rewrite for an OPTIMIZE checkpoint operation") {
     withTable("amt_optimize_ckpt") {
       val name = "amt_optimize_ckpt"
       createAMTTable(name, checkpointInterval = 2)
-      sql(s"INSERT INTO $name VALUES (1)")
+      withSQLConf(leafPackingConfs: _*) {
+        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles)
 
-      val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint())
-      val ex = intercept[UnsupportedOperationException] {
-        manager.writeAMT(
+        val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint(
+          incremental = false, triggerName = AMTTriggerMode.CheckpointIntervalFull.name))
+        val result = manager.writeAMT(
           commitVersion = snapshot.version + 1,
           currentTransactionInfo = txnInfoFor(snapshot, actions = Seq.empty),
-          preCommitLogSegment = snapshot.logSegment)
+          preCommitLogSegment = snapshot.logSegment).getOrElse(
+            fail("OPTIMIZE checkpoint must materialize an AMT."))
+        assertLeafCount(result.leaves)
+        // The commit carries no user actions, so the tree describes state as of the read version.
+        assert(result.contentRootVersion == snapshot.version)
+        // The metric records the trigger name carried on the operation.
+        assert(manager.metrics.writeAttempts.head.trigger ==
+          AMTTriggerMode.CheckpointIntervalFull.name)
       }
-      assert(ex.getMessage.contains("OPTIMIZE checkpoints"))
     }
   }
 
-  test("emits AMT when commit count since last checkpoint reaches the checkpoint interval") {
-    withTable("amt_count_trigger") {
-      val name = "amt_count_trigger"
-      createAMTTable(name, checkpointInterval = 3)
-      sql(s"INSERT INTO $name VALUES (1)") // v1: 1 commit since genesis, < 3.
-      sql(s"INSERT INTO $name VALUES (2)") // v2: 2 commits since genesis, < 3.
-      sql(s"INSERT INTO $name VALUES (3)") // v3: 3 commits since genesis, >= 3 -> emit.
+  // End-to-end emission-policy scenarios (interval / full-rewrite cadence / size trigger / minor
+  // compaction) live in AMTCheckpointPolicySuite. This suite covers writeAMT's direct behavior.
 
-      val deltaLog = deltaLogForName(name)
-      val path = tablePath(name)
-      assert(checkpointsAt(deltaLog, 1).isEmpty, "v1 is below the interval; no emission.")
-      assert(checkpointsAt(deltaLog, 2).isEmpty, "v2 is below the interval; no emission.")
-      assert(checkpointsAt(deltaLog, 3).size == 1, "v3 reaches the interval; AMT must be emitted.")
-      assert(rootFiles(path).size == 1 && leafFiles(path).nonEmpty,
-        "A manifest tree must be written at the interval boundary.")
-      assert(amtProvider(deltaLog.update()).isDefined)
-    }
-  }
-
-
-  test("does not emit AMT when no trigger fires") {
-    withTable("amt_no_trigger") {
-      val name = "amt_no_trigger"
-      // Interval far away, and a tiny commit stays well below the default size threshold, so
-      // neither the count nor the (edge-only) size trigger fires.
-      createAMTTable(name, checkpointInterval = 1000)
-      sql(s"INSERT INTO $name VALUES (1)")
-
-      val deltaLog = deltaLogForName(name)
-      val path = tablePath(name)
-      assert(checkpointsAt(deltaLog, 1).isEmpty, "No trigger fires; no emission.")
-      assert(rootFiles(path).isEmpty && leafFiles(path).isEmpty, "No manifest tree written.")
-      assert(amtProvider(deltaLog.update()).isEmpty)
-    }
-  }
-
-  test("writeAMT hard-fails an AMT table on a conflict-resolution retry") {
-    withTable("amt_conflict_fail") {
-      val name = "amt_conflict_fail"
+  test("writeAMT hard-fails a tree-writing commit on a conflict-resolution retry") {
+    withTable("amt_conflict_tree_writer") {
+      val name = "amt_conflict_tree_writer"
       createAMTTable(name, checkpointInterval = 2)
       sql(s"INSERT INTO $name VALUES (1)")
 
-      val (manager, snapshot) = managerFor(name)
+      // An OPTIMIZE checkpoint writes a tree, so it still hard-fails on a rebase (the tree-rebuild
+      // rebase is a later milestone).
+      val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint(
+        incremental = false, triggerName = AMTTriggerMode.CheckpointIntervalFull.name))
       // A retry: conflict resolution advanced the segment past the read snapshot's version.
       val retrySegment = snapshot.logSegment.copy(version = snapshot.version + 1)
       intercept[ConcurrentWriteException] {
@@ -121,6 +105,53 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
           currentTransactionInfo = txnInfoFor(snapshot, actions = Seq.empty),
           preCommitLogSegment = retrySegment)
       }
+    }
+  }
+
+  test("writeAMT lets a log-only commit rebase past a log-only winner on retry") {
+    withTable("amt_conflict_log_rebase") {
+      val name = "amt_conflict_log_rebase"
+      createAMTTable(name, checkpointInterval = 2)
+      commitCheckpoint(deltaLogForName(name), incremental = false)
+
+      val (manager, snapshot) = managerFor(name)
+      val baseTree = amtProvider(snapshot).map(_.checkpointAction)
+      assert(baseTree.isDefined, "the table must be AMT-backed for this case.")
+      // The winner wrote no tree, so the base AMT is unchanged (the folded pointer still equals the
+      // read snapshot's tree): a log-only commit rebases with no AMT write instead of hard-failing.
+      val retrySegment = snapshot.logSegment.copy(version = snapshot.version + 1)
+      val result = manager.writeAMT(
+        commitVersion = snapshot.version + 2,
+        currentTransactionInfo =
+          txnInfoFor(snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = baseTree),
+        preCommitLogSegment = retrySegment)
+      assert(result.isEmpty,
+        "a log-only commit that lost to a log-only winner must rebase without an AMT write.")
+    }
+  }
+
+  test("writeAMT writes no tree for a log-only commit rebasing past a tree-installing winner") {
+    withTable("amt_conflict_log_vs_tree") {
+      val name = "amt_conflict_log_vs_tree"
+      createAMTTable(name, checkpointInterval = 2)
+      commitCheckpoint(deltaLogForName(name), incremental = false)
+
+      val (manager, snapshot) = managerFor(name)
+      val baseTree = amtProvider(snapshot).map(_.checkpointAction).getOrElse(
+        fail("the table must be AMT-backed for this case."))
+      // A winner installed a newer tree than the read snapshot's. writeAMT for a log-only commit no
+      // longer hard-fails on this -- it writes no tree; re-deriving the file actions' back
+      // references against the winner tree happens in doCommit's rebaseBackReferences, exercised
+      // end-to-end in AMTConflictResolutionSuite.
+      val winnerTree = baseTree.copy(version = baseTree.version + 1)
+      val retrySegment = snapshot.logSegment.copy(version = snapshot.version + 1)
+      val result = manager.writeAMT(
+        commitVersion = snapshot.version + 2,
+        currentTransactionInfo = txnInfoFor(
+          snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = Some(winnerTree)),
+        preCommitLogSegment = retrySegment)
+      assert(result.isEmpty,
+        "a log-only commit rebasing past a winner tree writes no AMT (re-derivation is elsewhere).")
     }
   }
 

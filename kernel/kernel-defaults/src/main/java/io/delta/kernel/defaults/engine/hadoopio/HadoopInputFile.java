@@ -20,6 +20,7 @@ import io.delta.kernel.defaults.engine.fileio.SeekableInputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.util.concurrent.ExecutionException;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FutureDataInputStreamBuilder;
@@ -45,6 +46,11 @@ public class HadoopInputFile implements InputFile {
   @Override
   public String path() {
     return path.toString();
+  }
+
+  /** Returns the Hadoop {@link Configuration} this file is read with. */
+  public Configuration configuration() {
+    return fs.getConf();
   }
 
   @Override

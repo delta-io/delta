@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.ChangelogSyntaxSupportedShim
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
@@ -79,6 +80,71 @@ trait CDCTestMixin extends SharedSparkSession {
     CDCReader.changesToBatchDF(deltaLog, startVersion, endVersion, spark)
   }
 }
+
+trait ChangelogV2CDCUtilMixin extends CDCTestMixin with ChangelogSyntaxSupportedShim {
+
+  // Tests skipped on the V2 changelog read path.
+  protected def excludedV2Exact: Set[String] = Set(
+    // Read-CDF does not write any files.
+    "usage metrics",
+    // VOID is not a supported Delta data type in the Kernel schema parser. On the V2 changelog
+    // read path (DeltaV2ChangelogScan -> JvmSnapshot.getSchema) a table whose schema retains a VOID
+    // field throws KernelException. These tests build a struct that keeps a lit(null) VOID field.
+    // V1 CDCReader does not parse the schema through the Kernel, so these are excluded only on the
+    // V2 path.
+    "merge CDC - schema evolution from void to struct with void",
+    "merge CDC - schema evolution with non-nullable schema",
+    "merge CDC - schema evolution with non-nullable schema - matched only",
+    // TODO(follow-up): "UPDATE with DV write CDC files explicitly" fails with "List() was empty":
+    // it inspects AddCDCFile actions written by the classic path, but the V2 changelog read path
+    // computes changes differently and does not surface those explicit CDC files here.
+    "UPDATE with DV write CDC files explicitly"
+  )
+
+  // CDCTestMixin has no `excluded` hook, so filter by name in a test() override and ignore()
+  // the matches; everything else runs. The V2 changelog read path uses the `SELECT ... CHANGES`
+  // clause, which only the Spark 4.2 parser supports; supportsChangelogSyntax is a compile-time
+  // shim (true on spark-4.2, false on spark-4.0-4.1) so tests cancel on older versions.
+  override protected def test(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any)(
+      implicit pos: org.scalactic.source.Position): Unit = {
+    if (excludedV2Exact.contains(testName)) {
+      ignore(testName + " (excluded on the V2 changelog read path, see excludedV2Exact)")(testFun)
+    } else {
+      super.test(testName, testTags: _*) {
+        assume(supportsChangelogSyntax, "The SELECT ... CHANGES clause requires Spark 4.2 or newer")
+        testFun
+      }
+    }
+  }
+
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .set(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED.key, "true")
+    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "false")
+
+  override def computeCDC(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      startVersion: Long,
+      endVersion: Long,
+      predicates: Seq[Expression] = Seq.empty): DataFrame = {
+    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+      val tablePath = deltaLog.dataPath.toString
+      val tempName = s"v2cdc_temp_${System.nanoTime()}"
+      spark.sql(s"CREATE TABLE $tempName USING delta LOCATION '$tablePath'")
+      try {
+        spark.sql(
+          s"SELECT * FROM $tempName " +
+            s"CHANGES FROM VERSION $startVersion TO VERSION $endVersion " +
+            s"WITH (computeUpdates = 'true')")
+          .drop("_metadata")
+      } finally {
+        spark.sql(s"DROP TABLE IF EXISTS $tempName")
+      }
+    }
+  }
+}
+
 
 trait DeltaTestUtilsBase {
   import DeltaTestUtils.TableIdentifierOrPath
@@ -743,6 +809,7 @@ trait DeltaSQLInMemoryTestUtils
 trait DeltaDMLTestUtils
   extends DeltaSQLTestUtils
   with DeltaTestUtilsBase
+  with DeltaTableProvider
   with BeforeAndAfterEach
   with CDCTestMixin {
   self: SharedSparkSession =>
@@ -802,7 +869,7 @@ trait DeltaDMLTestUtils
   }
 
   protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
-    val dfw = df.write.format("delta").mode("append")
+    val dfw = df.write.format(writeFormat).mode("append")
     if (partitionBy.nonEmpty) {
       dfw.partitionBy(partitionBy: _*)
     }

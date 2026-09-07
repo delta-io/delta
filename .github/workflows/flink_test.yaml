@@ -6,6 +6,9 @@ on:
     paths:
       - 'flink/**'
       - 'kernel/**'
+      - 'build.sbt'
+      - 'project/CrossFlinkVersions.scala'
+      - '.github/workflows/flink_test.yaml'
       - '!**/*.md'
       - '!**/*.txt'
   pull_request:
@@ -13,6 +16,9 @@ on:
     paths:
       - 'flink/**'
       - 'kernel/**'
+      - 'build.sbt'
+      - 'project/CrossFlinkVersions.scala'
+      - '.github/workflows/flink_test.yaml'
       - '!**/*.md'
       - '!**/*.txt'
 
@@ -26,9 +32,34 @@ env:
   SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
 
 jobs:
-  test:
-    name: "DF"
+  generate-matrix:
+    name: "Generate Flink versions matrix"
     runs-on: ubuntu-24.04
+    outputs:
+      flink-versions: ${{ steps.versions.outputs.flink-versions }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Install Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Generate matrix
+        id: versions
+        run: |
+          build/sbt exportFlinkVersionsJson
+          versions="$(jq -c '[.[].fullVersion]' target/flink-versions.json)"
+          echo "flink-versions=$versions" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: "DF: Flink ${{ matrix.flink }}"
+    needs: generate-matrix
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        flink: ${{ fromJson(needs.generate-matrix.outputs.flink-versions) }}
     steps:
       - name: Show runner specs
         run: |
@@ -56,7 +87,7 @@ jobs:
             ~/.sbt
             ~/.ivy2
             ~/.cache/coursier
-          key: sbt-flink
+          key: sbt-flink-${{ matrix.flink }}
       - name: Check cache status
         run: |
           if [ "${{ steps.cache-sbt.outputs.cache-hit }}" == "true" ]; then
@@ -70,7 +101,7 @@ jobs:
         uses: ./.github/actions/setup-unitycatalog
       - name: Run unit tests
         run: |
-          build/sbt flinkGroup/test
+          build/sbt -DflinkVersion=${{ matrix.flink }} flinkGroup/test
       - name: Save SBT cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -79,4 +110,4 @@ jobs:
             ~/.sbt
             ~/.ivy2
             ~/.cache/coursier
-          key: sbt-flink
+          key: sbt-flink-${{ matrix.flink }}

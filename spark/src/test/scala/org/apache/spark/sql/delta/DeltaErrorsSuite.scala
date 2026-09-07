@@ -580,16 +580,16 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.replaceWhereMismatchException("replaceWhereArgValue",
           new InvariantViolationException("Invariant violated."))
       }
-      checkError(e, "DELTA_REPLACE_WHERE_MISMATCH", "44000",
-        Map("replaceWhere" -> "replaceWhereArgValue", "message" -> "Invariant violated."))
+      checkError(e, "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION", "44000",
+        Map("replaceWhere" -> "replaceWhereArgValue",
+          "invariantViolationMessage" -> "Invariant violated."))
     }
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.replaceWhereMismatchException("replaceWhere", "badPartitions")
       }
-      checkError(e, "DELTA_REPLACE_WHERE_MISMATCH", "44000",
-        Map("replaceWhere" -> "replaceWhere",
-          "message" -> "Invalid data would be written to partitions badPartitions."))
+      checkError(e, "DELTA_REPLACE_WHERE_MISMATCH.INVALID_PARTITIONS", "44000",
+        Map("replaceWhere" -> "replaceWhere", "badPartitions" -> "badPartitions"))
     }
     {
       val e = intercept[DeltaIllegalStateException] {
@@ -1339,14 +1339,15 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.nonPartitionColumnAbsentException(false)
       }
-      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT", "KD005", Map("details" -> ""))
+      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT.ALL_PARTITION_COLUMNS", "KD005",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.nonPartitionColumnAbsentException(true)
       }
-      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT", "KD005",
-        Map("details" -> " Columns which are of NullType have been dropped."))
+      checkError(e, "DELTA_NON_PARTITION_COLUMN_ABSENT.NULL_TYPE_COLUMNS_DROPPED", "KD005",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -1620,10 +1621,19 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.invalidIdempotentWritesOptionsException("someReason")
+        throw DeltaErrors.invalidIdempotentWritesMissingWriteOptionsException()
       }
-      checkError(e, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616",
-        Map("reason" -> "someReason"))
+      checkError(e,
+        "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+        Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.invalidIdempotentWritesMissingSessionConfsException()
+      }
+      checkError(e,
+        "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS", "42616",
+        Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2892,6 +2902,14 @@ trait DeltaErrorsSuiteBase
         "same streaming query at the same time?"))
     }
     {
+      val e = intercept[ConflictingMetadataDomainException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .conflictingMetadataDomainException("delta.liquid")
+      }
+      checkError(e, "DELTA_CONFLICTING_METADATA_DOMAIN", "2D521",
+        Map("domain" -> "delta.liquid"))
+    }
+    {
       val e = intercept[io.delta.exceptions.ConcurrentWriteException] {
         throw org.apache.spark.sql.delta.DeltaErrors.concurrentWriteException(None)
       }
@@ -2986,6 +3004,33 @@ trait DeltaErrorsSuiteBase
         DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(newSession)
       assert(exceptionWithoutContext.getMessage.contains("https") === false)
     }
+  }
+
+  test("raising error class without subclass when subclasses exist") {
+    // DELTA_METADATA_MISMATCH defines subclasses, so a fully-qualified subclass extends the
+    // main-class template. This guards that the test exercises the has-subclasses scenario.
+    val mainTemplate = DeltaThrowableHelper.getMainMessageTemplate("DELTA_METADATA_MISMATCH")
+    val subTemplate =
+      DeltaThrowableHelper.getSubMessageTemplate("DELTA_METADATA_MISMATCH.SCHEMA_MISMATCH")
+    assert(subTemplate.nonEmpty)
+    assert(DeltaThrowableHelper.getMessageTemplate("DELTA_METADATA_MISMATCH") == mainTemplate)
+    assert(DeltaThrowableHelper.getMessageTemplate("DELTA_METADATA_MISMATCH.SCHEMA_MISMATCH") ==
+      mainTemplate + " " + subTemplate)
+
+    val e = intercept[DeltaIllegalArgumentException] {
+      throw new DeltaIllegalArgumentException(errorClass = "DELTA_METADATA_MISMATCH")
+    }
+    assert(e.getErrorClass == "DELTA_METADATA_MISMATCH")
+    // Assert getMessage directly rather than via checkError: the point is to verify that getMessage
+    // itself renders a bare class that has subclasses, which checkError does not exercise.
+    assert(e.getMessage == "[DELTA_METADATA_MISMATCH] " + mainTemplate)
+
+    // getParameterNames must also resolve for a bare main class that has subclasses. Use
+    // DELTA_CONCURRENT_APPEND, whose main template and subclass both carry parameters.
+    assert(DeltaThrowableHelper.getParameterNames("DELTA_CONCURRENT_APPEND", errorSubClass = null)
+      .toSeq == Seq("operation", "tableName", "version"))
+    assert(DeltaThrowableHelper.getParameterNames("DELTA_CONCURRENT_APPEND", "WITH_PARTITION_HINT")
+      .toSeq == Seq("operation", "tableName", "version", "partitionValues", "docLink"))
   }
 
   test("throwChangelogReadFailed preserves SparkThrowable cause and wraps others") {

@@ -526,10 +526,10 @@ class DeltaInsertReplaceWhereTargetAliasSuite
               .option("replaceWhere", "t.id = 1")
               .saveAsTable(testTableName)
           },
-          condition = "DELTA_REPLACE_WHERE_MISMATCH",
+          condition = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
           parameters = Map(
             "replaceWhere" -> "t.id = 1",
-            "message" -> "(?s).*id : 99.*"),
+            "invariantViolationMessage" -> "(?s).*id : 99.*"),
           matchPVals = true)
       }
     }
@@ -827,10 +827,10 @@ class DeltaInsertReplaceWhereTargetAliasSuite
               .option("replaceWhere", "t.data IS NULL")
               .saveAsTable(testTableName)
           },
-          condition = "DELTA_REPLACE_WHERE_MISMATCH",
+          condition = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
           parameters = Map(
             "replaceWhere" -> "t.data IS NULL",
-            "message" -> "(?s).*data : non-null.*"),
+            "invariantViolationMessage" -> "(?s).*data : non-null.*"),
           matchPVals = true)
       }
     }

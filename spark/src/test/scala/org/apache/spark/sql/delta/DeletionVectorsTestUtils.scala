@@ -382,7 +382,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
     withDVWriter(log, dvFileId) { writer =>
       filesWithDVs.flatMap { case (currentFile, dv) =>
         val range = writer.write(serializeRoaringBitmapArrayWithDefaultFormat(dv))
-        val dvData = DeletionVectorDescriptor.onDiskWithRelativePath(
+        val dvData = DeletionVectorDescriptor.onDiskWithUuidRelativePath(
           id = dvFileId,
           sizeInBytes = range.length,
           cardinality = dv.cardinality,
@@ -457,7 +457,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
     val dvFileId = UUID.randomUUID()
     withDVWriter(log, dvFileId) { writer =>
       val range = writer.write(serializeRoaringBitmapArrayWithDefaultFormat(bitmapArray))
-      DeletionVectorDescriptor.onDiskWithRelativePath(
+      DeletionVectorDescriptor.onDiskWithUuidRelativePath(
         id = dvFileId,
         sizeInBytes = range.length,
         cardinality = bitmapArray.cardinality,

@@ -21,7 +21,10 @@ import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import java.util.*;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 
 /** Delta log action representing a transaction identifier action. */
 public class SetTransaction {
@@ -41,6 +44,16 @@ public class SetTransaction {
         vector.getChild(2).isNullAt(rowId)
             ? Optional.empty()
             : Optional.of(vector.getChild(2).getLong(rowId)));
+  }
+
+  public static SetTransaction fromRow(Row row) {
+    if (row == null) {
+      return null;
+    }
+    return new SetTransaction(
+        row.getString(0),
+        row.getLong(1),
+        row.isNullAt(2) ? Optional.empty() : Optional.of(row.getLong(2)));
   }
 
   private final String appId;
@@ -77,5 +90,24 @@ public class SetTransaction {
     setTransactionMap.put(2, lastUpdated.orElse(null));
 
     return new GenericRow(SetTransaction.FULL_SCHEMA, setTransactionMap);
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (!(o instanceof SetTransaction)) {
+      return false;
+    }
+    SetTransaction other = (SetTransaction) o;
+    return version == other.version
+        && Objects.equals(appId, other.appId)
+        && Objects.equals(lastUpdated, other.lastUpdated);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(appId, version, lastUpdated);
   }
 }

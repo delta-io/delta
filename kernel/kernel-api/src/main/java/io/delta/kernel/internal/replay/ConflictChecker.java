@@ -137,8 +137,14 @@ public class ConflictChecker {
     AtomicReference<Optional<CommitInfo>> winningCommitInfoOpt =
         new AtomicReference<>(Optional.empty());
 
-    // no winning commits. why did we get the transaction conflict?
-    checkState(!winningCommits.isEmpty(), "No winning commits found.");
+    if (winningCommits.isEmpty()) {
+      if (TableFeatures.isCatalogManagedSupported(transaction.getProtocol())) {
+        // A winning commit may be ratified before it is published to the log. Without its actions,
+        // conflict resolution is unsafe; let the caller refresh the catalog snapshot and retry.
+        throw new ConcurrentWriteException();
+      }
+      checkState(false, "No winning commits found.");
+    }
 
     // Collect the data files removed by this (losing) transaction so we can detect delete-vs-delete
     // conflicts against the winning transactions below.
@@ -449,7 +455,9 @@ public class ConflictChecker {
 
       return ensureNoGapsInWinningCommits(winningCommitFiles);
     } catch (FileNotFoundException nfe) {
-      // no winning commits. why did we get here?
+      if (TableFeatures.isCatalogManagedSupported(transaction.getProtocol())) {
+        return Collections.emptyList();
+      }
       throw new IllegalStateException("No winning commits found.", nfe);
     } catch (IOException ioe) {
       throw new UncheckedIOException("Error listing files from " + firstWinningCommitFile, ioe);

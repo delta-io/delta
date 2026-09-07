@@ -18,8 +18,14 @@ package org.apache.spark.sql.delta.columnmapping
 
 import java.util.concurrent.TimeUnit
 
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ColumnMappingTableFeature
+import org.apache.spark.sql.delta.DeltaAnalysisException
+import org.apache.spark.sql.delta.DeltaColumnMappingUnsupportedException
+import org.apache.spark.sql.delta.DeltaConfigs
 import org.apache.spark.sql.delta.DeltaConfigs._
+import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.DeltaTableFeatureException
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._

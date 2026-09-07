@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, Inva
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.exceptions
+import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
 import org.apache.spark.{SparkConf, SparkEnv, SparkException, SparkThrowable}
@@ -1271,14 +1272,14 @@ trait DeltaErrorsBase
   }
 
   def nonPartitionColumnAbsentException(colsDropped: Boolean): Throwable = {
-    val msg = if (colsDropped) {
-      " Columns which are of NullType have been dropped."
+    val errorClass = if (colsDropped) {
+      "DELTA_NON_PARTITION_COLUMN_ABSENT.NULL_TYPE_COLUMNS_DROPPED"
     } else {
-      ""
+      "DELTA_NON_PARTITION_COLUMN_ABSENT.ALL_PARTITION_COLUMNS"
     }
     new DeltaAnalysisException(
-      errorClass = "DELTA_NON_PARTITION_COLUMN_ABSENT",
-      messageParameters = Array(msg)
+      errorClass = errorClass,
+      messageParameters = Array.empty
     )
   }
 
@@ -1286,16 +1287,15 @@ trait DeltaErrorsBase
       replaceWhere: String,
       invariantViolation: InvariantViolationException): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_REPLACE_WHERE_MISMATCH",
+      errorClass = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
       messageParameters = Array(replaceWhere, invariantViolation.getMessage),
       cause = Some(invariantViolation))
   }
 
   def replaceWhereMismatchException(replaceWhere: String, badPartitions: String): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_REPLACE_WHERE_MISMATCH",
-      messageParameters = Array(replaceWhere,
-        s"Invalid data would be written to partitions $badPartitions."))
+      errorClass = "DELTA_REPLACE_WHERE_MISMATCH.INVALID_PARTITIONS",
+      messageParameters = Array(replaceWhere, badPartitions))
   }
 
   def illegalFilesFound(file: String): Throwable = {
@@ -1310,10 +1310,16 @@ trait DeltaErrorsBase
       messageParameters = Array(input, name, explain))
   }
 
-  def invalidIdempotentWritesOptionsException(explain: String): Throwable = {
+  def invalidIdempotentWritesMissingWriteOptionsException(): Throwable = {
     new DeltaIllegalArgumentException(
-      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS",
-      messageParameters = Array(explain))
+      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS",
+      messageParameters = Array.empty)
+  }
+
+  def invalidIdempotentWritesMissingSessionConfsException(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS",
+      messageParameters = Array.empty)
   }
 
   def invalidInterval(interval: String): Throwable = {
@@ -2971,6 +2977,11 @@ trait DeltaErrorsBase
     )
   }
 
+  def conflictingMetadataDomainException(
+      domain: String): ConflictingMetadataDomainException = {
+    new ConflictingMetadataDomainException(Array(domain))
+  }
+
   def restoreMissedDataFilesError(missedFiles: Array[String], version: Long): Throwable =
     new IllegalArgumentException(
       s"""Not all files from version $version are available in file system.
@@ -3778,33 +3789,22 @@ trait DeltaErrorsBase
 
   def uniFormIcebergRequiresIcebergCompat(): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
-      messageParameters = Array(
-        UniversalFormat.ICEBERG_FORMAT,
-        "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) " +
-        "to be enabled on an existing table. Supported versions are IcebergCompatV1 and " +
-        "IcebergCompatV2."
-      )
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION.ICEBERG_COMPAT_REQUIRED",
+      messageParameters = Array(UniversalFormat.ICEBERG_FORMAT)
     )
   }
 
   def uniFormHudiDeleteVectorCompat(): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
-      messageParameters = Array(
-        UniversalFormat.HUDI_FORMAT,
-        "Requires delete vectors to be disabled."
-      )
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION.HUDI_DELETE_VECTORS_NOT_SUPPORTED",
+      messageParameters = Array(UniversalFormat.HUDI_FORMAT)
     )
   }
 
   def uniFormHudiSchemaCompat(unsupportedType: DataType): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
-      messageParameters = Array(
-        UniversalFormat.HUDI_FORMAT,
-        s"DataType: $unsupportedType is not currently supported."
-      )
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION.HUDI_UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(UniversalFormat.HUDI_FORMAT, unsupportedType.toString)
     )
   }
 
@@ -3988,10 +3988,20 @@ trait DeltaErrorsBase
   def universalFormatConversionFailedException(
       failedOnCommitVersion: Long,
       format: String,
-      errorMessage: String): Throwable = {
+      error: Throwable): Throwable = {
     new DeltaRuntimeException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED",
-      messageParameters = Array(s"$failedOnCommitVersion", format, errorMessage)
+      errorClass = "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED.CAUSED_BY_ERROR",
+      messageParameters = Array(s"$failedOnCommitVersion", format, ExceptionUtils.getMessage(error))
+    ).initCause(error)
+  }
+
+  def universalFormatConversionFailedUnexpectedPartitionDataTypeException(
+      failedOnCommitVersion: Long,
+      format: String,
+      dataType: DataType): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED.UNEXPECTED_PARTITION_DATA_TYPE",
+      messageParameters = Array(s"$failedOnCommitVersion", format, dataType.toString)
     )
   }
 
@@ -4180,6 +4190,15 @@ trait DeltaErrorsBase
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
       messageParameters = Array(operation))
+  }
+
+  def checkCatalogManagedTableOperationAllowed(
+      operation: String,
+      snapshot: SnapshotDescriptor,
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    if (snapshot.isCatalogOwned) {
+      throw operationBlockedOnCatalogManagedTable(operation)
+    }
   }
 
   def deltaCannotCreateCatalogManagedTable(): Throwable = {
@@ -4388,6 +4407,22 @@ class ConcurrentTransactionException(message: String)
         "into this table. Did you run multiple instances of the same streaming query" +
         " at the same time?",
       conflictingCommit))
+}
+
+/**
+ * Thrown when the current transaction adds a metadata domain that conflicts with a metadata domain
+ * added by a concurrent transaction. Subclasses
+ * [[io.delta.exceptions.ConcurrentTransactionException]] for backward compatibility, but reports
+ * its own error class.
+ */
+class ConflictingMetadataDomainException(messageParameters: Array[String] = Array.empty)
+  extends io.delta.exceptions.ConcurrentTransactionException(
+    DeltaThrowableHelper.getMessage("DELTA_CONFLICTING_METADATA_DOMAIN", messageParameters))
+    with DeltaThrowable {
+  override def getErrorClass: String = "DELTA_CONFLICTING_METADATA_DOMAIN"
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(
+      "DELTA_CONFLICTING_METADATA_DOMAIN", errorSubClass = null, messageParameters)
 }
 
 /** A helper class in building a helpful error message in case of metadata mismatches. */

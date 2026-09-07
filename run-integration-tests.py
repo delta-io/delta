@@ -129,19 +129,20 @@ def get_spark_variants(spark_specs):
     Builds the list of artifact variants to test from the Spark version specs.
 
     Each variant is a dict with:
-      - suffix: Maven artifact suffix, e.g. "" (unsuffixed), "_4.0", "_4.1"
-      - spark_version: full Spark version, e.g. "4.1.0", "4.0.1"
+      - suffix: Maven artifact suffix, e.g. "" (unsuffixed), "_4.0", "_4.1", "_4.2"
+      - spark_version: full Spark version, e.g. "4.0.1", "4.1.0", "4.2.0"
       - support_iceberg: "true" or "false"
       - support_hudi: "true" or "false"
 
     The first variant is always unsuffixed (backward compat) using the DEFAULT spec's metadata.
     Remaining variants are suffixed, one per non-master Spark version.
 
-    Example return value (given Spark 4.0 and 4.1 specs, with 4.1 as default):
+    Example return value (given Spark 4.0, 4.1, and 4.2 specs, with 4.2 as default):
       [
-        {"suffix": "",     "spark_version": "4.1.0", "support_iceberg": "false", "support_hudi": "false"},
+        {"suffix": "",     "spark_version": "4.2.0", "support_iceberg": "false", "support_hudi": "false"},
         {"suffix": "_4.0", "spark_version": "4.0.1", "support_iceberg": "true",  "support_hudi": "true"},
-        {"suffix": "_4.1", "spark_version": "4.1.0", "support_iceberg": "false", "support_hudi": "false"},
+        {"suffix": "_4.1", "spark_version": "4.1.0", "support_iceberg": "true",  "support_hudi": "false"},
+        {"suffix": "_4.2", "spark_version": "4.2.0", "support_iceberg": "false", "support_hudi": "false"},
       ]
     """
     variants = []

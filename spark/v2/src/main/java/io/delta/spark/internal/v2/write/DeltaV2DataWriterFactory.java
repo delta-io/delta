@@ -27,40 +27,47 @@ import org.apache.spark.util.SerializableConfiguration;
 
 /**
  * Serializable factory sent to executors to create {@link DeltaV2DataWriter} instances. Carries the
- * serialized Hadoop config and Kernel transaction state needed by each writer. Serves both batch
- * and streaming writes -- the {@link DeltaV2DataWriter} is epoch-agnostic, so the streaming
- * overload ignores {@code epochId} (the epoch only scopes the driver-side commit, not the per-task
- * write).
+ * serialized Hadoop config, Kernel transaction state, and partition layout needed by each writer.
+ * Serves both batch and streaming writes -- the {@link DeltaV2DataWriter} is epoch-agnostic, so the
+ * streaming overload ignores {@code epochId}.
  */
 class DeltaV2DataWriterFactory
     implements DataWriterFactory, StreamingDataWriterFactory, Serializable {
 
-  private final String targetDirectory;
   private final SerializableConfiguration hadoopConf;
   private final SerializableKernelRowWrapper serializedTxnState;
   private final StructType dataSchema;
+  private final StructType partitionSchema;
+  private final int[] dataOrdinals;
+  private final int[] partitionOrdinals;
   private final OutputWriterFactory outputWriterFactory;
 
   DeltaV2DataWriterFactory(
-      String targetDirectory,
       SerializableConfiguration hadoopConf,
       SerializableKernelRowWrapper serializedTxnState,
       StructType dataSchema,
+      StructType partitionSchema,
+      int[] dataOrdinals,
+      int[] partitionOrdinals,
       OutputWriterFactory outputWriterFactory) {
-    this.targetDirectory = targetDirectory;
     this.hadoopConf = hadoopConf;
     this.serializedTxnState = serializedTxnState;
     this.dataSchema = dataSchema;
+    this.partitionSchema = partitionSchema;
+    this.dataOrdinals = dataOrdinals;
+    this.partitionOrdinals = partitionOrdinals;
     this.outputWriterFactory = outputWriterFactory;
   }
 
   @Override
   public DataWriter<InternalRow> createWriter(int partitionId, long taskId) {
     return new DeltaV2DataWriter(
-        targetDirectory,
         hadoopConf,
         serializedTxnState,
         dataSchema,
+        partitionSchema,
+        dataOrdinals,
+        partitionOrdinals,
         outputWriterFactory,
         partitionId,
         taskId);

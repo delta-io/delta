@@ -90,7 +90,7 @@ abstract class TahoeFileIndex(
    * set by the partition and data filters. Essentially, this is a collection of all the files
    * associated with the identified partitions.
    */
-  def listPartitionsAsAddFiles(
+  private[delta] def listPartitionsAsAddFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): (Seq[(InternalRow, Seq[AddFile])], Seq[AddFile]) = {
     val matchedFiles = matchingFiles(partitionFilters, dataFilters)
@@ -142,7 +142,7 @@ abstract class TahoeFileIndex(
     FileStatusWithMetadata(fs, metadata.toMap)
   }
 
-  def makePartitionDirectories(
+  private[delta] def makePartitionDirectories(
       partitionValuesToFiles: Seq[(InternalRow, Seq[AddFile])]): Seq[PartitionDirectory] = {
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
     partitionValuesToFiles.map {

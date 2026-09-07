@@ -23,7 +23,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
-import org.apache.spark.sql.delta.SnapshotManagement.checkpointV2ThreadPool
+import org.apache.spark.sql.delta.SnapshotManagement.checkpointThreadPool
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -180,10 +180,44 @@ trait FileBasedCheckpointProvider
 
 object CheckpointProvider extends DeltaLogging {
 
+  val MISSING_CHECKPOINT_METADATA_OP_TYPE =
+    "delta.checkpointV2.missingCheckpointMetadata"
+
   /** Helper method to convert non-empty checkpoint files to DeltaLogFileIndex */
   def checkpointFileIndex(checkpointFiles: Seq[FileStatus]): DeltaLogFileIndex = {
     assert(checkpointFiles.nonEmpty, "checkpointFiles must not be empty")
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, checkpointFiles).get
+  }
+
+  /**
+   * Wraps `v2ActionsFuture` in a [[LazyCompleteCheckpointProvider]] which resolves to a
+   * [[V2CheckpointProvider]]. The future is not waited on until a complete-checkpoint-provider
+   * method is actually called.
+   */
+  private def lazyV2CheckpointProvider(
+      provider: UninitializedV2LikeCheckpointProvider,
+      snapshotDescriptor: SnapshotDescriptor,
+      v2ActionsFuture: NonFateSharingFuture[(Option[CheckpointMetadata], Seq[SidecarFile])])
+      : CheckpointProvider = {
+    new LazyCompleteCheckpointProvider(provider) {
+      override def createCheckpointProvider(): FileBasedCheckpointProvider = {
+        val (checkpointMetadataOpt, sidecarFiles) = v2ActionsFuture.get(Duration.Inf)
+        // This must be a v2 checkpoint, so checkpointMetadataOpt must be non empty.
+        val checkpointMetadata = checkpointMetadataOpt.getOrElse {
+          recordDeltaEvent(
+            snapshotDescriptor.deltaLog,
+            MISSING_CHECKPOINT_METADATA_OP_TYPE,
+            data = Map(
+              "v2CheckpointPath" -> provider.fileStatus.getPath.toString,
+              "providerType" -> provider.getClass.getSimpleName))
+          throw new IllegalStateException(
+            s"V2 Checkpoint ${provider.fileStatus.getPath} has no CheckpointMetadata action")
+        }
+        require(isV2CheckpointEnabled(snapshotDescriptor))
+        V2CheckpointProvider(
+          provider, checkpointMetadata, sidecarFiles, snapshotDescriptor.deltaLog)
+      }
+    }
   }
 
   /** Converts an [[UninitializedCheckpointProvider]] into a [[CheckpointProvider]] */
@@ -195,25 +229,9 @@ object CheckpointProvider extends DeltaLogging {
       : CheckpointProvider = uninitializedCheckpointProvider match {
     // Note: snapshotDescriptor.protocol should be accessed as late as possible inside the futures
     // as it might need I/O.
-    case uninitializedV2CheckpointProvider: UninitializedV2CheckpointProvider =>
-      new LazyCompleteCheckpointProvider(uninitializedV2CheckpointProvider) {
-        override def createCheckpointProvider(): FileBasedCheckpointProvider = {
-          val (checkpointMetadataOpt, sidecarFiles) =
-            uninitializedV2CheckpointProvider.nonFateSharingCheckpointReadFuture.get(Duration.Inf)
-          // This must be a v2 checkpoint, so checkpointMetadataOpt must be non empty.
-          val checkpointMetadata = checkpointMetadataOpt.getOrElse {
-            val checkpointFile = uninitializedV2CheckpointProvider.topLevelFiles.head
-            throw new IllegalStateException(s"V2 Checkpoint ${checkpointFile.getPath} " +
-              s"has no CheckpointMetadata action")
-          }
-          require(isV2CheckpointEnabled(snapshotDescriptor.protocol))
-          V2CheckpointProvider(
-            uninitializedV2CheckpointProvider,
-            checkpointMetadata,
-            sidecarFiles,
-            snapshotDescriptor.deltaLog)
-        }
-      }
+    case provider: UninitializedV2CheckpointProvider =>
+      lazyV2CheckpointProvider(
+        provider, snapshotDescriptor, provider.nonFateSharingCheckpointReadFuture)
     case provider: UninitializedV1OrV2ParquetCheckpointProvider
         if isV2CheckpointEnabled(checksumOpt).contains(false) =>
       // V2 checkpoints are specifically disabled, so it must be V1
@@ -225,9 +243,10 @@ object CheckpointProvider extends DeltaLogging {
       // Start a future to start reading the v2 actions from the parquet checkpoint and return
       // a lazy checkpoint provider wrapping the future. we won't wait on the future unless/until
       // somebody calls a complete checkpoint provider method.
-      val future = checkpointV2ThreadPool.submitNonFateSharing { spark: SparkSession =>
-        readV2ActionsFromParquetCheckpoint(
-          spark, provider.logPath, provider.fileStatus, snapshotDescriptor.deltaLog.options)
+      val deltaLog = snapshotDescriptor.deltaLog
+      val future = checkpointThreadPool.submitNonFateSharing { spark: SparkSession =>
+        provider.readV2Actions(
+          spark, deltaLog.store, deltaLog.newDeltaHadoopConf(), deltaLog.options)
       }
       new LazyCompleteCheckpointProvider(provider) {
         override def createCheckpointProvider(): FileBasedCheckpointProvider = {
@@ -288,7 +307,8 @@ object CheckpointProvider extends DeltaLogging {
       fileStatus: FileStatus,
       fileType: String,
       logPath: Path,
-      exception: Option[Throwable]): Unit = {
+      exception: Option[Throwable],
+      providerType: String = ""): Unit = {
     recordDeltaEvent(
       provider = null,
       opType = "delta.checkpointV2.readV2ActionsFromCheckpoint",
@@ -297,7 +317,8 @@ object CheckpointProvider extends DeltaLogging {
         "v2CheckpointPath" -> fileStatus.getPath.toString,
         "v2CheckpointSize" -> fileStatus.getLen,
         "errorMessage" -> exception.map(_.toString).getOrElse(""),
-        "fileType" -> fileType
+        "fileType" -> fileType,
+        "providerType" -> providerType
       ),
       path = Some(logPath.getParent)
     )
@@ -308,7 +329,8 @@ object CheckpointProvider extends DeltaLogging {
       logStore: LogStore,
       logPath: Path,
       fileStatus: FileStatus,
-      hadoopConf: Configuration): (CheckpointMetadata, Seq[SidecarFile]) = {
+      hadoopConf: Configuration,
+      providerType: String = ""): (CheckpointMetadata, Seq[SidecarFile]) = {
     val startTimeMs = System.currentTimeMillis()
     try {
       var checkpointMetadataOpt: Option[CheckpointMetadata] = None
@@ -329,11 +351,13 @@ object CheckpointProvider extends DeltaLogging {
       val checkpointMetadata = checkpointMetadataOpt.getOrElse {
         throw new IllegalStateException("Json V2 Checkpoint has no CheckpointMetadata action")
       }
-      sendEventForV2CheckpointRead(startTimeMs, fileStatus, "json", logPath, exception = None)
+      sendEventForV2CheckpointRead(
+        startTimeMs, fileStatus, "json", logPath, exception = None, providerType)
       (checkpointMetadata, sidecarFileActions.toSeq)
     } catch {
       case NonFatal(e) =>
-        sendEventForV2CheckpointRead(startTimeMs, fileStatus, "json", logPath, exception = Some(e))
+        sendEventForV2CheckpointRead(
+          startTimeMs, fileStatus, "json", logPath, exception = Some(e), providerType)
         throw e
     }
   }
@@ -348,7 +372,8 @@ object CheckpointProvider extends DeltaLogging {
       spark: SparkSession,
       logPath: Path,
       fileStatus: FileStatus,
-      deltaLogOptions: Map[String, String]): (Option[CheckpointMetadata], Seq[SidecarFile]) = {
+      deltaLogOptions: Map[String, String],
+      providerType: String = ""): (Option[CheckpointMetadata], Seq[SidecarFile]) = {
     val startTimeMs = System.currentTimeMillis()
     try {
       val relation = DeltaLog.indexToRelation(
@@ -375,11 +400,13 @@ object CheckpointProvider extends DeltaLogging {
         throw new IllegalStateException(
           "sidecar files present in checkpoint even when checkpoint metadata is missing")
       }
-      sendEventForV2CheckpointRead(startTimeMs, fileStatus, "parquet", logPath, exception = None)
+      sendEventForV2CheckpointRead(
+        startTimeMs, fileStatus, "parquet", logPath, exception = None, providerType)
       (checkpointMetadata, checkpointSidecarFiles.toSeq)
     } catch {
       case NonFatal(e) =>
-        sendEventForV2CheckpointRead(startTimeMs, fileStatus, "parquet", logPath, Some(e))
+        sendEventForV2CheckpointRead(
+          startTimeMs, fileStatus, "parquet", logPath, Some(e), providerType)
         throw e
     }
   }
@@ -456,6 +483,53 @@ trait UninitializedV2LikeCheckpointProvider extends FileBasedUninitializedCheckp
   override lazy val topLevelFiles: Seq[FileStatus] = Seq(fileStatus)
   override lazy val topLevelFileIndex: Option[DeltaLogFileIndex] =
     DeltaLogFileIndex(v2CheckpointFormat.fileFormat, topLevelFiles)
+
+  protected def providerType: String = getClass.getSimpleName
+
+  protected def v2ActionsFromLastCheckpointOpt: Option[(CheckpointMetadata, Seq[SidecarFile])] = {
+    lastCheckpointInfoOpt
+      .flatMap(_.v2Checkpoint)
+      .map(v2 => (v2.checkpointMetadataOpt, v2.sidecarFiles))
+      .collect {
+        case (Some(checkpointMetadata), Some(sidecarFiles)) =>
+          (checkpointMetadata, sidecarFiles)
+      }
+  }
+
+  /** Helper method to do I/O and read v2 actions from the underlying v2 checkpoint file */
+  private[delta] def readV2Actions(
+      spark: SparkSession,
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      deltaLogOptions: Map[String, String])
+      : (Option[CheckpointMetadata], Seq[SidecarFile]) = {
+    v2CheckpointFormat match {
+      case V2Checkpoint.Format.JSON =>
+        val (checkpointMetadata, sidecars) = CheckpointProvider.readV2ActionsFromJsonCheckpoint(
+            logStore, logPath, fileStatus, hadoopConf, providerType)
+        (Some(checkpointMetadata), sidecars)
+      case V2Checkpoint.Format.PARQUET =>
+        CheckpointProvider.readV2ActionsFromParquetCheckpoint(
+            spark, logPath, fileStatus, deltaLogOptions, providerType)
+    }
+  }
+
+  /**
+   * Loads the V2 actions, preferring the cached actions over an I/O read. The [[LogStore]] / Hadoop
+   * conf are parameters rather than fields so that an implementation which does not have them at
+   * construction time can still reuse this logic by supplying them at read time.
+   */
+  private[delta] def loadV2Actions(
+      spark: SparkSession,
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      deltaLogOptions: Map[String, String])
+      : (Option[CheckpointMetadata], Seq[SidecarFile]) = {
+    v2ActionsFromLastCheckpointOpt match {
+      case Some((cm, sidecars)) => Some(cm) -> sidecars
+      case None => readV2Actions(spark, logStore, hadoopConf, deltaLogOptions)
+    }
+  }
 }
 
 /**
@@ -495,37 +569,10 @@ case class UninitializedV2CheckpointProvider(
   override val v2CheckpointFormat: V2Checkpoint.Format =
     V2Checkpoint.toFormat(fileStatus.getPath.getName)
 
-  // Try to get the required actions from LastCheckpointInfo
-  private val v2ActionsFromLastCheckpointOpt: Option[(CheckpointMetadata, Seq[SidecarFile])] = {
-    lastCheckpointInfoOpt
-      .flatMap(_.v2Checkpoint)
-      .map(v2 => (v2.checkpointMetadataOpt, v2.sidecarFiles))
-      .collect {
-        case (Some(checkpointMetadata), Some(sidecarFiles)) =>
-          (checkpointMetadata, sidecarFiles)
-      }
-  }
-
-  /** Helper method to do I/O and read v2 actions from the underlying v2 checkpoint file */
-  private def readV2Actions(spark: SparkSession): (Option[CheckpointMetadata], Seq[SidecarFile]) = {
-    v2CheckpointFormat match {
-      case V2Checkpoint.Format.JSON =>
-        val (checkpointMetadata, sidecars) = CheckpointProvider.readV2ActionsFromJsonCheckpoint(
-            logStore, logPath, fileStatus, hadoopConf)
-        (Some(checkpointMetadata), sidecars)
-      case V2Checkpoint.Format.PARQUET =>
-        CheckpointProvider.readV2ActionsFromParquetCheckpoint(
-            spark, logPath, fileStatus, deltaLogOptions)
-    }
-  }
-
   val nonFateSharingCheckpointReadFuture
       : NonFateSharingFuture[(Option[CheckpointMetadata], Seq[SidecarFile])] = {
-    checkpointV2ThreadPool.submitNonFateSharing { spark: SparkSession =>
-      v2ActionsFromLastCheckpointOpt match {
-        case Some((cm, sidecars)) => Some(cm) -> sidecars
-        case None => readV2Actions(spark)
-      }
+    checkpointThreadPool.submitNonFateSharing { spark: SparkSession =>
+      loadV2Actions(spark, logStore, hadoopConf, deltaLogOptions)
     }
   }
 }
@@ -665,7 +712,7 @@ object V2CheckpointProvider {
     def getSidecarSchemaFetcher: () => Option[StructType] = {
       val sidecarSchemaFromMetadata = checkpointMetadata.sidecarFileSchema
       val nonFateSharingSidecarSchemaFuture: NonFateSharingFuture[Option[StructType]] = {
-        checkpointV2ThreadPool.submitNonFateSharing { spark: SparkSession =>
+        checkpointThreadPool.submitNonFateSharing { spark: SparkSession =>
           sidecarFiles.headOption.map { sidecarFile =>
             val sidecarFileStatus =
               sidecarFile.toFileStatus(uninitializedV2LikeCheckpointProvider.logPath)

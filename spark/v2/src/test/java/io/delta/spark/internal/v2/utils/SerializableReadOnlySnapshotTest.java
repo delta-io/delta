@@ -34,6 +34,7 @@ import java.io.ObjectOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -48,7 +49,7 @@ public class SerializableReadOnlySnapshotTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SnapshotImpl snapshot = (SnapshotImpl) mgr.loadLatestSnapshot();
+    SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot());
 
     SerializableReadOnlySnapshot original =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
@@ -68,10 +69,10 @@ public class SerializableReadOnlySnapshotTest extends DeltaV2TestBase {
 
     assertEquals(original.getVersion(), deserialized.getVersion());
 
-    Scan scan = deserialized.toScan();
+    Engine engine = DefaultEngine.create(deserialized.getHadoopConf());
+    Scan scan = deserialized.toScan(engine);
     assertNotNull(scan);
 
-    Engine engine = DefaultEngine.create(deserialized.getHadoopConf());
     List<FilteredColumnarBatch> batches = new ArrayList<>();
     try (CloseableIterator<FilteredColumnarBatch> iter = scan.getScanFiles(engine)) {
       while (iter.hasNext()) {
@@ -88,12 +89,12 @@ public class SerializableReadOnlySnapshotTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SnapshotImpl snapshot = (SnapshotImpl) mgr.loadLatestSnapshot();
+    SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot());
 
     SerializableReadOnlySnapshot serializable =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
 
-    Scan scan = serializable.toScan();
+    Scan scan = serializable.toScan(defaultEngine);
     assertNotNull(scan);
     assertNotNull(scan.getScanState(defaultEngine));
     assertNotNull(scan.getRemainingFilter());

@@ -21,6 +21,7 @@ import java.util.{Date, UUID}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.shims.DataSourceUtilsShims
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileAlreadyExistsException, Path}
@@ -101,6 +102,7 @@ object DeltaFileFormatWriter extends Logging {
     job.setOutputKeyClass(classOf[Void])
     job.setOutputValueClass(classOf[InternalRow])
     FileOutputFormat.setOutputPath(job, new Path(outputSpec.outputPath))
+    DataSourceUtilsShims.mergeWriteOptionsIntoHadoopConf(options, job.getConfiguration)
 
     val partitionSet = AttributeSet(partitionColumns)
     // cleanup the internal metadata information of

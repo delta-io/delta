@@ -49,9 +49,13 @@ public class AppendOnly
 
   private List<DeltaWriterResult> completedWrites;
 
+  /** First task failure, saved because Caffeine does not propagate removal-listener exceptions. */
+  private RuntimeException writerCompletionFailure;
+
   public void init(DeltaSinkWriter writer) {
     this.writer = writer;
     this.completedWrites = new ArrayList<>();
+    this.writerCompletionFailure = null;
     this.writerTasksByPartition =
         Caffeine.newBuilder()
             .executor(Runnable::run)
@@ -99,6 +103,9 @@ public class AppendOnly
   @Override
   public List<DeltaWriterResult> merge() {
     writerTasksByPartition.invalidateAll();
+    if (writerCompletionFailure != null) {
+      throw writerCompletionFailure;
+    }
     List<DeltaWriterResult> results = List.copyOf(completedWrites);
     completedWrites.clear();
     return results;
@@ -112,8 +119,10 @@ public class AppendOnly
       if (value != null) {
         completedWrites.addAll(value.complete());
       }
-    } catch (IOException e) {
-      throw new RuntimeException(e);
+    } catch (IOException | RuntimeException e) {
+      if (writerCompletionFailure == null) {
+        writerCompletionFailure = ExceptionUtils.wrap(e);
+      }
     }
   }
 }

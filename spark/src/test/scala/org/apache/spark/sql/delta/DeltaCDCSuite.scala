@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.ChangelogSyntaxSupportedShim
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.apache.hadoop.fs.Path
 
@@ -1177,3 +1178,132 @@ class DeltaCDCScalaWithCatalogOwnedBatch2Suite extends DeltaCDCScalaSuite {
 class DeltaCDCScalaWithCatalogOwnedBatch100Suite extends DeltaCDCScalaSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
+
+/**
+ * Routes [[DeltaCDCSuiteBase.cdcRead]] through the V2 changelog SQL surface
+ * (`<table> CHANGES FROM ...` -> TableCatalog.loadChangelog -> DeltaV2ChangelogScan /
+ * DeltaV2ChangelogBatch), so the existing DeltaCDCScalaSuite / DeltaCDCSQLSuite test bodies
+ * validate the V2 changelog read path. Sister of [[ChangelogV2CDCUtilMixin]], which does the same
+ * for the computeCDC() entry point used by the generated Merge/Delete/Update CDC suites.
+ *
+ * STRICT mode is scoped to the read only. Path-based reads register the path as a named
+ * (unmanaged) table so resolution goes through the configured V2 spark_catalog (returns a
+ * SparkTable); a bare `delta.`path`` would resolve to a V1 DeltaTableV2 and be rejected by
+ * ChangelogSupport.
+ */
+trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase with ChangelogSyntaxSupportedShim {
+
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .set(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED.key, "true")
+    // The V2 changelog read path requires row tracking (DELTA_CHANGELOG_REQUIRES_ROW_TRACKING).
+    .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "true")
+
+  // Tests that do not apply to the V2 changelog read path:
+  //  - V1-specific error semantics (they intercept V1 error codes that the V2 path does not raise)
+  //  - mixed timestamp/version boundaries (the V2 CHANGES grammar only allows VERSION..VERSION or
+  //    TIMESTAMP..TIMESTAMP)
+  //  - timestamp -> version resolution, unsupported on the JVM kernel backend today:
+  //    getActiveCommitAtTimestamp requires a JvmSnapshot and the drop-in SnapshotImpl is not
+  //    unwrapped. TODO: re-enable the timestamp families once the kernel history SPI supports
+  //    the drop-in snapshot.
+  //  - open-ended reads: V1 resolves the missing end bound lazily at execution time, the V2 path
+  //    resolves it eagerly at analysis time, so versions written after the DataFrame is built are
+  //    not observed.
+  //  - protocol assertions: the V2 path requires row tracking (see sparkConf above), which adds the
+  //    rowTracking and domainMetadata table features the V1 test does not expect.
+  protected def excludedV2Exact: Set[String] = Set(
+    "An error should be thrown when CDC is not enabled",
+    "aggregating non-numeric cdc data columns",
+    "changes - end timestamp exceeding latest commit timestamp",
+    "changes - only start is a timestamp",
+    "changes - only start is a timestamp - inclusive behavior",
+    "changes - start and end are timestamps",
+    "changes - start timestamp exceeding latest commit timestamp",
+    "end timestamp < start timestamp",
+    "ending version not specified resolves to latest at execution time",
+    "non-monotonic timestamps",
+    "protocol version",
+    "resolve expression for timestamp function",
+    "table schema changed after dataframe with ending not specified",
+    "table schema changed after dataframe with ending specified"
+  )
+
+  // Whole test families excluded by name prefix (every member is V1-specific or timestamp-based).
+  protected def excludedV2Prefixes: Seq[String] = Seq(
+    "range boundary cannot be null",
+    "CDF timestamp format",
+    "version from timestamp",
+    "CDC read respects timezone and DST",
+    "CDC read's commit timestamps are correct"
+  )
+
+  // Filter by name in a test() override and ignore() the matches; everything else runs. The V2
+  // changelog read path uses the `SELECT ... CHANGES` clause, which only the Spark 4.2 parser
+  // supports; supportsChangelogSyntax is a compile-time shim (true on spark-4.2, false on
+  // spark-4.0-4.1) so tests cancel on older versions.
+  override protected def test(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any)(
+      implicit pos: org.scalactic.source.Position): Unit = {
+    if (excludedV2Exact.contains(testName) || excludedV2Prefixes.exists(testName.startsWith)) {
+      ignore(testName + " (excluded on the V2 changelog read path)", testTags: _*)(testFun)
+    } else {
+      super.test(testName, testTags: _*) {
+        assume(supportsChangelogSyntax, "The SELECT ... CHANGES clause requires Spark 4.2 or newer")
+        testFun
+      }
+    }
+  }
+
+  override def cdcRead(
+      tblId: TblId,
+      start: Boundary,
+      end: Boundary,
+      schemaMode: Option[DeltaBatchCDFSchemaMode] = Some(BatchCDFSchemaLegacy),
+      readerOptions: Map[String, String] = Map.empty): DataFrame = {
+
+    // Set the batch CDF schema mode using SQL conf if we specified it, mirroring the V1 overrides.
+    if (schemaMode.isDefined) {
+      var result: DataFrame = null
+      withSQLConf(DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key ->
+        schemaMode.get.name) {
+        result = cdcRead(tblId, start, end, None, readerOptions)
+      }
+      return result
+    }
+
+    val startClause: String = start match {
+      case sv: StartingVersion => s"FROM VERSION ${sv.value}"
+      case st: StartingTimestamp => s"FROM TIMESTAMP '${st.value}'"
+      case Unbounded =>
+        // changesClause requires a starting boundary; unbounded start is streaming-only.
+        throw new UnsupportedOperationException(
+          "V2 changelog batch read requires a starting boundary")
+    }
+    val endClause: String = end match {
+      case ev: EndingVersion => s"TO VERSION ${ev.value}"
+      case et: EndingTimestamp => s"TO TIMESTAMP '${et.value}'"
+      case Unbounded => ""
+    }
+
+    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+      tblId match {
+        case _: TableName =>
+          spark.sql(s"SELECT * FROM ${tblId.id} CHANGES $startClause $endClause")
+            .drop("_metadata")
+        case _: TablePath =>
+          val tempName = s"v2cdc_temp_${System.nanoTime()}"
+          spark.sql(s"CREATE TABLE $tempName USING delta LOCATION '${tblId.id}'")
+          try {
+            spark.sql(s"SELECT * FROM $tempName CHANGES $startClause $endClause")
+              .drop("_metadata")
+          } finally {
+            spark.sql(s"DROP TABLE IF EXISTS $tempName")
+          }
+        case _ =>
+          throw new IllegalArgumentException("No table name or path provided")
+      }
+    }
+  }
+}
+
+class DeltaCDCScalaChangelogV2Suite extends DeltaCDCScalaSuite with ChangelogV2CdcReadMixin
