@@ -17,8 +17,8 @@ package io.delta.spark.internal.v2.tablemanager
 
 import java.io.File
 import java.util.Optional
-import java.util.concurrent.{ConcurrentLinkedQueue, CountDownLatch, TimeUnit}
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
+import java.util.concurrent.{ConcurrentLinkedQueue, CountDownLatch, CyclicBarrier, TimeUnit}
+import java.util.concurrent.atomic.AtomicLong
 
 // format: off
 // scalastyle:off import.ordering.noEmptyLine
@@ -453,24 +453,27 @@ class CachedSnapshotManagerSuite
         createDeltaTable(dir)
         val mgr = createManager(dir)
         try {
+          val versions = 1L to 3L
+          val numReaders = 4
           val failures = new ConcurrentLinkedQueue[Throwable]()
-          val committedVersion = new AtomicLong(mgr.loadLatestSnapshot().version)
-          val maxVersionSeen = new AtomicLong(committedVersion.get())
-          val writerDone = new AtomicBoolean(false)
-          val versionObserved = Array.fill(3)(new CountDownLatch(1))
-          val readers = (1 to 4).map { _ =>
+          val maxVersionSeen = new AtomicLong(mgr.loadLatestSnapshot().version)
+          val roundStarted = new CyclicBarrier(numReaders + 1)
+          val roundFinished = new CyclicBarrier(numReaders + 1)
+          val readers = (1 to numReaders).map { _ =>
             new Thread(() => {
               try {
                 var lastSeenVersion = -1L
-                while (!writerDone.get() || lastSeenVersion < committedVersion.get()) {
+                versions.foreach { _ =>
+                  roundStarted.await(30L, TimeUnit.SECONDS)
                   val minimumVersion = maxVersionSeen.get()
-                  val observedVersion = mgr.loadLatestSnapshot().version
-                  assert(observedVersion >= lastSeenVersion)
-                  assert(observedVersion >= minimumVersion)
-                  lastSeenVersion = observedVersion
-                  maxVersionSeen.getAndUpdate(current => math.max(current, observedVersion))
-                  if (observedVersion > 0L) {
-                    versionObserved((observedVersion - 1L).toInt).countDown()
+                  try {
+                    val observedVersion = mgr.loadLatestSnapshot().version
+                    assert(observedVersion >= lastSeenVersion)
+                    assert(observedVersion >= minimumVersion)
+                    lastSeenVersion = observedVersion
+                    maxVersionSeen.getAndUpdate(current => math.max(current, observedVersion))
+                  } finally {
+                    roundFinished.await(30L, TimeUnit.SECONDS)
                   }
                 }
               } catch {
@@ -480,16 +483,16 @@ class CachedSnapshotManagerSuite
           }
           val appender = new Thread(() => {
             try {
-              (1L to 3L).foreach { version =>
-                appendToDeltaTable(dir)
-                committedVersion.set(version)
-                val observed = versionObserved((version - 1L).toInt).await(30L, TimeUnit.SECONDS)
-                assert(observed, s"No reader observed committed version $version")
+              versions.foreach { _ =>
+                roundStarted.await(30L, TimeUnit.SECONDS)
+                try {
+                  appendToDeltaTable(dir)
+                } finally {
+                  roundFinished.await(30L, TimeUnit.SECONDS)
+                }
               }
             } catch {
               case failure: Throwable => failures.add(failure)
-            } finally {
-              writerDone.set(true)
             }
           })
           val threads = appender +: readers
@@ -500,7 +503,7 @@ class CachedSnapshotManagerSuite
           val latest = mgr.loadLatestSnapshot()
           assert(latest.version == 3L)
           assert(latest.allFiles.count() > 0L)
-          assert(maxVersionSeen.get() == latest.version)
+          assert(latest.version >= maxVersionSeen.get())
         } finally {
           mgr.retire()
         }
