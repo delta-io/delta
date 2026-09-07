@@ -289,7 +289,7 @@ object SparkVersionSpec {
   private val spark40 = SparkVersionSpec(
     fullVersion = "4.0.1",
     targetJvm = "17",
-    additionalSourceDirs = Seq("scala-shims/spark-4.0", "scala-shims/spark-4.0-4.1"),
+    additionalSourceDirs = Seq("scala-shims/spark-4.0", "scala-shims/spark-4.0-4.1", "scala-shims/spark-4.0-4.2"),
     supportIceberg = true,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
@@ -300,7 +300,7 @@ object SparkVersionSpec {
     fullVersion = "4.1.0",
     targetJvm = "17",
     additionalSourceDirs =
-      Seq("scala-shims/spark-4.1", "scala-shims/spark-4.0-4.1", "scala-shims/spark-4.1-4.2"),
+      Seq("scala-shims/spark-4.1", "scala-shims/spark-4.0-4.1", "scala-shims/spark-4.1-4.2", "scala-shims/spark-4.0-4.2"),
     supportIceberg = true,
     supportHudi = false,
     antlr4Version = "4.13.1",
@@ -311,7 +311,7 @@ object SparkVersionSpec {
   private val spark42 = SparkVersionSpec(
     fullVersion = "4.2.0",
     targetJvm = "17",
-    additionalSourceDirs = Seq("scala-shims/spark-4.2", "scala-shims/spark-4.1-4.2"),
+    additionalSourceDirs = Seq("scala-shims/spark-4.2", "scala-shims/spark-4.1-4.2", "scala-shims/spark-4.0-4.2"),
     supportIceberg = false,
     supportHudi = false,
     antlr4Version = "4.13.1",
