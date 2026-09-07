@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.metering.LogThrottler
  * Usage-event instrumentation for the Concurrent Identity Columns (CIC) sequence service.
  *
  * Every opType shares the `delta.identityColumn.concurrent.` prefix (one `startswith` selects the
- * feature), and every vent reports `tableId` as the service table id
+ * feature), and every event reports `tableId` as the service table id
  * ([[ConcurrentIdentityColumnSchema.sequenceServiceTableId]]), never the Delta `metadata.id`, so
  * ids join across events.
  *
