@@ -113,7 +113,10 @@ case class MergeIntoCommand(
         }
 
         checkIdentityColumnHighWaterMarks(deltaTxn)
-        deltaTxn.setTrackHighWaterMarks(trackHighWaterMarks)
+        // Only regular identity columns need to track the current high water mark, CIC do not.
+        if (!deltaTxn.protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature)) {
+          deltaTxn.setTrackHighWaterMarks(trackHighWaterMarks)
+        }
 
         // Materialize the source if needed.
         prepareMergeSource(
@@ -128,10 +131,22 @@ case class MergeIntoCommand(
           if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
             // This is a single-job execution so there is no WriteChanges.
             performedSecondSourceScan = false
+            // The fast path has no prior job that counts source rows, so size the reservation from
+            // a cheap planning-time row-count estimate instead of an extra source scan. With no
+            // stats the reservation is rate-based and the executor reserves more on demand.
+            reserveIdentityValuesIfNeeded(
+              spark,
+              deltaTxn,
+              getMergeSource.df.queryExecution.optimizedPlan.stats.rowCount
+                .map(_.toLong).filter(_ > 0L))
             writeOnlyInserts(
               spark, deltaTxn, filterMatchedRows = true, numSourceRowsMetric = "numSourceRows")
           } else {
             val (filesToRewrite, deduplicateCDFDeletes) = findTouchedFiles(spark, deltaTxn)
+
+            // findTouchedFiles has populated the numSourceRows metric, so the classic path sizes
+            // the reservation precisely from that already-computed count (no extra scan).
+            reserveIdentityValuesIfNeeded(spark, deltaTxn, Some(metrics("numSourceRows").value))
             if (filesToRewrite.nonEmpty) {
               val shouldWriteDeletionVectors = shouldWritePersistentDeletionVectors(spark, deltaTxn)
               if (shouldWriteDeletionVectors) {
