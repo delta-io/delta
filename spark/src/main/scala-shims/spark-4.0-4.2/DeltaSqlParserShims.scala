@@ -14,11 +14,6 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.catalyst.expressions
+package io.delta.sql.parser
 
-/** Additional classes allowed during user-provided expression validation in Spark 4.2. */
-object AllowedUserProvidedExpressionsShims {
-  val additionalExpressions: Set[Class[_]] = Set(
-    classOf[TypedNullLiteral],
-    classOf[TimestampAddInterval])
-}
+trait DeltaSqlParserShims
