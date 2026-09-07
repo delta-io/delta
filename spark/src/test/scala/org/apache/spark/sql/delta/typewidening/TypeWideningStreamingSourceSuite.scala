@@ -30,7 +30,7 @@ import org.apache.spark.SparkArithmeticException
 import org.apache.spark.sql.{DataFrame, Row, SaveMode}
 import org.apache.spark.sql.functions.{col, count, lit}
 import org.apache.spark.sql.streaming._
-import org.apache.spark.sql.test.SQLTestUtils
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 /**
@@ -70,14 +70,14 @@ trait TypeWideningStreamingSourceTestMixin
   /** Unblocks the stream after a widening type change. */
   protected def withUnblockedTypeChanges(fn: => Unit): Unit
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.sessionState.conf.setConf(
       DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING, schemaTrackingEnabled)
     spark.udf.register("scala_udf", (x: Int) => x + 1)
   }
 
-  override def afterAll(): Unit = {
+  override protected def afterAll(): Unit = {
     // The scala UDF is a temporary function, no need to drop it.
     super.afterAll()
   }
@@ -160,9 +160,9 @@ trait TypeWideningStreamingSourceTestMixin
  * Can run both with and without schema tracking.
  */
 trait TypeWideningStreamingSourceTests
-  extends StreamTest
-  with SQLTestUtils
-  with TypeWideningStreamingSourceTestMixin {
+  extends SharedSparkSession
+  with TypeWideningStreamingSourceTestMixin
+  with StreamTest {
 
   import testImplicits._
 
@@ -525,9 +525,9 @@ trait TypeWideningStreamingSourceTests
 
 /** Tests that specifically cover type widening without schema tracking. */
 trait TypeWideningStreamingSourceWithoutSchemaTrackingTests
-  extends StreamTest
-  with SQLTestUtils
-  with TypeWideningStreamingSourceTestMixin {
+  extends SharedSparkSession
+  with TypeWideningStreamingSourceTestMixin
+  with StreamTest {
 
   import testImplicits._
 
@@ -601,9 +601,9 @@ trait TypeWideningStreamingSourceWithoutSchemaTrackingTests
 
 /** Tests that specifically cover schema tracking for type widening. */
 trait TypeWideningStreamingSourceSchemaTrackingTests
-  extends StreamTest
-  with SQLTestUtils
-  with TypeWideningStreamingSourceTestMixin {
+  extends SharedSparkSession
+  with TypeWideningStreamingSourceTestMixin
+  with StreamTest {
 
   import testImplicits._
 

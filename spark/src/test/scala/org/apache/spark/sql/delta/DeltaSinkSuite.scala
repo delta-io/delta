@@ -45,8 +45,8 @@ import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 abstract class DeltaSinkTest
-  extends StreamTest
-  with DeltaSQLCommandTest {
+  extends DeltaSQLCommandTest
+  with StreamTest {
 
   override val streamingTimeout = 60.seconds
   import testImplicits._

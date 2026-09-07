@@ -31,14 +31,10 @@ import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamTest}
 import org.apache.spark.util.Utils
 
-class DeltaSourceTableAPISuite extends StreamTest
-  with DeltaSQLCommandTest
+class DeltaSourceTableAPISuite
+  extends DeltaSQLCommandTest
+  with StreamTest
   with CatalogOwnedTestBaseSuite {
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-
-  }
 
   import testImplicits._
   test("table API") {

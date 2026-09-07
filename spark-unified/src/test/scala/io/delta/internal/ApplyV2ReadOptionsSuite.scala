@@ -40,8 +40,9 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.datasources.DataSource
 import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.sql.test.SharedSparkSession
 
-class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
+class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest with SharedSparkSession {
 
   // Mirrors the rule order in DeltaSparkSessionExtension: ApplyV2Streaming runs first to produce
   // a StreamingRelationV2, then ApplyV2ReadOptions plumbs read options into the table.

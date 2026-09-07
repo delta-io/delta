@@ -32,6 +32,7 @@ class TypeWideningAlterTableNestedSuite
     with TypeWideningTestMixin
     with DeltaDMLTestUtilsNameBased
     with TypeWideningAlterTableNestedTests
+    with org.apache.spark.sql.test.SharedSparkSession
 
 trait TypeWideningAlterTableNestedTests {
   self: QueryTest with ParquetTest with TypeWideningTestMixin =>

@@ -30,13 +30,15 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.streaming.{StreamingQueryException, StreamTest, Trigger}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 
 // Unit tests to verify that delta format sharing support column mapping (CM).
 class DeltaSharingDataSourceCMSuite
-    extends StreamTest
+    extends SharedSparkSession
     with DeltaSQLCommandTest
     with DeltaSharingTestSparkUtils
+    with StreamTest
     with DeltaSharingDataSourceDeltaTestUtils {
 
   import testImplicits._

@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{DebugFilesystem, SparkThrowable}
-import org.apache.spark.sql.{DataFrame, QueryTest, SaveMode}
+import org.apache.spark.sql.{DataFrame, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.QuotingUtils
 import org.apache.spark.sql.functions.{col, lit}
@@ -40,9 +40,8 @@ import org.apache.spark.sql.types.StructType
  * inserts to allow more easily running tests with all or a subset of them.
  */
 trait DeltaInsertIntoTest
-  extends QueryTest
+  extends DeltaSQLCommandTest
   with DeltaDMLTestUtilsPathBased
-  with DeltaSQLCommandTest
   with DeltaTableProvider {
 
   val catalogName = "spark_catalog"

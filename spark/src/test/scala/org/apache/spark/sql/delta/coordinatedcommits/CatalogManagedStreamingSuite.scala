@@ -30,9 +30,9 @@ import org.apache.spark.sql.streaming.StreamTest
  * on the tracking client will not be deterministic.
  */
 trait CatalogManagedStreamingSuiteBase
-  extends StreamTest
+  extends DeltaSQLCommandTest
+  with StreamTest
   with DeltaSQLTestUtils
-  with DeltaSQLCommandTest
   with CatalogOwnedTestBaseSuite {
 
 

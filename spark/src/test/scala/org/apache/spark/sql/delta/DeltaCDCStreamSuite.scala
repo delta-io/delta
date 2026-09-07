@@ -38,8 +38,10 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.types.StructType
 
-trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
+trait DeltaCDCStreamSuiteBase
+  extends DeltaSQLCommandTest
   with DeltaSourceSuiteBase
+  with StreamTest
   with DeltaColumnMappingTestUtils {
 
   import testImplicits._

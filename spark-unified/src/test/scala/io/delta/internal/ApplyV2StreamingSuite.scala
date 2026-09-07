@@ -36,9 +36,10 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.datasources.DataSource
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
-class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
+class ApplyV2StreamingSuite extends DeltaSQLCommandTest with SharedSparkSession {
 
   private def applyRule(plan: LogicalPlan): LogicalPlan = {
     new ApplyV2Streaming(spark).apply(plan)
