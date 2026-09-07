@@ -771,6 +771,54 @@
     },
     "sqlState" : "2D521"
   },
+  "DELTA_CONCURRENT_IDENTITY_COLUMN_CONVERSION_INCOMPLETE" : {
+    "message" : [
+      "Identity column <columnName> on table <tableId> is missing its sequence service pointer. Re-run the feature opt-in conversion to repair it."
+    ],
+    "sqlState" : "XXKDS"
+  },
+  "DELTA_CONCURRENT_IDENTITY_COLUMN_DISABLED" : {
+    "message" : [
+      "Cannot <operation> table <tableId>: concurrent identity columns are disabled."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_CONCURRENT_IDENTITY_COLUMN_EMPTY_RESERVE_RANGE" : {
+    "message" : [
+      "Concurrent identity column reservation returned an empty range for sequence <sequenceId> on table <tableId>."
+    ],
+    "sqlState" : "XXKDS"
+  },
+  "DELTA_CONCURRENT_IDENTITY_COLUMN_METADATA_MISMATCH" : {
+    "message" : [
+      "Identity column <property> mismatch: service value <grantedStep> (sequence <sequenceId>) vs schema value <columnStep>."
+    ],
+    "sqlState" : "XXKDS"
+  },
+  "DELTA_CONCURRENT_IDENTITY_COLUMN_SEQUENCE_NOT_FOUND" : {
+    "message" : [
+      "Identity column <columnName> on table <tableId> references sequence <sequenceId>, which no longer exists. Run SYNC IDENTITY to repair the column."
+    ],
+    "sqlState" : "XXKDS"
+  },
+  "DELTA_CONCURRENT_IDENTITY_COLUMN_SERVICE_TIMEOUT" : {
+    "message" : [
+      "The identity sequence operation for table <tableId> timed out after <timeoutMs> ms."
+    ],
+    "sqlState" : "XXKDS"
+  },
+  "DELTA_CONCURRENT_IDENTITY_COLUMN_TOO_MANY_COLUMNS" : {
+    "message" : [
+      "Table <tableId> would have <numColumns> concurrent identity columns, which exceeds the maximum of <maxColumns>. Reduce the number of identity columns."
+    ],
+    "sqlState" : "54011"
+  },
+  "DELTA_CONCURRENT_IDENTITY_COLUMN_USING_WRONG_GENERATOR" : {
+    "message" : [
+      "Write failed due to an identity column version mismatch for column(s) <columnNames> on table <tableId>."
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_CONCURRENT_TRANSACTION" : {
     "message" : [
       "ConcurrentTransactionException: This error occurs when multiple streaming queries are using the same checkpoint to write into this table. Did you run multiple instances of the same streaming query at the same time?<conflictingCommit>\nRefer to <docLink> for more details."
