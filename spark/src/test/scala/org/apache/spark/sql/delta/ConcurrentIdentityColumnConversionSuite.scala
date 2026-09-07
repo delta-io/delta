@@ -221,11 +221,12 @@ class ConcurrentIdentityColumnConversionSuite extends ConcurrentIdentityColumnSu
     }
   }
 
-  test("SYNC IDENTITY repairs independently of the session conf") {
-    // SYNC no longer routes on CONCURRENT_IDENTITY_COLUMN_ENABLED: on a stamped table it is
-    // always the service repair (the old conf-off downgrade flow is gone; leaving the service
-    // backend is table-level DDL). Run SYNC with the conf at its default (off) and verify it
-    // still re-mints a fresh sequence and keeps the stamp.
+  test("SYNC IDENTITY is gated by the kill switch: off fails loud, on repairs the sequence") {
+    // Backend selection is table-state-driven: on a stamped table SYNC is always the service
+    // repair (the old conf-off downgrade flow is gone; leaving the service backend is table-level
+    // DDL). But the kill switch still gates it. With the conf OFF, SYNC on a stamped table must
+    // fail loud and not re-stamp; with the conf ON, it re-mints a fresh sequence, keeps the stamp,
+    // and reseeds past the data.
     withTable("target") {
       withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
         spark.sql(createTargetTableStatement(Seq(
@@ -235,9 +236,23 @@ class ConcurrentIdentityColumnConversionSuite extends ConcurrentIdentityColumnSu
       }
       assert(syncedSequenceId.isDefined, "Setup: a conf-on table must carry a sequenceId.")
       val seqBefore = syncedSequenceId.get
-      val numCreatesBefore = localService.createSequenceCount
 
-      // Conf at its default (off): SYNC must still repair, not downgrade.
+      // Conf OFF: the kill switch blocks the repair; the stamp is untouched.
+      withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "false") {
+        val cause = cicReservationCause(intercept[Exception] {
+          spark.sql(s"ALTER TABLE delta.`$tempPath` ALTER COLUMN ids SYNC IDENTITY")
+        })
+        checkError(
+          cause,
+          condition = killSwitchError,
+          sqlState = "0A000",
+          parameters = cause.getMessageParameters.asScala.toMap)
+      }
+      assert(syncedSequenceId.get === seqBefore,
+        "A repair blocked by the kill switch must not re-stamp.")
+
+      // Conf ON: SYNC repairs and re-mints a fresh sequence and keeps the column service-backed.
+      val numCreatesBefore = localService.createSequenceCount
       spark.sql(s"ALTER TABLE delta.`$tempPath` ALTER COLUMN ids SYNC IDENTITY")
 
       assert(syncedSequenceId.isDefined, "Repair must keep the column service-backed.")

@@ -161,7 +161,8 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
     // Precompute conditions in insert clauses and generate source data frame with precomputed
     // boolean columns and insert clauses with rewritten conditions.
     val (sourceWithPrecompConditions, insertClausesWithPrecompConditions) =
-      generatePrecomputedConditionsAndDF(preparedSourceDF, notMatchedClauses)
+      generatePrecomputedConditionsAndDF(preparedSourceDF,
+        computeCicNotMatchedClausesForInsertExpressions)
 
     // Generate output cols.
     val outputCols = generateInsertsOnlyOutputCols(
@@ -187,7 +188,8 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       targetWriteColNames: Seq[String]
     ): Seq[Column] = {
 
-    val outputExprs = notMatchedClauses.head.resolvedActions.map(_.expr)
+    val outputExprs =
+      computeCicNotMatchedClausesForInsertExpressions.head.resolvedActions.map(_.expr)
     assert(outputExprs.nonEmpty)
     // generate the outputDF without `CaseWhen` expressions.
     outputExprs.zip(targetWriteColNames).map { case (expr, name) =>
