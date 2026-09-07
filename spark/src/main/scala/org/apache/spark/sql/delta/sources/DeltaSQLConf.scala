@@ -3443,6 +3443,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "maxColumnsPerTable must be positive")
       .createWithDefault(50)
 
+  val CONCURRENT_IDENTITY_COLUMN_SERVICE_CLASS_NAME =
+    buildConf("identityColumn.concurrent.serviceClassName")
+      .internal()
+      .doc("Optional override naming an IdentitySequenceService implementation (with a no-arg " +
+        "constructor) that IdentitySequenceServices.resolve instantiates reflectively instead of " +
+        "the default backend. Unit suites point it at the LocalIdentitySequenceService fake.")
+      .stringConf
+      .createOptional
+
   //////////////////
   // GeoSpatial
   //////////////////
