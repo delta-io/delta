@@ -3500,6 +3500,30 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0L, "driverInitialSize must be positive")
       .createWithDefault(2L)
 
+  val CONCURRENT_IDENTITY_COLUMN_ENABLED =
+    buildConf("identityColumn.concurrent.enabled")
+      .internal()
+      .doc("Kill switch for Concurrent Identity Columns. It does NOT route backends " +
+        "(routing is table-state-driven: a stamped sequence ID selects the " +
+        "IdentitySequenceService). When false, identity-generating writes to " +
+        "service-backed tables, CREATE TABLE with the CIC feature, the feature opt-in " +
+        "conversion, and SYNC IDENTITY repair are all blocked; reads and ALTER TABLE " +
+        "DROP FEATURE (the escape hatch back to stock identity) keep working.")
+      .booleanConf
+      // Default-off: the feature ships inert until a deployer turns it on (and configures a
+      // sequence-service backend).
+      .createWithDefault(false)
+
+  val CONCURRENT_IDENTITY_COLUMN_DROP_WITHOUT_SERVICE =
+    buildConf("identityColumn.concurrent.dropFeatureWithoutService")
+      .internal()
+      .doc("Escape hatch for ALTER TABLE ... DROP FEATURE of Concurrent Identity Columns when " +
+        "the identity-sequence service is unavailable. When true, the downgrade derives the " +
+        "stock high-water mark by scanning the data (max/min), like SYNC IDENTITY, instead of " +
+        "reserving from the service, so a table can leave the feature while the service is down.")
+      .booleanConf
+      .createWithDefault(false)
+
   //////////////////
   // GeoSpatial
   //////////////////
