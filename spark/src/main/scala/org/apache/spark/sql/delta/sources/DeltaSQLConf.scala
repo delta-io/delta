@@ -3452,6 +3452,54 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .stringConf
       .createOptional
 
+  val CONCURRENT_IDENTITY_COLUMN_RESERVE_MAX_BATCH_SIZE =
+    buildConf("identityColumn.concurrent.reserve.maxBatchSize")
+      .internal()
+      .doc("Absolute ceiling on a single CIC reserve-more / driver buffer refill. Bounds the " +
+        "maximum gap that an unused buffer tail can leave: when a write finishes with reserved " +
+        "values still in the buffer, those values may be abandoned and become a gap in the " +
+        "identity sequence. Set high enough to never clip legitimate large writes, but small " +
+        "enough that the resulting gaps are acceptable.")
+      .longConf
+      .checkValue(_ > 0L, "maxBatchSize must be positive")
+      .createWithDefault(100000000L)
+
+  val CONCURRENT_IDENTITY_COLUMN_RESERVE_WINDOW_MS =
+    buildConf("identityColumn.concurrent.reserve.windowMs")
+      .internal()
+      .doc("Look-back window (ms) for CIC driver-buffer adaptive sizing. When the buffer drains " +
+        "again within this window the next refill doubles the previous one (up to maxBatchSize); " +
+        "a much longer gap (over 4x the window) halves it, else it holds. An idle-TTL buffer " +
+        "eviction resets the history, so the next refill starts again from driverInitialSize. " +
+        "Increase to trade larger gaps for fewer UC round-trips on sustained writes.")
+      .longConf
+      .checkValue(_ > 0L, "windowMs must be positive")
+      .createWithDefault(60000L)
+
+  val CONCURRENT_IDENTITY_COLUMN_RESERVE_MIN_BATCH_SIZE =
+    buildConf("identityColumn.concurrent.reserve.minBatchSize")
+      .internal()
+      .doc("Floor on any CIC reserve or grant: the sizing rule's output (both the driver's UC " +
+        "pull and an executor's grant) is clamped up to at least this. Prevents a tiny request " +
+        "(e.g. a single-row write) from burning a UC round-trip on a trivially small " +
+        "reservation. Raise if reserves are routinely under-sized; leave at 1 (default) to let " +
+        "adaptive sizing dominate.")
+      .longConf
+      .checkValue(_ > 0L, "minBatchSize must be positive")
+      .createWithDefault(1L)
+
+  val CONCURRENT_IDENTITY_COLUMN_RESERVE_DRIVER_INITIAL_SIZE =
+    buildConf("identityColumn.concurrent.reserve.driverInitialSize")
+      .internal()
+      .doc("Size of the driver's first UC reservation for a cold CIC sequence, before the sizing " +
+        "rule has any history. The rule ramps this up multiplicatively as the buffer drains. " +
+        "The executor's first-request size is derived as half this (min 1), so a task's opening " +
+        "ask stays small (little tiny-write waste) while the driver still fills a generous " +
+        "buffer. Keep small; the rule grows it under load.")
+      .longConf
+      .checkValue(_ > 0L, "driverInitialSize must be positive")
+      .createWithDefault(2L)
+
   //////////////////
   // GeoSpatial
   //////////////////
