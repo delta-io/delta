@@ -30,7 +30,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.util.Collections;
 import java.util.Optional;
 
 /**
@@ -84,26 +83,7 @@ public final class MockEngineFixtures {
     };
   }
 
-  /** A mock {@link Engine} whose only capability is listing an empty log directory. */
-  public static Engine emptyListFromEngine() {
-    return mockEngine(
-        new BaseMockFileSystemClient() {
-          @Override
-          public CloseableIterator<FileStatus> listFrom(String filePath) {
-            return toCloseableIterator(Collections.<FileStatus>emptyList().iterator());
-          }
-
-          @Override
-          public String resolvePath(String path) {
-            return path;
-          }
-        },
-        null,
-        null,
-        null);
-  }
-
-  private static <T> CloseableIterator<T> toCloseableIterator(java.util.Iterator<T> iterator) {
+  static <T> CloseableIterator<T> toCloseableIterator(java.util.Iterator<T> iterator) {
     return new CloseableIterator<T>() {
       @Override
       public boolean hasNext() {
