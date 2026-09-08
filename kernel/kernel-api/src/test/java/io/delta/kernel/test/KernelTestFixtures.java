@@ -18,6 +18,7 @@ package io.delta.kernel.test;
 import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.CommitInfo;
@@ -54,9 +55,6 @@ public final class KernelTestFixtures {
   private KernelTestFixtures() {}
 
   public static final String LOG_PATH = "/fake/_delta_log";
-
-  /** Matches {@code MockFileSystemClientUtils.dataPath}. */
-  public static final String DATA_PATH = "/fake/path/to/table/";
 
   public static final Protocol PROTOCOL_12 = new Protocol(1, 2);
 
@@ -118,6 +116,26 @@ public final class KernelTestFixtures {
 
       @Override
       public void close() {}
+    };
+  }
+
+  /** Mirrors {@code VectorTestUtils.emptyColumnarBatch}. */
+  public static ColumnarBatch emptyColumnarBatch() {
+    return new ColumnarBatch() {
+      @Override
+      public StructType getSchema() {
+        return null;
+      }
+
+      @Override
+      public ColumnVector getColumnVector(int ordinal) {
+        return null;
+      }
+
+      @Override
+      public int getSize() {
+        return 0;
+      }
     };
   }
 

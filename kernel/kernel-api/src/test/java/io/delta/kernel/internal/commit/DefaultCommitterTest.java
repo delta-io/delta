@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal.commit;
 
-import static io.delta.kernel.test.KernelTestFixtures.DATA_PATH;
 import static io.delta.kernel.test.KernelTestFixtures.PROTOCOL_12;
 import static io.delta.kernel.test.KernelTestFixtures.PROTOCOL_WITH_CATALOG_MANAGED_SUPPORT;
 import static io.delta.kernel.test.KernelTestFixtures.commitMetadata;
@@ -23,8 +22,9 @@ import static io.delta.kernel.test.KernelTestFixtures.emptyActionsIterator;
 import static io.delta.kernel.test.KernelTestFixtures.readState;
 import static io.delta.kernel.test.KernelTestFixtures.testCommitInfo;
 import static io.delta.kernel.test.KernelTestFixtures.testMetadata;
-import static io.delta.kernel.test.MockEngineFixtures.emptyListFromEngine;
 import static io.delta.kernel.test.MockEngineFixtures.mockEngine;
+import static io.delta.kernel.test.MockFileSystemFixtures.dataPathString;
+import static io.delta.kernel.test.MockFileSystemFixtures.mockFSListFromEngine;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -83,13 +83,13 @@ class DefaultCommitterTest {
   @MethodSource("catalogManagedProtocolPairs")
   void defaultCommitterDoesNotSupportCatalogManagedTables(
       Protocol readProtocol, Protocol newProtocol, String testCase) {
-    Engine emptyMockEngine = emptyListFromEngine();
+    Engine emptyMockEngine = mockFSListFromEngine(Collections.emptyList());
     StructType schema = new StructType().add("col1", IntegerType.INTEGER);
     Metadata metadata = testMetadata(schema, Collections.emptyList());
 
     SnapshotBuilderImpl builder =
         (SnapshotBuilderImpl)
-            TableManager.loadSnapshot(DATA_PATH)
+            TableManager.loadSnapshot(dataPathString())
                 .withProtocolAndMetadata(readProtocol, metadata)
                 .atVersion(1);
     if (readProtocol.supportsFeature(TableFeatures.CATALOG_MANAGED_RW_FEATURE)) {
