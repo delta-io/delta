@@ -128,9 +128,9 @@ class CachedSnapshotManagerSuite
     }
   }
 
-  // === Staleness triggers full reload ==========================
+  // === Staleness triggers refresh ===============================
 
-  test("stale rebuild after append advances version via full reload") {
+  test("stale rebuild after append advances version") {
     withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
       withTempDir { dir =>
         createDeltaTable(dir)

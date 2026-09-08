@@ -16,8 +16,10 @@
 package io.delta.spark.internal.v2.tablemanager
 
 import java.util.Optional
+import java.util.concurrent.locks.ReentrantLock
 
 import scala.jdk.OptionConverters._
+import scala.util.control.NonFatal
 
 // format: off
 // scalastyle:off import.ordering.noEmptyLine
@@ -46,15 +48,15 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 // format: on
 
 /**
- * Table-scoped snapshot manager that caches the [[DeltaV2Snapshot]]
- * and serves it to every operation on the same table.
+ * Table-scoped snapshot manager that caches and refreshes the [[DeltaV2Snapshot]] served to
+ * operations on the same table.
  *
  * State invariants:
  *  - [[currentSnapshot]] is `null` until the first successful load.
  *  - [[tableId]] is captured on first load and validated on every
  *    subsequent install; a mismatch throws [[IllegalStateException]].
- *  - Stale entries are refreshed through the uncached snapshot manager.
- *  - Incremental refresh strategies are layered by dependent modules.
+ *  - Stale refreshes are serialized and recheck freshness after acquiring [[snapshotLock]].
+ *  - Backends without incremental replay support fall back to a full load.
  */
 private[tablemanager] class CachedSnapshotManager(
     val tablePath: Path,
@@ -65,6 +67,7 @@ private[tablemanager] class CachedSnapshotManager(
 
   private case class CachedSnapshot(snapshot: Snapshot, validatedAtMs: Long)
 
+  private val snapshotLock = new ReentrantLock()
   @volatile private var currentSnapshot: CachedSnapshot = _
   @volatile private var tableId: String = _
 
@@ -125,22 +128,63 @@ private[tablemanager] class CachedSnapshotManager(
     acquireLatest(freshAfter)
   }
 
-  private def acquireLatest(requiredFreshAfter: Long): Snapshot = {
+  private def acquireLatest(requiredFreshAfter: Long): Snapshot =
+    acquireLatest(requiredFreshAfter, minimumVersion = None)
+
+  private def acquireLatest(
+      requiredFreshAfter: Long,
+      minimumVersion: Option[Long]): Snapshot = {
     recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.acquireLatest") {
       val existing = currentSnapshot
-      if (existing != null && existing.validatedAtMs >= requiredFreshAfter) {
-        return existing.snapshot
+      if (isFreshEnough(existing, requiredFreshAfter, minimumVersion)) {
+        existing.snapshot
+      } else {
+        withSnapshotLockInterruptibly {
+          val lockedExisting = currentSnapshot
+          if (isFreshEnough(lockedExisting, requiredFreshAfter, minimumVersion)) {
+            lockedExisting.snapshot
+          } else {
+            rebuild()
+          }
+        }
       }
-      rebuild()
+    }
+  }
+
+  private def isFreshEnough(
+      cached: CachedSnapshot,
+      requiredFreshAfter: Long,
+      minimumVersion: Option[Long]): Boolean = {
+    cached != null && {
+      val satisfiesMinimumVersion = minimumVersion.exists(cached.snapshot.version >= _)
+      cached.validatedAtMs >= requiredFreshAfter || satisfiesMinimumVersion
+    }
+  }
+
+  private def withSnapshotLockInterruptibly[T](body: => T): T = {
+    snapshotLock.lockInterruptibly()
+    try {
+      body
+    } finally {
+      snapshotLock.unlock()
     }
   }
 
   private def rebuild(): Snapshot = {
     recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.rebuild") {
       val validationStartedAt = System.currentTimeMillis()
-      val refreshed = loadLatestUncached()
+      val existing = currentSnapshot
+      val refreshed = if (existing == null) {
+        loadLatestUncached()
+      } else {
+        loadLatestFrom(existing.snapshot)
+      }
       install(refreshed, validationStartedAt)
     }
+  }
+
+  private def loadLatestFrom(existing: Snapshot): KernelSnapshot = {
+    loadLatestUncached()
   }
 
   private def acquireSnapshotAt(version: Long): Snapshot = {
@@ -149,7 +193,7 @@ private[tablemanager] class CachedSnapshotManager(
       return existing.snapshot
     }
     val upperBound = if (existing == null || version > existing.snapshot.version) {
-      rebuild()
+      acquireLatest(System.currentTimeMillis(), Some(version))
     } else {
       acquireLatestWithConfiguredStaleness()
     }
@@ -166,8 +210,9 @@ private[tablemanager] class CachedSnapshotManager(
 
   // === Uncached loading =====================================================
 
-  private def wrapSnapshot(kernelSnapshot: KernelSnapshot): Snapshot =
+  private def wrapSnapshot(kernelSnapshot: KernelSnapshot): Snapshot = {
     DeltaV2SnapshotManager.wrapKernelSnapshot(kernelSnapshot, tablePath.toString)
+  }
 
   private def loadLatestUncached(): KernelSnapshot = {
     withUncachedManager { manager =>
@@ -193,9 +238,12 @@ private[tablemanager] class CachedSnapshotManager(
 
   private def withEngine[T](f: KernelEngine => T): T = f(createKernelEngine())
 
+  private def createUncachedManager(kernelEngine: KernelEngine): DeltaV2SnapshotManager =
+    SnapshotManagerFactory.create(tablePath.toString, kernelEngine, catalogTableOpt.toJava)
+
   private def withUncachedManager[T](f: DeltaV2SnapshotManager => T): T = {
     withEngine { kernelEngine =>
-      f(SnapshotManagerFactory.create(tablePath.toString, kernelEngine, catalogTableOpt.toJava))
+      f(createUncachedManager(kernelEngine))
     }
   }
 
@@ -203,7 +251,12 @@ private[tablemanager] class CachedSnapshotManager(
 
   private[tablemanager] def install(kernelSnapshot: KernelSnapshot, validatedAt: Long): Snapshot =
     synchronized {
-      validateTableIdentity(kernelSnapshot)
+      try {
+        validateTableIdentity(kernelSnapshot)
+      } catch {
+        case NonFatal(error) =>
+          throw error
+      }
       val existing = currentSnapshot
       if (existing != null && existing.snapshot.version >= kernelSnapshot.getVersion) {
         currentSnapshot = CachedSnapshot(existing.snapshot, validatedAt)
