@@ -87,8 +87,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import org.apache.hadoop.conf.Configuration;
@@ -186,73 +184,23 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     return colon > 0 ? location.substring(0, colon) : "";
   }
 
-  private static final int HTTP_FORBIDDEN = 403;
-
-  // How long an intent-less load trusts a remembered READ_WRITE denial before probing again.
-  // Bounds the staleness window for a grant added after a denial (e.g. before an OPTIMIZE).
-  private static final long WRITE_DENIAL_TTL_MILLIS = TimeUnit.MINUTES.toMillis(5);
-
-  // Full names of tables whose READ_WRITE credential request was 403-denied, mapped to the
-  // deadline until which intent-less loads skip the doomed round-trip. Entries expire, and a
-  // successful declared write clears them early. Package-visible for tests.
-  final Map<String, Long> writeDeniedTables = new ConcurrentHashMap<>();
-
-  private void markWriteDenied(String fullName) {
-    writeDeniedTables.put(fullName, System.currentTimeMillis() + WRITE_DENIAL_TTL_MILLIS);
-  }
-
-  private boolean isWriteDenied(String fullName) {
-    Long deadline = writeDeniedTables.get(fullName);
-    if (deadline == null) {
-      return false;
-    }
-    if (System.currentTimeMillis() >= deadline) {
-      writeDeniedTables.remove(fullName, deadline);
-      return false;
-    }
-    return true;
-  }
-
   private Map<String, String> fetchTableCredentials(
       String catalog, String schema, String table, String location, boolean writeIntent)
       throws ApiException {
     UCCredentialHadoopConfs.Builder b = newCredBuilder(schemeOf(location));
-    String fullName = catalog + "." + schema + "." + table;
-    if (writeIntent) {
-      Map<String, String> props;
-      try {
-        props = b.buildForTable(catalog, schema, table, TableOperation.READ_WRITE, location);
-      } catch (ApiException rw) {
-        // Declared write: READ credentials would only defer the same denial to the storage
-        // layer mid-job, so let it surface now. A 403 also proves the denial for later reads.
-        if (rw.getCode() == HTTP_FORBIDDEN) {
-          markWriteDenied(fullName);
-        }
-        throw rw;
-      } catch (IllegalArgumentException malformed) {
-        // UC Hadoop's response validator (DeltaStorageCredentialUtil.requireSingleCloudConfig)
-        // throws when the scheme has no cloud cred (e.g. file://). Treat as no creds.
-        return Collections.emptyMap();
-      }
-      writeDeniedTables.remove(fullName);
-      return props;
-    }
-    if (isWriteDenied(fullName)) {
-      return b.buildForTable(catalog, schema, table, TableOperation.READ, location);
-    }
-    // Intent-less loads still try READ_WRITE first: some write paths (e.g. OPTIMIZE) resolve
-    // through the intent-less overload.
+    // Intent-less loads still request READ_WRITE first: write paths such as OPTIMIZE resolve
+    // their target through the intent-less overload.
     try {
       return b.buildForTable(catalog, schema, table, TableOperation.READ_WRITE, location);
     } catch (ApiException rw) {
-      // Only a permission denial is worth remembering; a transient failure must keep the
-      // READ_WRITE-first retry on the next load.
-      if (rw.getCode() == HTTP_FORBIDDEN) {
-        markWriteDenied(fullName);
+      if (writeIntent) {
+        // Fail fast: READ credentials would only defer the denial to the storage layer mid-job.
+        throw rw;
       }
       return b.buildForTable(catalog, schema, table, TableOperation.READ, location);
     } catch (IllegalArgumentException malformed) {
-      // See above: scheme with no cloud cred (e.g. file://).
+      // UC Hadoop's response validator (DeltaStorageCredentialUtil.requireSingleCloudConfig)
+      // throws when the scheme has no cloud cred (e.g. file://). Treat as no creds.
       return Collections.emptyMap();
     }
   }
