@@ -31,8 +31,8 @@ import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 import org.apache.spark.sql.delta.DeltaIllegalStateException
 import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
 import org.apache.spark.sql.delta.Snapshot
-import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import io.delta.spark.internal.v2.DeltaV2Logging
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
@@ -61,7 +61,7 @@ private[tablemanager] class CachedSnapshotManager(
     catalogTableOpt: Option[CatalogTable],
     sessionInvariantFsOptions: Map[String, String])
     extends DeltaV2SnapshotManager
-    with DeltaLogging {
+    with DeltaV2Logging {
 
   private case class CachedSnapshot(snapshot: Snapshot, validatedAtMs: Long)
 
@@ -71,13 +71,13 @@ private[tablemanager] class CachedSnapshotManager(
   // === DeltaV2SnapshotManager implementation ================================
 
   override def loadLatestSnapshot(): Snapshot = {
-    recordFrameProfile("Delta", "CachedSnapshotManager.loadLatestSnapshot") {
+    recordFrameProfile("cachedSnapshotManager.loadLatestSnapshot") {
       acquireLatestWithConfiguredStaleness()
     }
   }
 
   override def loadSnapshotAt(version: Long): Snapshot = {
-    recordFrameProfile("Delta", "CachedSnapshotManager.loadSnapshotAt") {
+    recordFrameProfile("cachedSnapshotManager.loadSnapshotAt") {
       acquireSnapshotAt(version)
     }
   }
