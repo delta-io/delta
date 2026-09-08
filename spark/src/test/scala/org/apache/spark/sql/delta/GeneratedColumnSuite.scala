@@ -838,6 +838,24 @@ trait GeneratedColumnSuiteBase
     }
   }
 
+  test("generation expression allows NULLIF (create, write and OPTIMIZE)") {
+    // NullIf's replacement is transient IR not in the allow-list; validation must not reject it.
+    // CREATE covers the metadata path; ASSERT makes the write path (INSERT/OPTIMIZE) fatal too.
+    withSQLConf(DeltaSQLConf.GENERATED_COLUMN_VALIDATE_ON_WRITE.key ->
+        GeneratedColumnValidateOnWriteMode.ASSERT.toString) {
+      withTableName("nullif_gen_col") { table =>
+        createTable(table, None, "c1 INT, c2 INT, g INT", Map("g" -> "NULLIF(c1, c2)"), Nil)
+        sql(s"INSERT INTO $table (c1, c2) VALUES (1, 1)")
+        sql(s"INSERT INTO $table (c1, c2) VALUES (2, 3)")
+        sql(s"OPTIMIZE $table")
+        checkAnswer(
+          sql(s"SELECT c1, c2, g FROM $table"),
+          Row(1, 1, null) :: Row(2, 3, 2) :: Nil
+        )
+      }
+    }
+  }
+
   test("complex type extractors") {
     withTableName("struct_field") { table =>
       createTable(

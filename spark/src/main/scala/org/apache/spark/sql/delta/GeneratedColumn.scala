@@ -282,6 +282,11 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         throw DeltaErrors.generatedColumnsNonDeterministicExpression(expr)
       case expr if expr.isInstanceOf[AggregateExpression] =>
         throw DeltaErrors.generatedColumnsAggregateExpression(expr)
+      case expr @ (_: RuntimeReplaceable | _: Unevaluable) =>
+        // Transient IR rewritten away before execution (e.g. NullIf's `With(.., TypedNullLiteral,
+        // ..)`), so never allow-listed; children are still traversed. Match by trait: the
+        // `With`/`CommonExpression*` classes are absent pre-Spark-4.0.
+        expr
       case expr if !AllowedUserProvidedExpressions.expressions.contains(expr.getClass) =>
         throw DeltaErrors.generatedColumnsUnsupportedExpression(expr)
     }
