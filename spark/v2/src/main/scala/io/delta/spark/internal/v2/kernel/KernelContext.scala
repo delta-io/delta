@@ -16,10 +16,9 @@
 
 package io.delta.spark.internal.v2.kernel
 
+import org.apache.spark.sql.delta.storage.LogStore
 import io.delta.kernel.defaults.engine.{DefaultEngine => KernelDefaultEngine}
 import io.delta.kernel.engine.{Engine => KernelEngine}
-
-import org.apache.spark.sql.delta.storage.LogStore
 
 import org.apache.spark.sql.SparkSession
 
@@ -40,8 +39,10 @@ private[v2] final class KernelContext(
   private[kernel] def materializeHadoopConf() =
     SparkSession.active.sessionState.newHadoopConfWithOptions(sessionInvariantFsOptions)
 
-  private def createDefaultEngine(): KernelEngine =
-    KernelDefaultEngine.create(materializeHadoopConf())
+  private def createDefaultEngine(): KernelEngine = {
+    val hadoopConf = materializeHadoopConf()
+    KernelDefaultEngine.create(hadoopConf)
+  }
 
   private lazy val kernelDefaultEngine = createDefaultEngine()
 

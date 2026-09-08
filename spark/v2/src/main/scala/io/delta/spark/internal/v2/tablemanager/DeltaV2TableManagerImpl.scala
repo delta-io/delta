@@ -15,12 +15,11 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
-import io.delta.spark.internal.v2.kernel.KernelContext
-
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
-
+import io.delta.spark.internal.v2.kernel.KernelContext
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
@@ -41,7 +40,8 @@ private[tablemanager] class DeltaV2TableManagerImpl(
     val sessionInvariantFsOptions: Map[String, String],
     val initialCatalogTableOpt: Option[CatalogTable])
     extends DeltaV2TableManager
-    with LogStoreProvider {
+    with LogStoreProvider
+{
 
   /** The table's data directory, fully qualified. */
   def tablePath: Path = qualifiedTableDataPath
