@@ -174,11 +174,9 @@ class AMTIncrementalWriteTrackingMDVSuite extends AMTIncrementalWriteTestBase {
 
   test("incremental AMT writes handles paths with spaces correctly") {
     withTempDir { baseDir =>
-      // A leaf pointer's `location` is relativized against the table root as a URI, so a space in
-      // the root becomes %20 there. The MDV update matches a remove's stamped
-      // `backReference.manifest` to that `location` by string equality, and a mismatch would
-      // silently no-op the MDV -- leaving the removed file live, which the live-set oracle inside
-      // createIncrementalAMTAndValidate catches.
+      // A leaf pointer's `location` and a remove's stamped `backReference.manifest` are both raw,
+      // table-root-relative AMT paths. A mismatch here would silently no-op the MDV, leaving the
+      // removed file live, which createIncrementalAMTAndValidate's live-set oracle catches.
       val tableRoot = new java.io.File(baseDir, "amt tbl")
       withTables(amtTableLocation = Some(tableRoot.toString)) {
           (baselineDeltaLog, amtDeltaLog) =>
