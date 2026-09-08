@@ -66,6 +66,13 @@ val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
 val flinkVersion = CrossFlinkVersions.getFlinkArtifactVersion()
 val gcsConnectorVersion = "4.0.4"
+val junit5Version = "5.14.0"
+val junit5TestDependencies = Seq(
+  "org.junit.jupiter" % "junit-jupiter-api" % junit5Version % "test",
+  "org.junit.jupiter" % "junit-jupiter-engine" % junit5Version % "test",
+  "org.junit.jupiter" % "junit-jupiter-params" % junit5Version % "test",
+  "com.github.sbt.junit" % "jupiter-interface" % "0.16.0" % "test"
+)
 
 // Optional kernel version override. See `project/KernelVersion.scala` for the
 // resolution rule and `-DkernelVersion=<v>` semantics.
@@ -513,16 +520,11 @@ lazy val sparkV2 = {
       exportJars := true,  // Export as JAR to avoid classpath conflicts
 
       Test / javaOptions ++= Seq("-ea"),
-      libraryDependencies ++= Seq(
+      libraryDependencies ++= junit5TestDependencies ++ Seq(
         "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
         "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "provided",
         "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",
 
-        // Test dependencies
-        "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
-        "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
-        "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
-        "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
         // Spark test classes for Scala/Java test utilities
         "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "test" classifier "tests",
         "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "test" classifier "tests",
@@ -674,7 +676,7 @@ lazy val spark = (project in file("spark-unified"))
       projectDependencies.value.filterNot(dep => internalModules.contains(dep.name))
     },
 
-    libraryDependencies ++= Seq(
+    libraryDependencies ++= junit5TestDependencies ++ Seq(
       "org.apache.spark" %% "spark-hive" % sparkArtifactVersion.value % "provided",
       "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
       "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "provided",
@@ -685,10 +687,6 @@ lazy val spark = (project in file("spark-unified"))
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
-      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
       "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "test" classifier "tests",
@@ -945,13 +943,8 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % sparkUnityCatalogJacksonVersion
     ),
 
-    libraryDependencies ++= Seq(
+    libraryDependencies ++= junit5TestDependencies ++ Seq(
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
-      // JUnit 5 test dependencies
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
-      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
       // Lombok for generating boilerplate code
       "org.projectlombok" % "lombok" % "1.18.34" % "test",
 
@@ -1053,7 +1046,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     // can depend on test utilities via a published artifact instead of depending on raw class directories.
     Test / publishArtifact := true,
     Test / packageBin / artifactClassifier := Some("tests"),
-    libraryDependencies ++= Seq(
+    libraryDependencies ++= junit5TestDependencies ++ Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
 
@@ -1066,8 +1059,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "com.google.code.findbugs" % "jsr305" % "3.0.2",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.13.2" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.25.3" % "test",
       "org.apache.logging.log4j" % "log4j-core" % "2.25.3" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
@@ -1679,7 +1670,7 @@ lazy val flink = (project in file("flink"))
     // Publish the pinned UC jars before sbt tries to resolve them.
     update := update.dependsOn(ensurePinnedUnityCatalog).value,
 
-    libraryDependencies ++= Seq(
+    libraryDependencies ++= junit5TestDependencies ++ Seq(
       "org.apache.flink" % "flink-core" % flinkVersion % "provided",
       "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
       "org.apache.flink" % "flink-streaming-java" % flinkVersion % "provided",
@@ -1696,11 +1687,6 @@ lazy val flink = (project in file("flink"))
       // io.delta.flink.kernel.dv compiles against the same library on the classpath.
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
 
-      // Test dependencies
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
-      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
       "org.apache.flink" % "flink-test-utils" % flinkVersion % "test",
       "org.apache.flink" % "flink-clients" % flinkVersion % "test",
       "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % Test,

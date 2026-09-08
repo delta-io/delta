@@ -1693,6 +1693,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED =
+    buildConf("readSnapshotStateFromChecksum.enabled")
+      .internal()
+      .doc("If enabled, snapshot state fields (file/record counts, set transactions, domain " +
+        "metadata, and histograms) are read from the checksum file when it contains them, " +
+        "avoiding a spark job aggregating over the state reconstruction. Fields the checksum " +
+        "does not carry, and snapshots without a checksum file, fall back to state " +
+        "reconstruction.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CHECKSUM_DV_METRICS_ENABLED =
     buildConf("checksumDVMetrics.enabled")
       .internal()
@@ -2161,6 +2172,20 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         " generated column if possible")
       .booleanConf
       .createWithDefault(true)
+
+  object GeneratedColumnPartitionFilterInferenceMode extends
+    DeltaBreakingChangeEnum(GENERATED_COLUMN_PARTITION_FILTER_INFERENCE_MODE)
+
+  val GENERATED_COLUMN_PARTITION_FILTER_INFERENCE_MODE =
+    buildConf("generatedColumn.partitionFilterInference.mode")
+      .internal()
+      .doc("Controls telemetry and suppression for generated-column partition filter " +
+        "inferences. LOG_ONLY records candidate signatures while retaining all inferred " +
+        "filters. ASSERT also suppresses candidates covered by the current safety policy.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValues(DeltaBreakingChangeEnum.validValues)
+      .createWithDefault(DeltaBreakingChangeEnum.LOG_ONLY)
 
   val GENERATED_COLUMN_ALLOW_NULLABLE =
     buildConf("generatedColumn.allowNullableIngest.enabled")

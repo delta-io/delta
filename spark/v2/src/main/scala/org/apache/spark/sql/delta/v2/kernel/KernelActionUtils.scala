@@ -29,7 +29,8 @@ import org.apache.spark.sql.delta.actions.{
   Format,
   Metadata,
   Protocol,
-  RemoveFile
+  RemoveFile,
+  SetTransaction
 }
 import io.delta.kernel.{CommitActions => KernelCommitActions}
 import io.delta.kernel.data.{ColumnarBatch => KernelColumnarBatch}
@@ -44,6 +45,7 @@ import io.delta.kernel.internal.actions.{
 import io.delta.kernel.internal.actions.{Metadata => KernelMetadata}
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
 import io.delta.kernel.internal.actions.{RemoveFile => KernelRemoveFile}
+import io.delta.kernel.internal.actions.{SetTransaction => KernelSetTransaction}
 import io.delta.kernel.internal.data.{StructRow => KernelStructRow}
 import io.delta.kernel.internal.util.{VectorUtils => KernelVectorUtils}
 
@@ -110,6 +112,9 @@ private[v2] object KernelActionUtils {
     case KernelDeltaAction.COMMITINFO =>
       commitInfoFromKernel(
         KernelCommitInfo.fromColumnVector(columnVector, rowId))
+    case KernelDeltaAction.TXN =>
+      setTransactionFromKernel(
+        KernelSetTransaction.fromColumnVector(columnVector, rowId))
     case other =>
       throw new UnsupportedOperationException(
         s"No V1 action from Kernel decoder for a '${other.colName}' action yet")
@@ -213,6 +218,16 @@ private[v2] object KernelActionUtils {
       engineInfo = commitInfo.getEngineInfo.toScala,
       txnId = commitInfo.getTxnId.toScala,
       lastManifestCommit = None)
+  }
+
+  /**
+   * Converts a Kernel [[KernelSetTransaction]] into a V1 [[SetTransaction]].
+   */
+  def setTransactionFromKernel(txn: KernelSetTransaction): SetTransaction = {
+    SetTransaction(
+      appId = txn.getAppId,
+      version = txn.getVersion,
+      lastUpdated = txn.getLastUpdated.toScala.map(_.longValue()))
   }
 
   private def deletionVectorFromKernel(
