@@ -16,22 +16,19 @@
 
 package org.apache.spark.sql.delta.deletionvectors
 
+import org.apache.spark.util.Utils
+
 /**
- * A mutable bitmap of unsigned positions for the AMT manifest deletion vectors: the masking MDV in
- * `manifest_info.dv` and the CDF `tracking.deleted_positions` / `tracking.replaced_positions`
+ * A mutable bitmap of unsigned positions for the AMT manifest deletion vectors: the masking MDV
+ * in `manifest_info.dv` and the CDF `tracking.deleted_positions` / `tracking.replaced_positions`
  * bitmaps.
- *
- * This trait is the seam over the concrete bitmap format written to disk. The only implementation
- * today is [[RoaringManifestBitmap]] (Roaring portable), so behavior is unchanged; the trait exists
- * so an alternative compressed format can later be dropped in behind the [[ManifestBitmap]] factory
- * and [[ManifestBitmap.readFrom]] without touching the AMT write path.
  */
 trait ManifestBitmap {
   /** Adds `value` to the bitmap. */
-  def add(value: Long): Unit
+  def add(value: Int): Unit
 
   /** Returns `true` if `value` is set. */
-  def contains(value: Long): Boolean
+  def contains(value: Int): Boolean
 
   /** Returns the number of set positions. */
   def cardinality: Long
@@ -39,48 +36,73 @@ trait ManifestBitmap {
   /** Returns `true` if no position is set. */
   def isEmpty: Boolean
 
-  /** Returns the set positions in ascending order. */
-  def toArray: Array[Long]
-
   /** Serializes to the on-disk byte form carried in `manifest_info.dv` / the CDF bitmaps. */
   def serializeAsByteArray(): Array[Byte]
+
+  /** The set positions in ascending order, for tests only. */
+  final def toArrayForTesting: Array[Long] = {
+    assert(Utils.isTesting)
+    toArrayForTestingImpl
+  }
+
+  protected def toArrayForTestingImpl: Array[Long]
+
 }
 
 object ManifestBitmap {
-  /** Returns an empty bitmap. */
-  def empty(): ManifestBitmap = RoaringManifestBitmap.empty()
-
   /** Returns a bitmap of the given positions. */
-  def apply(values: Long*): ManifestBitmap = RoaringManifestBitmap(values: _*)
+  def fromPositions(values: Seq[Int]): ManifestBitmap = RoaringManifestBitmap.fromPositions(values)
 
   /** Deserializes a bitmap previously produced by [[ManifestBitmap.serializeAsByteArray]]. */
-  def readFrom(bytes: Array[Byte]): ManifestBitmap = RoaringManifestBitmap.readFrom(bytes)
+  def fromSerializedByteArray(bytes: Array[Byte]): ManifestBitmap =
+    RoaringManifestBitmap.fromSerializedByteArray(bytes)
 }
 
-/** A [[ManifestBitmap]] backed by a [[RoaringBitmapArray]] serialized in the portable format. */
-final class RoaringManifestBitmap private (private val underlying: RoaringBitmapArray)
+/**
+ * A [[ManifestBitmap]] backed by a [[RoaringBitmapArray]] in the portable format.
+ */
+final class RoaringManifestBitmap private (
+    private val serializedBytesOrPositions: Either[Array[Byte], Seq[Int]])
   extends ManifestBitmap {
 
-  override def add(value: Long): Unit = underlying.add(value)
+  // Materialized on first bit-level use: decoded from the on-disk bytes, or built from the
+  // positions.
+  private lazy val roaringBitmapArray: RoaringBitmapArray =
+    serializedBytesOrPositions match {
+      case Left(bytes) => RoaringBitmapArray.readFrom(bytes)
+      case Right(positions) => RoaringBitmapArray(positions.map(_.toLong): _*)
+    }
 
-  override def contains(value: Long): Boolean = underlying.contains(value)
+  // Set once a position is added, so serialization re-encodes from the decoded (mutated) bitmap
+  // instead of returning the now-stale `serializedBytesOrPositions`.
+  private var mutated = false
 
-  override def cardinality: Long = underlying.cardinality
+  override def add(value: Int): Unit = {
+    mutated = true
+    roaringBitmapArray.add(value.toLong)
+  }
 
-  override def isEmpty: Boolean = underlying.isEmpty
+  override def contains(value: Int): Boolean = roaringBitmapArray.contains(value.toLong)
 
-  override def toArray: Array[Long] = underlying.toArray
+  override def cardinality: Long = roaringBitmapArray.cardinality
+
+  override def isEmpty: Boolean = roaringBitmapArray.isEmpty
+
+  override protected def toArrayForTestingImpl: Array[Long] = roaringBitmapArray.toArray
 
   override def serializeAsByteArray(): Array[Byte] =
-    underlying.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
+    serializedBytesOrPositions match {
+      // Defensive copy: Don't expose internal buffer for a caller to mutate.
+      case Left(bytes) if !mutated => bytes.clone()
+      case _ => roaringBitmapArray.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
+    }
+
 }
 
 object RoaringManifestBitmap {
-  def empty(): RoaringManifestBitmap = new RoaringManifestBitmap(new RoaringBitmapArray)
+  def fromPositions(values: Seq[Int]): RoaringManifestBitmap =
+    new RoaringManifestBitmap(Right(values))
 
-  def apply(values: Long*): RoaringManifestBitmap =
-    new RoaringManifestBitmap(RoaringBitmapArray(values: _*))
-
-  def readFrom(bytes: Array[Byte]): RoaringManifestBitmap =
-    new RoaringManifestBitmap(RoaringBitmapArray.readFrom(bytes))
+  def fromSerializedByteArray(serializedBytes: Array[Byte]): RoaringManifestBitmap =
+    new RoaringManifestBitmap(Left(serializedBytes))
 }

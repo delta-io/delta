@@ -19,8 +19,7 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, SnapshotDescriptor, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
-import org.apache.spark.sql.delta.util.DeltaFileOperations
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.Path
 
 /**
  * Path helpers for AMT (Adaptive Metadata Tree) manifest files.
@@ -81,11 +80,11 @@ object AMTUtils {
    * Relativizes a location against a table location. A trailing slash on `tableLocation` is
    * ignored. If `location` starts with the normalized table location immediately followed by `/`,
    * the prefix and separator are removed. Otherwise, `location` is returned as-is.
-   * This is a lightweight string manipulation compared to [[DeltaFileOperations.tryRelativizePath]]
-   * and should be preferred in hot paths.
+   * This is a lightweight string manipulation.
    *
    * Because the relativization is prefix matching based, callers are expected to pass locations in
-   * the same format and encoding. No such checks are performed here.
+   * the same format and encoding (either both raw or both URL-encoded).
+   * No such checks are performed here.
    */
   def relativizeLocation(tableLocation: String, location: String): String = {
     // Strip trailing slash from tableLocation if present.
@@ -106,14 +105,6 @@ object AMTUtils {
       location
     }
   }
-
-  /**
-   * Relativizes an AMT manifest file `path` against `tableRoot`, returning the raw
-   * (non-URL-encoded) string to store in a manifest `location` / `contentRoot.path`. Paths under
-   * the table root become relative; paths elsewhere are returned absolute.
-   */
-  def relativizeManifestPathToTableRoot(fs: FileSystem, tableRoot: Path, path: Path): String =
-    DeltaFileOperations.tryRelativizePath(fs, tableRoot, path).toString
 
   /**
    * Resolves a manifest `location` / `contentRoot.path` back to an absolute [[Path]] against
@@ -168,5 +159,5 @@ object AMTUtils {
 
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
   private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
-    ManifestBitmap.readFrom(bytes)
+    ManifestBitmap.fromSerializedByteArray(bytes)
 }

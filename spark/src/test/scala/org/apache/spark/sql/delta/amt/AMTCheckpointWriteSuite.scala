@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.amt
 import java.io.File
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{Checkpoints, CommitStats, CurrentTransactionInfo, DeltaOperations, LastCheckpointInfo}
+import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaOperations, LastCheckpointInfo}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -363,8 +363,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
           useRename = false,
           outputSchema = Some(AMTSingleAction.persistedSchema(metadata, protocol)),
           writeAsIcebergManifest = true)
-        val relative = AMTUtils.relativizeManifestPathToTableRoot(
-          file.getFileSystem(hadoopConf), dataPath, file)
+        val relative = AMTUtils.relativizeLocation(dataPath.toString, file.toString)
         assert(relative == s"${FileNames.AMT_METADATA_DIR_NAME}/$fileName" &&
           !relative.contains("%20"),
           s"stored pointer must be raw and table-root-relative; got $relative")
@@ -406,6 +405,82 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       assert(addPaths.toSeq == Seq("part-0.parquet"),
         s"reconstruction from the spaced-manifest tree must surface the DATA entry; got $addPaths")
     }
+  }
+
+  private val eAcute: Char = 0xE9.toChar
+
+  testAcrossAMTCheckpointScenarios(
+      "AddFile and DataEntry conversions use correct encoding of Delta and Iceberg specs",
+      "amt_data_entry_raw_location")(
+      setup = name => {
+        val deltaLog = deltaLogForName(name)
+        val inTableAbsolute =
+          deltaLog.dataPath.toUri.toString + s"/dir/part%20with%25percent(3)${eAcute}.parquet"
+        deltaLog.startTransaction().commit(
+          Seq(
+            // Relative.
+            AddFile(
+              path = s"dir/part%20with%25percent(1)${eAcute}.parquet",
+              partitionValues = Map.empty,
+              size = 128L,
+              modificationTime = 0L,
+              dataChange = true,
+              stats = s"""{"numRecords":1}"""),
+            // Out-of-root absolute.
+            AddFile(
+              path = s"file:/other-root/table/part%20with%25percent(2)${eAcute}.parquet",
+              partitionValues = Map.empty,
+              size = 128L,
+              modificationTime = 0L,
+              dataChange = true,
+              stats = s"""{"numRecords":1}"""),
+            // In table root absolute.
+            AddFile(
+              path = inTableAbsolute,
+              partitionValues = Map.empty,
+              size = 128L,
+              modificationTime = 0L,
+              dataChange = true,
+              stats = s"""{"numRecords":1}""")),
+          DeltaOperations.ManualUpdate)
+      }) { context =>
+    // According to RFC-2396:
+    // %20: whitespace
+    // %25: percent sign
+    // (: unreserved in RFC-2396 (in contrast to RFC-3986), left literal
+    // ): same above
+    // e-acute(U+00E9): non-ASCII, left literal
+    val expectedRawLocations = Set(
+      s"dir/part with%percent(1)${eAcute}.parquet",
+      s"file:/other-root/table/part with%percent(2)${eAcute}.parquet",
+      s"dir/part with%percent(3)${eAcute}.parquet")
+    val expectedDeltaPaths = Set(
+      s"dir/part%20with%25percent(1)${eAcute}.parquet",
+      s"file:/other-root/table/part%20with%25percent(2)${eAcute}.parquet",
+      s"dir/part%20with%25percent(3)${eAcute}.parquet")
+    val rootPath = context.checkpoint.contentRoot.getAbsolutePath(context.provider.tableRoot)
+    val dataLocations = allowReadWithinDeltaLog {
+      spark.read.parquet(rootPath.toString)
+        .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
+        .select("location")
+        .as[String]
+        .collect()
+        .toSet
+    }
+    assert(dataLocations == expectedRawLocations,
+      s"AMT DATA locations must be raw; got $dataLocations.")
+
+    val reconstructedPaths = context.provider
+      .loadActionsForStateReconstruction(spark, context.postCheckpointSnapshot.deltaLog)
+      .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+      .where("add is not null")
+      .select("add.path")
+      .as[String]
+      .collect()
+      .toSet
+    assert(reconstructedPaths == expectedDeltaPaths,
+      s"Reconstructed AddFile paths must stay Delta-encoded; got $reconstructedPaths.")
+    assertReconstructsLiveFileSet(context)
   }
 
   test("no emission on a vanilla (non-AMT) table") {
@@ -531,10 +606,11 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       val v3Stats = allStats.find(_.commitVersion == 3).getOrElse(fail("No stats for v3."))
       val metrics = v3Stats.amtWriteMetrics
         .getOrElse(fail("The follow-up commit's stats should carry AMT write metrics."))
-      assert(metrics.attempts.size == 1, s"Expected one AMT write attempt, got ${metrics.attempts}")
+      assert(metrics.writeAttempts.size == 1,
+        s"Expected one AMT write attempt, got ${metrics.writeAttempts}")
       // The first AMT has no prior tree to build on, so it is always a full rewrite.
-      assert(metrics.attempts.head.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
-      assert(metrics.attempts.head.materializeDurationMs >= 0L)
+      assert(metrics.writeAttempts.head.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
+      assert(metrics.writeAttempts.head.materializeDurationMs >= 0L)
     }
   }
 
