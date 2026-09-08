@@ -39,6 +39,13 @@ private[serverSidePlanning] trait ServerSidePlanningMetadata {
   def tokenSupplier: Option[() => String]
 
   /**
+   * Authentication configuration used to reconstruct a renewable token provider on executors.
+   * Keys use the Unity Catalog TokenProvider format (for example, `type`, `token`, and
+   * `oauth.*`).
+   */
+  def authConfig: Map[String, String] = Map.empty
+
+  /**
    * Catalog name for configuration lookups.
    */
   def catalogName: String

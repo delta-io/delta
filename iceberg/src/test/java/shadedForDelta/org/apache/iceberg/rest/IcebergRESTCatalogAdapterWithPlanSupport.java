@@ -406,6 +406,7 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
 
     // Build response (Pattern 1: COMPLETED with direct tasks)
     return PlanTableScanResponse.builder()
+        .withPlanId("test-plan-id")
         .withPlanStatus(PlanStatus.COMPLETED)
         .withFileScanTasks(tasksToReturn)
         .withSpecsById(specsById)

@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.serverSidePlanning
 
 import java.io.IOException
 import java.lang.reflect.Method
+import java.net.URI
 import java.util.Locale
 
 import scala.jdk.CollectionConverters._
@@ -68,11 +69,14 @@ private case class CatalogConfigResponse(
  * @param catalogName Name of the catalog for config endpoint query parameter.
  * @param tokenSupplier Supplier of auth tokens, called per-request to support OAuth.
  *                      Returns empty string if no auth is needed.
+ * @param credentialRefreshConfig Optional catalog URI and auth configuration retained so a
+ *                                returned plan ID can enable executor-side credential renewal.
  */
 class IcebergRESTCatalogPlanningClient(
     baseUriRaw: String,
     catalogName: String,
-    tokenSupplier: () => String
+    tokenSupplier: () => String,
+    credentialRefreshConfig: Option[ScanPlanCredentialRefreshConfig] = None
 ) extends ServerSidePlanningClient with Logging {
 
   // Normalize baseUri to handle trailing slashes
@@ -356,7 +360,9 @@ class IcebergRESTCatalogPlanningClient(
     // icebergRestCatalogUriRoot is lazily constructed as: {baseUri}/{prefix}
     // where prefix comes from /v1/config?warehouse=<catalogName> per Iceberg REST spec.
     // See: https://iceberg.apache.org/rest-catalog-spec/
-    val planTableScanUri = s"$icebergRestCatalogUriRoot/namespaces/$database/tables/$table/plan"
+    val tableEndpoint = s"$icebergRestCatalogUriRoot/namespaces/$database/tables/$table"
+    val planTableScanUri = s"$tableEndpoint/plan"
+    val credentialsEndpoint = s"$tableEndpoint/credentials"
 
     // Request planning for current snapshot. snapshotId = 0 means "use current snapshot"
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
@@ -418,7 +424,7 @@ class IcebergRESTCatalogPlanningClient(
             s"expected 'completed'. Table: $database.$table")
         }
 
-        convertToScanPlan(icebergResponse, responseBody)
+        convertToScanPlan(icebergResponse, responseBody, credentialsEndpoint)
       } else {
         // TODO: Parse structured ErrorResponse JSON from Iceberg REST spec instead of raw body
         throw new IOException(
@@ -437,7 +443,8 @@ class IcebergRESTCatalogPlanningClient(
    */
   private def convertToScanPlan(
       response: PlanTableScanResponse,
-      responseBody: String): ScanPlan = {
+      responseBody: String,
+      credentialsEndpoint: String): ScanPlan = {
     require(response != null, "PlanTableScanResponse cannot be null")
     require(response.fileScanTasks() != null, "File scan tasks cannot be null")
 
@@ -471,7 +478,26 @@ class IcebergRESTCatalogPlanningClient(
     }.toSeq
 
     val credentials = extractCredentials(responseBody)
-    ScanPlan(files = files, credentials = credentials)
+    val storageSchemes = files.flatMap { file =>
+      Try(new URI(file.filePath).getScheme)
+        .toOption
+        .filter(_ != null)
+        .map(_.toLowerCase(Locale.ROOT))
+    }.distinct
+    val credentialRefresh = for {
+      config <- credentialRefreshConfig
+      planId <- Option(response.planId()).filter(_.nonEmpty)
+    } yield ScanPlanCredentialRefresh(
+      catalogUri = config.catalogUri,
+      credentialsEndpoint = credentialsEndpoint,
+      planId = planId,
+      authConfig = config.authConfig,
+      storageSchemes = storageSchemes)
+
+    ScanPlan(
+      files = files,
+      credentials = credentials,
+      credentialRefresh = credentialRefresh)
   }
 
   /**

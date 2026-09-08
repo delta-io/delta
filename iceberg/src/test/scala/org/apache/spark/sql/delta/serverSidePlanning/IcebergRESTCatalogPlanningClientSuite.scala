@@ -85,8 +85,42 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         assert(scanPlan.files != null, "Scan plan files should not be null")
         assert(scanPlan.files.isEmpty,
           s"Empty table should have 0 files, got ${scanPlan.files.length}")
+        assert(scanPlan.credentialRefresh.isEmpty,
+          "Credential refresh requires catalog auth context")
       } finally {
         client.close()
+      }
+    }
+  }
+
+  test("plan ID produces credential refresh context with the resolved catalog prefix") {
+    withTempTable("credentialRefreshContext") { table =>
+      val tableName = s"rest_catalog.${defaultNamespace}.credentialRefreshContext"
+      populateTestData(tableName)
+      server.setCatalogPrefix("catalogs/test-catalog-prefix")
+
+      val refreshConfig = ScanPlanCredentialRefreshConfig(
+        catalogUri = "https://uc.example.com",
+        authConfig = Map("type" -> "static", "token" -> "secret"))
+      val client = new IcebergRESTCatalogPlanningClient(
+        s"$serverUri/v1", "test_catalog", () => "secret", Some(refreshConfig))
+      try {
+        val plan = client.planScan(defaultNamespace.toString, "credentialRefreshContext")
+        val refresh = plan.credentialRefresh.getOrElse(
+          fail("Expected credential refresh context when plan ID and auth config are present"))
+
+        assert(refresh.planId == "test-plan-id")
+        assert(refresh.catalogUri == "https://uc.example.com")
+        assert(refresh.credentialsEndpoint ==
+          s"$serverUri/v1/catalogs/test-catalog-prefix/namespaces/$defaultNamespace/" +
+            "tables/credentialRefreshContext/credentials")
+        assert(refresh.authConfig == refreshConfig.authConfig)
+        // The test JDBC catalog stores local paths without an explicit URI scheme. Cloud-backed
+        // scan files carry s3/abfs/gs schemes, which are retained for credential configuration.
+        assert(refresh.storageSchemes.isEmpty)
+      } finally {
+        client.close()
+        server.setCatalogPrefix(null)
       }
     }
   }
