@@ -33,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.logging.log4j.Level
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{DataFrame, Row}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.execution.streaming.Offset
 import org.apache.spark.sql.functions.lit
@@ -41,8 +41,11 @@ import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils
 
-trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
-  with DeltaSourceSuiteBase with DeltaColumnMappingSelectedTestMixin with DeltaSQLCommandTest {
+trait StreamingSchemaEvolutionSuiteBase
+  extends QueryTest
+  with DeltaColumnMappingSelectedTestMixin
+  with DeltaSourceSuiteBase
+  with ColumnMappingStreamingTestUtils {
 
   override protected def runOnlyTests: Seq[String] = Seq(
     "schema log initialization with additive schema changes",

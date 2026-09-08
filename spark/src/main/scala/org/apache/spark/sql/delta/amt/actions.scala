@@ -25,6 +25,7 @@ import com.fasterxml.jackson.databind.{DeserializationContext, JsonDeserializer}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
@@ -488,7 +489,8 @@ case class DataEntry(
     val dv = deletion_vector.map(DeletionVector.toDescriptor(_, tableRoot)).orNull
     val stats = AMTContentStats.toStatsJson(content_stats, record_count)
     AddFile(
-      path = location,
+      // RFC-2396 encoding used by Delta.
+      path = SparkPath.fromPathString(location).urlEncoded,
       partitionValues = partition.getOrElse(Map.empty),
       size = file_size_in_bytes,
       modificationTime = 0L,
@@ -507,7 +509,9 @@ object DataEntry {
   def fromAddFile(add: AddFile, tracking: Tracking, tableRoot: Path): DataEntry = {
     val passthrough = add.amtPassthrough
     DataEntry(
-      location = add.path,
+      // RFC-2396 to Iceberg raw path conversion.
+      location = AMTUtils.relativizeLocation(
+        tableRoot.toString, SparkPath.fromUrlString(add.path).toPath.toString),
       file_format = AMTSingleAction.FileFormatParquet,
       // Round-trip the AddFile's row-tracking fields through the Iceberg tracking envelope so a
       // rowTracking-enabled table can reconstruct them on read.
