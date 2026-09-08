@@ -233,6 +233,20 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
+  testQuietly("check constraint allows NULLIF") {
+    // NULLIF analyzes to transient IR (With/CommonExpression*, TypedNullLiteral on 4.2+), which
+    // validation must allow. `NULLIF(num, 0) IS NOT NULL` means `num != 0`; existing rows satisfy
+    // it, so the constraint is added and then enforced on writes.
+    withTestTable { table =>
+      sql(s"ALTER TABLE $table ADD CONSTRAINT numNotZero CHECK (NULLIF(num, 0) IS NOT NULL)")
+      sql(s"INSERT INTO $table VALUES (7, 'g')")
+      val e = intercept[InvariantViolationException] {
+        sql(s"INSERT INTO $table VALUES (0, 'h')")
+      }
+      assert(e.getMessage.contains("CHECK constraint numnotzero"))
+    }
+  }
+
   test("drop constraint that doesn't exist throws an exception") {
     withTestTable { table =>
       intercept[AnalysisException] {

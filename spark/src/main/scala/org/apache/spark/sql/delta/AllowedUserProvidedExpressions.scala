@@ -335,8 +335,15 @@ object AllowedUserProvidedExpressions {
 
     // Special expressions that are not built-in expressions.
     expression[AttributeReference]("col"),
-    expression[Literal]("lit")
-  )
+    expression[Literal]("lit"),
+
+    // Transient "common expression" IR from Spark 4.0+ function rewrites (e.g. NULLIF analyzes to
+    // `With(If(.., <null>, ..), CommonExpressionDef(..))`). Stripped before execution and carry no
+    // user logic of their own; their real children are still validated by the walk.
+    classOf[With],
+    classOf[CommonExpressionDef],
+    classOf[CommonExpressionRef]
+  ) ++ AllowedExpressionsShim.transientExpressions
 
   val checkConstraintExpressions: Set[Class[_]] = Set(
     expression[Contains]("contains"),
