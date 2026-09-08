@@ -395,7 +395,7 @@ class IcebergConverter
         // If `rowTrackingBackfillRequired` is enabled, the Row Tracking Backfill command
         // will first be triggered, adding one or more ROW TRACKING BACKFILL commits
         // to the table. After backfilling completes, here we must regenerate the entire
-        // Iceberg metadata to keep the snapshot version in sync.
+        // Iceberg metadata to keep snapshot sequence numbers in sync with Delta versions.
         case _ if rowTrackingJustEnabled =>
           val commitInfos = createSnapshotsForReplaceTable(
             snapshotToConvert, prevConvertedSnapshotOpt, icebergTxn, catalogTable,

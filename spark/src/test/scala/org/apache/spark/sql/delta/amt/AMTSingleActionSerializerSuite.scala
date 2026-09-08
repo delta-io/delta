@@ -108,11 +108,60 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     val add = sampleAddFile
     val entry = AMTSingleAction.fromAddFile(add, addedTracking, tableRoot)
     assert(entry.content_type == AMTSingleAction.ContentType.Type.Data)
-    assert(entry.location == add.path)
+    assert(entry.location == "part-00000.parquet")
     assert(entry.record_count == add.numPhysicalRecords.get)
     assert(entry.file_size_in_bytes == add.size)
     assert(entry.manifest_info.isEmpty)
     assert(entry.tracking == addedTracking)
+  }
+
+  test("fromAddFile decodes Delta paths into raw DATA locations") {
+    val add = sampleAddFile.copy(path = "dir/part%20with%25percent.parquet")
+    val entry = AMTSingleAction.fromAddFile(add, addedTracking, tableRoot)
+    assert(entry.location == "dir/part with%percent.parquet")
+  }
+
+  test("toAddFile encodes raw DATA locations into Delta paths") {
+    val add = DataEntry(
+      location = "dir/part with%percent.parquet",
+      file_format = AMTSingleAction.FileFormatParquet,
+      tracking = addedTracking,
+      record_count = 10L,
+      file_size_in_bytes = 100L).toAddFile(tableRoot)
+    assert(add.path == "dir/part%20with%25percent.parquet")
+  }
+
+  test("fromAddFile relativizes absolute in-table Delta paths") {
+    val deltaPath = "file:/tmp/amt-test-table/dir/part%20with%20space.parquet"
+    val entry = AMTSingleAction.fromAddFile(
+      sampleAddFile.copy(path = deltaPath),
+      addedTracking,
+      tableRoot
+    )
+    assert(entry.location == "dir/part with space.parquet")
+    assert(entry.unwrap.asInstanceOf[DataEntry].toAddFile(tableRoot).path ==
+      "dir/part%20with%20space.parquet")
+  }
+
+  test("toAddFile keeps a relative in-table location relative") {
+    val add = DataEntry(
+      location = "dir/part with space.parquet",
+      file_format = AMTSingleAction.FileFormatParquet,
+      tracking = addedTracking,
+      record_count = 10L,
+      file_size_in_bytes = 100L).toAddFile(tableRoot)
+    assert(add.path == "dir/part%20with%20space.parquet")
+  }
+
+  test("DATA location conversion preserves out-of-root absolute Delta paths") {
+    val deltaPath = "file:/tmp/other-table/dir/part%20with%20space.parquet"
+    val entry = AMTSingleAction.fromAddFile(
+      sampleAddFile.copy(path = deltaPath),
+      addedTracking,
+      tableRoot
+    )
+    assert(entry.location == "file:/tmp/other-table/dir/part with space.parquet")
+    assert(entry.unwrap.asInstanceOf[DataEntry].toAddFile(tableRoot).path == deltaPath)
   }
 
   test("DataManifestEntry wraps to a DATA_MANIFEST root entry") {
