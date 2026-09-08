@@ -26,6 +26,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
@@ -80,7 +81,12 @@ class ManualListingFileManifest(
 
   override lazy val parquetSchema: Option[StructType] = {
     recordDeltaOperationForTablePath(basePath, "delta.convert.schemaInference") {
-      Some(ConvertUtils.mergeSchemasInParallel(spark, partitionSchema, allFiles))
+      // Order by path so schema merging (which uses first-appearance order for the final column
+      // order) is deterministic and independent of task layout: rebalancing the file listing above
+      // must not change the inferred schema. This sorts the cached footer results, not the footer
+      // reads themselves.
+      Some(ConvertUtils.mergeSchemasInParallel(
+        spark, partitionSchema, allFiles.orderBy(col("fileStatus.path"))))
     }
   }
 

@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types.StructType
 
 /**
  * Validates the CONVERT TO DELTA file-listing rebalance
@@ -95,6 +96,42 @@ class ConvertToDeltaListingRebalanceSuite extends ConvertToDeltaSuiteBaseCommons
       assert(on.max <= 20, s"expected balanced partitions with rebalance, max=${on.max}")
       assert(on.max < off.max,
         s"rebalance must reduce the max partition: on=${on.max} off=${off.max}")
+    }
+  }
+
+  // Files with differing schemas in one directory, so distinct schemas can land in the same task:
+  // (a, b), (b, c), (a, c). Schema merging uses first-appearance order for the column order, so the
+  // task visitation order must not change the merged schema.
+  private def writeHeterogeneousParquet(dir: String): Unit = {
+    withSQLConf("spark.sql.files.maxRecordsPerFile" -> "1") {
+      spark.range(8).select(col("id").as("a"), (col("id") * 2).as("b"))
+        .write.mode("append").parquet(dir)
+      spark.range(8).select((col("id") * 3).as("b"), (col("id") * 4).as("c"))
+        .write.mode("append").parquet(dir)
+      spark.range(8).select(col("id").as("a"), (col("id") * 5).as("c"))
+        .write.mode("append").parquet(dir)
+    }
+  }
+
+  private def inferredSchema(dir: String, rebalance: Boolean): StructType = {
+    withSQLConf(DeltaSQLConf.DELTA_CONVERT_REBALANCE_FILE_LISTING.key -> rebalance.toString) {
+      val manifest = new ParquetTable(
+        spark, dir, catalogTable = None, userPartitionSchema = None).fileManifest
+      try manifest.parquetSchema.get finally manifest.close()
+    }
+  }
+
+  test("inferred schema is identical with rebalance on and off (heterogeneous files)") {
+    withTempDir { tmp =>
+      val dir = new File(tmp, "src").getCanonicalPath
+      writeHeterogeneousParquet(dir)
+
+      val off = inferredSchema(dir, rebalance = false)
+      val on = inferredSchema(dir, rebalance = true)
+
+      assert(on == off, s"inferred schema must not depend on the rebalance flag:\non=$on\noff=$off")
+      assert(on.fieldNames.toSet == Set("a", "b", "c"),
+        s"expected merged columns a,b,c but got ${on.fieldNames.mkString(",")}")
     }
   }
 }
