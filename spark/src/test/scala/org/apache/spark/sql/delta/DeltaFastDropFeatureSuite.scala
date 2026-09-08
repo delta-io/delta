@@ -627,6 +627,44 @@ class DeltaFastDropFeatureSuite
       !protocol.readerFeatureNames.contains(DeletionVectorsTableFeature.name))
   }
 
+  for {
+    readFromChecksum <- BOOLEAN_DOMAIN
+    metricsEnabled <- BOOLEAN_DOMAIN
+  }
+  test(s"DV drop invariants reject existing vectors after DV creation is disabled: " +
+      s"readFromChecksum=$readFromChecksum, metricsEnabled=$metricsEnabled") {
+    withTempPath { dir =>
+      withSQLConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED.key -> "true") {
+        val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+        createTableWithDeletionVectors(deltaLog)
+        sql(s"ALTER TABLE delta.`${dir.getAbsolutePath}` SET TBLPROPERTIES " +
+          s"('delta.enableDeletionVectors' = 'false')")
+      }
+
+      withSQLConf(
+        DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> readFromChecksum.toString,
+        DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED.key -> metricsEnabled.toString
+      ) {
+        DeltaLog.clearCache()
+        val table = DeltaTableV2(spark, new Path(dir.getAbsolutePath))
+        val snapshot = table.initialSnapshot
+        assert(!DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(snapshot.metadata))
+        assert(snapshot.allFiles.filter(col("deletionVector").isNotNull).count() == 2L)
+        assert(snapshot.numDeletionVectorsOpt == Option.when(metricsEnabled)(2L))
+        assert(!DeletionVectorsTableFeature.validateDropInvariants(table, snapshot))
+
+        sql(s"REORG TABLE delta.`${dir.getAbsolutePath}` APPLY (PURGE)")
+        val purgedSnapshot = table.update()
+        assert(purgedSnapshot.allFiles.filter(col("deletionVector").isNotNull).isEmpty)
+        assert(purgedSnapshot.numDeletionVectorsOpt == Option.when(metricsEnabled)(0L))
+        assert(DeletionVectorsTableFeature.validateDropInvariants(table, purgedSnapshot))
+
+        dropDeletionVectors(table.deltaLog)
+        assert(spark.read.format("delta").load(dir.getAbsolutePath).count() == 80L)
+      }
+    }
+  }
+
   private def validateTombstones(
       log: DeltaLog,
       expectedDVTombstoneCount: Option[Int] = None): Unit = {
