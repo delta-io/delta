@@ -1357,10 +1357,19 @@ private[delta] class ConflictChecker(
       case d: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(d) => None
       case a => Some(a)
     }
+    val rowTrackingDomainMetadata = RowTrackingMetadataDomain(highWaterMark).toDomainMetadata
+    // The reassigned row IDs advance the high water mark, so the row-tracking [[DomainMetadata]]
+    // must reflect the new value. Besides updating the action list, we also refresh the
+    // separately tracked `domainMetadata`: some commit paths surface `domainMetadata` to the
+    // commit coordinator independently of the action list, and a stale copy would advertise the
+    // pre-reassignment high water mark while the committed AddFiles already use the reassigned,
+    // higher one, causing the commit to be rejected.
+    val updatedDomainMetadata = rowTrackingDomainMetadata +:
+      currentTransactionInfo.domainMetadata.filterNot(RowTrackingMetadataDomain.isSameDomain)
     currentTransactionInfo = currentTransactionInfo.copy(
       // Add row ID high water mark at the front for faster retrieval.
-      actions = RowTrackingMetadataDomain(highWaterMark).toDomainMetadata +:
-        actionsWithReassignedRowIds,
+      actions = rowTrackingDomainMetadata +: actionsWithReassignedRowIds,
+      domainMetadata = updatedDomainMetadata,
       readRowIdHighWatermark = winningHighWaterMark)
   }
 
