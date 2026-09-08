@@ -21,17 +21,18 @@ import scala.jdk.OptionConverters._
 
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
-import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 
 import org.apache.spark.sql.delta.{CheckpointProvider, DeltaColumnMappingMode, DeltaLogFileIndex, Snapshot, VersionChecksum}
 import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, FileSizeHistogram, StatisticsCollection}
+import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
 
 import com.databricks.spark.util.TagDefinition
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{DataFrame, Dataset}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * A [[Snapshot]] backed by a Delta Kernel snapshot, for the v2 Connector. It extends the V1
@@ -59,6 +60,15 @@ class DeltaV2Snapshot(
       logSegment = null,
       deltaLog = null,
       checksumOpt = None) {
+
+  private[this] var resolvedCatalogTableOpt: Option[CatalogTable] = None
+
+  def this(
+      kernelSnapshot: KernelSnapshot,
+      catalogTableOpt: Option[CatalogTable]) = {
+    this(kernelSnapshot)
+    resolvedCatalogTableOpt = catalogTableOpt
+  }
 
   // scalastyle:off deltahadoopconfiguration
   private def kernelEngine: Engine =
@@ -112,6 +122,8 @@ class DeltaV2Snapshot(
   // This snapshot has no DeltaLog from which to derive usage-log tags, so emit none.
   override def getCommonTags: Map[TagDefinition, String] = Map.empty
 
+  // The catalog table this snapshot was resolved from, if the connector supplied one.
+  def catalogTable: Option[CatalogTable] = Option(resolvedCatalogTableOpt).flatten
   // --- SnapshotDescriptor / state surface ----------------------------------------------------
 
   override lazy val metadata: Metadata =

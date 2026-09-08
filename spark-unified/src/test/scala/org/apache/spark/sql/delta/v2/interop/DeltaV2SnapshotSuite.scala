@@ -27,6 +27,9 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
+
 /**
  * Tests for [[DeltaV2Snapshot]] focusing on the construction surface that is wired to the
  * underlying Kernel snapshot: `path` / `version`, the data members read from Kernel
@@ -64,6 +67,23 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       val snapshot2 = new DeltaV2Snapshot(kernelSnapshot2)
       assert(snapshot2.version === 2L)
       assert(snapshot2.version === kernelSnapshot2.getVersion)
+    }
+  }
+
+  test("catalog table is preserved when provided") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(1).write.format("delta").save(path)
+      val kernelSnapshot = loadKernelSnapshot(path)
+      val catalogTable = CatalogTable(
+        identifier = TableIdentifier("test_table"),
+        tableType = CatalogTableType.EXTERNAL,
+        storage = CatalogStorageFormat.empty.copy(locationUri = Some(dir.toURI)),
+        schema = spark.range(0).schema)
+
+      assert(new DeltaV2Snapshot(kernelSnapshot).catalogTable.isEmpty)
+      assert(new DeltaV2Snapshot(kernelSnapshot, Some(catalogTable)).catalogTable.contains(
+        catalogTable))
     }
   }
 

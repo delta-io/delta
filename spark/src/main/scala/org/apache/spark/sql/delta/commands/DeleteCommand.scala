@@ -121,7 +121,8 @@ case class DeleteCommand(
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
-  override val output: Seq[Attribute] = Seq(AttributeReference("num_affected_rows", LongType)())
+  override val output: Seq[Attribute] =
+    Seq(AttributeReference("num_affected_rows", LongType, nullable = false)())
 
   override lazy val metrics = createMetrics
 
