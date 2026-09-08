@@ -15,6 +15,14 @@
  */
 package io.delta.kernel.internal.commit;
 
+import static io.delta.kernel.test.KernelTestFixtures.BASIC_PARTITIONED_METADATA;
+import static io.delta.kernel.test.KernelTestFixtures.LOG_PATH;
+import static io.delta.kernel.test.KernelTestFixtures.PROTOCOL_12;
+import static io.delta.kernel.test.KernelTestFixtures.PROTOCOL_WITH_CATALOG_MANAGED_SUPPORT;
+import static io.delta.kernel.test.KernelTestFixtures.commitMetadata;
+import static io.delta.kernel.test.KernelTestFixtures.readState;
+import static io.delta.kernel.test.KernelTestFixtures.testCommitInfo;
+import static io.delta.kernel.test.KernelTestFixtures.testMetadata;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -22,19 +30,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.commit.CommitMetadata.CommitType;
-import io.delta.kernel.data.ArrayValue;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.MapValue;
-import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
-import io.delta.kernel.internal.actions.Format;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Tuple2;
-import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.Arrays;
 import java.util.Collections;
@@ -42,8 +42,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Supplier;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -52,195 +50,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 class CommitMetadataTest {
 
-  private static final Protocol PROTOCOL_12 = new Protocol(1, 2);
-  private static final String LOG_PATH = "/fake/_delta_log";
   private static final long CREATE_VERSION_0 = 0L;
   private static final long UPDATE_VERSION_NON_ZERO = 1L;
-
-  private static final Protocol PROTOCOL_WITH_CATALOG_MANAGED_SUPPORT =
-      new Protocol(
-          TableFeatures.TABLE_FEATURES_MIN_READER_VERSION,
-          TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION,
-          Collections.singleton(TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName()),
-          Stream.of(
-                  TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName(),
-                  TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE.featureName())
-              .collect(Collectors.toSet()));
-
-  private static final Metadata BASIC_PARTITIONED_METADATA =
-      testMetadata(
-          new StructType().add("part1", IntegerType.INTEGER).add("col1", IntegerType.INTEGER),
-          Collections.singletonList("part1"));
-
-  // ========== Fixtures ==========
-  //
-  // The kernel-api test fixtures (TestFixtures, ActionUtils, VectorTestUtils) are Scala traits
-  // carrying vals, so their initializers cannot run from Java. The handful this suite needs are
-  // rebuilt below; extract them to a shared Java fixture once a second Java suite wants them.
-
-  /** Mirrors VectorTestUtils.stringVector. */
-  private static ColumnVector stringVector(List<String> values) {
-    return new ColumnVector() {
-      @Override
-      public DataType getDataType() {
-        return StringType.STRING;
-      }
-
-      @Override
-      public int getSize() {
-        return values.size();
-      }
-
-      @Override
-      public void close() {}
-
-      @Override
-      public boolean isNullAt(int rowId) {
-        return values.get(rowId) == null;
-      }
-
-      @Override
-      public String getString(int rowId) {
-        return values.get(rowId);
-      }
-    };
-  }
-
-  /** Mirrors ActionUtils.testMetadata. */
-  private static Metadata testMetadata(StructType schema, List<String> partitionCols) {
-    return new Metadata(
-        "id",
-        Optional.of("name"),
-        Optional.of("description"),
-        new Format("parquet", Collections.emptyMap()),
-        schema.toJson(),
-        schema,
-        new ArrayValue() {
-          @Override
-          public int getSize() {
-            return partitionCols.size();
-          }
-
-          @Override
-          public ColumnVector getElements() {
-            return stringVector(partitionCols);
-          }
-        },
-        Optional.empty(),
-        new MapValue() {
-          @Override
-          public int getSize() {
-            return 0;
-          }
-
-          @Override
-          public ColumnVector getKeys() {
-            return stringVector(Collections.emptyList());
-          }
-
-          @Override
-          public ColumnVector getValues() {
-            return stringVector(Collections.emptyList());
-          }
-        });
-  }
-
-  /** Mirrors ActionUtils.testCommitInfo. */
-  private static CommitInfo testCommitInfo(boolean ictEnabled) {
-    return new CommitInfo(
-        ictEnabled ? Optional.of(1L) : Optional.empty(), // ICT
-        1L, // timestamp
-        Optional.of("engineInfo"),
-        Optional.of("operation"),
-        Collections.emptyMap(), // operationParameters
-        Optional.of(false), // isBlindAppend
-        Optional.of("txnId"),
-        Collections.emptyMap() // operationMetrics
-        );
-  }
-
-  /**
-   * Java stand-in for TestFixtures.createCommitMetadata, whose nine parameters are all defaulted in
-   * Scala. Each test overrides only the fields it exercises.
-   */
-  private static final class CommitMetadataBuilder {
-    private long version;
-    private String logPath = LOG_PATH;
-    private CommitInfo commitInfo = testCommitInfo(true);
-    private List<DomainMetadata> commitDomainMetadatas = Collections.emptyList();
-    private Supplier<Map<String, String>> committerProperties = Collections::emptyMap;
-    private Optional<Tuple2<Protocol, Metadata>> readPandMOpt = Optional.empty();
-    private Optional<Protocol> newProtocolOpt = Optional.empty();
-    private Optional<Metadata> newMetadataOpt = Optional.empty();
-    private Optional<Long> maxKnownPublishedDeltaVersion = Optional.empty();
-
-    CommitMetadataBuilder version(long version) {
-      this.version = version;
-      return this;
-    }
-
-    CommitMetadataBuilder logPath(String logPath) {
-      this.logPath = logPath;
-      return this;
-    }
-
-    CommitMetadataBuilder commitInfo(CommitInfo commitInfo) {
-      this.commitInfo = commitInfo;
-      return this;
-    }
-
-    CommitMetadataBuilder commitDomainMetadatas(List<DomainMetadata> commitDomainMetadatas) {
-      this.commitDomainMetadatas = commitDomainMetadatas;
-      return this;
-    }
-
-    CommitMetadataBuilder committerProperties(Supplier<Map<String, String>> committerProperties) {
-      this.committerProperties = committerProperties;
-      return this;
-    }
-
-    CommitMetadataBuilder readPandMOpt(Optional<Tuple2<Protocol, Metadata>> readPandMOpt) {
-      this.readPandMOpt = readPandMOpt;
-      return this;
-    }
-
-    CommitMetadataBuilder newProtocolOpt(Optional<Protocol> newProtocolOpt) {
-      this.newProtocolOpt = newProtocolOpt;
-      return this;
-    }
-
-    CommitMetadataBuilder newMetadataOpt(Optional<Metadata> newMetadataOpt) {
-      this.newMetadataOpt = newMetadataOpt;
-      return this;
-    }
-
-    CommitMetadataBuilder maxKnownPublishedDeltaVersion(
-        Optional<Long> maxKnownPublishedDeltaVersion) {
-      this.maxKnownPublishedDeltaVersion = maxKnownPublishedDeltaVersion;
-      return this;
-    }
-
-    CommitMetadata build() {
-      return new CommitMetadata(
-          version,
-          logPath,
-          commitInfo,
-          commitDomainMetadatas,
-          committerProperties,
-          readPandMOpt,
-          newProtocolOpt,
-          newMetadataOpt,
-          maxKnownPublishedDeltaVersion);
-    }
-  }
-
-  private static CommitMetadataBuilder commitMetadata(long version) {
-    return new CommitMetadataBuilder().version(version);
-  }
-
-  private static Optional<Tuple2<Protocol, Metadata>> readState(Protocol protocol) {
-    return Optional.of(new Tuple2<>(protocol, BASIC_PARTITIONED_METADATA));
-  }
 
   // ========== Tests ==========
 
