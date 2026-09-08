@@ -23,7 +23,7 @@ import org.apache.spark.sql.types._
 /**
  * Trait collecting supported and unsupported type change test cases.
  */
-trait TypeWideningTestCases extends SQLTestUtils { self: SharedSparkSession =>
+trait TypeWideningTestCases extends SQLTestUtils {
   import testImplicits._
 
   /**
