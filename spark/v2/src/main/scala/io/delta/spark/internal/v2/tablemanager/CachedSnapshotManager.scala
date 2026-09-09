@@ -173,7 +173,7 @@ private[tablemanager] class CachedSnapshotManager(
       val validationStartedAt = System.currentTimeMillis()
       val existing = currentSnapshot
       val refreshed = if (existing == null) {
-        loadLatestUncached()
+        withUncachedSnapshotManager(_.loadLatestSnapshot())
       } else {
         loadLatestFrom(existing.snapshot)
       }
@@ -196,9 +196,8 @@ private[tablemanager] class CachedSnapshotManager(
     }
   }
 
-  private def loadLatestFrom(existing: Snapshot): Snapshot = {
-    loadLatestUncached()
-  }
+  private def loadLatestFrom(existing: Snapshot): Snapshot =
+    withUncachedSnapshotManager(_.loadLatestSnapshotFrom(existing))
 
   private def acquireSnapshotAt(version: Long): Snapshot = {
     val existing = currentSnapshot
@@ -221,24 +220,13 @@ private[tablemanager] class CachedSnapshotManager(
       return upperBound
     }
     // Historical snapshots are returned to the caller but never replace the cached latest snapshot.
-    val historicalSnapshot = loadSnapshotAtUncached(version)
+    val historicalSnapshot =
+      withUncachedSnapshotManager(_.loadSnapshotAt(version))
     validateTableIdentity(historicalSnapshot)
     historicalSnapshot
   }
 
   // === Uncached loading =====================================================
-
-  private def loadLatestUncached(): Snapshot = {
-    withUncachedSnapshotManager { manager =>
-      manager.loadLatestSnapshot()
-    }
-  }
-
-  private def loadSnapshotAtUncached(version: Long): Snapshot = {
-    withUncachedSnapshotManager { manager =>
-      manager.loadSnapshotAt(version)
-    }
-  }
 
   private def withUncachedSnapshotManager[T](f: DeltaV2SnapshotManager => T): T =
     f(SnapshotManagerFactory.create(

@@ -42,6 +42,13 @@ trait DeltaV2SnapshotManager {
   def loadLatestSnapshot(): Snapshot
 
   /**
+   * Loads the latest snapshot using an existing snapshot as an incremental-refresh hint.
+   *
+   * Managers without incremental-refresh support fall back to a full latest-snapshot load.
+   */
+  def loadLatestSnapshotFrom(existing: Snapshot): Snapshot = loadLatestSnapshot()
+
+  /**
    * Loads and returns a snapshot at a specific version.
    *
    * @param version the version number to load (must be >= 0)
