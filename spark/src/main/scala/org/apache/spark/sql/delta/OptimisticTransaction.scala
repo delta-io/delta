@@ -3264,7 +3264,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     : (Long, CurrentTransactionInfo) = recordDeltaOperation(
         deltaLog,
         "delta.commit.retry.conflictCheck",
-        tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {
+        tags = Map(TAG_LOG_STORE_CLASS -> commitLogStoreClassNameForTag)) {
 
     DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
       val fileStatuses = getConflictingVersions(checkVersion)
@@ -3353,8 +3353,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     (firstWinningVersion to lastWinningVersion)
       .zip(conflictingCommitFiles)
       .foreach { case (otherCommitVersion, otherCommitFileStatus) =>
-        val winningCommitSummary = WinningCommitSummary.createFromFileStatus(
-          deltaLog, otherCommitFileStatus)
+        val winningCommitSummary = readWinningCommitSummary(otherCommitFileStatus)
 
         val conflictChecker = new ConflictChecker(
           spark,
@@ -3421,6 +3420,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
       None
     }
   }
+
+  /**
+   * Reads the actions of a winning commit into a [[WinningCommitSummary]] for conflict resolution.
+   */
+  protected def readWinningCommitSummary(fileStatus: FileStatus): WinningCommitSummary =
+    WinningCommitSummary.createFromFileStatus(deltaLog, fileStatus)
 
   /** Returns the version that the first attempt will try to commit at. */
   private[delta] def getFirstAttemptVersion: Long = readVersion + 1L
