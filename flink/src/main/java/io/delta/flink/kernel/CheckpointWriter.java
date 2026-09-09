@@ -124,7 +124,8 @@ public class CheckpointWriter {
 
   private final CheckpointMetaData lastCheckpointMeta;
   private final boolean lastCheckpointByMe;
-  private int lastSidecarCount;
+  private final int lastCheckpointSidecarCount;
+  private int carriedSidecarCount;
   /** Guard to prevent reusing a single writer instance. */
   private boolean used = false;
 
@@ -162,12 +163,14 @@ public class CheckpointWriter {
     lastCheckpointByMe =
         Boolean.parseBoolean(
             lastCheckpointMeta.tags.getOrDefault(TAG_DELTASINK_CHECKPOINT, "false"));
-    lastSidecarCount = 0;
+    int parsedSidecarCount = 0;
     try {
-      lastSidecarCount =
+      parsedSidecarCount =
           Integer.parseInt(lastCheckpointMeta.tags.getOrDefault(TAG_SIDECAR_COUNT, "0"));
     } catch (Exception ignore) {
     }
+    lastCheckpointSidecarCount = parsedSidecarCount;
+    carriedSidecarCount = 0;
   }
 
   public CheckpointWriter(Engine engine, Snapshot snapshot) {
@@ -241,7 +244,18 @@ public class CheckpointWriter {
     // including AddFiles. It also checks if remove file exists.
     SidecarFile newSidecar;
     CloseableIterator<FilteredColumnarBatch> existingSidecars = EMPTY_ITERATOR();
+    if (baseCheckpointMeta.isPresent()) {
+      // When there's no remove files, read existing sidecars from the base checkpoint if it
+      // exists. Materialize existing sidecars and their selection vectors before scanning
+      // incremental actions, so it triggers the computation of txnId/domainMetadata from the base
+      // checkpoint first.
+      existingSidecars = materialize(sidecarsFromCheckpoint(baseCheckpointPath));
+    }
+    int prevTxnCount = transactionIds.size();
+    int prevDomainMetadataCount = domainMetadatas.size();
 
+    boolean fallbackToFullSnapshot = false;
+    AtomicInteger snapshotAddFileCounter = new AtomicInteger();
     try (CloseableIterator<FilteredColumnarBatch> actions =
         DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
                 engine,
@@ -257,14 +271,14 @@ public class CheckpointWriter {
       newSidecar = sidecarFromAddFiles(actions);
       // If remove file exists, fallback to generating a new sidecar including everything.
       if (removeFileCounter.get() > 0) {
+        fallbackToFullSnapshot = true;
+        existingSidecars = EMPTY_ITERATOR();
         try (CloseableIterator<FilteredColumnarBatch> allActions =
-            snapshot.getCreateCheckpointIterator(engine).map(filterAddFiles())) {
+            snapshot
+                .getCreateCheckpointIterator(engine)
+                .map(filterAddFiles(snapshotAddFileCounter))) {
           newSidecar = sidecarFromAddFiles(allActions);
         }
-      } else if (baseCheckpointMeta.isPresent()) {
-        // When there's no remove files, read existing sidecars from the base checkpoint if it
-        // exists
-        existingSidecars = sidecarsFromCheckpoint(baseCheckpointPath);
       }
     }
     // ==========
@@ -297,6 +311,16 @@ public class CheckpointWriter {
     // ==========
     // Write _last_checkpoint file with our tag, so we can recognize our own checkpoints later.
     if (version > lastCheckpointMeta.version) {
+      int newSidecarCount = fallbackToFullSnapshot ? 1 : carriedSidecarCount + 1;
+      long checkpointActionCount =
+          checkpointActionCount(
+              baseCheckpointMeta.isPresent(),
+              fallbackToFullSnapshot,
+              addFileCounter.get(),
+              snapshotAddFileCounter.get(),
+              prevTxnCount,
+              prevDomainMetadataCount,
+              newSidecarCount);
       engine
           .getJsonHandler()
           .writeJsonFileAtomically(
@@ -304,16 +328,45 @@ public class CheckpointWriter {
               singletonCloseableIterator(
                   new CheckpointMetaData(
                           version,
-                          lastCheckpointMeta.size + addFileCounter.get() - removeFileCounter.get(),
+                          checkpointActionCount,
                           Optional.empty(),
                           Map.of(
                               TAG_DELTASINK_CHECKPOINT,
                               "true",
                               TAG_SIDECAR_COUNT,
-                              String.valueOf(lastSidecarCount + 1)))
+                              String.valueOf(newSidecarCount)))
                       .toRow()),
               true /* overwrite */);
     }
+  }
+
+  /**
+   * Computes {@code _last_checkpoint.size}, defined by the protocol as the number of actions stored
+   * in the checkpoint. Keep append-only checkpoints incremental to avoid reading old sidecars;
+   * fallback checkpoints count actions while rebuilding from the full snapshot.
+   */
+  private long checkpointActionCount(
+      boolean hasBaseCheckpoint,
+      boolean fallbackToFullSnapshot,
+      int addFileCount,
+      int snapshotAddFileCount,
+      int prevTxnCount,
+      int prevDomainMetadataCount,
+      int newSidecarCount) {
+    if (fallbackToFullSnapshot || !hasBaseCheckpoint) {
+      int sidecarAddFileCount = fallbackToFullSnapshot ? snapshotAddFileCount : addFileCount;
+      return sidecarAddFileCount
+          + 3 // protocol, metadata, checkpointMetadata
+          + newSidecarCount
+          + transactionIds.size()
+          + domainMetadatas.size();
+    }
+
+    return lastCheckpointMeta.size
+        + addFileCount
+        + (newSidecarCount - lastCheckpointSidecarCount)
+        + (transactionIds.size() - prevTxnCount)
+        + (domainMetadatas.size() - prevDomainMetadataCount);
   }
 
   /**
@@ -338,7 +391,8 @@ public class CheckpointWriter {
             .map(FileReadResult::getData)
             .map(filterActions(Map.of("sidecar", sidecarCounter)));
 
-    if (sidecarMergeThreshold > 0 && lastSidecarCount >= sidecarMergeThreshold - 1) {
+    carriedSidecarCount = lastCheckpointSidecarCount;
+    if (sidecarMergeThreshold > 0 && lastCheckpointSidecarCount >= sidecarMergeThreshold - 1) {
       // Too many existing sidecars. Merge them into one.
       try (CloseableIterator<FileStatus> sidecarFiles =
               existingSidecars
@@ -357,27 +411,65 @@ public class CheckpointWriter {
                   .map(FileReadResult::getData)
                   .map(ColumnVectorUtils::wrap)) {
         existingSidecars = rowsToBatch(Stream.of(sidecarFromAddFiles(addFileRows)));
-        lastSidecarCount = 1;
+        carriedSidecarCount = 1;
       }
     }
     return existingSidecars;
   }
 
-  /**
-   * Return a mapping function that further filter add files from a filtered column batch
-   *
-   * @return a mapping function that applies to a filtered column batch
-   */
-  private Function<FilteredColumnarBatch, FilteredColumnarBatch> filterAddFiles() {
+  private CloseableIterator<FilteredColumnarBatch> materialize(
+      CloseableIterator<FilteredColumnarBatch> iterator) {
+    List<FilteredColumnarBatch> batches = iterator.toInMemoryList();
+    for (FilteredColumnarBatch batch : batches) {
+      batch.getRows().toInMemoryList();
+    }
+    return toCloseableIterator(batches.iterator());
+  }
+
+  private void accumulateNonFileActions(ColumnarBatch columnarBatch, int rowId) {
+    int txnOrdinal = columnarBatch.getSchema().indexOf("txn");
+    int dmOrdinal = columnarBatch.getSchema().indexOf("domainMetadata");
+
+    ColumnVector txnVector = columnarBatch.getColumnVector(txnOrdinal);
+    if (!txnVector.isNullAt(rowId)) {
+      String appId = txnVector.getChild(0).getString(rowId);
+      long txnVersion = txnVector.getChild(1).getLong(rowId);
+      transactionIds.merge(appId, txnVersion, Math::max);
+    }
+    ColumnVector dmVector = columnarBatch.getColumnVector(dmOrdinal);
+    if (!dmVector.isNullAt(rowId)) {
+      String domain = dmVector.getChild(0).getString(rowId);
+      String configuration = dmVector.getChild(1).getString(rowId);
+      boolean removed = dmVector.getChild(2).getBoolean(rowId);
+      if (removed) {
+        domainMetadatas.remove(domain);
+      } else {
+        domainMetadatas.put(domain, configuration);
+      }
+    }
+  }
+
+  private Function<FilteredColumnarBatch, FilteredColumnarBatch> filterAddFiles(
+      AtomicInteger addFileCounter) {
     return (input) -> {
       int addOrdinal = input.getData().getSchema().indexOf("add");
       return new FilteredColumnarBatch(
           input.getData(),
           ColumnVectorUtils.filter(
               input.getData().getSize(),
-              (rowId) ->
-                  input.getSelectionVector().map(cv -> cv.getBoolean(rowId)).orElse(true)
-                      && !input.getData().getColumnVector(addOrdinal).isNullAt(rowId)));
+              (rowId) -> {
+                boolean selected =
+                    input.getSelectionVector().map(cv -> cv.getBoolean(rowId)).orElse(true);
+                if (!selected) {
+                  return false;
+                }
+
+                if (!input.getData().getColumnVector(addOrdinal).isNullAt(rowId)) {
+                  addFileCounter.incrementAndGet();
+                  return true;
+                }
+                return false;
+              }));
     };
   }
 
@@ -386,6 +478,7 @@ public class CheckpointWriter {
    *
    * <ul>
    *   <li>Aggregates {@code txn} actions into {@link #transactionIds} (max version per appId)
+   *   <li>Aggregates {@code domainMetadata} actions into {@link #domainMetadatas}
    *   <li>Filters rows where {@code notNullName} is non-null
    *   <li>Optionally increments {@code counter} for each retained row
    * </ul>
@@ -400,9 +493,6 @@ public class CheckpointWriter {
   private Function<ColumnarBatch, FilteredColumnarBatch> filterActions(
       Map<String, AtomicInteger> nameToCounters) {
     return (columnarBatch) -> {
-      int txnOrdinal = columnarBatch.getSchema().indexOf("txn");
-      int dmOrdinal = columnarBatch.getSchema().indexOf("domainMetadata");
-
       var entries = new ArrayList<>(nameToCounters.entrySet());
       Integer[] ordinals = new Integer[nameToCounters.size()];
       AtomicInteger[] counters = new AtomicInteger[nameToCounters.size()];
@@ -416,23 +506,7 @@ public class CheckpointWriter {
           ColumnVectorUtils.filter(
               columnarBatch.getSize(),
               (rowId) -> {
-                ColumnVector txnVector = columnarBatch.getColumnVector(txnOrdinal);
-                if (!txnVector.isNullAt(rowId)) {
-                  String appId = txnVector.getChild(0).getString(rowId);
-                  long txnVersion = txnVector.getChild(1).getLong(rowId);
-                  transactionIds.merge(appId, txnVersion, Math::max);
-                }
-                ColumnVector dmVector = columnarBatch.getColumnVector(dmOrdinal);
-                if (!dmVector.isNullAt(rowId)) {
-                  String domain = dmVector.getChild(0).getString(rowId);
-                  String configuration = dmVector.getChild(1).getString(rowId);
-                  boolean removed = dmVector.getChild(2).getBoolean(rowId);
-                  if (removed) {
-                    domainMetadatas.remove(domain);
-                  } else {
-                    domainMetadatas.put(domain, configuration);
-                  }
-                }
+                accumulateNonFileActions(columnarBatch, rowId);
                 for (int i = 0; i < ordinals.length; i++) {
                   if (!columnarBatch.getColumnVector(ordinals[i]).isNullAt(rowId)) {
                     counters[i].incrementAndGet();

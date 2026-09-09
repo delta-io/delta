@@ -151,6 +151,39 @@ class CheckpointWriterTest extends TestHelper {
         .getPostCommitSnapshot();
   }
 
+  private Optional<Snapshot> writeTableWithTransactionId(
+      Engine engine,
+      String tablePath,
+      StructType schema,
+      String applicationId,
+      long transactionVersion) {
+    AddFile dummyAddFile =
+        AddFile.convertDataFileStatus(
+            schema,
+            URI.create(tablePath),
+            new DataFileStatus(UUID.randomUUID().toString(), 1000L, 2000L, Optional.empty()),
+            Collections.emptyMap(),
+            true,
+            Collections.emptyMap(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty());
+
+    var txn =
+        TableManager.loadSnapshot(tablePath)
+            .build(engine)
+            .buildUpdateTableTransaction("dummy", Operation.WRITE)
+            .withTransactionId(applicationId, transactionVersion)
+            .build(engine);
+
+    return txn.commit(
+            engine,
+            CloseableIterable.inMemoryIterable(
+                Utils.singletonCloseableIterator(
+                    SingleAction.createAddFileSingleAction(dummyAddFile.toRow()))))
+        .getPostCommitSnapshot();
+  }
+
   private void assertSnapshotRead(
       Engine engine, String tablePath, long version, int numSidecars, int numActions) {
     SnapshotImpl latest = (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
@@ -209,6 +242,16 @@ class CheckpointWriterTest extends TestHelper {
    */
   private void assertLastCheckpointFile(
       Engine engine, Snapshot snapshot, int expectedVersion, int expectedNumSidecars) {
+    assertLastCheckpointFile(
+        engine, snapshot, expectedVersion, expectedNumSidecars, -1 /* expectedSize */);
+  }
+
+  private void assertLastCheckpointFile(
+      Engine engine,
+      Snapshot snapshot,
+      int expectedVersion,
+      int expectedNumSidecars,
+      int expectedSize) {
     String tablePath = snapshot.getPath();
     String lastCheckpointPath = tablePath + "/_delta_log/_last_checkpoint";
 
@@ -231,14 +274,18 @@ class CheckpointWriterTest extends TestHelper {
         assertEquals(expectedVersion, metadata.version, "Checkpoint version mismatch");
       }
 
+      if (expectedSize >= 0) {
+        assertEquals(expectedSize, metadata.size, "Checkpoint size mismatch");
+      }
+
       // Verify tags contain TAG_FLINK_DELTASINK_CHECKPOINT
       assertTrue(
           Boolean.parseBoolean(
               metadata.tags.getOrDefault(CheckpointWriter.TAG_DELTASINK_CHECKPOINT, "false")),
           "Expected TAG_DELTASINK_CHECKPOINT to be true in _last_checkpoint");
 
-      // Verify number of sidecars if parts are present
-      if (expectedNumSidecars >= 0 && metadata.parts.isPresent()) {
+      // Verify number of sidecars tracked by the Flink checkpoint writer.
+      if (expectedNumSidecars >= 0) {
         assertEquals(
             expectedNumSidecars,
             Integer.parseInt(metadata.tags.getOrDefault(TAG_SIDECAR_COUNT, "0")),
@@ -375,6 +422,10 @@ class CheckpointWriterTest extends TestHelper {
           s.ifPresent(wrap(sn -> new CheckpointWriter(engine, sn).write()));
 
           assertSnapshotRead(engine, tablePath, 27, 1, 26);
+          s.ifPresent(
+              snapshot ->
+                  assertLastCheckpointFile(
+                      engine, snapshot, /* version */ 27, /* numSidecar */ 1, /* size */ 30));
         });
   }
 
@@ -413,6 +464,8 @@ class CheckpointWriterTest extends TestHelper {
               (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
 
           assertSnapshotRead(engine, snapshotAfter, -1, 2, 41);
+          assertLastCheckpointFile(
+              engine, finalSnapshot, /* version */ 40, /* numSidecar */ 2, /* size */ 46);
         });
   }
 
@@ -432,15 +485,27 @@ class CheckpointWriterTest extends TestHelper {
 
           writeDomainMetadata(engine, tablePath, "domain1", "conf1");
           writeDomainMetadata(engine, tablePath, "domain2", "conf2");
-          snapshot = writeDomainMetadata(engine, tablePath, "domain1", "conf2");
+          writeDomainMetadata(engine, tablePath, "domain1", "conf2");
+          snapshot = writeTableWithTransactionId(engine, tablePath, schema, "app1", 5L);
 
           new CheckpointWriter(engine, snapshot.get()).write();
-          // Write a new commit then read the table
-          writeTable(engine, tablePath, schema).get();
+
+          // Write a plain data commit and create an incremental checkpoint. Live non-file actions
+          // from the base checkpoint must be carried forward even when not updated in the
+          // incremental range.
+          snapshot = writeTable(engine, tablePath, schema);
+          new CheckpointWriter(engine, snapshot.get()).write();
+
           SnapshotImpl snapshotAfter =
               (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
           assertSnapshotRead(
-              engine, snapshotAfter, 3, 1, 2, Map.of("domain1", "conf2", "domain2", "conf2"));
+              engine, snapshotAfter, 5, 2, 3, Map.of("domain1", "conf2", "domain2", "conf2"));
+          assertEquals(Optional.of(5L), snapshotAfter.getLatestTransactionVersion(engine, "app1"));
+
+          // 3 AddFiles in sidecars + protocol + metadata + checkpointMetadata + 2 sidecars
+          // + carried txn + 2 carried domainMetadata actions.
+          assertLastCheckpointFile(
+              engine, snapshot.get(), /* version */ 5, /* numSidecar */ 2, /* size */ 11);
         });
   }
 }
