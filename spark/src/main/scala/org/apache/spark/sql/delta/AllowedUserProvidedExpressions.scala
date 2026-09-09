@@ -334,6 +334,9 @@ object AllowedUserProvidedExpressions {
     expression[StructsToCsv]("to_csv"),
 
     // Special expressions that are not built-in expressions.
+    classOf[With],
+    classOf[CommonExpressionDef],
+    classOf[CommonExpressionRef],
     expression[AttributeReference]("col"),
     expression[Literal]("lit")
   ) ++ AllowedUserProvidedExpressionsShims.additionalExpressions
