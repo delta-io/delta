@@ -81,7 +81,6 @@ class CachedSnapshotManagerSuite
   ): CachedSnapshotManager = {
     new CachedSnapshotManager(
       new Path(dir.getCanonicalPath),
-      catalogTableOpt = None,
       kernelContext)
   }
 

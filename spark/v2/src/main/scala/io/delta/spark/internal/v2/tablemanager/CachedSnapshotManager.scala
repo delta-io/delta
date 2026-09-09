@@ -16,6 +16,7 @@
 package io.delta.spark.internal.v2.tablemanager
 
 import java.util.Optional
+import java.util.concurrent.atomic.AtomicReference
 
 import scala.jdk.OptionConverters._
 
@@ -56,8 +57,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  * dependent modules may layer incremental refresh strategies on this base implementation.
  */
 private[tablemanager] class CachedSnapshotManager(
-    val tablePath: Path,
-    catalogTableOpt: Option[CatalogTable],
+    tablePath: Path,
     kernelContext: KernelContext)
     extends DeltaV2SnapshotManager
     with DeltaV2Logging {
@@ -66,6 +66,27 @@ private[tablemanager] class CachedSnapshotManager(
 
   @volatile private var currentSnapshot: CachedSnapshot = _
   @volatile private var tableId: String = _
+  private val _unsafeVolatileCatalogTable = new AtomicReference[CatalogTable]()
+
+  /**
+   * The catalog table most recently associated with this manager.
+   *
+   * This is best-effort state: concurrent callers may replace it at any time, so a caller must
+   * capture the returned value once rather than expect successive reads to agree.
+   */
+  private[tablemanager] def unsafeVolatileCatalogTable: Option[CatalogTable] =
+    Option(_unsafeVolatileCatalogTable.get())
+
+  private[tablemanager] def setUnsafeVolatileCatalogTable(table: CatalogTable): Unit =
+    _unsafeVolatileCatalogTable.set(table)
+
+  def this(
+      tablePath: Path,
+      catalogTableOpt: Option[CatalogTable],
+      kernelContext: KernelContext) = {
+    this(tablePath, kernelContext)
+    catalogTableOpt.foreach(setUnsafeVolatileCatalogTable)
+  }
 
   // === DeltaV2SnapshotManager implementation ================================
 
@@ -112,7 +133,7 @@ private[tablemanager] class CachedSnapshotManager(
   // === Snapshot lifecycle ===================================================
 
   // Eviction only drops the process cache's reference. Escaped managers remain fully functional.
-  def retire(): Unit = ()
+  private[tablemanager] def retire(): Unit = ()
 
   // === Acquisition ==========================================================
 
@@ -182,7 +203,7 @@ private[tablemanager] class CachedSnapshotManager(
     f(SnapshotManagerFactory.create(
       tablePath.toString,
       kernelContext.getDefaultEngine(),
-      catalogTableOpt.toJava))
+      unsafeVolatileCatalogTable.toJava))
 
   private def validateTableIdentity(snapshot: Snapshot): Unit = synchronized {
     val snapshotTableId = snapshot.metadata.id
