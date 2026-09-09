@@ -171,33 +171,42 @@ private[tablemanager] class CachedSnapshotManager(
   private def rebuildAndInstall(): Snapshot = {
     recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.rebuild") {
       val validationStartedAt = System.currentTimeMillis()
-      val existing = currentSnapshot
-      val refreshed = if (existing == null) {
-        withUncachedSnapshotManager(_.loadLatestSnapshot())
-      } else {
-        loadLatestFrom(existing.snapshot)
-      }
-      synchronized {
-        try {
-          validateTableIdentity(refreshed)
-        } catch {
-          case NonFatal(error) =>
-            throw error
-        }
-        val current = currentSnapshot
-        if (current != null && current.snapshot.version >= refreshed.version) {
-          currentSnapshot = CachedSnapshot(current.snapshot, validationStartedAt)
-          current.snapshot
+      withUncachedSnapshotManager { manager =>
+        val existing = currentSnapshot
+        val refreshed = if (existing == null) {
+          manager.loadLatestSnapshot()
         } else {
-          currentSnapshot = CachedSnapshot(refreshed, validationStartedAt)
-          refreshed
+          manager.loadLatestSnapshotFrom(existing.snapshot)
+        }
+        synchronized {
+          try {
+            validateTableIdentity(refreshed)
+          } catch {
+            case NonFatal(error) =>
+              if (existing == null || (refreshed ne existing.snapshot)) {
+                try {
+                  manager.releaseSnapshot(refreshed)
+                } catch {
+                  case NonFatal(cleanupError) => error.addSuppressed(cleanupError)
+                }
+              }
+              throw error
+          }
+          val current = currentSnapshot
+          if (current != null && current.snapshot.version >= refreshed.version) {
+            currentSnapshot = CachedSnapshot(current.snapshot, validationStartedAt)
+            if (existing == null || (refreshed ne existing.snapshot)) {
+              manager.releaseSnapshot(refreshed)
+            }
+            current.snapshot
+          } else {
+            currentSnapshot = CachedSnapshot(refreshed, validationStartedAt)
+            refreshed
+          }
         }
       }
     }
   }
-
-  private def loadLatestFrom(existing: Snapshot): Snapshot =
-    withUncachedSnapshotManager(_.loadLatestSnapshotFrom(existing))
 
   private def acquireSnapshotAt(version: Long): Snapshot = {
     val existing = currentSnapshot

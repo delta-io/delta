@@ -28,6 +28,7 @@ import java.util.concurrent.{
 import java.util.concurrent.atomic.AtomicLong
 
 import scala.jdk.CollectionConverters._
+import scala.util.control.NonFatal
 
 // format: off
 // scalastyle:off import.ordering.noEmptyLine
@@ -44,7 +45,6 @@ import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.catalog.{DeltaCatalogV1 => DeltaCatalog}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FSDataInputStream, Path, RawLocalFileSystem}
@@ -535,7 +535,7 @@ class CachedSnapshotManagerSuite
                   }
                 }
               } catch {
-                case failure: Throwable => failures.add(failure)
+                case NonFatal(failure) => failures.add(failure)
               }
             })
           }
@@ -550,7 +550,7 @@ class CachedSnapshotManagerSuite
                 }
               }
             } catch {
-              case failure: Throwable => failures.add(failure)
+              case NonFatal(failure) => failures.add(failure)
             }
           })
           val threads = appender +: readers
@@ -581,7 +581,7 @@ class CachedSnapshotManagerSuite
               try {
                 snapshots.add(mgr.loadLatestSnapshot())
               } catch {
-                case failure: Throwable => failures.add(failure)
+                case NonFatal(failure) => failures.add(failure)
               }
             })
           }
@@ -626,7 +626,7 @@ class CachedSnapshotManagerSuite
                 case 2 => currentResults.add(result)
               }
             } catch {
-              case failure: Throwable => failures.add(failure)
+              case NonFatal(failure) => failures.add(failure)
             }
           })
         }

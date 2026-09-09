@@ -48,6 +48,9 @@ trait DeltaV2SnapshotManager {
    */
   def loadLatestSnapshotFrom(existing: Snapshot): Snapshot = loadLatestSnapshot()
 
+  /** Releases a manager-owned snapshot that the caller did not retain. */
+  def releaseSnapshot(snapshot: Snapshot): Unit = ()
+
   /**
    * Loads and returns a snapshot at a specific version.
    *
