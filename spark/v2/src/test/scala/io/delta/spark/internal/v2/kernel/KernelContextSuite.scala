@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
-package io.delta.spark.internal.v2
+package io.delta.spark.internal.v2.kernel
 
 import java.util.concurrent.FutureTask
+
+import org.apache.spark.sql.delta.storage.LogStore
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.SparkSession
@@ -27,18 +29,28 @@ class KernelContextSuite extends SparkFunSuite with SharedSparkSession {
   private val hadoopConfKey = "kernel.context.test"
   private val invariantHadoopConfKey = "kernel.context.invariant.test"
 
+  private def newContext(options: Map[String, String] = Map.empty): KernelContext =
+    KernelContext(options, LogStore.createLogStore(spark))
+
   test("an empty context uses the active session Hadoop configuration") {
     withSQLConf(hadoopConfKey -> "session-value") {
-      assert(KernelContext.empty.materializeHadoopConf().get(hadoopConfKey) == "session-value")
+      assert(newContext().materializeHadoopConf().get(hadoopConfKey) == "session-value")
     }
   }
 
   test("session-invariant filesystem options override the active session configuration") {
     withSQLConf(hadoopConfKey -> "session-value") {
-      val context = KernelContext(Map(hadoopConfKey -> "context-value"))
+      val context = newContext(Map(hadoopConfKey -> "context-value"))
 
       assert(context.materializeHadoopConf().get(hadoopConfKey) == "context-value")
     }
+  }
+
+  test("context retains the provided LogStore") {
+    val logStore = LogStore.createLogStore(spark)
+    val context = KernelContext(Map.empty, logStore)
+
+    assert(context.logStore eq logStore)
   }
 
   test("materializeHadoopConf resolves the active Spark session on every call") {
@@ -46,7 +58,7 @@ class KernelContextSuite extends SparkFunSuite with SharedSparkSession {
     val otherSession = spark.newSession()
     originalSession.conf.set(hadoopConfKey, "original-session")
     otherSession.conf.set(hadoopConfKey, "other-session")
-    val context = KernelContext.empty
+    val context = newContext()
 
     try {
       SparkSession.setActiveSession(originalSession)
@@ -66,7 +78,7 @@ class KernelContextSuite extends SparkFunSuite with SharedSparkSession {
     val sessionA = spark.newSession()
     val sessionB = spark.newSession()
     val invariantOptions = Map(invariantHadoopConfKey -> "context-value")
-    val context = KernelContext(invariantOptions)
+    val context = newContext(invariantOptions)
 
     try {
       sessionA.conf.set(hadoopConfKey, "session-a")
@@ -107,13 +119,21 @@ class KernelContextSuite extends SparkFunSuite with SharedSparkSession {
   }
 
   test("constructing a context with null session-invariant filesystem options throws") {
+    val logStore = LogStore.createLogStore(spark)
     Seq[() => KernelContext](
-      () => new KernelContext(null),
-      () => KernelContext(null)).foreach { createContext =>
+      () => new KernelContext(null, logStore),
+      () => KernelContext(null, logStore)).foreach { createContext =>
       val error = intercept[IllegalArgumentException] {
         createContext()
       }
       assert(error.getMessage == "requirement failed: sessionInvariantFsOptions must not be null")
     }
+  }
+
+  test("constructing a context with a null LogStore throws") {
+    val error = intercept[IllegalArgumentException] {
+      KernelContext(Map.empty, null)
+    }
+    assert(error.getMessage == "requirement failed: logStore must not be null")
   }
 }
