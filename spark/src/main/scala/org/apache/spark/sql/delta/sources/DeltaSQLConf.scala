@@ -2173,6 +2173,20 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  object GeneratedColumnPartitionFilterInferenceMode extends
+    DeltaBreakingChangeEnum(GENERATED_COLUMN_PARTITION_FILTER_INFERENCE_MODE)
+
+  val GENERATED_COLUMN_PARTITION_FILTER_INFERENCE_MODE =
+    buildConf("generatedColumn.partitionFilterInference.mode")
+      .internal()
+      .doc("Controls telemetry and suppression for generated-column partition filter " +
+        "inferences. LOG_ONLY records candidate signatures while retaining all inferred " +
+        "filters. ASSERT also suppresses candidates covered by the current safety policy.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValues(DeltaBreakingChangeEnum.validValues)
+      .createWithDefault(DeltaBreakingChangeEnum.LOG_ONLY)
+
   val GENERATED_COLUMN_ALLOW_NULLABLE =
     buildConf("generatedColumn.allowNullableIngest.enabled")
       .internal()
