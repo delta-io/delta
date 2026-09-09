@@ -70,7 +70,7 @@ class TypeWideningStreamingV2SourceSuite
   override protected def shouldFailTests: Set[String] =
     super.shouldFailTests ++ Set(
       // Delta log event is not supported in V2, so event-logging tests are not meaningful.
-      "schema changed event is logged for type widening",
+      "schema changed event is logged for type widening"
     )
 }
 
