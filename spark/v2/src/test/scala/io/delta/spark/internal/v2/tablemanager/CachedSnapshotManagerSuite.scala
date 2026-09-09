@@ -21,23 +21,23 @@ import java.util.Optional
 import java.util.concurrent.{
   ConcurrentLinkedQueue,
   CopyOnWriteArrayList,
+  CountDownLatch,
   CyclicBarrier,
   TimeUnit
 }
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 
 import scala.jdk.CollectionConverters._
+import scala.util.control.NonFatal
 
 // format: off
 // scalastyle:off import.ordering.noEmptyLine
 // scalastyle:off import.ordering.wrongOrderInGroup
 import org.apache.spark.sql.delta.storage.LogStore
 import io.delta.spark.internal.v2.kernel.{KernelContext, KernelEngineFactory}
-import io.delta.kernel.spi.KernelBackend
 
 import io.delta.sql.{DeltaSparkSessionExtensionV1 => DeltaSparkSessionExtension}
 
-import org.apache.spark.sql.delta.DeltaIllegalStateException
 import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.catalog.{DeltaCatalogV1 => DeltaCatalog}
@@ -51,7 +51,14 @@ import org.apache.spark.SparkConf
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{
+  CatalogStorageFormat,
+  CatalogTable,
+  CatalogTableType
+}
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.StructType
 // scalastyle:on import.ordering.noEmptyLine
 // scalastyle:on import.ordering.wrongOrderInGroup
 
@@ -108,6 +115,33 @@ class CachedSnapshotManagerSuite
     val alive = threads.filter(_.isAlive)
     alive.foreach(_.interrupt())
     assert(alive.isEmpty, s"Threads did not terminate: ${alive.map(_.getName).mkString(", ")}")
+  }
+
+  // === Catalog metadata ======================================
+
+  test("catalog table reference supports empty, seeded, and replacement states") {
+    withTempDir { dir =>
+      val tablePath = new Path(dir.getCanonicalPath)
+      val kernelContext = KernelContext(Map.empty, LogStore.createLogStore(spark))
+      val firstCatalogTable = CatalogTable(
+        identifier = TableIdentifier("first_table"),
+        tableType = CatalogTableType.EXTERNAL,
+        storage = CatalogStorageFormat.empty.copy(locationUri = Some(dir.toURI)),
+        schema = new StructType())
+      val secondCatalogTable =
+        firstCatalogTable.copy(identifier = TableIdentifier("second_table"))
+
+      val emptyManager = new CachedSnapshotManager(tablePath, kernelContext)
+      assert(emptyManager.unsafeVolatileCatalogTable.isEmpty)
+      emptyManager.setUnsafeVolatileCatalogTable(firstCatalogTable)
+      assert(emptyManager.unsafeVolatileCatalogTable.contains(firstCatalogTable))
+      emptyManager.setUnsafeVolatileCatalogTable(secondCatalogTable)
+      assert(emptyManager.unsafeVolatileCatalogTable.contains(secondCatalogTable))
+
+      val seededManager =
+        new CachedSnapshotManager(tablePath, Some(firstCatalogTable), kernelContext)
+      assert(seededManager.unsafeVolatileCatalogTable.contains(firstCatalogTable))
+    }
   }
 
   // === Cold start ============================================
@@ -219,8 +253,7 @@ class CachedSnapshotManagerSuite
         assert(manager.loadSnapshotAt(1L).version == 1L)
         assert(kernelContext.getDefaultEngine() eq retainedEngine)
         val expectedSessionMarker =
-          if (KernelBackend.resolve() == KernelBackend.JNR) "second-operation"
-          else "first-operation"
+          "first-operation"
         assertRecordingFileSystemObserved(expectedSessionMarker)
       } finally {
         if (manager != null) manager.retire()
@@ -229,21 +262,41 @@ class CachedSnapshotManagerSuite
     }
   }
 
-  test("previously returned snapshot remains usable after installing a newer snapshot") {
+  test("superseded and retired snapshots release persisted state and remain usable") {
     withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
       withTempDir { dir =>
         createDeltaTable(dir)
         val mgr = createManager(dir)
-        val previous = mgr.loadLatestSnapshot()
-        val previousFileCount = previous.allFiles.count()
+        try {
+          val beforePreviousStatsRddIds = spark.sparkContext.getPersistentRDDs.keySet
+          val previous = mgr.loadLatestSnapshot()
+          val previousFileCount = previous.allFiles.count()
+          val previousStatsCount = previous.withStats.count()
+          val previousRddIds =
+            spark.sparkContext.getPersistentRDDs.keySet -- beforePreviousStatsRddIds
+          assert(previousRddIds.nonEmpty)
 
-        appendToDeltaTable(dir)
-        val current = mgr.loadLatestSnapshot()
+          appendToDeltaTable(dir)
+          val current = mgr.loadLatestSnapshot()
+          assert(previousRddIds.intersect(spark.sparkContext.getPersistentRDDs.keySet).isEmpty)
+          val beforeCurrentStatsRddIds = spark.sparkContext.getPersistentRDDs.keySet
+          val currentStatsCount = current.withStats.count()
+          val currentRddIds =
+            spark.sparkContext.getPersistentRDDs.keySet -- beforeCurrentStatsRddIds
+          assert(currentRddIds.nonEmpty)
 
-        assert(previous.version == 0L)
-        assert(current.version == 1L)
-        assert(previous.allFiles.count() == previousFileCount)
-        assert(current.allFiles.count() > previousFileCount)
+          assert(previous.version == 0L)
+          assert(current.version == 1L)
+          assert(previous.allFiles.count() == previousFileCount)
+          assert(previous.withStats.count() == previousStatsCount)
+          assert(current.allFiles.count() > previousFileCount)
+
+          mgr.retire()
+          assert(currentRddIds.intersect(spark.sparkContext.getPersistentRDDs.keySet).isEmpty)
+          assert(current.withStats.count() == currentStatsCount)
+        } finally {
+          mgr.retire()
+        }
       }
     }
   }
@@ -431,20 +484,21 @@ class CachedSnapshotManagerSuite
 
   // === Table identity validation ==============================
 
-  test("table identity mismatch fails after the table is recreated at the same path") {
+  test("table recreation at the same path replaces the cached snapshot") {
     withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
       withTempDir { dir =>
         createDeltaTable(dir)
         val mgr = createManager(dir)
         try {
-          mgr.loadLatestSnapshot()
+          val previous = mgr.loadLatestSnapshot()
           JavaUtils.deleteRecursively(dir)
           createDeltaTable(dir)
 
-          val error = intercept[DeltaIllegalStateException] {
-            mgr.loadLatestSnapshot()
-          }
-          assert(error.getErrorClass == "INTERNAL_ERROR")
+          val replacement = mgr.loadLatestSnapshot()
+          assert(replacement.version == 0L)
+          assert(replacement.metadata.id != previous.metadata.id)
+          assert(replacement ne previous)
+          assert(mgr.loadLatestSnapshot() eq replacement)
         } finally {
           mgr.retire()
         }
@@ -500,6 +554,55 @@ class CachedSnapshotManagerSuite
   }
 
   // === Concurrency correctness ================================
+
+  test("an older refresh completing late does not replace a newer cached snapshot") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val kernelContext = KernelContext(
+          Map(
+            "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
+            "fs.file.impl.disable.cache" -> "true"),
+          LogStore.createLogStore(spark))
+        val manager = createManager(dir, kernelContext)
+        val failures = new ConcurrentLinkedQueue[Throwable]()
+        val staleResult = new AtomicReference[Snapshot]()
+        val staleThread = new Thread(() => {
+          try {
+            staleResult.set(manager.loadLatestSnapshot())
+          } catch {
+            case NonFatal(failure) => failures.add(failure)
+          }
+        }, "stale-refresh")
+        staleThread.setDaemon(true)
+
+        try {
+          assert(manager.loadLatestSnapshot().version == 0L)
+          appendToDeltaTable(dir)
+          CachedSnapshotManagerBlockingFileSystem.arm(staleThread.getName)
+          staleThread.start()
+          assert(
+            CachedSnapshotManagerBlockingFileSystem.awaitCapturedListing(),
+            "stale refresh did not capture a transaction-log listing")
+
+          appendToDeltaTable(dir)
+          val newerSnapshot = manager.loadLatestSnapshot()
+          assert(newerSnapshot.version == 2L)
+
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          staleThread.join(TimeUnit.SECONDS.toMillis(30L))
+          assert(!staleThread.isAlive, "stale refresh thread did not terminate")
+          assert(failures.isEmpty, s"Stale refresh failed: ${failures.toArray.mkString(", ")}")
+          assert(staleResult.get() eq newerSnapshot)
+          assert(manager.loadLatestSnapshot() eq newerSnapshot)
+        } finally {
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          staleThread.interrupt()
+          manager.retire()
+        }
+      }
+    }
+  }
 
   test("concurrent appends and loadLatestSnapshot calls observe monotonically newer versions") {
     withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
@@ -692,4 +795,43 @@ private[tablemanager] class CachedSnapshotManagerRecordingFileSystem extends Raw
       operation,
       sessionMarker,
       invariantMarker)
+}
+
+private[tablemanager] object CachedSnapshotManagerBlockingFileSystem {
+  private val targetThreadName = new AtomicReference[String]()
+  @volatile private var capturedListing = new CountDownLatch(0)
+  @volatile private var releaseCapturedListing = new CountDownLatch(0)
+
+  def arm(threadName: String): Unit = synchronized {
+    targetThreadName.set(threadName)
+    capturedListing = new CountDownLatch(1)
+    releaseCapturedListing = new CountDownLatch(1)
+  }
+
+  def awaitCapturedListing(): Boolean =
+    capturedListing.await(30L, TimeUnit.SECONDS)
+
+  def releaseListing(): Unit =
+    releaseCapturedListing.countDown()
+
+  def blockAfterListing(path: Path): Unit = {
+    val expectedThreadName = targetThreadName.get()
+    if (path.getName == "_delta_log" &&
+        expectedThreadName == Thread.currentThread().getName &&
+        targetThreadName.compareAndSet(expectedThreadName, null)) {
+      capturedListing.countDown()
+      if (!releaseCapturedListing.await(30L, TimeUnit.SECONDS)) {
+        throw new IllegalStateException(
+          "Timed out waiting to release captured transaction-log list")
+      }
+    }
+  }
+}
+
+private[tablemanager] class CachedSnapshotManagerBlockingFileSystem extends RawLocalFileSystem {
+  override def listStatus(path: Path): Array[FileStatus] = {
+    val statuses = super.listStatus(path)
+    CachedSnapshotManagerBlockingFileSystem.blockAfterListing(path)
+    statuses
+  }
 }
