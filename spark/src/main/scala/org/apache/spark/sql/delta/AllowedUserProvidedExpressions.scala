@@ -336,7 +336,7 @@ object AllowedUserProvidedExpressions {
     // Special expressions that are not built-in expressions.
     expression[AttributeReference]("col"),
     expression[Literal]("lit")
-  )
+  ) ++ AllowedUserProvidedExpressionsShims.additionalExpressions
 
   val checkConstraintExpressions: Set[Class[_]] = Set(
     expression[Contains]("contains"),
