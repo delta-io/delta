@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.schema
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaConfigs, DeltaLog, DeltaTableProvider}
+import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaConfigs, DeltaLog, DeltaTableProvider, DeltaTestUtils}
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.ValidateCheckConstraintsMode
@@ -638,7 +638,7 @@ class CheckConstraintsSuite extends QueryTest
 
   test("check constraints with timestamp + interval (TimestampAddInterval) expression") {
     assume(
-      sparkVersionBucket(spark) == "4.2+",
+      DeltaTestUtils.sparkVersionBucket(spark) == "4.2+",
       "TimestampAddInterval is only allowlisted in Spark 4.2")
     withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
       ValidateCheckConstraintsMode.ASSERT.toString) {
