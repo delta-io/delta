@@ -241,12 +241,10 @@ private[tablemanager] class CachedSnapshotManager(
   }
 
   private def withUncachedSnapshotManager[T](f: DeltaV2SnapshotManager => T): T =
-    synchronized {
-      f(SnapshotManagerFactory.create(
-        tablePath.toString,
-        kernelContext.getDefaultEngine(),
-        catalogTableOpt.toJava))
-    }
+    f(SnapshotManagerFactory.create(
+      tablePath.toString,
+      kernelContext.getDefaultEngine(),
+      catalogTableOpt.toJava))
 
   private def validateTableIdentity(snapshot: Snapshot): Unit = synchronized {
     val snapshotTableId = snapshot.metadata.id
