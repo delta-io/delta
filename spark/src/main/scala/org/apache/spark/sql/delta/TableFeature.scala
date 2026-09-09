@@ -437,6 +437,7 @@ object TableFeature {
     if (adaptiveMetadataFeatureEnabled) {
       features += AdaptiveMetadataTableFeature
     }
+    features += ConcurrentIdentityColumnsTableFeature
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
     featureMap
@@ -665,6 +666,28 @@ object IdentityColumnsTableFeature
   }
 }
 
+object ConcurrentIdentityColumnsTableFeature
+  extends WriterFeature(name = "concurrentIdentityColumns_preview")
+  with RemovableFeature {
+  override def requiredFeatures: Set[TableFeature] = Set(
+    DomainMetadataTableFeature,
+    IdentityColumnsTableFeature)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    ConcurrentIdentityColumnsPreDowngradeCommand(table)
+
+  /**
+   * Dropping the feature requires no remaining traces of the service backend: no column may
+   * carry the service-sequence pointer. The pre-downgrade command strips the pointer,
+   * returning the columns to the stock schema-high-water-mark identity path.
+   */
+  override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean =
+    !ConcurrentIdentityColumnSchema.hasConcurrentSequenceMetadata(snapshot.metadata.schema)
+
+  // Only consulted for reader-writer features (requiresHistoryProtection); this is a
+  // writer-only feature, so historical traces never block the drop.
+  override def actionUsesFeature(action: Action): Boolean = false
+}
 
 /** Common base shared by the preview and geospatial table features. */
 abstract class GeoSpatialTableFeatureBase(name: String)

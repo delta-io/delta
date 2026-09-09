@@ -116,7 +116,11 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       queryExecution: QueryExecution,
       schema: StructType,
       data: DataFrame,
-      nullAsDefault: Boolean): (DataFrame, Seq[Constraint], Set[String]) = {
+      nullAsDefault: Boolean,
+      // When defined, identity columns are populated via the reservation's
+      // [[IdentityColumnReservation.reservedSlots]] instead of the metadata-domain HWM.
+      identityColumnReservation: Option[IdentityColumnReservation] = None
+  ): (DataFrame, Seq[Constraint], Set[String]) = {
     val topLevelOutputNames = CaseInsensitiveMap(data.schema.map(f => f.name -> f).toMap)
     lazy val metadataOutputNames = CaseInsensitiveMap(schema.map(f => f.name -> f).toMap)
     val constraints = mutable.ArrayBuffer[Constraint]()
@@ -174,9 +178,35 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
             if (topLevelOutputNames.contains(f.name)) {
               Some(SchemaUtils.fieldToColumn(f))
             } else {
-              // Track high water marks for generated IDENTITY values.
-              track += f.name
-              Some(IdentityColumn.createIdentityColumnGenerationExprAsColumn(f))
+              // CIC path. When the reservation provides a slot for this column, build the
+              // generator with the reserved range start. Then it reserves more from the driver
+              // on demand.
+              identityColumnReservation match {
+                case Some(reservation) if reservation.reservedSlots.contains(f.name) =>
+                  val info = IdentityColumn.getIdentityInfo(f)
+                  val reservedRange = reservation.reservedSlots(f.name)
+                  // Single source of truth for the generator bounds, shared with the MERGE
+                  // path so the (safety-critical) gating cannot drift between INSERT and MERGE.
+                  val (reservedEndOpt, cicReserveConfig) = reservation.generatorBounds(
+                    f.name, reservedRange)
+                  Some(Column(GenerateIdentityValues(PartitionIdentityValueGenerator(
+                    start = reservedRange.start,
+                    step = info.step,
+                    highWaterMarkOpt = None,
+                    reservedEndOpt = reservedEndOpt,
+                    cicReserveConfig = cicReserveConfig))).alias(f.name))
+                case _ =>
+                  // Reaching here with a CIC means the reservation did not provide a slot for this
+                  // column. Fail before writing rather than emitting values that could collide
+                  // with the service-managed sequence.
+                  if (ConcurrentIdentityColumnSchema.hasConcurrentSequenceMetadata(f)) {
+                    throw ConcurrentIdentityColumnErrors.usingWrongGenerator(
+                      Seq(f.name), deltaLog.unsafeVolatileSnapshot.metadata.id)
+                  }
+                  // Track high water marks for generated IDENTITY values.
+                  track += f.name
+                  Some(IdentityColumn.createIdentityColumnGenerationExprAsColumn(f))
+              }
             }
           } else {
             if (topLevelOutputNames.contains(f.name) ||
@@ -241,7 +271,9 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
           .remove(DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY)
           .build()
         field.copy(metadata = newMetadata)
-      } else if (!keepIdentityColumns && isIdentityColumn(field)) {
+      } else if (!keepIdentityColumns &&
+          (isIdentityColumn(field) ||
+            ConcurrentIdentityColumnSchema.hasConcurrentSequenceMetadata(field))) {
         updated = true
         val newMetadata = new MetadataBuilder()
           .withMetadata(field.metadata)
@@ -249,6 +281,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
           .remove(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK)
           .remove(DeltaSourceUtils.IDENTITY_INFO_START)
           .remove(DeltaSourceUtils.IDENTITY_INFO_STEP)
+          .remove(ConcurrentIdentityColumnSchema.SEQUENCE_ID)
           .build()
         field.copy(metadata = newMetadata)
       } else {

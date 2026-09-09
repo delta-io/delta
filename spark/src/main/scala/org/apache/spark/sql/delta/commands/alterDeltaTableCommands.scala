@@ -26,8 +26,9 @@ import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.ClusteringColumnInfo
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.actions.{DropTableFeatureUtils, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{Action, DropTableFeatureUtils, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.cic.IdentitySequenceServices
 import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
@@ -163,10 +164,28 @@ case class AlterTableSetPropertiesDeltaCommand(
 
       // If table redirect feature is updated, validates its property.
       RedirectFeature.validateTableRedirect(txn.snapshot, table.catalogTable, configuration)
-      val newMetadata = metadata.copy(
+      var newMetadata = metadata.copy(
         description = configuration.getOrElse(TableCatalog.PROP_COMMENT, metadata.description),
         configuration = metadata.configuration ++ filteredConfs)
 
+      // Opting the table into the CIC feature converts its identity columns to the service
+      // backend: mint and stamp a sequence per unstamped identity column, seeded past all
+      // durable identity state. Idempotent, so re-running the property set on a table that
+      // already supports the feature converts an unstamped column in place.
+      var cicConversionActions: Seq[Action] = Nil
+      if (ConcurrentIdentityColumnConversion.containsCicFeatureEnablement(configuration)) {
+        // Kill switch: conversion mints service sequences, so it is blocked alongside
+        // writes and CREATE while concurrent identity columns are disabled.
+        if (!sparkSession.conf.get(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED)) {
+          throw ConcurrentIdentityColumnErrors.concurrentIdentityColumnsDisabled(
+            operation = "convert", tableId = newMetadata.id)
+        }
+        val (convertedMetadata, conversionActions) =
+          ConcurrentIdentityColumnConversion.convertOnFeatureOptIn(
+            sparkSession, txn, newMetadata)
+        newMetadata = convertedMetadata
+        cicConversionActions = conversionActions
+      }
       txn.updateMetadata(newMetadata)
 
       // Tag if the metadata update is _only_ for enabling row tracking. This allows for
@@ -187,7 +206,7 @@ case class AlterTableSetPropertiesDeltaCommand(
           tags += (DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true")
         }
       }
-      txn.commit(Nil, DeltaOperations.SetTableProperties(configuration), tags)
+      txn.commit(cicConversionActions, DeltaOperations.SetTableProperties(configuration), tags)
 
       Seq.empty[Row]
     }
@@ -747,9 +766,43 @@ case class AlterTableDropColumnsDeltaCommand(
       columnsToDrop.foreach { columnParts =>
         checkDependentExpressions(sparkSession, columnParts, metadata, txn.protocol)
       }
+      // Service sequences of any dropped CIC identity columns (top-level; identity columns are
+      // never nested), read from the pre-drop schema and retired post-commit.
+      val droppedCicSequenceIds = columnsToDrop.collect { case Seq(name) => name }
+        .flatMap { name =>
+          metadata.schema.fields.find(f => sparkSession.sessionState.conf.resolver(f.name, name))
+            .flatMap(ConcurrentIdentityColumnSchema.getSequenceId)
+        }
 
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.DropColumns(columnsToDrop))
+      // Retire those sequences best-effort and idempotently: the columns (and their pointers) are
+      // gone, so a drop failure only leaves a harmless orphan rather than a live pointer to a
+      // dropped sequence.
+      if (droppedCicSequenceIds.nonEmpty) {
+        import org.apache.spark.sql.delta.cic.DropSequenceRequest
+        val serviceTableId = ConcurrentIdentityColumnSchema.sequenceServiceTableId(metadata)
+        val service = IdentitySequenceServices.resolve(sparkSession)
+        droppedCicSequenceIds.foreach { seqId =>
+          try {
+            service.dropSequence(DropSequenceRequest(seqId, serviceTableId))
+            ConcurrentIdentityColumnObservability.recordDropSequence(
+              provider = table,
+              tableId = serviceTableId,
+              sequenceId = seqId,
+              reason = ConcurrentIdentityColumnObservability.DropReason.DropColumn)
+          } catch {
+            case scala.util.control.NonFatal(e) =>
+              logWarning(s"DROP COLUMN removed a CIC identity column from table ${metadata.id} " +
+                s"but failed to retire its identity sequence $seqId; it stays orphaned.", e)
+              ConcurrentIdentityColumnObservability.recordDropSequenceFailed(
+                provider = table,
+                tableId = serviceTableId,
+                sequenceId = seqId,
+                reason = ConcurrentIdentityColumnObservability.DropReason.DropColumn)
+          }
+        }
+      }
 
       Seq.empty[Row]
     }
@@ -802,6 +855,8 @@ case class AlterTableChangeColumnDeltaCommand(
         SchemaUtils.findColumnPosition(columnPath :+ columnName, oldSchema, resolver)
       })
 
+      // Collects the old sequenceId for any CIC SYNC that replaces it; dropped post-commit.
+      var cicSyncOldSequenceId: Option[String] = None
       def transformSchemaOnce(prevSchema: StructType, change: DeltaChangeColumnSpec) = {
         val columnPath = change.columnPath
         val columnName = change.columnName
@@ -815,17 +870,35 @@ case class AlterTableChangeColumnDeltaCommand(
               if (change.syncIdentity) {
                 assert(oldColumn == newColumn)
                 val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
-                val allowLoweringHighWaterMarkForSyncIdentity = sparkSession.conf
-                  .get(DeltaSQLConf.DELTA_IDENTITY_ALLOW_SYNC_IDENTITY_TO_LOWER_HIGH_WATER_MARK)
-                val field = IdentityColumn.syncIdentity(
-                  deltaLog,
-                  newColumn,
-                  df,
-                  allowLoweringHighWaterMarkForSyncIdentity
-                )
-                txn.setSyncIdentity()
-                txn.readWholeTable()
-                field
+                if (ConcurrentIdentityColumnSync.isCicTable(txn.snapshot)) {
+                  // Kill switch: repair mints a service sequence, so it is blocked alongside
+                  // writes, CREATE, and conversion while concurrent identity columns are
+                  // disabled (DROP FEATURE remains the escape hatch).
+                  if (!sparkSession.conf.get(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED)) {
+                    throw ConcurrentIdentityColumnErrors.concurrentIdentityColumnsDisabled(
+                      operation = "repair (SYNC IDENTITY)", tableId = txn.snapshot.metadata.id)
+                  }
+                  // CIC SYNC is repair-only: reseed the service sequence past the data and
+                  // re-stamp the column's sequenceId. Concurrent writers must see that, so
+                  // skip setSyncIdentity() (which lets them ignore it  and let readWholeTable()
+                  // force a conflict on any racing write.
+                  cicSyncOldSequenceId = ConcurrentIdentityColumnSchema.getSequenceId(oldColumn)
+                  val field = ConcurrentIdentityColumnSync.syncIdentity(txn.snapshot, newColumn, df)
+                  txn.readWholeTable()
+                  field
+                } else {
+                  val allowLoweringHighWaterMarkForSyncIdentity = sparkSession.conf
+                    .get(DeltaSQLConf.DELTA_IDENTITY_ALLOW_SYNC_IDENTITY_TO_LOWER_HIGH_WATER_MARK)
+                  val field = IdentityColumn.syncIdentity(
+                    deltaLog,
+                    newColumn,
+                    df,
+                    allowLoweringHighWaterMarkForSyncIdentity
+                  )
+                  txn.setSyncIdentity()
+                  txn.readWholeTable()
+                  field
+                }
               } else {
                 // Take the name, comment, nullability and data type from newField
                 // It's crucial to keep the old column's metadata, which may contain column mapping
@@ -951,6 +1024,32 @@ case class AlterTableChangeColumnDeltaCommand(
       }
       txn.commit(Nil, operation)
 
+      // Post-commit: retire the old service sequence that SYNC replaced. Best-effort and
+      // idempotent -- dropping after the commit means a failure only leaves a harmless orphan
+      // (the table now points at the new sequence), never a live table pointing at a dropped one.
+      cicSyncOldSequenceId.foreach { oldSeqId =>
+        val meta = txn.metadata
+        import org.apache.spark.sql.delta.cic.DropSequenceRequest
+        val syncServiceTableId = ConcurrentIdentityColumnSchema.sequenceServiceTableId(meta)
+        try {
+          IdentitySequenceServices.resolve(sparkSession).dropSequence(
+            DropSequenceRequest(oldSeqId, syncServiceTableId))
+          ConcurrentIdentityColumnObservability.recordDropSequence(
+            provider = table,
+            tableId = syncServiceTableId,
+            sequenceId = oldSeqId,
+            reason = ConcurrentIdentityColumnObservability.DropReason.SyncReseed)
+        } catch {
+          case scala.util.control.NonFatal(e) =>
+            logWarning(s"SYNC IDENTITY reseeded table ${meta.id} but failed to retire the " +
+              s"old identity sequence $oldSeqId; it stays orphaned in the service.", e)
+            ConcurrentIdentityColumnObservability.recordDropSequenceFailed(
+              provider = table,
+              tableId = syncServiceTableId,
+              sequenceId = oldSeqId,
+              reason = ConcurrentIdentityColumnObservability.DropReason.SyncReseed)
+        }
+      }
       Seq.empty[Row]
     }
   }
