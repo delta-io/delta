@@ -16,14 +16,24 @@
 package io.delta.spark.internal.v2.tablemanager
 
 import java.io.File
+import java.net.URI
 import java.util.Optional
-import java.util.concurrent.{ConcurrentLinkedQueue, CountDownLatch, CyclicBarrier, TimeUnit}
+import java.util.concurrent.{
+  ConcurrentLinkedQueue,
+  CopyOnWriteArrayList,
+  CyclicBarrier,
+  TimeUnit
+}
 import java.util.concurrent.atomic.AtomicLong
+
+import scala.jdk.CollectionConverters._
 
 // format: off
 // scalastyle:off import.ordering.noEmptyLine
 // scalastyle:off import.ordering.wrongOrderInGroup
-import io.delta.spark.internal.v2.kernel.KernelEngineFactory
+import org.apache.spark.sql.delta.storage.LogStore
+import io.delta.spark.internal.v2.kernel.{KernelContext, KernelEngineFactory}
+import io.delta.kernel.spi.KernelBackend
 
 import io.delta.sql.{DeltaSparkSessionExtensionV1 => DeltaSparkSessionExtension}
 
@@ -33,13 +43,13 @@ import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.catalog.{DeltaCatalogV1 => DeltaCatalog}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus, FSDataInputStream, Path, RawLocalFileSystem}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.network.util.JavaUtils
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 import org.apache.spark.sql.test.SharedSparkSession
 // scalastyle:on import.ordering.noEmptyLine
@@ -65,11 +75,40 @@ class CachedSnapshotManagerSuite
     spark.range(numRows).write.format("delta").mode("append").save(dir.getCanonicalPath)
   }
 
-  private def createManager(dir: File): CachedSnapshotManager = {
+  private def createManager(
+      dir: File,
+      kernelContext: KernelContext = KernelContext(Map.empty, LogStore.createLogStore(spark))
+  ): CachedSnapshotManager = {
     new CachedSnapshotManager(
       new Path(dir.getCanonicalPath),
       catalogTableOpt = None,
-      sessionInvariantFsOptions = Map.empty)
+      kernelContext)
+  }
+
+  private def setRecordingMarkers(session: SparkSession, sessionMarker: String): Unit = {
+    session.conf.set(
+      CachedSnapshotManagerRecordingFileSystem.SessionMarkerKey,
+      sessionMarker)
+    session.conf.set(
+      CachedSnapshotManagerRecordingFileSystem.InvariantMarkerKey,
+      s"session-$sessionMarker")
+  }
+
+  private def assertRecordingFileSystemObserved(expectedSessionMarker: String): Unit = {
+    val observations = CachedSnapshotManagerRecordingFileSystem.currentThreadObservations
+    assert(observations.nonEmpty)
+    assert(observations.forall { case (_, sessionMarker, invariantMarker) =>
+      sessionMarker == expectedSessionMarker && invariantMarker == "table-option"
+    }, s"Unexpected filesystem observations: $observations")
+  }
+
+  private def startAndJoinThreads(threads: Seq[Thread]): Unit = {
+    threads.foreach(_.setDaemon(true))
+    threads.foreach(_.start())
+    threads.foreach(_.join(TimeUnit.SECONDS.toMillis(30L)))
+    val alive = threads.filter(_.isAlive)
+    alive.foreach(_.interrupt())
+    assert(alive.isEmpty, s"Threads did not terminate: ${alive.map(_.getName).mkString(", ")}")
   }
 
   // === Cold start ============================================
@@ -81,8 +120,7 @@ class CachedSnapshotManagerSuite
       try {
         val snapshot = mgr.loadLatestSnapshot()
         assert(snapshot != null)
-        val kernelSnap = DeltaV2Snapshot.getKernelSnapshot(snapshot)
-        assert(kernelSnap.getVersion == 0L)
+        assert(snapshot.version == 0L)
       } finally {
         mgr.retire()
       }
@@ -97,8 +135,7 @@ class CachedSnapshotManagerSuite
       val mgr = createManager(dir)
       try {
         val snapshot = mgr.loadLatestSnapshot()
-        val kernelSnap = DeltaV2Snapshot.getKernelSnapshot(snapshot)
-        assert(kernelSnap.getVersion == 2L)
+        assert(snapshot.version == 2L)
       } finally {
         mgr.retire()
       }
@@ -115,9 +152,7 @@ class CachedSnapshotManagerSuite
         try {
           val first = mgr.loadLatestSnapshot()
           val second = mgr.loadLatestSnapshot()
-          val k1 = DeltaV2Snapshot.getKernelSnapshot(first)
-          val k2 = DeltaV2Snapshot.getKernelSnapshot(second)
-          assert(k1 eq k2, "Expected same SnapshotImpl instance on warm hit")
+          assert(first eq second, "Expected same snapshot instance on warm hit")
           val firstFileCount = first.allFiles.count()
           assert(firstFileCount > 0L)
           assert(second.allFiles.count() == firstFileCount)
@@ -137,19 +172,60 @@ class CachedSnapshotManagerSuite
         val mgr = createManager(dir)
         try {
           val snap1 = mgr.loadLatestSnapshot()
-          val k1 = DeltaV2Snapshot.getKernelSnapshot(snap1)
-          assert(k1.getVersion == 0L)
+          assert(snap1.version == 0L)
 
           appendToDeltaTable(dir)
 
           val snap2 = mgr.loadLatestSnapshot()
-          val k2 = DeltaV2Snapshot.getKernelSnapshot(snap2)
-          assert(k2.getVersion == 1L)
-          assert(snap2 ne snap1, "A new Kernel snapshot must install a new DeltaV2Snapshot")
-          assert(k2 ne k1)
+          assert(snap2.version == 1L)
+          assert(snap2 ne snap1, "A newly loaded snapshot must replace the cached facade")
         } finally {
           mgr.retire()
         }
+      }
+    }
+  }
+
+  test("cached snapshot manager preserves KernelContext session invariance") {
+    withTempDir { dir =>
+      createDeltaTable(dir)
+      val originalSession = SparkSession.active
+      val constructionSession = spark.newSession()
+      val firstOperationSession = spark.newSession()
+      val secondOperationSession = spark.newSession()
+      val invariantOptions = Map(
+        "fs.file.impl" -> classOf[CachedSnapshotManagerRecordingFileSystem].getName,
+        "fs.file.impl.disable.cache" -> "true",
+        CachedSnapshotManagerRecordingFileSystem.InvariantMarkerKey -> "table-option")
+      var manager: CachedSnapshotManager = null
+
+      try {
+        SparkSession.setActiveSession(constructionSession)
+        setRecordingMarkers(constructionSession, "construction")
+        val kernelContext =
+          KernelContext(invariantOptions, LogStore.createLogStore(constructionSession))
+        manager = createManager(dir, kernelContext)
+
+        SparkSession.setActiveSession(firstOperationSession)
+        setRecordingMarkers(firstOperationSession, "first-operation")
+        CachedSnapshotManagerRecordingFileSystem.clear()
+        assert(manager.loadLatestSnapshot().version == 0L)
+        assertRecordingFileSystemObserved("first-operation")
+        val retainedEngine = kernelContext.getDefaultEngine()
+
+        appendToDeltaTable(dir)
+        SparkSession.setActiveSession(secondOperationSession)
+        setRecordingMarkers(secondOperationSession, "second-operation")
+        CachedSnapshotManagerRecordingFileSystem.clear()
+        assert(manager.loadSnapshotAt(1L).version == 1L)
+        assert(kernelContext.getDefaultEngine() eq retainedEngine)
+        val expectedSessionMarker =
+          if (KernelBackend.resolve() == KernelBackend.JNR) "second-operation"
+          else "first-operation"
+        assertRecordingFileSystemObserved(expectedSessionMarker)
+      } finally {
+        if (manager != null) manager.retire()
+        SparkSession.setActiveSession(originalSession)
       }
     }
   }
@@ -183,8 +259,8 @@ class CachedSnapshotManagerSuite
       try {
         val snapV0 = mgr.loadSnapshotAt(0L)
         val snapV1 = mgr.loadSnapshotAt(1L)
-        assert(DeltaV2Snapshot.getKernelSnapshot(snapV0).getVersion == 0L)
-        assert(DeltaV2Snapshot.getKernelSnapshot(snapV1).getVersion == 1L)
+        assert(snapV0.version == 0L)
+        assert(snapV1.version == 1L)
         assert(mgr.loadLatestSnapshot() eq snapV1)
       } finally {
         mgr.retire()
@@ -377,9 +453,9 @@ class CachedSnapshotManagerSuite
     }
   }
 
-  // === installSnapshot same-version dedup =====================
+  // === Refresh deduplication ==================================
 
-  test("installSnapshot deduplicates same-version refresh") {
+  test("same-version refresh reuses the cached snapshot") {
     withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
       withTempDir { dir =>
         createDeltaTable(dir)
@@ -388,29 +464,8 @@ class CachedSnapshotManagerSuite
           val firstSnap = mgr.loadLatestSnapshot()
           assert(firstSnap.version == 0L)
 
-          val kernelSnapshot = DeltaV2Snapshot.getKernelSnapshot(firstSnap)
-          val secondSnap = mgr.install(kernelSnapshot, System.currentTimeMillis())
+          val secondSnap = mgr.loadLatestSnapshot()
           assert(firstSnap eq secondSnap, "Same version should keep existing instance")
-        } finally {
-          mgr.retire()
-        }
-      }
-    }
-  }
-
-  test("installSnapshot keeps a newer cached snapshot") {
-    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
-      withTempDir { dir =>
-        createDeltaTable(dir)
-        val mgr = createManager(dir)
-        try {
-          val stale = DeltaV2Snapshot.getKernelSnapshot(mgr.loadSnapshotAt(0L))
-          mgr.loadLatestSnapshot()
-          appendToDeltaTable(dir)
-          val current = mgr.loadLatestSnapshot()
-          assert(current.version == 1L)
-
-          assert(mgr.install(stale, System.currentTimeMillis()) eq current)
         } finally {
           mgr.retire()
         }
@@ -496,8 +551,7 @@ class CachedSnapshotManagerSuite
             }
           })
           val threads = appender +: readers
-          threads.foreach(_.start())
-          threads.foreach(_.join())
+          startAndJoinThreads(threads)
 
           assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
           val latest = mgr.loadLatestSnapshot()
@@ -528,14 +582,13 @@ class CachedSnapshotManagerSuite
               }
             })
           }
-          threads.foreach(_.start())
-          threads.foreach(_.join())
+          startAndJoinThreads(threads)
 
           assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
           assert(snapshots.size() == threads.size)
           val tableIds = Seq.newBuilder[String]
           while (!snapshots.isEmpty) {
-            tableIds += DeltaV2Snapshot.getKernelSnapshot(snapshots.poll()).getMetadata.getId
+            tableIds += snapshots.poll().metadata.id
           }
           assert(tableIds.result().distinct.size == 1)
         } finally {
@@ -574,8 +627,7 @@ class CachedSnapshotManagerSuite
             }
           })
         }
-        threads.foreach(_.start())
-        threads.foreach(_.join())
+        startAndJoinThreads(threads)
 
         assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
         assert(currentResults.size() == 4)
@@ -592,4 +644,53 @@ class CachedSnapshotManagerSuite
       }
     }
   }
+}
+
+private[tablemanager] object CachedSnapshotManagerRecordingFileSystem {
+  val SessionMarkerKey = "fs.cached-snapshot-manager-test.session-marker"
+  val InvariantMarkerKey = "fs.cached-snapshot-manager-test.table-option"
+
+  private val observations = new CopyOnWriteArrayList[(String, String, String)]()
+
+  def clear(): Unit = observations.clear()
+
+  def record(operation: String, sessionMarker: String, invariantMarker: String): Unit =
+    observations.add((operation, sessionMarker, invariantMarker))
+
+  def currentThreadObservations: Seq[(String, String, String)] =
+    observations.asScala.toSeq
+}
+
+private[tablemanager] class CachedSnapshotManagerRecordingFileSystem extends RawLocalFileSystem {
+  private var sessionMarker: String = _
+  private var invariantMarker: String = _
+
+  override def initialize(name: URI, hadoopConf: Configuration): Unit = {
+    sessionMarker =
+      hadoopConf.get(CachedSnapshotManagerRecordingFileSystem.SessionMarkerKey)
+    invariantMarker =
+      hadoopConf.get(CachedSnapshotManagerRecordingFileSystem.InvariantMarkerKey)
+    super.initialize(name, hadoopConf)
+  }
+
+  override def open(path: Path, bufferSize: Int): FSDataInputStream = {
+    record("open")
+    super.open(path, bufferSize)
+  }
+
+  override def getFileStatus(path: Path): FileStatus = {
+    record("getFileStatus")
+    super.getFileStatus(path)
+  }
+
+  override def listStatus(path: Path): Array[FileStatus] = {
+    record("listStatus")
+    super.listStatus(path)
+  }
+
+  private def record(operation: String): Unit =
+    CachedSnapshotManagerRecordingFileSystem.record(
+      operation,
+      sessionMarker,
+      invariantMarker)
 }
