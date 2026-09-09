@@ -134,7 +134,7 @@ private[tablemanager] class CachedSnapshotManager(
   private def rebuildAndInstall(): Snapshot = {
     recordFrameProfile("Delta", "DeltaV2.cachedSnapshotManager.rebuild") {
       val validationStartedAt = System.currentTimeMillis()
-      val refreshed = loadLatestUncached()
+      val refreshed = withUncachedSnapshotManager(_.loadLatestSnapshot())
       synchronized {
         validateTableIdentity(refreshed)
         val existing = currentSnapshot
@@ -170,24 +170,13 @@ private[tablemanager] class CachedSnapshotManager(
       return upperBound
     }
     // Historical snapshots are returned to the caller but never replace the cached latest snapshot.
-    val historicalSnapshot = loadSnapshotAtUncached(version)
+    val historicalSnapshot =
+      withUncachedSnapshotManager(_.loadSnapshotAt(version))
     validateTableIdentity(historicalSnapshot)
     historicalSnapshot
   }
 
   // === Uncached loading =====================================================
-
-  private def loadLatestUncached(): Snapshot = {
-    withUncachedSnapshotManager { manager =>
-      manager.loadLatestSnapshot()
-    }
-  }
-
-  private def loadSnapshotAtUncached(version: Long): Snapshot = {
-    withUncachedSnapshotManager { manager =>
-      manager.loadSnapshotAt(version)
-    }
-  }
 
   private def withUncachedSnapshotManager[T](f: DeltaV2SnapshotManager => T): T =
     f(SnapshotManagerFactory.create(
