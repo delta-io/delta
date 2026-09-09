@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.commands.CreateDeltaTableCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -45,7 +46,7 @@ import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table,
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{MetadataBuilder, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, IntegerType, MapType, MetadataBuilder, StringType, StructField, StructType}
 import org.apache.spark.util.Utils
 
 trait DeltaTableCreationTests
@@ -2262,16 +2263,18 @@ class DeltaTableCreationSuite
   }
 
   test("Replace a table without comment") {
-    withTempDir { dir =>
-      val table = "replace_table_without_comment"
-      val location = dir.getAbsolutePath
-      withTable(table) {
-        sql(s"CREATE TABLE $table (col string) USING delta COMMENT 'Table' LOCATION '$location'")
-        sql(s"REPLACE TABLE $table (col string) USING delta LOCATION '$location'")
-        checkResult(
-          sql(s"DESCRIBE DETAIL $table"),
-          Seq("delta", null),
-          Seq("format", "description"))
+    withSQLConf(DeltaSQLConf.RETAIN_COMMENTS_DURING_REPLACE_TABLE.key -> "false") {
+      withTempDir { dir =>
+        val table = "replace_table_without_comment"
+        val location = dir.getAbsolutePath
+        withTable(table) {
+          sql(s"CREATE TABLE $table (col string) USING delta COMMENT 'Table' LOCATION '$location'")
+          sql(s"REPLACE TABLE $table (col string) USING delta LOCATION '$location'")
+          checkResult(
+            sql(s"DESCRIBE DETAIL $table"),
+            Seq("delta", null),
+            Seq("format", "description"))
+        }
       }
     }
   }
@@ -2325,19 +2328,21 @@ class DeltaTableCreationSuite
   }
 
   test("Replace CTAS a table without comment") {
-    val table = "replace_ctas_without_comment"
-    withTable(table) {
-      sql(
-        s"""CREATE TABLE $table
-           |USING delta
-           |COMMENT 'This table is created with existing data'
-           |AS SELECT * FROM range(10)
-          """.stripMargin)
-      sql(s"REPLACE TABLE $table USING delta AS SELECT * FROM range(10)")
-      checkResult(
-        sql(s"DESCRIBE DETAIL $table"),
-        Seq("delta", null),
-        Seq("format", "description"))
+    withSQLConf(DeltaSQLConf.RETAIN_COMMENTS_DURING_REPLACE_TABLE.key -> "false") {
+      val table = "replace_ctas_without_comment"
+      withTable(table) {
+        sql(
+          s"""CREATE TABLE $table
+             |USING delta
+             |COMMENT 'This table is created with existing data'
+             |AS SELECT * FROM range(10)
+            """.stripMargin)
+        sql(s"REPLACE TABLE $table USING delta AS SELECT * FROM range(10)")
+        checkResult(
+          sql(s"DESCRIBE DETAIL $table"),
+          Seq("delta", null),
+          Seq("format", "description"))
+      }
     }
   }
 
@@ -2355,6 +2360,464 @@ class DeltaTableCreationSuite
         sql(s"DESCRIBE DETAIL $table"),
         Seq("delta", "This table is created with existing data"),
         Seq("format", "description"))
+    }
+  }
+
+  test("Replace table retains column comments when not re-specified") {
+    withTempDir { dir =>
+      val table = "retain_col_comment"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table (a STRING COMMENT 'column a', b INT COMMENT 'column b')
+              |USING delta LOCATION '$location'""".stripMargin)
+        sql(s"REPLACE TABLE $table (a STRING, b INT) USING delta LOCATION '$location'")
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaSchema = DeltaLog.forTable(spark, catalogTable).update().schema
+        Seq(
+          deltaSchema
+        ).foreach { schema =>
+          assert(schema("a").getComment() === Some("column a"))
+          assert(schema("b").getComment() === Some("column b"))
+        }
+      }
+    }
+  }
+
+  test("Replace table allows explicit column comment override") {
+    withTempDir { dir =>
+      val table = "override_col_comment"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table (a STRING COMMENT 'original')
+              |USING delta LOCATION '$location'""".stripMargin)
+        sql(s"""REPLACE TABLE $table (a STRING COMMENT 'new comment')
+              |USING delta LOCATION '$location'""".stripMargin)
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaSchema = DeltaLog.forTable(spark, catalogTable).update().schema
+        Seq(
+          deltaSchema
+        ).foreach { schema =>
+          assert(schema("a").getComment() === Some("new comment"))
+        }
+      }
+    }
+  }
+
+  test("Replace table allows explicitly clearing column comment") {
+    withTempDir { dir =>
+      val table = "clear_col_comment"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table (a STRING COMMENT 'original')
+              |USING delta LOCATION '$location'""".stripMargin)
+        sql(s"""REPLACE TABLE $table (a STRING COMMENT '')
+              |USING delta LOCATION '$location'""".stripMargin)
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaSchema = DeltaLog.forTable(spark, catalogTable).update().schema
+        Seq(
+          deltaSchema
+        ).foreach { schema =>
+          assert(schema("a").getComment() === Some(""))
+        }
+      }
+    }
+  }
+
+  test("Replace table retains comments only for matching columns") {
+    withTempDir { dir =>
+      val table = "retain_matching_col_comments"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table (a STRING COMMENT 'ca', b INT COMMENT 'cb')
+              |USING delta LOCATION '$location'""".stripMargin)
+        sql(s"REPLACE TABLE $table (a STRING, c DOUBLE) USING delta LOCATION '$location'")
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaSchema = DeltaLog.forTable(spark, catalogTable).update().schema
+        Seq(
+          deltaSchema
+        ).foreach { schema =>
+          assert(schema("a").getComment() === Some("ca"))
+          assert(schema("c").getComment() === None)
+        }
+      }
+    }
+  }
+
+  test("Replace table retains a matching column's comment even when its data type changes") {
+    withTempDir { dir =>
+      val table = "retain_comment_changed_type"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table (a STRING COMMENT 'ca')
+              |USING delta LOCATION '$location'""".stripMargin)
+        sql(s"REPLACE TABLE $table (a INT) USING delta LOCATION '$location'")
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaSchema = DeltaLog.forTable(spark, catalogTable).update().schema
+        Seq(
+          deltaSchema
+        ).foreach { schema =>
+          assert(schema("a").dataType === IntegerType)
+          assert(schema("a").getComment() === Some("ca"))
+        }
+      }
+    }
+  }
+
+  test("Replace CTAS retains column comments") {
+    val table = "rtas_retain_col_comments"
+    withTable(table) {
+      sql(s"CREATE TABLE $table USING delta AS SELECT * FROM range(10)")
+      sql(s"ALTER TABLE $table ALTER COLUMN id COMMENT 'my identifier'")
+      assert(spark.table(table).schema("id").getComment() === Some("my identifier"))
+      sql(s"REPLACE TABLE $table USING delta AS SELECT * FROM range(5)")
+      val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+      val deltaSchema = DeltaLog.forTable(spark, catalogTable).update().schema
+      Seq(
+        deltaSchema
+      ).foreach { schema =>
+        assert(schema("id").getComment() === Some("my identifier"))
+      }
+    }
+  }
+
+  test("Replace table retains nested struct column comments") {
+    withTempDir { dir =>
+      val table = "retain_nested_comments"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table
+              |(info STRUCT<x: STRING COMMENT 'nested x', y: INT COMMENT 'nested y'>)
+              |USING delta LOCATION '$location'""".stripMargin)
+        sql(s"""REPLACE TABLE $table
+              |(info STRUCT<x: STRING, y: INT>)
+              |USING delta LOCATION '$location'""".stripMargin)
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaSchema = DeltaLog.forTable(spark, catalogTable).update().schema
+        Seq(
+          deltaSchema
+        ).foreach { schema =>
+          val innerSchema = schema("info").dataType.asInstanceOf[StructType]
+          assert(innerSchema("x").getComment() === Some("nested x"))
+          assert(innerSchema("y").getComment() === Some("nested y"))
+        }
+      }
+    }
+  }
+
+  test("Replace table retains table comment when not re-specified") {
+    withTempDir { dir =>
+      val table = "retain_table_comment"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table (col STRING)
+              |USING delta COMMENT 'my table comment' LOCATION '$location'""".stripMargin)
+        sql(s"REPLACE TABLE $table (col STRING) USING delta LOCATION '$location'")
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaLog = DeltaLog.forTable(spark, catalogTable)
+        // Retained in the Delta log metadata and catalog table definition.
+        assert(deltaLog.update().metadata.description === "my table comment")
+        assert(catalogTable.comment === Some("my table comment"))
+      }
+    }
+  }
+
+  test("Replace table allows explicit table comment override") {
+    withTempDir { dir =>
+      val table = "override_table_comment"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table (col STRING)
+              |USING delta COMMENT 'original' LOCATION '$location'""".stripMargin)
+        sql(s"""REPLACE TABLE $table (col STRING)
+              |USING delta COMMENT 'new comment' LOCATION '$location'""".stripMargin)
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaLog = DeltaLog.forTable(spark, catalogTable)
+        assert(deltaLog.update().metadata.description === "new comment")
+        assert(catalogTable.comment === Some("new comment"))
+      }
+    }
+  }
+
+  test("Replace table via DataFrameWriterV2 retains comments") {
+    withTempDir { dir =>
+      val table = "retain_comments_df_v2"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table (a STRING COMMENT 'my col a', b INT COMMENT 'my col b')
+              |USING delta COMMENT 'my table comment' LOCATION '$location'""".stripMargin)
+        spark.range(1).selectExpr("cast(id as string) as a", "cast(id as int) as b")
+            .writeTo(table)
+            .using("delta")
+            .replace()
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaLog = DeltaLog.forTable(spark, catalogTable)
+        val deltaSchema = deltaLog.update().schema
+        Seq(
+          deltaSchema
+        ).foreach { schema =>
+          assert(schema("a").getComment() === Some("my col a"))
+          assert(schema("b").getComment() === Some("my col b"))
+        }
+        assert(deltaLog.update().metadata.description === "my table comment")
+        assert(catalogTable.comment === Some("my table comment"))
+      }
+    }
+  }
+
+  test("Replace table retains comments in array of structs") {
+    withTempDir { dir =>
+      val table = "retain_array_struct_comments"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table
+              |(items ARRAY<STRUCT<x: STRING COMMENT 'my arr x', y: INT COMMENT 'my arr y'>>)
+              |USING delta LOCATION '$location'""".stripMargin)
+        sql(s"""REPLACE TABLE $table
+              |(items ARRAY<STRUCT<x: STRING, y: INT>>)
+              |USING delta LOCATION '$location'""".stripMargin)
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaSchema = DeltaLog.forTable(spark, catalogTable).update().schema
+        Seq(
+          deltaSchema
+        ).foreach { schema =>
+          val elemType = schema("items").dataType
+              .asInstanceOf[ArrayType].elementType.asInstanceOf[StructType]
+          assert(elemType("x").getComment() === Some("my arr x"))
+          assert(elemType("y").getComment() === Some("my arr y"))
+        }
+      }
+    }
+  }
+
+  test("Replace table retains comments in map value structs") {
+    withTempDir { dir =>
+      val table = "retain_map_struct_comments"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table
+              |(lookup MAP<STRING,
+              |STRUCT<a: STRING COMMENT 'my map a', b: INT COMMENT 'my map b'>>)
+              |USING delta LOCATION '$location'""".stripMargin)
+        sql(s"""REPLACE TABLE $table
+              |(lookup MAP<STRING, STRUCT<a: STRING, b: INT>>)
+              |USING delta LOCATION '$location'""".stripMargin)
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaSchema = DeltaLog.forTable(spark, catalogTable).update().schema
+        Seq(
+          deltaSchema
+        ).foreach { schema =>
+          val valType = schema("lookup").dataType
+              .asInstanceOf[MapType].valueType.asInstanceOf[StructType]
+          assert(valType("a").getComment() === Some("my map a"))
+          assert(valType("b").getComment() === Some("my map b"))
+        }
+      }
+    }
+  }
+
+  test("Replace table retains comments in map key structs") {
+    withTempDir { dir =>
+      val table = "retain_map_key_struct_comments"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table
+              |(lookup MAP<STRUCT<k1: STRING COMMENT 'my key1', k2: INT COMMENT 'my key2'>, INT>)
+              |USING delta LOCATION '$location'""".stripMargin)
+        sql(s"""REPLACE TABLE $table
+              |(lookup MAP<STRUCT<k1: STRING, k2: INT>, INT>)
+              |USING delta LOCATION '$location'""".stripMargin)
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaSchema = DeltaLog.forTable(spark, catalogTable).update().schema
+        Seq(
+          deltaSchema
+        ).foreach { schema =>
+          val keyType = schema("lookup").dataType
+              .asInstanceOf[MapType].keyType.asInstanceOf[StructType]
+          assert(keyType("k1").getComment() === Some("my key1"))
+          assert(keyType("k2").getComment() === Some("my key2"))
+        }
+      }
+    }
+  }
+
+  test("Replace table retains comments in deeply nested types") {
+    withTempDir { dir =>
+      val table = "retain_deep_nested_comments"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        // MAP<STRING, ARRAY<STRUCT<x COMMENT 'deep'>>>
+        sql(s"""CREATE TABLE $table
+              |(col MAP<STRING, ARRAY<STRUCT<x: STRING COMMENT 'my deep'>>>)
+              |USING delta LOCATION '$location'""".stripMargin)
+        sql(s"""REPLACE TABLE $table
+              |(col MAP<STRING, ARRAY<STRUCT<x: STRING>>>)
+              |USING delta LOCATION '$location'""".stripMargin)
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table))
+        val deltaSchema = DeltaLog.forTable(spark, catalogTable).update().schema
+        Seq(
+          deltaSchema
+        ).foreach { schema =>
+          val innerStruct = schema("col").dataType
+              .asInstanceOf[MapType].valueType
+              .asInstanceOf[ArrayType].elementType.asInstanceOf[StructType]
+          assert(innerStruct("x").getComment() === Some("my deep"))
+        }
+      }
+    }
+  }
+
+  // Direct unit tests for the pure comment carry-over helpers. These complement the end-to-end
+  // REPLACE tests above by exercising the schema transform in isolation, including edge cases that
+  // are awkward or impossible to express through SQL DDL (type-shape mismatches, explicit empty
+  // comments, non-comment metadata preservation, and asymmetric nested schemas).
+  private def field(
+      name: String,
+      dataType: DataType,
+      comment: Option[String] = None): StructField = {
+    val base = StructField(name, dataType)
+    comment.map(base.withComment).getOrElse(base)
+  }
+
+  private def carryOver(
+      oldSchema: StructType,
+      newSchema: StructType): StructType = {
+    CreateDeltaTableCommand.carryOverStructTypeComments(oldSchema, newSchema)
+  }
+
+  test("carryOverStructTypeComments: fills missing comments, keeps explicit ones") {
+    val oldSchema = StructType(Seq(
+      field("a", StringType, Some("old a")),
+      field("b", IntegerType, Some("old b")),
+      field("c", StringType, Some("old c"))))
+    val newSchema = StructType(Seq(
+      field("a", StringType), // no comment -> carried over
+      field("b", IntegerType, Some("new b")), // explicit comment -> kept
+      field("c", StringType, Some("")), // explicit empty comment -> kept (wins over carry-over)
+      field("d", StringType))) // no match in old -> stays uncommented
+    val result = carryOver(oldSchema, newSchema)
+    assert(result("a").getComment() === Some("old a"))
+    assert(result("b").getComment() === Some("new b"))
+    assert(result("c").getComment() === Some(""))
+    assert(result("d").getComment() === None)
+  }
+
+  test("carryOverStructTypeComments: matches column names case-insensitively") {
+    val oldSchema = StructType(Seq(field("Name", StringType, Some("old name"))))
+    val newSchema = StructType(Seq(field("name", StringType)))
+    val result = carryOver(oldSchema, newSchema)
+    assert(result("name").getComment() === Some("old name"))
+  }
+
+  test("carryOverStructTypeComments: preserves non-comment field metadata") {
+    val extraMetadata = new MetadataBuilder().putString("custom", "keep-me").build()
+    val oldSchema = StructType(Seq(field("a", StringType, Some("old a"))))
+    val newSchema = StructType(Seq(StructField("a", StringType, metadata = extraMetadata)))
+    val result = carryOver(oldSchema, newSchema)
+    assert(result("a").getComment() === Some("old a"))
+    assert(result("a").metadata.getString("custom") === "keep-me")
+  }
+
+  test("carryOverStructTypeComments: nested struct, array, and map recursion") {
+    val oldSchema = StructType(Seq(
+      field("s", StructType(Seq(field("x", StringType, Some("old x")))), Some("old s")),
+      field("arr",
+        ArrayType(StructType(Seq(field("e", StringType, Some("old e"))))), Some("old a")),
+      field("m",
+        MapType(
+          StructType(Seq(field("k", StringType, Some("old k")))),
+          StructType(Seq(field("v", StringType, Some("old v"))))),
+        Some("old m"))))
+    val newSchema = StructType(Seq(
+      field("s", StructType(Seq(field("x", StringType)))),
+      field("arr", ArrayType(StructType(Seq(field("e", StringType))))),
+      field("m",
+        MapType(
+          StructType(Seq(field("k", StringType))),
+          StructType(Seq(field("v", StringType)))))))
+    val result = carryOver(oldSchema, newSchema)
+    assert(result("s").getComment() === Some("old s"))
+    assert(result("s").dataType.asInstanceOf[StructType]("x").getComment() === Some("old x"))
+    val arrElem =
+      result("arr").dataType.asInstanceOf[ArrayType].elementType.asInstanceOf[StructType]
+    assert(arrElem("e").getComment() === Some("old e"))
+    val mapType = result("m").dataType.asInstanceOf[MapType]
+    assert(mapType.keyType.asInstanceOf[StructType]("k").getComment() === Some("old k"))
+    assert(mapType.valueType.asInstanceOf[StructType]("v").getComment() === Some("old v"))
+  }
+
+  test("carryOverStructTypeComments: type-shape mismatch is a no-op, not a crash") {
+    // Old field is a struct, new field is a scalar (and vice versa): recursion must fall through
+    // and leave the new type untouched rather than throwing.
+    val oldSchema = StructType(Seq(
+      field("a", StructType(Seq(field("x", StringType, Some("old x")))), Some("old a")),
+      field("b", ArrayType(StringType), Some("old b"))))
+    val newSchema = StructType(Seq(
+      field("a", StringType), // struct -> scalar
+      field("b", MapType(StringType, StringType)))) // array -> map
+    val result = carryOver(oldSchema, newSchema)
+    // Top-level comments are still carried over by name; only the nested recursion no-ops.
+    assert(result("a").getComment() === Some("old a"))
+    assert(result("a").dataType === StringType)
+    assert(result("b").getComment() === Some("old b"))
+    assert(result("b").dataType === MapType(StringType, StringType))
+  }
+
+  test("carryOverStructTypeComments: preserves nullability from the new schema") {
+    // containsNull / valueContainsNull must be taken from the NEW type, not the old.
+    val oldSchema = StructType(Seq(
+      field("arr", ArrayType(StringType, containsNull = true)),
+      field("m", MapType(StringType, StringType, valueContainsNull = true))))
+    val newSchema = StructType(Seq(
+      field("arr", ArrayType(StringType, containsNull = false)),
+      field("m", MapType(StringType, StringType, valueContainsNull = false))))
+    val result = carryOver(oldSchema, newSchema)
+    assert(!result("arr").dataType.asInstanceOf[ArrayType].containsNull)
+    assert(!result("m").dataType.asInstanceOf[MapType].valueContainsNull)
+  }
+
+  test("Replace table allows explicitly clearing table comment") {
+    withTempDir { dir =>
+      val table = "clear_table_comment"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"""CREATE TABLE $table (col STRING)
+              |USING delta COMMENT 'original' LOCATION '$location'""".stripMargin)
+        sql(s"""REPLACE TABLE $table (col STRING)
+              |USING delta COMMENT '' LOCATION '$location'""".stripMargin)
+        // An explicit empty comment must win over carry-over: the description is set to the empty
+        // string rather than the retained old comment.
+        assert(getDeltaLog(new Path(location)).update().metadata.description === "")
+      }
+    }
+  }
+
+  test("Replace via DataFrameWriterV2 with overwriteSchema=true drops column comments but " +
+      "retains the table comment") {
+    // Scoped to NoMapping: in column-mapping modes the reused column-mapping metadata already
+    // makes the data schema differ from txn.metadata.schema regardless of comments, so the
+    // overwriteSchema path diverges for reasons unrelated to this carry-over. Skip the body
+    // (rather than cancel) under the column-mapping suite variants.
+    if (columnMappingMode == NoMapping.name) {
+      withTempDir { dir =>
+        val table = "overwrite_schema_drops_col_comments"
+        val location = dir.getAbsolutePath
+        withTable(table) {
+          sql(s"""CREATE TABLE $table (a STRING COMMENT 'my col a', b INT COMMENT 'my col b')
+                |USING delta COMMENT 'my table comment' LOCATION '$location'""".stripMargin)
+          spark.range(1).selectExpr("cast(id as string) as a", "cast(id as int) as b")
+              .writeTo(table)
+              .using("delta")
+              .option("overwriteSchema", "true")
+              .replace()
+          val schema = spark.table(table).schema
+          assert(schema("a").getComment() === None)
+          assert(schema("b").getComment() === None)
+          checkResult(
+            sql(s"DESCRIBE DETAIL $table"),
+            Seq("delta", "my table comment"),
+            Seq("format", "description"))
+        }
+      }
     }
   }
 
