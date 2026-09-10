@@ -450,4 +450,14 @@ class DeleteMetricsSuite extends QueryTest
     }
   }
 
+  test("DELETE output metrics schema is not nullable") {
+    withTable("target") {
+      spark.range(10).write.format("delta").saveAsTable("target")
+
+      val schema = spark.sql("DELETE FROM target WHERE id < 3").schema
+
+      assert(schema.forall(!_.nullable))
+    }
+  }
+
 }

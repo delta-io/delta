@@ -507,8 +507,51 @@ trait AMTCheckpointTestBase
       .map(e => JsonUtils.fromJson[CommitStats](e.blob))
       .find(_.commitVersion == commitVersion)
       .flatMap(_.amtWriteMetrics)
-      .flatMap(_.attempts.headOption)
+      .flatMap(_.writeAttempts.headOption)
       .flatMap(_.incrementalWriteMetrics)
+  }
+
+  /**
+   * Like [[trackIncrementalAMTWriteMetrics]] but returns one entry per attempt that made an
+   * incremental write, in attempt order -- a conflict retry materializes the tree more than once,
+   * so this exposes each attempt's shape. `commitVersion` is by-name so callers can pass the final
+   * committed version, which is only known after `commit` runs.
+   */
+  protected def trackIncrementalAMTWriteMetricsPerAttempt(
+      commitVersion: => Long)(commit: => Unit): Seq[IncrementalAMTWriteMetrics] = {
+    val events = Log4jUsageLogger.track {
+      commit
+    }
+    val version = commitVersion
+    events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains("delta.commit.stats"))
+      .map(e => JsonUtils.fromJson[CommitStats](e.blob))
+      .find(_.commitVersion == version)
+      .toSeq
+      .flatMap(_.amtWriteMetrics.toSeq)
+      .flatMap(_.writeAttempts)
+      .flatMap(_.incrementalWriteMetrics)
+  }
+
+  /**
+   * Runs `commit` and returns the [[BackRefRebaseMetrics]] logged for the commit at
+   * `commitVersion` -- one entry per conflict round that re-derived back references against a
+   * newly installed tree. `commitVersion` is by-name so callers can pass the final committed
+   * version, which is only known after `commit` runs.
+   */
+  protected def trackBackrefRebaseMetricsAt(
+      commitVersion: => Long)(commit: => Unit): Seq[BackRefRebaseMetrics] = {
+    val events = Log4jUsageLogger.track {
+      commit
+    }
+    val version = commitVersion
+    events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains("delta.commit.stats"))
+      .map(e => JsonUtils.fromJson[CommitStats](e.blob))
+      .find(_.commitVersion == version)
+      .toSeq
+      .flatMap(_.amtWriteMetrics.toSeq)
+      .flatMap(_.backrefRebaseAttempts)
   }
 
   private def assertAMTCheckpointScenarioInvariants(
@@ -579,11 +622,13 @@ trait AMTCheckpointTestBase
   }
 
   /** Forces every write to inline its AMT incrementally (a low action-count threshold). */
-  protected def withInline[T](body: => T): T =
+  protected def withInline[T](body: => T): T = withInlineThreshold(1)(body)
+
+  /** Runs `body` with the inline-manifest threshold at `n` actions. */
+  protected def withInlineThreshold[T](n: Int)(body: => T): T =
     withSQLConf(
-      DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key -> "1") {
-      body
-    }
+      DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+        -> n.toString)(body)
 
   /**
    * Runs the test with inline writes forced (a low action-count threshold).

@@ -1191,7 +1191,7 @@ object AddFile {
  */
 case class BackReference(
     manifest: String,
-    pos: Long)
+    pos: Int)
 
 object BackReference {
 

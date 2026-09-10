@@ -153,6 +153,7 @@ object DeltaV2SourceSuite {
     "can delete old files of a snapshot without update",
     "Delta source advances with non-data inserts and generates empty dataframe for " +
       "non-data operations",
+    "make sure that the delta sources works fine",
     "reading from table with multiple partition columns succeeds during restart",
     "streaming read returns correct data from table with partition column in middle",
     "streaming read with column pruning and partition column in middle",
@@ -175,6 +176,9 @@ object DeltaV2SourceSuite {
     //  schema without rebuilding the DataFrame.
     "relax nullability: restarting with stale DataFrame should recover",
     "type widening: restarting with stale DataFrame should recover",
+    // V2 pins the schema when the DataFrame is loaded, so restarting the same DataFrame after the
+    // nullability change fails instead of adopting the current table schema.
+    "handling nullability schema changes",
 
     // === Data Loss Detection ===
     // V2 only tolerates missing start versions with failOnDataLoss=false; mid-log gaps still
@@ -202,9 +206,7 @@ object DeltaV2SourceSuite {
 
     // === Tests that bypass V2 by not using loadStreamWithOptions ===
     "disallow user specified schema", // Uses .schema() directly
-    "make sure that the delta sources works fine", // Uses .delta() directly
     "self union a Delta table should pass the catalog table assert", // Uses .table() directly
-    "handling nullability schema changes", // Uses .table() directly
     "allow user specified schema if consistent: v1 source", // Uses DataSource directly
     // Calls deltaSource.createSource() directly
     "createSource should create source with empty or matching table schema provided"

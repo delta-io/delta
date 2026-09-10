@@ -744,6 +744,10 @@ class DeltaV2MicroBatchStream
     // IMPORTANT: for future developers, please place any work you would like to do in commit()
     // before updateMetadataTrackingLogAndFailTheStreamIfNeeded as it may throw an exception.
     DeltaSourceOffset offset = DeltaSourceOffset.apply(tableId, end);
+    if (!offset.isInitialSnapshot()) {
+      // Release the cached DataFrame only after initial snapshot processing has completed.
+      invalidateDataFrameCache();
+    }
     metadataEvolutionHandler.updateMetadataTrackingLogAndFailTheStreamIfNeeded(offset);
   }
 
@@ -1005,8 +1009,6 @@ class DeltaV2MicroBatchStream
       CloseableIterator<IndexedFile> deltaChanges = filterDeltaLogs(fromVersion + 1, endOffset);
       result = snapshotFiles.combine(deltaChanges);
     } else {
-      // Release cached DataFrame — initial snapshot processing complete.
-      invalidateDataFrameCache();
       result = filterDeltaLogs(fromVersion, endOffset);
     }
 
