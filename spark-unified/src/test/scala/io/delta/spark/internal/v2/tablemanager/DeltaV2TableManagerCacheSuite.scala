@@ -435,7 +435,7 @@ private[tablemanager] class StubTableManager(val id: String) extends DeltaV2Tabl
     throw new UnsupportedOperationException("stub")
   override def snapshotManager(): DeltaV2SnapshotManager =
     throw new UnsupportedOperationException("stub")
-  override private[tablemanager] def updateCatalogTable(
-      latestCatalogTableOpt: Option[CatalogTable]): Unit = {}
+  override private[tablemanager] def withUnsafeVolatileCatalogTable(
+      table: CatalogTable): DeltaV2TableManager = this
   override def retire(): Unit = { retired = true }
 }

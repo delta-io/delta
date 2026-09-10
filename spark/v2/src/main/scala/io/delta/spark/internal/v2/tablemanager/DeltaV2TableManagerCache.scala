@@ -44,10 +44,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
     managerFactory: (
         DeltaV2TableManagerCache.CacheKey,
         Option[CatalogTable]) => DeltaV2TableManager =
-      (key, catalog) => new DeltaV2TableManagerImpl(
-        key.path.getParent,
-        key.sessionInvariantFsOptions,
-        catalog)
+      DeltaV2TableManagerCache.createManager
 ) extends DeltaV2Logging {
   import DeltaV2TableManagerCache.CacheKey
 
@@ -69,12 +66,12 @@ private[tablemanager] class DeltaV2TableManagerCache(
   // the original Delta error class, SQLSTATE, and cause chain rather than exposing Guava wrappers.
   def getOrCreate(
       key: CacheKey,
-      latestCatalogTableOpt: Option[CatalogTable] = None
+      catalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     val manager = try {
       cache.get(key, () => {
         recordFrameProfile("tableManagerCache.createManager") {
-          managerFactory(key, latestCatalogTableOpt)
+          managerFactory(key, catalogTableOpt)
         }
       })
     } catch {
@@ -84,8 +81,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
         logWarning(log"Cache loader failed; rethrowing original cause", cause)
         throw cause
     }
-    manager.updateCatalogTable(latestCatalogTableOpt)
-    manager
+    catalogTableOpt.fold(manager)(manager.withUnsafeVolatileCatalogTable)
   }
 
   def invalidate(key: CacheKey): Unit = cache.invalidate(key)
@@ -120,6 +116,14 @@ private[tablemanager] class DeltaV2TableManagerCache(
  * exposed outside the `tablemanager` package.
  */
 private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
+
+  private[tablemanager] def createManager(
+      key: CacheKey,
+      catalogTableOpt: Option[CatalogTable]): DeltaV2TableManager =
+    new DeltaV2TableManagerImpl(
+      key.path.getParent,
+      key.sessionInvariantFsOptions,
+      catalogTableOpt)
 
   // === Cache key ==================================================
 
@@ -212,27 +216,22 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
    * @param spark the active SparkSession, used for filesystem resolution and configuration.
    * @param dataPath the table's data directory path as a string.
    * @param options reader/writer options (Java map).
-   * @param latestCatalogTableOpt optional latest catalog table. Its storage properties contribute
-   *   filesystem options to the key, and its metadata is published to the returned manager.
+   * @param catalogTableOpt optional catalog table. Its storage properties contribute filesystem
+   *   options to the key, and its metadata is published to the returned manager.
    */
   def forTable(
       spark: SparkSession,
       dataPath: String,
       options: java.util.Map[String, String],
-      latestCatalogTableOpt: Option[CatalogTable] = None
+      catalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     recordFrameProfile("tableManagerCache.forTable") {
-      val key = CacheKey.from(spark, dataPath, options, latestCatalogTableOpt)
+      val key = CacheKey.from(spark, dataPath, options, catalogTableOpt)
       val sqlConf = spark.sessionState.conf
       if (!isEnabled(sqlConf)) {
-        val manager = new DeltaV2TableManagerImpl(
-          key.path.getParent,
-          key.sessionInvariantFsOptions,
-          latestCatalogTableOpt)
-        manager.updateCatalogTable(latestCatalogTableOpt)
-        manager
+        createManager(key, catalogTableOpt)
       } else {
-        getOrCreateInstance(sqlConf).getOrCreate(key, latestCatalogTableOpt)
+        getOrCreateInstance(sqlConf).getOrCreate(key, catalogTableOpt)
       }
     }
   }
@@ -243,18 +242,13 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
   private[tablemanager] def getOrCreate(
       sqlConf: SQLConf,
       key: CacheKey,
-      latestCatalogTableOpt: Option[CatalogTable] = None
+      catalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     recordFrameProfile("tableManagerCache.getOrCreate") {
       if (!isEnabled(sqlConf)) {
-        val manager = new DeltaV2TableManagerImpl(
-          key.path.getParent,
-          key.sessionInvariantFsOptions,
-          latestCatalogTableOpt)
-        manager.updateCatalogTable(latestCatalogTableOpt)
-        manager
+        createManager(key, catalogTableOpt)
       } else {
-        getOrCreateInstance(sqlConf).getOrCreate(key, latestCatalogTableOpt)
+        getOrCreateInstance(sqlConf).getOrCreate(key, catalogTableOpt)
       }
     }
   }

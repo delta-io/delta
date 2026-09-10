@@ -21,26 +21,19 @@ import io.delta.spark.internal.v2.kernel.KernelContext
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
- * Composite contract for a process-cached Delta table manager.
- *
- * Table identity (path, catalog table) is seeded at construction and determines cache-key affinity.
+ * Contract for a Delta table manager used by the DSv2 connector.
  */
 private[v2] trait DeltaV2TableManager {
 
-  /** Returns the table-scoped context that owns Kernel resources. */
+  /** Returns the table-scoped Kernel context. */
   private[v2] def kernelContext: KernelContext
 
-  /** Returns a per-request snapshot manager backed by this composite's shared snapshot state. */
+  /** Returns a snapshot manager for the table. */
   def snapshotManager(): DeltaV2SnapshotManager
 
-  private[tablemanager] def updateCatalogTable(
-      latestCatalogTableOpt: Option[CatalogTable]): Unit
+  private[tablemanager] def withUnsafeVolatileCatalogTable(
+      table: CatalogTable): DeltaV2TableManager
 
-  /**
-   * Idempotently prevents future acquisitions and releases exclusively owned state when safe.
-   *
-   * Default no-op: the single production implementation overrides this. Test stubs inherit the
-   * no-op safely.
-   */
+  /** Retires this manager and releases any resources it owns. */
   def retire(): Unit = {}
 }
