@@ -19,6 +19,7 @@ import java.util.Collections
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
+import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache.CacheKey
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -76,7 +77,7 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("per-instance: cache hit preserves initialCatalogTableOpt from first load") {
+  test("per-instance: cache hit preserves initial and publishes latest catalog table") {
     val cache = new DeltaV2TableManagerCache(maxSize = 1000, ttlMinutes = 60)
     withTempDir { dir =>
       val key = makeKey(dir.getCanonicalPath)
@@ -92,11 +93,19 @@ class DeltaV2TableManagerCacheSuite
         schema = new StructType())
 
       val first = cache.getOrCreate(key, Some(catalogA))
-      val second = cache.getOrCreate(key, Some(catalogB))
-      assert(first eq second)
       val impl = first.asInstanceOf[DeltaV2TableManagerImpl]
+      assert(impl.initialCatalogTableOpt === Some(catalogA))
+      assert(impl.unsafeVolatileCatalogTable === Some(catalogA),
+        "initial catalog table should seed the volatile reference")
+
+      val second = cache.getOrCreate(key, Some(catalogB))
+      val third = cache.getOrCreate(key, None)
+      assert(first eq second)
+      assert(second eq third)
       assert(impl.initialCatalogTableOpt === Some(catalogA),
-        "initial catalog should be from first load")
+        "initial catalog table should remain construction provenance")
+      assert(impl.unsafeVolatileCatalogTable === Some(catalogB),
+        "latest present catalog table should replace the previous value")
     }
   }
 
@@ -399,6 +408,7 @@ class DeltaV2TableManagerCacheSuite
       assert(impl.qualifiedTableDataPath.toUri.getPath.contains(dir.getName))
       assert(impl.sessionInvariantFsOptions.isEmpty)
       assert(impl.initialCatalogTableOpt.isEmpty)
+      assert(impl.unsafeVolatileCatalogTable.isEmpty)
       val tableStore = impl.logStore
       val tableKernelContext = impl.kernelContext
       assert(tableKernelContext.logStore eq tableStore)
@@ -421,7 +431,11 @@ private[tablemanager] class TestTicker extends Ticker {
 
 private[tablemanager] class StubTableManager(val id: String) extends DeltaV2TableManager {
   @volatile var retired: Boolean = false
+  override private[v2] def kernelContext: KernelContext =
+    throw new UnsupportedOperationException("stub")
   override def snapshotManager(): DeltaV2SnapshotManager =
     throw new UnsupportedOperationException("stub")
+  override private[tablemanager] def updateCatalogTable(
+      latestCatalogTableOpt: Option[CatalogTable]): Unit = {}
   override def retire(): Unit = { retired = true }
 }

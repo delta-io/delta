@@ -16,6 +16,9 @@
 package io.delta.spark.internal.v2.tablemanager
 
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import io.delta.spark.internal.v2.kernel.KernelContext
+
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Composite contract for a process-cached Delta table manager.
@@ -24,8 +27,14 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
  */
 private[v2] trait DeltaV2TableManager {
 
+  /** Returns the table-scoped context that owns Kernel resources. */
+  private[v2] def kernelContext: KernelContext
+
   /** Returns a per-request snapshot manager backed by this composite's shared snapshot state. */
   def snapshotManager(): DeltaV2SnapshotManager
+
+  private[tablemanager] def updateCatalogTable(
+      latestCatalogTableOpt: Option[CatalogTable]): Unit
 
   /**
    * Idempotently prevents future acquisitions and releases exclusively owned state when safe.

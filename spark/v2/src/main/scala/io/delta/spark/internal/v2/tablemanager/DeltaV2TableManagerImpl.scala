@@ -15,19 +15,25 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
+import java.util.concurrent.atomic.AtomicReference
+
+import scala.jdk.OptionConverters._
+
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
+import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
- * Process-cached [[DeltaV2TableManager]] composite.
+ * Process-cached [[DeltaV2TableManager]] implementation.
  *
- * Placeholder: inherits default trait stubs. The real implementation (snapshot lifecycle and
- * freshness control) is added in a follow-up layer.
+ * The manager owns the table-scoped [[KernelContext]] but does not retain snapshot state. Each
+ * [[snapshotManager]] call uses [[SnapshotManagerFactory]] to create an uncached manager backed by
+ * the Kernel Engine shared through that context.
  *
  * @param qualifiedTableDataPath the fully-qualified table data directory (parent of `_delta_log`).
  * @param sessionInvariantFsOptions filesystem-prefixed credential options (`fs.*`, `dfs.*`) that
@@ -43,15 +49,31 @@ private[tablemanager] class DeltaV2TableManagerImpl(
     with LogStoreProvider
 {
 
+  private val _unsafeVolatileCatalogTable =
+    new AtomicReference[CatalogTable](initialCatalogTableOpt.orNull)
+
+  private[tablemanager] def unsafeVolatileCatalogTable: Option[CatalogTable] =
+    Option(_unsafeVolatileCatalogTable.get())
+
+  override private[tablemanager] def updateCatalogTable(
+      latestCatalogTableOpt: Option[CatalogTable]): Unit = {
+    latestCatalogTableOpt.foreach { catalogTable =>
+      _unsafeVolatileCatalogTable.set(catalogTable)
+    }
+  }
+
   /** The table's data directory, fully qualified. */
   def tablePath: Path = qualifiedTableDataPath
 
   /** Used to read and write physical log files and checkpoints. */
   private[tablemanager] lazy val logStore = createLogStore(SparkSession.active)
 
-  private[tablemanager] lazy val kernelContext = KernelContext(sessionInvariantFsOptions, logStore)
+  override private[v2] lazy val kernelContext =
+    KernelContext(sessionInvariantFsOptions, logStore)
 
-  // Placeholder until snapshot lifecycle is implemented.
   override def snapshotManager(): DeltaV2SnapshotManager =
-    throw new UnsupportedOperationException("snapshotManager not yet implemented")
+    SnapshotManagerFactory.create(
+      tablePath.toString,
+      kernelContext.getDefaultEngine(),
+      unsafeVolatileCatalogTable.toJava)
 }

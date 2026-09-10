@@ -69,12 +69,12 @@ private[tablemanager] class DeltaV2TableManagerCache(
   // the original Delta error class, SQLSTATE, and cause chain rather than exposing Guava wrappers.
   def getOrCreate(
       key: CacheKey,
-      initialCatalogTableOpt: Option[CatalogTable] = None
+      latestCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
-    try {
+    val manager = try {
       cache.get(key, () => {
         recordFrameProfile("tableManagerCache.createManager") {
-          managerFactory(key, initialCatalogTableOpt)
+          managerFactory(key, latestCatalogTableOpt)
         }
       })
     } catch {
@@ -84,6 +84,8 @@ private[tablemanager] class DeltaV2TableManagerCache(
         logWarning(log"Cache loader failed; rethrowing original cause", cause)
         throw cause
     }
+    manager.updateCatalogTable(latestCatalogTableOpt)
+    manager
   }
 
   def invalidate(key: CacheKey): Unit = cache.invalidate(key)
@@ -210,25 +212,28 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
    * @param spark the active SparkSession, used for filesystem resolution and configuration.
    * @param dataPath the table's data directory path as a string.
    * @param options reader/writer options (Java map).
-   * @param initialCatalogTableOpt optional catalog table whose storage properties contribute
-   *   additional filesystem options.
+   * @param latestCatalogTableOpt optional latest catalog table. Its storage properties contribute
+   *   filesystem options to the key, and its metadata is published to the returned manager.
    */
   def forTable(
       spark: SparkSession,
       dataPath: String,
       options: java.util.Map[String, String],
-      initialCatalogTableOpt: Option[CatalogTable] = None
+      latestCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     recordFrameProfile("tableManagerCache.forTable") {
-      val key = CacheKey.from(spark, dataPath, options, initialCatalogTableOpt)
+      val key = CacheKey.from(spark, dataPath, options, latestCatalogTableOpt)
       val sqlConf = spark.sessionState.conf
       if (!isEnabled(sqlConf)) {
-        return new DeltaV2TableManagerImpl(
+        val manager = new DeltaV2TableManagerImpl(
           key.path.getParent,
           key.sessionInvariantFsOptions,
-          initialCatalogTableOpt)
+          latestCatalogTableOpt)
+        manager.updateCatalogTable(latestCatalogTableOpt)
+        manager
+      } else {
+        getOrCreateInstance(sqlConf).getOrCreate(key, latestCatalogTableOpt)
       }
-      getOrCreateInstance(sqlConf).getOrCreate(key, initialCatalogTableOpt)
     }
   }
 
@@ -238,16 +243,19 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
   private[tablemanager] def getOrCreate(
       sqlConf: SQLConf,
       key: CacheKey,
-      initialCatalogTableOpt: Option[CatalogTable] = None
+      latestCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     recordFrameProfile("tableManagerCache.getOrCreate") {
       if (!isEnabled(sqlConf)) {
-        return new DeltaV2TableManagerImpl(
+        val manager = new DeltaV2TableManagerImpl(
           key.path.getParent,
           key.sessionInvariantFsOptions,
-          initialCatalogTableOpt)
+          latestCatalogTableOpt)
+        manager.updateCatalogTable(latestCatalogTableOpt)
+        manager
+      } else {
+        getOrCreateInstance(sqlConf).getOrCreate(key, latestCatalogTableOpt)
       }
-      getOrCreateInstance(sqlConf).getOrCreate(key, initialCatalogTableOpt)
     }
   }
 
