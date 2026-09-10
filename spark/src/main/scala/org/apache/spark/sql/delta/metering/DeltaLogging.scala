@@ -209,7 +209,7 @@ trait DeltaLogging
       throwable: Throwable,
       deltaLog: DeltaLog = null,
       data: AnyRef = null,
-      path: Option[Path] = None,
+      path: Option[Path] = None
     ): Unit = {
     if (!check) {
       recordDeltaEvent(
