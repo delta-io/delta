@@ -182,6 +182,25 @@ class PostCommitSnapshotSuite
     }
   }
 
+  test("regular snapshot has ICT pre-loaded") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
+      appendData(engine, tablePath, data = seqOfUnpartitionedDataBatch1)
+
+      // Load as a regular snapshot via the standard path (SnapshotFactory -> SnapshotImpl)
+      val snapshot = latestSnapshot(tablePath, engine).asInstanceOf[SnapshotImpl]
+
+      val failingEngine = mockEngine()
+
+      // ICT is captured during Protocol/Metadata loading; should *not* read the delta file again
+      snapshot.getTimestamp(failingEngine)
+    }
+  }
+
   // TODO: Test CRC is also pre-loaded. Requires
   //       (1) SnapshotImpl::getCurrentCrcInfo to take in an engine param
   //       (2) LogReplay to *not* be injected into SnapshotImpl constructor
