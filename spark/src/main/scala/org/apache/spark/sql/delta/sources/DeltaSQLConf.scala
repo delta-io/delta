@@ -550,6 +550,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_COMMIT_IDEMPOTENCY_CHECK_VALIDATE_PREPARED_ACTIONS_ENABLED =
+    buildConf("commit.idempotencyCheck.validatePreparedActions.enabled")
+      .internal()
+      .doc("When enabled, on an idempotent self-commit (the write landed but the response was " +
+        "lost, detected on a later retry), validate that the prepared actions we finalize with " +
+        "match the actions read back from the landed commit, ignoring CommitInfo.version. This " +
+        "is a correctness check with a performance cost, intended to be removed once the " +
+        "idempotent self-commit finalization path is proven.")
+      .booleanConf
+      .createWithDefault(true)
+
   val FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED =
     buildConf("featureEnablement.conflictResolution.enabled")
       .internal()
@@ -2184,6 +2195,20 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  object GeneratedColumnPartitionFilterInferenceMode extends
+    DeltaBreakingChangeEnum(GENERATED_COLUMN_PARTITION_FILTER_INFERENCE_MODE)
+
+  val GENERATED_COLUMN_PARTITION_FILTER_INFERENCE_MODE =
+    buildConf("generatedColumn.partitionFilterInference.mode")
+      .internal()
+      .doc("Controls telemetry and suppression for generated-column partition filter " +
+        "inferences. LOG_ONLY records candidate signatures while retaining all inferred " +
+        "filters. ASSERT also suppresses candidates covered by the current safety policy.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValues(DeltaBreakingChangeEnum.validValues)
+      .createWithDefault(DeltaBreakingChangeEnum.LOG_ONLY)
+
   val GENERATED_COLUMN_ALLOW_NULLABLE =
     buildConf("generatedColumn.allowNullableIngest.enabled")
       .internal()
@@ -3101,6 +3126,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         """
           |If enabled, when a column mapping table is replaced, the new schema will reuse as many
           |old schema's column mapping metadata (field id and physical name) as possible.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val RETAIN_COMMENTS_DURING_REPLACE_TABLE =
+    buildConf("retainCommentsDuringReplace")
+      .internal()
+      .doc(
+        """
+          |If enabled, replacing a table (CREATE OR REPLACE TABLE, REPLACE TABLE, or the
+          |DataFrameWriterV2 replace()/createOrReplace() APIs) retains table and column comments
+          |from the old table when the new DDL does not explicitly specify them.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)

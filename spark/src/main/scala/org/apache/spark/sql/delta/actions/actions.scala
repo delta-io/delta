@@ -1280,7 +1280,8 @@ case class RemoveFile(
 
   /** Only for testing. */
   @JsonIgnore
-  private [delta] def isDVTombstone: Boolean = DeletionVectorDescriptor.isDeletionVectorPath(new Path(path))
+  private [delta] def isDVTombstone: Boolean =
+    DeletionVectorDescriptor.isSparkImplDeletionVectorPath(new Path(path))
 
 }
 // scalastyle:on

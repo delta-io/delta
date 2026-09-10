@@ -34,13 +34,17 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.types.StructType
 
-trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
+trait DeltaCDCStreamSuiteBase
+  extends QueryTest
+  with DeltaSQLCommandTest
+  with DeltaColumnMappingTestUtils
   with DeltaSourceSuiteBase
-  with DeltaColumnMappingTestUtils {
+  with StreamTest {
 
   import testImplicits._
   import io.delta.implicits._
