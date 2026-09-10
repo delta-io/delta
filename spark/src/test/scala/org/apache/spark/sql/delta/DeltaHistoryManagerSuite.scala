@@ -662,6 +662,64 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests {
     }
   }
 
+  test("getAllStagedAndCommittedFileActions returns add and remove actions across the commit range") {
+    val tblName = "delta_get_all_file_actions"
+    withTable(tblName) {
+      sql(s"CREATE TABLE $tblName (id INT) USING delta")
+      sql(s"INSERT INTO $tblName VALUES (1), (2), (3)")   // adds
+      sql(s"INSERT INTO $tblName VALUES (4), (5)")        // adds
+      sql(s"INSERT OVERWRITE $tblName VALUES (6)")        // removes the earlier files, adds new
+      val deltaLog = DeltaTableV2(spark, TableIdentifier(tblName)).deltaLog
+      val latest = deltaLog.update().version
+      val historyManager = deltaLog.history
+
+      {
+        val allActions = historyManager.getAllStagedAndCommittedFileActions(0, latest).collect()
+        assert(allActions.exists(_.add != null), "expected AddFile actions in the range")
+        assert(allActions.exists(_.remove != null), "expected RemoveFile actions in the range")
+
+        // Up to the version before the overwrite there are only adds (no removes yet), so the
+        // adds getAllStagedAndCommittedFileActions returns must equal the files of the snapshot as of that version.
+        val beforeOverwriteVersion = latest - 1
+        val beforeOverwrite = historyManager.getAllStagedAndCommittedFileActions(0, beforeOverwriteVersion).collect()
+        assert(!beforeOverwrite.exists(_.remove != null),
+          "no file was removed before the overwrite commit")
+        val addPathsBeforeOverwrite = beforeOverwrite.filter(_.add != null).map(_.add.path).toSet
+        val snapshotPaths =
+          deltaLog.getSnapshotAt(beforeOverwriteVersion).allFiles.collect().map(_.path).toSet
+        assert(addPathsBeforeOverwrite === snapshotPaths,
+          "adds up to the pre-overwrite version should equal that snapshot's files")
+
+        // An empty range (startVersion > endVersion) returns no actions.
+        assert(historyManager.getAllStagedAndCommittedFileActions(latest + 1, latest).isEmpty)
+      }
+    }
+  }
+
+  test("getRemoveFileActions returns only the removes within the commit range") {
+    val tblName = "delta_get_remove_file_actions"
+    withTable(tblName) {
+      sql(s"CREATE TABLE $tblName (id INT) USING delta")
+      sql(s"INSERT INTO $tblName VALUES (1), (2), (3)")   // adds only
+      sql(s"INSERT OVERWRITE $tblName VALUES (4)")        // removes the earlier files
+      val deltaLog = DeltaTableV2(spark, TableIdentifier(tblName)).deltaLog
+      val latest = deltaLog.update().version
+      val historyManager = deltaLog.history
+
+      {
+        val removes = historyManager.getRemoveFileActions(0, latest).collect()
+        assert(removes.nonEmpty, "expected removed files in the range")
+        assert(removes.forall(_.path != null))
+
+        // A range that excludes the overwrite commit has no removes.
+        assert(historyManager.getRemoveFileActions(0, latest - 1).count() === 0)
+
+        // An empty range (startVersion > endVersion) returns no removes.
+        assert(historyManager.getRemoveFileActions(latest + 1, latest).isEmpty)
+      }
+    }
+  }
+
   test("getCommitFromNonICTRange should handle empty history by throwing proper error") {
     val tblName = "delta_table"
     withTable(tblName) {

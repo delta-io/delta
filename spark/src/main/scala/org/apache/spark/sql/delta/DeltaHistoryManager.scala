@@ -25,7 +25,7 @@ import scala.collection.mutable
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutorService, Future}
 import scala.concurrent.duration.Duration
 
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo, CommitMarker, JobInfo, NotebookInfo}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, CommitMarker, JobInfo, NotebookInfo, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -64,6 +64,80 @@ class DeltaHistoryManager(
   }
 
   import DeltaHistoryManager._
+
+  /**
+   * Returns all staged and committed file actions (as raw `SingleAction`s) in the commits in the
+   * inclusive version
+   * range `[startVersion, endVersion]`, read directly by traversing the commit files.
+   *
+   * This includes actions from unbackfilled commit files under `_delta_log/_commits/`, which may
+   * be staged commits that were never actually committed to the table.
+   *
+   * This reads the file actions straight from the commit JSONs. For AMT (Delta on Iceberg V4)
+   * tables this is valid because the current implementation always writes the commit's file
+   * actions to the commit JSON (`includeActionsInCommitJson = true`) in addition to the manifest
+   * tree; omitting them from the JSON (manifest as the sole per-commit source) is not implemented
+   * and is explicitly rejected at commit time. If that ever changes, this implementation needs to
+   * be changed.
+   */
+  def getAllStagedAndCommittedFileActions(
+      startVersion: Long,
+      endVersion: Long): Dataset[SingleAction] = {
+    import org.apache.spark.sql.delta.implicits._
+    if (startVersion > endVersion) {
+      return spark.emptyDataset[SingleAction]
+    }
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+
+    // Backfilled commits in `_delta_log/`.
+    val backfilledCommitFiles = deltaLog.store
+      .listFrom(listingPrefix(deltaLog.logPath, startVersion), hadoopConf)
+      .collect { case DeltaFile(f, version) => (f, version) }
+      .takeWhile(_._2 <= endVersion)
+      .toSeq
+
+    // Unbackfilled commits in `_delta_log/_commits/`. Start listing from the last backfilled
+    // version we found so the two listings bridge without gaps. The directory may not exist on
+    // tables created in older versions.
+    val commitDirPath = FileNames.commitDirPath(deltaLog.logPath)
+    val fs = deltaLog.logPath.getFileSystem(hadoopConf)
+    val updatedStartVersion =
+      backfilledCommitFiles.lastOption.map(_._2).getOrElse(startVersion)
+    val unbackfilledCommitFiles = if (fs.exists(commitDirPath)) {
+      deltaLog.store
+        .listFrom(listingPrefix(commitDirPath, updatedStartVersion), hadoopConf)
+        .collect { case UnbackfilledDeltaFile(f, version, _) => (f, version) }
+        .takeWhile(_._2 <= endVersion)
+        .toSeq
+    } else {
+      Seq.empty
+    }
+
+    val allCommitFiles = (backfilledCommitFiles ++ unbackfilledCommitFiles).map(_._1)
+    if (allCommitFiles.isEmpty) {
+      return spark.emptyDataset[SingleAction]
+    }
+    val commitFileIndex =
+      DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, allCommitFiles).get
+    deltaLog.loadIndex(commitFileIndex).as[SingleAction]
+  }
+
+  /**
+   * Returns the `RemoveFile` (tombstone) actions for the removes within the inclusive version
+   * range `[startVersion, endVersion]`, derived by traversing the commits in the range (the
+   * removes-only view of [[getAllStagedAndCommittedFileActions]]).
+   */
+  def getRemoveFileActions(
+      startVersion: Long,
+      endVersion: Long): Dataset[RemoveFile] = {
+    import org.apache.spark.sql.delta.implicits._
+    if (startVersion > endVersion) {
+      return spark.emptyDataset[RemoveFile]
+    }
+    getAllStagedAndCommittedFileActions(startVersion, endVersion)
+      .where("remove IS NOT NULL")
+      .select(col("remove").as[RemoveFile])
+  }
 
   /**
    * Returns the information of the latest `limit` commits made to this table in reverse
