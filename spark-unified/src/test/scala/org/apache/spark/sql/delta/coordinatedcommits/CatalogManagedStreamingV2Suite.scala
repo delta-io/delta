@@ -40,7 +40,8 @@ object CatalogManagedStreamingV2Suite {
   )
 
   val FailingTests: Set[String] = Set(
-    // Delta V2 supports catalog-managed reads but not catalog-managed streaming commits.
+    // TODO(#7140): Delta V2 supports catalog-managed reads but not catalog-managed
+    // streaming commits.
     "stream to delta sink",
     "stream from delta source to delta sink with shared commit coordinator"
   )
