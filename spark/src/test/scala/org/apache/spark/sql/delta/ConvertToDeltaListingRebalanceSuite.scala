@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{LongType, StructType}
 
 /**
  * Validates the CONVERT TO DELTA file-listing rebalance
@@ -33,6 +33,13 @@ import org.apache.spark.sql.types.StructType
  * per-partition file distribution of `allFiles`, conf OFF vs ON.
  */
 class ConvertToDeltaListingRebalanceSuite extends ConvertToDeltaSuiteBaseCommons {
+
+  // Path order of the heterogeneous fixture (01-ab, 02-bc, 03-ac) fixes the merged column order and
+  // casing (A is seen before a), so the inferred schema is exactly A, b, c.
+  private val expectedPathOrderedSchema = new StructType()
+    .add("A", LongType, nullable = true)
+    .add("b", LongType, nullable = true)
+    .add("c", LongType, nullable = true)
 
   // recursiveListDirs uses defaultParallelism to partition; pin it so the OFF case (directory
   // distribution) is deterministic and the ON case fans out to a known width.
@@ -99,17 +106,17 @@ class ConvertToDeltaListingRebalanceSuite extends ConvertToDeltaSuiteBaseCommons
     }
   }
 
-  // Files with differing schemas in one directory, so distinct schemas can land in the same task:
-  // (a, b), (b, c), (a, c). Schema merging uses first-appearance order for the column order, so the
-  // task visitation order must not change the merged schema.
+  // Three differing schemas in path-sorted subdirs so the merged column order is deterministic:
+  // 01-ab=(A,b), 02-bc=(b,c), 03-ac=(a,c). Path order fixes first-appearance to A, b, c, and A
+  // (seen before a) fixes the casing.
   private def writeHeterogeneousParquet(dir: String): Unit = {
     withSQLConf("spark.sql.files.maxRecordsPerFile" -> "1") {
-      spark.range(8).select(col("id").as("a"), (col("id") * 2).as("b"))
-        .write.mode("append").parquet(dir)
+      spark.range(8).select(col("id").as("A"), (col("id") * 2).as("b"))
+        .write.mode("append").parquet(new File(dir, "01-ab").getCanonicalPath)
       spark.range(8).select((col("id") * 3).as("b"), (col("id") * 4).as("c"))
-        .write.mode("append").parquet(dir)
+        .write.mode("append").parquet(new File(dir, "02-bc").getCanonicalPath)
       spark.range(8).select(col("id").as("a"), (col("id") * 5).as("c"))
-        .write.mode("append").parquet(dir)
+        .write.mode("append").parquet(new File(dir, "03-ac").getCanonicalPath)
     }
   }
 
@@ -121,20 +128,31 @@ class ConvertToDeltaListingRebalanceSuite extends ConvertToDeltaSuiteBaseCommons
     }
   }
 
-  test("inferred schema is deterministic when rebalancing is enabled") {
+  test("inferred schema is the exact path-ordered schema when rebalancing is enabled") {
     withTempDir { tmp =>
       val dir = new File(tmp, "src").getCanonicalPath
       writeHeterogeneousParquet(dir)
 
-      // With rebalancing on, the schema merge is path-ordered, so the inferred schema is stable
-      // across runs even though recursiveListDirs' internal round-robin is not. With the flag off
-      // the merge order matches pre-PR (listing order), so it is intentionally not asserted here.
+      // Rebalancing processes files in path order, so the merged schema is exactly A, b, c.
       val s1 = inferredSchema(dir, rebalance = true)
       val s2 = inferredSchema(dir, rebalance = true)
 
-     assert(s1 == s2, s"schema must be deterministic when rebalancing:\n1=$s1\n2=$s2")
-     assert(s1.fieldNames.toSet == Set("a", "b", "c"),
-       s"expected merged columns a,b,c but got ${s1.fieldNames.mkString(",")}")
+      assert(s1 == expectedPathOrderedSchema, s"unexpected schema: $s1")
+      assert(s2 == expectedPathOrderedSchema, s"unexpected schema: $s2")
+    }
+  }
+
+  test("CONVERT TO DELTA commits the exact path-ordered schema") {
+    withTempDir { tmp =>
+      val dir = new File(tmp, "src").getCanonicalPath
+      writeHeterogeneousParquet(dir)
+
+      withSQLConf(DeltaSQLConf.DELTA_CONVERT_REBALANCE_FILE_LISTING.key -> "true") {
+        convertToDelta(s"parquet.`$dir`", collectStats = false)
+      }
+
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      assert(deltaLog.update().metadata.schema === expectedPathOrderedSchema)
     }
   }
 }

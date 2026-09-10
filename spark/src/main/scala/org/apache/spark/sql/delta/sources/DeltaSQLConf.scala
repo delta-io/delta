@@ -459,13 +459,13 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELTA_CONVERT_REBALANCE_FILE_LISTING =
     buildConf("convert.rebalanceFileListing")
       .internal()
-      .doc("When true (default), CONVERT TO DELTA rebalances the recursively-listed files " +
+      .doc("When true, CONVERT TO DELTA rebalances the recursively-listed files " +
         "across tasks (by file count) before reading Parquet footers for schema inference. " +
+        "Files are processed in path order for deterministic schema merging. " +
         "recursiveListDirs otherwise parcels files by top-level directory, so a single large " +
-        "partition directory becomes one skewed task that reads all its footers alone. Set " +
-        "to false to restore the previous directory-based task distribution.")
+        "partition directory becomes one skewed task that reads all its footers alone.")
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(false)
 
   val DELTA_CONVERT_METADATA_CHECK_ENABLED =
     buildConf("convert.metadataCheck.enabled")
