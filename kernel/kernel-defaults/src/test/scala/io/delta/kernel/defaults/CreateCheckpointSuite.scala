@@ -16,20 +16,27 @@
 package io.delta.kernel.defaults
 
 import java.io.File
+import java.util.Optional
 
 import scala.collection.immutable.Seq
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Table, TableManager}
-import io.delta.kernel.defaults.engine.DefaultEngine
+import io.delta.kernel.data.ColumnarBatch
+import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler}
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
+import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.{GeoTestUtils, TestRow, TestUtils, WriteUtils}
-import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{CheckpointAlreadyExistsException, TableNotFoundException}
-import io.delta.kernel.expressions.{Column, Literal}
+import io.delta.kernel.engine.{Engine, JsonHandler}
+import io.delta.kernel.exceptions.{CheckpointAlreadyExistsException, KernelEngineException, TableNotFoundException}
+import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.actions.SingleAction
 import io.delta.kernel.internal.tablefeatures.TableFeatures.GEOSPATIAL_RW_FEATURE
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.types.{GeometryType, StructType => KernelStructType}
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.apache.spark.sql.delta.{DeltaLog, VersionNotFoundException}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
@@ -45,7 +52,7 @@ import org.scalatest.funsuite.AnyFunSuite
 /**
  * Test suite for `io.delta.kernel.Table.checkpoint(engine, version)`
  */
-class CreateCheckpointSuite extends CheckpointBase with GeoTestUtils {
+class CreateCheckpointSuite extends CheckpointBase with GeoTestUtils with ParquetSuiteBase {
 
   ///////////
   // Tests //
@@ -590,6 +597,49 @@ class CreateCheckpointSuite extends CheckpointBase with GeoTestUtils {
       assert(
         deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === commits + 1,
         "Log cleanup should NOT happen with checkpointProtection enabled")
+    }
+  }
+
+  test("checkpoint write must not leave a partial checkpoint " +
+    "file when log replay fails mid-write") {
+    withTempDirAndEngine { (tablePath, tc) =>
+      setupTestTable(tc, tablePath, tableProperties = Map.empty[String, String], commits = 5)
+
+      val snapshot = TableManager.loadSnapshot(tablePath).build(tc).asInstanceOf[SnapshotImpl]
+      val checkpointVersion = snapshot.getVersion
+      val v0CommitName = f"${0L}%020d.json"
+
+      val fileIO = new HadoopFileIO(new Configuration())
+      val failingEngine = new DefaultEngine(fileIO) {
+        override def getJsonHandler: JsonHandler = new DefaultJsonHandler(fileIO) {
+          override def readJsonFiles(
+              scanFileIter: CloseableIterator[FileStatus],
+              physicalSchema: KernelStructType,
+              predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+            val files = new java.util.ArrayList[FileStatus]()
+            while (scanFileIter.hasNext) {
+              val fileStatus = scanFileIter.next()
+              if (fileStatus.getPath.endsWith(v0CommitName)) {
+                throw new RuntimeException("simulating read failure")
+              }
+              files.add(fileStatus)
+            }
+            super.readJsonFiles(toCloseableIterator(files.iterator()), physicalSchema, predicate)
+          }
+        }
+      }
+
+      intercept[KernelEngineException] {
+        snapshot.writeCheckpoint(failingEngine)
+      }
+
+      // With the abort-on-read-failure fix, a checkpoint whose log replay fails part-way through
+      // must NOT publish any file at the destination: the write is aborted, not finalized.
+      val checkpointFile = new File(checkpointFilePath(tablePath, checkpointVersion))
+      if (checkpointFile.exists()) {
+        fail(s"aborted checkpoint write must not publish a file, " +
+          s"but one was left at ${checkpointFile.getPath}")
+      }
     }
   }
 }
