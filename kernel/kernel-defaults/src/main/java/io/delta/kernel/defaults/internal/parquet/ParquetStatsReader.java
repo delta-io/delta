@@ -55,8 +55,9 @@ public class ParquetStatsReader {
   public static DataFileStatistics readDataFileStatistics(
       InputFile kernelInputFile, StructType dataSchema, List<Column> statsColumns)
       throws IOException {
-    // Pass the configuration explicitly so `parquet-mr` doesn't construct a fresh Hadoop
-    // Configuration here; see ParquetIOUtils#parquetConfiguration.
+    // Read the Parquet footer to compute the statistics. Pass the configuration explicitly so
+    // `parquet-mr` doesn't construct a fresh Hadoop Configuration here; see
+    // ParquetIOUtils#parquetConfiguration.
     org.apache.parquet.io.InputFile parquetFile =
         ParquetIOUtils.createParquetInputFile(kernelInputFile);
     ParquetMetadata footer =
