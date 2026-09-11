@@ -44,7 +44,10 @@ private[tablemanager] class DeltaV2TableManagerCache(
     managerFactory: (
         DeltaV2TableManagerCache.CacheKey,
         Option[CatalogTable]) => DeltaV2TableManager =
-      DeltaV2TableManagerCache.createManager
+      (key, catalog) => new DeltaV2TableManagerImpl(
+        key.path.getParent,
+        key.sessionInvariantFsOptions,
+        catalog)
 ) extends DeltaV2Logging {
   import DeltaV2TableManagerCache.CacheKey
 
@@ -66,12 +69,12 @@ private[tablemanager] class DeltaV2TableManagerCache(
   // the original Delta error class, SQLSTATE, and cause chain rather than exposing Guava wrappers.
   def getOrCreate(
       key: CacheKey,
-      catalogTableOpt: Option[CatalogTable] = None
+      initialCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
-    val manager = try {
+    try {
       cache.get(key, () => {
         recordFrameProfile("tableManagerCache.createManager") {
-          managerFactory(key, catalogTableOpt)
+          managerFactory(key, initialCatalogTableOpt)
         }
       })
     } catch {
@@ -81,7 +84,6 @@ private[tablemanager] class DeltaV2TableManagerCache(
         logWarning(log"Cache loader failed; rethrowing original cause", cause)
         throw cause
     }
-    catalogTableOpt.fold(manager)(manager.withUnsafeVolatileCatalogTable)
   }
 
   def invalidate(key: CacheKey): Unit = cache.invalidate(key)
@@ -116,14 +118,6 @@ private[tablemanager] class DeltaV2TableManagerCache(
  * exposed outside the `tablemanager` package.
  */
 private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
-
-  private[tablemanager] def createManager(
-      key: CacheKey,
-      catalogTableOpt: Option[CatalogTable]): DeltaV2TableManager =
-    new DeltaV2TableManagerImpl(
-      key.path.getParent,
-      key.sessionInvariantFsOptions,
-      catalogTableOpt)
 
   // === Cache key ==================================================
 
@@ -216,23 +210,25 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
    * @param spark the active SparkSession, used for filesystem resolution and configuration.
    * @param dataPath the table's data directory path as a string.
    * @param options reader/writer options (Java map).
-   * @param catalogTableOpt optional catalog table. Its storage properties contribute filesystem
-   *   options to the key, and its metadata is published to the returned manager.
+   * @param initialCatalogTableOpt optional catalog table whose storage properties contribute
+   *   additional filesystem options.
    */
   def forTable(
       spark: SparkSession,
       dataPath: String,
       options: java.util.Map[String, String],
-      catalogTableOpt: Option[CatalogTable] = None
+      initialCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     recordFrameProfile("tableManagerCache.forTable") {
-      val key = CacheKey.from(spark, dataPath, options, catalogTableOpt)
+      val key = CacheKey.from(spark, dataPath, options, initialCatalogTableOpt)
       val sqlConf = spark.sessionState.conf
       if (!isEnabled(sqlConf)) {
-        createManager(key, catalogTableOpt)
-      } else {
-        getOrCreateInstance(sqlConf).getOrCreate(key, catalogTableOpt)
+        return new DeltaV2TableManagerImpl(
+          key.path.getParent,
+          key.sessionInvariantFsOptions,
+          initialCatalogTableOpt)
       }
+      getOrCreateInstance(sqlConf).getOrCreate(key, initialCatalogTableOpt)
     }
   }
 
@@ -242,14 +238,16 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
   private[tablemanager] def getOrCreate(
       sqlConf: SQLConf,
       key: CacheKey,
-      catalogTableOpt: Option[CatalogTable] = None
+      initialCatalogTableOpt: Option[CatalogTable] = None
   ): DeltaV2TableManager = {
     recordFrameProfile("tableManagerCache.getOrCreate") {
       if (!isEnabled(sqlConf)) {
-        createManager(key, catalogTableOpt)
-      } else {
-        getOrCreateInstance(sqlConf).getOrCreate(key, catalogTableOpt)
+        return new DeltaV2TableManagerImpl(
+          key.path.getParent,
+          key.sessionInvariantFsOptions,
+          initialCatalogTableOpt)
       }
+      getOrCreateInstance(sqlConf).getOrCreate(key, initialCatalogTableOpt)
     }
   }
 
