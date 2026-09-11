@@ -29,7 +29,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 /**
  * Process-cached [[DeltaV2TableManager]] implementation.
  *
- * The manager owns the table-scoped [[KernelContext]] and snapshot manager.
+ * Creates uncached snapshot managers using the table-scoped [[KernelContext]].
  *
  * @param qualifiedTableDataPath the fully-qualified table data directory (parent of `_delta_log`).
  * @param sessionInvariantFsOptions filesystem-prefixed credential options (`fs.*`, `dfs.*`) that
@@ -54,7 +54,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   override private[v2] lazy val kernelContext =
     KernelContext(sessionInvariantFsOptions, logStore)
 
-  override lazy val snapshotManager: DeltaV2SnapshotManager =
+  override def snapshotManager: DeltaV2SnapshotManager =
     SnapshotManagerFactory.create(
       tablePath.toString,
       kernelContext.getDefaultEngine(),

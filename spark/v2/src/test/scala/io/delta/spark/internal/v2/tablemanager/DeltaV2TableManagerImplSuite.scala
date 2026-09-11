@@ -42,7 +42,7 @@ class DeltaV2TableManagerImplSuite
     super.afterEach()
   }
 
-  test("snapshotManager reuses an uncached delegate and the shared Kernel Engine") {
+  test("snapshotManager creates uncached delegates using the shared Kernel Engine") {
     withTempDir { dir =>
       spark.range(1).write.format("delta").save(dir.getCanonicalPath)
       val impl = DeltaV2TableManagerCache
@@ -53,7 +53,7 @@ class DeltaV2TableManagerImplSuite
       val first = impl.snapshotManager
       val second = impl.snapshotManager
 
-      assert(first eq second)
+      assert(first ne second)
       assert(impl.kernelContext.getDefaultEngine() eq kernelEngine)
       assert(first.loadLatestSnapshot().version == 0)
       assert(second.loadLatestSnapshot().version == 0)
