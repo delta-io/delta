@@ -3484,6 +3484,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val CONCURRENT_IDENTITY_COLUMN_MAX_COLUMNS_PER_TABLE =
+    buildConf("identityColumn.concurrent.maxColumnsPerTable")
+      .internal()
+      .doc("Maximum number of concurrent (service-backed) identity columns allowed on a single " +
+        "table. Enforced when the table opts into the feature: CREATE/REPLACE with the CIC " +
+        "feature and the feature opt-in conversion reject a table whose identity-column count " +
+        "exceeds this, before any sequence is minted.")
+      .intConf
+      .checkValue(_ > 0, "maxColumnsPerTable must be positive")
+      .createWithDefault(50)
+
   //////////////////
   // GeoSpatial
   //////////////////
