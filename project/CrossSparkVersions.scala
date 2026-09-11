@@ -308,8 +308,10 @@ object SparkVersionSpec {
     jacksonVersion = "2.18.2"
   )
 
-  private val spark42 = SparkVersionSpec(
-    fullVersion = "4.2.0",
+  // The default profile currently targets Spark 4.2. When the default moves to a new Spark line,
+  // rename this profile to spark42 and add a new defaultSpark with the new line's settings.
+  private val defaultSpark = SparkVersionSpec(
+    fullVersion = IO.read(file("project/default-spark-version")).trim,
     targetJvm = "17",
     additionalSourceDirs = Seq("scala-shims/spark-4.2", "scala-shims/spark-4.1-4.2"),
     supportIceberg = false,
@@ -320,13 +322,13 @@ object SparkVersionSpec {
   )
 
   /** Default Spark version */
-  val DEFAULT = spark42
+  val DEFAULT = defaultSpark
 
   /** Spark master branch version (optional). Release branches should not build against master */
   val MASTER: Option[SparkVersionSpec] = None
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41, spark42)
+  val ALL_SPECS = Seq(spark40, spark41, DEFAULT)
 }
 
 /** See docs on top of this file */
