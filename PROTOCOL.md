@@ -110,6 +110,7 @@
   - [Generated Columns](#generated-columns)
   - [Default Columns](#default-columns)
   - [Identity Columns](#identity-columns)
+  - [Materialize Partition Columns](#materialize-partition-columns)
   - [Writer Version Requirements](#writer-version-requirements)
 - [Requirements for Readers](#requirements-for-readers)
   - [Reader Version Requirements](#reader-version-requirements)
@@ -2491,6 +2492,33 @@ When `delta.identity.allowExplicitInsert` is false, writers should meet the foll
 - Overflow when calculating generated Identity values should be detected and such writes should not be allowed.
 - `delta.identity.highWaterMark` should be updated to the new highest value when the write operation commits.
 
+## Materialize Partition Columns
+
+When this feature is supported, partition columns are physically written to Parquet files alongside the data columns. To support this feature:
+ - The table must be on Writer Version 7, and a feature name `materializePartitionColumns` must exist in the table `protocol`'s `writerFeatures`.
+
+When supported:
+ - When the writer feature `materializePartitionColumns` is set in the protocol, writers must materialize partition columns into any newly created data file. This mimics the same partition column materialization requirement from [IcebergCompatV1](#iceberg-compatibility-v1)
+and
+[IcebergCompatV2](#iceberg-compatibility-v2). As such, the `materializePartitionColumns` feature can be seen as a subset of the requirements imposed by those features, providing the partition column materialization guarantee independently without requiring full
+  Iceberg compatibility.
+ - When the writer feature `materializePartitionColumns` is not set in the table protocol, writers are not required to write partition columns to data files. Note that other features might still require materialization of partition values, such as [IcebergCompatV1](#iceberg-compatibility-v1)
+
+This feature does not impose any requirements on readers. All Delta readers must be able to read the table regardless of whether partition columns are materialized in the data files. If partition values are present in both parquet and AddFile metadata, Delta readers should continue to read partition values from AddFile metadata. Also, [file-level statistics](#per-file-statistics) should not be written for the partition column as it would repeat information already present in an AddFile's `partitionValues`.
+
+Note that this table feature, as well as [icebergCompatV1](#iceberg-compatibility-v1) (and related table features that require partition column materialization), if enabled, take priority over the `delta.writePartitionColumnsToParquet` table property. In other words, if a table feature is enabled that requires materialization of partition columns, and table metadata contains a `false` value for `delta.writePartitionColumnsToParquet`, partition columns must be materialized.
+
+| Table feature enablement | Value of `delta.writePartitionColumnsToParquet` table property | Writer requirement |
+| ------------------------ | -------------------------------------------------------------- | ------------------ |
+| A writer feature requiring partition column materialization (eg. `materializePartitionColumns`) is *enabled* | `false` | Partition columns *must* be materialized in parquet data files |
+| A writer feature requiring partition column materialization (eg. `materializePartitionColumns`) is *enabled* | `true` | Partition columns *must* be materialized in parquet data files |
+| A writer feature requiring partition column materialization (eg. `materializePartitionColumns`) is *enabled* | unset | Partition columns *must* be materialized in parquet data files |
+| No writer feature requiring partition column materialization is enabled | `false` | Partition columns *should not* be materialized in parquet data files |
+| No writer feature requiring partition column materialization is enabled | `true` | Partition columns *should* be materialized in parquet data files |
+| No writer feature requiring partition column materialization is enabled | unset | No requirement on partition column materialization |
+
+The value of having both the table feature `materializePartitionColumns` and the table property `delta.writePartitionColumnsToParquet` supported is that not every table is going to need the heightened requirement of only allowing writes from writers that understand `materializePartitionColumns`. In other words, `materializePartitionColumns` imposes a writer compatibility edge that `delta.writePartitionColumnsToParquet` does not.
+
 ## Writer Version Requirements
 
 The requirements of the writers according to the protocol versions are summarized in the table below. Each row inherits the requirements from the preceding row.
@@ -2526,6 +2554,7 @@ Property | Description | Details
 `delta.parquet.compression.codec` | Compression codec writers SHOULD use for new Parquet data and checkpoint files. Changing this property does not affect existing files; a table may contain files written with different codecs, which is a normal and expected state. | Widely supported values (matched case-insensitively): `uncompressed`/`none` (no compression), `snappy`, `gzip`, `lz4` (deprecated, Hadoop framing), `lz4_raw` ([LZ4 block format](https://parquet.apache.org/docs/file-format/data-pages/compression/#lz4_raw)), `zstd`.<br><br>When absent, writers SHOULD default to `zstd`. If a writer does not support or recognize the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.<br><br>Readers SHOULD support all codecs listed above regardless of the current property value. Parquet files written with other [parquet-supported codecs](https://parquet.apache.org/docs/file-format/data-pages/compression/) may also exist; readers MAY support reading these files.
 `delta.parquet.format.version` | Parquet data page format writers SHOULD use for new data and checkpoint files. This property is a directive to writers only; readers do not need to consult it, as Parquet pages are self-describing via the `PageType` field in each page header. Changing this property does not affect existing files; a table MAY contain files written with different data page versions, which is a normal and expected state. | Valid values: `1.0.0` (DataPageV1) and `2.x.x` (DataPageV2, where `x.x` is any minor.patch version). Recommended values are `1.0.0` and `2.12.0`.<br><br>When absent, writers SHOULD default to `1.0.0`. Writers SHOULD validate this property and abort if the value does not match `1.0.0` or `2.MINOR.PATCH`.<br><br>Readers SHOULD support both DataPageV1 and DataPageV2 pages regardless of this property's value. Tables intended for access by engines beyond the Delta Lake connectors SHOULD use `1.0.0`, as DataPageV2 support varies across the broader Parquet ecosystem.
 `delta.enableVariantShredding` | When `true`, writers could write variant data to parquet files in [shredded](#variant-shredding) format. | Valid values: `true` (shredding allowed) and `false` (shredding not allowed).<br><br>When enabled, writers must ensure that the `variantShredding` table feature is present in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+`delta.writePartitionColumnsToParquet` | Controls whether writers SHOULD write partition columns in newly written data parquet files, in the absence of any writer features that necessitate writing of partition columns (eg. `IcebergCompatV1`). In other words, if no writer feature is enabled that requires materialization of partition columns, writers should read this property to decide whether to materialize partition columns in data parquet files or not. Writer features requirements take precedence over this property's value. Readers should continue to read partition values off of AddFile actions, regardless of the presence of partition values in data files. File-level statistics should not be present for partition columns in partitioned tables in any case. This setting does not apply to writers of files of any other file format. | Boolean field, with valid values `false` and `true`.
 
 # Appendix
 
@@ -2552,6 +2581,7 @@ Feature | Name | Readers or Writers?
 [Clustered Table](#clustered-table) | `clustering` | Writers only
 [VACUUM Protocol Check](#vacuum-protocol-check) | `vacuumProtocolCheck` | Readers and Writers
 [In-Commit Timestamps](#in-commit-timestamps) | `inCommitTimestamp` | Writers only
+[Materialize Partition Columns](#materialize-partition-columns) | `materializePartitionColumns` | Writers only
 
 ## Deletion Vector Format
 
