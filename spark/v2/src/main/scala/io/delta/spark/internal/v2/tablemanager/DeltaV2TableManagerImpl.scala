@@ -15,12 +15,9 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
-import java.util.concurrent.atomic.AtomicReference
-
 import scala.jdk.OptionConverters._
 
 import org.apache.spark.sql.delta.storage.LogStoreProvider
-import io.delta.spark.internal.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
@@ -32,9 +29,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 /**
  * Process-cached [[DeltaV2TableManager]] implementation.
  *
- * The manager owns the table-scoped [[KernelContext]] but does not retain snapshot state. Each
- * [[snapshotManager]] call uses [[SnapshotManagerFactory]] to create an uncached manager backed by
- * the Kernel Engine shared through that context.
+ * The manager owns the table-scoped [[KernelContext]] and snapshot manager.
  *
  * @param qualifiedTableDataPath the fully-qualified table data directory (parent of `_delta_log`).
  * @param sessionInvariantFsOptions filesystem-prefixed credential options (`fs.*`, `dfs.*`) that
@@ -47,32 +42,8 @@ private[tablemanager] class DeltaV2TableManagerImpl(
     val sessionInvariantFsOptions: Map[String, String],
     val initialCatalogTableOpt: Option[CatalogTable])
     extends DeltaV2TableManager
-    with DeltaV2Logging
     with LogStoreProvider
 {
-
-  private val _unsafeVolatileCatalogTable =
-    new AtomicReference[CatalogTable]()
-
-  private[tablemanager] def unsafeVolatileCatalogTable: Option[CatalogTable] =
-    Option(_unsafeVolatileCatalogTable.get())
-
-  override private[tablemanager] def withUnsafeVolatileCatalogTable(
-      table: CatalogTable): DeltaV2TableManager = {
-    val oldTable = _unsafeVolatileCatalogTable.getAndSet(table)
-    if (oldTable != null && oldTable.identifier != table.identifier) {
-      recordDeltaEvent(
-        null,
-        "deltaV2.catalog.multipleTablesForSameLog",
-        data = Map(
-          "oldTableIdentifier" -> oldTable.identifier,
-          "newTableIdentifier" -> table.identifier),
-        path = Some(tablePath))
-    }
-    this
-  }
-
-  initialCatalogTableOpt.foreach(withUnsafeVolatileCatalogTable)
 
   /** The table's data directory, fully qualified. */
   def tablePath: Path = qualifiedTableDataPath
@@ -83,9 +54,9 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   override private[v2] lazy val kernelContext =
     KernelContext(sessionInvariantFsOptions, logStore)
 
-  override def snapshotManager(): DeltaV2SnapshotManager =
+  override lazy val snapshotManager: DeltaV2SnapshotManager =
     SnapshotManagerFactory.create(
       tablePath.toString,
       kernelContext.getDefaultEngine(),
-      unsafeVolatileCatalogTable.toJava)
+      initialCatalogTableOpt.toJava)
 }

@@ -42,7 +42,7 @@ class DeltaV2TableManagerImplSuite
     super.afterEach()
   }
 
-  test("snapshotManager returns a new uncached manager using the shared Kernel Engine") {
+  test("snapshotManager reuses an uncached delegate and the shared Kernel Engine") {
     withTempDir { dir =>
       spark.range(1).write.format("delta").save(dir.getCanonicalPath)
       val impl = DeltaV2TableManagerCache
@@ -50,26 +50,13 @@ class DeltaV2TableManagerImplSuite
         .asInstanceOf[DeltaV2TableManagerImpl]
 
       val kernelEngine = impl.kernelContext.getDefaultEngine()
-      val first = impl.snapshotManager()
-      val second = impl.snapshotManager()
+      val first = impl.snapshotManager
+      val second = impl.snapshotManager
 
-      assert(!(first eq second))
+      assert(first eq second)
       assert(impl.kernelContext.getDefaultEngine() eq kernelEngine)
       assert(first.loadLatestSnapshot().version == 0)
       assert(second.loadLatestSnapshot().version == 0)
-    }
-  }
-
-  test("retire remains a no-op for the uncached implementation") {
-    withTempDir { dir =>
-      val impl = DeltaV2TableManagerCache
-        .forTable(spark, dir.getCanonicalPath, Collections.emptyMap())
-        .asInstanceOf[DeltaV2TableManagerImpl]
-      val snapshotManager = impl.snapshotManager()
-
-      impl.retire()
-
-      assert(!(impl.snapshotManager() eq snapshotManager))
     }
   }
 

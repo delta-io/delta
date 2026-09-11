@@ -18,8 +18,6 @@ package io.delta.spark.internal.v2.tablemanager
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
 
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
-
 /**
  * Contract for a Delta table manager used by the DSv2 connector.
  */
@@ -28,11 +26,8 @@ private[v2] trait DeltaV2TableManager {
   /** Returns the table-scoped Kernel context. */
   private[v2] def kernelContext: KernelContext
 
-  /** Returns a snapshot manager for the table. */
-  def snapshotManager(): DeltaV2SnapshotManager
-
-  private[tablemanager] def withUnsafeVolatileCatalogTable(
-      table: CatalogTable): DeltaV2TableManager
+  /** Returns the table's snapshot manager. */
+  def snapshotManager: DeltaV2SnapshotManager
 
   /** Retires this manager and releases any resources it owns. */
   def retire(): Unit = {}
