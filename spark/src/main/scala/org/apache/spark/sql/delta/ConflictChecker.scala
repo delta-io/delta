@@ -222,11 +222,16 @@ object WinningCommitSummary {
 }
 
 private[delta] class ConflictChecker(
-    spark: SparkSession,
+    protected val spark: SparkSession,
     initialCurrentTransactionInfo: CurrentTransactionInfo,
-    winningCommitSummary: WinningCommitSummary,
+    // A `var` (reassigned once by [[resolveRowLevelConflicts]]) to drop files that were reconciled
+    // at the row level, mirroring how `currentTransactionInfo` is rebased. After that the
+    // file-level checks run against a summary that never mentions the reconciled files, so they
+    // need no changes.
+    protected var winningCommitSummary: WinningCommitSummary,
     isolationLevel: IsolationLevel)
-  extends DeltaLogging with ConflictCheckerPredicateElimination {
+  extends DeltaLogging with ConflictCheckerPredicateElimination
+  with RowLevelConcurrencyResolution {
 
   protected val winningCommitVersion = winningCommitSummary.commitVersion
   protected val startTimeMs = System.currentTimeMillis()
@@ -305,6 +310,12 @@ private[delta] class ConflictChecker(
 
     // Update the table version in newly added type widening metadata.
     updateTypeWideningMetadata()
+
+    // Row-level concurrency: try to resolve "same physical file" conflicts by merging deletion
+    // vectors before the file-level checks run, so that concurrent DML touching disjoint rows of
+    // the same file no longer aborts. Runs after row-ID reassignment so merged files keep stable
+    // base row IDs.
+    resolveRowLevelConflicts()
 
     // Data file checks.
     checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn()
