@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -34,6 +35,8 @@ import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManager;
+import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache$;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -45,9 +48,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.function.BiFunction;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField;
@@ -58,6 +64,7 @@ import org.apache.spark.sql.connector.catalog.SupportsWrite;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
@@ -71,6 +78,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
 
@@ -530,6 +538,101 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
         "0",
         tableAtV0.version(),
         "version() should remain pinned to the construction-time snapshot");
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @EnumSource(ConstructionMethod.class)
+  public void testUsesTableManagerKernelContextAndLoadsSnapshotsAcrossSessions(
+      ConstructionMethod method, @TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "test_table_manager_" + method.name().toLowerCase();
+    spark.sql(String.format("CREATE TABLE %s (id INT) USING delta LOCATION '%s'", tableName, path));
+    Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
+    SparkSession sessionA = spark.newSession();
+    SparkSession sessionB = spark.newSession();
+
+    DeltaV2TableManagerCache$.MODULE$.clearCache();
+    try {
+      CatalogTable catalogTableA =
+          withActiveSession(
+              sessionA,
+              () ->
+                  sessionA
+                      .sessionState()
+                      .catalog()
+                      .getTableMetadata(new TableIdentifier(tableName)));
+      CatalogTable catalogTableB =
+          withActiveSession(
+              sessionB,
+              () ->
+                  sessionB
+                      .sessionState()
+                      .catalog()
+                      .getTableMetadata(new TableIdentifier(tableName)));
+      Option<CatalogTable> catalogTableOptA =
+          method == ConstructionMethod.FROM_PATH ? Option.empty() : Option.apply(catalogTableA);
+      Option<CatalogTable> catalogTableOptB =
+          method == ConstructionMethod.FROM_PATH ? Option.empty() : Option.apply(catalogTableB);
+      DeltaV2Table table =
+          withActiveSession(
+              sessionA,
+              () ->
+                  method == ConstructionMethod.FROM_PATH
+                      ? new DeltaV2Table(identifier, path)
+                      : new DeltaV2Table(identifier, catalogTableA, Collections.emptyMap()));
+      DeltaV2TableManager managerA =
+          DeltaV2TableManagerCache$.MODULE$.forTable(
+              sessionA, path, Collections.emptyMap(), catalogTableOptA);
+      DeltaV2TableManager managerB =
+          DeltaV2TableManagerCache$.MODULE$.forTable(
+              sessionB, path, Collections.emptyMap(), catalogTableOptB);
+
+      assertTrue(table.getSnapshotManager() instanceof PathBasedSnapshotManager);
+      assertSame(managerA, managerB);
+      assertSame(managerA.kernelContext().getDefaultEngine(), table.kernelEngine());
+      assertEquals("0", table.version());
+
+      withActiveSession(
+          sessionA,
+          () -> {
+            sessionA.sql(String.format("INSERT INTO %s VALUES (1)", tableName));
+            assertLatestSnapshot(table, sessionA, 1L, 1L);
+            return null;
+          });
+      withActiveSession(
+          sessionB,
+          () -> {
+            sessionB.sql(String.format("INSERT INTO %s VALUES (2)", tableName));
+            assertLatestSnapshot(table, sessionB, 2L, 2L);
+            return null;
+          });
+    } finally {
+      DeltaV2TableManagerCache$.MODULE$.clearCache();
+      spark.sql(String.format("DROP TABLE IF EXISTS %s", tableName));
+    }
+  }
+
+  private static void assertLatestSnapshot(
+      DeltaV2Table table, SparkSession activeSession, long expectedVersion, long expectedFiles) {
+    Snapshot snapshot = table.getSnapshotManager().loadLatestSnapshot();
+    Dataset<?> allFiles = snapshot.allFiles();
+    assertEquals(expectedVersion, snapshot.version());
+    assertSame(activeSession, allFiles.sparkSession());
+    assertEquals(expectedFiles, allFiles.count());
+  }
+
+  private static <T> T withActiveSession(SparkSession session, Callable<T> body) throws Exception {
+    Option<SparkSession> originalSession = SparkSession.getActiveSession();
+    SparkSession.setActiveSession(session);
+    try {
+      return body.call();
+    } finally {
+      if (originalSession.isDefined()) {
+        SparkSession.setActiveSession(originalSession.get());
+      } else {
+        SparkSession.clearActiveSession();
+      }
+    }
   }
 
   @Test
