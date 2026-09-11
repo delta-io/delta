@@ -200,6 +200,13 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(n => n >= 0, "must not be negative.")
       .createWithDefault(2)
 
+  val DELTA_SNAPSHOT_FILESYSTEM_LISTING_FILTER_STAGED_COMMITS_ENABLED =
+    buildConf("snapshot.filesystemListing.filterStagedCommits.enabled")
+      .internal()
+      .doc("When true, raw filesystem listings accept only backfilled Delta commit files.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES =
     buildConf("commit.inconsistentList.maxRetries")
       .internal()
