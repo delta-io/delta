@@ -15,6 +15,7 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
+import java.io.File
 import java.util.Collections
 
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
@@ -22,7 +23,10 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.StructType
 
 class DeltaV2TableManagerImplSuite
     extends QueryTest
@@ -42,21 +46,55 @@ class DeltaV2TableManagerImplSuite
     super.afterEach()
   }
 
-  test("snapshotManager creates uncached delegates using the shared Kernel Engine") {
+  private def forPathAndCatalogManagers(
+      path: String)(testFn: DeltaV2TableManagerImpl => Unit): Unit = {
+    val catalogTable = CatalogTable(
+      identifier = TableIdentifier("test_table"),
+      tableType = CatalogTableType.EXTERNAL,
+      storage = CatalogStorageFormat.empty.copy(locationUri = Some(new File(path).toURI)),
+      schema = new StructType())
+    Seq("path-based" -> None, "catalog-backed" -> Some(catalogTable)).foreach {
+      case (label, catalogTableOpt) =>
+        DeltaV2TableManagerCache.clearCache()
+        withClue(s"$label manager: ") {
+          val manager = DeltaV2TableManagerCache
+            .forTable(spark, path, Collections.emptyMap(), catalogTableOpt)
+            .asInstanceOf[DeltaV2TableManagerImpl]
+          assert(manager.initialCatalogTableOpt === catalogTableOpt)
+          testFn(manager)
+        }
+    }
+  }
+
+  test("snapshotManager loads table history through path and catalog managers") {
     withTempDir { dir =>
-      spark.range(1).write.format("delta").save(dir.getCanonicalPath)
-      val impl = DeltaV2TableManagerCache
-        .forTable(spark, dir.getCanonicalPath, Collections.emptyMap())
-        .asInstanceOf[DeltaV2TableManagerImpl]
+      val path = dir.getCanonicalPath
+      spark.range(0, 1, 1, 1).write.format("delta").save(path)
+      spark.range(1, 2, 1, 1).write.format("delta").mode("append").save(path)
+      spark.range(2, 3, 1, 1).write.format("delta").mode("append").save(path)
 
-      val kernelEngine = impl.kernelContext.getDefaultEngine()
-      val first = impl.snapshotManager
-      val second = impl.snapshotManager
+      forPathAndCatalogManagers(path) { manager =>
+        val kernelEngine = manager.kernelContext.getDefaultEngine()
+        val atVersionZeroManager = manager.snapshotManager
+        val atVersionOneManager = manager.snapshotManager
+        val latestManager = manager.snapshotManager
 
-      assert(first ne second)
-      assert(impl.kernelContext.getDefaultEngine() eq kernelEngine)
-      assert(first.loadLatestSnapshot().version == 0)
-      assert(second.loadLatestSnapshot().version == 0)
+        assert(atVersionZeroManager ne atVersionOneManager)
+        assert(atVersionOneManager ne latestManager)
+        assert(manager.kernelContext.getDefaultEngine() eq kernelEngine)
+
+        val atVersionZero = atVersionZeroManager.loadSnapshotAt(0)
+        assert(atVersionZero.version == 0)
+        assert(atVersionZero.allFiles.count() == 1)
+
+        val atVersionOne = atVersionOneManager.loadSnapshotAt(1)
+        assert(atVersionOne.version == 1)
+        assert(atVersionOne.allFiles.count() == 2)
+
+        val latest = latestManager.loadLatestSnapshot()
+        assert(latest.version == 2)
+        assert(latest.allFiles.count() == 3)
+      }
     }
   }
 
