@@ -572,7 +572,7 @@ class ParquetSchemaUtils {
         if (isNestedFieldId) {
           seemNestedWithNoId.set(true);
           checkArgument(
-              !seenNestedFieldWithId.get() && !seenFieldWithId.get(),
+              !seenNestedFieldWithId.get(),
               "Some of the fields are missing field ids.\n%s",
               structType);
         } else {
