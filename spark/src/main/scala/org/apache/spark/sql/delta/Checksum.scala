@@ -878,9 +878,14 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
     }
     // AMT manifest trees do not yet round-trip every AddFile field: `DataEntry.toAddFile` zeroes
     // `modificationTime`, forces `dataChange = false`, drops `tags`, and reduces `stats` to
-    // `{"numRecords":n}`. Project both sides through that lossy lens before comparing.
+    // `{"numRecords":n}`. Project those lossy fields before comparing.
     if (AMTUtils.amtEnabled(self)) {
       def normalizeForAmtTreeRoundTrip(f: AddFile): AddFile = f.copy(
+        // CRC and AMT reconstruction may use different path encodings for the same on-disk DV,
+        // so normalize both to absolute paths before comparing.
+        deletionVector = Option(f.deletionVector)
+          .map(_.copyWithAbsolutePath(deltaLog.dataPath))
+          .orNull,
         modificationTime = 0L,
         dataChange = false,
         tags = null,
