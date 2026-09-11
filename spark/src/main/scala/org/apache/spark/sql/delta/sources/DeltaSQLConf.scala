@@ -200,6 +200,13 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(n => n >= 0, "must not be negative.")
       .createWithDefault(2)
 
+  val DELTA_SNAPSHOT_FILESYSTEM_LISTING_FILTER_STAGED_COMMITS_ENABLED =
+    buildConf("snapshot.filesystemListing.filterStagedCommits.enabled")
+      .internal()
+      .doc("When true, raw filesystem listings accept only backfilled Delta commit files.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES =
     buildConf("commit.inconsistentList.maxRetries")
       .internal()
@@ -2527,6 +2534,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |This is a safety switch - we should only set this to false if the fix introduces some
           |regression.
           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_DROP_STATS_COLUMNS_ESCAPE_NAMES =
+    buildConf("stats.dropStatsColumns.escapeNames")
+      .internal()
+      .doc("Whether to properly escape surviving data skipping stats column names after dropping " +
+        "a column.")
       .booleanConf
       .createWithDefault(true)
 
