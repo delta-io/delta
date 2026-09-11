@@ -124,10 +124,18 @@ trait SnapshotManagement { self: DeltaLog =>
     } catch {
       case _: FileNotFoundException => None
     }
+    val filterStagedCommits = spark.conf.get(
+      DeltaSQLConf.DELTA_SNAPSHOT_FILESYSTEM_LISTING_FILTER_STAGED_COMMITS_ENABLED)
     val files =
       filesOpt.map {
       _.flatMap {
-        case DeltaFile(f, fileVersion) =>
+        // A recursive listing can return files from `_staged_commits`. A file in this directory is
+        // not a valid commit until the commit coordinator approves it. By default, accept only
+        // backfilled commit files from the listing. If filtering is disabled, accept all Delta
+        // commit file names as before.
+        case DeltaFile(f, fileVersion) if !filterStagedCommits =>
+          Some((f, FileType.DELTA, fileVersion))
+        case BackfilledDeltaFile(f, fileVersion) =>
           Some((f, FileType.DELTA, fileVersion))
         case CompactedDeltaFile(f, startVersion, endVersion)
             if includeMinorCompactions && versionToLoad.forall(endVersion <= _) =>
