@@ -47,7 +47,7 @@ class DeltaV2TableManagerImplSuite
   }
 
   private def forPathAndCatalogManagers(
-      path: String)(testFn: DeltaV2TableManagerImpl => Unit): Unit = {
+      path: String)(testFn: (DeltaV2TableManagerImpl, Option[CatalogTable]) => Unit): Unit = {
     val catalogTable = CatalogTable(
       identifier = TableIdentifier("test_table"),
       tableType = CatalogTableType.EXTERNAL,
@@ -61,7 +61,7 @@ class DeltaV2TableManagerImplSuite
             .forTable(spark, path, Collections.emptyMap(), catalogTableOpt)
             .asInstanceOf[DeltaV2TableManagerImpl]
           assert(manager.initialCatalogTableOpt === catalogTableOpt)
-          testFn(manager)
+          testFn(manager, catalogTableOpt)
         }
     }
   }
@@ -73,11 +73,11 @@ class DeltaV2TableManagerImplSuite
       spark.range(1, 2, 1, 1).write.format("delta").mode("append").save(path)
       spark.range(2, 3, 1, 1).write.format("delta").mode("append").save(path)
 
-      forPathAndCatalogManagers(path) { manager =>
+      forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
         val kernelEngine = manager.kernelContext.getDefaultEngine()
-        val atVersionZeroManager = manager.snapshotManager
-        val atVersionOneManager = manager.snapshotManager
-        val latestManager = manager.snapshotManager
+        val atVersionZeroManager = manager.snapshotManager(catalogTableOpt)
+        val atVersionOneManager = manager.snapshotManager(catalogTableOpt)
+        val latestManager = manager.snapshotManager(catalogTableOpt)
 
         assert(atVersionZeroManager ne atVersionOneManager)
         assert(atVersionOneManager ne latestManager)

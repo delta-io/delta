@@ -19,25 +19,21 @@ import java.util.Collections
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
-import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache.CacheKey
-
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
-
 import com.google.common.base.Ticker
+
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
-class DeltaV2TableManagerCacheSuite
-    extends QueryTest
-    with SharedSparkSession {
+class DeltaV2TableManagerCacheSuite extends QueryTest with SharedSparkSession {
 
   /** Creates a cache key from a data directory using the public factory. */
-  private def makeKey(dataPath: String): CacheKey =
-    CacheKey.from(spark, dataPath, Collections.emptyMap())
+  private def makeKey(dataPath: String): DeltaV2TableManagerCache.CacheKey =
+    DeltaV2TableManagerCache.CacheKey.from(spark, dataPath, Collections.emptyMap())
 
   // Process-global companion tests use unsetCache for isolation.
   override def beforeEach(): Unit = {
@@ -234,8 +230,10 @@ class DeltaV2TableManagerCacheSuite
     val stubs = Iterator(stubA, stubB)
     withTempDir { dir =>
       val sharedLogPath = makeKey(dir.getCanonicalPath).path
-      val keyA = CacheKey(sharedLogPath, Map("fs.s3a.access.key" -> "AAA"))
-      val keyB = CacheKey(sharedLogPath, Map("fs.s3a.access.key" -> "BBB"))
+      val keyA = DeltaV2TableManagerCache.CacheKey(
+        sharedLogPath, Map("fs.s3a.access.key" -> "AAA"))
+      val keyB = DeltaV2TableManagerCache.CacheKey(
+        sharedLogPath, Map("fs.s3a.access.key" -> "BBB"))
       val cache = new DeltaV2TableManagerCache(
         maxSize = 1000, ttlMinutes = 60,
         managerFactory = (_, _) => stubs.next())
@@ -307,8 +305,10 @@ class DeltaV2TableManagerCacheSuite
         val sessionB = spark.newSession()
         sessionB.conf.set(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key, "500")
 
-        val keyA = CacheKey.from(sessionA, dir.getCanonicalPath, Collections.emptyMap())
-        val keyB = CacheKey.from(sessionB, dir.getCanonicalPath, Collections.emptyMap())
+        val keyA = DeltaV2TableManagerCache.CacheKey.from(
+          sessionA, dir.getCanonicalPath, Collections.emptyMap())
+        val keyB = DeltaV2TableManagerCache.CacheKey.from(
+          sessionB, dir.getCanonicalPath, Collections.emptyMap())
 
         val fromA = DeltaV2TableManagerCache.getOrCreate(sessionA.sessionState.conf, keyA)
         val fromB = DeltaV2TableManagerCache.getOrCreate(sessionB.sessionState.conf, keyB)
@@ -369,8 +369,10 @@ class DeltaV2TableManagerCacheSuite
 
     withTempDir { dirA =>
       withTempDir { dirB =>
-        val keyA = CacheKey.from(sessionA, dirA.getCanonicalPath, Collections.emptyMap())
-        val keyB = CacheKey.from(sessionB, dirB.getCanonicalPath, Collections.emptyMap())
+        val keyA = DeltaV2TableManagerCache.CacheKey.from(
+          sessionA, dirA.getCanonicalPath, Collections.emptyMap())
+        val keyB = DeltaV2TableManagerCache.CacheKey.from(
+          sessionB, dirB.getCanonicalPath, Collections.emptyMap())
 
         // Session A loads key A -- initializes singleton (size 1).
         val originalA = DeltaV2TableManagerCache.getOrCreate(sessionA.sessionState.conf, keyA)
@@ -424,7 +426,7 @@ private[tablemanager] class StubTableManager(val id: String) extends DeltaV2Tabl
   override private[v2] def kernelContext:
       io.delta.spark.internal.v2.kernel.KernelContext =
     throw new UnsupportedOperationException("stub")
-  override def snapshotManager: DeltaV2SnapshotManager =
+  override def snapshotManager(catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager =
     throw new UnsupportedOperationException("stub")
   override def retire(): Unit = { retired = true }
 }

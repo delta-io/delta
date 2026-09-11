@@ -54,9 +54,10 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   override private[v2] lazy val kernelContext =
     KernelContext(sessionInvariantFsOptions, logStore)
 
-  override def snapshotManager: DeltaV2SnapshotManager =
+  override def snapshotManager(
+      catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager =
     SnapshotManagerFactory.create(
       tablePath.toString,
       kernelContext.getDefaultEngine(),
-      initialCatalogTableOpt.toJava)
+      catalogTableOpt.toJava)
 }
