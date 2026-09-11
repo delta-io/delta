@@ -999,7 +999,11 @@ class DummySnapshotWithAllFilesSupport(
         useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
           metadata, protocol, spark))
       val baseVersion = version - 1
-      if (baseVersion < 0) { // No prior commit exists
+      // Post-commit conversion passes the committed snapshot as readSnapshot and all active files
+      // as finalActionsToCommit, so it must not replay the base snapshot.
+      val finalActionsContainAllFiles =
+        txnInfo.readSnapshot.version == version
+      if (baseVersion < 0 || finalActionsContainAllFiles) { // No prior commit is needed
         replay.append(0, txnInfo.finalActionsToCommit.iterator)
       } else { // construct allFiles from baseSnapshot
         val baseSnapshot = baseVersion match {

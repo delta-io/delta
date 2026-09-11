@@ -33,6 +33,33 @@ public class UCDeltaTableUniformIcebergV3Test extends UCDeltaTableUniformIceberg
   }
 
   @Test
+  public void uniformIcebergV3CTASRowLineage() throws Exception {
+    Assumptions.assumeTrue(
+        Boolean.getBoolean("supportIceberg"),
+        "Skipping: Iceberg support not available for this Spark version");
+    String fullTableName = fullTableName("uniform_iceberg_v3_ctas");
+    sql("DROP TABLE IF EXISTS %s", fullTableName);
+    try {
+      sql(
+          "CREATE TABLE %s USING DELTA"
+              + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported', %s)"
+              + " AS SELECT 1 AS id, 'a' AS data",
+          fullTableName, uniformTableProperties());
+
+      check(fullTableName, List.of(row("1", "a")));
+      Assertions.assertEquals(
+          1L,
+          currentVersion(fullTableName),
+          "Iceberg V3 CTAS should commit CREATE at v0 and data at v1");
+      IcebergMeta meta = verifyNonIncrementalUniForm(fullTableName, 1L, /* expectSnapshot= */ true);
+      assertIcebergDataFileCount(meta.table, 1L);
+      assertIcebergRowTrackingMatchesDelta(fullTableName, meta.table);
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  @Test
   public void uniformIcebergV3UpdateRowLineage() throws Exception {
     runRowLineageDmlTest(
         "uniform_iceberg_v3_update",
