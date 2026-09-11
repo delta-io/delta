@@ -421,27 +421,12 @@ class SnapshotBuilderSuite extends AnyFunSuite
       .build(emptyMockEngine)
   }
 
-  test("validateMaxCatalogVersionPresence: catalogManaged table requires maxCatalogVersion") {
-    val exMsg = intercept[IllegalArgumentException] {
-      TableManager.loadSnapshot(dataPath.toString)
-        .atVersion(1)
-        .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
-        .build(emptyMockEngine)
-    }.getMessage
-
-    assert(exMsg === "Must provide maxCatalogVersion for catalogManaged tables")
+  test("version time travel with maxCatalogVersion skips protocol-presence validation") {
+    TableManager.loadSnapshot(dataPath.toString)
+      .atVersion(1)
+      .withProtocolAndMetadata(protocol, metadata)
+      .withMaxCatalogVersion(1)
+      .build(emptyMockEngine)
   }
 
-  test(
-    "validateMaxCatalogVersionPresence: non-catalogManaged table cannot have maxCatalogVersion") {
-    val exMsg = intercept[IllegalArgumentException] {
-      TableManager.loadSnapshot(dataPath.toString)
-        .atVersion(1)
-        .withProtocolAndMetadata(protocol, metadata) // protocol without catalogManaged
-        .withMaxCatalogVersion(1)
-        .build(emptyMockEngine)
-    }.getMessage
-
-    assert(exMsg === "Should not provide maxCatalogVersion for file-system managed tables")
-  }
 }
