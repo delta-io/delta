@@ -33,6 +33,6 @@ class IcebergRESTCatalogPlanningClientFactory extends ServerSidePlanningClientFa
       metadata.tokenSupplier.getOrElse(() => "")
 
     new IcebergRESTCatalogPlanningClient(
-      baseUri, catalogName, supplier)
+      baseUri, catalogName, supplier, metadata.planningProperties)
   }
 }

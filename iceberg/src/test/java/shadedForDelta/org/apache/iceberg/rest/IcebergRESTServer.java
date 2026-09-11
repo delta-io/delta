@@ -154,6 +154,41 @@ public class IcebergRESTServer {
     }
   }
 
+  /** Set default properties returned by the /v1/config endpoint. */
+  public void setCatalogDefaults(Map<String, String> defaults) {
+    if (adapter != null) {
+      adapter.setCatalogDefaults(defaults);
+    }
+  }
+
+  /** Set override properties returned by the /v1/config endpoint. */
+  public void setCatalogOverrides(Map<String, String> overrides) {
+    if (adapter != null) {
+      adapter.setCatalogOverrides(overrides);
+    }
+  }
+
+  /** Configure whether /v1/config includes an endpoints list. */
+  public void setAdvertiseEndpoints(boolean advertise) {
+    if (adapter != null) {
+      adapter.setAdvertiseEndpoints(advertise);
+    }
+  }
+
+  /** Configure whether /v1/config advertises the fetch-planning-result endpoint. */
+  public void setAdvertiseFetchPlanningResult(boolean advertise) {
+    if (adapter != null) {
+      adapter.setAdvertiseFetchPlanningResult(advertise);
+    }
+  }
+
+  /** Configure whether /v1/config advertises the cancel-planning endpoint. */
+  public void setAdvertiseCancelPlanning(boolean advertise) {
+    if (adapter != null) {
+      adapter.setAdvertiseCancelPlanning(advertise);
+    }
+  }
+
   /**
    * Get the filter captured from the most recent /plan request.
    * Delegates to adapter. For test verification.
@@ -215,6 +250,21 @@ public class IcebergRESTServer {
     IcebergRESTCatalogAdapterWithPlanSupport.setTestResidual(residual);
   }
 
+  /** Configure whether scan responses include a position delete file. */
+  public void setInjectDeleteFiles(boolean inject) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setInjectDeleteFiles(inject);
+  }
+
+  /** Configure whether completed scan responses include a non-empty plan-tasks list. */
+  public void setInjectPlanTasks(boolean inject) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setInjectPlanTasks(inject);
+  }
+
+  /** Configure the server to fail the next N poll (GET /plan/{plan-id}) requests. */
+  public void setFailNextFetchRequests(int count, int statusCode) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setFailNextFetchRequests(count, statusCode);
+  }
+
   /**
    * Configure the server to fail the next N /plan requests with the specified HTTP status code.
    * After N failures, subsequent requests proceed normally.
@@ -235,11 +285,38 @@ public class IcebergRESTServer {
     return IcebergRESTCatalogAdapterWithPlanSupport.getPlanRequestCount();
   }
 
+  /** Configure the number of submitted poll responses before the terminal response. */
+  public void setSubmittedPollsBeforeCompletion(int count) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setSubmittedPollsBeforeCompletion(count);
+  }
+
+  /** Get the number of fetch-planning-result requests since the last reset. */
+  public int getPlanPollRequestCount() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getPlanPollRequestCount();
+  }
+
+  /** Get the number of cancel-planning requests since the last reset. */
+  public int getPlanCancelRequestCount() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getPlanCancelRequestCount();
+  }
+
+  /** Configure the terminal response status returned by fetch-planning-result. */
+  public void setFetchPlanningResultStatus(PlanStatus status) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setFetchTerminalStatus(status);
+  }
+
   /**
    * Clear captured filter and projection. Call between tests.
    */
   public void clearCaptured() {
     IcebergRESTCatalogAdapterWithPlanSupport.clearCaptured();
+    if (adapter != null) {
+      adapter.setCatalogDefaults(null);
+      adapter.setCatalogOverrides(null);
+      adapter.setAdvertiseEndpoints(true);
+      adapter.setAdvertiseFetchPlanningResult(true);
+      adapter.setAdvertiseCancelPlanning(true);
+    }
   }
 
   public void stop() throws Exception {
