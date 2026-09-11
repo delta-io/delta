@@ -2498,15 +2498,12 @@ When this feature is supported, partition columns are physically written to Parq
  - The table must be on Writer Version 7, and a feature name `materializePartitionColumns` must exist in the table `protocol`'s `writerFeatures`.
 
 When supported:
- - When the writer feature `materializePartitionColumns` is set in the protocol, writers must materialize partition columns into any newly created data file. This mimics the same partition column materialization requirement from [IcebergCompatV1](#iceberg-compatibility-v1)
-and
-[IcebergCompatV2](#iceberg-compatibility-v2). As such, the `materializePartitionColumns` feature can be seen as a subset of the requirements imposed by those features, providing the partition column materialization guarantee independently without requiring full
-  Iceberg compatibility.
- - When the writer feature `materializePartitionColumns` is not set in the table protocol, writers are not required to write partition columns to data files. Note that other features might still require materialization of partition values, such as [IcebergCompatV1](#iceberg-compatibility-v1)
+ - When the writer feature `materializePartitionColumns` is set in the protocol, writers must materialize partition columns into any newly created data file. This mimics the same partition column materialization requirement from [IcebergCompatV1](#iceberg-compatibility-v1) and [IcebergCompatV2](#iceberg-compatibility-v2). As such, the `materializePartitionColumns` feature can be seen as a subset of the requirements imposed by those features, providing the partition column materialization guarantee independently without requiring full Iceberg compatibility.
+ - When the writer feature `materializePartitionColumns` is not set in the table protocol, writers are not required to write partition columns to data files. Note that other features might still require materialization of partition values, such as [IcebergCompatV1](#iceberg-compatibility-v1).
 
 This feature does not impose any requirements on readers. All Delta readers must be able to read the table regardless of whether partition columns are materialized in the data files. If partition values are present in both parquet and AddFile metadata, Delta readers should continue to read partition values from AddFile metadata. Also, [file-level statistics](#per-file-statistics) should not be written for the partition column as it would repeat information already present in an AddFile's `partitionValues`.
 
-Note that this table feature, as well as [icebergCompatV1](#iceberg-compatibility-v1) (and related table features that require partition column materialization), if enabled, take priority over the `delta.writePartitionColumnsToParquet` table property. In other words, if a table feature is enabled that requires materialization of partition columns, and table metadata contains a `false` value for `delta.writePartitionColumnsToParquet`, partition columns must be materialized.
+Note that this table feature, as well as [IcebergCompatV1](#iceberg-compatibility-v1) (and related table features that require partition column materialization), if enabled, take priority over the `delta.writePartitionColumnsToParquet` table property. In other words, if a table feature is enabled that requires materialization of partition columns, and table metadata contains a `false` value for `delta.writePartitionColumnsToParquet`, partition columns must be materialized.
 
 | Table feature enablement | Value of `delta.writePartitionColumnsToParquet` table property | Writer requirement |
 | ------------------------ | -------------------------------------------------------------- | ------------------ |
