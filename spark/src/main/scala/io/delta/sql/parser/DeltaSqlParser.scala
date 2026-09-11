@@ -72,7 +72,8 @@ import org.apache.spark.sql.types._
  * forward the call to `delegate`.
  */
 class DeltaSqlParser(val delegate: ParserInterface)
-    extends ParserInterface {
+    extends ParserInterface
+    with DeltaSqlParserShims {
   private val builder = new DeltaSqlAstBuilder
   private val substitution = new VariableSubstitution
 

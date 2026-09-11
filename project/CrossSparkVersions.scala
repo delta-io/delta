@@ -289,7 +289,10 @@ object SparkVersionSpec {
   private val spark40 = SparkVersionSpec(
     fullVersion = "4.0.1",
     targetJvm = "17",
-    additionalSourceDirs = Seq("scala-shims/spark-4.0", "scala-shims/spark-4.0-4.1"),
+    additionalSourceDirs = Seq(
+      "scala-shims/spark-4.0",
+      "scala-shims/spark-4.0-4.1",
+      "scala-shims/spark-4.0-4.2"),
     supportIceberg = true,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
@@ -300,7 +303,11 @@ object SparkVersionSpec {
     fullVersion = "4.1.0",
     targetJvm = "17",
     additionalSourceDirs =
-      Seq("scala-shims/spark-4.1", "scala-shims/spark-4.0-4.1", "scala-shims/spark-4.1-4.2"),
+      Seq(
+        "scala-shims/spark-4.1",
+        "scala-shims/spark-4.0-4.1",
+        "scala-shims/spark-4.0-4.2",
+        "scala-shims/spark-4.1-4.3"),
     supportIceberg = true,
     supportHudi = false,
     antlr4Version = "4.13.1",
@@ -311,12 +318,30 @@ object SparkVersionSpec {
   private val spark42 = SparkVersionSpec(
     fullVersion = "4.2.0",
     targetJvm = "17",
-    additionalSourceDirs = Seq("scala-shims/spark-4.2", "scala-shims/spark-4.1-4.2"),
+    additionalSourceDirs = Seq(
+      "scala-shims/spark-4.2",
+      "scala-shims/spark-4.2-4.3",
+      "scala-shims/spark-4.0-4.2",
+      "scala-shims/spark-4.1-4.3"),
     supportIceberg = false,
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
+  )
+
+  private val spark43 = SparkVersionSpec(
+    fullVersion = "4.3.0-SNAPSHOT",
+    targetJvm = "17",
+    additionalSourceDirs = Seq(
+      "scala-shims/spark-4.2-4.3",
+      "scala-shims/spark-4.1-4.3",
+      "scala-shims/spark-4.3"),
+    supportIceberg = false,
+    supportHudi = false,
+    antlr4Version = "4.13.1",
+    additionalJavaOptions = java17TestSettings,
+    sourceBuildDefaultRef = Some("3db813416c8716996b0d4d2fbb94fed5dc121fd2")
   )
 
   /** Default Spark version */
@@ -326,7 +351,7 @@ object SparkVersionSpec {
   val MASTER: Option[SparkVersionSpec] = None
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41, spark42)
+  val ALL_SPECS = Seq(spark40, spark41, spark42, spark43)
 }
 
 /** See docs on top of this file */
