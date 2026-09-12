@@ -630,6 +630,7 @@ object StatisticsCollection extends DeltaCommand {
     val deltaStatsColumnSpec = configuredDeltaStatsColumnSpec(metadata)
     deltaStatsColumnSpec.deltaStatsColumnNamesOpt.map { deltaColumnsNames =>
       val droppedColumnSet = columnsToDrop.toSet
+      val escapeNames = SQLConf.get.getConf(DeltaSQLConf.DELTA_DROP_STATS_COLUMNS_ESCAPE_NAMES)
       val deltaStatsColumnStr = deltaColumnsNames
         .map(_.nameParts)
         .filterNot { attributeNameParts =>
@@ -640,7 +641,13 @@ object StatisticsCollection extends DeltaCommand {
             commonPrefix == droppedColumnParts.size
           }.nonEmpty
         }
-        .map(columnParts => UnresolvedAttribute(columnParts).name)
+        .map { columnParts =>
+          if (escapeNames) {
+            UnresolvedAttribute(columnParts).sql
+          } else {
+            UnresolvedAttribute(columnParts).name
+          }
+        }
         .mkString(",")
       Map(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key -> deltaStatsColumnStr)
     }.getOrElse(Map.empty[String, String])

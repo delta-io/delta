@@ -343,6 +343,15 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
   }
 }
 
+case class AdaptiveMetadataPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    throw new UnsupportedOperationException(
+      s"Dropping the ${AdaptiveMetadataTableFeature.name} table feature is not yet supported.")
+  }
+}
+
 case class V2CheckpointPreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
   with DeltaLogging {

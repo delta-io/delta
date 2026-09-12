@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, Inva
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.exceptions
+import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
 import org.apache.spark.{SparkConf, SparkEnv, SparkException, SparkThrowable}
@@ -3987,10 +3988,20 @@ trait DeltaErrorsBase
   def universalFormatConversionFailedException(
       failedOnCommitVersion: Long,
       format: String,
-      errorMessage: String): Throwable = {
+      error: Throwable): Throwable = {
     new DeltaRuntimeException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED",
-      messageParameters = Array(s"$failedOnCommitVersion", format, errorMessage)
+      errorClass = "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED.CAUSED_BY_ERROR",
+      messageParameters = Array(s"$failedOnCommitVersion", format, ExceptionUtils.getMessage(error))
+    ).initCause(error)
+  }
+
+  def universalFormatConversionFailedUnexpectedPartitionDataTypeException(
+      failedOnCommitVersion: Long,
+      format: String,
+      dataType: DataType): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED.UNEXPECTED_PARTITION_DATA_TYPE",
+      messageParameters = Array(s"$failedOnCommitVersion", format, dataType.toString)
     )
   }
 

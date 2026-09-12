@@ -224,6 +224,49 @@ case class DeletionVectorDescriptor(
   }
 
   /**
+   * Like [[normalizedTableRelativeObjectId]] but identifies the physical DV file rather than the
+   * individual DV within it and returns the normalized (storageType, path) with no offset. Today
+   * this is only used for table clone.
+   */
+  private[delta] def normalizedTableRelativeObjectFile(tableRoot: Path): (String, String) = {
+    storageType match {
+      case INLINE_DV_MARKER =>
+        (INLINE_DV_MARKER, pathOrInlineDv)
+      case UUID_DV_MARKER =>
+        val (randomPrefix, uuid) = getRandomPrefixAndUuid.get
+        val fileName = assembleDeletionVectorFileName(uuid)
+        val relativePath = if (randomPrefix.isEmpty) fileName else s"$randomPrefix/$fileName"
+        (RELATIVE_DV_MARKER, relativePath)
+      case RELATIVE_DV_MARKER =>
+        (RELATIVE_DV_MARKER, pathOrInlineDv)
+      case PATH_DV_MARKER =>
+        val path = SparkPath.fromUrlString(pathOrInlineDv).toPath.toString
+        val relativePath = AMTUtils.relativizeLocation(tableRoot.toString, path)
+        if (AMTUtils.isAbsoluteLocation(relativePath)) {
+          (PATH_DV_MARKER, pathOrInlineDv)
+        } else {
+          (RELATIVE_DV_MARKER, relativePath)
+        }
+      case _ =>
+        throw new IllegalArgumentException(
+          s"Unsupported deletion vector storage type: $storageType")
+    }
+  }
+
+  /**
+   * Computes a normalized absolute object identity for this descriptor.
+   * Today this is only used for table clone.
+   */
+  private[delta] def normalizedAbsoluteObjectId(tableRoot: Path): String = {
+    val (normalizedStorageType, normalizedPathOrInlineDv) = if (isInline) {
+      (INLINE_DV_MARKER, pathOrInlineDv)
+    } else {
+      (PATH_DV_MARKER, urlEncodedPath(tableRoot))
+    }
+    formatIdentity(normalizedStorageType, normalizedPathOrInlineDv, offset)
+  }
+
+  /**
    * Produce a copy of this DV, but using an absolute path.
    *
    * If the DV already has an absolute path or is inline, then this is just a normal copy.
@@ -406,19 +449,19 @@ object DeletionVectorDescriptor {
       cardinality = cardinality)
 
   /**
-   * Returns whether the path points to a deletion vector file.
-   * Note, external writers are no enforced to create DV files with the same naming convertions.
-   * This function is intended for testing. */
-  private[delta] def isDeletionVectorPath(path: Path): Boolean =
+   * Returns whether the path points to a deletion vector file written by this Spark
+   * implementation. This function is intended for testing. Use at your own risk.
+   */
+  private[delta] def isSparkImplDeletionVectorPath(path: Path): Boolean =
     deletionVectorFileNamePattern.matcher(path.getName).matches()
 
-  /** Only for testing. */
-  private[delta] def isDeletionVectorPath(path: String): Boolean =
-    isDeletionVectorPath(new Path(path))
+  /** This function is intended for testing. Use at your own risk. */
+  private[delta] def isSparkImplDeletionVectorPath(path: String): Boolean =
+    isSparkImplDeletionVectorPath(new Path(path))
 
-  /** Same as above but as a column expression. Only for testing. */
-  private[delta] def isDeletionVectorPath(pathCol: Column): Column =
-    DeltaUDF.booleanFromString(isDeletionVectorPath)(pathCol)
+  /** Same as above but as a column expression. Use at your own risk. */
+  private[delta] def isSparkImplDeletionVectorPath(pathCol: Column): Column =
+    DeltaUDF.booleanFromString(isSparkImplDeletionVectorPath)(pathCol)
 
   /** Returns a boolean column that corresponds to whether each deletion vector is inline. */
   def isInline(dv: Column): Column =
