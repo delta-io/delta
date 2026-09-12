@@ -38,6 +38,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.functions.{approx_count_distinct, col, not}
+import org.apache.spark.sql.types.{StructField, StructType}
 
 /**
  * Used as the return type of `removeFeatureTracesIfNeeded`. The contents are the following:
@@ -854,3 +855,135 @@ case class MaterializePartitionColumnsPreDowngradeCommand(table: DeltaTableV2)
     PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
   }
 }
+
+/**
+ * PreDowngrade command for the Concurrent Identity Columns feature: returns every
+ * service-backed identity column to the stock (schema high-water-mark) identity path.
+ *
+ * In one commit, for each identity column:
+ *   - A stamped (converted) column reserves a single id from its service sequence
+ *     (`reserveIds(count = 1)`) and writes that value into the schema high-water mark
+ *     `delta.identity.highWaterMark`, then strips the service-sequence pointer. This is NOT
+ *     SYNC: the downgrade does not scan or reconcile against the data. The reserved value is
+ *     the next value the service would have handed out.
+ *   - An unstamped column (without a service sequence)  is left unchanged (there is no pointer to
+ *     strip). A warning is logged, as this case should never happen.
+ *
+ * When [[DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_DROP_WITHOUT_SERVICE]] is set, the stamped-column
+ * branch instead scans the data extreme for the HWM (like SYNC) and skips both `reserveIds` and the
+ * post-commit `dropSequence`, so a table can leave the feature while the service is down.
+ * The commit is marked readWholeTable so a racing identity write conflicts with the downgrade.
+ */
+case class ConcurrentIdentityColumnsPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+    with DeltaLogging {
+  import org.apache.spark.sql.delta.cic.IdentitySequenceServices
+  import org.apache.spark.sql.delta.sources.DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK
+  import org.apache.spark.sql.delta.cic.{DropSequenceRequest, ReserveIdsRequest}
+  import org.apache.spark.sql.types.MetadataBuilder
+  import scala.collection.mutable.ArrayBuffer
+  import scala.util.control.NonFatal
+
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    if (ConcurrentIdentityColumnsTableFeature
+        .validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
+
+    val withoutService =
+      spark.conf.get(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_DROP_WITHOUT_SERVICE)
+    val txn = table.startTransaction()
+    val metadata = txn.metadata
+    // Whole-table scan reused by every stamped column under `withoutService`; materialized lazily
+    // so a service-backed downgrade (the default) never builds it.
+    lazy val tableDf = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
+    val changes = ArrayBuffer.empty[(Seq[String], StructField)]
+    // The service's table scope; also the id every CIC event reports, never `metadata.id`.
+    val serviceTableId = ConcurrentIdentityColumnSchema.sequenceServiceTableId(metadata)
+    // Sequences the downgrade no longer references; retired from the service after the commit
+    // (see below) so a failed commit only orphans them rather than dropping a live table's id.
+    // Left empty under `withoutService`, which never touches the service.
+    val droppedSequenceIds = ArrayBuffer.empty[String]
+    val downgraded = metadata.schema.map { field =>
+      if (ColumnWithDefaultExprUtils.isIdentityColumn(field)) {
+        val downgradedField = ConcurrentIdentityColumnSchema.getSequenceId(field) match {
+          case Some(_) if withoutService =>
+            // Escape hatch: when set, derive the stock HWM by scanning the data instead of calling
+            // the service, so a table can leave the feature while the service is unavailable
+            val withHwm = IdentityColumn.syncIdentity(
+              deltaLog = txn.snapshot.deltaLog,
+              field = field,
+              df = tableDf,
+              allowLoweringHighWaterMarkForSyncIdentity = false)
+            ConcurrentIdentityColumnSchema.withoutConcurrentSequenceMetadata(withHwm)
+          case Some(sequenceId) =>
+            // Stamped column: derive the stock HWM from the service without a data scan.
+            // reserveIds(count = 1) hands back the next value the service would emit, which is
+            // past everything already handed out; persist it as the HWM and drop the pointer.
+            val info = IdentityColumn.getIdentityInfo(field)
+            val resp = IdentitySequenceServices.resolve(spark).reserveIds(
+              ReserveIdsRequest(
+                sequenceId = sequenceId,
+                tableId = serviceTableId,
+                count = 1L,
+                step = info.step))
+            val newMetadata = new MetadataBuilder().withMetadata(field.metadata)
+              .putLong(IDENTITY_INFO_HIGHWATERMARK, resp.rangeStart)
+              .build()
+            droppedSequenceIds += sequenceId
+            ConcurrentIdentityColumnSchema.withoutConcurrentSequenceMetadata(
+              field.copy(metadata = newMetadata))
+          case None =>
+            // No sequence pointer: don't repair, the column can be fixed by calling SYNC.
+            logWarning(s"DROP FEATURE found an unstamped identity column ${field.name} on a " +
+              s"feature-on table ${metadata.id}; leaving it unchanged (fix it with SYNC " +
+              "IDENTITY). This indicates a mixed stamped/unstamped table, which conversion " +
+              "should never produce.")
+            recordDeltaEvent(
+              table,
+              opType = ConcurrentIdentityColumnObservability.opTypeDowngradeUnstampedSkipped,
+              data = Map("tableId" -> serviceTableId, "columnName" -> field.name))
+            field
+        }
+        if (downgradedField != field) {
+          changes += ((Seq(field.name), downgradedField))
+        }
+        downgradedField
+      } else {
+        field
+      }
+    }
+    // A racing identity write that commits before the downgrade must conflict it.
+    txn.readWholeTable()
+    txn.commit(
+      Seq(metadata.copy(schemaString = StructType(downgraded).json)),
+      DeltaOperations.UpdateColumnMetadata("DROP FEATURE", changes.toSeq))
+    // Post-commit: retire the now-unreferenced service sequences. Best-effort and idempotent --
+    // dropping after the commit means a drop failure only leaves a harmless orphan (the table no
+    // longer references it), never a live table pointing at a dropped sequence.
+    if (droppedSequenceIds.nonEmpty) {
+      val service = IdentitySequenceServices.resolve(spark)
+      droppedSequenceIds.foreach { sequenceId =>
+        try {
+          service.dropSequence(DropSequenceRequest(sequenceId, serviceTableId))
+          ConcurrentIdentityColumnObservability.recordDropSequence(
+            provider = table,
+            tableId = serviceTableId,
+            sequenceId = sequenceId,
+            reason = ConcurrentIdentityColumnObservability.DropReason.DropFeature)
+        } catch {
+          case NonFatal(e) =>
+            logWarning(s"DROP FEATURE downgraded table ${metadata.id} but failed to retire " +
+              s"identity sequence $sequenceId; it stays orphaned in the service.", e)
+            ConcurrentIdentityColumnObservability.recordDropSequenceFailed(
+              provider = table,
+              tableId = serviceTableId,
+              sequenceId = sequenceId,
+              reason = ConcurrentIdentityColumnObservability.DropReason.DropFeature)
+        }
+      }
+    }
+    PreDowngradeStatus.PERFORMED_CHANGES
+  }
+}
+
