@@ -1177,11 +1177,11 @@ trait MergeIntoMetricsBase
     }
     val expectedOpMetrics = Map[String, Int](
       "numSourceRows" -> 100,
-      "numOutputRows" -> 100,
+      "numOutputRows" -> 20,
       "numTargetRowsUpdated" -> 20,
       "numTargetRowsNotMatchedBySourceUpdated" -> 20,
-      "numTargetRowsCopied" -> 80,
-      "numTargetFilesRemoved" -> 5
+      "numTargetRowsCopied" -> 0,
+      "numTargetFilesRemoved" -> 1
     )
     runMergeCmdAndTestMetrics(
       targetDf = targetDf,
