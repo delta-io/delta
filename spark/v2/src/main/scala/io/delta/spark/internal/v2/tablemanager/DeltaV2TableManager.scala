@@ -15,6 +15,7 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
+import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
 
@@ -27,6 +28,9 @@ private[v2] trait DeltaV2TableManager {
 
   /** Returns the table-scoped Kernel context. */
   private[v2] def kernelContext: KernelContext
+
+  /** Returns the table-scoped log store. */
+  private[v2] def logStore: LogStore
 
   /** Returns a snapshot manager using the caller's current catalog metadata. */
   def snapshotManager(catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager

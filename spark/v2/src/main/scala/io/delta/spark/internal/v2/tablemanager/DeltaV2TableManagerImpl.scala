@@ -49,7 +49,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   def tablePath: Path = qualifiedTableDataPath
 
   /** Used to read and write physical log files and checkpoints. */
-  private[tablemanager] lazy val logStore = createLogStore(SparkSession.active)
+  override private[v2] lazy val logStore = createLogStore(SparkSession.active)
 
   override private[v2] lazy val kernelContext =
     KernelContext(sessionInvariantFsOptions, logStore)
