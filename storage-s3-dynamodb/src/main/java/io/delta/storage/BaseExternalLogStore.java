@@ -172,20 +172,28 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             Configuration hadoopConf) throws IOException {
         final FileSystem fs = path.getFileSystem(hadoopConf);
         final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
-        try {
-            // Prevent concurrent writers in this JVM from either
-            // a) concurrently overwriting N.json if overwrite=true
-            // b) both checking if N-1.json exists and performing a "recovery" where they both
-            //    copy T(N-1) into N-1.json
-            //
-            // Note that the mutual exclusion on writing into N.json with overwrite=false from
-            // different JVMs (which is the entire point of BaseExternalLogStore) is provided by the
-            // external cache, not by this lock, of course.
-            //
-            // Also note that this lock path (resolvedPath) is for N.json, while the lock path used
-            // below in the recovery `fixDeltaLog` path is for N-1.json. Thus, no deadlock.
-            pathLock.acquire(resolvedPath);
 
+        // Prevent concurrent writers in this JVM from either
+        // a) concurrently overwriting N.json if overwrite=true
+        // b) both checking if N-1.json exists and performing a "recovery" where they both
+        //    copy T(N-1) into N-1.json
+        //
+        // Note that the mutual exclusion on writing into N.json with overwrite=false from
+        // different JVMs (which is the entire point of BaseExternalLogStore) is provided by the
+        // external cache, not by this lock, of course.
+        //
+        // Also note that this lock path (resolvedPath) is for N.json, while the lock path used
+        // below in the recovery `fixDeltaLog` path is for N-1.json. Thus, no deadlock.
+        //
+        // The `acquire` must be outside of the try-finally below so that we only `release` a lock
+        // we actually hold. If the acquire were interrupted while waiting, `release` in `finally`
+        // would remove the lock entry owned by another writer, breaking per-JVM mutual exclusion.
+        try {
+            pathLock.acquire(resolvedPath);
+        } catch (java.lang.InterruptedException e) {
+            throw new InterruptedIOException(e.getMessage());
+        }
+        try {
             if (overwrite) {
                 writeActions(fs, path, actions);
                 return;
@@ -263,8 +271,6 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                     "{}: ignoring recoverable error", e.getClass().getSimpleName(), e
                 );
             }
-        } catch (java.lang.InterruptedException e) {
-            throw new InterruptedIOException(e.getMessage());
         } finally {
             pathLock.release(resolvedPath);
         }
@@ -392,9 +398,15 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         }
 
         final Path targetPath = entry.absoluteFilePath();
+        // The `acquire` must be outside of the try-finally below so that we only `release` a lock we
+        // actually hold. If the acquire were interrupted while waiting, `release` in `finally` would
+        // remove the lock entry owned by another thread, breaking per-JVM mutual exclusion.
         try {
             pathLock.acquire(targetPath);
-
+        } catch (java.lang.InterruptedException e) {
+            throw new InterruptedIOException(e.getMessage());
+        }
+        try {
             int retry = 0;
             boolean copied = false;
             while (true) {
@@ -421,8 +433,6 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                 }
                 retry += 1;
             }
-        } catch (java.lang.InterruptedException e) {
-            throw new InterruptedIOException(e.getMessage());
         } finally {
             pathLock.release(targetPath);
         }
