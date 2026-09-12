@@ -42,12 +42,12 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
   with SharedSparkSession
   with ClusteredTableTestUtils {
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key, "true")
   }
 
-  override def afterAll(): Unit = {
+  override protected def afterAll(): Unit = {
     // Reset UpdateCatalog's thread pool to ensure it is re-initialized in the next test suite.
     // This is necessary because the [[SparkThreadLocalForwardingThreadPoolExecutor]]
     // retains a reference to the SparkContext. Without resetting, the new test suite would

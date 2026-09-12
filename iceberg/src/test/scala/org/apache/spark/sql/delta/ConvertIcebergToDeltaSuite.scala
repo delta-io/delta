@@ -73,17 +73,17 @@ trait ConvertIcebergToDeltaUtils extends SharedSparkSession {
     .filterNot(identity).map(_ => "NO STATISTICS").getOrElse("")
 
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     warehousePath = Utils.createTempDir()
     super.beforeAll()
   }
 
-  override def afterAll(): Unit = {
+  override protected def afterAll(): Unit = {
     super.afterAll()
     if (warehousePath != null) Utils.deleteRecursively(warehousePath)
   }
 
-  override def afterEach(): Unit = {
+  override protected def afterEach(): Unit = {
     sql(s"DROP TABLE IF EXISTS $table")
     super.afterEach()
   }

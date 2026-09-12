@@ -19,24 +19,30 @@ package org.apache.spark.sql.delta.v2.interop
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
 import java.util.Optional
+import java.util.concurrent.TimeUnit
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
+import scala.jdk.OptionConverters._
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, LogSegment, OptimisticTransaction, Snapshot, VersionChecksum}
-import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, CommitInfo, Protocol}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, LogSegment, OptimisticTransaction, Snapshot, VersionChecksum, WinningCommitSummary}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, CommitInfo, Protocol}
 import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
+import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
+import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 import io.delta.storage.commit.Commit
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
-import io.delta.kernel.{DataWriteContext => KernelDataWriteContext, Operation => KernelOperation, Snapshot => KernelSnapshot, Table => KernelTable, Transaction => KernelTransaction}
+import org.apache.hadoop.fs.{FileStatus, Path}
+import io.delta.kernel.{CommitActions => KernelCommitActions, DataWriteContext => KernelDataWriteContext, Operation => KernelOperation, Snapshot => KernelSnapshot, Table => KernelTable, Transaction => KernelTransaction}
 import io.delta.kernel.data.{Row => KernelRow}
 import io.delta.kernel.engine.{Engine => KernelEngine}
 import io.delta.kernel.expressions.{Literal => KernelLiteral}
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshotImpl}
+import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
+import io.delta.kernel.internal.commitrange.{CommitRangeImpl => KernelCommitRangeImpl}
 import io.delta.kernel.internal.util.{PartitionUtils => KernelPartitionUtils, Utils => KernelUtils}
 import io.delta.kernel.statistics.{DataFileStatistics => KernelDataFileStatistics}
 import io.delta.kernel.types.{StringType => KernelStringType}
@@ -64,6 +70,13 @@ private[v2] class DeltaV2OptimisticTransaction(
     null.asInstanceOf[DeltaLog],
     catalogTable,
     deltaV2Snapshot) {
+
+  private lazy val deltaV2SnapshotManager: DeltaV2SnapshotManager =
+    SnapshotManagerFactory.create(
+      dataPath.toString,
+      kernelEngine,
+      catalogTable.toJava
+    )
 
   /**
    * Opt in to the base null-deltaLog guardrail: this transaction legitimately has no V1 DeltaLog.
@@ -145,12 +158,12 @@ private[v2] class DeltaV2OptimisticTransaction(
 
   /**
    * Kernel validated the table's protocol when it loaded the snapshot; protocol-CHANGING commits
-   * are a kernel wrapper gap and must fail loudly.
+   * are an unsupported operation and must fail loudly.
    */
   override protected def validateProtocolWrite(protocol: Protocol): Unit = {
     if (protocol != snapshot.protocol) {
       throw new UnsupportedOperationException(
-        "DeltaV2OptimisticTransaction cannot commit protocol changes yet (kernel wrapper gap)")
+        "DeltaV2 unsupported operation: cannot validate protocol changes")
     }
   }
 
@@ -179,6 +192,75 @@ private[v2] class DeltaV2OptimisticTransaction(
   }
 
   /**
+   * Reads the table commits in the inclusive version range `[startVersion, endVersion]`, applying
+   * `mapper` to each commit. In long term, this functionality should be owned by
+   * [[DeltaV2SnapshotManager]].
+   */
+  private def readCommitActionsInRange[T](
+      startVersion: Long,
+      endVersion: Long)(mapper: KernelCommitActions => T): Seq[T] = {
+    val commitRange = deltaV2SnapshotManager
+      .getTableChanges(
+        kernelEngine, startVersion, Optional.of(java.lang.Long.valueOf(endVersion)))
+      .asInstanceOf[KernelCommitRangeImpl]
+    val actionSet = java.util.EnumSet.allOf(classOf[KernelDeltaAction])
+    val commitActionsIter = commitRange.getCommitActions(kernelEngine, actionSet)
+    try {
+      val results = Seq.newBuilder[T]
+      while (commitActionsIter.hasNext) {
+        val commitActions = commitActionsIter.next()
+        try {
+          results += mapper(commitActions)
+        } finally {
+          commitActions.close()
+        }
+      }
+      results.result()
+    } finally {
+      commitActionsIter.close()
+    }
+  }
+
+  /**
+   * Gets the conflicting versions through Kernel, from the previous attempt version to the latest.
+   */
+  override protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {
+    val latestVersion = deltaV2SnapshotManager.loadLatestSnapshot().version
+    if (previousAttemptVersion > latestVersion) {
+      return Seq.empty
+    }
+    readCommitActionsInRange(previousAttemptVersion, latestVersion) { commitActions =>
+      new FileStatus(
+        /* length = */ 0L,
+        /* isdir = */ false,
+        /* block_replication = */ 0,
+        /* blocksize = */ 0L,
+        /* modification_time = */ commitActions.getTimestamp(),
+        FileNames.unsafeDeltaFile(logPath, commitActions.getVersion()))
+    }
+  }
+
+  /**
+   * Reads the commit's actions through Kernel and wraps them as a [[WinningCommitSummary]] for
+   * the ConflictChecker.
+   */
+  override protected def readWinningCommitSummary(fileStatus: FileStatus): WinningCommitSummary = {
+    val (actions, readTimeMs) = readCommitActions(fileStatus)
+    new WinningCommitSummary(actions, fileStatus, readTimeMs)
+  }
+
+  /**
+   * Reads the winning commit's actions through Kernel and decodes them into [[Action]]s.
+   */
+  private def readCommitActions(fileStatus: FileStatus): (Seq[Action], Long) = {
+    val startTimeNs = System.nanoTime()
+    val version = FileNames.deltaVersion(fileStatus)
+    val actions = readCommitActionsInRange(version, version)(KernelActionUtils.readActions).flatten
+    val readTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
+    (actions, readTimeMs)
+  }
+
+  /**
    * Commit-IO seam: write the commit through Kernel.
    *
    * Translates staged [[Action]]s into Kernel action rows and commits through `Transaction.commit`,
@@ -196,8 +278,8 @@ private[v2] class DeltaV2OptimisticTransaction(
       case _: CommitInfo => // Kernel generates its own; V1 operation provenance is an JNR gap.
       case other =>
         throw new UnsupportedOperationException(
-          "DeltaV2OptimisticTransaction only supports AddFile actions yet; cannot commit action " +
-            s"${other.getClass.getSimpleName} (kernel wrapper gap)")
+          "DeltaV2 unsupported operation: cannot commit action " +
+            s"${other.getClass.getSimpleName}")
     }
 
     val kernelSnapshotForCommit = KernelTable

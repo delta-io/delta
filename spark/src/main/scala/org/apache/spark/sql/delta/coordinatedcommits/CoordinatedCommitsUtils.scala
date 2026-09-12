@@ -68,11 +68,11 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       txn.updateProtocol(protocol = p)
       // Force a metadata update to trigger ICT (In-Commit Timestamp) enablement.
       // CatalogOwnedTableFeature requires ICT to be enabled in the metadata, but
-      // updateMetadataAndProtocolWithRequiredFeatures in prepareCommit only runs
+      // updateMetadataAndProtocolWithRequiredFeatures in prepareInitialActions only runs
       // when there's an explicit metadata change (metadataChanges.headOption is non-empty).
       // Since we're only updating the protocol here without changing metadata content,
       // we need to explicitly call updateMetadata to ensure metadataChanges is non-empty
-      // during prepareCommit, which will then enable ICT in the metadata.
+      // during prepareInitialActions, which will then enable ICT in the metadata.
       // Without this, generateInCommitTimestampForFirstCommitAttempt would return None,
       // causing UCCommitCoordinatorClient to fail with DELTA_MISSING_COMMIT_TIMESTAMP.
       txn.updateMetadata(proposedNewMetadata = txn.metadata)
