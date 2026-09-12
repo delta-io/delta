@@ -421,7 +421,13 @@ private[tablemanager] class TestTicker extends Ticker {
 
 private[tablemanager] class StubTableManager(val id: String) extends DeltaV2TableManager {
   @volatile var retired: Boolean = false
-  override def snapshotManager(): DeltaV2SnapshotManager =
+  override private[v2] def kernelContext:
+      io.delta.spark.internal.v2.kernel.KernelContext =
+    throw new UnsupportedOperationException("stub")
+  override private[v2] def logStore:
+      org.apache.spark.sql.delta.storage.LogStore =
+    throw new UnsupportedOperationException("stub")
+  override def snapshotManager(catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager =
     throw new UnsupportedOperationException("stub")
   override def retire(): Unit = { retired = true }
 }
