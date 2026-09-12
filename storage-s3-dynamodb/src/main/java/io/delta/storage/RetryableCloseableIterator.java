@@ -163,14 +163,17 @@ public class RetryableCloseableIterator implements CloseableIterator<String> {
             "Caught a RemoteFileChangedException. NumRetries is {} / {}.\n{}",
             numRetries + 1, maxRetries, topLevelEx
         );
-        currentIter.close();
-
         while (numRetries < maxRetries) {
             numRetries++;
             LOG.info(
                 "Replaying until (inclusive) index {}. NumRetries is {} / {}.",
                 lastSuccessfullIndex, numRetries + 1, maxRetries
             );
+            // Close the previous iterator before reopening a new one. On the first loop this
+            // closes the iterator that just threw; on subsequent loops (when the replay below
+            // itself throws a RemoteFileChangedException and we retry) this closes the iterator
+            // opened by the previous attempt, which would otherwise leak its open input stream.
+            currentIter.close();
             currentIter = iterSupplier.get();
 
             // Last successful index replayed. Starts at -1, and not 0, because 0 means we've
