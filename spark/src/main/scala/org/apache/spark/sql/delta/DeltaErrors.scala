@@ -124,7 +124,6 @@ trait DocsPath {
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
     "sourceNotDeterministicInMergeException",
-    "columnMappingAdviceMessage",
     "icebergClassMissing",
     "tableFeatureReadRequiresWriteException",
     "tableFeatureRequiresHigherReaderProtocolVersion",
@@ -2556,29 +2555,32 @@ trait DeltaErrorsBase
         mode.name))
   }
 
-  protected def columnMappingAdviceMessage(
-      requiredProtocol: Protocol = ColumnMappingTableFeature.minProtocolVersion): String = {
-    val readerVersion = requiredProtocol.minReaderVersion
-    val writerVersion = requiredProtocol.minWriterVersion
-    s"""
-       |Please enable Column Mapping on your Delta table with mapping mode 'name'.
-       |You can use one of the following commands.
-       |
-       |ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
-       |
-       |Note, if your table is not on the required protocol version it will be upgraded.
-       |Column mapping requires at least protocol ($readerVersion, $writerVersion)
-       |""".stripMargin
+  /**
+   * Returns the error class (either `mainErrorClass` or `mainErrorClass.<subClass>`) and message
+   * parameters for the "enable Column Mapping" advice. When `suggestUpgrade` is false the advice is
+   * omitted and the bare `mainErrorClass` is returned.
+   */
+  protected def withColumnMappingAdviceSubClass(
+      mainErrorClass: String, suggestUpgrade: Boolean): (String, Array[String]) = {
+    if (!suggestUpgrade) {
+      return (mainErrorClass, Array.empty[String])
+    }
+    val readerVersion = ColumnMappingTableFeature.minProtocolVersion.minReaderVersion
+    val writerVersion = ColumnMappingTableFeature.minProtocolVersion.minWriterVersion
+    (s"$mainErrorClass.ENABLE_COLUMN_MAPPING",
+      Array(readerVersion.toString, writerVersion.toString))
   }
 
   def columnRenameNotSupported: Throwable = {
-    val adviceMsg = columnMappingAdviceMessage()
-    new DeltaAnalysisException("DELTA_UNSUPPORTED_RENAME_COLUMN", Array(adviceMsg))
+    val (errorClass, params) =
+      withColumnMappingAdviceSubClass("DELTA_UNSUPPORTED_RENAME_COLUMN", suggestUpgrade = true)
+    new DeltaAnalysisException(errorClass, params)
   }
 
   def dropColumnNotSupported(suggestUpgrade: Boolean): Throwable = {
-    val adviceMsg = if (suggestUpgrade) columnMappingAdviceMessage() else ""
-    new DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_COLUMN", Array(adviceMsg))
+    val (errorClass, params) =
+      withColumnMappingAdviceSubClass("DELTA_UNSUPPORTED_DROP_COLUMN", suggestUpgrade)
+    new DeltaAnalysisException(errorClass, params)
   }
 
   def dropNestedColumnsFromNonStructTypeException(struct : DataType) : Throwable = {
