@@ -18,7 +18,6 @@ package io.sparkuctest;
 
 import static org.apache.spark.sql.functions.col;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.delta.tables.DeltaTable;
 import java.util.List;
@@ -128,15 +127,10 @@ public class UCDeltaTableDeltaAPITest extends UCDeltaTableIntegrationBaseTest {
         tableType,
         tableName -> {
           sql("INSERT INTO %s VALUES (1, 'A'), (2, 'B'), (3, 'A')", tableName);
-          if (tableType == TableType.MANAGED) {
-            assertThatThrownBy(() -> forName(tableName).optimize().executeCompaction())
-                .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION");
-          } else {
-            assertThat(forName(tableName).optimize().executeCompaction().collectAsList())
-                .isNotEmpty();
-            assertThat(forName(tableName).optimize().executeZOrderBy("category").collectAsList())
-                .isNotEmpty();
-          }
+          assertThat(forName(tableName).optimize().executeCompaction().collectAsList())
+              .isNotEmpty();
+          assertThat(forName(tableName).optimize().executeZOrderBy("category").collectAsList())
+              .isNotEmpty();
         });
   }
 
