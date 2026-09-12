@@ -60,15 +60,19 @@ trait TypeWideningStreamingV2SourceSuiteBase extends V2ForceTest {
 
   // Failures that affect both the schema-tracking and non-schema-tracking suites.
   override protected def shouldFailTests: Set[String] = Set(
-    // Delta log event is not supported in V2, so event-logging tests are not meaningful.
-    "schema changed event is logged for type widening",
     "schema changed event is not logged when there are no schema changes"
   )
 }
 
 class TypeWideningStreamingV2SourceSuite
   extends TypeWideningStreamingSourceSuite
-    with TypeWideningStreamingV2SourceSuiteBase
+    with TypeWideningStreamingV2SourceSuiteBase {
+  override protected def shouldFailTests: Set[String] =
+    super.shouldFailTests ++ Set(
+      // Delta log event is not supported in V2, so event-logging tests are not meaningful.
+      "schema changed event is logged for type widening"
+    )
+}
 
 class TypeWideningStreamingV2SourceSchemaTrackingSuite
   extends TypeWideningStreamingSourceSchemaTrackingSuite
