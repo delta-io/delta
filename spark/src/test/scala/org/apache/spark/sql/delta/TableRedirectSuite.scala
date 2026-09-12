@@ -41,6 +41,7 @@ import org.apache.commons.text.StringEscapeUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{QueryTest, SaveMode, SparkSession}
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.test.SharedSparkSession
@@ -51,6 +52,13 @@ class TableRedirectSuite extends QueryTest
   with CatalogOwnedTestBaseSuite
   with DeltaCheckpointTestUtils
   with DeltaSQLTestUtils {
+
+  // Several tests assert on the exact set/count of `_delta_log` files. The log-compaction
+  // post-commit hook is on by default and, at the default interval (5), writes
+  // `<x>.<y>.compacted.json` files (which also end in `.json`) that would inflate those counts.
+  // Disable the write hook here; compaction writing is covered by LogCompactionSuite.
+  override protected def sparkConf: SparkConf =
+    super.sparkConf.set(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_WRITES.key, "false")
 
   private def validateState(
       deltaLog: DeltaLog,

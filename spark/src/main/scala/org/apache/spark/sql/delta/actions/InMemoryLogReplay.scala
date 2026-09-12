@@ -30,6 +30,10 @@ import org.apache.hadoop.fs.Path
  *    A [[RemoveFile]] "corresponds" to the [[AddFile]] that matches both the parquet file URI
  *    *and* the deletion vector id (if any).
  *  - The most recent version for any `appId` in a [[SetTransaction]] wins.
+ *  - The most recent [[DomainMetadata]] for any `domain` wins. A `removed = true` action is a
+ *    tombstone: it is excluded from the output by default (snapshot/checkpoint semantics), but
+ *    retained when `retainDomainMetadataTombstones` is set, so that an incremental log compaction
+ *    can suppress an earlier `add` that precedes the compacted window.
  *  - The most recent [[Metadata]] wins.
  *  - The most recent [[Protocol]] version wins.
  *  - For each `(path, dv id)` tuple, this class should always output only one [[FileAction]]
@@ -41,7 +45,8 @@ class InMemoryLogReplay(
     minFileRetentionTimestamp: Option[Long],
     minSetTransactionRetentionTimestamp: Option[Long],
     tableRoot: Path,
-    useDeletionVectorObjectIdentity: Boolean) extends LogReplay {
+    useDeletionVectorObjectIdentity: Boolean,
+    retainDomainMetadataTombstones: Boolean = false) extends LogReplay {
 
   private var currentProtocolVersion: Protocol = null
   private var currentVersion: Long = -1
@@ -63,9 +68,11 @@ class InMemoryLogReplay(
     actions.foreach {
       case a: SetTransaction =>
         transactions(a.appId) = a
-      case a: DomainMetadata if a.removed =>
-        domainMetadatas.remove(a.domain)
-      case a: DomainMetadata if !a.removed =>
+      case a: DomainMetadata =>
+        // Keep the latest action per domain, *including* `removed = true` tombstones. A full
+        // checkpoint/snapshot excludes tombstones (see `getDomainMetadatas`), but an incremental
+        // log compaction must retain them so that a domain whose `add` precedes the compacted
+        // window is still suppressed when the compaction replaces those commits.
         domainMetadatas(a.domain) = a
       case _: CheckpointOnlyAction => // Ignore this while doing LogReplay
       case a: Metadata =>
@@ -110,7 +117,17 @@ class InMemoryLogReplay(
     }
   }
 
-  private[delta] def getDomainMetadatas: Iterable[DomainMetadata] = domainMetadatas.values
+  private[delta] def getDomainMetadatas: Iterable[DomainMetadata] =
+    if (retainDomainMetadataTombstones) {
+      // Log compaction is an incremental replacement for its commit range, so it must retain
+      // `removed = true` tombstones to suppress earlier (pre-window) adds, just like RemoveFile
+      // tombstones are retained for files.
+      domainMetadatas.values
+    } else {
+      // Snapshots and checkpoints exclude domain tombstones: per the protocol, removed domains
+      // are not returned by snapshot reads and are not preserved in checkpoints.
+      domainMetadatas.values.filterNot(_.removed)
+    }
 
   /**
    * Returns the most recent [[Protocol]] seen during replay, or None if no Protocol action was
