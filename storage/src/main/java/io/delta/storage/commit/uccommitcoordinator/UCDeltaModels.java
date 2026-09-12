@@ -126,23 +126,6 @@ public final class UCDeltaModels {
         String location,
         AbstractMetadata metadata,
         Map<String, String> storageProperties,
-        Optional<UniformMetadata> uniformMetadata) {
-      this(
-          tableId,
-          tableType,
-          location,
-          metadata,
-          storageProperties,
-          Collections.emptyList(),
-          uniformMetadata);
-    }
-
-    public TableInfo(
-        UUID tableId,
-        TableType tableType,
-        String location,
-        AbstractMetadata metadata,
-        Map<String, String> storageProperties,
         List<String> clientMaintenanceOperations,
         Optional<UniformMetadata> uniformMetadata) {
       this.tableId = tableId;

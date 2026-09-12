@@ -4199,8 +4199,8 @@ trait DeltaErrorsBase
     if (snapshot.isCatalogOwned) {
       val allowedOperations = catalogTableOpt
         .flatMap(_.storage.properties.get("delta.clientMaintenanceOperations"))
-        .map(_.split(",").toSet)
-        .getOrElse(Set.empty)
+        .map(_.split(","))
+        .getOrElse(Array.empty[String])
       if (!allowedOperations.contains(operation)) {
         throw operationBlockedOnCatalogManagedTable(operation)
       }
