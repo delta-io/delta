@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.hooks.InflightDMLRegistry
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
@@ -94,6 +95,10 @@ case class UpdateCommand(
   )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
+    // Async Auto Compaction DML yield: register this UPDATE so concurrent async AC yields.
+    val updateTableId = tahoeFileIndex.deltaLog.unsafeVolatileTableId
+    InflightDMLRegistry.acquire(updateTableId)
+    try {
     recordDeltaOperation(tahoeFileIndex.deltaLog, "delta.dml.update") {
       val deltaLog = tahoeFileIndex.deltaLog
       deltaLog.withNewTransaction(catalogTable) { txn =>
@@ -109,6 +114,9 @@ case class UpdateCommand(
       sparkSession.sharedState.cacheManager.recacheByPlan(sparkSession, target)
     }
     Seq(Row(metrics("numUpdatedRows").value))
+    } finally {
+      InflightDMLRegistry.release(updateTableId)
+    }
   }
 
   private def performUpdate(
