@@ -198,11 +198,9 @@ class ChecksumDVMetricsSuite
         // to take advantage any recent snapshot reconstruction and harvest the stats from there.
         // In the opposite scenario, disabling DVs midway, we maintain the previously computed
         // statistics so we do not lose incrementality if DVs are enabled again.
-        // When incremental commit is disabled, both enabling and disabling DVs
-        // midway is not an issue. When DVs are enabled we produce results and when DVs are
-        // disabled we do not.
-        validateChecksum(targetLog.update(),
-          statisticsExpected = !(enableDVCreation && !enableIncrementalCommit))
+        // With incremental commit disabled, reconstruction also produces metrics as long as
+        // DVs are readable, even if creation has been disabled.
+        validateChecksum(targetLog.update())
       }
     }
   }
