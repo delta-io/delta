@@ -1252,8 +1252,117 @@ trait ClusteredTableDDLWithV2Base
 trait ClusteredTableDDLWithV2
   extends ClusteredTableDDLWithV2Base
 
+trait ClusteredTableDataFrameWriterV2Suite
+  extends ClusteredTableCreateOrReplaceDDLSuite
+    with SharedSparkSession {
+  import testImplicits._
+
+  override protected def supportedClauses: Seq[String] = Seq("CREATE", "REPLACE")
+
+  test("DataFrameWriterV2: clusterBy on create/replace") {
+    val testTable = this.testTable
+    withTable(testTable) {
+      Seq((1, "US", "F"), (2, "DE", "M")).toDF("id", "country", "gender")
+        .writeTo(testTable).using("delta").clusterBy("country", "gender").create()
+      verifyClusteringColumns(TableIdentifier(testTable), Seq("country", "gender"))
+
+      Seq((3, "JP", "F")).toDF("id", "country", "gender")
+        .writeTo(testTable).using("delta").clusterBy("gender").replace()
+      verifyClusteringColumns(TableIdentifier(testTable), Seq("gender"))
+
+      Seq((4, "FR", "M")).toDF("id", "country", "gender")
+        .writeTo(testTable).using("delta").clusterBy("country").createOrReplace()
+      verifyClusteringColumns(TableIdentifier(testTable), Seq("country"))
+    }
+  }
+
+  test("DataFrameWriterV2: clusterBy with nested column") {
+    val testTable = this.testTable
+    withTable(testTable) {
+      spark.sql(
+        s"""CREATE TABLE $testTable (id INT, info STRUCT<city: STRING, zip: INT>) USING delta""")
+      spark.table(testTable).limit(0)
+        .writeTo(testTable).using("delta").clusterBy("info.city").replace()
+      verifyClusteringColumns(TableIdentifier(testTable), Seq("info.city"))
+    }
+  }
+
+  test("DataFrameWriter v1: saveAsTable create with clusterBy") {
+    val testTable = this.testTable
+    withTable(testTable) {
+      Seq((1, "US", "F"), (2, "DE", "M")).toDF("id", "country", "gender").write
+        .format("delta").clusterBy("country", "gender").saveAsTable(testTable)
+      verifyClusteringColumns(TableIdentifier(testTable), Seq("country", "gender"))
+    }
+  }
+
+  test("DataFrameWriter v1: save(path) create with clusterBy") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      Seq((1, "US", "F"), (2, "DE", "M")).toDF("id", "country", "gender").write
+        .format("delta").clusterBy("country", "gender").save(path)
+      val (_, snapshot) =
+        DeltaLog.forTableWithSnapshot(spark, new org.apache.hadoop.fs.Path(path))
+      val cols =
+        org.apache.spark.sql.delta.skipping.clustering.ClusteringColumnInfo
+          .extractLogicalNames(snapshot)
+      assert(cols === Seq("country", "gender"),
+        s"expected clustering columns Seq(country, gender), got $cols")
+    }
+  }
+
+  test("DataFrameWriter v1: append with matching clusterBy is allowed") {
+    val testTable = this.testTable
+    withTable(testTable) {
+      Seq((1, "US", "F")).toDF("id", "country", "gender").write
+        .format("delta").clusterBy("country", "gender").saveAsTable(testTable)
+      Seq((2, "DE", "M")).toDF("id", "country", "gender").write
+        .format("delta").mode("append").clusterBy("country", "gender").saveAsTable(testTable)
+      verifyClusteringColumns(TableIdentifier(testTable), Seq("country", "gender"))
+      assert(spark.table(testTable).count() === 2)
+    }
+  }
+
+  test("DataFrameWriter v1: append with mismatching clusterBy throws") {
+    val testTable = this.testTable
+    withTable(testTable) {
+      Seq((1, "US", "F")).toDF("id", "country", "gender").write
+        .format("delta").clusterBy("country", "gender").saveAsTable(testTable)
+      val ex = intercept[Exception] {
+        Seq((2, "DE", "M")).toDF("id", "country", "gender").write
+          .format("delta").mode("append").clusterBy("gender").saveAsTable(testTable)
+      }
+      val msg = Option(ex.getMessage).getOrElse("")
+      assert(
+        msg.toLowerCase.contains("cluster") &&
+          (msg.contains("do not match") || msg.contains("does not match") ||
+            msg.contains("mismatch") || msg.contains("different")),
+        s"expected clustering mismatch error, got: $msg")
+    }
+  }
+
+  test("DataFrameWriter v1: save(path) append with mismatching clusterBy throws") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      Seq((1, "US", "F")).toDF("id", "country", "gender").write
+        .format("delta").clusterBy("country", "gender").save(path)
+      // Path-based append does NOT go through Spark's checkPartitioningMatchesV2Table; the
+      // mismatch must be caught by Delta's own validateClusteringColumnsInSnapshot.
+      val ex = intercept[Exception] {
+        Seq((2, "DE", "M")).toDF("id", "country", "gender").write
+          .format("delta").mode("append").clusterBy("gender").save(path)
+      }
+      val msg = Option(ex.getMessage).getOrElse("")
+      assert(
+        msg.toLowerCase.contains("cluster"),
+        s"expected clustering mismatch error, got: $msg")
+    }
+  }
+}
+
 trait ClusteredTableDDLDataSourceV2SuiteBase
   extends ClusteredTableDDLWithV2
+    with ClusteredTableDataFrameWriterV2Suite
     with ClusteredTableDDLSuite {
   test("Create clustered table from external location, " +
     "location has clustered table, schema not specified, cluster by not specified") {
