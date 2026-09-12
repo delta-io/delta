@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -295,6 +296,11 @@ public final class Literal implements Expression {
       return false;
     }
     Literal other = (Literal) o;
-    return Objects.equals(dataType, other.dataType) && Objects.equals(value, other.value);
+    return Objects.equals(dataType, other.dataType) && Objects.deepEquals(value, other.value);
+  }
+
+  @Override
+  public int hashCode() {
+    return Arrays.deepHashCode(new Object[] {dataType, value});
   }
 }
