@@ -27,7 +27,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
-import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException
+import io.delta.storage.commit.uccommitcoordinator.exceptions.{CredentialFetchFailedException, NoSuchTableException}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -75,7 +75,12 @@ class UCDeltaTokenBasedRestClientSuite
   }
 
   override def afterAll(): Unit = if (server != null) server.stop(0)
-  override def beforeEach(): Unit = { deltaHandler = null }
+  override def beforeEach(): Unit = {
+    deltaHandler = null
+    // The UC hadoop credential cache is JVM-global; clear it so no test inherits (or leaves
+    // behind) cached credentials for `testIdentifier`.
+    clearUcCredentialCache()
+  }
 
   // --------------- helpers ---------------
 
@@ -273,6 +278,76 @@ class UCDeltaTokenBasedRestClientSuite
       assert(!c.createStagingTable(testIdentifier).getStorageProperties.isEmpty)
     }
     assert(credentialRequests.get() === 2)
+  }
+
+  // --------------- write-intent credential selection ---------------
+
+  /**
+   * The UC hadoop package keeps a JVM-global credential cache keyed by (context, table,
+   * operation); earlier tests in this suite populate it for `testIdentifier`. Clear it so every
+   * fetch in these tests reaches the stub server.
+   */
+  private def clearUcCredentialCache(): Unit = {
+    val field = classOf[io.unitycatalog.hadoop.internal.CredPropsUtil]
+      .getDeclaredField("initialCredCache")
+    field.setAccessible(true)
+    field.get(null)
+      .asInstanceOf[io.unitycatalog.hadoop.internal.auth.CredentialCache]
+      .clear()
+  }
+
+  /** Routes credential requests through `recordedOps`, denying READ_WRITE with a 403 on demand. */
+  private def credentialOpHandler(
+      recordedOps: java.util.List[String],
+      denyReadWrite: () => Boolean): (HttpExchange, String) => Unit = (exchange, _) => {
+    val path = exchange.getRequestURI.getPath
+    if (path.endsWith("/credentials")) {
+      val query = Option(exchange.getRequestURI.getQuery).getOrElse("")
+      val op = if (query.contains("READ_WRITE")) "READ_WRITE" else "READ"
+      recordedOps.add(op)
+      if (op == "READ_WRITE" && denyReadWrite()) {
+        sendJson(exchange, HttpStatus.SC_FORBIDDEN,
+          """{"error":{"message":"DENIED","type":"Denied","code":403}}""")
+      } else {
+        sendJson(
+          exchange,
+          HttpStatus.SC_OK,
+          s"""{"storage-credentials":[{"prefix":"s3://bucket/table","operation":"$op",""" +
+            """"expiration-time-ms":4102444800000,"config":{"s3.access-key-id":"ak",""" +
+            """"s3.secret-access-key":"sk","s3.session-token":"st"}}]}""")
+      }
+    } else {
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+    }
+  }
+
+  test("intent-less load falls back to READ when READ_WRITE is denied") {
+    val ops = java.util.Collections.synchronizedList(new java.util.ArrayList[String]())
+    deltaHandler = credentialOpHandler(ops, () => true)
+    withClient { c =>
+      assert(!c.loadTable(testIdentifier).getStorageProperties.isEmpty)
+      assert(ops.asScala.toList === List("READ_WRITE", "READ"))
+    }
+  }
+
+  test("declared write requests READ_WRITE and surfaces a denial without READ fallback") {
+    val ops = java.util.Collections.synchronizedList(new java.util.ArrayList[String]())
+    deltaHandler = credentialOpHandler(ops, () => true)
+    withClient { c =>
+      intercept[CredentialFetchFailedException] {
+        c.loadTable(testIdentifier, true)
+      }
+      assert(ops.asScala.toList === List("READ_WRITE"))
+    }
+  }
+
+  test("granted declared write requests READ_WRITE only") {
+    val ops = java.util.Collections.synchronizedList(new java.util.ArrayList[String]())
+    deltaHandler = credentialOpHandler(ops, () => false)
+    withClient { c =>
+      assert(!c.loadTable(testIdentifier, true).getStorageProperties.isEmpty)
+      assert(ops.asScala.toList === List("READ_WRITE"))
+    }
   }
 
   test("loadTable schema emits Delta camelCase wire format for array and map") {

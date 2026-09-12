@@ -46,6 +46,17 @@ public interface UCDeltaClient extends UCClient {
   TableInfo loadTable(TableIdentifier tableIdentifier) throws IOException;
 
   /**
+   * Same as {@link #loadTable(TableIdentifier)}, additionally declaring whether the caller
+   * resolved the table as the target of a write (Spark's
+   * {@code loadTable(ident, writePrivileges)}). Implementations may use the intent to request
+   * matching storage credentials; the default ignores it.
+   */
+  default TableInfo loadTable(TableIdentifier tableIdentifier, boolean writeIntent)
+      throws IOException {
+    return loadTable(tableIdentifier);
+  }
+
+  /**
    * Reserves a staging slot for a new Delta table. The returned response contains the table ID,
    * storage location, and protocol/property requirements that the caller must honor when
    * finalizing the table with {@link #createTable}.

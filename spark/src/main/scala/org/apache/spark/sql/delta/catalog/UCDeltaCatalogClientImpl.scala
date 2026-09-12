@@ -90,11 +90,13 @@ private[catalog] class UCDeltaCatalogClientImpl(
   // DeltaCatalogClient: loadTable
   // -------------------------------------------------------------------------
 
-  override def loadTable(ident: Identifier): Table = {
+  override def loadTable(ident: Identifier): Table = loadTable(ident, writeIntent = false)
+
+  override def loadTable(ident: Identifier, writeIntent: Boolean): Table = {
     UCDeltaCatalogClientImpl.loadTableInvocationsCounter.incrementAndGet()
     val tid = toStorageTableIdent(ident)
     val info =
-      try ucClient.loadTable(tid)
+      try ucClient.loadTable(tid, writeIntent)
       catch {
         case _: StorageNoSuchTableException => throw new NoSuchTableException(ident)
         case e: UnsupportedTableFormatException =>
@@ -102,7 +104,9 @@ private[catalog] class UCDeltaCatalogClientImpl(
             log"UCDeltaClient; falling back to the legacy catalog path. Cause: " +
             log"${MDC(DeltaLogKeys.EXCEPTION, e.getMessage)}")
           return fallbackLoadTableFunc(ident)
-        case e: CredentialFetchFailedException if serverSidePlanningEnabled =>
+        // Server-side planning is read-only; a declared write must surface the denial rather
+        // than be handed a read-only SSP table that fails later with "does not support writes".
+        case e: CredentialFetchFailedException if serverSidePlanningEnabled && !writeIntent =>
           logWarning(log"Credential fetch failed for " +
             log"${MDC(DeltaLogKeys.TABLE_NAME, fullQualifiedTableName(ident))}; enabling " +
             log"server-side planning fallback. Cause: " +
