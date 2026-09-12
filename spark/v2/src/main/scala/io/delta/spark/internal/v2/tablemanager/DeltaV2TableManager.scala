@@ -16,22 +16,21 @@
 package io.delta.spark.internal.v2.tablemanager
 
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import io.delta.spark.internal.v2.kernel.KernelContext
+
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
- * Composite contract for a process-cached Delta table manager.
- *
- * Table identity (path, catalog table) is seeded at construction and determines cache-key affinity.
+ * Contract for a Delta table manager used by the DSv2 connector.
  */
 private[v2] trait DeltaV2TableManager {
 
-  /** Returns a per-request snapshot manager backed by this composite's shared snapshot state. */
-  def snapshotManager(): DeltaV2SnapshotManager
+  /** Returns the table-scoped Kernel context. */
+  private[v2] def kernelContext: KernelContext
 
-  /**
-   * Idempotently prevents future acquisitions and releases exclusively owned state when safe.
-   *
-   * Default no-op: the single production implementation overrides this. Test stubs inherit the
-   * no-op safely.
-   */
+  /** Returns a snapshot manager using the caller's current catalog metadata. */
+  def snapshotManager(catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager
+
+  /** Retires this manager and releases any resources it owns. */
   def retire(): Unit = {}
 }
