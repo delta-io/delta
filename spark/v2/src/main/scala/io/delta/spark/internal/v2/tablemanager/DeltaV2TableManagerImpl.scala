@@ -54,6 +54,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   override private[v2] lazy val kernelContext =
     KernelContext(sessionInvariantFsOptions, logStore)
 
+  // TODO: Replace this factory-created snapshot manager with the cached data member.
   override def snapshotManager(
       catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager =
     SnapshotManagerFactory.create(
