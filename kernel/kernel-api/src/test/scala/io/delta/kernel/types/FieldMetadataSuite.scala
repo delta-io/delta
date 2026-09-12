@@ -466,4 +466,41 @@ class FieldMetadataSuite extends AnyFunSuite {
     assertThat(meta.equals(null)).isFalse
     assertThat(meta.equals("not-metadata")).isFalse
   }
+
+  test("hashCode handles entries with null value") {
+    val meta1 = FieldMetadata.builder()
+      .putNull("nullKey")
+      .putString("same", "x")
+      .build()
+    val meta2 = FieldMetadata.builder()
+      .putNull("nullKey")
+      .putString("same", "x")
+      .build()
+
+    // Computing the hash of metadata with a null value must not throw.
+    val hash1 = meta1.hashCode()
+    val hash2 = meta2.hashCode()
+
+    // equal instances must have equal hash codes (equals/hashCode contract).
+    assertThat(meta1.equals(meta2)).isTrue
+    assertThat(hash1).isEqualTo(hash2)
+  }
+
+  test("hashCode is consistent with equals for arrays") {
+    val strings: Seq[java.lang.String] = Seq("x", "y", "z")
+    val inner1 = FieldMetadata.builder().putBoolean("k", true).build()
+    val inner2 = FieldMetadata.builder().putBoolean("k", true).build()
+
+    val meta1 = FieldMetadata.builder()
+      .putStringArray("stringArrayKey", strings.toArray)
+      .putFieldMetadataArray("fieldMetadataArrayKey", Array(inner1))
+      .build()
+    val meta2 = FieldMetadata.builder()
+      .putStringArray("stringArrayKey", strings.toArray)
+      .putFieldMetadataArray("fieldMetadataArrayKey", Array(inner2))
+      .build()
+
+    assertThat(meta1.equals(meta2)).isTrue
+    assertThat(meta1.hashCode()).isEqualTo(meta2.hashCode())
+  }
 }
