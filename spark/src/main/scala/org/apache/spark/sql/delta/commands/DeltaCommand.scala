@@ -118,8 +118,8 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
    * @param deltaLog The DeltaLog of the table that is being operated on
    * @param nameToAddFileMap A map generated using `generateCandidateFileMap`.
    * @param filesToRewrite Absolute paths of the files that were touched. We will search for these
-   *                       in `candidateFiles`. Obtained as the output of the `input_file_name`
-   *                       function.
+   *                       in `candidateFiles`. Obtained as the output of the `_metadata.file_path`
+   *                       column.
    * @param operationTimestamp The timestamp of the operation
    */
   protected def removeFilesFromPaths(

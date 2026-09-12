@@ -878,8 +878,10 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
       case f: FileSourceScanLike => f
     })
     // The first scan is for finding files to update. We only are matching against the key
-    // so that should be the only field in the schema.
-    assert(scans.head.schema == StructType(
+    // so that should be the only field in the schema. The scan additionally exposes the
+    // `_metadata.file_path` column used to identify the files to rewrite, which is file-constant
+    // and therefore not read from the data files.
+    assert(DeltaTestUtils.dataSchemaOf(scans.head) == StructType(
       Seq(
         StructField("key", IntegerType)
       )
@@ -903,7 +905,8 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
       case f: FileSourceScanLike => f
     })
 
-    assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
+    assert(DeltaTestUtils.dataSchemaOf(scans.head) ==
+      StructType.fromDDL("nested STRUCT<key: int>"))
   }
 
   /**

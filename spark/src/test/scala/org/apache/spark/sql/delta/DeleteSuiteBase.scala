@@ -532,7 +532,8 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       case f: FileSourceScanLike => f
     })
 
-    assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
+    assert(DeltaTestUtils.dataSchemaOf(scans.head) ==
+      StructType.fromDDL("nested STRUCT<key: int>"))
   }
 
   /**
