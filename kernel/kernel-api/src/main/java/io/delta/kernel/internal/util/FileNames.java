@@ -336,6 +336,22 @@ public final class FileNames {
     return UUID_DELTA_FILE_REGEX.matcher(p.getName()).matches();
   }
 
+  /**
+   * Returns the published commit-file path for staged delta files, and the original path otherwise.
+   *
+   * <p>This lets pagination treat a staged commit and its published copy as the same logical commit
+   * file.
+   */
+  public static String canonicalizeStagedDeltaFilePath(String path) {
+    if (!isStagedDeltaFile(path)) {
+      return path;
+    }
+
+    final Path stagedDeltaFile = new Path(path);
+    final Path logPath = stagedDeltaFile.getParent().getParent();
+    return deltaFile(logPath, deltaVersion(stagedDeltaFile));
+  }
+
   public static boolean isLogCompactionFile(String path) {
     final String fileName = new Path(path).getName();
     return COMPACTION_FILE_PATTERN.matcher(fileName).matches();
