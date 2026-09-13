@@ -18,6 +18,7 @@ package io.delta.spark.internal.v2.tablemanager
 import java.io.File
 import java.util.Collections
 
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
@@ -33,6 +34,7 @@ class DeltaV2TableManagerImplSuite
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+    .set("spark.sql.catalog.spark_catalog", classOf[DeltaCatalog].getName)
 
   override def beforeEach(): Unit = {
     super.beforeEach()
