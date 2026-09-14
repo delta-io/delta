@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection.{ASCII_MAX_CHARACTER, UTF8_MAX_CHARACTER}
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaSqlParserUtils, FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 import org.scalatest.exceptions.TestFailedException
 
@@ -481,6 +481,41 @@ class StatsCollectionSuite
         .toSeq
       val result1 = Seq(("delta.dataSkippingStatsColumns", "`c1.`,`c2*`,`c3,`,`c-4`"))
       assert(dataSkippingStatsColumns == result1)
+    }
+  }
+
+  test("drop Delta statistics columns round-trips escaped names") {
+    val tableName = "delta_table"
+    withTable(tableName) {
+      // Delta requires column mapping for DROP COLUMN, so use name mode for the ALTER TABLE path.
+      sql(
+        s"""CREATE TABLE $tableName (
+           |  `a,b` LONG,
+           |  `x.y` LONG,
+           |  x STRUCT<y: LONG>,
+           |  `a``b` LONG,
+           |  `a````b` LONG,
+           |  `a/b` LONG,
+           |  d LONG)
+           |USING delta
+           |TBLPROPERTIES (
+           |  'delta.dataSkippingStatsColumns' =
+           |    '`a,b`,`x.y`,x.y,`a``b`,`a````b`,`a/b`,d',
+           |  'delta.columnMapping.mode' = 'name')""".stripMargin)
+      sql(s"ALTER TABLE $tableName DROP COLUMN d")
+
+      val metadata = DeltaLog.forTable(spark, TableIdentifier(tableName)).update().metadata
+      val statsColumns = DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.fromMetaData(metadata).get
+      assert(statsColumns == "`a,b`,`x.y`,x.y,`a``b`,`a````b`,`a/b`")
+      assert(
+        DeltaSqlParserUtils.parseMultipartColumnList(statsColumns).get.map(_.nameParts) == Seq(
+          Seq("a,b"),
+          Seq("x.y"),
+          Seq("x", "y"),
+          Seq("a`b"),
+          Seq("a``b"),
+          Seq("a/b")))
+      StatisticsCollection.validateDeltaStatsColumns(metadata)
     }
   }
 

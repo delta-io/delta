@@ -399,6 +399,11 @@ class DeltaV2TableManagerCacheSuite
       assert(impl.qualifiedTableDataPath.toUri.getPath.contains(dir.getName))
       assert(impl.sessionInvariantFsOptions.isEmpty)
       assert(impl.initialCatalogTableOpt.isEmpty)
+      val tableStore = impl.logStore
+      val tableKernelContext = impl.kernelContext
+      assert(tableKernelContext.logStore eq tableStore)
+      assert(impl.kernelContext eq tableKernelContext)
+      assert(impl.logStore eq tableStore)
     }
   }
 }

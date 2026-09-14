@@ -19,56 +19,100 @@ package org.apache.spark.sql.delta.v2.interop
 import java.io.File
 import java.nio.file.{Files, StandardCopyOption}
 
-import org.apache.spark.sql.delta.DeltaOperations
-import org.apache.spark.sql.delta.actions.{AddFile, SetTransaction}
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.{DeltaOperations, OptimisticTransaction, OptimisticTransactionSuite}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, SetTransaction}
+import org.apache.spark.sql.delta.test.V2ForceTest
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
-import io.delta.kernel.Table
-import io.delta.kernel.internal.SnapshotImpl
+import org.apache.hadoop.fs.Path
+import io.delta.kernel.{Table => KernelTable}
+import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshotImpl}
 
-import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.LongType
+import org.apache.spark.sql.types.{LongType, StructType}
 import org.apache.spark.util.SystemClock
 
 /**
- * Tests for [[DeltaV2OptimisticTransaction]]. Two groups:
- *  - Construction: a transaction builds over a Kernel snapshot (with a null V1 `deltaLog`) and its
- *    read state (`readVersion`, `metadata`, `protocol`, `snapshot`) resolves from the wrapped
- *    [[DeltaV2Snapshot]].
- *  - Commit: [[AddFile]] actions commit through Kernel's `Transaction.commit` while the surrounding
- *    commit machinery runs unchanged; the durable log is asserted by re-loading the table through
- *    Kernel as a [[DeltaV2Snapshot]]. Non-AddFile actions fail loudly.
+ * Tests for [[DeltaV2OptimisticTransaction]]. Extends [[OptimisticTransactionSuite]] and forces the
+ * V2 connector via [[V2ForceTest]]; inherited cases not yet supported on the V2 path are listed in
+ * [[shouldFailTests]]. Also covers construction, AddFile, commits, stats, and retry.
  */
 class DeltaV2OptimisticTransactionSuite
-    extends QueryTest
-    with SharedSparkSession
-    with DeltaSQLCommandTest {
+    extends OptimisticTransactionSuite
+    with V2ForceTest {
 
   import testImplicits._
+
+  override protected def withTempDir(f: File => Unit): Unit = withTempDir(prefix = "spark")(f)
+
+  /**
+   * Creates the transaction under test as a Kernel-backed [[DeltaV2OptimisticTransaction]] for the
+   * inherited V1 conflict test cases.
+   */
+  override protected def startTestTransaction(dataPath: Path): OptimisticTransaction = {
+    // scalastyle:off deltahadoopconfiguration
+    val kernelEngine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
+    val kernelSnap = KernelTable
+      .forPath(kernelEngine, dataPath.toString)
+      .getLatestSnapshot(kernelEngine)
+      .asInstanceOf[KernelSnapshotImpl]
+    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap)
+    new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot, kernelEngine)
+  }
+
+  override protected def testDefaultMetadata(): Metadata =
+    Metadata(schemaString = new StructType().add("id", LongType).json)
+  override protected def testDefaultProtocol(): Protocol = Protocol(1, 2)
+
+  override protected def shouldFailTests: Set[String] = Set(
+    // Conflict-checking: DelatV2 unsupported operations gaps
+    "conflicting txns - should conflict",
+    "disjoint txns - should not conflict",
+    "delete / delete - should conflict",
+    "upgrade / upgrade - should conflict",
+    // V2 write-path gaps that STRICT reroutes through the connector (deletion vectors):
+    "Duplicate action - remove file twice - same DV",
+    "Duplicate action - remove file twice - DV vs. no DV",
+    "Duplicate action - remove file twice - different DVs",
+    "Duplicate action - add file twice - same DV",
+    "Duplicate action - add file twice - DV vs. no DV",
+    "Duplicate action - add file twice - different DVs",
+    "Duplicate action - remove and add file - same DV",
+    "DVs cannot be added to files without numRecords stat",
+    // V2 write-path gaps that STRICT reroutes through the connector (SQL/DML/DDL, CLONE):
+    "preCommitLogSegment is updated during conflict checking",
+    "CommitInfo does not contain fully qualified column names",
+    "partition column changes not thrown for sql error on new path table",
+    "partition column changes not thrown for sql overwrite on new path table",
+    "partition column changes not thrown for sql append on path",
+    "partition column changes allowed for CLONE operations"
+    ,
+    "partition column changes allowed for RenameColumn when partition column renamed"
+    )
+
+  override protected def shouldFail(testName: String): Boolean = shouldFailTests.contains(testName)
 
   /** Builds a Kernel-backed transaction over the latest snapshot of the table at `dir`. */
   private def startKernelTxn(dir: File): DeltaV2OptimisticTransaction = {
     // scalastyle:off deltahadoopconfiguration
     // No DeltaLog here (the snapshot is loaded via Kernel), so use the session Hadoop conf.
-    val engine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
+    val kernelEngine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
-    val kernelSnap = Table
-      .forPath(engine, dir.getCanonicalPath)
-      .getLatestSnapshot(engine)
-      .asInstanceOf[SnapshotImpl]
+    val kernelSnap = KernelTable
+      .forPath(kernelEngine, dir.getCanonicalPath)
+      .getLatestSnapshot(kernelEngine)
+      .asInstanceOf[KernelSnapshotImpl]
     val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap)
-    new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot, engine)
+    new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot, kernelEngine)
   }
 
   private def latestKernelSnapshot(dir: File): DeltaV2Snapshot = {
     // scalastyle:off deltahadoopconfiguration
-    val engine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
+    val kernelEngine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
-    val kernelSnap = Table
-      .forPath(engine, dir.getCanonicalPath)
-      .getLatestSnapshot(engine)
-      .asInstanceOf[SnapshotImpl]
+    val kernelSnap = KernelTable
+      .forPath(kernelEngine, dir.getCanonicalPath)
+      .getLatestSnapshot(kernelEngine)
+      .asInstanceOf[KernelSnapshotImpl]
     new DeltaV2Snapshot(kernelSnap)
   }
 
@@ -216,7 +260,8 @@ class DeltaV2OptimisticTransactionSuite
       val e = intercept[UnsupportedOperationException] {
         txn.commit(setTxn :: Nil, DeltaOperations.ManualUpdate)
       }
-      assert(e.getMessage.contains("kernel wrapper gap"))
+      assert(e.getMessage ==
+        "DeltaV2 unsupported operation: cannot commit action SetTransaction")
     }
   }
 
@@ -368,15 +413,23 @@ class DeltaV2OptimisticTransactionSuite
     checkTypedPartitionAppend("STRING", "'foo'")
   }
 
+  private def concurrentAppend(
+      dir: File, fileName: String, partitionValues: Map[String, String] = Map.empty): Unit = {
+    val txn = startKernelTxn(dir)
+    txn.commit(
+      AddFile(fileName, partitionValues, 1L, 1L, dataChange = true) :: Nil,
+      DeltaOperations.ManualUpdate)
+  }
+
   test("multiple AddFiles per partition all commit through Kernel") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       spark.sql(
         s"""CREATE TABLE delta.`$path` (id LONG, p INT)
-           |USING delta PARTITIONED BY (p)""".stripMargin)
-      // Two partitions (p=0, p=1), each with a real data file so we can reuse their serialized
-      // partition values below.
-      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 0), (2, 1)")
+           |USING delta PARTITIONED BY (p)""".stripMargin) // version 0
+
+      concurrentAppend(dir, "p=0/seed", Map("p" -> "0")) // version 1
+      concurrentAppend(dir, "p=1/seed", Map("p" -> "1")) // version 2
 
       val base = latestKernelSnapshot(dir)
       val baseVersion = base.version
@@ -387,9 +440,7 @@ class DeltaV2OptimisticTransactionSuite
         }
       assert(samplesByPartition.size === 2, "expected one file per partition to reuse")
 
-      // Stage two synthetic AddFiles per partition (four total) so the per-partition grouping in
-      // generateKernelAppendActionRows must emit multiple append action rows for the same write
-      // context, not just one.
+      // Stage two synthetic AddFiles per partition (four total)
       val adds = samplesByPartition.toSeq.flatMap { case (partitionValues, sample) =>
         (1 to 2).map { i =>
           AddFile(
@@ -408,7 +459,6 @@ class DeltaV2OptimisticTransactionSuite
       val post = latestKernelSnapshot(dir)
       assert(post.version === baseVersion + 1)
       val committedPaths = post.allFiles.collect().map(_.path)
-      // All four synthetic files landed, spread across both partitions.
       adds.foreach(add => assert(committedPaths.contains(add.path), s"missing ${add.path}"))
       assert(committedPaths.count(_.startsWith("synthetic-p0")) === 2)
       assert(committedPaths.count(_.startsWith("synthetic-p1")) === 2)

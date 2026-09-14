@@ -15,9 +15,12 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
+import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import io.delta.spark.internal.v2.kernel.KernelContext
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
@@ -36,10 +39,17 @@ private[tablemanager] class DeltaV2TableManagerImpl(
     val qualifiedTableDataPath: Path,
     val sessionInvariantFsOptions: Map[String, String],
     val initialCatalogTableOpt: Option[CatalogTable])
-    extends DeltaV2TableManager {
+    extends DeltaV2TableManager
+    with LogStoreProvider
+{
 
   /** The table's data directory, fully qualified. */
   def tablePath: Path = qualifiedTableDataPath
+
+  /** Used to read and write physical log files and checkpoints. */
+  private[tablemanager] lazy val logStore = createLogStore(SparkSession.active)
+
+  private[tablemanager] lazy val kernelContext = KernelContext(sessionInvariantFsOptions, logStore)
 
   // Placeholder until snapshot lifecycle is implemented.
   override def snapshotManager(): DeltaV2SnapshotManager =
