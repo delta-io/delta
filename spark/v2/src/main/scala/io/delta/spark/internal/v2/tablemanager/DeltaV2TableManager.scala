@@ -33,7 +33,7 @@ private[v2] trait DeltaV2TableManager {
   private[v2] def logStore: LogStore
 
   /** Returns a snapshot manager using the caller's current catalog metadata. */
-  def snapshotManager(catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager
+  private[v2] def snapshotManager(catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager
 
   /** Retires this manager and releases any resources it owns. */
   def retire(): Unit = {}
