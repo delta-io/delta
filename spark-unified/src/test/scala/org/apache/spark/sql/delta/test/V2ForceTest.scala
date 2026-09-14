@@ -47,16 +47,20 @@ trait V2ForceTest extends DeltaSQLCommandTest with AdaptiveSparkPlanHelper {
 
   private val testsRun: mutable.Set[String] = mutable.Set.empty
 
-  val nonExistingShouldFailTests = shouldFailTests.filterNot { shouldFailTest =>
-    testNames.contains(shouldFailTest) || testNames.contains(s"$shouldFailTest - $ignoreMsg")
-  }
+  override protected def beforeAll(): Unit = {
+    // assert that all tests listed in shouldFailTests actually exist
+    val nonExistingShouldFailTests = shouldFailTests.filterNot { shouldFailTest =>
+      testNames.contains(shouldFailTest) || testNames.contains(s"$shouldFailTest - $ignoreMsg")
+    }
 
-  // assert that all tests listed in shouldFailTests actually exist
-  if (nonExistingShouldFailTests.nonEmpty) {
-    fail(
-      s"""The following tests in $this are listed in 'shouldFailTests' but were not discovered:
-         |${nonExistingShouldFailTests.map("- " + _).mkString("\n")}
-         |""".stripMargin)
+    if (nonExistingShouldFailTests.nonEmpty) {
+      fail(
+        s"""The following tests in $this are listed in 'shouldFailTests' but were not discovered:
+           |${nonExistingShouldFailTests.map("- " + _).mkString("\n")}
+           |""".stripMargin)
+    }
+
+    super.beforeAll()
   }
 
   /**
