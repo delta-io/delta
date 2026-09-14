@@ -51,8 +51,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   /** Used to read and write physical log files and checkpoints. */
   override private[v2] lazy val logStore = createLogStore(SparkSession.active)
 
-  override private[v2] lazy val kernelContext =
-    KernelContext(sessionInvariantFsOptions, logStore)
+  override private[v2] lazy val kernelContext = KernelContext(sessionInvariantFsOptions, logStore)
 
   // TODO: Replace this factory-created snapshot manager with the cached data member.
   override private[v2] def snapshotManager(

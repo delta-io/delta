@@ -32,8 +32,7 @@ class DeltaV2TableManagerImplSuite
     with SharedSparkSession {
 
   private val sparkCatalogKey = "spark.sql.catalog.spark_catalog"
-  private val deltaCatalogV1ClassName =
-    "org.apache.spark.sql.delta.catalog.DeltaCatalogV1"
+  private val deltaCatalogV1ClassName = "org.apache.spark.sql.delta.catalog.DeltaCatalogV1"
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
