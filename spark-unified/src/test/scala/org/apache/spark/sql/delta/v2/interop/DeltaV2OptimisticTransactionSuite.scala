@@ -80,7 +80,6 @@ class DeltaV2OptimisticTransactionSuite
     "DVs cannot be added to files without numRecords stat",
     // V2 write-path gaps that STRICT reroutes through the connector (SQL/DML/DDL, CLONE):
     "preCommitLogSegment is updated during conflict checking",
-    "CommitInfo does not contain fully qualified column names",
     "partition column changes not thrown for sql error on new path table",
     "partition column changes not thrown for sql overwrite on new path table",
     "partition column changes not thrown for sql append on path",
