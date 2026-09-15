@@ -505,6 +505,25 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
     AddFile(encodedPath, partitionValues, size, modificationTime, dataChange, stats)
   }
 
+  /**
+   * Rewrites the `dataChange` an existing commit records in its [[CommitInfo]], leaving its file
+   * actions untouched so that the two can be made to disagree -- which no write path produces, and
+   * which is the only way to observe which of the two a reader consulted.
+   */
+  def recordDataChangeInCommitInfo(
+      deltaLog: DeltaLog, version: Long, dataChange: Option[Boolean]): Unit = {
+    val conf = deltaLog.newDeltaHadoopConf()
+    val commitFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+    val rewritten = deltaLog.store.read(commitFile, conf).map { line =>
+      Action.fromJson(line) match {
+        case commitInfo: CommitInfo => commitInfo.copy(dataChange = dataChange).json
+        case _ => line
+      }
+    }
+    deltaLog.store.write(commitFile, rewritten.toIterator, overwrite = true, conf)
+    DeltaLog.clearCache()
+  }
+
 
   /**
    * Discovers all DeltaOperations.Operation subclasses using reflection.
