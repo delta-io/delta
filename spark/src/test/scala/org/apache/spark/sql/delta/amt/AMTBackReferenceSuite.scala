@@ -331,7 +331,9 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
       n => sql(s"INSERT OVERWRITE $n VALUES (99)"),
       tombstones = leafPackedFiles, exact = true),
     PropagationCase("RESTORE", "amt_back_ref_restore",
-      n => sql(s"RESTORE TABLE $n TO VERSION AS OF 1"), tombstones = 1, exact = false))
+      n => sql(s"RESTORE TABLE $n TO VERSION AS OF 1"), tombstones = 1, exact = false),
+    PropagationCase("TRUNCATE", "amt_back_ref_truncate",
+      n => sql(s"TRUNCATE TABLE $n"), tombstones = leafPackedFiles, exact = true))
 
   propagationCases.foreach { c =>
     testAcrossAMTCheckpointScenarios(
@@ -603,6 +605,27 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
           s"but was ${a.backReference}.")
     }
     */
+  }
+
+
+  test("CONVERT TO DELTA adds files that carry no back reference") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      // A plain parquet dataset converted in place becomes an ordinary (non-AMT) Delta table, so
+      // none of the AddFiles the conversion commits may carry a back reference.
+      spark.range(0, 5).selectExpr("CAST(id AS INT) AS id")
+        .write.mode("overwrite").parquet(path)
+      sql(s"CONVERT TO DELTA parquet.`$path`")
+
+      val snapshot = DeltaLog.forTable(spark, new Path(path)).update()
+      assert(amtProvider(snapshot).isEmpty, "a converted parquet table must not be AMT-backed.")
+      val adds = snapshot.allFiles.collect()
+      assert(adds.nonEmpty, "CONVERT must add the parquet data files to the Delta log.")
+      adds.foreach { a =>
+        assert(a.backReference.isEmpty,
+          s"converted AddFile ${a.path} must carry no back reference.")
+      }
+    }
   }
 
 }
