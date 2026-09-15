@@ -51,14 +51,8 @@ import org.apache.spark.SparkConf
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.{
-  CatalogStorageFormat,
-  CatalogTable,
-  CatalogTableType
-}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.StructType
 // scalastyle:on import.ordering.noEmptyLine
 // scalastyle:on import.ordering.wrongOrderInGroup
 
@@ -88,7 +82,8 @@ class CachedSnapshotManagerSuite
   ): CachedSnapshotManager = {
     new CachedSnapshotManager(
       new Path(dir.getCanonicalPath),
-      kernelContext)
+      kernelContext,
+      new AtomicReference[Option[CatalogTable]](None))
   }
 
   private def setRecordingMarkers(session: SparkSession, sessionMarker: String): Unit = {
@@ -117,31 +112,18 @@ class CachedSnapshotManagerSuite
     assert(alive.isEmpty, s"Threads did not terminate: ${alive.map(_.getName).mkString(", ")}")
   }
 
-  // === Catalog metadata ======================================
-
-  test("catalog table reference supports empty, seeded, and replacement states") {
-    withTempDir { dir =>
-      val tablePath = new Path(dir.getCanonicalPath)
-      val kernelContext = KernelContext(Map.empty, LogStore.createLogStore(spark))
-      val firstCatalogTable = CatalogTable(
-        identifier = TableIdentifier("first_table"),
-        tableType = CatalogTableType.EXTERNAL,
-        storage = CatalogStorageFormat.empty.copy(locationUri = Some(dir.toURI)),
-        schema = new StructType())
-      val secondCatalogTable =
-        firstCatalogTable.copy(identifier = TableIdentifier("second_table"))
-
-      val emptyManager = new CachedSnapshotManager(tablePath, kernelContext)
-      assert(emptyManager.unsafeVolatileCatalogTable.isEmpty)
-      emptyManager.setUnsafeVolatileCatalogTable(firstCatalogTable)
-      assert(emptyManager.unsafeVolatileCatalogTable.contains(firstCatalogTable))
-      emptyManager.setUnsafeVolatileCatalogTable(secondCatalogTable)
-      assert(emptyManager.unsafeVolatileCatalogTable.contains(secondCatalogTable))
-
-      val seededManager =
-        new CachedSnapshotManager(tablePath, Some(firstCatalogTable), kernelContext)
-      assert(seededManager.unsafeVolatileCatalogTable.contains(firstCatalogTable))
+  private def assertWaitsForSnapshotLock(thread: Thread): Unit = {
+    val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30L)
+    var stackTrace = thread.getStackTrace.toSeq
+    while (thread.isAlive &&
+        !stackTrace.exists(_.getMethodName == "lockInterruptibly") &&
+        System.nanoTime() < deadlineNanos) {
+      Thread.sleep(10L)
+      stackTrace = thread.getStackTrace.toSeq
     }
+    assert(
+      stackTrace.exists(_.getMethodName == "lockInterruptibly"),
+      s"${thread.getName} did not wait for the snapshot lock: ${stackTrace.mkString(", ")}")
   }
 
   // === Cold start ============================================
@@ -555,7 +537,7 @@ class CachedSnapshotManagerSuite
 
   // === Concurrency correctness ================================
 
-  test("an older refresh completing late does not replace a newer cached snapshot") {
+  test("concurrent refreshes serialize and the later caller advances the cached snapshot") {
     withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
       withTempDir { dir =>
         createDeltaTable(dir)
@@ -567,6 +549,8 @@ class CachedSnapshotManagerSuite
         val manager = createManager(dir, kernelContext)
         val failures = new ConcurrentLinkedQueue[Throwable]()
         val staleResult = new AtomicReference[Snapshot]()
+        val newerResult = new AtomicReference[Snapshot]()
+        val secondaryPhase = new CyclicBarrier(2)
         val staleThread = new Thread(() => {
           try {
             staleResult.set(manager.loadLatestSnapshot())
@@ -574,7 +558,16 @@ class CachedSnapshotManagerSuite
             case NonFatal(failure) => failures.add(failure)
           }
         }, "stale-refresh")
+        val newerThread = new Thread(() => {
+          try {
+            secondaryPhase.await(30L, TimeUnit.SECONDS)
+            newerResult.set(manager.loadLatestSnapshot())
+          } catch {
+            case NonFatal(failure) => failures.add(failure)
+          }
+        }, "newer-refresh")
         staleThread.setDaemon(true)
+        newerThread.setDaemon(true)
 
         try {
           assert(manager.loadLatestSnapshot().version == 0L)
@@ -585,19 +578,387 @@ class CachedSnapshotManagerSuite
             CachedSnapshotManagerBlockingFileSystem.awaitCapturedListing(),
             "stale refresh did not capture a transaction-log listing")
 
+          newerThread.start()
+          secondaryPhase.await(30L, TimeUnit.SECONDS)
           appendToDeltaTable(dir)
-          val newerSnapshot = manager.loadLatestSnapshot()
-          assert(newerSnapshot.version == 2L)
+          assertWaitsForSnapshotLock(newerThread)
+          assert(newerResult.get() == null)
 
           CachedSnapshotManagerBlockingFileSystem.releaseListing()
           staleThread.join(TimeUnit.SECONDS.toMillis(30L))
+          newerThread.join(TimeUnit.SECONDS.toMillis(30L))
           assert(!staleThread.isAlive, "stale refresh thread did not terminate")
-          assert(failures.isEmpty, s"Stale refresh failed: ${failures.toArray.mkString(", ")}")
-          assert(staleResult.get() eq newerSnapshot)
-          assert(manager.loadLatestSnapshot() eq newerSnapshot)
+          assert(!newerThread.isAlive, "newer refresh thread did not terminate")
+          assert(failures.isEmpty, s"Concurrent refresh failed: ${failures.toArray.mkString(", ")}")
+          assert(staleResult.get().version == 1L)
+          assert(newerResult.get().version == 2L)
+          assert(manager.loadSnapshotAt(2L) eq newerResult.get())
+          assert(
+            CachedSnapshotManagerBlockingFileSystem.listingThreadNames.distinct.sorted ==
+              Seq("newer-refresh", "stale-refresh"),
+            "the later freshness boundary should trigger a second reconstruction")
         } finally {
           CachedSnapshotManagerBlockingFileSystem.releaseListing()
           staleThread.interrupt()
+          newerThread.interrupt()
+          manager.retire()
+        }
+      }
+    }
+  }
+
+  test("concurrent cold latest loads share one refresh across Spark sessions") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val kernelContext = KernelContext(
+          Map(
+            "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
+            "fs.file.impl.disable.cache" -> "true"),
+          LogStore.createLogStore(spark))
+        val manager = createManager(dir, kernelContext)
+        val operationSessions = Seq(spark.newSession(), spark.newSession())
+        val startBarrier = new CyclicBarrier(operationSessions.size)
+        val snapshots = new ConcurrentLinkedQueue[Snapshot]()
+        val allFileSessions = new ConcurrentLinkedQueue[SparkSession]()
+        val failures = new ConcurrentLinkedQueue[Throwable]()
+        val threads = operationSessions.zipWithIndex.map { case (operationSession, index) =>
+          new Thread(() => {
+            SparkSession.setActiveSession(operationSession)
+            try {
+              startBarrier.await(30L, TimeUnit.SECONDS)
+              val snapshot = manager.loadLatestSnapshot()
+              snapshots.add(snapshot)
+              val allFiles = snapshot.allFiles
+              assert(allFiles.count() > 0L)
+              allFileSessions.add(allFiles.sparkSession)
+            } catch {
+              case failure: Throwable => failures.add(failure)
+            } finally {
+              SparkSession.clearActiveSession()
+            }
+          }, s"cold-latest-$index")
+        }
+        threads.foreach(_.setDaemon(true))
+
+        try {
+          CachedSnapshotManagerBlockingFileSystem.armFirstListing()
+          threads.foreach(_.start())
+          assert(
+            CachedSnapshotManagerBlockingFileSystem.awaitCapturedListing(),
+            "cold refresh did not capture a transaction-log listing")
+          val lockWinner = CachedSnapshotManagerBlockingFileSystem.listingThreadNames.head
+          assertWaitsForSnapshotLock(threads.find(_.getName != lockWinner).get)
+
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          threads.foreach(_.join(TimeUnit.SECONDS.toMillis(30L)))
+          assert(
+            threads.forall(thread => !thread.isAlive),
+            "concurrent cold refresh threads did not terminate")
+          assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
+          assert(snapshots.size() == operationSessions.size)
+          val returnedSnapshots = snapshots.asScala.toSeq
+          assert(returnedSnapshots.map(_.version).distinct == Seq(0L))
+          assert(returnedSnapshots.forall(_ eq returnedSnapshots.head))
+          assert(
+            CachedSnapshotManagerBlockingFileSystem.listingThreadNames.distinct.size == 1,
+            "only the lock winner should reconstruct the cold snapshot")
+          assert(allFileSessions.size() == operationSessions.size)
+          assert(allFileSessions.asScala.forall(operationSessions.contains))
+          assert(allFileSessions.asScala.toSeq.distinct.size == 1)
+          assert(!allFileSessions.asScala.exists(_ eq spark))
+        } finally {
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          threads.foreach(_.interrupt())
+          manager.retire()
+        }
+      }
+    }
+  }
+
+  test("concurrent latest and time-travel loads share one upper-bound refresh") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val kernelContext = KernelContext(
+          Map(
+            "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
+            "fs.file.impl.disable.cache" -> "true"),
+          LogStore.createLogStore(spark))
+        val manager = createManager(dir, kernelContext)
+        val initial = manager.loadLatestSnapshot()
+        appendToDeltaTable(dir)
+        val operationSessions = Seq(spark.newSession(), spark.newSession())
+        val startBarrier = new CyclicBarrier(operationSessions.size)
+        val latestResult = new AtomicReference[Snapshot]()
+        val timeTravelResult = new AtomicReference[Snapshot]()
+        val failures = new ConcurrentLinkedQueue[Throwable]()
+        val threads = operationSessions.zipWithIndex.map { case (operationSession, index) =>
+          new Thread(() => {
+            SparkSession.setActiveSession(operationSession)
+            try {
+              startBarrier.await(30L, TimeUnit.SECONDS)
+              val result = if (index == 0) {
+                manager.loadLatestSnapshot()
+              } else {
+                manager.loadSnapshotAt(1L)
+              }
+              if (index == 0) latestResult.set(result) else timeTravelResult.set(result)
+            } catch {
+              case failure: Throwable => failures.add(failure)
+            } finally {
+              SparkSession.clearActiveSession()
+            }
+          }, if (index == 0) "mixed-latest" else "mixed-time-travel")
+        }
+        threads.foreach(_.setDaemon(true))
+
+        try {
+          CachedSnapshotManagerBlockingFileSystem.armFirstListing()
+          threads.foreach(_.start())
+          assert(
+            CachedSnapshotManagerBlockingFileSystem.awaitCapturedListing(),
+            "mixed refresh did not capture a transaction-log listing")
+          val lockWinner = CachedSnapshotManagerBlockingFileSystem.listingThreadNames.head
+          assertWaitsForSnapshotLock(threads.find(_.getName != lockWinner).get)
+
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          threads.foreach(_.join(TimeUnit.SECONDS.toMillis(30L)))
+          assert(
+            threads.forall(thread => !thread.isAlive),
+            "mixed refresh threads did not terminate")
+          assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
+          assert(latestResult.get().version == 1L)
+          assert(timeTravelResult.get().version == 1L)
+          assert(latestResult.get() eq timeTravelResult.get())
+          assert(latestResult.get() ne initial)
+          assert(manager.loadSnapshotAt(1L) eq latestResult.get())
+          assert(
+            CachedSnapshotManagerBlockingFileSystem.listingThreadNames.distinct.size == 1,
+            "the waiter should reuse the upper bound installed by the lock winner")
+        } finally {
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          threads.foreach(_.interrupt())
+          manager.retire()
+        }
+      }
+    }
+  }
+
+  test("concurrent latest and historical loads preserve the installed upper bound") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val kernelContext = KernelContext(
+          Map(
+            "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
+            "fs.file.impl.disable.cache" -> "true"),
+          LogStore.createLogStore(spark))
+        val manager = createManager(dir, kernelContext)
+        val initial = manager.loadLatestSnapshot()
+        appendToDeltaTable(dir)
+        appendToDeltaTable(dir)
+        val latestSession = spark.newSession()
+        val historicalSession = spark.newSession()
+        val startBarrier = new CyclicBarrier(2)
+        val latestResult = new AtomicReference[Snapshot]()
+        val historicalResult = new AtomicReference[Snapshot]()
+        val latestAllFilesSession = new AtomicReference[SparkSession]()
+        val historicalAllFilesSession = new AtomicReference[SparkSession]()
+        val failures = new ConcurrentLinkedQueue[Throwable]()
+        val latestThread = new Thread(() => {
+          SparkSession.setActiveSession(latestSession)
+          try {
+            startBarrier.await(30L, TimeUnit.SECONDS)
+            val snapshot = manager.loadLatestSnapshot()
+            latestResult.set(snapshot)
+            latestAllFilesSession.set(snapshot.allFiles.sparkSession)
+          } catch {
+            case failure: Throwable => failures.add(failure)
+          } finally {
+            SparkSession.clearActiveSession()
+          }
+        }, "latest-upper-bound")
+        val historicalThread = new Thread(() => {
+          SparkSession.setActiveSession(historicalSession)
+          try {
+            startBarrier.await(30L, TimeUnit.SECONDS)
+            val snapshot = manager.loadSnapshotAt(1L)
+            historicalResult.set(snapshot)
+            historicalAllFilesSession.set(snapshot.allFiles.sparkSession)
+          } catch {
+            case failure: Throwable => failures.add(failure)
+          } finally {
+            SparkSession.clearActiveSession()
+          }
+        }, "historical-version")
+        val threads = Seq(latestThread, historicalThread)
+        threads.foreach(_.setDaemon(true))
+
+        try {
+          CachedSnapshotManagerBlockingFileSystem.armFirstListing()
+          threads.foreach(_.start())
+          assert(
+            CachedSnapshotManagerBlockingFileSystem.awaitCapturedListing(),
+            "upper-bound refresh did not capture a transaction-log listing")
+          val lockWinner = CachedSnapshotManagerBlockingFileSystem.listingThreadNames.head
+          assertWaitsForSnapshotLock(threads.find(_.getName != lockWinner).get)
+
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          threads.foreach(_.join(TimeUnit.SECONDS.toMillis(30L)))
+          assert(
+            threads.forall(thread => !thread.isAlive),
+            "latest and historical refresh threads did not terminate")
+          assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
+          assert(latestResult.get().version == 2L)
+          assert(historicalResult.get().version == 1L)
+          assert(latestResult.get() ne initial)
+          assert(historicalResult.get() ne latestResult.get())
+          assert(manager.loadSnapshotAt(2L) eq latestResult.get())
+          assert(latestResult.get().allFiles.count() > historicalResult.get().allFiles.count())
+          assert(latestAllFilesSession.get() eq latestSession)
+          assert(historicalAllFilesSession.get() eq historicalSession)
+        } finally {
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          threads.foreach(_.interrupt())
+          manager.retire()
+        }
+      }
+    }
+  }
+
+  test("retire waits for an in-flight refresh and preserves manager reuse") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val kernelContext = KernelContext(
+          Map(
+            "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
+            "fs.file.impl.disable.cache" -> "true"),
+          LogStore.createLogStore(spark))
+        val manager = createManager(dir, kernelContext)
+        manager.loadLatestSnapshot()
+        appendToDeltaTable(dir)
+        val refreshed = new AtomicReference[Snapshot]()
+        val failures = new ConcurrentLinkedQueue[Throwable]()
+        val refreshThread = new Thread(() => {
+          SparkSession.setActiveSession(spark)
+          try {
+            refreshed.set(manager.loadLatestSnapshot())
+          } catch {
+            case failure: Throwable => failures.add(failure)
+          } finally {
+            SparkSession.clearActiveSession()
+          }
+        }, "refresh-before-retire")
+        val retireThread = new Thread(() => {
+          try {
+            manager.retire()
+          } catch {
+            case failure: Throwable => failures.add(failure)
+          }
+        }, "concurrent-retire")
+        val threads = Seq(refreshThread, retireThread)
+        threads.foreach(_.setDaemon(true))
+
+        try {
+          CachedSnapshotManagerBlockingFileSystem.arm(refreshThread.getName)
+          refreshThread.start()
+          assert(
+            CachedSnapshotManagerBlockingFileSystem.awaitCapturedListing(),
+            "refresh did not capture a transaction-log listing")
+          retireThread.start()
+          assertWaitsForSnapshotLock(retireThread)
+
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          threads.foreach(_.join(TimeUnit.SECONDS.toMillis(30L)))
+          assert(
+            threads.forall(thread => !thread.isAlive),
+            "refresh and retire threads did not terminate")
+          assert(
+            failures.isEmpty,
+            s"Concurrent lifecycle failed: ${failures.toArray.mkString(", ")}")
+          assert(refreshed.get().version == 1L)
+          assert(manager.loadSnapshotAt(1L) eq refreshed.get())
+          assert(refreshed.get().allFiles.count() > 0L)
+
+          appendToDeltaTable(dir)
+          val next = manager.loadSnapshotAt(2L)
+          assert(next.version == 2L)
+          assert(next ne refreshed.get())
+        } finally {
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          threads.foreach(_.interrupt())
+          manager.retire()
+        }
+      }
+    }
+  }
+
+  test("interrupting a snapshot-lock waiter leaves refresh and lock healthy") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val kernelContext = KernelContext(
+          Map(
+            "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
+            "fs.file.impl.disable.cache" -> "true"),
+          LogStore.createLogStore(spark))
+        val manager = createManager(dir, kernelContext)
+        manager.loadLatestSnapshot()
+        appendToDeltaTable(dir)
+        val refreshed = new AtomicReference[Snapshot]()
+        val refreshFailure = new AtomicReference[Throwable]()
+        val waiterFailure = new AtomicReference[Throwable]()
+        val refreshThread = new Thread(() => {
+          SparkSession.setActiveSession(spark)
+          try {
+            refreshed.set(manager.loadLatestSnapshot())
+          } catch {
+            case failure: Throwable => refreshFailure.set(failure)
+          } finally {
+            SparkSession.clearActiveSession()
+          }
+        }, "refresh-lock-owner")
+        val waiterThread = new Thread(() => {
+          SparkSession.setActiveSession(spark)
+          try {
+            manager.loadLatestSnapshot()
+          } catch {
+            case failure: Throwable => waiterFailure.set(failure)
+          } finally {
+            SparkSession.clearActiveSession()
+          }
+        }, "interrupted-lock-waiter")
+        val threads = Seq(refreshThread, waiterThread)
+        threads.foreach(_.setDaemon(true))
+
+        try {
+          CachedSnapshotManagerBlockingFileSystem.arm(refreshThread.getName)
+          refreshThread.start()
+          assert(
+            CachedSnapshotManagerBlockingFileSystem.awaitCapturedListing(),
+            "refresh did not capture a transaction-log listing")
+          waiterThread.start()
+          assertWaitsForSnapshotLock(waiterThread)
+          waiterThread.interrupt()
+          waiterThread.join(TimeUnit.SECONDS.toMillis(30L))
+          assert(!waiterThread.isAlive, "interrupted lock waiter did not terminate")
+          assert(waiterFailure.get().isInstanceOf[InterruptedException])
+
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          refreshThread.join(TimeUnit.SECONDS.toMillis(30L))
+          assert(!refreshThread.isAlive, "refresh lock owner did not terminate")
+          assert(refreshFailure.get() == null)
+          assert(refreshed.get().version == 1L)
+
+          appendToDeltaTable(dir)
+          val next = manager.loadSnapshotAt(2L)
+          assert(next.version == 2L)
+          assert(next ne refreshed.get())
+        } finally {
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          threads.foreach(_.interrupt())
           manager.retire()
         }
       }
@@ -712,10 +1073,13 @@ class CachedSnapshotManagerSuite
         val intermediateResults = new ConcurrentLinkedQueue[Snapshot]()
         val historicalResults = new ConcurrentLinkedQueue[Snapshot]()
         val failures = new ConcurrentLinkedQueue[Throwable]()
+        val numThreads = 12
+        val startBarrier = new CyclicBarrier(numThreads)
 
-        val threads = (1 to 12).map { index =>
+        val threads = (1 to numThreads).map { index =>
           new Thread(() => {
             try {
+              startBarrier.await(30L, TimeUnit.SECONDS)
               val requestedVersion = index % 3
               val result = mgr.loadSnapshotAt(requestedVersion)
               assert(result.version == requestedVersion)
@@ -798,15 +1162,22 @@ private[tablemanager] class CachedSnapshotManagerRecordingFileSystem extends Raw
 }
 
 private[tablemanager] object CachedSnapshotManagerBlockingFileSystem {
+  private val AnyThread = "*"
   private val targetThreadName = new AtomicReference[String]()
+  private val listingThreads = new CopyOnWriteArrayList[String]()
   @volatile private var capturedListing = new CountDownLatch(0)
   @volatile private var releaseCapturedListing = new CountDownLatch(0)
 
   def arm(threadName: String): Unit = synchronized {
+    listingThreads.clear()
     targetThreadName.set(threadName)
     capturedListing = new CountDownLatch(1)
     releaseCapturedListing = new CountDownLatch(1)
   }
+
+  def armFirstListing(): Unit = arm(AnyThread)
+
+  def listingThreadNames: Seq[String] = listingThreads.asScala.toSeq
 
   def awaitCapturedListing(): Boolean =
     capturedListing.await(30L, TimeUnit.SECONDS)
@@ -815,9 +1186,12 @@ private[tablemanager] object CachedSnapshotManagerBlockingFileSystem {
     releaseCapturedListing.countDown()
 
   def blockAfterListing(path: Path): Unit = {
+    if (path.getName == "_delta_log") {
+      listingThreads.add(Thread.currentThread().getName)
+    }
     val expectedThreadName = targetThreadName.get()
     if (path.getName == "_delta_log" &&
-        expectedThreadName == Thread.currentThread().getName &&
+        (expectedThreadName == AnyThread || expectedThreadName == Thread.currentThread().getName) &&
         targetThreadName.compareAndSet(expectedThreadName, null)) {
       capturedListing.countDown()
       if (!releaseCapturedListing.await(30L, TimeUnit.SECONDS)) {

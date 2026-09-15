@@ -15,12 +15,11 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
-import scala.jdk.OptionConverters._
+import java.util.concurrent.atomic.AtomicReference
 
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
-import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
@@ -53,11 +52,39 @@ private[tablemanager] class DeltaV2TableManagerImpl(
 
   override private[v2] lazy val kernelContext = KernelContext(sessionInvariantFsOptions, logStore)
 
-  // TODO: Replace this factory-created snapshot manager with the cached data member.
+  private val latestCatalogTableOpt =
+    new AtomicReference[Option[CatalogTable]](initialCatalogTableOpt)
+  private val cachedSnapshotManagerRef = new AtomicReference[CachedSnapshotManager]()
+
+  /**
+   * Returns the one cached manager owned by this composite. Construction remains lazy so creating
+   * or retiring an unused table manager does not materialize a Kernel context on an eviction
+   * thread. Concurrent first callers may create candidates, but only the CAS winner is retained;
+   * unused candidates have not loaded snapshots and own no resources.
+   */
+  private def getOrCreateCachedSnapshotManager(): CachedSnapshotManager = {
+    val existing = cachedSnapshotManagerRef.get()
+    if (existing != null) {
+      return existing
+    }
+    val candidate =
+      new CachedSnapshotManager(tablePath, kernelContext, latestCatalogTableOpt)
+    if (cachedSnapshotManagerRef.compareAndSet(null, candidate)) {
+      candidate
+    } else {
+      cachedSnapshotManagerRef.get()
+    }
+  }
+
   override private[v2] def snapshotManager(
-      catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager =
-    SnapshotManagerFactory.create(
-      tablePath.toString,
-      kernelContext.getDefaultEngine(),
-      catalogTableOpt.toJava)
+      catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager = {
+    // Catalog metadata is latest-wins best-effort state. A refresh captures one atomic value and
+    // uses it consistently while selecting its path-based or catalog-managed uncached delegate.
+    latestCatalogTableOpt.set(catalogTableOpt)
+    getOrCreateCachedSnapshotManager()
+  }
+
+  override def retire(): Unit = {
+    Option(cachedSnapshotManagerRef.get()).foreach(_.retire())
+  }
 }
