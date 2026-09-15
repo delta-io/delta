@@ -112,6 +112,16 @@ class CachedSnapshotManagerSuite
     assert(alive.isEmpty, s"Threads did not terminate: ${alive.map(_.getName).mkString(", ")}")
   }
 
+  private def awaitClockAfter(timestampMs: Long): Unit = {
+    val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30L)
+    while (System.currentTimeMillis() <= timestampMs && System.nanoTime() < deadlineNanos) {
+      Thread.`yield`()
+    }
+    assert(
+      System.currentTimeMillis() > timestampMs,
+      s"Wall clock did not advance beyond $timestampMs")
+  }
+
   private def assertWaitsForSnapshotLock(thread: Thread): Unit = {
     val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30L)
     var stackTrace = thread.getStackTrace.toSeq
@@ -577,8 +587,10 @@ class CachedSnapshotManagerSuite
           assert(
             CachedSnapshotManagerBlockingFileSystem.awaitCapturedListing(),
             "stale refresh did not capture a transaction-log listing")
+          val staleListingCapturedAtMs = System.currentTimeMillis()
 
           newerThread.start()
+          awaitClockAfter(staleListingCapturedAtMs)
           secondaryPhase.await(30L, TimeUnit.SECONDS)
           appendToDeltaTable(dir)
           assertWaitsForSnapshotLock(newerThread)
