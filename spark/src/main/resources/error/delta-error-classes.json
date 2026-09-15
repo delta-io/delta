@@ -154,8 +154,30 @@
   },
   "DELTA_CANNOT_CHANGE_DATA_TYPE" : {
     "message" : [
-      "Cannot change data type: <dataType>"
+      "Cannot change the table schema."
     ],
+    "subClass" : {
+      "ADD_NON_NULLABLE_COLUMN" : {
+        "message" : [
+          "Adding non-nullable column <columnName> is not supported."
+        ]
+      },
+      "CHANGE_DATA_TYPE" : {
+        "message" : [
+          "Changing the data type of column <columnName> from <fromType> to <toType> is not supported."
+        ]
+      },
+      "DROP_COLUMNS" : {
+        "message" : [
+          "Dropping column(s) <columnNames> is not supported."
+        ]
+      },
+      "TIGHTEN_NULLABILITY" : {
+        "message" : [
+          "Tightening the nullability of column <columnName> is not supported."
+        ]
+      }
+    },
     "sqlState" : "429BQ"
   },
   "DELTA_CANNOT_CHANGE_LOCATION" : {
@@ -3292,13 +3314,35 @@
   },
   "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP" : {
     "message" : [
-      "Unsupported ALTER TABLE REPLACE COLUMNS operation. Reason: <details>",
-      "",
+      "Unsupported ALTER TABLE REPLACE COLUMNS operation.",
       "Failed to change schema from:",
       "<oldSchema>",
       "to:",
-      "<newSchema>"
+      "<newSchema>",
+      "Reason:"
     ],
+    "subClass" : {
+      "ADD_NON_NULLABLE_COLUMN" : {
+        "message" : [
+          "Adding non-nullable column <columnName> is not supported."
+        ]
+      },
+      "CHANGE_DATA_TYPE" : {
+        "message" : [
+          "Changing the data type of column <columnName> from <fromType> to <toType> is not supported."
+        ]
+      },
+      "DROP_COLUMNS" : {
+        "message" : [
+          "Dropping column(s) <columnNames> is not supported."
+        ]
+      },
+      "TIGHTEN_NULLABILITY" : {
+        "message" : [
+          "Tightening the nullability of column <columnName> is not supported."
+        ]
+      }
+    },
     "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_CREATION" : {
