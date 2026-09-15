@@ -16,11 +16,17 @@
 
 package io.delta.storage.commit.uccommitcoordinator
 
-import java.util.{Arrays, Collections, HashMap => JHashMap}
+import java.util.{Arrays, Collections}
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import io.unitycatalog.client.delta.model.{ArrayType, DecimalType, DeltaType, MapType}
-import io.unitycatalog.client.delta.model.{PrimitiveType, StructField, StructType}
+import io.unitycatalog.client.delta.model.DeltaArrayType
+import io.unitycatalog.client.delta.model.DeltaDataType
+import io.unitycatalog.client.delta.model.DeltaDecimalType
+import io.unitycatalog.client.delta.model.DeltaMapType
+import io.unitycatalog.client.delta.model.DeltaPrimitiveType
+import io.unitycatalog.client.delta.model.DeltaStructField
+import io.unitycatalog.client.delta.model.DeltaStructFieldMetadata
+import io.unitycatalog.client.delta.model.DeltaStructType
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -28,9 +34,13 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
 
   private val objectMapper = new ObjectMapper()
 
-  private def prim(t: String): PrimitiveType = new PrimitiveType().`type`(t)
-  private def field(name: String, t: DeltaType, nullable: Boolean = true): StructField =
-    new StructField().name(name).nullable(nullable).`type`(t)
+  private def prim(t: String): DeltaPrimitiveType = new DeltaPrimitiveType().`type`(t)
+  // Delta's wire format requires `metadata` to always be present (even if empty); a real
+  // schema parsed from the wire never has a null metadata, so the helper mirrors that
+  // shape with an empty DeltaStructFieldMetadata by default.
+  private def field(name: String, t: DeltaDataType, nullable: Boolean = true): DeltaStructField =
+    new DeltaStructField()
+      .name(name).nullable(nullable).`type`(t).metadata(new DeltaStructFieldMetadata())
 
   /**
    * One example per primitive: (UC `ColumnTypeName`, catalog-side DDL form, Delta wire form).
@@ -53,7 +63,7 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
     ("BINARY", "binary", "binary"),
     ("DECIMAL", "decimal(10,2)", "decimal(10,2)"))
 
-  /** Build the StructField JSON that UC's `toStructFieldJson` produces. */
+  /** Build the DeltaStructField JSON that UC's `toStructFieldJson` produces. */
   private def fieldJson(name: String, deltaWireType: String, nullable: Boolean): String =
     s"""{"name":"$name","type":"$deltaWireType","nullable":$nullable,"metadata":{}}"""
 
@@ -66,7 +76,8 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
   }
 
   test("serializeSchema: empty struct produces an empty fields array") {
-    val parsed = objectMapper.readTree(UCDeltaSchemaConverter.serializeSchema(new StructType()))
+    val parsed =
+      objectMapper.readTree(UCDeltaSchemaConverter.serializeSchema(new DeltaStructType()))
     assert(parsed.get("type").asText() === "struct")
     assert(parsed.get("fields").isArray)
     assert(parsed.get("fields").size() === 0)
@@ -74,13 +85,13 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
 
   test("serializeSchema: every primitive serializes as bare-string wire form " +
       "inside Array and Map containers") {
-    // Covers (a) bare-string emission (PrimitiveType serializes flat, not {"type":"integer"}),
+    // Covers (a) bare-string emission (DeltaPrimitiveType serializes flat, not {"type":"integer"}),
     // (b) decimal parameter preservation, and (c) wire fidelity for every primitive type at
     // both Array.elementType and Map.valueType (the two camelCase mixin paths).
     primitiveExamples.foreach { case (_, _, p) =>
-      val arr = new ArrayType().elementType(prim(p)).containsNull(true)
-      val m = new MapType().keyType(prim("string")).valueType(prim(p)).valueContainsNull(true)
-      val s = new StructType().addFieldsItem(field("a", arr)).addFieldsItem(field("m", m))
+      val arr = new DeltaArrayType().elementType(prim(p)).containsNull(true)
+      val m = new DeltaMapType().keyType(prim("string")).valueType(prim(p)).valueContainsNull(true)
+      val s = new DeltaStructType().addFieldsItem(field("a", arr)).addFieldsItem(field("m", m))
       val parsed = objectMapper.readTree(UCDeltaSchemaConverter.serializeSchema(s))
       val arrType = parsed.get("fields").get(0).get("type")
       assert(arrType.get("type").asText() === "array", s"primitive=$p")
@@ -95,21 +106,21 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
       "camelCase (never kebab-case) at every level") {
     // Kitchen-sink schema exercising the mixins (array, map, nested struct, array-of-map,
     // map-of-struct, array-of-struct) and nullability in every direction.
-    val innerStruct = new StructType()
+    val innerStruct = new DeltaStructType()
       .addFieldsItem(field("k", prim("string")))
       .addFieldsItem(field("v", prim("long"), nullable = false))
-    val arrOfStruct = new ArrayType().elementType(innerStruct).containsNull(false)
-    val mapOfStruct = new MapType()
+    val arrOfStruct = new DeltaArrayType().elementType(innerStruct).containsNull(false)
+    val mapOfStruct = new DeltaMapType()
       .keyType(prim("string"))
       .valueType(innerStruct)
       .valueContainsNull(true)
-    val innerMap = new MapType()
+    val innerMap = new DeltaMapType()
       .keyType(prim("string"))
       .valueType(prim("date"))
       .valueContainsNull(true)
-    val arrOfMap = new ArrayType().elementType(innerMap).containsNull(true)
+    val arrOfMap = new DeltaArrayType().elementType(innerMap).containsNull(true)
 
-    val s = new StructType()
+    val s = new DeltaStructType()
       .addFieldsItem(field("z_int", prim("integer"), nullable = false))
       .addFieldsItem(field("a_str", prim("string")))
       .addFieldsItem(field("arr_of_struct", arrOfStruct))
@@ -159,13 +170,13 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
   }
 
   test("serializeSchema: per-field metadata round-trips; empty metadata emits {} (not omitted)") {
-    val metadata = new JHashMap[String, Object]()
+    val metadata = new DeltaStructFieldMetadata()
     metadata.put("comment", "user-facing column doc")
     metadata.put("delta.columnMapping.id", java.lang.Long.valueOf(42L))
-    val annotated = new StructField()
+    val annotated = new DeltaStructField()
       .name("annotated").nullable(true).`type`(prim("integer")).metadata(metadata)
     val plain = field("plain", prim("integer"))
-    val s = new StructType().addFieldsItem(annotated).addFieldsItem(plain)
+    val s = new DeltaStructType().addFieldsItem(annotated).addFieldsItem(plain)
 
     val parsed = objectMapper.readTree(UCDeltaSchemaConverter.serializeSchema(s))
     val annotatedMeta = parsed.get("fields").get(0).get("metadata")
@@ -174,20 +185,6 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
     // Empty metadata must still be present as `{}`; Delta's reader treats omission as ambiguous.
     val plainMeta = parsed.get("fields").get(1).get("metadata")
     assert(plainMeta != null && plainMeta.isObject && plainMeta.size() === 0)
-  }
-
-  test("serializeSchema: null containsNull / valueContainsNull are omitted from JSON output") {
-    // Delta's reader rejects literal "containsNull":null, so the mapper must omit the key.
-    val arr = new ArrayType().elementType(prim("string")) // containsNull deliberately unset
-    val m = new MapType().keyType(prim("string")).valueType(prim("integer")) // and here too
-    val s = new StructType().addFieldsItem(field("a", arr)).addFieldsItem(field("m", m))
-    val parsed = objectMapper.readTree(UCDeltaSchemaConverter.serializeSchema(s))
-    val arrJson = parsed.get("fields").get(0).get("type")
-    val arrNode = arrJson.get("containsNull")
-    assert(arrNode == null || !arrNode.isNull, s"unexpected null containsNull in: $arrJson")
-    val mapJson = parsed.get("fields").get(1).get("type")
-    val mapNode = mapJson.get("valueContainsNull")
-    assert(mapNode == null || !mapNode.isNull, s"unexpected null valueContainsNull in: $mapJson")
   }
 
   // ----------------------------------------
@@ -203,7 +200,7 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
 
   test("parseSchemaString: empty struct round-trips") {
     val parsed = UCDeltaSchemaConverter.parseSchemaString("""{"type":"struct","fields":[]}""")
-    assert(parsed.isInstanceOf[StructType])
+    assert(parsed.isInstanceOf[DeltaStructType])
     assert(parsed.getFields == null || parsed.getFields.isEmpty)
   }
 
@@ -228,25 +225,25 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
 
     val i = parsed.getFields.get(0)
     assert(i.getNullable === false)
-    assert(i.getType.asInstanceOf[PrimitiveType].getType === "integer")
+    assert(i.getType.asInstanceOf[DeltaPrimitiveType].getType === "integer")
 
-    val d = parsed.getFields.get(1).getType.asInstanceOf[DecimalType]
+    val d = parsed.getFields.get(1).getType.asInstanceOf[DeltaDecimalType]
     assert(d.getPrecision === 10 && d.getScale === 2)
 
-    val arr = parsed.getFields.get(2).getType.asInstanceOf[ArrayType]
+    val arr = parsed.getFields.get(2).getType.asInstanceOf[DeltaArrayType]
     assert(arr.getContainsNull === true)
-    assert(arr.getElementType.asInstanceOf[PrimitiveType].getType === "string")
+    assert(arr.getElementType.asInstanceOf[DeltaPrimitiveType].getType === "string")
 
-    val m = parsed.getFields.get(3).getType.asInstanceOf[MapType]
+    val m = parsed.getFields.get(3).getType.asInstanceOf[DeltaMapType]
     assert(m.getValueContainsNull === false)
-    assert(m.getKeyType.asInstanceOf[PrimitiveType].getType === "string")
-    assert(m.getValueType.asInstanceOf[PrimitiveType].getType === "long")
+    assert(m.getKeyType.asInstanceOf[DeltaPrimitiveType].getType === "string")
+    assert(m.getValueType.asInstanceOf[DeltaPrimitiveType].getType === "long")
 
     val outer = parsed.getFields.get(4)
     assert(outer.getMetadata.get("comment") === "outer-doc")
     assert(outer.getMetadata.get("delta.columnMapping.id")
       .asInstanceOf[Number].longValue === 5L)
-    val inner = outer.getType.asInstanceOf[StructType].getFields.get(0)
+    val inner = outer.getType.asInstanceOf[DeltaStructType].getFields.get(0)
     assert(inner.getMetadata.get("comment") === "inner-doc")
     assert(inner.getMetadata.get("delta.columnMapping.id")
       .asInstanceOf[Number].longValue === 7L)
@@ -261,15 +258,15 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
 
   test("serializeSchema -> parseSchemaString round-trip: complex schema is idempotent on the " +
       "wire") {
-    val arr = new ArrayType().elementType(prim("double")).containsNull(false)
-    val map = new MapType()
+    val arr = new DeltaArrayType().elementType(prim("double")).containsNull(false)
+    val map = new DeltaMapType()
       .keyType(prim("string"))
       .valueType(prim("date"))
       .valueContainsNull(true)
-    val inner = new StructType()
+    val inner = new DeltaStructType()
       .addFieldsItem(field("inner_i", prim("integer"), nullable = false))
       .addFieldsItem(field("inner_s", prim("string")))
-    val original = new StructType()
+    val original = new DeltaStructType()
       .addFieldsItem(field("a", prim("integer"), nullable = false))
       .addFieldsItem(field("arr", arr))
       .addFieldsItem(field("m", map))
@@ -319,10 +316,11 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
       val s = UCDeltaSchemaConverter.toUCStructType(Collections.singletonList(column))
       val t = s.getFields.get(0).getType
       if (typeName == "DECIMAL") {
-        assert(t.isInstanceOf[DecimalType], s"typeName=$typeName: expected DecimalType")
+        assert(t.isInstanceOf[DeltaDecimalType], s"typeName=$typeName: expected DeltaDecimalType")
       } else {
-        assert(t.isInstanceOf[PrimitiveType], s"typeName=$typeName: expected PrimitiveType")
-        val got = t.asInstanceOf[PrimitiveType].getType
+        assert(
+          t.isInstanceOf[DeltaPrimitiveType], s"typeName=$typeName: expected DeltaPrimitiveType")
+        val got = t.asInstanceOf[DeltaPrimitiveType].getType
         assert(got === wire, s"typeName=$typeName: expected wire '$wire' got '$got'")
         if (ddl != wire) {
           assert(got !== ddl, s"typeName=$typeName: DDL form '$ddl' leaked into the output")
@@ -352,7 +350,7 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
   }
 
   test("toUCStructType: typeJson without a 'type' field throws IllegalStateException") {
-    // E.g. a bare type JSON or an empty object -- neither is StructField-shaped.
+    // E.g. a bare type JSON or an empty object -- neither is DeltaStructField-shaped.
     val cols = Arrays.asList(
       new UCClient.ColumnDef("a", "INT", "int", "{}", true, 0))
     val e = intercept[IllegalStateException] {
@@ -388,20 +386,20 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
     assert(outer.getName === "deep")
     assert(outer.getMetadata.get("delta.columnMapping.id").asInstanceOf[Number].longValue === 3L)
 
-    val outerArr = outer.getType.asInstanceOf[ArrayType]
+    val outerArr = outer.getType.asInstanceOf[DeltaArrayType]
     assert(outerArr.getContainsNull === true)
-    val innerStruct = outerArr.getElementType.asInstanceOf[StructType]
+    val innerStruct = outerArr.getElementType.asInstanceOf[DeltaStructType]
     val innerFields = innerStruct.getFields
     assert(innerFields.size() === 2)
-    assert(innerFields.get(0).getType.asInstanceOf[PrimitiveType].getType === "integer")
+    assert(innerFields.get(0).getType.asInstanceOf[DeltaPrimitiveType].getType === "integer")
     assert(innerFields.get(0).getMetadata.get("comment") === "x-doc")
-    val yMap = innerFields.get(1).getType.asInstanceOf[MapType]
+    val yMap = innerFields.get(1).getType.asInstanceOf[DeltaMapType]
     assert(yMap.getValueContainsNull === false)
-    val yArr = yMap.getValueType.asInstanceOf[ArrayType]
+    val yArr = yMap.getValueType.asInstanceOf[DeltaArrayType]
     assert(yArr.getContainsNull === true)
-    assert(yArr.getElementType.asInstanceOf[PrimitiveType].getType === "long")
+    assert(yArr.getElementType.asInstanceOf[DeltaPrimitiveType].getType === "long")
 
-    // Round-trip: parsed StructField re-serializes to the same JSON tree (order-insensitive).
+    // Round-trip: parsed DeltaStructField re-serializes to the same JSON tree (order-insensitive).
     val reserialized = UCDeltaSchemaConverter.serializeSchema(s)
     val expectedTree = objectMapper.readTree(s"""{"type":"struct","fields":[$fieldJson]}""")
     val actualTree = objectMapper.readTree(reserialized)

@@ -22,9 +22,10 @@ import java.nio.charset.Charset
 import scala.collection.JavaConverters._
 import scala.util.Try
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
@@ -32,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.logging.log4j.Level
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{DataFrame, Row}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.execution.streaming.Offset
 import org.apache.spark.sql.functions.lit
@@ -40,8 +41,11 @@ import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils
 
-trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
-  with DeltaSourceSuiteBase with DeltaColumnMappingSelectedTestMixin with DeltaSQLCommandTest {
+trait StreamingSchemaEvolutionSuiteBase
+  extends QueryTest
+  with DeltaColumnMappingSelectedTestMixin
+  with DeltaSourceSuiteBase
+  with ColumnMappingStreamingTestUtils {
 
   override protected def runOnlyTests: Seq[String] = Seq(
     "schema log initialization with additive schema changes",
@@ -49,6 +53,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     "trigger.Once with deferred commit should work",
     "trigger.AvailableNow should work",
     "consecutive schema evolutions",
+    "consecutive schema evolutions with protocol-only tail",
     "latestOffset should not progress before schema evolved"
   )
 
@@ -251,7 +256,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   /**
    * Executes a DDL/DML SQL statement. Overridable so that V2 suites can route it through the V1
-   * connector, since SparkTable (V2) is read-only and does not support writes/DDL.
+   * connector, since DeltaV2Table (V2) is read-only and does not support writes/DDL.
    */
   protected def executeDml(sqlText: String): Unit = sql(sqlText)
 
@@ -1539,6 +1544,54 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       ProcessAllAvailable(),
       CheckAnswer((5 until 6).map(i => (i.toString, i.toString)): _*)
     )
+  }
+
+  testSchemaEvolution("consecutive schema evolutions with protocol-only tail") {
+    implicit log =>
+    // Chain ends with a Protocol-only commit; start, currentMetadata, and final schemas
+    // are chosen pairwise distinct so a coincidence can't mask a faulty merger.
+    val v5 = log.update().version // <a, b>
+    renameColumn("b", "c") // <a, c> -- becomes currentMetadata at merger time
+    addColumn("d") // <a, c, d>
+    dropColumn("c") // <a, d> -- the final snapshot schema
+    // Writer-only feature keeps the tail protocol-only without adding reader-writer
+    // features Kernel can't read (which would break the V2 read path).
+    val newProtocol = log.update().protocol.merge(
+      Action.supportedProtocolVersion(withAllFeatures = false)
+        .withFeature(DomainMetadataTableFeature))
+    log.upgradeProtocol(newProtocol) // protocol-only tail commit
+    val vTail = log.update().version
+    addData(5 until 6) // file action bounds the merger chain
+
+    def df: DataFrame = readStream(
+      schemaLocation = Some(getDefaultSchemaLocation.toString), startingVersion = Some(v5))
+
+    // Init schema log @ v5 with <a, b>.
+    testStream(df)(
+      StartStream(checkpointLocation = getDefaultCheckpoint.toString),
+      ProcessAllAvailableIgnoreError,
+      ExpectMetadataEvolutionExceptionFromInitialization
+    )
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v5)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
+      .sameElements(Array("a", "b")))
+
+    // First schema change at v6 -> persists (v6, <a, c>), fails the stream.
+    testStream(df)(
+      StartStream(checkpointLocation = getDefaultCheckpoint.toString),
+      ProcessAllAvailableIgnoreError,
+      CheckAnswer(Seq(4).map(_.toString).map(i => (i, i)): _*),
+      ExpectMetadataEvolutionException
+    )
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v5 + 1)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
+      .sameElements(Array("a", "c")))
+
+    // Next restart runs the merger; entry should advance to vTail with schema <a, d>.
+    val latestDf = df
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == vTail)
+    assert(latestDf.schema.fieldNames.sameElements(Array("a", "d")),
+      s"got ${latestDf.schema.fieldNames.toSeq}")
   }
 
   testSchemaEvolution("upgrade and downgrade") { implicit log =>

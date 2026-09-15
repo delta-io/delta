@@ -29,6 +29,8 @@ import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
 import io.delta.sharing.client.util.JsonUtils
 
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.SparkEnv
 import org.apache.spark.delta.sharing.TableRefreshResult
 import org.apache.spark.internal.Logging
@@ -45,6 +47,7 @@ object DeltaSharingUtils extends Logging {
       TimestampNTZTableFeature.name,
       TypeWideningPreviewTableFeature.name,
       TypeWideningTableFeature.name,
+      GeoSpatialTableFeature.name,
       VariantTypePreviewTableFeature.name,
       VariantTypeTableFeature.name,
       VariantShreddingPreviewTableFeature.name,
@@ -59,6 +62,7 @@ object DeltaSharingUtils extends Logging {
       TypeWideningPreviewTableFeature.name,
       TypeWideningTableFeature.name,
       VariantTypePreviewTableFeature.name,
+      GeoSpatialTableFeature.name,
       VariantTypeTableFeature.name,
       VariantShreddingPreviewTableFeature.name,
       VariantShreddingTableFeature.name
@@ -217,13 +221,15 @@ object DeltaSharingUtils extends Logging {
       client: DeltaSharingClient,
       table: Table,
       cdfOptions: Map[String, String],
-      fileIdHash: Option[String] = None): RefresherFunction = { (_: Option[String]) =>
+      fileIdHash: Option[String] = None,
+      includeHistoricalProtocol: Boolean = false): RefresherFunction = { (_: Option[String]) =>
     {
       val tableFiles = client.getCDFFiles(
         table = table,
         cdfOptions = cdfOptions,
         includeHistoricalMetadata = true,
-        fileIdHash = fileIdHash
+        fileIdHash = fileIdHash,
+        includeHistoricalProtocol = includeHistoricalProtocol
       )
       getTableRefreshResult(tableFiles)
     }
@@ -240,14 +246,16 @@ object DeltaSharingUtils extends Logging {
       table: Table,
       startingVersion: Long,
       endingVersion: Option[Long],
-      fileIdHash: Option[String] = None): RefresherFunction = { (_: Option[String]) =>
+      fileIdHash: Option[String] = None,
+      includeHistoricalProtocol: Boolean = false): RefresherFunction = { (_: Option[String]) =>
     {
       val tableFiles = client
         .getFiles(
           table = table,
           startingVersion = startingVersion,
           endingVersion = endingVersion,
-          fileIdHash = fileIdHash
+          fileIdHash = fileIdHash,
+          includeHistoricalProtocol = includeHistoricalProtocol
         )
       getTableRefreshResult(tableFiles)
     }
@@ -300,6 +308,8 @@ object DeltaSharingUtils extends Logging {
       localDeltaLog,
       new SnapshotDescriptor {
         val deltaLog: DeltaLog = localDeltaLog
+        override val dataPath: Path = localDeltaLog.dataPath
+        val logPath: Path = localDeltaLog.logPath
         val metadata: Metadata = deltaSharingTableMetadata.metadata.deltaMetadata
         val protocol: Protocol = deltaSharingTableMetadata.protocol.deltaProtocol
         val version = deltaSharingTableMetadata.version

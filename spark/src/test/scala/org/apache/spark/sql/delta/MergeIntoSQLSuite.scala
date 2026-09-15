@@ -27,7 +27,7 @@ import org.apache.spark.sql.catalyst.analysis.{Analyzer, ResolveSessionCatalog}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaMergeInto, LogicalPlan}
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
@@ -235,7 +235,7 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
           val df = sql(merge)
 
           val readSchema: Seq[StructType] = df.queryExecution.executedPlan.collect {
-            case f: FileSourceScanExec => f.requiredSchema
+            case f: FileSourceScanLike => f.requiredSchema
           }
           assert(readSchema.flatten.isEmpty, "column pruning does not work")
         }

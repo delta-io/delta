@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.util
 import scala.util.Random
 
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.CommitInfo
+import org.apache.spark.sql.delta.actions.{CommitInfo, LastManifestCommit}
 import org.apache.spark.sql.delta.stats.DataSize
 import com.fasterxml.jackson.core.StreamReadConstraints
 
@@ -61,10 +61,12 @@ class JsonUtilsSuite
       readVersion = Some(1),
       isolationLevel = None,
       isBlindAppend = Some(false),
+      dataChange = Some(true),
       operationMetrics = None,
       userMetadata = Some("I am a test and not a user"),
       tags = None,
-      txnId = Some("Transaction with a veryyyyyyy large commit info")
+      txnId = Some("Transaction with a veryyyyyyy large commit info"),
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
     )
 
     val serialized = JsonUtils.toJson(commitInfo)

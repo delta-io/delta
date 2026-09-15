@@ -258,6 +258,20 @@ object FileNames {
     new Path(basePath, f"$version%020d.checkpoint.$currentPart%010d.$numParts%010d.$uuid.parquet")
   }
 
+  /** Subdirectory under the table's data path that holds AMT manifest files. */
+  val AMT_METADATA_DIR_NAME = "metadata"
+
+  /** Returns the AMT manifest directory for a table: `<tableRoot>/metadata/`. */
+  def amtMetadataDirPath(tableRoot: Path): Path = new Path(tableRoot, AMT_METADATA_DIR_NAME)
+
+  /** File path for a new AMT leaf manifest parquet file under `metadataDir`. */
+  def newAMTLeafManifestFile(metadataDir: Path): Path =
+    new Path(metadataDir, s"leaf-${UUID.randomUUID().toString}.parquet")
+
+  /** File path for a new AMT root manifest parquet file under `metadataDir`. */
+  def newAMTRootManifestFile(metadataDir: Path): Path =
+    new Path(metadataDir, s"root-${UUID.randomUUID().toString}.parquet")
+
   val SIDECAR_SUBDIR = "_sidecars"
 
   /** Returns path to the sidecar directory */

@@ -47,8 +47,10 @@ public class SingleAction {
   public static StructType CONFLICT_RESOLUTION_SCHEMA =
       new StructType()
           .add("txn", SetTransaction.FULL_SCHEMA)
-          // .add("add", AddFile.FULL_SCHEMA) // not needed for blind appends
-          // .add("remove", RemoveFile.FULL_SCHEMA) // not needed for blind appends
+          // .add("add", AddFile.FULL_SCHEMA) // not needed: we only detect delete-vs-delete
+          // RemoveFile is needed to detect two transactions concurrently removing (or
+          // DV-updating) the same data file, which would otherwise silently duplicate data.
+          .add("remove", RemoveFile.FULL_SCHEMA)
           .add("metaData", Metadata.FULL_SCHEMA)
           .add("protocol", Protocol.FULL_SCHEMA)
           .add("commitInfo", CommitInfo.FULL_SCHEMA)

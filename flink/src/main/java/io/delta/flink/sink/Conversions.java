@@ -16,16 +16,18 @@
 
 package io.delta.flink.sink;
 
+import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.TimestampData;
 import org.apache.flink.table.types.logical.*;
+import org.apache.flink.table.types.logical.ArrayType;
+import org.apache.flink.table.types.logical.DecimalType;
+import org.apache.flink.table.types.logical.MapType;
 
 /**
  * Provide conversions between Flink and Delta data structures. This now includes:
@@ -232,6 +234,62 @@ public class Conversions {
           return rowData.getDecimal(colIdx, precision, scale);
         default:
           throw new UnsupportedOperationException("Unsupported data type: " + field.getType());
+      }
+    }
+  }
+
+  /** Convert Delta Kernel data to plain Java objects. */
+  public static class DeltaToJava {
+    /**
+     * Convert the value at column {@code colIdx} of a Kernel {@link Row} to a plain Java object.
+     *
+     * <p>Supports primitive types only. Complex types (struct, array, map) throw {@link
+     * UnsupportedOperationException}.
+     *
+     * @param schema row schema
+     * @param rowData Kernel row
+     * @param colIdx column ordinal
+     * @return the column value as a Java object, or {@code null} if the column is null at this row
+     * @throws UnsupportedOperationException for complex types (struct, array, map)
+     */
+    public static Object data(StructType schema, Row rowData, int colIdx) {
+      DataType dataType = schema.fields().get(colIdx).getDataType();
+      if (rowData.isNullAt(colIdx)) {
+        return null;
+      }
+      if (dataType.equivalent(io.delta.kernel.types.BooleanType.BOOLEAN)) {
+        return rowData.getBoolean(colIdx);
+      } else if (dataType.equivalent(ByteType.BYTE)) {
+        return rowData.getByte(colIdx);
+      } else if (dataType.equivalent(ShortType.SHORT)) {
+        return rowData.getShort(colIdx);
+      } else if (dataType.equivalent(IntegerType.INTEGER)) {
+        return rowData.getInt(colIdx);
+      } else if (dataType.equivalent(LongType.LONG)) {
+        return rowData.getLong(colIdx);
+      } else if (dataType.equivalent(io.delta.kernel.types.FloatType.FLOAT)) {
+        return rowData.getFloat(colIdx);
+      } else if (dataType.equivalent(io.delta.kernel.types.DoubleType.DOUBLE)) {
+        return rowData.getDouble(colIdx);
+      } else if (dataType.equivalent(StringType.STRING)) {
+        return rowData.getString(colIdx);
+      } else if (dataType.equivalent(io.delta.kernel.types.BinaryType.BINARY)) {
+        return rowData.getBinary(colIdx);
+      } else if (dataType.equivalent(io.delta.kernel.types.DateType.DATE)) {
+        // Days since 1970-01-01
+        return rowData.getInt(colIdx);
+      } else if (dataType.equivalent(io.delta.kernel.types.TimestampType.TIMESTAMP)) {
+        // Microseconds since epoch, UTC
+        return rowData.getLong(colIdx);
+      } else if (dataType.equivalent(TimestampNTZType.TIMESTAMP_NTZ)) {
+        // Microseconds since epoch, no time zone
+        return rowData.getLong(colIdx);
+      } else if (dataType instanceof io.delta.kernel.types.DecimalType) {
+        return rowData.getDecimal(colIdx);
+      } else {
+        // StructType, ArrayType, MapType — out of scope per spec.
+        throw new UnsupportedOperationException(
+            "DeltaToJava.data does not support complex type: " + dataType);
       }
     }
   }

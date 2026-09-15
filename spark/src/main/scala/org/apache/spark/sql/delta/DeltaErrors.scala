@@ -24,7 +24,7 @@ import java.util.{ConcurrentModificationException, UUID}
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBySpec}
-import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, DeltaGenerateCommand}
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.AutoCompactType
@@ -37,9 +37,10 @@ import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, Inva
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.exceptions
+import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
-import org.apache.spark.{SparkConf, SparkEnv, SparkException}
+import org.apache.spark.{SparkConf, SparkEnv, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -123,7 +124,6 @@ trait DocsPath {
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
     "sourceNotDeterministicInMergeException",
-    "columnMappingAdviceMessage",
     "icebergClassMissing",
     "tableFeatureReadRequiresWriteException",
     "tableFeatureRequiresHigherReaderProtocolVersion",
@@ -330,7 +330,7 @@ trait DeltaErrorsBase
 
   def invalidConstraintName(name: String): AnalysisException = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0001",
+      errorClass = "DELTA_INVALID_CONSTRAINT_NAME",
       messageParameters = Array(name)
     )
   }
@@ -377,6 +377,19 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
       messageParameters = Array(constraintNames.map(formatColumn).mkString(", "))
+    )
+  }
+
+  def cannotDropGeospatialFeature(cols: Seq[StructField]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_DROP_GEOSPATIAL_FEATURE",
+      messageParameters = Array(cols.map(_.name).mkString(", ")))
+  }
+
+  def geoSpatialNotSupportedException(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_GEOSPATIAL_NOT_SUPPORTED",
+      messageParameters = Array.empty
     )
   }
 
@@ -496,6 +509,15 @@ trait DeltaErrorsBase
     )
   }
 
+  def streamingTrailingCommitMissing(
+      expectedVersion: Long,
+      seenVersion: Long): DeltaIllegalStateException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_STREAMING_TRAILING_COMMIT_MISSING",
+      messageParameters = Array(s"$expectedVersion", s"$seenVersion")
+    )
+  }
+
   def staticPartitionsNotSupportedException: Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_STATIC_PARTITIONS",
@@ -525,6 +547,20 @@ trait DeltaErrorsBase
       errorClass = "DELTA_ZORDERING_COLUMN_DOES_NOT_EXIST",
       messageParameters = Array(colName))
   }
+
+  def operationNotSupportedForDataTypes(
+      operation: String,
+      unsupportedDataType: UnsupportedDataTypeInfo,
+      moreUnsupportedDataTypes: UnsupportedDataTypeInfo*): Throwable = {
+    val prettyMessage = (unsupportedDataType +: moreUnsupportedDataTypes)
+      .map(dt => s"${dt.column}: ${dt.dataType}")
+      .mkString("[", ", ", "]")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES",
+      messageParameters = Array(operation, prettyMessage)
+    )
+  }
+
 
   /**
    * Throwable used when CDC options contain no 'start'.
@@ -568,6 +604,17 @@ trait DeltaErrorsBase
   }
 
   /**
+   * Read-time CDC reader rejected a reader option it doesn't honor (e.g. `computeUpdates`,
+   * `deduplicationMode`, `startingBoundInclusive`, `endingBoundInclusive`). See
+   * `ResolveTableChangesV2.rejectUnsupportedOptions` for the rejected set.
+   */
+  def changelogUnsupportedOption(option: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_CHANGELOG_UNSUPPORTED_OPTION",
+      messageParameters = Array(option))
+  }
+
+  /**
    * Throwable used for invalid CDC 'start' and 'end' options, where end < start
    */
   def endBeforeStartVersionInCDC(start: Long, end: Long): Throwable = {
@@ -587,7 +634,7 @@ trait DeltaErrorsBase
   }
 
   /**
-   * Auto-CDF batch read rejected because the source table does not have row tracking enabled.
+   * Read-time CDF batch read rejected because the source table does not have row tracking enabled.
    * Row tracking is required for the V2 changelog reader to identify rows across commits.
    *
    * Returns `Nothing` so Scala callers can use this in expression position (e.g. as a `match`
@@ -600,7 +647,7 @@ trait DeltaErrorsBase
   }
 
   /**
-   * Auto-CDF batch read rejected because the user requested an unbounded changelog range.
+   * Read-time CDF batch read rejected because the user requested an unbounded changelog range.
    * Batch CHANGES queries require explicit start and end bounds.
    *
    * Returns `Nothing` so Scala callers can use this in expression position (e.g. as a `match`
@@ -613,10 +660,11 @@ trait DeltaErrorsBase
   }
 
   /**
-   * Auto-CDF batch read rejected because the table resolved by the catalog is not a V2
-   * [[io.delta.spark.internal.v2.catalog.SparkTable]]. The V2 connector is the only path that
+   * Read-time CDF batch read rejected because the table resolved by the catalog is not a V2
+   * [[io.delta.spark.internal.v2.catalog.DeltaV2Table]]. The V2 connector is the only path that
    * implements the catalog-driven CHANGES surface. V1 Delta tables (`DeltaTableV2`) continue to
-   * use the legacy CDF path that does not go through `TableCatalog.loadChangelog`.
+   * use the legacy CDF path that does not go through `TableCatalog.loadChangelog`. Use
+   * `AUTO`/`STRICT` mode so the catalog re-resolves V1 tables to the V2 connector for CHANGES.
    *
    * Returns `Nothing` so Scala callers can use this in expression position (e.g. as a `match`
    * arm) without an explicit `throw`. Java callers invoke it as a statement.
@@ -628,7 +676,7 @@ trait DeltaErrorsBase
   }
 
   /**
-   * Auto-CDF batch read rejected because the table schema differs at some commit within the
+   * Read-time CDF batch read rejected because the table schema differs at some commit within the
    * requested range. The connector requires the schema to be stable across the read range so
    * that downstream batch CDC post-processing sees a single schema.
    */
@@ -639,7 +687,7 @@ trait DeltaErrorsBase
   }
 
   /**
-   * Auto-CDF batch read rejected because row tracking was disabled at some commit within the
+   * Read-time CDF batch read rejected because row tracking was disabled at some commit within the
    * requested range (the `delta.enableRowTracking` table property was set to `false`).
    */
   def throwChangelogRowTrackingDisabledInRange(version: Long): Nothing = {
@@ -648,10 +696,35 @@ trait DeltaErrorsBase
       messageParameters = Array(version.toString))
   }
 
+  /**
+   * Read-time CDF batch read failed while reading the changelog (e.g. an IO error while iterating
+   * commit actions or planning input partitions). A cause that already carries a Spark error class
+   * is rethrown unchanged so its user-facing class is preserved. Anything else is wrapped in a
+   * Delta error class rather than a bare RuntimeException. `errorSubClass` names the phase, e.g.
+   * "PROCESS_COMMIT_ACTIONS".
+   */
+  def throwChangelogReadFailed(errorSubClass: String, cause: Throwable): Nothing = cause match {
+    case _: SparkThrowable => throw cause
+    case other =>
+      throw new DeltaIllegalStateException(
+        errorClass = "DELTA_CHANGELOG_READ_FAILED." + errorSubClass,
+        cause = other)
+  }
+
   def setTransactionVersionConflict(appId: String, version1: Long, version2: Long): Throwable = {
     new IllegalArgumentException(
       s"Two SetTransaction actions within the same transaction have the same appId ${appId} but " +
         s"different versions ${version1} and ${version2}.")
+  }
+
+  def duplicateActionCheckFailed(
+      actionType: String,
+      path: String,
+      conflictingPath: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_DUPLICATE_ACTIONS_FOUND",
+      messageParameters = Array(actionType, path, conflictingPath)
+    )
   }
 
   def unexpectedChangeFilesFound(changeFiles: String): Throwable = {
@@ -932,6 +1005,30 @@ trait DeltaErrorsBase
     )
   }
 
+  def cannotWriteEmptySchemaTableNoColumns(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.TABLE_NO_COLUMNS",
+      messageParameters = Array.empty)
+  }
+
+  def cannotWriteEmptySchemaTableAllVoidColumns(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.TABLE_ALL_VOID_COLUMNS",
+      messageParameters = Array.empty)
+  }
+
+  def cannotWriteEmptySchemaStructNoFields(columnPath: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.STRUCT_NO_FIELDS",
+      messageParameters = Array(SchemaUtils.prettyFieldName(columnPath)))
+  }
+
+  def cannotWriteEmptySchemaStructAllVoidFields(columnPath: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.STRUCT_ALL_VOID_FIELDS",
+      messageParameters = Array(SchemaUtils.prettyFieldName(columnPath)))
+  }
+
   def castingCauseOverflowErrorInTableWrite(
       from: DataType,
       to: DataType,
@@ -1104,9 +1201,11 @@ trait DeltaErrorsBase
     ).initCause(e)
   }
 
+  final val DELTA_TXN_LOG_FAILED_INTEGRITY = "DELTA_TXN_LOG_FAILED_INTEGRITY"
+
   def logFailedIntegrityCheck(version: Long, mismatchOption: String): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_TXN_LOG_FAILED_INTEGRITY",
+      errorClass = DELTA_TXN_LOG_FAILED_INTEGRITY,
       messageParameters = Array(version.toString, mismatchOption)
     )
   }
@@ -1161,15 +1260,25 @@ trait DeltaErrorsBase
     )
   }
 
+  def tagCouldNotBeParsedException(
+      tagName: String,
+      tags: Map[String, String],
+      cause: Throwable): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NON_PARSABLE_TAG",
+      messageParameters = Array(tagName, tags.mkString("[", ",", "]")),
+      cause = Some(cause))
+  }
+
   def nonPartitionColumnAbsentException(colsDropped: Boolean): Throwable = {
-    val msg = if (colsDropped) {
-      " Columns which are of NullType have been dropped."
+    val errorClass = if (colsDropped) {
+      "DELTA_NON_PARTITION_COLUMN_ABSENT.NULL_TYPE_COLUMNS_DROPPED"
     } else {
-      ""
+      "DELTA_NON_PARTITION_COLUMN_ABSENT.ALL_PARTITION_COLUMNS"
     }
     new DeltaAnalysisException(
-      errorClass = "DELTA_NON_PARTITION_COLUMN_ABSENT",
-      messageParameters = Array(msg)
+      errorClass = errorClass,
+      messageParameters = Array.empty
     )
   }
 
@@ -1177,16 +1286,15 @@ trait DeltaErrorsBase
       replaceWhere: String,
       invariantViolation: InvariantViolationException): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_REPLACE_WHERE_MISMATCH",
+      errorClass = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
       messageParameters = Array(replaceWhere, invariantViolation.getMessage),
       cause = Some(invariantViolation))
   }
 
   def replaceWhereMismatchException(replaceWhere: String, badPartitions: String): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_REPLACE_WHERE_MISMATCH",
-      messageParameters = Array(replaceWhere,
-        s"Invalid data would be written to partitions $badPartitions."))
+      errorClass = "DELTA_REPLACE_WHERE_MISMATCH.INVALID_PARTITIONS",
+      messageParameters = Array(replaceWhere, badPartitions))
   }
 
   def illegalFilesFound(file: String): Throwable = {
@@ -1201,10 +1309,16 @@ trait DeltaErrorsBase
       messageParameters = Array(input, name, explain))
   }
 
-  def invalidIdempotentWritesOptionsException(explain: String): Throwable = {
+  def invalidIdempotentWritesMissingWriteOptionsException(): Throwable = {
     new DeltaIllegalArgumentException(
-      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS",
-      messageParameters = Array(explain))
+      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS",
+      messageParameters = Array.empty)
+  }
+
+  def invalidIdempotentWritesMissingSessionConfsException(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS",
+      messageParameters = Array.empty)
   }
 
   def invalidInterval(interval: String): Throwable = {
@@ -1329,6 +1443,22 @@ trait DeltaErrorsBase
     )
   }
 
+  /**
+   * Java-friendly factory for [[InvalidProtocolVersionException]]. The supported reader/writer
+   * version sets are `private[delta]` so this must be built in Scala.
+   */
+  def invalidProtocolVersionError(
+      tableNameOrPath: String,
+      readerRequiredVersion: Int,
+      writerRequiredVersion: Int): Throwable = {
+    InvalidProtocolVersionException(
+      tableNameOrPath,
+      readerRequiredVersion,
+      writerRequiredVersion,
+      Action.supportedReaderVersionNumbers.toSeq,
+      Action.supportedWriterVersionNumbers.toSeq)
+  }
+
   def specifySchemaAtReadTimeException: Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_SCHEMA_DURING_READ",
@@ -1413,7 +1543,7 @@ trait DeltaErrorsBase
 
   def bloomFilterInvalidParameterValueException(message: String): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0002",
+      errorClass = "DELTA_BLOOM_FILTER_INVALID_PARAMETER_VALUE",
       messageParameters = Array(message)
     )
   }
@@ -1545,7 +1675,7 @@ trait DeltaErrorsBase
       m.map(e => s"${e._1}=${e._2}").mkString("[", ", ", "]")
     }
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0003",
+      errorClass = "DELTA_CONVERT_METASTORE_METADATA_MISMATCH",
       messageParameters = Array(
         prettyMap(tableProperties),
         prettyMap(deltaConfiguration),
@@ -1880,7 +2010,7 @@ trait DeltaErrorsBase
   def cannotSetLocationMultipleTimes(locations : Seq[String]) : Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES",
-      messageParameters = Array(s"${locations}")
+      messageParameters = Array(locations.mkString(", "))
     )
   }
 
@@ -2359,6 +2489,32 @@ trait DeltaErrorsBase
     )
   }
 
+  def adaptiveMetadataRequiresColumnMappingIdMode(
+      featureName: String, actualMode: String): Throwable = {
+    val key = DeltaConfigs.COLUMN_MAPPING_MODE.key
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ADAPTIVE_METADATA_REQUIRES_COLUMN_MAPPING_ID_MODE",
+      // Template order: <feature>, <prop>, <mode>, <prop>.
+      messageParameters = Array(featureName, key, actualMode, key)
+    )
+  }
+
+  def adaptiveMetadataRequiresDependentFeatureEnabled(
+      featureName: String, propertyKey: String, actualValue: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ADAPTIVE_METADATA_REQUIRES_DEPENDENT_FEATURE_ENABLED",
+      // Template order: <feature>, <prop>, <value>, <prop>.
+      messageParameters = Array(featureName, propertyKey, actualValue, propertyKey)
+    )
+  }
+
+  def adaptiveMetadataUpgradeNotSupported(featureName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ADAPTIVE_METADATA_UPGRADE_NOT_SUPPORTED",
+      messageParameters = Array(featureName)
+    )
+  }
+
   def maxColumnIdNotSetCorrectly(tableMax: Long, fieldMax: Long): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY",
@@ -2399,29 +2555,32 @@ trait DeltaErrorsBase
         mode.name))
   }
 
-  protected def columnMappingAdviceMessage(
-      requiredProtocol: Protocol = ColumnMappingTableFeature.minProtocolVersion): String = {
-    val readerVersion = requiredProtocol.minReaderVersion
-    val writerVersion = requiredProtocol.minWriterVersion
-    s"""
-       |Please enable Column Mapping on your Delta table with mapping mode 'name'.
-       |You can use one of the following commands.
-       |
-       |ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
-       |
-       |Note, if your table is not on the required protocol version it will be upgraded.
-       |Column mapping requires at least protocol ($readerVersion, $writerVersion)
-       |""".stripMargin
+  /**
+   * Returns the error class (either `mainErrorClass` or `mainErrorClass.<subClass>`) and message
+   * parameters for the "enable Column Mapping" advice. When `suggestUpgrade` is false the advice is
+   * omitted and the bare `mainErrorClass` is returned.
+   */
+  protected def withColumnMappingAdviceSubClass(
+      mainErrorClass: String, suggestUpgrade: Boolean): (String, Array[String]) = {
+    if (!suggestUpgrade) {
+      return (mainErrorClass, Array.empty[String])
+    }
+    val readerVersion = ColumnMappingTableFeature.minProtocolVersion.minReaderVersion
+    val writerVersion = ColumnMappingTableFeature.minProtocolVersion.minWriterVersion
+    (s"$mainErrorClass.ENABLE_COLUMN_MAPPING",
+      Array(readerVersion.toString, writerVersion.toString))
   }
 
   def columnRenameNotSupported: Throwable = {
-    val adviceMsg = columnMappingAdviceMessage()
-    new DeltaAnalysisException("DELTA_UNSUPPORTED_RENAME_COLUMN", Array(adviceMsg))
+    val (errorClass, params) =
+      withColumnMappingAdviceSubClass("DELTA_UNSUPPORTED_RENAME_COLUMN", suggestUpgrade = true)
+    new DeltaAnalysisException(errorClass, params)
   }
 
   def dropColumnNotSupported(suggestUpgrade: Boolean): Throwable = {
-    val adviceMsg = if (suggestUpgrade) columnMappingAdviceMessage() else ""
-    new DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_COLUMN", Array(adviceMsg))
+    val (errorClass, params) =
+      withColumnMappingAdviceSubClass("DELTA_UNSUPPORTED_DROP_COLUMN", suggestUpgrade)
+    new DeltaAnalysisException(errorClass, params)
   }
 
   def dropNestedColumnsFromNonStructTypeException(struct : DataType) : Throwable = {
@@ -2522,9 +2681,11 @@ trait DeltaErrorsBase
   }
 
   def metadataChangedException(
+      table: String,
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.MetadataChangedException = {
     new io.delta.exceptions.MetadataChangedException(
       Array(
+        table,
         conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
         DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
     )
@@ -2818,6 +2979,11 @@ trait DeltaErrorsBase
     )
   }
 
+  def conflictingMetadataDomainException(
+      domain: String): ConflictingMetadataDomainException = {
+    new ConflictingMetadataDomainException(Array(domain))
+  }
+
   def restoreMissedDataFilesError(missedFiles: Array[String], version: Long): Throwable =
     new IllegalArgumentException(
       s"""Not all files from version $version are available in file system.
@@ -2884,7 +3050,7 @@ trait DeltaErrorsBase
       hasStep: Boolean,
       hasInsert: Boolean): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0006",
+      errorClass = "DELTA_IDENTITY_COLUMN_INCONSISTENT_METADATA",
       messageParameters = Array(colName, s"$hasStart", s"$hasStep", s"$hasInsert")
     )
   }
@@ -3625,33 +3791,22 @@ trait DeltaErrorsBase
 
   def uniFormIcebergRequiresIcebergCompat(): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
-      messageParameters = Array(
-        UniversalFormat.ICEBERG_FORMAT,
-        "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) " +
-        "to be enabled on an existing table. Supported versions are IcebergCompatV1 and " +
-        "IcebergCompatV2."
-      )
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION.ICEBERG_COMPAT_REQUIRED",
+      messageParameters = Array(UniversalFormat.ICEBERG_FORMAT)
     )
   }
 
   def uniFormHudiDeleteVectorCompat(): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
-      messageParameters = Array(
-        UniversalFormat.HUDI_FORMAT,
-        "Requires delete vectors to be disabled."
-      )
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION.HUDI_DELETE_VECTORS_NOT_SUPPORTED",
+      messageParameters = Array(UniversalFormat.HUDI_FORMAT)
     )
   }
 
   def uniFormHudiSchemaCompat(unsupportedType: DataType): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
-      messageParameters = Array(
-        UniversalFormat.HUDI_FORMAT,
-        s"DataType: $unsupportedType is not currently supported."
-      )
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION.HUDI_UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(UniversalFormat.HUDI_FORMAT, unsupportedType.toString)
     )
   }
 
@@ -3835,10 +3990,20 @@ trait DeltaErrorsBase
   def universalFormatConversionFailedException(
       failedOnCommitVersion: Long,
       format: String,
-      errorMessage: String): Throwable = {
+      error: Throwable): Throwable = {
     new DeltaRuntimeException(
-      errorClass = "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED",
-      messageParameters = Array(s"$failedOnCommitVersion", format, errorMessage)
+      errorClass = "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED.CAUSED_BY_ERROR",
+      messageParameters = Array(s"$failedOnCommitVersion", format, ExceptionUtils.getMessage(error))
+    ).initCause(error)
+  }
+
+  def universalFormatConversionFailedUnexpectedPartitionDataTypeException(
+      failedOnCommitVersion: Long,
+      format: String,
+      dataType: DataType): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED.UNEXPECTED_PARTITION_DATA_TYPE",
+      messageParameters = Array(s"$failedOnCommitVersion", format, dataType.toString)
     )
   }
 
@@ -3983,7 +4148,7 @@ trait DeltaErrorsBase
   def errorFindingColumnPosition(
       columnPath: Seq[String], schema: DataType, extraErrMsg: String): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0008",
+      errorClass = "DELTA_ERROR_FINDING_COLUMN_POSITION",
       messageParameters = Array(
         UnresolvedAttribute(columnPath).name, dataTypeToString(schema), extraErrMsg))
   }
@@ -4027,6 +4192,15 @@ trait DeltaErrorsBase
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
       messageParameters = Array(operation))
+  }
+
+  def checkCatalogManagedTableOperationAllowed(
+      operation: String,
+      snapshot: SnapshotDescriptor,
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    if (snapshot.isCatalogOwned) {
+      throw operationBlockedOnCatalogManagedTable(operation)
+    }
   }
 
   def deltaCannotCreateCatalogManagedTable(): Throwable = {
@@ -4235,6 +4409,22 @@ class ConcurrentTransactionException(message: String)
         "into this table. Did you run multiple instances of the same streaming query" +
         " at the same time?",
       conflictingCommit))
+}
+
+/**
+ * Thrown when the current transaction adds a metadata domain that conflicts with a metadata domain
+ * added by a concurrent transaction. Subclasses
+ * [[io.delta.exceptions.ConcurrentTransactionException]] for backward compatibility, but reports
+ * its own error class.
+ */
+class ConflictingMetadataDomainException(messageParameters: Array[String] = Array.empty)
+  extends io.delta.exceptions.ConcurrentTransactionException(
+    DeltaThrowableHelper.getMessage("DELTA_CONFLICTING_METADATA_DOMAIN", messageParameters))
+    with DeltaThrowable {
+  override def getErrorClass: String = "DELTA_CONFLICTING_METADATA_DOMAIN"
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(
+      "DELTA_CONFLICTING_METADATA_DOMAIN", errorSubClass = null, messageParameters)
 }
 
 /** A helper class in building a helpful error message in case of metadata mismatches. */

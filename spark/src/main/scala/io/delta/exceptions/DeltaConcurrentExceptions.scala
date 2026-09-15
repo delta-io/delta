@@ -59,14 +59,24 @@ class ConcurrentWriteException(message: String)
  * @since 1.0.0
  */
 @Evolving
-class MetadataChangedException(message: String)
+class MetadataChangedException private (
+    message: String,
+    messageParameters: Array[String])
   extends org.apache.spark.sql.delta.MetadataChangedException(message)
     with DeltaThrowable {
+  def this(message: String) = this(message, Array.empty)
   def this(messageParameters: Array[String]) = {
-    this(DeltaThrowableHelper.getMessage("DELTA_METADATA_CHANGED", messageParameters))
+    this(
+      DeltaThrowableHelper.getMessage("DELTA_METADATA_CHANGED", messageParameters),
+      messageParameters)
   }
   override def getErrorClass: String = "DELTA_METADATA_CHANGED"
   override def getMessage: String = message
+
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getMessageParameters(
+      "DELTA_METADATA_CHANGED", errorSubClass = null, messageParameters)
+  }
 }
 
 /**

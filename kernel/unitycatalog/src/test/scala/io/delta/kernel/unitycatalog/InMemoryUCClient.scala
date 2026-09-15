@@ -18,14 +18,14 @@ package io.delta.kernel.unitycatalog
 
 import java.lang.{Long => JLong}
 import java.net.URI
-import java.util.Optional
+import java.util.{Collections, List => JList, Optional}
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse, TableIdentifier}
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
@@ -46,6 +46,13 @@ object InMemoryUCClient {
     private var currentProtocolOpt: Option[AbstractProtocol] = None
     private var currentMetadataOpt: Option[AbstractMetadata] = None
     private var currentIcebergOpt: Option[IcebergMetadata] = None
+
+    // For test only: capture the read-side (old) Protocol/Metadata and domain metadata that the
+    // last commit() call received. The UCClient ignores these; capturing them lets tests assert
+    // the committer forwards them, which is needed by the UCDeltaClient.
+    private var lastOldProtocolOpt: Option[AbstractProtocol] = None
+    private var lastOldMetadataOpt: Option[AbstractMetadata] = None
+    private var lastDomainMetadatas: List[AbstractDomainMetadata] = Nil
 
     /** @return the maximum ratified version. */
     def getMaxRatifiedVersion: Long = synchronized { maxRatifiedVersion }
@@ -74,6 +81,25 @@ object InMemoryUCClient {
     /** @return the current Iceberg metadata. For test only. */
     def getCurrentIcebergOpt: Option[IcebergMetadata] = synchronized {
       currentIcebergOpt
+    }
+
+    /** @return the read-side (old) protocol passed to the last commit(). For test only. */
+    def getLastOldProtocolOpt: Option[AbstractProtocol] = synchronized { lastOldProtocolOpt }
+
+    /** @return the read-side (old) metadata passed to the last commit(). For test only. */
+    def getLastOldMetadataOpt: Option[AbstractMetadata] = synchronized { lastOldMetadataOpt }
+
+    /** @return the domain metadata passed to the last commit(). For test only. */
+    def getLastDomainMetadatas: List[AbstractDomainMetadata] = synchronized { lastDomainMetadatas }
+
+    /** Records the read-side P&M and domain metadata seen by a commit(). For test only. */
+    def recordCommitInputs(
+        oldProtocol: Optional[AbstractProtocol],
+        oldMetadata: Optional[AbstractMetadata],
+        domainMetadatas: JList[AbstractDomainMetadata]): Unit = synchronized {
+      lastOldProtocolOpt = if (oldProtocol.isPresent) Some(oldProtocol.get()) else None
+      lastOldMetadataOpt = if (oldMetadata.isPresent) Some(oldMetadata.get()) else None
+      lastDomainMetadatas = domainMetadatas.asScala.toList
     }
 
     /** Updates the Iceberg metadata. */
@@ -125,7 +151,10 @@ object InMemoryUCClient {
       schemaName: String,
       storageLocation: String,
       columns: java.util.List[UCClient.ColumnDef],
-      properties: java.util.Map[String, String])
+      protocol: AbstractProtocol,
+      properties: java.util.Map[String, String],
+      lastCommitTimestampMs: Long,
+      domainMetadata: java.util.List[AbstractDomainMetadata])
 }
 
 /**
@@ -166,10 +195,12 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       newMetadata,
       Optional.empty(), // oldProtocol
       newProtocol,
+      Collections.emptyList[AbstractDomainMetadata](), // transactionDomainMetadata
       Optional.empty() // uniform
     )
   }
 
+  // scalastyle:off argcount
   override def commit(
       tableId: String,
       tableUri: URI,
@@ -180,12 +211,15 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       newMetadata: Optional[AbstractMetadata],
       oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
+      transactionDomainMetadata: JList[AbstractDomainMetadata],
       uniform: Optional[UniformMetadata]): Unit = {
     forceThrowInCommitMethod()
 
     val tableData = getOrCreateTableIfNotExists(tableId)
 
     tableData.synchronized {
+      tableData.recordCommitInputs(oldProtocol, oldMetadata, transactionDomainMetadata)
+
       commitOpt.ifPresent { commit =>
         tableData.appendCommit(commit, newProtocol, newMetadata)
       }
@@ -202,6 +236,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       }
     }
   }
+  // scalastyle:on argcount
 
   override def getCommits(
       tableId: String,
@@ -227,7 +262,10 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       schemaName: String,
       storageLocation: String,
       columns: java.util.List[UCClient.ColumnDef],
-      properties: java.util.Map[String, String]): Unit = {
+      protocol: AbstractProtocol,
+      properties: java.util.Map[String, String],
+      lastCommitTimestampMs: Long,
+      domainMetadata: java.util.List[AbstractDomainMetadata]): Unit = {
     forceThrowInFinalizeCreateMethod()
     lastFinalizeCreateRecord = Some(InMemoryUCClient.FinalizeCreateRecord(
       tableName,
@@ -235,7 +273,10 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       schemaName,
       storageLocation,
       columns,
-      properties))
+      protocol,
+      properties,
+      lastCommitTimestampMs,
+      domainMetadata))
     val fqn = s"$catalogName.$schemaName.$tableName"
     Option(tables.putIfAbsent(fqn, TableData.afterCreate()))
       .foreach(_ => throw new IllegalArgumentException(s"$fqn already exists"))

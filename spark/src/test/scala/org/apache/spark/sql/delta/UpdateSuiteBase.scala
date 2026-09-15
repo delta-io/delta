@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.test.shims.UnsupportedTableOperationErrorShims
 
 import org.apache.spark.{SparkThrowable, SparkUnsupportedOperationException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -140,7 +140,7 @@ trait UpdateBaseTempViewTests extends UpdateBaseMixin {
       expectedErrorClassForDataSetTempView: String = null): Unit = {
     testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
       withTable("tab") {
-        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        Seq((0, 3), (1, 2)).toDF("key", "value").write.format(writeFormat).saveAsTable("tab")
         createTempViewFromSelect(text, isSQLTempView)
         val ex = intercept[AnalysisException] {
           executeUpdate(
@@ -176,14 +176,14 @@ trait UpdateBaseTempViewTests extends UpdateBaseMixin {
   private def testComplexTempViews(name: String)(text: String, expectedResult: Seq[Row]) = {
     testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
         withTable("tab") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format(writeFormat).saveAsTable("tab")
           createTempViewFromSelect(text, isSQLTempView)
           executeUpdate(
             "v",
             where = "key >= 1 and value < 3",
             set = "value = key + value, key = key + 1"
           )
-          checkAnswer(spark.read.format("delta").table("v"), expectedResult)
+          checkAnswer(spark.read.format(writeFormat).table("v"), expectedResult)
         }
       }
   }
@@ -226,14 +226,14 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     test(s"basic update - Delta table by name - Partition=$isPartitioned") {
       withTable("delta_table") {
         val partitionByClause = if (isPartitioned) "PARTITIONED BY (key)" else ""
-        sql(s"""
-             |CREATE TABLE delta_table(key INT, value INT) USING delta
-             |$partitionByClause
-           """.stripMargin)
+        sql(createTableSQL(
+          "delta_table",
+          "key INT, value INT",
+          partitionBy = partitionByClause))
 
         Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
           .write
-          .format("delta")
+          .format(writeFormat)
           .mode("append")
           .saveAsTable("delta_table")
 
@@ -405,6 +405,38 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     }
   }
 
+  test("basic case with NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
+      checkUpdate(condition = None, setClauses = "value = 2",
+        expectedResults = Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Nil)
+    }
+  }
+
+  test("basic case with condition on NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
+      checkUpdate(condition = Some("key is null"), setClauses = "value = 2",
+        expectedResults = Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Nil)
+    }
+  }
+
+  test("basic case with nested NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(
+      DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"
+    ) {
+      append(Seq(((null, 2), 1), ((null, 4), 1), (null, 1), ((null, 1), 1)).toDF("key", "value"))
+      checkUpdate(
+        condition = Some("key._1 IS NULL AND key IS NOT NULL"),
+        setClauses = "value = 5",
+        expectedResults = Row(Row(null, 2), 5) :: Row(Row(null, 4), 5) :: Row(null, 1) ::
+          Row(Row(null, 1), 5) :: Nil)
+    }
+  }
+
   for (storeAssignmentPolicy <- StoreAssignmentPolicy.values)
   test("upcast int source type into long target, storeAssignmentPolicy = " +
     s"$storeAssignmentPolicy") {
@@ -481,7 +513,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
       spark.read.json("""
           {"a": {"b.1": 1, "c.e": 'random'}, "d": 1}
           {"a": {"b.1": 3, "c.e": 'string'}, "d": 2}"""
-        .split("\n").toSeq.toDS()).write.format("delta").saveAsTable("`target`")
+        .split("\n").toSeq.toDS()).write.format(writeFormat).saveAsTable("`target`")
 
       executeUpdate(
         target = "target",
@@ -524,7 +556,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
 
   test("Negative case - check target columns during analysis") {
     withTable("table") {
-      sql("CREATE TABLE table (s int, t string) USING delta PARTITIONED BY (s)")
+      sql(createTableSQL("table", "s int, t string", partitionBy = "PARTITIONED BY (s)"))
       var ae = intercept[AnalysisException] {
         executeUpdate("table", set = "column_doesnt_exist = 'San Francisco'", where = "t = 'a'")
       }
@@ -571,7 +603,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     withTempDir { dir =>
       val tempPath = dir.getCanonicalPath
       val df = Seq((2, 2), (3, 2)).toDF("key", "value")
-      df.write.format("delta").partitionBy("key").save(tempPath)
+      df.write.format(writeFormat).partitionBy("key").save(tempPath)
 
       val e = intercept[AnalysisException] {
         executeUpdate(
@@ -843,7 +875,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     }
 
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanExec => f
+      case f: FileSourceScanLike => f
     })
     // The first scan is for finding files to update. We only are matching against the key
     // so that should be the only field in the schema.
@@ -868,7 +900,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     }
 
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanExec => f
+      case f: FileSourceScanLike => f
     })
 
     assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
@@ -893,7 +925,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
       customErrorRegex: Option[String] = None) {
     test(s"$functionType functions in update - expect exception: $expectException") {
       withTable("deltaTable") {
-        data.write.format("delta").saveAsTable("deltaTable")
+        data.write.format(writeFormat).saveAsTable("deltaTable")
 
         val expectedErrorRegex = "(?s).*(?i)unsupported.*(?i).*Invalid expressions.*"
 
@@ -910,7 +942,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
 
 
           if (catchException) {
-            val dataBeforeException = spark.read.format("delta").table("deltaTable").collect()
+            val dataBeforeException = spark.read.format(writeFormat).table("deltaTable").collect()
             val e = intercept[Exception] {
               executeUpdate(
                 "deltaTable",
@@ -921,7 +953,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
               e.getCause.getMessage
             } else e.getMessage
             assert(message.matches(errorRegex))
-            checkAnswer(spark.read.format("delta").table("deltaTable"), dataBeforeException)
+            checkAnswer(spark.read.format(writeFormat).table("deltaTable"), dataBeforeException)
           } else {
             executeUpdate(
               "deltaTable",

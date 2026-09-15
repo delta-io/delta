@@ -54,7 +54,7 @@ trait AnalysisHelper {
       if (!expr.resolved) {
         throw new ExtendedAnalysisException(
           new DeltaAnalysisException(
-            errorClass = "_LEGACY_ERROR_TEMP_DELTA_0012",
+            errorClass = "DELTA_CANNOT_RESOLVE_EXPRESSION",
             messageParameters = Array(expr.toString)
           ),
           planProvidingAttrs
@@ -80,7 +80,7 @@ trait AnalysisHelper {
         // This is unexpected
         throw new ExtendedAnalysisException(
           new DeltaAnalysisException(
-            errorClass = "_LEGACY_ERROR_TEMP_DELTA_0012",
+            errorClass = "DELTA_CANNOT_RESOLVE_EXPRESSION",
             messageParameters = Array(exprs.mkString(","))
           ),
           newPlan

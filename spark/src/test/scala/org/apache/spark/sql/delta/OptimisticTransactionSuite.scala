@@ -19,11 +19,16 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 import java.nio.file.FileAlreadyExistsException
+import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 
-import com.databricks.spark.util.Log4jUsageLogger
+import scala.collection.JavaConverters._
+import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.duration._
+
+import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, InMemoryCommitCoordinator, InMemoryCommitCoordinatorBuilder, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -39,7 +44,7 @@ import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types.{IntegerType, StructType, TimestampType}
-import org.apache.spark.util.ManualClock
+import org.apache.spark.util.{ManualClock, ThreadUtils}
 
 
 class OptimisticTransactionSuite
@@ -222,7 +227,7 @@ class OptimisticTransactionSuite
       t => t.metadata
     ),
     concurrentWrites = Seq(
-      Metadata()),
+      testDefaultMetadata()),
     actions = Nil)
 
   check(
@@ -242,9 +247,11 @@ class OptimisticTransactionSuite
       t => t.metadata
     ),
     concurrentWrites = Seq(
-      Action.supportedProtocolVersion(featuresToExclude = Seq(CatalogOwnedTableFeature))),
+      Action.supportedProtocolVersion(
+        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))),
     actions = Seq(
-      Action.supportedProtocolVersion(featuresToExclude = Seq(CatalogOwnedTableFeature))))
+      Action.supportedProtocolVersion(
+        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))))
 
   check(
     "taint whole table",
@@ -282,6 +289,25 @@ class OptimisticTransactionSuite
     actions = Seq(
       AddFile("b", Map.empty, 1, 1, dataChange = true)))
 
+  check(
+    "multiple concurrent appends",
+    conflicts = false,
+    initialSetup = { log =>
+      Seq(testDefaultMetadata(), testDefaultProtocol()).foreach { action =>
+        log.startTransaction().commit(Seq(action), ManualUpdate)
+      }
+    },
+    reads = Nil,
+    concurrentTxns = Seq(
+      t => t.commit(Seq(createTestAddFile(encodedPath = "winner-1")), Truncate()),
+      t => t.commit(Seq(createTestAddFile(encodedPath = "winner-2")), Truncate())),
+    actions = Seq(createTestAddFile(encodedPath = "loser")),
+    operation = Truncate(),
+    expectedErrorClass = None,
+    expectedErrorMessageParameters = None,
+    exceptionClass = None,
+    additionalSQLConfs = Seq.empty)
+
   override def beforeEach(): Unit = {
     super.beforeEach()
     CommitCoordinatorProvider.clearNonDefaultBuilders()
@@ -308,6 +334,32 @@ class OptimisticTransactionSuite
         txn.commit(Seq(Metadata(), Metadata()), ManualUpdate)
       }
       assert(e.getMessage.contains("Cannot change the metadata more than once in a transaction."))
+    }
+  }
+
+  test("dataPath resolves to deltaLog.dataPath") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val txn = log.startTransaction()
+      assert(txn.dataPath === log.dataPath)
+    }
+  }
+
+  test("logPath resolves to deltaLog.logPath") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val txn = log.startTransaction()
+      assert(txn.logPath === log.logPath)
+    }
+  }
+
+  test("newDeltaHadoopConf resolves to deltaLog.newDeltaHadoopConf") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val txn = log.startTransaction()
+      def asMap(conf: org.apache.hadoop.conf.Configuration): Map[String, String] =
+        conf.iterator().asScala.map(e => e.getKey -> e.getValue).toMap
+      assert(asMap(txn.newDeltaHadoopConf()) === asMap(log.newDeltaHadoopConf()))
     }
   }
 
@@ -570,6 +622,25 @@ class OptimisticTransactionSuite
       assert(testTxn.preCommitLogSegment.lastCommitFileModificationTimestamp < testTxnEndTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointProvider.version == 10)
+    }
+  }
+
+  test("commit fails after exhausting the retry budget") {
+    withSQLConf(DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> "0") {
+      withTempDir { dir =>
+        val log = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath))
+        Seq(testDefaultMetadata(), testDefaultProtocol()).foreach { action =>
+          log.startTransaction().commit(Seq(action), ManualUpdate)
+        }
+        val txn = startTestTransaction(log.dataPath)
+        log.startTransaction().commit(
+          Seq(createTestAddFile(encodedPath = "winner-1")), Truncate())
+
+        val e = intercept[DeltaIllegalStateException] {
+          txn.commit(Seq(createTestAddFile(encodedPath = "loser")), Truncate())
+        }
+        assert(e.getErrorClass == "DELTA_MAX_COMMIT_RETRIES_EXCEEDED")
+      }
     }
   }
 
@@ -963,7 +1034,7 @@ class OptimisticTransactionSuite
         .add("part", "string")
       deltaLog.withNewTransaction { txn =>
         val protocol = Action.supportedProtocolVersion(
-          featuresToExclude = Seq(CatalogOwnedTableFeature))
+          featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))
         val metadata = Metadata(
           schemaString = schema.json,
           partitionColumns = partitionColumns)
@@ -1162,7 +1233,8 @@ class OptimisticTransactionSuite
               newProtocolOpt = None,
               op = DeltaOperations.Restore(Some(0), None),
               context = Map.empty,
-              metrics = Map.empty)
+              metrics = Map.empty,
+              dataChange = Some(true))
           }
           if (conflict) {
             assert(e.isInstanceOf[ConcurrentWriteException])
@@ -1655,4 +1727,240 @@ class OptimisticTransactionSuite
       assertPartitionColumns(new TableIdentifier(pathOrTable), expected)
     }
   }
+
+  test("filesForScan is thread-safe when invoked concurrently on a single transaction") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, tablePath)
+
+      // Set up a partitioned table with one file per partition.
+      log.startTransaction().commit(Seq(
+        Metadata(
+          schemaString = new StructType()
+            .add("part", IntegerType)
+            .add("value", IntegerType).json,
+          partitionColumns = Seq("part"))
+      ), ManualUpdate)
+
+      val numPartitions = 16
+      val seedFiles = (0 until numPartitions).map { i =>
+        AddFile(s"f$i", Map("part" -> i.toString), 1, 1, dataChange = true)
+      }
+      log.startTransaction().commit(seedFiles, ManualUpdate)
+
+      val txn = log.startTransaction()
+
+      // Sanity check: filesForScan returns expected files when called concurrently. Each
+      // worker queries a single partition and must observe its own file independently of
+      // the other threads racing to update the transaction's state.
+      val numThreads = 8
+      val scanPool = Executors.newFixedThreadPool(numThreads)
+      locally {
+        implicit val ec: ExecutionContext = ExecutionContext.fromExecutorService(scanPool)
+        try {
+          val scanLatch = new CountDownLatch(1)
+          val scanFutures = (0 until numPartitions).map { i =>
+            Future {
+              scanLatch.await()
+              val filter = EqualTo('part, Literal(i))
+              val scan = txn.filesForScan(filter :: Nil)
+              assert(scan.files.map(_.path).toSet === Set(s"f$i"))
+            }
+          }
+          scanLatch.countDown()
+          ThreadUtils.awaitResult(Future.sequence(scanFutures), 60.seconds)
+        } finally {
+          scanPool.shutdown()
+          scanPool.awaitTermination(60, TimeUnit.SECONDS)
+        }
+      }
+
+      // Stress the mutator path that filesForScan ultimately uses (trackFilesRead) with a
+      // large, evenly partitioned write load timed so all threads start simultaneously.
+      // Without a thread-safe collection (e.g. mutable.HashSet) the concurrent updates
+      // race and lose entries or corrupt the table; with a ConcurrentHashMap-backed set
+      // every entry is observed.
+      val stressThreads = 32
+      val perThread = 1000
+      val totalExpected = stressThreads * perThread
+      val stressBatches = (0 until stressThreads).map { t =>
+        (0 until perThread).map { j =>
+          AddFile(s"stress-t${t}-j${j}", Map("part" -> "0"), 1, 1, dataChange = true)
+        }
+      }
+      val pool = Executors.newFixedThreadPool(stressThreads)
+      locally {
+        implicit val ec: ExecutionContext = ExecutionContext.fromExecutorService(pool)
+        try {
+          val startLatch = new CountDownLatch(1)
+          val readyLatch = new CountDownLatch(stressThreads)
+          val futures = stressBatches.map { batch =>
+            Future {
+              readyLatch.countDown()
+              startLatch.await()
+              txn.trackFilesRead(batch)
+            }
+          }
+          assert(readyLatch.await(60, TimeUnit.SECONDS),
+            "Timed out waiting for stress workers to reach the start barrier.")
+          startLatch.countDown()
+          ThreadUtils.awaitResult(Future.sequence(futures), 120.seconds)
+        } finally {
+          pool.shutdown()
+          pool.awaitTermination(60, TimeUnit.SECONDS)
+        }
+      }
+
+      // Access the protected `readFiles` field reflectively so the test is decoupled
+      // from whether the underlying collection is a Scala or Java Set.
+      val readFilesField = txn.getClass.getDeclaredFields
+        .find(_.getName.endsWith("readFiles"))
+        .getOrElse(fail("Could not locate readFiles field on the transaction class"))
+      readFilesField.setAccessible(true)
+      val tracked: Set[AddFile] = readFilesField.get(txn) match {
+        case javaSet: java.util.Collection[_] =>
+          javaSet.asScala.toSet.asInstanceOf[Set[AddFile]]
+        case scalaSet: scala.collection.Iterable[_] =>
+          scalaSet.toSet.asInstanceOf[Set[AddFile]]
+        case other => fail(s"Unexpected readFiles container type: ${other.getClass}")
+      }
+      // Tracked files = the files initially scanned (one per partition) plus every
+      // synthetic file added by the stress phase.
+      val expectedSize = numPartitions + totalExpected
+      assert(tracked.size === expectedSize,
+        s"Expected $expectedSize tracked read files, got ${tracked.size}. " +
+          s"This indicates lost updates from concurrent updates to readFiles, meaning " +
+          s"the underlying collection is not thread-safe.")
+    }
+  }
+
+  /* ************************
+   * Consistent dataChange validation
+   * ************************ */
+
+  /**
+   * Commits a mixed batch (one dataChange=true AddFile and one dataChange=false AddFile)
+   * against a fresh table under `mode` using either `commit` or `commitLarge`. Returns the
+   * captured `delta.commit.inconsistentDataChange` records along with the thrown exception
+   * (if any).
+   */
+  private def commitMixedDataChangeBatch(
+      tempDir: File,
+      mode: DeltaSQLConf.ConsistentDataChangeValidationMode,
+      useCommitLarge: Boolean)
+      : (Seq[UsageRecord], Option[Throwable]) = {
+    withSQLConf(
+      DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE.key -> mode.toString) {
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val seedTxn = log.startTransaction()
+      seedTxn.updateMetadataForNewTable(Metadata())
+      seedTxn.commit(Seq.empty, ManualUpdate)
+
+      val mixedActions = Seq(
+        createTestAddFile(encodedPath = "data-change", dataChange = true),
+        createTestAddFile(encodedPath = "no-data-change", dataChange = false))
+      var thrown: Option[Throwable] = None
+      val allRecords = Log4jUsageLogger.track {
+        try {
+          if (useCommitLarge) {
+            log.startTransaction().commitLarge(
+              spark,
+              nonProtocolMetadataActions = mixedActions.iterator,
+              newProtocolOpt = None,
+              op = DeltaOperations.ManualUpdate,
+              context = Map.empty,
+              metrics = Map.empty,
+              dataChange = Some(true))
+          } else {
+            log.startTransaction().commit(mixedActions, ManualUpdate)
+          }
+        } catch {
+          case t: Throwable => thrown = Some(t)
+        }
+      }
+      val records = filterUsageRecords(allRecords, "delta.commit.inconsistentDataChange")
+      (records, thrown)
+    }
+  }
+
+  for (useCommitLarge <- BOOLEAN_DOMAIN) {
+    val callerContext = if (useCommitLarge) "commitLarge" else "commit"
+
+    test(s"consistent dataChange validation: FATAL mode throws and logs payload" +
+        s" ($callerContext)") {
+      withTempDir { tempDir =>
+        val (records, thrown) = commitMixedDataChangeBatch(
+          tempDir, DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL, useCommitLarge)
+        assert(thrown.exists(_.isInstanceOf[IllegalStateException]))
+        assert(records.size == 1)
+        val payload = JsonUtils.fromJson[Map[String, Any]](records.head.blob)
+        assert(payload("callerContext") == callerContext)
+        assert(payload("operation") == ManualUpdate.name)
+        assert(payload.contains("operationParameters"))
+        val firstDataChange = payload("firstDataChangeAction").asInstanceOf[Map[String, Any]]
+        val firstNoDataChange = payload("firstNoDataChangeAction").asInstanceOf[Map[String, Any]]
+        assert(firstDataChange("path") == "data-change")
+        assert(firstNoDataChange("path") == "no-data-change")
+      }
+    }
+
+    test(s"consistent dataChange validation: LOG mode logs but does not throw" +
+        s" ($callerContext)") {
+      withTempDir { tempDir =>
+        val (records, thrown) = commitMixedDataChangeBatch(
+          tempDir, DeltaSQLConf.ConsistentDataChangeValidationMode.LOG, useCommitLarge)
+        assert(thrown.isEmpty)
+        assert(records.size == 1)
+      }
+    }
+
+    test(s"consistent dataChange validation: OFF mode neither logs nor throws" +
+        s" ($callerContext)") {
+      withTempDir { tempDir =>
+        val (records, thrown) = commitMixedDataChangeBatch(
+          tempDir, DeltaSQLConf.ConsistentDataChangeValidationMode.OFF, useCommitLarge)
+        assert(thrown.isEmpty)
+        assert(records.isEmpty)
+      }
+    }
+  }
+
+  test("consistent dataChange validation: uniform commit passes in FATAL mode") {
+    withTempDir { tempDir =>
+      withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE.key ->
+          DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL.toString) {
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val seedTxn = log.startTransaction()
+        seedTxn.updateMetadataForNewTable(Metadata())
+        seedTxn.commit(Seq.empty, ManualUpdate)
+        // All true.
+        log.startTransaction().commit(
+          Seq(createTestAddFile(encodedPath = "a", dataChange = true)), ManualUpdate)
+        // All false.
+        log.startTransaction().commit(
+          Seq(createTestAddFile(encodedPath = "b", dataChange = false)), ManualUpdate)
+      }
+    }
+  }
+
+  test("consistent dataChange validation: AddCDCFile is excluded from the check") {
+    withTempDir { tempDir =>
+      withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE.key ->
+          DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL.toString) {
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val seedTxn = log.startTransaction()
+        seedTxn.updateMetadataForNewTable(Metadata())
+        seedTxn.commit(Seq.empty, ManualUpdate)
+        // AddCDCFile has dataChange = false hardcoded; co-committing it with a
+        // dataChange = true AddFile is the normal CDF write shape and must not trip
+        // the validation.
+        log.startTransaction().commit(
+          Seq(
+            createTestAddFile(encodedPath = "data", dataChange = true),
+            AddCDCFile(path = "_change_data/cdc-file", partitionValues = Map.empty, size = 1)),
+          ManualUpdate)
+      }
+    }
+  }
+
 }

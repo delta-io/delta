@@ -20,6 +20,7 @@ import scala.reflect.runtime.universe.TypeTag
 
 import org.apache.spark.sql.delta.{DeltaHistory, DeltaHistoryManager, SerializableFileStatus, SnapshotState}
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTSingleAction
 import org.apache.spark.sql.delta.commands.convert.ConvertTargetFile
 import org.apache.spark.sql.delta.sources.IndexedFile
 
@@ -68,6 +69,9 @@ private[delta] trait DeltaEncoders {
   private lazy val _singleActionEncoder = new DeltaEncoder[SingleAction]
   implicit def singleActionEncoder: Encoder[SingleAction] = _singleActionEncoder.get
 
+  private lazy val _amtSingleActionEncoder = new DeltaEncoder[AMTSingleAction]
+  implicit def amtSingleActionEncoder: Encoder[AMTSingleAction] = _amtSingleActionEncoder.get
+
   private lazy val _addFileEncoder = new DeltaEncoder[AddFile]
   implicit def addFileEncoder: Encoder[AddFile] = _addFileEncoder.get
 
@@ -77,8 +81,12 @@ private[delta] trait DeltaEncoders {
   private lazy val _addCdcFileEncoder = new DeltaEncoder[AddCDCFile]
   implicit def addCdcFileEncoder: Encoder[AddCDCFile] = _addCdcFileEncoder.get
 
-  private lazy val _pmtvEncoder = new DeltaEncoder[(Protocol, Metadata, Option[Long], Long)]
-  implicit def pmtvEncoder: Encoder[(Protocol, Metadata, Option[Long], Long)] = _pmtvEncoder.get
+  /** Params: Protocol, Metadata, Option[InCommitTimestamp], Option[LastManifestCommit], Version */
+  private lazy val _pmtlvEncoder =
+    new DeltaEncoder[(Protocol, Metadata, Option[Long], Option[LastManifestCommit], Long)]
+  implicit def pmtlvEncoder:
+    Encoder[(Protocol, Metadata, Option[Long], Option[LastManifestCommit], Long)] =
+      _pmtlvEncoder.get
 
   private lazy val _v2CheckpointActionsEncoder = new DeltaEncoder[(CheckpointMetadata, SidecarFile)]
   implicit def v2CheckpointActionsEncoder: Encoder[(CheckpointMetadata, SidecarFile)] =

@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -69,5 +70,60 @@ class UCTableInfoTest {
                     authConfig));
 
     assertEquals("tableIdentifier is null", ex.getMessage());
+  }
+
+  @Test
+  void testToUcConfigForwardsOptInFlags() {
+    // The opt-in flags must reach `toUcConfig`'s output verbatim; otherwise
+    // `UCTokenBasedRestClientFactory.createUCClient` falls back to the legacy client
+    // even when the catalog has opted into the new Delta API.
+    Map<String, String> authConfig = new HashMap<>();
+    authConfig.put("type", "static");
+    authConfig.put("token", "tok");
+
+    Map<String, String> optInFlags = new HashMap<>();
+    optInFlags.put(UCConfigUtils.DELTA_REST_API_ENABLED_KEY, "true");
+    optInFlags.put(UCConfigUtils.RENEW_CREDENTIAL_ENABLED_KEY, "true");
+    optInFlags.put(UCConfigUtils.CRED_SCOPED_FS_ENABLED_KEY, "false");
+
+    UCTableInfo info =
+        new UCTableInfo(
+            "uc_tbl_1",
+            "s3://bucket/tbl",
+            new UCTableIdentifier("cat", "sch", "tbl"),
+            "https://uc.example.net",
+            authConfig,
+            optInFlags);
+
+    Map<String, String> ucConfig = info.toUcConfig();
+    assertEquals("https://uc.example.net", ucConfig.get("uri"));
+    assertEquals("static", ucConfig.get("auth.type"));
+    assertEquals("tok", ucConfig.get("auth.token"));
+    assertEquals("true", ucConfig.get(UCConfigUtils.DELTA_REST_API_ENABLED_KEY));
+    assertEquals("true", ucConfig.get(UCConfigUtils.RENEW_CREDENTIAL_ENABLED_KEY));
+    assertEquals("false", ucConfig.get(UCConfigUtils.CRED_SCOPED_FS_ENABLED_KEY));
+  }
+
+  @Test
+  void testLegacyConstructorDefaultsOptInFlagsToEmpty() {
+    // Callers that don't pass optInFlags get the legacy behavior: no flags emitted into
+    // `toUcConfig`. The factory falls back to the default UC client, preserving prior
+    // semantics for code paths that haven't migrated.
+    Map<String, String> authConfig = new HashMap<>();
+    authConfig.put("token", "tok");
+
+    UCTableInfo info =
+        new UCTableInfo(
+            "uc_tbl_1",
+            "s3://bucket/tbl",
+            new UCTableIdentifier("cat", "sch", "tbl"),
+            "https://uc.example.net",
+            authConfig);
+
+    assertEquals(true, info.getOptInFlags().isEmpty(), "Default optInFlags should be empty");
+    Map<String, String> ucConfig = info.toUcConfig();
+    assertEquals(null, ucConfig.get(UCConfigUtils.DELTA_REST_API_ENABLED_KEY));
+    assertEquals(null, ucConfig.get(UCConfigUtils.RENEW_CREDENTIAL_ENABLED_KEY));
+    assertEquals(null, ucConfig.get(UCConfigUtils.CRED_SCOPED_FS_ENABLED_KEY));
   }
 }

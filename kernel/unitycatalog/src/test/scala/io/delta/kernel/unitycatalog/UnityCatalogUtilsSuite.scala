@@ -381,4 +381,25 @@ class UnityCatalogUtilsSuite
       assert(result.getDomainMetadatas.isEmpty)
     }
   }
+
+  test("toColumnDefs: typeJson is the full per-field object, not the bare data type") {
+    val schema = new StructType()
+      .add("id", IntegerType.INTEGER, false)
+      .add("name", StringType.STRING, true)
+    val defs = UnityCatalogUtils.toColumnDefs(schema).asScala
+
+    assert(defs.map(_.getName) === Seq("id", "name"))
+    assert(defs.map(_.getPosition) === Seq(0, 1))
+    assert(defs.map(_.isNullable) === Seq(false, true))
+    assert(defs.map(_.getTypeName) === Seq("INT", "STRING"))
+
+    val mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+    defs.foreach { d =>
+      val node = mapper.readTree(d.getTypeJson)
+      assert(node.has("name"), s"typeJson missing 'name' for ${d.getName}: ${d.getTypeJson}")
+      assert(node.get("name").asText === d.getName)
+      assert(node.has("type") && node.has("nullable") && node.has("metadata"))
+      assert(node.get("nullable").asBoolean === d.isNullable)
+    }
+  }
 }

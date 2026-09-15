@@ -28,7 +28,13 @@ import io.delta.kernel.metrics.FileSizeHistogramResult;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructType;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /** A histogram that tracks file size distributions and their counts. */
@@ -54,6 +60,20 @@ public class FileSizeHistogram {
     long[] zeroCounts = new long[defaultBoundaries.length];
     long[] zeroBytes = new long[defaultBoundaries.length];
     return new FileSizeHistogram(defaultBoundaries, zeroCounts, zeroBytes);
+  }
+
+  /** Creates a FileSizeHistogram from a {@link Row} with the schema {@link #FULL_SCHEMA}. */
+  public static FileSizeHistogram fromRow(Row row) {
+    requireNonNull(row);
+    checkArgument(
+        FULL_SCHEMA.equals(row.getSchema()),
+        "Expected schema: %s, found: %s",
+        FULL_SCHEMA,
+        row.getSchema());
+    return fromColumnVector(
+            VectorUtils.buildColumnVector(Collections.singletonList(row), FULL_SCHEMA),
+            /* rowId */ 0)
+        .get();
   }
 
   /** Creates a FileSizeHistogram from a column vector. */

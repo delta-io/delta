@@ -18,6 +18,7 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils;
 import io.unitycatalog.client.api.TablesApi;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -38,7 +39,6 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl;
-import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -165,31 +165,35 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     // Set the catalog specific configs.
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
+    String catalogPrefix = "spark.sql.catalog." + catalogName;
     conf =
-        conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
-            .set("spark.sql.catalog." + catalogName + ".uri", uc.serverUri())
-            .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken());
-    if (useDeltaRestApiForTests()) {
+        conf.set(catalogPrefix, "io.unitycatalog.spark.UCSingleCatalog")
+            .set(catalogPrefix + ".uri", uc.serverUri());
+    if (uc.oauthTokenUri() != null) {
+      // OAuth client-credentials: the connector fetches a token from the OAuth token endpoint
+      // (uc.oauthTokenUri(): the local broker, or a real IdP for remote runs) and sends it as a
+      // Bearer. No static `.token` is set.
+      conf =
+          conf.set(catalogPrefix + ".auth.type", "oauth")
+              .set(catalogPrefix + ".auth.oauth.uri", uc.oauthTokenUri())
+              .set(catalogPrefix + ".auth.oauth.clientId", uc.oauthClientId())
+              .set(catalogPrefix + ".auth.oauth.clientSecret", uc.oauthClientSecret());
+    } else {
+      conf = conf.set(catalogPrefix + ".token", uc.serverToken());
+    }
+    if (!useDeltaRestApiForTests()) {
+      // Default is true. Tests can opt out.
       conf =
           conf.set(
-              "spark.sql.catalog."
-                  + catalogName
-                  + "."
-                  + UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY(),
-              "true");
+              "spark.sql.catalog." + catalogName + "." + UCConfigUtils.DELTA_REST_API_ENABLED_KEY,
+              "false");
     }
     return conf;
   }
 
-  /** Subclasses can override to false for A/B comparison with the legacy path. */
-  protected boolean useDeltaRestApiForTests() {
-    // TODO: turn this on once the Delta API is fully integrated.
-    return false;
-  }
-
   /**
-   * Whether the class-level @AfterAll should assert that the Delta REST API actually served at
-   * least one load. Override to false in classes that intentionally exercise only the fallback path
+   * Whether the class-level @AfterAll should assert that the UC Delta API actually served at least
+   * one load. Override to false in classes that intentionally exercise only the fallback path
    * (which does NOT bump the successfulDeltaRestApiLoads counter), so the class-level check doesn't
    * false-positive when test sharding distributes methods across CI shards.
    */
@@ -217,14 +221,14 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     long loadInvocationsAfter = UCDeltaCatalogClientImpl.loadTableInvocationsForTesting();
     if (loadInvocationsAfter <= loadTableInvocationsAtClassStart) {
       // Every test in the suite was aborted (e.g. via Assumption.assumeTrue) before any
-      // loadTable call ran, so there is nothing to assert about the Delta REST API path.
+      // loadTable call ran, so there is nothing to assert about the UC Delta API path.
       return;
     }
     long after = UCDeltaCatalogClientImpl.successfulDeltaRestApiLoadsForTesting();
     if (after <= deltaRestApiLoadsAtClassStart) {
       throw new AssertionError(
           "Suite finished but no UCDeltaCatalogClientImpl.loadTable call actually returned a "
-              + "Delta table via the Delta REST API. deltaRestApi.enabled is on but every "
+              + "Delta table via the UC Delta API. deltaRestApi.enabled is on but every "
               + "load either fell back to the legacy delegate or threw. baseline="
               + deltaRestApiLoadsAtClassStart
               + ", after="
@@ -233,7 +237,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     LOG.info(
         "[delta-api] "
             + getClass().getSimpleName()
-            + " successful Delta REST API loads: "
+            + " successful UC Delta API loads: "
             + (after - deltaRestApiLoadsAtClassStart));
   }
 

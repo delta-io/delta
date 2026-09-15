@@ -17,7 +17,24 @@ package io.delta.spark.internal.v2;
 
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.spark.internal.v2.read.DeltaV2ScanBuilder;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.Collections;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.expressions.AttributeReference;
+import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.catalyst.expressions.Literal;
+import org.apache.spark.sql.sources.And;
+import org.apache.spark.sql.sources.EqualTo;
+import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.sources.GreaterThan;
+import org.apache.spark.sql.sources.Not;
+import org.apache.spark.sql.sources.Or;
+import org.apache.spark.sql.sources.StringEndsWith;
+import org.apache.spark.sql.sources.StringStartsWith;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 
@@ -48,6 +65,17 @@ public abstract class DeltaV2TestBase {
       spark.stop();
       spark = null;
     }
+  }
+
+  /** Returns a fresh, unique table directory path under the JVM temp dir. */
+  protected static String newTablePath(String prefix) {
+    return Paths.get(System.getProperty("java.io.tmpdir"), prefix + "-" + System.nanoTime())
+        .toString();
+  }
+
+  /** Returns the DSv2-catalog table reference for a path-based Delta table. */
+  protected static String dsv2Table(String tablePath) {
+    return String.format("dsv2.delta.`%s`", tablePath);
   }
 
   protected void createTestTableWithData(String path, String tableName) {
@@ -157,5 +185,80 @@ public abstract class DeltaV2TestBase {
                 + "('2', '20180520', 'bj', 'David', '40'),"
                 + "('2', '20181212', 'sz', 'Eve', '50')",
             tableName));
+  }
+
+  /** Pushes legacy test filters through the Catalyst filter API used by DeltaV2ScanBuilder. */
+  protected static void pushFilters(DeltaV2ScanBuilder builder, Filter... filters) {
+    Expression[] expressions =
+        Arrays.stream(filters)
+            .map(filter -> toCatalystFilter(builder, filter))
+            .toArray(Expression[]::new);
+    scala.collection.immutable.Seq<Expression> expressionSeq =
+        scala.jdk.javaapi.CollectionConverters.asScala(Arrays.asList(expressions)).toList();
+    builder.pushFilters(expressionSeq);
+  }
+
+  protected static Expression toCatalystFilter(DeltaV2ScanBuilder builder, Filter filter) {
+    // Concatenate data + partition fields via add() rather than StructType.merge: of the two merge
+    // overloads, one is not available in every build and the other is private[sql], so neither is
+    // portable. add() exists everywhere and suffices here (the schemas share no column names).
+    StructType tableSchema = builder.getDataSchema();
+    for (StructField field : builder.getPartitionSchema().fields()) {
+      tableSchema = tableSchema.add(field);
+    }
+    return toCatalystFilter(filter, tableSchema);
+  }
+
+  private static Expression toCatalystFilter(Filter filter, StructType tableSchema) {
+    if (filter instanceof EqualTo) {
+      EqualTo equalTo = (EqualTo) filter;
+      AttributeReference attribute = catalystAttribute(equalTo.attribute(), tableSchema);
+      return new org.apache.spark.sql.catalyst.expressions.EqualTo(
+          attribute, Literal.create(equalTo.value(), attribute.dataType()));
+    }
+    if (filter instanceof GreaterThan) {
+      GreaterThan greaterThan = (GreaterThan) filter;
+      AttributeReference attribute = catalystAttribute(greaterThan.attribute(), tableSchema);
+      return new org.apache.spark.sql.catalyst.expressions.GreaterThan(
+          attribute, Literal.create(greaterThan.value(), attribute.dataType()));
+    }
+    if (filter instanceof And) {
+      And and = (And) filter;
+      return new org.apache.spark.sql.catalyst.expressions.And(
+          toCatalystFilter(and.left(), tableSchema), toCatalystFilter(and.right(), tableSchema));
+    }
+    if (filter instanceof Or) {
+      Or or = (Or) filter;
+      return new org.apache.spark.sql.catalyst.expressions.Or(
+          toCatalystFilter(or.left(), tableSchema), toCatalystFilter(or.right(), tableSchema));
+    }
+    if (filter instanceof Not) {
+      return new org.apache.spark.sql.catalyst.expressions.Not(
+          toCatalystFilter(((Not) filter).child(), tableSchema));
+    }
+    if (filter instanceof StringStartsWith) {
+      StringStartsWith startsWith = (StringStartsWith) filter;
+      AttributeReference attribute = catalystAttribute(startsWith.attribute(), tableSchema);
+      return new org.apache.spark.sql.catalyst.expressions.StartsWith(
+          attribute, Literal.create(startsWith.value(), attribute.dataType()));
+    }
+    if (filter instanceof StringEndsWith) {
+      StringEndsWith endsWith = (StringEndsWith) filter;
+      AttributeReference attribute = catalystAttribute(endsWith.attribute(), tableSchema);
+      return new org.apache.spark.sql.catalyst.expressions.EndsWith(
+          attribute, Literal.create(endsWith.value(), attribute.dataType()));
+    }
+    throw new IllegalArgumentException("Unsupported test filter: " + filter);
+  }
+
+  private static AttributeReference catalystAttribute(String name, StructType tableSchema) {
+    StructField field = tableSchema.apply(name);
+    return new AttributeReference(
+        name,
+        field.dataType(),
+        field.nullable(),
+        field.metadata(),
+        org.apache.spark.sql.catalyst.expressions.NamedExpression.newExprId(),
+        scala.jdk.javaapi.CollectionConverters.asScala(Collections.<String>emptyList()).toList());
   }
 }

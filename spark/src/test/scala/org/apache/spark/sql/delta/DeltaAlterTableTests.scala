@@ -2147,6 +2147,23 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       }
     }
   }
+
+  test("CHANGE COLUMN: allow change from void to int") {
+    withDeltaTable("i int, v void") { tableName =>
+      sql(s"INSERT INTO $tableName VALUES (1, null), (2, null)")
+      sql(s"ALTER TABLE $tableName CHANGE COLUMN v TYPE INT")
+      sql(s"INSERT INTO $tableName VALUES (3, 1)")
+      checkAnswer(spark.table(tableName), Row(1, null) :: Row(2, null) :: Row(3, 1) :: Nil)
+    }
+  }
+
+  test("CHANGE COLUMN: change from int to void not supported") {
+    withDeltaTable("i int, v int") { tableName =>
+      sql(s"INSERT INTO $tableName VALUES (1, null), (2, null)")
+      assertNotSupported(s"ALTER TABLE $tableName CHANGE COLUMN v TYPE VOID")
+    }
+  }
+
 }
 
 trait DeltaAlterTableByNameTests extends DeltaAlterTableTests {

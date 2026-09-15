@@ -24,29 +24,32 @@ import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
-import org.apache.spark.sql.{AnalysisException, Dataset}
+import org.apache.spark.sql.{AnalysisException, Dataset, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.SessionCatalog.DEFAULT_DATABASE
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamTest}
 import org.apache.spark.util.Utils
 
-class DeltaSourceTableAPISuite extends StreamTest
+class DeltaSourceTableAPISuite
+  extends QueryTest
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite {
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-
-  }
+  with CatalogOwnedTestBaseSuite
+  with StreamTest {
 
   import testImplicits._
+
+  /** Runs batch writes that prepare data for a streaming source test through V1. */
+  protected def withV1Mode(f: => Unit): Unit = f
+
   test("table API") {
     withTempDir { tempDir =>
       val tblName = "my_table"
       val dir = tempDir.getAbsolutePath
       withTable(tblName) {
-        spark.range(3).write.format("delta").option("path", dir).saveAsTable(tblName)
+        withV1Mode {
+          spark.range(3).write.format("delta").option("path", dir).saveAsTable(tblName)
+        }
 
         testStream(spark.readStream.table(tblName))(
           ProcessAllAvailable(),
@@ -63,7 +66,9 @@ class DeltaSourceTableAPISuite extends StreamTest
       withTempDatabase { db =>
         withTable(tblName) {
           spark.sql(s"USE $db")
-          spark.range(3).write.format("delta").option("path", dir).saveAsTable(tblName)
+          withV1Mode {
+            spark.range(3).write.format("delta").option("path", dir).saveAsTable(tblName)
+          }
           spark.sql(s"USE $DEFAULT_DATABASE")
 
           testStream(spark.readStream.table(s"$db.$tblName"))(

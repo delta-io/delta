@@ -26,12 +26,8 @@ import org.apache.spark.sql.delta.{
 }
 
 /**
- * Test suite that runs DeltaSourceSchemaEvolutionSuite using the V2 connector
- * (V2_ENABLE_MODE=STRICT).
- */
-
-/**
- * Base trait for V2 schema evolution streaming tests.
+ * Base trait for V2 schema evolution streaming tests, running
+ * DeltaSourceSchemaEvolutionSuite using the V2 connector (V2_ENABLE_MODE=STRICT).
  * Provides common overrides shared by all V2 schema evolution suites.
  */
 trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
@@ -114,6 +110,7 @@ trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
     // ========== Schema evolution scenarios ==========
     "consecutive schema evolutions without schema merging",
     "consecutive schema evolutions",
+    "consecutive schema evolutions with protocol-only tail",
     "upgrade and downgrade",
     "multiple sources with schema evolution",
     "schema evolution with Delta sink",

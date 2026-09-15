@@ -20,6 +20,7 @@ import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
@@ -83,6 +84,9 @@ public interface UCClient extends AutoCloseable {
    *                    If present, UC can validate the current protocol state.
    * @param newProtocol An Optional containing a new protocol version to be applied to the table.
    *                    If present, the table's protocol will be updated atomically with the commit.
+   * @param transactionDomainMetadata The raw domain metadata actions from this transaction.
+   *                                  A non-removed action sets domain metadata, and a removed action
+   *                                  removes the domain metadata.
    * @param uniform An Optional containing UniForm metadata for Delta Universal Format support.
    *                If present, this metadata will be used by UC to manage format conversions
    *                (e.g., Iceberg, Hudi).
@@ -101,6 +105,7 @@ public interface UCClient extends AutoCloseable {
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
+      List<AbstractDomainMetadata> transactionDomainMetadata,
       Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException;
 
@@ -171,7 +176,12 @@ public interface UCClient extends AutoCloseable {
    * @param schemaName parent schema name in Unity Catalog
    * @param storageLocation the storage root URL for the table
    * @param columns column definitions for the table schema
-   * @param properties properties to persist in UC (protocol features, metadata config, etc.)
+   * @param protocol the table's protocol (min reader/writer versions and features).
+   * @param properties properties to persist in UC. For Delta-Commits clients this is the flattened
+   *     bag (protocol features, metadata config, timestamp, version, clustering); for Delta-Tables
+   *     clients this is the {@code metadata.configuration}.
+   * @param lastCommitTimestampMs the Delta-log timestamp of the version-0 commit.
+   * @param domainMetadata the version-0 domain-metadata actions (e.g. clustering, row tracking).
    * @throws CommitFailedException if there is a network or server error during finalization
    */
   void finalizeCreate(
@@ -180,7 +190,10 @@ public interface UCClient extends AutoCloseable {
       String schemaName,
       String storageLocation,
       List<ColumnDef> columns,
-      Map<String, String> properties) throws CommitFailedException;
+      AbstractProtocol protocol,
+      Map<String, String> properties,
+      long lastCommitTimestampMs,
+      List<AbstractDomainMetadata> domainMetadata) throws CommitFailedException;
 
   /**
    * Closes any resources used by this client.

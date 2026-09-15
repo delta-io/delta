@@ -35,10 +35,10 @@ import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.read.CDCDataFile;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.io.IOException;
 import java.util.*;
 import org.apache.spark.annotation.Experimental;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 
 /**
  * Helper class providing utilities for working with Delta table data in streaming scenarios.
@@ -186,6 +186,8 @@ public class StreamingHelper {
    * @param actionSet the set of actions to read (e.g., ADD, REMOVE)
    * @return an iterator over {@link CommitActions}, one per commit version
    */
+  // TODO: callers can switch to CommitRange.getCommitActions(engine, actionSet) — the
+  // no-Snapshot overload added alongside this comment makes this helper obsolete.
   public static CloseableIterator<CommitActions> getCommitActionsFromRangeUnsafe(
       Engine engine,
       CommitRangeImpl commitRange,
@@ -218,7 +220,7 @@ public class StreamingHelper {
   public static Map<Long, Metadata> collectMetadataActionsFromRangeUnsafe(
       long startVersion,
       Optional<Long> endVersionOpt,
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       Engine engine,
       String tablePath) {
     return collectActionsFromRangeUnsafe(
@@ -254,7 +256,7 @@ public class StreamingHelper {
   public static Map<Long, Protocol> collectProtocolActionsFromRangeUnsafe(
       long startVersion,
       Optional<Long> endVersionOpt,
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       Engine engine,
       String tablePath) {
     return collectActionsFromRangeUnsafe(
@@ -281,7 +283,7 @@ public class StreamingHelper {
   private static <T> Map<Long, T> collectActionsFromRangeUnsafe(
       long startVersion,
       Optional<Long> endVersionOpt,
-      DeltaSnapshotManager snapshotManager,
+      DeltaV2SnapshotManager snapshotManager,
       Engine engine,
       String tablePath,
       DeltaLogActionUtils.DeltaAction actionType,

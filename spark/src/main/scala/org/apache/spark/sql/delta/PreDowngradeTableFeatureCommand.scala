@@ -271,7 +271,11 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
         op = DeltaOperations.AddDeletionVectorsTombstones,
         newProtocolOpt = None,
         context = Map.empty,
-        metrics = Map("dvTombstonesWithinRetentionPeriod" -> tombstonesToAddCount.toString))
+        metrics = Map("dvTombstonesWithinRetentionPeriod" -> tombstonesToAddCount.toString),
+        // The commit is only DV tombstones: RemoveFiles whose path is a deletion vector file
+        // rather than a data file, written so that VACUUM can delete those DVs. They drop no
+        // rows so dataChange is false.
+        dataChange = Some(false))
     } else {
       table.startTransaction(Some(snapshotToUse))
         .commit(actionsToCommit.toList, DeltaOperations.AddDeletionVectorsTombstones)
@@ -336,6 +340,15 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
       opType = "delta.deletionVectorsFeatureRemovalMetrics",
       data = metrics)
     PreDowngradeStatus(performedChanges = tracesFound)
+  }
+}
+
+case class AdaptiveMetadataPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    throw new UnsupportedOperationException(
+      s"Dropping the ${AdaptiveMetadataTableFeature.name} table feature is not yet supported.")
   }
 }
 
@@ -590,6 +603,27 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
     true
   }
 }
+
+case class GeospatialPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * Throws an exception if the table has geospatial types, and returns false otherwise.
+   * We currently do not remove the geospatial statistics in the current table version so no
+   * action is required.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    if (GeoSpatialPreviewTableFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
+    val geospatialCols = table.initialSnapshot.schema.fields
+      .filter(field => DeltaGeoSpatial.containsGeoColumns(field.dataType))
+    // We ask the user to explicitly drop the geospatial columns before the table feature
+    // can be dropped.
+    throw DeltaErrors.cannotDropGeospatialFeature(geospatialCols)
+  }
+}
+
 case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
     with DeltaLogging {

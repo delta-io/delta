@@ -635,6 +635,8 @@ object DeletionVectorWriter extends DeltaLogging {
     val tablePathString = DeletionVectorStore.pathToEscapedString(table)
     val packingTargetSize =
       sparkSession.conf.get(DeltaSQLConf.DELETION_VECTOR_PACKING_TARGET_SIZE)
+    val propagateCloseFailure =
+      sparkSession.conf.get(DeltaSQLConf.DELETION_VECTOR_PROPAGATE_CLOSE_FAILURE)
 
     // This is the (partition) mapper function we are returning
     (rowIterator: Iterator[InputT]) => {
@@ -651,8 +653,12 @@ object DeletionVectorWriter extends DeltaLogging {
           tablePath,
           fileId,
           prefix)
-        val result = SparkUtils.tryWithResource(writer) { writer =>
-          rows.map(r => callbackFn(ctx, r))
+        // Not tryWithResource: its closeQuietly would swallow a failed DV close(), committing a
+        // descriptor for a file that was never written. tryWithSafeFinally propagates the failure.
+        val result = if (propagateCloseFailure) {
+          SparkUtils.tryWithSafeFinally(rows.map(r => callbackFn(ctx, r)))(writer.close())
+        } else {
+          SparkUtils.tryWithResource(writer)(w => rows.map(r => callbackFn(ctx, r)))
         }
         result
       }
@@ -685,7 +691,7 @@ object DeletionVectorWriter extends DeltaLogging {
       DeletionVectorDescriptor.EMPTY
     } else {
       val dvRange = ctx.writer.write(bitmapData)
-      DeletionVectorDescriptor.onDiskWithRelativePath(
+      DeletionVectorDescriptor.onDiskWithUuidRelativePath(
         id = ctx.fileId,
         randomPrefix = ctx.prefix,
         sizeInBytes = bitmapData.length,

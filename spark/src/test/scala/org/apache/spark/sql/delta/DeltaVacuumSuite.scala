@@ -1540,20 +1540,27 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
 
   test("running vacuum on a catalog managed table should fail") {
     withCatalogManagedTable() { tableName =>
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val untrackedFile = new Path(deltaLog.dataPath, "untracked-file")
+      val fs = untrackedFile.getFileSystem(deltaLog.newDeltaHadoopConf())
+      fs.create(untrackedFile).close()
+
       checkError(
         intercept[DeltaUnsupportedOperationException] {
           spark.sql(s"VACUUM $tableName")
         },
         "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
-        parameters = Map("operation" -> "VACUUM")
+        parameters = Map("operation" -> "DATA_CLEANUP")
       )
+      assert(fs.exists(untrackedFile))
       checkError(
         intercept[DeltaUnsupportedOperationException] {
           spark.sql(s"VACUUM $tableName DRY RUN")
         },
         "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
-        parameters = Map("operation" -> "VACUUM")
+        parameters = Map("operation" -> "DATA_CLEANUP")
       )
+      assert(fs.exists(untrackedFile))
     }
   }
 }

@@ -49,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiPredicate;
+import java.util.stream.Collectors;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.StringData;
 import org.junit.jupiter.api.Test;
@@ -58,10 +59,9 @@ import org.junit.jupiter.api.Test;
  *
  * <p>This suite exercises the file-rewrite half of the upsert pipeline in isolation — it supplies a
  * scan-file row and a row-level filter directly, bypassing {@link
- * io.delta.flink.sink.MergeStrategy#recordUpsert} / {@link
- * io.delta.flink.sink.MergeStrategy#recordDelete} / {@link Upsert#merge}. End-to-end tests of the
- * full merge pipeline (including {@link RowLocator} and the PK-driven filter construction) are out
- * of scope here.
+ * io.delta.flink.sink.MergeStrategy#upsert} / {@link io.delta.flink.sink.MergeStrategy#delete} /
+ * {@link Upsert#merge}. End-to-end tests of the full merge pipeline (including {@link RowLocator}
+ * and the PK-driven filter construction) are out of scope here.
  *
  * <p>{@link CoWUpsert#deleteRecords} is {@code protected}, so we wrap it in a tiny test-only
  * subclass ({@link ExposedCoWUpsert}) that exposes the method plus the {@code table} field.
@@ -348,6 +348,75 @@ class CoWUpsertTest extends TestHelper {
   }
 
   // -------------------------------------------------------------------------
+  // markRemovesOnStaged tests
+  // -------------------------------------------------------------------------
+
+  @Test
+  void testMarkRemovesOnStagedDropsSomeRows() {
+    withTempDir(
+        dir -> {
+          HadoopTable table = openTable(dir, SCHEMA, Collections.emptyList());
+          Row stagedAction = stageFile(table, SCHEMA, 5);
+
+          Row result = new CoWUpsert().markRemovesOnStaged(table, stagedAction, Set.of(0, 2));
+
+          AddFile resultAddFile = addFileOf(result);
+          Path newFile = dir.toPath().resolve(resultAddFile.getPath()).toAbsolutePath();
+          List<Row> survivors = readParquet(newFile, SCHEMA);
+
+          // Positions 0 and 2 (ids 0 and 2) were dropped; 3 rows survive.
+          assertEquals(3, survivors.size());
+          List<Integer> survivorIds =
+              survivors.stream().map(r -> r.getInt(0)).collect(Collectors.toList());
+          assertFalse(survivorIds.contains(0), "id 0 should have been removed");
+          assertFalse(survivorIds.contains(2), "id 2 should have been removed");
+          assertTrue(survivorIds.contains(1), "id 1 should survive");
+          assertTrue(survivorIds.contains(3), "id 3 should survive");
+          assertTrue(survivorIds.contains(4), "id 4 should survive");
+        });
+  }
+
+  @Test
+  void testMarkRemovesOnStagedCoLocatedWithSource() {
+    withTempDir(
+        dir -> {
+          HadoopTable table = openTable(dir, SCHEMA, Collections.emptyList());
+          Row stagedAction = stageFile(table, SCHEMA, 4);
+
+          Row result = new CoWUpsert().markRemovesOnStaged(table, stagedAction, Set.of(0));
+
+          AddFile source = addFileOf(stagedAction);
+          AddFile rewrite = addFileOf(result);
+
+          // The rewritten file must land in the same parent directory as the source.
+          assertEquals(
+              parentDir(source.getPath()),
+              parentDir(rewrite.getPath()),
+              "rewrite must be co-located with the staged source file");
+        });
+  }
+
+  @Test
+  void testMarkRemovesOnStagedSingleRow() {
+    withTempDir(
+        dir -> {
+          HadoopTable table = openTable(dir, SCHEMA, Collections.emptyList());
+          Row stagedAction = stageFile(table, SCHEMA, 3);
+
+          Row result = new CoWUpsert().markRemovesOnStaged(table, stagedAction, Set.of(2));
+
+          AddFile resultAddFile = addFileOf(result);
+          Path newFile = dir.toPath().resolve(resultAddFile.getPath()).toAbsolutePath();
+          List<Row> survivors = readParquet(newFile, SCHEMA);
+
+          // Row at position 2 (id=2) is removed; survivors are id=0 and id=1 in order.
+          assertEquals(2, survivors.size());
+          assertEquals(0, survivors.get(0).getInt(0));
+          assertEquals(1, survivors.get(1).getInt(0));
+        });
+  }
+
+  // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
 
@@ -512,5 +581,42 @@ class CoWUpsertTest extends TestHelper {
     assertTrue(
         action.isNullAt(SingleAction.REMOVE_FILE_ORDINAL),
         "did not expect the action to also carry a RemoveFile");
+  }
+
+  /**
+   * Write {@code numRows} rows via a {@link DeltaWriterTask}, call {@code complete()}, and return
+   * the single {@code SingleAction(AddFile)} row from the result. The file is on disk but NOT
+   * committed to the table.
+   */
+  private Row stageFile(HadoopTable table, StructType schema, int numRows) {
+    DeltaSinkConf conf = new DeltaSinkConf(schema, Collections.emptyMap());
+    DeltaWriterTask task =
+        new DeltaWriterTask(
+            "test-job",
+            /* subtaskId= */ 0,
+            /* attemptNumber= */ 0,
+            table,
+            conf,
+            Collections.emptyMap());
+    try {
+      for (int i = 0; i < numRows; i++) {
+        task.write(
+            GenericRowData.of(Integer.valueOf(i), StringData.fromString("row-" + i)),
+            new TestSinkWriterContext(0, 0));
+      }
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+
+    List<DeltaWriterResult> results;
+    try {
+      results = task.complete();
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+    assertEquals(1, results.size(), "stageFile: expected exactly one result");
+    List<Row> actions = results.get(0).getDeltaActions();
+    assertEquals(1, actions.size(), "stageFile: expected exactly one action");
+    return actions.get(0);
   }
 }

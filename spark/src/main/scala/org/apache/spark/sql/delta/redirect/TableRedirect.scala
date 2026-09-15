@@ -605,7 +605,7 @@ object RedirectFeature {
   ): Unit = {
     val identifier = catalogTable
       .map(_.identifier.quotedString)
-      .getOrElse(s"delta.`${snapshot.deltaLog.logPath.toString}`")
+      .getOrElse(s"delta.`${snapshot.logPath.toString}`")
     if (configs.contains(DeltaConfigs.REDIRECT_READER_WRITER.key)) {
       if (RedirectWriterOnly.isFeatureSet(snapshot.metadata)) {
         throw DeltaErrors.invalidSetUnSetRedirectCommand(

@@ -136,7 +136,7 @@ object UniversalFormat extends DeltaLogging {
       }
       SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
         f.isInstanceOf[NullType] | f.isInstanceOf[ByteType] | f.isInstanceOf[ShortType] |
-        f.isInstanceOf[TimestampNTZType]
+        f.isInstanceOf[TimestampNTZType] | DeltaGeoSpatial.isGeoSpatialType(f)
       } match {
         case Some(unsupportedType) =>
           throw DeltaErrors.uniFormHudiSchemaCompat(unsupportedType)
@@ -211,7 +211,8 @@ object UniversalFormat extends DeltaLogging {
         Option[DeltaOperations.Operation],
         Seq[Action]) => (Option[Protocol], Option[Metadata])] = Seq(
       IcebergCompatV1.enforceInvariantsAndDependencies,
-      IcebergCompatV2.enforceInvariantsAndDependencies
+      IcebergCompatV2.enforceInvariantsAndDependencies,
+      IcebergCompatV3.enforceInvariantsAndDependencies
     )
     compatChecks.foreach { compatCheck =>
       val updates = compatCheck(

@@ -16,14 +16,15 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
-import java.util.Optional
+import java.util.{Optional, UUID}
 
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import io.delta.storage.commit.{GetCommitsResponse => JGetCommitsResponse}
+import io.delta.storage.commit.{GetCommitsResponse => JGetCommitsResponse, TableDescriptor}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.fs.Path
 
 abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
@@ -98,6 +99,23 @@ abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
     assert(cs3.isInstanceOf[InMemoryCommitCoordinator])
     assert(cs3.asInstanceOf[InMemoryCommitCoordinator].batchSize == 10)
     assert(cs3 ne cs2)
+  }
+
+  test("empty getCommits returns zero only for catalog-managed table descriptors") {
+    withTempTableDir { tempDir =>
+      val logPath = DeltaLog.forTable(spark, tempDir.toString).logPath
+      val coordinator = InMemoryCommitCoordinatorBuilder(batchSize).build(spark, Map.empty)
+
+      val nonUcTableDesc = new TableDescriptor(logPath, Optional.empty(), Map.empty.asJava)
+      assert(coordinator.getCommits(nonUcTableDesc, null, null).getLatestTableVersion == -1L)
+
+      val catalogManagedTableDesc = new TableDescriptor(
+        logPath,
+        Optional.empty(),
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> UUID.randomUUID().toString).asJava)
+      assert(
+        coordinator.getCommits(catalogManagedTableDesc, null, null).getLatestTableVersion == 0L)
+    }
   }
 
   test("test commit > 1 is rejected as first commit") {

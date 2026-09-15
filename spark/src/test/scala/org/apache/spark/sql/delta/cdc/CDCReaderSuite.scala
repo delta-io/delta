@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.cdc
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 
-import com.databricks.spark.util.Log4jUsageLogger
+import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Delete
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.files.DelayedCommitProtocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
@@ -102,6 +103,7 @@ class CDCReaderSuite
 
   def createCDFDF(start: Long, end: Long, commitVersion: Long, changeType: String): DataFrame = {
     spark.range(start, end)
+      .withColumn("v", lit(null))
       .withColumn(CDC_TYPE_COLUMN_NAME, lit(changeType))
       .withColumn(CDC_COMMIT_VERSION, lit(commitVersion))
   }
@@ -420,12 +422,15 @@ class CDCReaderSuite
 
   for (cdfEnabled <- BOOLEAN_DOMAIN)
   test(s"Coarse-grained CDF, cdfEnabled=$cdfEnabled") {
+    // The test table has a NullType column (v) that is read back via CDF.
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> cdfEnabled.toString) {
       withTempDir { dir =>
         val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
 
         // commit 0: 2 inserts
         spark.range(start = 0, end = 2, step = 1, numPartitions = 1)
+          .withColumn("v", lit(null))
           .write.format("delta").save(dir.getAbsolutePath)
         var df = CDCReader.changesToBatchDF(
           log, 0, 1, spark, catalogTableOpt = None, useCoarseGrainedCDC = true)
@@ -471,6 +476,84 @@ class CDCReaderSuite
 
       assert(events.exists(event => event.metric == "tahoeEvent" &&
         event.tags.get("opType") == Option("delta.changeDataFeed.changesToDF")))
+    }
+  }
+
+  /** Collect and parse the `delta.changeDataFeed.changesToDF` usage logs among the events. */
+  private def findChangesToDFEvents(events: Seq[UsageRecord]): Seq[Map[String, Any]] = {
+    events.collect {
+      case event if event.metric == "tahoeEvent" &&
+        event.tags.get("opType").contains("delta.changeDataFeed.changesToDF") =>
+        JsonUtils.fromJson[Map[String, Any]](event.blob)
+    }
+  }
+
+  /** Parse the single `delta.changeDataFeed.changesToDF` usage log emitted by the events. */
+  private def getChangesToDFMetrics(events: Seq[UsageRecord]): Map[String, Any] = {
+    findChangesToDFEvents(events) match {
+      case Seq(metrics) => metrics
+      case other => fail("Expected exactly one delta.changeDataFeed.changesToDF usage event, " +
+        s"got ${other.size} with opTypes: " + events.flatMap(_.tags.get("opType")).mkString(", "))
+    }
+  }
+
+  /** Extract a non-negative numeric metric emitted in a parsed usage log. */
+  private def getMetric(metrics: Map[String, Any], key: String): Long = {
+    metrics.get(key)
+      .map(_.asInstanceOf[Number].longValue())
+      .getOrElse(fail(s"Metric '$key' not found in usage log: $metrics"))
+  }
+
+  test("changesToDF metrics count only AddCDCFiles when a commit has CDC actions") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      val log = DeltaLog.forTable(spark, path)
+
+      spark.range(10).write.format("delta").save(path)
+      sql(s"UPDATE delta.`$path` SET id = id + 100 WHERE id < 5")
+
+      val events = Log4jUsageLogger.track {
+        CDCReader.changesToBatchDF(log, 1, 1, spark)
+      }
+      val metrics = getChangesToDFMetrics(events)
+
+      assert(getMetric(metrics, "numAddCRCFiles") >= 1L,
+        s"Expected the AddCDCFile actions to be counted: $metrics")
+      assert(getMetric(metrics, "numAddFiles") == 0L,
+        s"AddFile actions ignored when serving CDC must not be counted: $metrics")
+      assert(getMetric(metrics, "numRemoveFiles") == 0L,
+        s"RemoveFile actions ignored when serving CDC must not be counted: $metrics")
+      assert(getMetric(metrics, "totalBytes") >= 1L,
+        s"Expected the AddCDCFile sizes to contribute to totalBytes: $metrics")
+    }
+  }
+
+  test("changesToDF metrics exclude dataChange = false file actions") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      val log = DeltaLog.forTable(spark, path)
+
+      spark.range(0, 50).write.format("delta").save(path)
+      spark.range(50, 100).write.format("delta").mode("append").save(path)
+      sql(s"OPTIMIZE delta.`$path`")
+
+      val optimizeVersion = log.update().version
+      assert(optimizeVersion == 2L,
+        s"Expected OPTIMIZE to commit version 2, but the latest version is $optimizeVersion")
+
+      val events = Log4jUsageLogger.track {
+        CDCReader.changesToBatchDF(log, optimizeVersion, optimizeVersion, spark)
+      }
+      val metrics = getChangesToDFMetrics(events)
+
+      assert(getMetric(metrics, "numAddFiles") == 0L,
+        s"dataChange = false AddFile actions must not be counted: $metrics")
+      assert(getMetric(metrics, "numRemoveFiles") == 0L,
+        s"dataChange = false RemoveFile actions must not be counted: $metrics")
+      assert(getMetric(metrics, "numAddCRCFiles") == 0L,
+        s"OPTIMIZE produces no CDC actions: $metrics")
+      assert(getMetric(metrics, "totalBytes") == 0L,
+        s"No files are read for this commit, so totalBytes must be 0: $metrics")
     }
   }
 }

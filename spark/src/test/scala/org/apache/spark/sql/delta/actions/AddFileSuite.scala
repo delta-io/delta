@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.actions
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaRuntimeException}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.amt.AMTPassthrough
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 

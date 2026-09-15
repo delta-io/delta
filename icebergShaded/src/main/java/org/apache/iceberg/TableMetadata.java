@@ -31,6 +31,7 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.iceberg.encryption.EncryptedKey;
+import org.apache.iceberg.encryption.EncryptionUtil;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.relocated.com.google.common.base.MoreObjects;
 import org.apache.iceberg.relocated.com.google.common.base.Objects;
@@ -50,7 +51,7 @@ import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.SerializableSupplier;
 
 /**
- * This class is directly copied from iceberg repo 1.10.0 with following changes
+ * This class is directly copied from iceberg repo 1.11.0 with following changes
  * Change: L602 add back the deprecated API
  *         public TableMetadata updateSchema(Schema newSchema, int newLastColumnId)
  *         L848 add the sql conf check to bypass snap sequenceNumber check
@@ -151,6 +152,8 @@ public class TableMetadata implements Serializable {
     MetricsConfig.fromProperties(properties).validateReferencedColumns(schema);
 
     PropertyUtil.validateCommitProperties(properties);
+
+    EncryptionUtil.checkCompatibility(properties, formatVersion);
 
     return new Builder()
         .setInitialFormatVersion(formatVersion)
@@ -1286,7 +1289,7 @@ public class TableMetadata implements Serializable {
           "Snapshot already exists for id: %s",
           snapshot.snapshotId());
 
-      ValidationException.check(
+      RetryableValidationException.check(
           formatVersion == 1
               || snapshot.sequenceNumber() > lastSequenceNumber
               || snapshot.parentId() == null,
@@ -1294,7 +1297,6 @@ public class TableMetadata implements Serializable {
           snapshot.sequenceNumber(),
           lastSequenceNumber);
 
-      this.lastUpdatedMillis = snapshot.timestampMillis();
       this.lastSequenceNumber = snapshot.sequenceNumber();
       snapshots.add(snapshot);
       snapshotsById.put(snapshot.snapshotId(), snapshot);
@@ -1303,7 +1305,7 @@ public class TableMetadata implements Serializable {
       if (formatVersion >= MIN_FORMAT_VERSION_ROW_LINEAGE) {
         ValidationException.check(
             snapshot.firstRowId() != null, "Cannot add a snapshot: first-row-id is null");
-        ValidationException.check(
+        RetryableValidationException.check(
             snapshot.firstRowId() != null && snapshot.firstRowId() >= nextRowId,
             "Cannot add a snapshot, first-row-id is behind table next-row-id: %s < %s",
             snapshot.firstRowId(),
@@ -1352,9 +1354,6 @@ public class TableMetadata implements Serializable {
       Snapshot snapshot = snapshotsById.get(snapshotId);
       ValidationException.check(
           snapshot != null, "Cannot set %s to unknown snapshot: %s", name, snapshotId);
-      if (isAddedSnapshot(snapshotId)) {
-        this.lastUpdatedMillis = snapshot.timestampMillis();
-      }
 
       if (SnapshotRef.MAIN_BRANCH.equals(name)) {
         this.currentSnapshotId = ref.snapshotId();
@@ -1362,7 +1361,10 @@ public class TableMetadata implements Serializable {
           this.lastUpdatedMillis = System.currentTimeMillis();
         }
 
-        snapshotLog.add(new SnapshotLogEntry(lastUpdatedMillis, ref.snapshotId()));
+        // rollback to an existing snapshot will use current timestamp as the time of the change
+        long timeOfChange =
+            isAddedSnapshot(snapshotId) ? snapshot.timestampMillis() : this.lastUpdatedMillis;
+        snapshotLog.add(new SnapshotLogEntry(timeOfChange, ref.snapshotId()));
       }
 
       refs.put(name, ref);

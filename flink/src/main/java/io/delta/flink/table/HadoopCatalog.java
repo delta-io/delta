@@ -97,7 +97,7 @@ public class HadoopCatalog implements DeltaCatalog {
 
   /** @return nothing as this catalog does not vend credentials */
   @Override
-  public Map<String, String> getCredentials(String uuid) {
+  public Map<String, String> getCredentials(String tableId) {
     return configurations;
   }
 }

@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{File, FileInputStream, OutputStream, PrintWriter, StringWriter}
+import java.io.{File, FileInputStream, FileNotFoundException, OutputStream, PrintWriter, StringWriter}
 import java.net.URI
 import java.sql.Timestamp
 import java.util.UUID
@@ -26,9 +26,10 @@ import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DataFrameUtils
-import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
+import org.apache.spark.sql.delta.DeltaTestUtils.{modifyCommitTimestamp, modifyCommitTimestamps}
 import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedMaintenanceIncompatible
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf, DeltaSource, DeltaSourceOffset}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -39,7 +40,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 import org.scalatest.time.{Seconds, Span}
 
-import org.apache.spark.{SparkConf, SparkThrowable}
+import org.apache.spark.{SparkConf, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
@@ -54,6 +55,13 @@ import org.apache.spark.util.{ManualClock, Utils}
 class DeltaSourceSuite extends DeltaSourceSuiteBase
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
+
+  // Many tests in this suite deliberately delete commit JSON files to exercise streaming's own
+  // missing-commit-file / failOnDataLoss handling. The DeltaLog.getChangeLogFiles version-gap
+  // validator (which throws in tests by default) would pre-empt that streaming-layer check
+  // with a different error class, so disable the test-only throw suite-wide.
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_FAIL_ON_GAPS_IN_TESTS.key, "false")
 
   import testImplicits._
 
@@ -1079,7 +1087,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test(
-      "can delete old files of a snapshot without update"
+      "can delete old files of a snapshot without update",
+    CatalogManagedMaintenanceIncompatible
   ) {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
@@ -1351,15 +1360,22 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     duration.toMillis
   }
 
-  /** Disable log cleanup to avoid deleting logs we are testing. */
-  protected def disableLogCleanup(tablePath: String): Unit = {
-    sql(s"alter table delta.`$tablePath` " +
-      s"set tblproperties (${DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key} = false)")
+  private def sparkTimestampString(timestamp: Long): String = {
+    Seq(new Timestamp(timestamp)).toDF("ts")
+      .select($"ts".cast("string")).as[String].head()
   }
 
-  /** Rename a column on a path-based Delta table. V2 overrides this to route through V1 mode. */
-  protected def renameColumn(tablePath: String, oldName: String, newName: String): Unit = {
-    sql(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN $oldName TO $newName")
+  /**
+   * Executes a DML SQL statement (DELETE, INSERT, etc.).
+   * Overridable so that V2 suites can route DML through the V1 connector,
+   * since SparkTable (V2) is read-only and does not support writes.
+   */
+  protected def executeDml(sqlText: String): Unit = sql(sqlText)
+
+  /** Disable log cleanup to avoid deleting logs we are testing. */
+  protected def disableLogCleanup(tablePath: String): Unit = {
+    executeDml(s"alter table delta.`$tablePath` " +
+      s"set tblproperties (${DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key} = false)")
   }
 
   testQuietly("startingVersion") {
@@ -1546,18 +1562,35 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             expected.map(_.toLong).toDF())
         }
       }
-      assert(intercept[StreamingQueryException] {
-        testStartingTimestamp("2020-07-15 00:10:01")
-      }.getMessage.contains("The provided timestamp (2020-07-15 00:10:01.0) " +
-        "is after the latest version"))
-      assert(intercept[StreamingQueryException] {
-        testStartingTimestamp("2020-07-16")
-      }.getMessage.contains("The provided timestamp (2020-07-16 00:00:00.0) " +
-        "is after the latest version"))
-      assert(intercept[StreamingQueryException] {
-        testStartingTimestamp("i am not a timestamp")
-      }.getMessage.contains("The provided timestamp ('i am not a timestamp') " +
-        "cannot be converted to a valid timestamp"))
+      checkError(
+        intercept[StreamingQueryException] {
+          testStartingTimestamp("2020-07-15 00:10:01")
+        }.getCause.asInstanceOf[SparkThrowable],
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        Some("42816"),
+        parameters = Map(
+          "providedTimestamp" -> "2020-07-15 00:10:01\\.0",
+          "lastCommitTimestamp" -> ".*",
+          "maximumTimestamp" -> ".*"),
+        matchPVals = true)
+      checkError(
+        intercept[StreamingQueryException] {
+          testStartingTimestamp("2020-07-16")
+        }.getCause.asInstanceOf[SparkThrowable],
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        Some("42816"),
+        parameters = Map(
+          "providedTimestamp" -> "2020-07-16 00:00:00\\.0",
+          "lastCommitTimestamp" -> ".*",
+          "maximumTimestamp" -> ".*"),
+        matchPVals = true)
+      checkError(
+        intercept[StreamingQueryException] {
+          testStartingTimestamp("i am not a timestamp")
+        }.getCause.asInstanceOf[SparkThrowable],
+        "DELTA_TIMESTAMP_INVALID",
+        "42816",
+        parameters = Map("expr" -> "'i am not a timestamp'"))
 
       // With non-strict parsing this produces null when casted to a timestamp and then parses
       // to 1970-01-01 (unix time 0).
@@ -1591,6 +1624,80 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  testWithDefaultCommitCoordinatorUnset("startingTimestamp with mid-history ICT") {
+    withSQLConf(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      withTempDir { tableDir =>
+        withTempView("startingTimestamp_test") {
+          val tablePath = tableDir.getCanonicalPath
+          val baseTimestamp = 1594795800000L // 2020-07-14 23:50:00 PDT
+          val preIctCommit0Mtime = baseTimestamp
+          val preIctCommit1Mtime = baseTimestamp + 20.minutes
+          val preIctCommit2Mtime = baseTimestamp + 40.minutes
+          generateCommits(
+            tablePath,
+            preIctCommit0Mtime,
+            preIctCommit1Mtime,
+            preIctCommit2Mtime)
+
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          executeDml(s"ALTER TABLE delta.`$tablePath` " +
+            s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+
+          val ictEnablementVersion = 3L
+          val ictEnablementMtime = baseTimestamp + 60.minutes
+          val ictEnablementTimestamp = baseTimestamp + 2.hours
+          modifyCommitTimestamps(
+            deltaLog,
+            ictEnablementVersion,
+            ictEnablementMtime,
+            ictEnablementTimestamp)
+
+          val firstPostIctVersion = 4L
+          val firstPostIctRows = 40L until 50L
+          val firstPostIctMtime = baseTimestamp + 80.minutes
+          val firstPostIctTimestamp = baseTimestamp + 3.hours
+          spark.range(firstPostIctRows.start, firstPostIctRows.end)
+            .write.format("delta").mode("append").save(tablePath)
+          modifyCommitTimestamps(
+            deltaLog,
+            firstPostIctVersion,
+            firstPostIctMtime,
+            firstPostIctTimestamp)
+
+          val secondPostIctVersion = 5L
+          val secondPostIctRows = 50L until 60L
+          val secondPostIctMtime = baseTimestamp + 100.minutes
+          val secondPostIctTimestamp = baseTimestamp + 4.hours
+          spark.range(secondPostIctRows.start, secondPostIctRows.end)
+            .write.format("delta").mode("append").save(tablePath)
+          modifyCommitTimestamps(
+            deltaLog,
+            secondPostIctVersion,
+            secondPostIctMtime,
+            secondPostIctTimestamp)
+
+          // Trap zone: after the first post-ICT file mtime, but before ICT enablement's ICT.
+          val startingTimestamp = sparkTimestampString(baseTimestamp + 81.minutes)
+          val q = loadStreamWithOptions(
+            tablePath,
+            Map("startingTimestamp" -> startingTimestamp))
+            .writeStream
+            .format("memory")
+            .queryName("startingTimestamp_test")
+            .start()
+          try {
+            q.processAllAvailable()
+            // The timestamp resolves to v2; v3 only enables ICT, so rows start at v4.
+            val expectedRows = (firstPostIctRows ++ secondPostIctRows).map(Row(_))
+            checkAnswer(spark.table("startingTimestamp_test"), expectedRows)
+          } finally {
+            q.stop()
+          }
+        }
+      }
+    }
+  }
+
   testQuietly("startingVersion and startingTimestamp are both set") {
     withTempDir { tableDir =>
       val tablePath = tableDir.getCanonicalPath
@@ -1607,6 +1714,45 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         }.getMessage.contains("Please either provide 'startingVersion' or 'startingTimestamp'"))
       } finally {
         q.stop()
+      }
+    }
+  }
+
+  test("batch-only options are ignored in streaming") {
+    // endingVersion and endingTimestamp are batch CDC options that DeltaSource does not enforce.
+    // Each is accepted without error and the stream continues past the specified bound.
+    // Note: versionAsOf and timestampAsOf are NOT passthrough - they throw
+    // DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS at analysis time and are intentionally excluded here.
+    val fmt = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+    val ts2000 = fmt.format(new java.util.Date(2000))
+
+    val passthroughOptions = Seq(
+      "endingVersion" -> "1",
+      "endingTimestamp" -> ts2000
+    )
+
+    passthroughOptions.foreach { case (optKey, optVal) =>
+      withTempDir { inputDir =>
+        val deltaLog = DeltaLog.forTable(spark, inputDir.getAbsolutePath)
+        // version 0
+        Seq(1, 2, 3).toDF("id").write.format("delta").save(inputDir.toString)
+        modifyCommitTimestamp(deltaLog, 0, 1000)
+        // version 1
+        Seq(4, 5).toDF("id").write.mode("append").format("delta").save(inputDir.toString)
+        modifyCommitTimestamp(deltaLog, 1, 2000)
+
+        val df = loadStreamWithOptions(inputDir.toString, Map(
+          "startingVersion" -> "0",
+          optKey -> optVal
+        ))
+
+        testStream(df)(
+          ProcessAllAvailable(),
+          CheckAnswer(1, 2, 3, 4, 5),
+          AddToReservoir(inputDir, Seq(6).toDF("id")), // version 2 - past any ending bound
+          ProcessAllAvailable(),
+          CheckAnswer(1, 2, 3, 4, 5, 6)
+        )
       }
     }
   }
@@ -2061,6 +2207,154 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 9, 10)))
   }
 
+  for {
+    readChangeFeed <- Seq(true, false)
+    midVersionEndOffset <- Seq(true, false)
+  } {
+    test("fail on missing trailing commit - trailing commit disappears between latestOffset" +
+        s" and getBatch readChangeFeed=$readChangeFeed" +
+        s" midVersionEndOffset=$midVersionEndOffset") {
+      withTempDir { srcData =>
+        withSQLConf(
+          DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> readChangeFeed.toString) {
+          // Version 0: exactly 1 file
+          spark.range(10).coalesce(1).write.format("delta").mode("append")
+            .save(srcData.getCanonicalPath)
+          // Version 1: exactly 1 file
+          spark.range(10, 20).coalesce(1).write.format("delta").mode("append")
+            .save(srcData.getCanonicalPath)
+          // Version 2: exactly 3 files so rate limiting can produce a mid-version offset
+          spark.range(20, 30).repartition(3).write.format("delta").mode("append")
+            .save(srcData.getCanonicalPath)
+
+          val srcLog = DeltaLog.forTable(spark, srcData)
+          srcLog.update()
+
+          // Construct a DeltaSource manually so we can call latestOffset and getBatch separately.
+          // When midVersionEndOffset=true, we use maxFilesPerTrigger to force latestOffset to
+          // stop mid-version, producing a non-BASE_INDEX offset where reservoirVersion is
+          // the actual version. When false, all versions are consumed and the offset is bumped
+          // to (version+1, BASE_INDEX).
+          val optionsMap = {
+            var m = Map("startingVersion" -> "0")
+            if (readChangeFeed) m += (DeltaOptions.CDC_READ_OPTION -> "true")
+            if (midVersionEndOffset) m += ("maxFilesPerTrigger" -> "3")
+            m
+          }
+          val source = DeltaSource(
+            spark,
+            srcLog,
+            catalogTableOpt = None,
+            new DeltaOptions(optionsMap, spark.sessionState.conf),
+            srcLog.update(),
+            metadataPath = "")
+
+          val latestOfs = source.latestOffset(null, source.getDefaultReadLimit)
+          assert(latestOfs != null)
+          val endOffset = DeltaSourceOffset(srcLog.unsafeVolatileTableId, latestOfs)
+
+          if (midVersionEndOffset) {
+            // maxFilesPerTrigger=3 admits version 0 (1 file) + version 1 (1 file) +
+            // version 2's first file (1 file) = 3 files, stopping mid-version 2.
+            assert(endOffset.reservoirVersion == 2,
+              s"Expected version 2 but got ${endOffset.reservoirVersion}")
+            assert(endOffset.index == 0)
+          } else {
+            // All versions consumed; offset is bumped to (version=3, BASE_INDEX).
+            assert(endOffset.reservoirVersion == 3)
+            assert(endOffset.index == DeltaSourceOffset.BASE_INDEX)
+          }
+
+          // Delete version 2's commit file to simulate it disappearing after latestOffset.
+          srcLog.checkpoint()
+          val commitFile = new File(FileNames.unsafeDeltaFile(srcLog.logPath, 2).toUri)
+          assert(commitFile.exists(), s"Commit file should exist: $commitFile")
+          assert(commitFile.delete(), s"Failed to delete commit file: $commitFile")
+
+          if (catalogOwnedDefaultCreationEnabledInTests) {
+            // With coordinated commits, manually deleting the commit file creates an
+            // inconsistency between the filesystem and the commit coordinator's state.
+            // SnapshotManagement detects this gap before the streaming layer's trailing
+            // commit check can fire, throwing an IllegalStateException.
+            val e = intercept[IllegalStateException] {
+              source.getBatch(startOffsetOption = None, endOffset)
+            }
+            assert(e.getMessage.contains(
+              "unexpectedly still requires additional file-system listing"))
+          } else {
+            // With the parallel CommitInfo read, getBatch's `update()` call eagerly reads the last
+            // commit's file during snapshot construction to source the AMT manifest reference.
+            // Because v2's commit file was deleted, that read fails as a SparkException wrapping a
+            // FileNotFoundException before the streaming's DELTA_STREAMING_TRAILING_COMMIT_MISSING
+            // check fires.
+            val e = intercept[SparkException] {
+              source.getBatch(startOffsetOption = None, endOffset)
+            }
+            assert(
+              Iterator.iterate[Throwable](e)(_.getCause).takeWhile(_ != null)
+                .exists(_.isInstanceOf[FileNotFoundException]),
+              s"expected a FileNotFoundException in the cause chain, got: $e")
+          }
+        }
+      }
+    }
+  }
+
+  for {
+    readChangeFeed <- Seq(true, false)
+  } {
+    test("fail on missing trailing commit - empty batch from startIndex >= endIndex is not a" +
+        s" false positive readChangeFeed=$readChangeFeed") {
+      withSQLConf(
+          DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION.key -> "true",
+          DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> readChangeFeed.toString) {
+        withTempDir { srcData =>
+          spark.range(10).coalesce(1).write.format("delta").mode("append")
+            .save(srcData.getCanonicalPath)
+          spark.range(10, 20).coalesce(1).write.format("delta").mode("append")
+            .save(srcData.getCanonicalPath)
+          // Version 2: three files so multiple in-version indices exist.
+          spark.range(20, 30).repartition(3).write.format("delta").mode("append")
+            .save(srcData.getCanonicalPath)
+
+          val srcLog = DeltaLog.forTable(spark, srcData)
+          srcLog.update()
+
+          val optionsMap = {
+            var m = Map("startingVersion" -> "0")
+            if (readChangeFeed) m += (DeltaOptions.CDC_READ_OPTION -> "true")
+            m
+          }
+          val source = DeltaSource(
+            spark,
+            srcLog,
+            catalogTableOpt = None,
+            new DeltaOptions(optionsMap, spark.sessionState.conf),
+            srcLog.update(),
+            metadataPath = "")
+
+          val reservoirId = srcLog.unsafeVolatileTableId
+          // isInitialSnapshot=true keeps endOffset unequal to each start offset, so getBatch's
+          // start == end early return is skipped and the check actually runs.
+          val endOffset = DeltaSourceOffset(
+            reservoirId, reservoirVersion = 2, index = 1, isInitialSnapshot = true)
+
+          // getBatch runs the check eagerly, so returning instead of throwing is the assertion.
+
+          // startIndex == endIndex: pins the comparison as `<`, not `<=`.
+          val equalStart = DeltaSourceOffset(
+            reservoirId, reservoirVersion = 2, index = 1, isInitialSnapshot = false)
+          source.getBatch(Some(equalStart), endOffset)
+
+          // startIndex > endIndex.
+          val greaterStart = DeltaSourceOffset(
+            reservoirId, reservoirVersion = 2, index = 2, isInitialSnapshot = false)
+          source.getBatch(Some(greaterStart), endOffset)
+        }
+      }
+    }
+  }
+
   test("incremental: first commit file missing, fails") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
@@ -2095,7 +2389,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       if (useDsv2) {
         assert(e.getCause.getMessage.contains("no log file found for version"))
       } else {
-        assert(e.getCause.getMessage === DeltaErrors.failOnDataLossException(1L, 2L).getMessage)
+        checkError(e.getCause.asInstanceOf[DeltaIllegalStateException],
+          "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "42K03",
+          Map("startVersion" -> "1", "earliestVersion" -> "2", "option" -> "failOnDataLoss"))
       }
     }
   }
@@ -2134,7 +2430,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       if (useDsv2) {
         assert(e.getCause.getMessage.contains("versions are not contiguous"))
       } else {
-        assert(e.getCause.getMessage === DeltaErrors.failOnDataLossException(2L, 3L).getMessage)
+        checkError(e.getCause.asInstanceOf[DeltaIllegalStateException],
+          "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "42K03",
+          Map("startVersion" -> "2", "earliestVersion" -> "3", "option" -> "failOnDataLoss"))
       }
     }
   }
@@ -2399,7 +2697,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       Seq(1, 2, 3).toDF().write.delta(inputDir.toString)
 
-      val df = spark.readStream.delta(inputDir.toString)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       val stream = df.writeStream
         .option("checkpointLocation", checkpointDir.toString)
@@ -3081,20 +3379,19 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     withTable("srcTable") {
       withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>
         def readStream(startingVersion: Option[Long] = None): DataFrame = {
-          var dsr = spark.readStream
-          startingVersion.foreach { v =>
-            dsr = dsr.option("startingVersion", v)
-          }
-          dsr.table("srcTable")
+          val options = startingVersion
+            .map(version => Map("startingVersion" -> version.toString))
+            .getOrElse(Map.empty)
+          loadStreamWithOptions(srcTblDir.getCanonicalPath, options)
         }
 
-        sql(s"""
+        executeDml(s"""
              |CREATE TABLE srcTable (
              |  a STRING NOT NULL,
              |  b STRING NOT NULL
              |) USING DELTA LOCATION '${srcTblDir.getCanonicalPath}'
              |""".stripMargin)
-        sql("""
+        executeDml("""
             |INSERT INTO srcTable
             | VALUES ("a", "b")
             |""".stripMargin)
@@ -3116,12 +3413,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           // Write more data and drop NOT NULL constraint
           Execute { _ =>
             // A batch of Delta actions
-            sql("""
+            executeDml("""
               |INSERT INTO srcTable
               |VALUES ("c", "d")
               |""".stripMargin)
-            sql("ALTER TABLE srcTable ALTER COLUMN a DROP NOT NULL")
-            sql("""
+            executeDml("ALTER TABLE srcTable ALTER COLUMN a DROP NOT NULL")
+            executeDml("""
               |INSERT INTO srcTable
               |VALUES ("e", "f")
               |""".stripMargin)
@@ -3152,7 +3449,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           txn.commit(txn.metadata.copy(schemaString = newSchema.json) :: Nil,
             DeltaOperations.ManualUpdate)
         }
-        sql("""
+        executeDml("""
             |INSERT INTO srcTable
             |VALUES ("g", "h")
             |""".stripMargin)
@@ -3178,9 +3475,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   test("streaming processes 100 sequential single-value commits and contains all values 0 to 99") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      // TODO(#6339): enable batch size 2 after fix PR merged
-      assume(!catalogOwnedCoordinatorBackfillBatchSize.contains(2),
-        "Test cannot pass with batch size 2 due to issue #6339")
       // Write the first value to initialize the Delta table
       Seq(0).toDF("x").write.format("delta").save(inputDir.toString)
 
@@ -3370,10 +3664,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
       Seq((1L, 10L, 100)).toDF("id", "part", "original_col")
         .write.format("delta").mode("append").save(tablePath)
-      renameColumn(tablePath, "original_col", "renamed_col")
+      executeDml(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN original_col TO renamed_col")
       Seq((2L, 20L, 200)).toDF("id", "part", "renamed_col")
         .write.format("delta").mode("append").save(tablePath)
-      renameColumn(tablePath, "part", "renamed_part")
+      executeDml(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN part TO renamed_part")
       Seq((3L, 30L, 300)).toDF("id", "renamed_part", "renamed_col")
         .write.format("delta").mode("append").save(tablePath)
 
@@ -3424,6 +3718,134 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       } finally {
         q.stop()
       }
+    }
+  }
+
+  test("initial snapshot: checkpoint resume produces all rows without duplicates") {
+    withTempDirs { (sourceDir, sinkDir, checkpointDir) =>
+      val sourcePath = sourceDir.getCanonicalPath
+      val sinkPath = sinkDir.getCanonicalPath
+      val checkpointPath = checkpointDir.getCanonicalPath
+
+      (0 until 10).foreach { i =>
+        Seq(i).toDF("value")
+          .write.mode("append").format("delta").save(sourcePath)
+      }
+
+      val q1 = loadStreamWithOptions(
+        sourcePath, Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "2"))
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .start(sinkPath)
+      try {
+        q1.processAllAvailable()
+      } finally {
+        q1.stop()
+      }
+
+      val firstRunCount = spark.read.format("delta").load(sinkPath).count()
+      assert(firstRunCount > 0, "First run should produce at least some rows")
+
+      val q2 = loadStreamWithOptions(
+        sourcePath, Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "2"))
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .start(sinkPath)
+      try {
+        q2.processAllAvailable()
+      } finally {
+        q2.stop()
+      }
+
+      checkAnswer(
+        spark.read.format("delta").load(sinkPath),
+        (0 until 10).map(i => Row(i)))
+    }
+  }
+
+  test("initial snapshot: Trigger.AvailableNow processes all data and terminates") {
+    withTempDirs { (sourceDir, sinkDir, checkpointDir) =>
+      val sourcePath = sourceDir.getCanonicalPath
+      val sinkPath = sinkDir.getCanonicalPath
+      val checkpointPath = checkpointDir.getCanonicalPath
+
+      (0 until 10).foreach { i =>
+        Seq(i).toDF("value")
+          .write.mode("append").format("delta").save(sourcePath)
+      }
+
+      val q = loadStreamWithOptions(sourcePath, Map.empty)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .trigger(Trigger.AvailableNow())
+        .start(sinkPath)
+      try {
+        assert(q.awaitTermination(60000),
+          "Trigger.AvailableNow query should terminate within 60 seconds")
+      } finally {
+        q.stop()
+      }
+
+      checkAnswer(
+        spark.read.format("delta").load(sinkPath),
+        (0 until 10).map(i => Row(i)))
+    }
+  }
+
+  test("initial snapshot: checkpoint resume after new commits produces all rows") {
+    withTempDirs { (sourceDir, sinkDir, checkpointDir) =>
+      val sourcePath = sourceDir.getCanonicalPath
+      val sinkPath = sinkDir.getCanonicalPath
+      val checkpointPath = checkpointDir.getCanonicalPath
+
+      // Create a 10-version table (1 row each).
+      (0 until 10).foreach { i =>
+        Seq(i).toDF("value")
+          .write.mode("append").format("delta").save(sourcePath)
+      }
+
+      // First run: rate-limit to 2 files per trigger, process some data, then stop.
+      val q1 = loadStreamWithOptions(
+        sourcePath, Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "2"))
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .start(sinkPath)
+      try {
+        q1.processAllAvailable()
+      } finally {
+        q1.stop()
+      }
+
+      val firstRunCount = spark.read.format("delta").load(sinkPath).count()
+      assert(firstRunCount > 0, "First run should produce at least some rows")
+
+      // Append 3 separate commits while the query is down.
+      (10 until 19).grouped(3).foreach { batch =>
+        batch.toDF("value")
+          .write.mode("append").format("delta").save(sourcePath)
+      }
+
+      // Second run: restart from checkpoint, process all remaining data.
+      val q2 = loadStreamWithOptions(
+        sourcePath, Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "2"))
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .start(sinkPath)
+      try {
+        q2.processAllAvailable()
+      } finally {
+        q2.stop()
+      }
+
+      // All 19 rows (10 initial + 9 appended) must be present with no duplicates.
+      checkAnswer(
+        spark.read.format("delta").load(sinkPath),
+        (0 until 19).map(i => Row(i)))
     }
   }
 

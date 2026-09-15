@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.test.V2ForceTest
  * Test suite that runs [[RemoveColumnMappingStreamingReadSuite]] using the V2 connector
  * (V2_ENABLE_MODE=STRICT).
  *
- * SparkTable (V2) is read-only and does not support DDL, so DDL/DML operations are routed
+ * DeltaV2Table (V2) is read-only and does not support DDL, so DDL/DML operations are routed
  * through the V1 connector via `executeDml`. Only streaming reads use the V2 connector.
  */
 class RemoveColumnMappingStreamingReadV2Suite

@@ -242,7 +242,8 @@ class DataFiltersBuilder(
       dataFilter: Expression,
       isNullExpansionDepth: Integer): Option[DataSkippingPredicate] = dataFilter match {
     // Expressions that contain only literals are not eligible for skipping.
-    case cmp: Expression if cmp.children.forall(areAllLeavesLiteral) => None
+    case cmp: Expression if cmp.children.forall(DataFiltersBuilder.areAllLeavesLiteral)
+      => None
 
     // Push skipping predicate generation through the AND:
     //
@@ -741,7 +742,10 @@ class DataFiltersBuilder(
         DataSkippingPredicate(Column(finalExpr), statsCols.toSet)
     }
   }
+}
 
+
+object DataFiltersBuilder {
   // We are doing the iterative approach because of stack depth concerns.
   private[stats] def areAllLeavesLiteral(e: Expression): Boolean = {
     val stack = scala.collection.mutable.Stack[Expression]()
@@ -760,4 +764,3 @@ class DataFiltersBuilder(
     true
   }
 }
-

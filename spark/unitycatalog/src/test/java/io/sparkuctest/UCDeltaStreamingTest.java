@@ -20,11 +20,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiException;
-import io.unitycatalog.client.api.DeltaCommitsApi;
-import io.unitycatalog.client.api.TablesApi;
-import io.unitycatalog.client.model.DeltaGetCommits;
-import io.unitycatalog.client.model.DeltaGetCommitsResponse;
-import io.unitycatalog.client.model.TableInfo;
+import io.unitycatalog.client.delta.api.DeltaTablesApi;
+import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -193,21 +190,17 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  private void assertUCManagedTableVersion(long expectedVersion, String tableName, ApiClient client)
-      throws ApiException {
-    // Get the table info.
-    TablesApi tablesApi = new TablesApi(client);
-    TableInfo tableInfo = tablesApi.getTable(tableName, false, false);
-
-    // Get the latest UC commit version.
-    DeltaCommitsApi deltaCommitsApi = new DeltaCommitsApi(client);
-    DeltaGetCommitsResponse resp =
-        deltaCommitsApi.getCommits(
-            new DeltaGetCommits().tableId(tableInfo.getTableId()).startVersion(0L));
-    assertNotNull(resp, "DeltaGetCommits response should not be null");
+  private void assertUCManagedTableVersion(
+      long expectedVersion, String fullTableName, ApiClient client) throws ApiException {
+    // The UC Delta API's `loadTable` returns the table metadata and the latest committed
+    // version in a single response, replacing the previous two-step lookup (DeltaTablesApi.getTable
+    // followed by DeltaCommitsApi.getCommits).
+    String[] parts = fullTableName.split("\\.");
+    assertEquals(3, parts.length, "Full table name must be catalog.schema.table");
+    DeltaTablesApi deltaTablesApi = new DeltaTablesApi(client);
+    DeltaLoadTableResponse resp = deltaTablesApi.loadTable(parts[0], parts[1], parts[2]);
+    assertNotNull(resp, "DeltaLoadTableResponse should not be null");
     assertNotNull(resp.getLatestTableVersion(), "Latest table version should not be null");
-
-    // The UC server should have the latest version.
     assertEquals(expectedVersion, resp.getLatestTableVersion());
   }
 

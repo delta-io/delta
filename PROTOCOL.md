@@ -87,7 +87,7 @@
   - [Reader Requirements for Catalog-managed tables](#reader-requirements-for-catalog-managed-tables)
   - [Table Discovery](#table-discovery)
   - [Sample Catalog Client API](#sample-catalog-client-api)
-- [Requirements for Writers](#requirements-for-writers)
+- [Additional Requirements for Writers](#additional-requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
   - [Delta Log Entries](#delta-log-entries-1)
@@ -123,6 +123,7 @@
   - [Partition Value Serialization](#partition-value-serialization)
   - [Schema Serialization Format](#schema-serialization-format)
     - [Primitive Types](#primitive-types)
+      - [Void Type](#void-type)
     - [Struct Type](#struct-type)
     - [Struct Field](#struct-field)
     - [Array Type](#array-type)
@@ -620,7 +621,7 @@ Field Name | Data Type | Description | optional/required
 path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path. | required
 deletionTimestamp | Option[Long] | The time the deletion occurred, represented as milliseconds since the epoch | optional
 dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version | required
-extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present | optional
+extendedFileMetadata | Boolean | When `true` the fields `partitionValues` and `size` are present | optional
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization) | optional
 size| Long | The size of this data file in bytes | optional
 stats | [Statistics Struct](#Per-file-Statistics) | Contains statistics (e.g., count, min/max values for columns) about the data in this logical file | optional
@@ -883,12 +884,28 @@ Field Name | Data Type | Description | optional/required
 version|`Long`|The checkpoint version.| required
 tags|`Map[String, String]`|Map containing any additional metadata about the v2 spec checkpoint.| optional
 
+##### Checkpoint Metadata Tags
+
+The following tag keys may be present in the `tags` map. All are optional, so there is no requirement for writers to produce these and readers cannot assume their presence.
+
+Tag Key | Value Type | Description
+-|-|-
+sidecarNumActions|`String` (parseable as `Long`)|The total number of actions stored across all [sidecar files](#sidecar-files) in this checkpoint.
+sidecarSizeInBytes|`String` (parseable as `Long`)|The total size in bytes across all [sidecar files](#sidecar-files) in this checkpoint.
+numOfAddFiles|`String` (parseable as `Long`)|The number of `add` file actions in this checkpoint.
+sidecarFileSchema|`String` (JSON-encoded `StructType`)|The schema of the [sidecar files](#sidecar-files) in this checkpoint. The value is the JSON serialization of the sidecar file's Parquet schema. Readers can use this to avoid reading the Parquet footer of sidecar files to determine their schema.
+
 E.g.
 ```json
 {
   "checkpointMetadata":{
     "version":1,
-    "tags":{}
+    "tags":{
+      "sidecarNumActions":"1234",
+      "sidecarSizeInBytes":"5678",
+      "numOfAddFiles":"42",
+      "sidecarFileSchema":"{\"type\":\"struct\",\"fields\":[{\"name\":\"add\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"path\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"remove\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"path\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}}]}"
+    }
   }
 }
 ```
@@ -948,7 +965,10 @@ A feature being supported does not imply that it is active. For example, a table
 A feature is active on a table when it is supported *and* its metadata requirements are satisfied. Each feature defines its own metadata requirements, as stated in the corresponding sections of this document. For example, the Append-only feature is active when the `appendOnly` feature name is present in a `protocol`'s `writerFeatures` *and* a table property `delta.appendOnly` set to `true`.
 
 # Column Mapping
-Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
+Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
+
+## Field Path
+A _field path_ is the path from the schema root to a [struct field](#struct-field), formed by the ordered sequence of field names along that path. When the path traverses an [Array Type](#array-type) element, or a [Map Type](#map-type) key or value, the path component is `element`, `key`, or `value`, respectively. A _physical field path_ exists only when Column Mapping mode is `id` or `name`; it is formed by replacing each struct field name in a field path with that struct field's physical name. In these modes, a physical field path must be unique across all versions of the table. This supports cheap column deletions in `name` mode.
 
 The column mapping is governed by the table property `delta.columnMapping.mode` being one of `none`, `id`, and `name`. The table property should only be honored if the table's protocol has reader and writer versions and/or table features that support the `columnMapping` table feature. For readers this is Reader Version 2, or Reader Version 3 with the `columnMapping` table feature listed as supported. For writers this is Writer Version 5 or 6, or Writer Version 7 with the `columnMapping` table feature supported.
 
@@ -979,6 +999,7 @@ The following is an example for the column definition of a table that leverages 
     }
   }
 ```
+In this example, the field path of the nested field `d` is `["e", "element", "d"]`, and its physical field path is `["col-5f422f40-de70-45b2-88ab-1d5c90e94db1", "element", "col-a7f4159c-53be-4cb0-b81a-f7e5240cfc49"]`.
 
 ## Writer Requirements for Column Mapping
 In order to support column mapping, writers must:
@@ -990,7 +1011,7 @@ In order to support column mapping, writers must:
  - Write data files by using the _physical name_ that is chosen for each column. The physical name of the column is static and can be different than the _display name_ of the column, which is changeable.
  - Write the 32 bit integer column identifier as part of the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift).
  - Track partition values, column level statistics, and [clustering column](#clustered-table) names with the physical name of the column in the transaction log.
- - Assign a globally unique identifier as the physical name for each new column that is added to the schema. This is especially important for supporting cheap column deletions in `name` mode. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
+ - Assign a physical name for each new column that is added to the schema, and ensure the physical field path of the new column is unique across all versions of the table. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
 
 ## Reader Requirements for Column Mapping
 If the table is on Reader Version 2, or if the table is on Reader Version 3 and the feature `columnMapping` is present in `readerFeatures`, readers and writers must read the table property `delta.columnMapping.mode` and do one of the following.
@@ -1815,7 +1836,7 @@ The following is an example for the `domainMetadata` action definition of a tabl
 {
   "domainMetadata": {
     "domain": "delta.clustering",
-    "configuration": "{\"clusteringColumns\":[\"col-daadafd7-7c20-4697-98f8-bff70199b1f9\", \"col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e\"]}",
+    "configuration": "{\"clusteringColumns\":[[\"col-daadafd7-7c20-4697-98f8-bff70199b1f9\"], [\"col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e\"]]}",
     "removed": false
   }
 }
@@ -1824,11 +1845,12 @@ The example above converts `configuration` field into JSON format, including esc
 ```json
 {
   "clusteringColumns": [
-    "col-daadafd7-7c20-4697-98f8-bff70199b1f9",
-    "col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e"
+    ["col-daadafd7-7c20-4697-98f8-bff70199b1f9"],
+    ["col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e"]
   ]
 }
 ```
+Each entry in `clusteringColumns` is the name path of a clustering column: a single segment for a top-level column, and multiple segments for a nested column (for example, `["user", "address", "city"]`). If [Column Mapping](#column-mapping) is enabled, physical names are used for each segment.
 
 
 # Variant Data Type
@@ -2006,6 +2028,8 @@ The supported type changes are:
   - `Byte`, `Short` or `Int` -> `Decimal(10 + k1, k2)` where `k1 >= k2 >= 0`.
   - `Long` -> `Decimal(20 + k1, k2)` where `k1 >= k2 >= 0`.
 
+Note: changing a `void` column to another type does not require the Type Widening feature; see [Void Type](#void-type).
+
 To support this feature:
 - The table must be on Reader version 3 and Writer Version 7.
 - The feature `typeWidening` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`, either during its creation or at a later stage.
@@ -2124,14 +2148,14 @@ When Type Widening is supported (when the `readerFeatures` field of a table's `p
 - Readers must allow reading data files written before the table underwent any supported type change, and must convert such values to the current, wider type.
 - Readers must validate that they support all type changes in the `delta.typeChanges` field in the table schema for the table version they are reading and fail when finding any unsupported type change.
 
-# Requirements for Writers
+# Additional Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
 
 ## Creation of New Log Entries
  - Writers MUST never overwrite an existing log entry. When ever possible they should use atomic primitives of the underlying filesystem to ensure concurrent writers do not overwrite each other's entries.
 
 ## Consistency Between Table Metadata and Data Files
- - Any column that exists in a data file present in the table MUST also be present in the metadata of the table.
+ - Any data file column that exists in the table schema MUST have the same type (except as allowed by the [Type Widening](#type-widening) table feature, if enabled).
  - Values for all partition columns present in the schema MUST be present for all files in the table.
  - Columns present in the schema of the table MAY be missing from data files. Readers SHOULD fill these missing columns in with `null`.
 
@@ -2500,7 +2524,7 @@ Delta Lake tables support a set of properties stored in the `configuration` fiel
 Property | Description | Details
 -|-|-
 `delta.parquet.compression.codec` | Compression codec writers SHOULD use for new Parquet data and checkpoint files. Changing this property does not affect existing files; a table may contain files written with different codecs, which is a normal and expected state. | Widely supported values (matched case-insensitively): `uncompressed`/`none` (no compression), `snappy`, `gzip`, `lz4` (deprecated, Hadoop framing), `lz4_raw` ([LZ4 block format](https://parquet.apache.org/docs/file-format/data-pages/compression/#lz4_raw)), `zstd`.<br><br>When absent, writers SHOULD default to `zstd`. If a writer does not support or recognize the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.<br><br>Readers SHOULD support all codecs listed above regardless of the current property value. Parquet files written with other [parquet-supported codecs](https://parquet.apache.org/docs/file-format/data-pages/compression/) may also exist; readers MAY support reading these files.
-`delta.parquet.format.version` | Parquet data page format writers SHOULD use for new data files. This property is a directive to writers only; readers do not need to consult it, as Parquet pages are self-describing via the `PageType` field in each page header. Changing this property does not affect existing files; a table MAY contain files written with different data page versions, which is a normal and expected state. | Valid values: `1.0.0` (DataPageV1) and `2.x.x` (DataPageV2, where `x.x` is any minor.patch version). Recommended values are `1.0.0` and `2.12.0`.<br><br>When absent, writers SHOULD default to `1.0.0`. Writers SHOULD validate this property and abort if the value does not match `1.0.0` or `2.MINOR.PATCH`.<br><br>Readers SHOULD support both DataPageV1 and DataPageV2 pages regardless of this property's value. Tables intended for access by engines beyond the Delta Lake connectors SHOULD use `1.0.0`, as DataPageV2 support varies across the broader Parquet ecosystem.
+`delta.parquet.format.version` | Parquet data page format writers SHOULD use for new data and checkpoint files. This property is a directive to writers only; readers do not need to consult it, as Parquet pages are self-describing via the `PageType` field in each page header. Changing this property does not affect existing files; a table MAY contain files written with different data page versions, which is a normal and expected state. | Valid values: `1.0.0` (DataPageV1) and `2.x.x` (DataPageV2, where `x.x` is any minor.patch version). Recommended values are `1.0.0` and `2.12.0`.<br><br>When absent, writers SHOULD default to `1.0.0`. Writers SHOULD validate this property and abort if the value does not match `1.0.0` or `2.MINOR.PATCH`.<br><br>Readers SHOULD support both DataPageV1 and DataPageV2 pages regardless of this property's value. Tables intended for access by engines beyond the Delta Lake connectors SHOULD use `1.0.0`, as DataPageV2 support varies across the broader Parquet ecosystem.
 `delta.enableVariantShredding` | When `true`, writers could write variant data to parquet files in [shredded](#variant-shredding) format. | Valid values: `true` (shredding allowed) and `false` (shredding not allowed).<br><br>When enabled, writers must ensure that the `variantShredding` table feature is present in the table `protocol`'s `readerFeatures` and `writerFeatures`.
 
 # Appendix
@@ -2723,10 +2747,26 @@ binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
 timestamp| Microsecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `true`.
 timestamp without time zone | Microsecond precision timestamp in a local timezone elapsed since the Unix epoch, 1970-01-01 00:00:00. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNtz)](#timestamp-without-timezone-timestampNtz) for more information.
+void| A column that contains only `null` values and is never materialized in data files. See section [Void Type](#void-type) for more information.
 
 See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp) for more details about timestamp and `isAdjustedToUTC`.
 
-Note: Existing tables may have `void` data type columns. Behavior is undefined for `void` data type columns but it is recommended to drop any `void` data type columns on reads (as is implemented by the Spark connector).
+#### Void Type
+
+_Note: `void` was never deliberately designed as a Delta feature; the Spark connector has produced such columns for a long time without it being specified here. This section documents that pre-existing behavior post-facto, rather than introducing it through the usual RFC process. Because such columns already exist in tables written by earlier clients, `void` is not gated by any table feature and applies to all tables._
+
+`void` is a primitive type and can appear both as a top-level column and nested inside complex types.
+
+On write, writers MUST omit `void` columns from data files; they do not appear in the data file's schema. On read, readers MUST reconstruct them as all-`null` columns, consistent with the [rule](#consistency-between-table-metadata-and-data-files) that columns present in the table schema but missing from a data file are read as `null`.
+
+Because `void` is never written to data files, writers MUST reject operations that **would write new data files** when the table's schema contains any of the following shapes:
+- a `void` type inside an `array` or `map` at any nesting level;
+- a `struct` (at any nesting level) whose fields are all `void`; or
+- a table whose columns are all `void`.
+
+These restrictions are stated in terms of the **table schema**, not the schema of any individual data file. A table with such a schema can still be created, altered through metadata-only operations, and read. In particular, a table covered by these restrictions can be made writable by evolving its schema - for example, by changing a `void` column to another type.
+
+A `void` column may be changed to any other data type through supported schema-evolution operations; this does not require the [Type Widening](#type-widening) table feature.
 
 ### Struct Type
 
@@ -3088,3 +3128,5 @@ binary| `binary` |
 array| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists) for further details | `LIST`
 map| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps) for further details | `MAP`
 struct| `group` |
+
+Note that `void` columns are not stored in Parquet files. See section [Void Type](#void-type).

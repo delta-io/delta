@@ -30,8 +30,8 @@ import org.apache.iceberg.view.ViewVersion;
 /** Represents a change to table or view metadata. */
 
 /**
- * This class is directly copied from iceberg repo 1.10.0 with following changes
- * Changes: L91 Added back the deprecated API in 1.9.0
+ * This class is directly copied from iceberg repo 1.11.0 with following changes
+ * Changes: L91 Added back the deprecated API (removed in 1.11.0)
  *              public AddSchema(Schema schema, int lastColumnId)
  */
 public interface MetadataUpdate extends Serializable {

@@ -510,6 +510,19 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
           builder.putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
         }
+
+        // When reusing column mapping metadata during overwrite, also carry over the nested IDs
+        // (used for List/Map/Array element fields in IcebergCompat V2+). Without this,
+        // rewriteFieldIdsForIceberg sees no existing nested IDs and assigns new ones,
+        // causing needless Iceberg field ID churn on schema-unchanged overwrites.
+        if (canReuseColumnMappingMetadataDuringOverwrite &&
+            !hasNestedColumnIds(field) &&
+            existingFieldOpt.exists(hasNestedColumnIds)) {
+          builder.putMetadata(
+            COLUMN_MAPPING_METADATA_NESTED_IDS_KEY,
+            getNestedColumnIds(existingFieldOpt.get))
+        }
+
         field.copy(metadata = builder.build())
       })
     // Starting from IcebergCompatV2, we require writing field-id for List/Map nested fields

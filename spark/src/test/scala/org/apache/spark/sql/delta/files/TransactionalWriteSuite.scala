@@ -16,9 +16,16 @@
 
 package org.apache.spark.sql.delta.files
 
-import org.apache.spark.sql.delta.DeltaLog
+import scala.jdk.CollectionConverters._
+
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.DeltaFileOperations
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
+import org.apache.parquet.hadoop.ParquetFileReader
+import org.apache.parquet.hadoop.util.HadoopInputFile
 
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.functions.column
@@ -66,6 +73,40 @@ class TransactionalWriteSuite extends QueryTest with SharedSparkSession with Del
         snapshot.allFiles.collect().foreach { f =>
           assert(!f.path.startsWith("data/"))
         }
+      }
+    }
+  }
+
+  test("partitioned table defaults to writing partition columns to parquet files") {
+    withTempDir { dir =>
+      spark.range(100).toDF("id")
+        .withColumn("partCol", column("id") % 5)
+        .write.format("delta")
+        .partitionBy("partCol")
+        .save(dir.getCanonicalPath)
+
+      val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val snapshot = deltaLog.update()
+      val files = snapshot.allFiles.collect()
+      assert(files.nonEmpty)
+
+      val logicalToPhysicalNameMap =
+        DeltaColumnMapping.getLogicalNameToPhysicalNameMap(snapshot.schema)
+      val physicalPartCol = logicalToPhysicalNameMap(Seq("partCol")).head
+
+      files.foreach { file =>
+        val filePath = DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, file.path)
+        val fileReader = ParquetFileReader.open(
+          HadoopInputFile.fromPath(new Path(filePath.toString), new Configuration()))
+        val parquetSchema = try {
+          fileReader.getFooter.getFileMetaData.getSchema
+        } finally {
+          fileReader.close()
+        }
+        val fieldNames = parquetSchema.getFields.asScala.map(_.getName).toSet
+        assert(fieldNames.contains(physicalPartCol),
+          s"Partition column 'partCol' (physical: '$physicalPartCol') should be present " +
+            s"in parquet file ${file.path}, but found fields: $fieldNames")
       }
     }
   }

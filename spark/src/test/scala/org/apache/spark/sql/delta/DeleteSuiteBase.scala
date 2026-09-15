@@ -21,7 +21,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.{SparkThrowable, SparkUnsupportedOperationException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
@@ -53,7 +53,7 @@ trait DeleteBaseMixin
       expectedErrorClassForDataSetTempView: String = null): Unit = {
     testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
       withTable("tab") {
-        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        Seq((0, 3), (1, 2)).toDF("key", "value").write.format(writeFormat).saveAsTable("tab")
         if (isSQLTempView) {
           sql(s"CREATE TEMP VIEW v AS $text")
         } else {
@@ -91,13 +91,13 @@ trait DeleteBaseMixin
       expectResult: Seq[Row]): Unit = {
     testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
         withTable("tab") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format(writeFormat).saveAsTable("tab")
           createTempViewFromSelect(text, isSQLTempView)
           executeDelete(
             "v",
             "key >= 1 and value < 3"
           )
-          checkAnswer(spark.read.format("delta").table("v"), expectResult)
+          checkAnswer(spark.read.format(writeFormat).table("v"), expectResult)
         }
     }
   }
@@ -237,6 +237,32 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     }
   }
 
+  test("basic case with NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
+      checkDelete(condition = None, Nil)
+    }
+  }
+
+  test("basic case with condition on NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
+      checkDelete(condition = Some("key is null"), Nil)
+    }
+  }
+
+  test("basic case with nested NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(
+      DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"
+    ) {
+      append(Seq(Tuple1((null, 2)), Tuple1((null, 4)), Tuple1(null), Tuple1((null, 1))).toDF("s"))
+      checkDelete(condition = Some("s._1 IS NULL AND s IS NOT NULL"), Row(null) :: Nil)
+    }
+  }
+
   test("Negative case - non-Delta target") {
     writeTable(
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
@@ -281,7 +307,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     withTempPath { tempDir =>
       val tempPath = tempDir.getCanonicalPath
       val df = Seq((2, 2), (3, 2)).toDF("key", "value")
-      df.write.format("delta").partitionBy("key").save(tempPath)
+      df.write.format(writeFormat).partitionBy("key").save(tempPath)
 
       val e = intercept[AnalysisException] {
         executeDelete(target = s"delta.`$tempPath/key=2`", where = "value = 2")
@@ -293,7 +319,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
   test("delete cached table by name") {
     withTable("cached_delta_table") {
       Seq((2, 2), (1, 4)).toDF("key", "value")
-        .write.format("delta").saveAsTable("cached_delta_table")
+        .write.format(writeFormat).saveAsTable("cached_delta_table")
 
       spark.table("cached_delta_table").cache()
       spark.table("cached_delta_table").collect()
@@ -380,7 +406,8 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       Row("c", "v") :: Row("d", "vv") :: Nil)
   }
 
-  test("do not support non-EXISTS subquery test") {
+  test("do not support non-EXISTS subquery test",
+      DSv2Incompatible("asserts classic Delta DELETE subquery policy")) {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
     Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("c", "d").createOrReplaceTempView("source")
 
@@ -445,7 +472,8 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       Row(2, 2) :: Row(1, 4) :: Row(1, 1) :: Nil)
   }
 
-  test("EXISTS subquery kill switch") {
+  test("EXISTS subquery kill switch",
+      DSv2Incompatible("asserts classic Delta DELETE subquery policy")) {
     append(Seq((2, 2), (1, 4)).toDF("key", "value"))
     Seq((2, 2)).toDF("c", "d").createOrReplaceTempView("source")
 
@@ -464,7 +492,8 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     }
   }
 
-  test("schema pruning on data condition") {
+  test("schema pruning on data condition",
+      ChecksPhysicalDeltaPlan("checks Delta file-scan schema pruning")) {
     val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
     append(input, Nil)
     // Start from a cached snapshot state
@@ -476,7 +505,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     }
 
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanExec => f
+      case f: FileSourceScanLike => f
     })
 
     // The first scan is for finding files to delete. We only are matching against the key
@@ -486,7 +515,8 @@ trait DeleteBaseTests extends DeleteBaseMixin {
   }
 
 
-  test("nested schema pruning on data condition") {
+  test("nested schema pruning on data condition",
+      ChecksPhysicalDeltaPlan("checks Delta file-scan schema pruning")) {
     val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
       .select(struct("key", "value").alias("nested"))
     append(input, Nil)
@@ -499,7 +529,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     }
 
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanExec => f
+      case f: FileSourceScanLike => f
     })
 
     assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
@@ -522,27 +552,39 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       customErrorRegex: Option[String] = None) {
     test(s"$functionType functions in delete - expect exception: $expectException") {
       withTable("deltaTable") {
-        data.write.format("delta").saveAsTable("deltaTable")
+        data.write.format(writeFormat).saveAsTable("deltaTable")
 
         val expectedErrorRegex = "(?s).*(?i)unsupported.*(?i).*Invalid expressions.*"
 
-        var catchException = true
+        val isInMemoryV2 = this.isInstanceOf[DeltaSQLInMemoryTestUtils]
+        val inMemoryV2ErrorRegex = functionType match {
+          // Each Spark version emits a different error class for unsupported
+          // expressions in DELETE WHERE (named, legacy, or via the "operator"
+          // fallback), so match on the stable human-readable keywords instead.
+          case "Window" => "(?is).*window function.*"
+          case "Aggregate" => "(?is).*aggregate function.*"
+          case "Generate" => "(?is).*more than one row.*"
+        }
+        var catchException = if (isInMemoryV2) expectException else true
 
-        var errorRegex = if (functionType.equals("Generate")) {
+        var errorRegex = if (isInMemoryV2) {
+          inMemoryV2ErrorRegex
+        } else if (functionType.equals("Generate")) {
           ".*Subqueries are not supported in the DELETE.*"
         } else customErrorRegex.getOrElse(expectedErrorRegex)
 
 
         if (catchException) {
-          val dataBeforeException = spark.read.format("delta").table("deltaTable").collect()
+          val dataBeforeException = spark.read.format(writeFormat).table("deltaTable").collect()
           val e = intercept[Exception] {
             executeDelete(target = "deltaTable", where = where)
           }
           val message = if (e.getCause != null) {
             e.getCause.getMessage
           } else e.getMessage
-          assert(message.matches(errorRegex))
-          checkAnswer(spark.read.format("delta").table("deltaTable"), dataBeforeException)
+          assert(message.matches(errorRegex),
+            s"unexpected error in $functionType case: ${e.getClass.getName}: $message")
+          checkAnswer(spark.read.format(writeFormat).table("deltaTable"), dataBeforeException)
         } else {
           executeDelete(target = "deltaTable", where = where)
         }
@@ -636,7 +678,7 @@ trait DeleteSubqueryBaseMixin extends DeleteBaseMixin {
         .toDF("c", "t1")
         .coalesce(1)
         .write
-        .format("delta")
+        .format(writeFormat)
         .mode("overwrite")
         .saveAsTable("target")
       if (source.nonEmpty) {
@@ -665,7 +707,7 @@ trait DeleteSubqueryBaseMixin extends DeleteBaseMixin {
       val partSpec = if (isPartitioned) "partitioned by (c)" else ""
       test(name + s" isPartitioned=$isPartitioned") {
         withTable("target") {
-          sql(s"CREATE TABLE target(c int, t1 string) USING delta $partSpec")
+          sql(s"CREATE TABLE target(c int, t1 string) USING $tableProvider $partSpec")
           body
         }
       }
@@ -791,7 +833,7 @@ trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
       .toDF("c", "t1")
       .coalesce(1)
       .write
-      .format("delta")
+      .format(writeFormat)
       .mode("overwrite")
       .saveAsTable("target")
     // Create an empty source view with the correct schema
@@ -817,7 +859,7 @@ trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
       .toDF("c", "t1")
       .repartition(4)
       .write
-      .format("delta")
+      .format(writeFormat)
       .mode("overwrite")
       .saveAsTable("target")
     Seq((3, "x"), (7, "y"), (15, "z"))

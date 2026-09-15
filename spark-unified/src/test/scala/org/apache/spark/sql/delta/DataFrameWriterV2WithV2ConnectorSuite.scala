@@ -30,7 +30,7 @@ class DataFrameWriterV2WithV2ConnectorSuite
    * Tests that we expect to fail because they require write operations after initial
    * table creation.
    *
-   * Kernel's SparkTable (V2 connector) only implements SupportsRead, not SupportsWrite.
+   * Kernel's DeltaV2Table (V2 connector) only implements SupportsRead, not SupportsWrite.
    * Tests that perform append/replace operations after table creation are expected to fail.
    */
   override protected def shouldFail(testName: String): Boolean = {
@@ -49,8 +49,8 @@ class DataFrameWriterV2WithV2ConnectorSuite
       "OverwritePartitions: overwrite all rows if not partitioned",
       "OverwritePartitions: by name not position",
 
-      // Create operations - TODO: fix SparkTable's name() to match DeltaTableV2
-      // SparkTable.name() returns simple table name, but tests expect catalog.schema.table format
+      // Create operations - TODO: fix DeltaV2Table's name() to match DeltaTableV2
+      // DeltaV2Table.name() returns simple table name, but tests expect catalog.schema.table format
       "Create: basic behavior",
       "Create: with using",
       "Create: with property",

@@ -563,7 +563,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   test("type conversions (Date/Timestamp) and boundary values") {
     val testDate = java.sql.Date.valueOf("2024-01-01")
-    val expectedDateDays = (testDate.getTime / (1000L * 60 * 60 * 24)).toInt
+    val expectedDateDays = testDate.toLocalDate.toEpochDay.toInt
 
     val testTimestamp = java.sql.Timestamp.valueOf("2024-01-01 00:00:00")
     val expectedTimestampMicros =

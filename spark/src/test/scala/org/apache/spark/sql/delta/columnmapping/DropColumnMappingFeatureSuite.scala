@@ -18,8 +18,14 @@ package org.apache.spark.sql.delta.columnmapping
 
 import java.util.concurrent.TimeUnit
 
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ColumnMappingTableFeature
+import org.apache.spark.sql.delta.DeltaAnalysisException
+import org.apache.spark.sql.delta.DeltaColumnMappingUnsupportedException
+import org.apache.spark.sql.delta.DeltaConfigs
 import org.apache.spark.sql.delta.DeltaConfigs._
+import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.DeltaTableFeatureException
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
@@ -73,10 +79,12 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
   }
 
   test("invalid column names") {
-    val invalidColName1 = colName("col1")
-    val invalidColName2 = colName("col2")
+    val invalidColName1 = "col1()"
+    val invalidColName2 = "col2{}"
+    val validColName = "col3"
     sql(
-      s"""CREATE TABLE $testTableName (a INT, `$invalidColName1` INT, `$invalidColName2` INT)
+      s"""CREATE TABLE $testTableName (a INT, `$invalidColName1` INT, `$invalidColName2` INT,
+         |`$validColName` INT)
          |USING delta
          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
          |""".stripMargin)
@@ -86,8 +94,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
     }
     checkError(e,
       "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
-      parameters = Map("invalidColumnNames" ->
-        "col1 with special chars ,;{}()\n\t=, col2 with special chars ,;{}()\n\t="))
+      parameters = Map("invalidColumnNames" -> s"$invalidColName1, $invalidColName2"))
   }
 
   test("drop column mapping from a table without table feature") {

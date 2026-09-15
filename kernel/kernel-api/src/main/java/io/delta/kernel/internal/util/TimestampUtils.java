@@ -46,4 +46,14 @@ public final class TimestampUtils {
   public static long toEpochMicros(LocalDateTime dateTime) {
     return toEpochMicros(dateTime.toInstant(java.time.ZoneOffset.UTC));
   }
+
+  /**
+   * Converts microseconds since epoch to an {@link Instant}. Uses floor-based decomposition so
+   * pre-epoch (negative) values keep a non-negative sub-second component (e.g. -1 micros yields
+   * 1969-12-31T23:59:59.999999Z, not 1970-01-01T00:00:00.999999Z).
+   */
+  public static Instant instantFromEpochMicros(long micros) {
+    return Instant.ofEpochSecond(
+        Math.floorDiv(micros, 1_000_000L), Math.floorMod(micros, 1_000_000L) * 1_000L);
+  }
 }

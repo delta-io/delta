@@ -2,7 +2,11 @@ name: "Set up pinned Unity Catalog build"
 description: >-
   Publishes Unity Catalog jars from the commit pinned in project/scripts/setup_unitycatalog_main.sh
   (the UC_PIN_SHA= line) to the runner's local Ivy / Maven caches, using GitHub Actions cache so the
-  slow UC build only runs the first time a pin is seen.
+  slow UC build only runs the first time a pin is seen. Reads SPARK_VERSION (Spark major.minor
+  short form) from the calling job's env to pick the Spark variant UC builds against; matrix
+  workflows set this from `matrix.spark_version`, other workflows leave it unset and inherit the
+  script's default. The cache key reflects SPARK_VERSION literally - workflows that share the
+  default share one cache entry under an empty `spark-` segment.
 
 runs:
   using: "composite"
@@ -15,9 +19,9 @@ runs:
         path: |
           ~/.ivy2/local
           ~/.m2/repository/io/unitycatalog
-        # Cache key hashes the setup script, so bumping UC_PIN_SHA (or any other script change)
-        # invalidates the cache.
-        key: uc-jars-${{ runner.os }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
+        # Cache key hashes the setup script (so any script change invalidates) and includes the
+        # Spark short version (so 4.0 and 4.1 don't fight over a single shared cache entry).
+        key: uc-jars-${{ runner.os }}-spark${{ env.SPARK_VERSION }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
     - name: Build Unity Catalog from pinned SHA
       shell: bash
       run: bash project/scripts/setup_unitycatalog_main.sh
@@ -33,4 +37,4 @@ runs:
         path: |
           ~/.ivy2/local
           ~/.m2/repository/io/unitycatalog
-        key: uc-jars-${{ runner.os }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
+        key: uc-jars-${{ runner.os }}-spark${{ env.SPARK_VERSION }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}

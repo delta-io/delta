@@ -34,22 +34,25 @@ import org.apache.spark.sql.types.{LongType, StructField, StructType}
  * computing the state of a Delta table.
  *
  * @param format The file format of the log files. Currently "parquet" or "json"
- * @param files The files to read
+ * @param files  The files to read.
  */
-case class DeltaLogFileIndex private (
-    format: FileFormat,
-    files: Array[FileStatus])
+class DeltaLogFileIndex private[delta] (
+    val format: FileFormat,
+    val files: Array[FileStatus]
+    )
   extends FileIndex
   with Logging {
 
   import DeltaLogFileIndex._
 
-  override lazy val rootPaths: Seq[Path] = files.map(_.getPath)
+  override lazy val rootPaths: Seq[Path] = files.map(_.getPath).toSeq
 
   def listAllFiles(): Seq[PartitionDirectory] = {
     files
       .groupBy(f => FileNames.getFileVersionOpt(f.getPath).getOrElse(-1L))
-      .map { case (version, files) => PartitionDirectory(InternalRow(version), files) }
+      .map { case (version, versionFiles) =>
+        PartitionDirectory(InternalRow(version), versionFiles)
+      }
       .toSeq
   }
 
@@ -94,14 +97,19 @@ object DeltaLogFileIndex {
   lazy val CHECKSUM_FILE_FORMAT = new JsonFileFormat
 
   def apply(format: FileFormat, fs: FileSystem, paths: Seq[Path]): DeltaLogFileIndex = {
-    DeltaLogFileIndex(format, paths.map(fs.getFileStatus).toArray)
+    new DeltaLogFileIndex(format, paths.map(fs.getFileStatus).toArray)
+  }
+
+  def apply(format: FileFormat, files: Array[FileStatus]): DeltaLogFileIndex = {
+    new DeltaLogFileIndex(format, files)
   }
 
   def apply(format: FileFormat, files: Seq[FileStatus]): Option[DeltaLogFileIndex] = {
-    if (files.isEmpty) None else Some(DeltaLogFileIndex(format, files.toArray))
+    if (files.isEmpty) None else Some(new DeltaLogFileIndex(format, files.toArray))
   }
 
   def apply(format: FileFormat, filesOpt: Option[Seq[FileStatus]]): Option[DeltaLogFileIndex] = {
     filesOpt.flatMap(DeltaLogFileIndex(format, _))
   }
+
 }

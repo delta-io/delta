@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.DeltaCommitTag
-import org.apache.spark.sql.delta.actions.{Action, FileAction}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction}
 
 object DMLUtils {
 
@@ -36,5 +36,13 @@ object DMLUtils {
 
   object TaggedCommitData {
     def empty[A <: Action]: TaggedCommitData[A] = TaggedCommitData(Seq.empty[A])
+  }
+
+  /** Partition [[FileAction]]s to [[AddFile]]s and [[AddCDCFile]]s. */
+  def partitionCDCFiles(actions: Seq[FileAction]): (Seq[AddFile], Seq[AddCDCFile]) = {
+    val addFiles = actions.collect { case a: AddFile => a }
+    val cdcFiles = actions.collect { case a: AddCDCFile => a }
+    assert(addFiles.length + cdcFiles.length == actions.length)
+    (addFiles, cdcFiles)
   }
 }

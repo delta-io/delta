@@ -199,6 +199,16 @@ public class TableBuilder {
     return this;
   }
 
+  /**
+   * Sets the source of storage credentials for this table: {@code "uc"} (default) to fetch
+   * temporary credentials from Unity Catalog, or {@code "ambient"} to fetch nothing and rely on the
+   * runtime environment (workload identity, instance profile, ADC, or core-site.xml).
+   */
+  public TableBuilder withCredentialSource(String credentialSource) {
+    this.configurations.put(TableConf.CREDENTIALS_SOURCE.key(), credentialSource);
+    return this;
+  }
+
   public TableBuilder withConfigurations(Map<String, String> configurations) {
     this.configurations.clear();
     this.configurations.putAll(configurations);
@@ -228,10 +238,18 @@ public class TableBuilder {
   private DeltaCatalog createUnityCatalog() {
     Preconditions.checkArgument(endpoint != null);
     Preconditions.checkArgument(!(token == null && oauthUri == null));
+    boolean credentialVendingEnabled =
+        new TableConf(configurations).shouldFetchCredentialsFromCatalog();
     if (token != null) {
-      return new UnityCatalog(catalogName, endpoint, token);
+      return new UnityCatalog(catalogName, endpoint, token, credentialVendingEnabled);
     } else {
-      return new UnityCatalog(catalogName, endpoint, oauthUri, oauthClientId, oauthClientSecret);
+      return new UnityCatalog(
+          catalogName,
+          endpoint,
+          oauthUri,
+          oauthClientId,
+          oauthClientSecret,
+          credentialVendingEnabled);
     }
   }
 

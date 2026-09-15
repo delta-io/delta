@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,21 @@
 
 package org.apache.spark.sql.delta.test
 
-import org.apache.spark.SparkConf
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.scalatest.Tag
-import org.scalactic.source.Position
-
 import scala.collection.mutable
+
+import org.apache.spark.sql.delta.DeltaTestUtils
+import org.apache.spark.sql.delta.files.TahoeFileIndex
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.scalactic.source.Position
+import org.scalatest.Tag
+
+import org.apache.spark.SparkConf
+import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 
 /**
  * Trait that forces Delta V2 connector mode to STRICT, ensuring all operations
- * use the Kernel-based SparkTable implementation (V2 connector) instead of
+ * use the Kernel-based DeltaV2Table implementation (V2 connector) instead of
  * DeltaTableV2 (V1 connector).
  *
  * See [[DeltaSQLConf.V2_ENABLE_MODE]] for V1 vs V2 connector definitions.
@@ -38,9 +43,15 @@ import scala.collection.mutable
  * }
  * }}}
  */
-trait V2ForceTest extends DeltaSQLCommandTest {
+trait V2ForceTest extends DeltaSQLCommandTest with AdaptiveSparkPlanHelper {
 
   private val testsRun: mutable.Set[String] = mutable.Set.empty
+
+  /**
+   * When true, each `shouldPass` test additionally checks that no executed plan contains a V1
+   * Delta file-source scan (this does not catch reads that are metadata-only). Off by default.
+   */
+  protected def assertNoV1Fallback: Boolean = false
 
   /**
    * Override `test` to apply the `shouldFail` logic.
@@ -56,7 +67,21 @@ trait V2ForceTest extends DeltaSQLCommandTest {
     } else {
       super.test(testName, testTags: _*) {
         testsRun.add(testName)
-        testFun
+        if (assertNoV1Fallback) {
+          val capturedPlans = DeltaTestUtils.withAllPlansCaptured(spark) { testFun; () }
+          val fellBackToV1Delta = capturedPlans.exists { plans =>
+            collectFirst(plans.executedPlan) {
+              case scan: FileSourceScanExec
+                  if scan.relation.location.isInstanceOf[TahoeFileIndex] => scan
+            }.isDefined
+          }
+          assert(!fellBackToV1Delta,
+            s"'$testName' produced a V1 Delta file-source scan under STRICT V2 mode, so it " +
+              "silently fell back to the V1 connector. Move it to shouldFailTests if the V2 " +
+              "connector does not support this surface yet.")
+        } else {
+          testFun
+        }
       }
     }
   }
@@ -85,7 +110,7 @@ trait V2ForceTest extends DeltaSQLCommandTest {
 
   /**
    * Override `sparkConf` to set V2_ENABLE_MODE to "STRICT".
-   * This ensures all catalog operations use Kernel SparkTable (V2 connector).
+   * This ensures all catalog operations use Kernel DeltaV2Table (V2 connector).
    */
   abstract override protected def sparkConf: SparkConf = {
     super.sparkConf
@@ -93,17 +118,12 @@ trait V2ForceTest extends DeltaSQLCommandTest {
   }
 
   /**
-   * Run a SQL statement through the V1 connector by temporarily setting
-   * V2_ENABLE_MODE to NONE. Useful for DDL/DML that SparkTable (V2) doesn't support.
+   * Run an arbitrary action through the V1 connector by temporarily setting V2_ENABLE_MODE to
+   * NONE. Useful for setup/DDL/DML that V2 doesn't support.
    */
-  protected def executeInV1Mode(sqlText: String): Unit = {
-    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-      sql(sqlText)
-    }
-  }
+  protected def inV1Mode[T](f: => T): T =
+    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE")(f)
 
-  override def afterAll(): Unit = {
-    super.afterAll()
-  }
+  /** Run a SQL statement through the V1 connector. */
+  protected def executeInV1Mode(sqlText: String): Unit = inV1Mode(sql(sqlText))
 }
-

@@ -347,7 +347,7 @@ class ParquetSchemaUtils {
       GeometryType geomType = (GeometryType) dataType;
       type =
           primitive(BINARY, repetition)
-              .as(LogicalTypeAnnotation.geometryType(geomType.getSRID()))
+              .as(LogicalTypeAnnotation.geometryType(geomType.getCRS()))
               .named(name);
     } else if (dataType instanceof GeographyType) {
       GeographyType geogType = (GeographyType) dataType;
@@ -355,7 +355,7 @@ class ParquetSchemaUtils {
           primitive(BINARY, repetition)
               .as(
                   LogicalTypeAnnotation.geographyType(
-                      geogType.getSRID(), toEdgeInterpolationAlgorithm(geogType.getAlgorithm())))
+                      geogType.getCRS(), toEdgeInterpolationAlgorithm(geogType.getAlgorithm())))
               .named(name);
     } else if (dataType instanceof DateType) {
       type = primitive(INT32, repetition).as(LogicalTypeAnnotation.dateType()).named(name);

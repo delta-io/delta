@@ -30,6 +30,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import org.apache.spark.sql.delta.RowIndexFilterType;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.junit.jupiter.api.Test;
 
@@ -173,5 +174,38 @@ public class CDCDataFileTest {
     assertEquals(55555L, cdcFile.getCommitTimestamp());
     assertEquals(8192, cdcFile.getFileSize());
     assertTrue(cdcFile.isAddCDCFile());
+  }
+
+  @Test
+  public void testFromDVDiff_delete() {
+    AddFile addFile = createTestAddFile("data.parquet", 1024, 100L, Optional.of(TEST_DV));
+    CDCDataFile cdcFile =
+        CDCDataFile.fromDVDiff(
+            addFile,
+            CDCReader.CDC_TYPE_DELETE_STRING(),
+            /* commitTimestamp= */ 77777L,
+            "inline-dv==");
+
+    assertSame(addFile, cdcFile.getAddFile());
+    assertEquals(CDCReader.CDC_TYPE_DELETE_STRING(), cdcFile.getChangeType());
+    assertEquals(77777L, cdcFile.getCommitTimestamp());
+    assertEquals(1024, cdcFile.getFileSize());
+    assertFalse(cdcFile.isAddCDCFile());
+    assertEquals(Optional.of("inline-dv=="), cdcFile.getEffectiveDv());
+    assertEquals(RowIndexFilterType.IF_NOT_CONTAINED, cdcFile.getDvFilterType());
+    assertEquals("data.parquet", cdcFile.getPath());
+    assertTrue(cdcFile.hasDeletionVector());
+  }
+
+  @Test
+  public void testFromDVDiff_insert() {
+    AddFile addFile = createTestAddFile("data.parquet", 2048, 200L, Optional.of(TEST_DV));
+    CDCDataFile cdcFile =
+        CDCDataFile.fromDVDiff(
+            addFile, CDCReader.CDC_TYPE_INSERT(), /* commitTimestamp= */ 88888L, "restore-dv==");
+
+    assertEquals(CDCReader.CDC_TYPE_INSERT(), cdcFile.getChangeType());
+    assertEquals(Optional.of("restore-dv=="), cdcFile.getEffectiveDv());
+    assertEquals(RowIndexFilterType.IF_NOT_CONTAINED, cdcFile.getDvFilterType());
   }
 }

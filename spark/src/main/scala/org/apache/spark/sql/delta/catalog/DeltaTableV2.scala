@@ -254,6 +254,9 @@ class DeltaTableV2 private(
       if (v1Table.tableType == CatalogTableType.EXTERNAL) {
         base.put(TableCatalog.PROP_EXTERNAL, "true")
       }
+      if (v1Table.tableType == CatalogTableType.MANAGED) {
+        base.put(TableCatalog.PROP_IS_MANAGED_LOCATION, "true")
+      }
     }
     // Don't use [[PROP_CLUSTERING_COLUMNS]] from CatalogTable because it may be stale.
     // Since ALTER TABLE updates it using an async post-commit hook.

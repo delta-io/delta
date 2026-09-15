@@ -24,6 +24,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static java.util.Arrays.asList;
 
+import io.delta.kernel.PartitionKeyType;
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.ExpressionHandler;
@@ -45,6 +46,8 @@ import java.util.stream.Collectors;
 public class PartitionUtils {
   private static final DateTimeFormatter PARTITION_TIMESTAMP_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+  private static final DateTimeFormatter PARTITION_TIMESTAMP_UTC_FORMATTER =
+      DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'").withZone(ZoneOffset.UTC);
 
   private PartitionUtils() {}
 
@@ -143,9 +146,9 @@ public class PartitionUtils {
   }
 
   /**
-   * Validate {@code partitionValues} contains values for every partition column in the table and
-   * the type of the value is correct. Once validated the partition values are sanitized to match
-   * the case of the partition column names in the table schema and returned
+   * Equivalent to {@link #validateAndSanitizePartitionValues(StructType, List, Map,
+   * PartitionKeyType)} with {@link PartitionKeyType#LOGICAL}; {@code partitionValues} keys are
+   * logical partition column names.
    *
    * @param tableSchema Schema of the table.
    * @param partitionColNames Partition column name. These should be from the table metadata that
@@ -157,13 +160,50 @@ public class PartitionUtils {
       StructType tableSchema,
       List<String> partitionColNames,
       Map<String, Literal> partitionValues) {
+    return validateAndSanitizePartitionValues(
+        tableSchema, partitionColNames, partitionValues, PartitionKeyType.LOGICAL);
+  }
 
-    if (!toLowerCaseSet(partitionColNames).equals(toLowerCaseSet(partitionValues.keySet()))) {
+  /**
+   * Validate {@code partitionValues} contains a value for every partition column and that each
+   * value's type matches its column, then return the values sanitized to the case of the partition
+   * column names.
+   *
+   * @param tableSchema Schema of the table.
+   * @param partitionColNames Logical partition column names, in the same case as in the table
+   *     schema.
+   * @param partitionValues Map of partition column to value given by the connector, keyed per
+   *     {@code partitionKeyType}.
+   * @param partitionKeyType Whether {@code partitionValues} keys are logical or physical column
+   *     names.
+   * @return Sanitized partition values, keyed per {@code partitionKeyType}.
+   */
+  public static Map<String, Literal> validateAndSanitizePartitionValues(
+      StructType tableSchema,
+      List<String> partitionColNames,
+      Map<String, Literal> partitionValues,
+      PartitionKeyType partitionKeyType) {
+
+    // Resolve the partition column names in partitionKeyType's name space, and the field for each
+    // name used to check the value's type.
+    List<String> expectedColNames = new ArrayList<>(partitionColNames.size());
+    Map<String, StructField> colNameToField = new HashMap<>();
+    for (String logicalName : partitionColNames) {
+      StructField field = tableSchema.get(logicalName);
+      String name =
+          partitionKeyType == PartitionKeyType.PHYSICAL
+              ? ColumnMapping.getPhysicalName(field)
+              : logicalName;
+      expectedColNames.add(name);
+      colNameToField.put(name, field);
+    }
+
+    if (!toLowerCaseSet(expectedColNames).equals(toLowerCaseSet(partitionValues.keySet()))) {
       throw new IllegalArgumentException(
           String.format(
               "Partition values provided are not matching the partition columns. "
                   + "Partition columns: %s, Partition values: %s",
-              partitionColNames, partitionValues));
+              expectedColNames, partitionValues));
     }
 
     // Convert the partition column names in given `partitionValues` to schema case. Schema
@@ -173,7 +213,7 @@ public class PartitionUtils {
     // (`partitionValues` in `AddFile`) or generating the target directory for writing the
     // data belonging to a partition.
     Map<String, Literal> schemaCasePartitionValues =
-        casePreservingPartitionColNames(partitionColNames, partitionValues);
+        casePreservingPartitionColNames(expectedColNames, partitionValues);
 
     // validate types are the same
     schemaCasePartitionValues
@@ -182,7 +222,7 @@ public class PartitionUtils {
             entry -> {
               String partColName = entry.getKey();
               Literal partValue = entry.getValue();
-              StructField partColField = tableSchema.get(partColName);
+              StructField partColField = colNameToField.get(partColName);
 
               // this shouldn't happen as we have already validated the partition column names
               checkArgument(
@@ -360,6 +400,56 @@ public class PartitionUtils {
   }
 
   /**
+   * Translates the given logical partition column names to their physical (column-mapping) names.
+   *
+   * <p>For a column-mapped table the on-disk Hive-style partition directory and the {@code AddFile}
+   * partition-value keys are stored under the physical {@code col-<uuid>} names. Callers pass
+   * logical partition column names so this rewrites each to {@link
+   * ColumnMapping#getPhysicalName(StructField)}. Returns the input unchanged when column mapping is
+   * disabled.
+   *
+   * @param logicalSchema the table's logical schema.
+   * @param partitionColNames logical partition column names, in partition order.
+   * @param mode the table's column mapping mode.
+   * @return the physical partition column names, in the same order.
+   */
+  public static List<String> toPhysicalPartitionColNames(
+      StructType logicalSchema,
+      List<String> partitionColNames,
+      ColumnMapping.ColumnMappingMode mode) {
+    if (!ColumnMapping.isColumnMappingModeEnabled(mode)) {
+      return partitionColNames;
+    }
+    return partitionColNames.stream()
+        .map(name -> ColumnMapping.getPhysicalName(logicalSchema.get(name)))
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * Rewrites the keys of a logical-keyed partition-value map to their physical (column mapping)
+   * names. Returns the input unchanged when column mapping is disabled.
+   *
+   * @param logicalSchema the table's logical schema.
+   * @param partitionValues partition values keyed by logical partition column name.
+   * @param mode the table's column mapping mode.
+   * @return partition values keyed by physical partition column name.
+   */
+  public static Map<String, Literal> toPhysicalPartitionValues(
+      StructType logicalSchema,
+      Map<String, Literal> partitionValues,
+      ColumnMapping.ColumnMappingMode mode) {
+    if (!ColumnMapping.isColumnMappingModeEnabled(mode)) {
+      return partitionValues;
+    }
+    Map<String, Literal> physicalValues = new LinkedHashMap<>();
+    for (Map.Entry<String, Literal> entry : partitionValues.entrySet()) {
+      physicalValues.put(
+          ColumnMapping.getPhysicalName(logicalSchema.get(entry.getKey())), entry.getValue());
+    }
+    return physicalValues;
+  }
+
+  /**
    * Get the target directory for writing data for given partition values. Example: Given partition
    * values (part1=1, part2='abc'), the target directory will be for a table rooted at
    * 's3://bucket/table': 's3://bucket/table/part1=1/part2=abc'.
@@ -445,9 +535,7 @@ public class PartitionUtils {
    */
   private static Optional<Long> tryParseIsoTimestamp(String value) {
     try {
-      Instant instant = Instant.parse(value);
-      long micros = instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1000L;
-      return Optional.of(micros);
+      return Optional.of(TimestampUtils.toEpochMicros(Instant.parse(value)));
     } catch (DateTimeParseException e) {
       return Optional.empty();
     }
@@ -476,7 +564,14 @@ public class PartitionUtils {
         () -> DeltaErrorsInternal.invalidTimestampFormatForPartitionValue(partitionValue));
   }
 
-  protected static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
+  /**
+   * Create a Literal object for the given partition value and data type.
+   *
+   * @param dataType The data type of the partition value.
+   * @param partitionValue The partition value to create the Literal object for.
+   * @return The Literal object for the given partition value and data type.
+   */
+  public static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
     if (partitionValue == null) {
       return Literal.ofNull(dataType);
     }
@@ -556,18 +651,12 @@ public class PartitionUtils {
     } else if (dataType instanceof DateType) {
       int daysSinceEpochUTC = (int) value;
       return LocalDate.ofEpochDay(daysSinceEpochUTC).toString();
-    } else if (dataType instanceof TimestampType || dataType instanceof TimestampNTZType) {
-      long microsSinceEpochUTC = (long) value;
-      long seconds = microsSinceEpochUTC / 1_000_000;
-      int microsOfSecond = (int) (microsSinceEpochUTC % 1_000_000);
-      if (microsOfSecond < 0) {
-        // also adjust for negative microsSinceEpochUTC
-        microsOfSecond = 1_000_000 + microsOfSecond;
-      }
-      int nanosOfSecond = microsOfSecond * 1_000;
-      LocalDateTime localDateTime =
-          LocalDateTime.ofEpochSecond(seconds, nanosOfSecond, ZoneOffset.UTC);
-      return localDateTime.format(PARTITION_TIMESTAMP_FORMATTER);
+    } else if (dataType instanceof TimestampType) {
+      Instant instant = TimestampUtils.instantFromEpochMicros((long) value);
+      return PARTITION_TIMESTAMP_UTC_FORMATTER.format(instant);
+    } else if (dataType instanceof TimestampNTZType) {
+      Instant instant = TimestampUtils.instantFromEpochMicros((long) value);
+      return PARTITION_TIMESTAMP_FORMATTER.format(LocalDateTime.ofInstant(instant, ZoneOffset.UTC));
     } else if (dataType instanceof DecimalType) {
       return ((BigDecimal) value).toString();
     } else if (dataType instanceof BinaryType) {

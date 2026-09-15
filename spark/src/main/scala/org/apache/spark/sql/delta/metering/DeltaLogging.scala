@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.metering
 
+import java.util.function.Supplier
+
 import scala.concurrent.duration._
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -170,9 +172,78 @@ trait DeltaLogging
     }
   }
 
+  /**
+   * A variation of [[deltaAssert]] that only logs the assertion error and
+   * does not add an assertion in test. This is useful for writing negative tests
+   * that validates the behaviour of executing the code after the [[deltaAssert]] call.
+   * The assertion in test prevents us from testing the production behaviour.
+   */
+  protected def deltaAssertLogOnly(
+      check: => Boolean,
+      name: String,
+      msg: String,
+      deltaLog: DeltaLog = null,
+      data: AnyRef = null,
+      path: Option[Path] = None
+    ): Unit = {
+    if (!check) {
+      recordDeltaEvent(
+        provider = deltaLog,
+        opType = s"delta.assertions.$name",
+        data = data,
+        path = path
+      )
+      logWarning(msg)
+    }
+  }
+
+  /**
+   * A variation of [[deltaAssert]] that logs the assertion error and throws a throwable.
+   * We don't need an assertion in test since if it fails we want the same throwable in
+   * test and in production.
+   */
+  protected def deltaAssertAndThrow(
+      check: => Boolean,
+      name: String,
+      msg: String,
+      throwable: Throwable,
+      deltaLog: DeltaLog = null,
+      data: AnyRef = null,
+      path: Option[Path] = None
+    ): Unit = {
+    if (!check) {
+      recordDeltaEvent(
+        provider = deltaLog,
+        opType = s"delta.assertions.$name",
+        data = data,
+        path = path
+      )
+      logError(msg)
+
+      throw throwable
+    }
+  }
+
   protected def recordFrameProfile[T](group: String, name: String)(thunk: => T): T = {
     // future work to capture runtime information ...
     thunk
+  }
+
+
+  /** Java adapter for a value-returning frame with fixed system-code group and name literals. */
+  protected def recordFrameProfileValue[T](
+      group: String,
+      name: String,
+      body: Supplier[T]): T = {
+    recordFrameProfile(group, name)(body.get())
+  }
+
+  /** Java adapter for a void frame with fixed system-code group and name literals. */
+  protected def recordFrameProfileAction(
+      group: String,
+      name: String,
+      body: Runnable): Unit = {
+    recordFrameProfile(group, name)(body.run())
   }
 
   private def withDmqTag[T](thunk: => T): T = {
@@ -224,6 +295,48 @@ object DeltaLogging {
 
   // The opType for delta commit stats.
   final val DELTA_COMMIT_STATS_OPTYPE = "delta.commit.stats"
+}
+
+/**
+ * A thread-safe, count-based throttler for usage-log emission via [[recordThrottledDeltaEvent]].
+ *
+ * Unlike [[LogThrottler]], which throttles by rate using a token bucket, this throttles purely by
+ * count: it records at most `maxEventsToLog` delta events and silently drops the rest. Each
+ * instance must be shared across all call sites it should throttle together, and its lifetime
+ * defines the throttling scope (for example, a field of an [[OptimisticTransaction]] gives
+ * per-commit throttling).
+ *
+ * @param maxEventsToLog Maximum number of events to log before throttling kicks in.
+ */
+class ThrottledEventLogger(val maxEventsToLog: Long) extends DeltaLogging {
+
+  private var numLogged: Long = 0
+
+  /**
+   * Records a delta event via [[recordDeltaEvent]] while fewer than `maxEventsToLog` events have
+   * been recorded; once the cap is reached further events are silently dropped.
+   *
+   * The counter is claimed under a lock but the (heavier) recording happens outside it, so
+   * concurrent callers serialize only on the cap check and not on event serialization.
+   */
+  def recordThrottledDeltaEvent(
+      provider: DeltaLoggingProvider,
+      opType: String,
+      tags: Map[TagDefinition, String] = Map.empty,
+      data: AnyRef = null,
+      path: Option[Path] = None): Unit = {
+    val shouldLog = this.synchronized {
+      if (numLogged < maxEventsToLog) {
+        numLogged += 1
+        true
+      } else {
+        false
+      }
+    }
+    if (shouldLog) {
+      recordDeltaEvent(provider, opType, tags, data, path)
+    }
+  }
 }
 
 /**

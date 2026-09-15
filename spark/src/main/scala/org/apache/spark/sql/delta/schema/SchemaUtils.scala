@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.schema
 
+import scala.collection.immutable.Queue
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
@@ -26,6 +27,7 @@ import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMod
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.v2.interop.AbstractProtocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -82,6 +84,42 @@ object SchemaUtils extends DeltaLogging {
     }
 
     recurseIntoComplexTypes(schema, Nil)
+  }
+
+  /**
+   * Class to represent a nested column path.
+   */
+  private[delta] case class ColumnPath(parts: Queue[String] = Queue.empty) {
+    override def toString: String = parts.mkString(".")
+
+    def prepended(part: String): ColumnPath = ColumnPath(parts.+:(part))
+  }
+
+  /**
+   * Copied verbatim from Apache Spark.
+   *
+   * For the given dataType `dt` find all column paths that satisfy the given predicate `f`.
+   */
+  def findColumnPaths(dt: DataType)(f: DataType => Boolean): Seq[(ColumnPath, DataType)] = {
+    dt match {
+      case _ if f(dt) =>
+        Seq((ColumnPath(), dt))
+
+      case ArrayType(elementType, _) =>
+        findColumnPaths(elementType)(f).map { case (path, dt) => (path.prepended("element"), dt) }
+
+      case MapType(keyType, valueType, _) =>
+        findColumnPaths(keyType)(f).map { case (path, dt) => (path.prepended("key"), dt) } ++
+          findColumnPaths(valueType)(f).map { case (path, dt) => (path.prepended("value"), dt) }
+
+      case StructType(fields) =>
+        fields.flatMap { case StructField(name, dataType, _, _) =>
+          findColumnPaths(dataType)(f).map { case (path, dt) => (path.prepended(name), dt) }
+        }.toSeq
+
+      case _ =>
+        Nil
+    }
   }
 
   /** Copied over from DataType for visibility reasons. */
@@ -489,8 +527,7 @@ def normalizeColumnNamesInDataType(
       typeWideningMode: TypeWideningMode = TypeWideningMode.NoTypeWidening,
       newPartitionColumns: Seq[String] = Seq.empty,
       oldPartitionColumns: Seq[String] = Seq.empty,
-      caseSensitive: Boolean = true,
-      allowVoidTypeChange: Boolean = false): Boolean = {
+      caseSensitive: Boolean = true): Boolean = {
 
     def isNullabilityCompatible(existingNullable: Boolean, readNullable: Boolean): Boolean = {
       if (forbidTightenNullability) {
@@ -507,8 +544,7 @@ def normalizeColumnNamesInDataType(
             forbidTightenNullability,
             typeWideningMode = typeWideningMode,
             allowMissingColumns = allowMissingColumns,
-            caseSensitive = caseSensitive,
-            allowVoidTypeChange = allowVoidTypeChange
+            caseSensitive = caseSensitive
           )
         case (e: ArrayType, n: ArrayType) =>
           // if existing elements are non-nullable, so should be the new element
@@ -519,8 +555,7 @@ def normalizeColumnNamesInDataType(
           isNullabilityCompatible(e.valueContainsNull, n.valueContainsNull) &&
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
-        // This should only be true for dataframe by-name inserts.
-        case (_: NullType, _) if allowVoidTypeChange =>
+        case (_: NullType, _) =>
           true
         case (e: AtomicType, n: AtomicType)
           if typeWideningMode.shouldWidenTo(fromType = e, toType = n) => true
@@ -1134,6 +1169,7 @@ def normalizeColumnNamesInDataType(
                 (if (columnPath.nonEmpty) s" from $columnName" else ""))
           }
 
+        case (_: NullType, _) => ()
         case (fromDataType: AtomicType, toDataType: AtomicType) if allowTypeWidening =>
           verify(TypeWidening.isTypeChangeSupported(fromDataType, toDataType),
             s"changing data type of ${UnresolvedAttribute(columnPath).name} " +
@@ -1576,6 +1612,7 @@ def normalizeColumnNamesInDataType(
     case DoubleType =>
     case StringType =>
     case DateType =>
+    case dt if org.apache.spark.sql.delta.shims.GeoTypesShim.isGeoSpatialType(dt) =>
     case TimestampType =>
     case TimestampNTZType =>
     case dt if dt.isInstanceOf[VariantType] =>
@@ -1618,7 +1655,7 @@ def normalizeColumnNamesInDataType(
   def findDependentGeneratedColumns(
       sparkSession: SparkSession,
       targetColumn: Seq[String],
-      protocol: Protocol,
+      protocol: AbstractProtocol,
       schema: StructType): Map[String, String] = {
     if (GeneratedColumn.satisfyGeneratedColumnProtocol(protocol) &&
         GeneratedColumn.hasGeneratedColumns(schema)) {

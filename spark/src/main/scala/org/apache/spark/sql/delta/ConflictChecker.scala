@@ -24,6 +24,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.DeltaOperations.{OP_SET_TBLPROPERTIES, ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -32,6 +33,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.storage.commit.UpdatedActions
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import io.delta.storage.commit.uniform.UniformMetadata
 import org.apache.hadoop.fs.FileStatus
 
@@ -67,8 +69,11 @@ private[delta] case class CurrentTransactionInfo(
     val readRowIdHighWatermark: Long,
     val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
-    val op: DeltaOperations.Operation
+    val op: DeltaOperations.Operation,
+    val preCommitLatestAMTCheckpointOpt: Option[Checkpoint] = None,
+    val currentCommitAttemptAMTCheckpointOpt: Option[Checkpoint] = None
     , val convertedIcebergMetadata: Option[UniformMetadata] = None
+    , idempotentCommitAlreadyLandedAt: Option[Long] = None
  ) {
 
   /**
@@ -164,6 +169,8 @@ private[delta] class WinningCommitSummary(
     commitInfo.exists(_.operation == ROW_TRACKING_UNBACKFILL_OPERATION_NAME)
   val removedFiles: Seq[RemoveFile] = actions.collect { case a: RemoveFile => a }
   val addedFiles: Seq[AddFile] = actions.collect { case a: AddFile => a }
+  // The inline AMT (Adaptive Metadata Tree) checkpoint this winning commit emitted, if any.
+  val amtCheckpoint: Option[Checkpoint] = actions.collectFirst { case a: Checkpoint => a }
   // This is used in resolveRowTrackingBackfillConflicts.
   lazy val addedFilePathToActionMap: Map[String, AddFile] =
     addedFiles.map(af => (af.path, af)).toMap
@@ -233,9 +240,45 @@ private[delta] class ConflictChecker(
   /**
    * This function checks conflict of the `initialCurrentTransactionInfo` against the
    * `winningCommitVersion` and returns an updated [[CurrentTransactionInfo]] that represents
+   * the transaction as if it had started while reading the `winningCommitVersion`. It also
+   * validates the actions.
+   */
+  def checkConflictsAndValidateActions(): CurrentTransactionInfo = {
+    val updatedInfo = checkConflicts()
+
+    // In case the actions of the current transaction changed, re-run the invariant
+    // checks against the rebased action set.
+    checkInvariants(updatedInfo)
+    updatedInfo
+  }
+
+  /**
+   * Returns true when conflict resolution produced a different action set than the one the
+   * transaction started with.
+   */
+  protected def hasActionsChanged(updatedInfo: CurrentTransactionInfo): Boolean = {
+    updatedInfo.actions ne initialCurrentTransactionInfo.actions
+  }
+
+  /** Run invariants on new set of actions in case they changed. */
+  private def checkInvariants(updatedInfo: CurrentTransactionInfo): Unit = {
+    if (!hasActionsChanged(updatedInfo)) return
+    ConflictChecker.checkNoDuplicateActions(spark, updatedInfo.actions.iterator)
+      .foreach(_ => ())
+    ConflictChecker.trackConsistentDataChange(
+      spark,
+      updatedInfo.actions.iterator,
+      deltaLog,
+      updatedInfo.op,
+      callerContext = "checkConflictsAndValidateActions").foreach(_ => ())
+  }
+
+  /**
+   * This function checks conflict of the `initialCurrentTransactionInfo` against the
+   * `winningCommitVersion` and returns an updated [[CurrentTransactionInfo]] that represents
    * the transaction as if it had started while reading the `winningCommitVersion`.
    */
-  def checkConflicts(): CurrentTransactionInfo = {
+  protected def checkConflicts(): CurrentTransactionInfo = {
     // Add time to read commit in the metrics.
     recordTime("initialize-old-commit", winningCommitSummary.readTimeMs)
 
@@ -268,6 +311,12 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     resolveTimestampOrderingConflicts()
+
+    // Fold the winning commit into our transaction info before the next attempt: this advances
+    // `preCommitLatestAMTCheckpointOpt` to the winner's inline AMT checkpoint (when the winner
+    // wrote one) and clears `currentCommitAttemptAMTCheckpointOpt`.
+    currentTransactionInfo =
+      AMTUtils.updateCurrentTransactionInfo(currentTransactionInfo, winningCommitSummary)
 
     logMetrics()
     currentTransactionInfo
@@ -612,7 +661,8 @@ private[delta] class ConflictChecker(
       if (winningCommitSummary.identityOnlyMetadataUpdate) {
         IdentityColumn.logTransactionAbort(deltaLog)
       }
-      throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
+      throw DeltaErrors.metadataChangedException(
+        getTableNameOrPath, winningCommitSummary.commitInfo)
     }
   }
 
@@ -630,7 +680,8 @@ private[delta] class ConflictChecker(
    */
   protected def attemptToResolveMetadataConflicts(): Unit = {
     def throwMetadataChangedException(): Unit =
-      throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
+      throw DeltaErrors.metadataChangedException(
+        getTableNameOrPath, winningCommitSummary.commitInfo)
 
     // If winning commit does not contain metadata update, no conflict.
     if (winningCommitSummary.metadataUpdates.isEmpty) return
@@ -725,7 +776,22 @@ private[delta] class ConflictChecker(
     val dvsAllowList =
         Set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key)
 
+    val v2CheckpointAllowList =
+        Set(DeltaConfigs.CHECKPOINT_POLICY.key)
+
+    // Resolving an inCommitTimestamps enablement conflict with another transaction is valid
+    // since a transaction that was prepared before ICT was enabled can be safely rebased:
+    // resolveTimestampOrderingConflicts() will assign it a valid ICT timestamp on the fly.
+    val ictAllowList =
+        InCommitTimestampUtils.TABLE_PROPERTY_KEYS.toSet
+
+    val catalogManagedAllowList =
+        Set(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
+
     rowTrackingAllowList ++ columnMappingAllowList ++ dvsAllowList
+      .++(v2CheckpointAllowList)
+      .++(catalogManagedAllowList)
+      .++(ictAllowList)
   }
 
   /**
@@ -790,6 +856,19 @@ private[delta] class ConflictChecker(
         case DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key =>
           currentTransactionInfo.protocol.isFeatureSupported(DeletionVectorsTableFeature) &&
             value.toBoolean
+        case DeltaConfigs.CHECKPOINT_POLICY.key =>
+          currentTransactionInfo.protocol.isFeatureSupported(V2CheckpointTableFeature) &&
+            value == CheckpointPolicy.V2.name
+        // ICT enablement configurations.
+        case DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key =>
+          currentTransactionInfo.protocol.isFeatureSupported(InCommitTimestampTableFeature) &&
+            value.toBoolean // only allow enabling, not disabling
+        case DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key => isNew
+        case DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key => isNew
+        // Catalog-owned enablement configuration
+        case UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+            if currentTransactionInfo.protocol.isFeatureSupported(CatalogOwnedTableFeature) =>
+          isNew
         case _ => true
       }
     }
@@ -1185,9 +1264,8 @@ private[delta] class ConflictChecker(
         case (domain, _) if RowTrackingMetadataDomain.isSameDomain(domain) => domain
         case (_, Some(_)) =>
           // Any conflict not specifically handled by a previous case must fail the transaction.
-          throw new io.delta.exceptions.ConcurrentTransactionException(
-            s"A conflicting metadata domain ${domainMetadataFromCurrentTransaction.domain} is " +
-              "added.")
+          throw DeltaErrors.conflictingMetadataDomainException(
+            domainMetadataFromCurrentTransaction.domain)
       }
 
     val mergedDomainMetadata = mutable.Buffer.empty[DomainMetadata]
@@ -1321,42 +1399,90 @@ private[delta] class ConflictChecker(
     if (!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(currentTransactionInfo.metadata)) {
       return
     }
+      resolveTimestampOrderingConflictsWithICTEnablementResolution()
+  }
 
+
+  /**
+   * Implements [[resolveTimestampOrderingConflicts]], handling the case where a DML transaction
+   * retries over a concurrent ICT enablement commit, using graceful fallbacks instead of
+   * throwing when inCommitTimestamp is absent.
+   */
+  private def resolveTimestampOrderingConflictsWithICTEnablementResolution(): Unit = {
+    // There are three possible cases at this point based on which commits have an ICT timestamp:
+    //   (1) Both winning and current have ICT: ICT was enabled before both transactions started.
+    //       Note: two racing ICT enablements cannot both reach this point -- the losing one would
+    //       fail with a protocolChangedException in checkProtocolCompatibility().
+    //   (2) Winning has no ICT, current has ICT: the current transaction is the ICT enablement.
+    //       The winning commit predates ICT, so we fall back to its file modification timestamp.
+    //   (3) Winning has ICT, current has no ICT: the current transaction was prepared before ICT
+    //       was enabled. A concurrent ICT enablement won the race, so the current transaction's
+    //       commitInfo has no inCommitTimestamp; we fall back to its wall-clock timestamp.
+    //
+    // A fourth case -- neither has ICT -- is impossible. The guard above ensures ICT is enabled
+    // in the current transaction's metadata, which is either the transaction's own or was
+    // adopted from a winning commit by attemptToResolveMetadataConflicts(). In either case,
+    // at least one of the two commits must carry an inCommitTimestamp.
+
+    // Use the winning commit's ICT timestamp if available. If the winning commit predates ICT
+    // (i.e. it has no inCommitTimestamp), fall back to its file timestamp as an approximation.
     val winningCommitTimestamp =
-      if (InCommitTimestampUtils.didCurrentTransactionEnableICT(
-              currentTransactionInfo.metadata, currentTransactionInfo.readSnapshot)) {
-        // Since the current transaction enabled inCommitTimestamps, we should use the file
-        // timestamp from the winning transaction as its commit timestamp.
-        winningCommitSummary.commitFileTimestamp
-    } else {
-      // Get the inCommitTimestamp from the winning transaction.
-      CommitInfo.getRequiredInCommitTimestamp(
-        winningCommitSummary.commitInfo, winningCommitVersion.toString)
-    }
-    val currentTransactionTimestamp = CommitInfo.getRequiredInCommitTimestamp(
-      currentTransactionInfo.commitInfo, "NEW_COMMIT")
-    // getRequiredInCommitTimestamp will throw an exception if commitInfo is None.
+      winningCommitSummary.commitInfo
+        .flatMap(_.inCommitTimestamp)
+        .getOrElse(winningCommitSummary.commitFileTimestamp)
+    // Use the ICT timestamp from CommitInfo if present. If the transaction was prepared before
+    // ICT was enabled (e.g. a DML concurrent with an ICT enablement), fall back to the
+    // wall-clock time recorded in CommitInfo. Math.max below ensures monotonicity regardless.
+    val currentTransactionTimestamp =
+      currentTransactionInfo.commitInfo.flatMap(_.inCommitTimestamp).getOrElse {
+        currentTransactionInfo.commitInfo.map(_.getTimestamp).getOrElse {
+          throw DeltaErrors.missingCommitInfo(InCommitTimestampTableFeature.name, "NEW_COMMIT")
+        }
+      }
     val currentTransactionCommitInfo = currentTransactionInfo.commitInfo.get
     val updatedCommitTimestamp = Math.max(currentTransactionTimestamp, winningCommitTimestamp + 1)
     val updatedCommitInfo =
       currentTransactionCommitInfo.copy(inCommitTimestamp = Some(updatedCommitTimestamp))
     currentTransactionInfo = currentTransactionInfo.copy(commitInfo = Some(updatedCommitInfo))
     val nextAvailableVersion = winningCommitVersion + 1L
-    val updatedMetadata =
-      InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
-        spark,
-        updatedCommitTimestamp,
-        currentTransactionInfo.readSnapshot,
-        currentTransactionInfo.metadata,
-        nextAvailableVersion)
-    updatedMetadata.foreach { updatedMetadata =>
-      currentTransactionInfo = currentTransactionInfo.copy(
-        metadata = updatedMetadata,
-        actions = currentTransactionInfo.actions.map {
-          case _: Metadata => updatedMetadata
-          case other => other
+    // The winning commit's Metadata action if present, otherwise the read snapshot's metadata.
+    // This is an approximation of the metadata at winningCommitVersion: when the winning commit
+    // has no metadata update, the read snapshot's metadata may be stale in multi-winner scenarios
+    // where a prior winner updated metadata without this winning commit doing so.
+    val priorMetadata = winningCommitSummary.metadataUpdates.headOption
+      .getOrElse(currentTransactionInfo.readSnapshot.metadata)
+    currentTransactionInfo.actions.collectFirst { case m: Metadata => m }
+        .foreach { currentMetadata =>
+      val updatedMetadataOpt = InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+        spark = spark,
+        inCommitTimestamp = updatedCommitTimestamp,
+        currentMetadataWithVersion =
+          InCommitTimestampUtils.MetadataWithVersion(nextAvailableVersion, currentMetadata),
+        priorMetadataWithVersion =
+          InCommitTimestampUtils.MetadataWithVersion(winningCommitVersion, priorMetadata))
+      updatedMetadataOpt.foreach { updatedMetadata =>
+        currentTransactionInfo = currentTransactionInfo.copy(
+          metadata = updatedMetadata,
+          actions = currentTransactionInfo.actions.map {
+            case _: Metadata => updatedMetadata
+            case other => other
+          })
+      }
+      val finalMetadata = updatedMetadataOpt.getOrElse(currentMetadata)
+      if (DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetaData(finalMetadata)
+          .contains(nextAvailableVersion)) {
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetaData(finalMetadata)
+            .foreach { ts =>
+          // Post-condition: CommitInfo.inCommitTimestamp and Metadata.enablementTimestamp are
+          // updated through separate code paths above; this assert verifies they agree for the
+          // ICT enablement commit. The guard `contains(nextAvailableVersion)` restricts the
+          // check to the enablement commit itself -- any other transaction that writes a Metadata
+          // action on an already-ICT-enabled table carries a historical enablementTimestamp from
+          // a prior commit, which would make the assertion fail incorrectly without the guard.
+          assert(ts == updatedCommitTimestamp,
+            s"ICT enablementTimestamp $ts must equal inCommitTimestamp $updatedCommitTimestamp")
         }
-      )
+      }
     }
   }
 
@@ -1379,15 +1505,8 @@ private[delta] class ConflictChecker(
     }
   }
 
-  protected def getTableNameOrPath: String = {
-    val tableName = currentTransactionInfo.catalogTable.map(_.qualifiedName)
-      .getOrElse(currentTransactionInfo.metadata.name)
-    if (tableName != null) {
-      tableName
-    } else {
-      s"delta.`${currentTransactionInfo.readSnapshot.deltaLog.dataPath}`"
-    }
-  }
+  protected def getTableNameOrPath: String =
+    currentTransactionInfo.readSnapshot.tableNameOrPath(currentTransactionInfo.catalogTable)
 
   protected def recordTime[T](phase: String)(f: => T): T = {
     val startTimeNs = System.nanoTime()
@@ -1415,5 +1534,119 @@ private[delta] class ConflictChecker(
     log"[tableId=${MDC(DeltaLogKeys.TABLE_ID,
       truncate(initialCurrentTransactionInfo.readSnapshot.metadata.id))}," +
     log"txnId=${MDC(DeltaLogKeys.TXN_ID, truncate(initialCurrentTransactionInfo.txnId))}] "
+  }
+}
+
+private[delta] object ConflictChecker extends DeltaLogging {
+  /**
+   * Returns an iterator that validates all [[AddFile]] and [[RemoveFile]] actions in
+   * `actions` share a consistent `dataChange` value. [[AddCDCFile]] is excluded because
+   * change-data-feed files are always emitted with `dataChange = false`.
+   *
+   * Behavior is controlled by
+   * [[DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE]]:
+   *  - `off`:   skip the check entirely.
+   *  - `log`:   record a Delta event on violation but do not throw.
+   *  - `fatal`: record a Delta event and then throw an [[IllegalStateException]].
+   *
+   * Single pass, no materialization; the throw fires on the first detected inconsistency.
+   */
+  def trackConsistentDataChange(
+      spark: SparkSession,
+      actions: Iterator[Action],
+      deltaLog: DeltaLog,
+      op: DeltaOperations.Operation,
+      callerContext: String): Iterator[Action] = {
+    val mode =
+      DeltaSQLConf.ConsistentDataChangeValidationMode.fromConf(spark.sessionState.conf)
+    if (mode == DeltaSQLConf.ConsistentDataChangeValidationMode.OFF) return actions
+    var firstDataChangeAction: Option[FileAction] = None
+    var firstNoDataChangeAction: Option[FileAction] = None
+    var violationReported = false
+    actions.map { action =>
+      action match {
+        case f: FileAction if !f.isInstanceOf[AddCDCFile] =>
+          if (f.dataChange) {
+            if (firstDataChangeAction.isEmpty) firstDataChangeAction = Some(f)
+          } else {
+            if (firstNoDataChangeAction.isEmpty) firstNoDataChangeAction = Some(f)
+          }
+          if (!violationReported &&
+              firstDataChangeAction.isDefined && firstNoDataChangeAction.isDefined) {
+            violationReported = true
+            val message = "All FileActions in a single commit must share a consistent " +
+              "dataChange value, but this commit mixes dataChange = true and " +
+              "dataChange = false actions."
+            recordDeltaEvent(
+              deltaLog,
+              "delta.commit.inconsistentDataChange",
+              data = Map(
+                "callerContext" -> callerContext,
+                "operation" -> op.name,
+                "operationParameters" -> op.jsonEncodedValues,
+                "firstDataChangeAction" -> firstDataChangeAction,
+                "firstNoDataChangeAction" -> firstNoDataChangeAction))
+            if (mode == DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL) {
+              throw new IllegalStateException(message)
+            }
+          }
+        case _ =>
+      }
+      action
+    }
+  }
+
+  /**
+   * Returns an iterator that validates no duplicate file actions exist as it
+   * streams. Checks: duplicate adds, duplicate removes, and same path+DV both
+   * added and removed. Single pass, no materialization. Returns `actions`
+   * unchanged when [[DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED]] is off.
+   */
+  def checkNoDuplicateActions(
+      spark: SparkSession,
+      actions: Iterator[Action]): Iterator[Action] = {
+    if (!spark.conf.get(DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED)) return actions
+    val addPaths = mutable.Map.empty[String, Option[String]]
+    val removePaths = mutable.Map.empty[String, Option[String]]
+    def pathAndDVString(path: String, dvIdOpt: Option[String]): String = {
+      dvIdOpt.map(dvId => s"$path DV $dvId").getOrElse(path)
+    }
+    def failDuplicate(
+      actionType: String, path: String,
+      addingDVId: Option[String],
+      existingDVId: Option[String]): Unit = {
+      throw DeltaErrors.duplicateActionCheckFailed(
+        actionType,
+        pathAndDVString(path, addingDVId),
+        pathAndDVString(path, existingDVId))
+    }
+    actions.map { action =>
+      action match {
+        case add: AddFile =>
+          val dvId = add.getLegacyDeletionVectorUniqueId
+          addPaths.put(add.path, dvId).foreach { existingDVId =>
+            failDuplicate("add", add.path, dvId, existingDVId)
+          }
+          // Check add/remove overlap inline.
+          removePaths.get(add.path).foreach { removeDVId =>
+            if (dvId == removeDVId) {
+              failDuplicate("add/remove", add.path, dvId, removeDVId)
+            }
+          }
+        case remove: RemoveFile =>
+          val dvId = remove.getLegacyDeletionVectorUniqueId
+          removePaths.put(remove.path, dvId).foreach { existingDVId =>
+            failDuplicate("remove", remove.path, dvId, existingDVId)
+          }
+          // Check add/remove overlap inline.
+          addPaths.get(remove.path).foreach { addDVId =>
+            if (dvId == addDVId) {
+              failDuplicate("add/remove", remove.path, addDVId, dvId)
+            }
+          }
+        case _ =>
+      }
+      action
+    }
   }
 }

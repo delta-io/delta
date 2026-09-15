@@ -26,7 +26,8 @@ import scala.concurrent.duration._
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.amt.AMTPassthrough
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
@@ -45,7 +46,7 @@ import org.apache.hadoop.util.Progressable
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions.{col, lit, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
@@ -89,6 +90,19 @@ class CheckpointsSuite
       case other =>
         throw new IllegalStateException(s"The underlying checkpoint is not a v2 checkpoint. " +
           s"It is: ${other.getClass.getName}")
+    }
+  }
+
+  def getCheckpointFileActions(
+      deltaLog: DeltaLog,
+      checkpoint: FileStatus): Seq[Action] = {
+    if (checkpoint.getPath.toString.endsWith("json")) {
+      deltaLog.store.read(checkpoint.getPath).map(Action.fromJson)
+    } else {
+      val fileIndex =
+        DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Seq(checkpoint)).get
+      deltaLog.loadIndex(fileIndex, Action.logSchema)
+        .as[SingleAction].collect().map(_.unwrap).toSeq
     }
   }
 
@@ -193,17 +207,7 @@ class CheckpointsSuite
           assert(checkpointLiteral == "checkpoint")
       }
 
-      def getCheckpointFileActions(checkpoint: FileStatus) : Seq[Action] = {
-        if (checkpoint.getPath.toString.endsWith("json")) {
-          deltaLog.store.read(checkpoint.getPath).map(Action.fromJson)
-        } else {
-          val fileIndex =
-            DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Seq(checkpoint)).get
-          deltaLog.loadIndex(fileIndex, Action.logSchema)
-            .as[SingleAction].collect().map(_.unwrap).toSeq
-        }
-      }
-      val actions = getCheckpointFileActions(checkpoint)
+      val actions = getCheckpointFileActions(deltaLog, checkpoint)
       // V2 Checkpoints should contain exactly one action each of types
       // Metadata, CheckpointMetadata, and Protocol
       // In this particular case, we should only have one sidecar file
@@ -226,6 +230,70 @@ class CheckpointsSuite
       val protocolActions = actions.collect { case p: Protocol => p }
       assert(protocolActions.length == 1)
       assert(CheckpointProvider.isV2CheckpointEnabled(protocolActions.head))
+    }
+  }
+
+  testDifferentV2Checkpoints("V2 Checkpoint - CheckpointMetadata tags contain" +
+      " sidecar stats and schema") {
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+      spark.range(10).write.format("delta").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      deltaLog.checkpoint()
+
+      val checkpointFiles = deltaLog.listFrom(0).filter(FileNames.isCheckpointFile).toList
+      assert(checkpointFiles.length == 1)
+      val checkpoint = checkpointFiles.head
+
+      val actions = getCheckpointFileActions(deltaLog, checkpoint)
+      val cmActions = actions.collect { case cm: CheckpointMetadata => cm }
+      assert(cmActions.length == 1)
+      val cm = cmActions.head
+
+      assert(cm.tags != null, "CheckpointMetadata.tags should not be null")
+      val expectedKeys = Set(
+        "sidecarNumActions",
+        "sidecarSizeInBytes",
+        "numOfAddFiles",
+        "sidecarFileSchema"
+      )
+      assert(expectedKeys.subsetOf(cm.tags.keySet),
+        s"tags keys ${cm.tags.keySet} should contain all of $expectedKeys")
+
+      val numActions = cm.tags("sidecarNumActions").toLong
+      assert(numActions > 0, s"sidecarNumActions should be > 0, got $numActions")
+      val sizeInBytes = cm.tags("sidecarSizeInBytes").toLong
+      assert(sizeInBytes > 0, s"sidecarSizeInBytes should be > 0, got $sizeInBytes")
+      val numOfAddFiles = cm.tags("numOfAddFiles").toLong
+      assert(numOfAddFiles > 0, s"numOfAddFiles should be > 0, got $numOfAddFiles")
+
+      val schemaJson = cm.tags("sidecarFileSchema")
+      assert(schemaJson != null && schemaJson.nonEmpty,
+        "sidecarFileSchema should be a non-empty JSON string")
+      val schema = cm.sidecarFileSchema
+      assert(schema.isDefined, "sidecarFileSchema should deserialize to Some(StructType)")
+      val sidecarSchema = schema.get
+      assert(sidecarSchema.fieldNames.contains("add"),
+        s"sidecar schema should contain 'add' field, got: ${sidecarSchema.fieldNames.toSeq}")
+      assert(sidecarSchema.fieldNames.contains("remove"),
+        s"sidecar schema should contain 'remove' field, got: ${sidecarSchema.fieldNames.toSeq}")
+
+      val sidecarActions = actions.collect { case s: SidecarFile => s }
+      assert(sidecarActions.nonEmpty, "Should have at least one sidecar file")
+      val sidecarFileStatus = sidecarActions.head.toFileStatus(deltaLog.logPath)
+      val footerSchema = Snapshot.getParquetFileSchemaAndRowCount(
+        spark, deltaLog, sidecarFileStatus)._1
+      assert(footerSchema == sidecarSchema,
+        s"Schema from tags should match schema read from sidecar Parquet footer.\n" +
+        s"From tags: ${sidecarSchema.treeString}\n" +
+        s"From footer: ${footerSchema.treeString}")
+
+      val roundTripped = JsonUtils.fromJson[SingleAction](cm.json).unwrap
+        .asInstanceOf[CheckpointMetadata]
+      assert(roundTripped.tags == cm.tags,
+        "Tags should survive JSON round-trip serialization")
+      assert(roundTripped.sidecarFileSchema == cm.sidecarFileSchema,
+        "sidecarFileSchema should survive JSON round-trip")
     }
   }
 
@@ -416,6 +484,66 @@ class CheckpointsSuite
     }
   }
 
+  testDifferentV2Checkpoints(
+      "v2 checkpoint uses default part size when not explicitly configured") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "1") {
+
+        // Write 12 files without setting DELTA_CHECKPOINT_PART_SIZE explicitly.
+        // The default for V2 is 50,000 so 12 actions < 50,000 => 1 sidecar.
+        spark.range(12).repartition(12).write.format("delta").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        deltaLog.checkpoint()
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 1)
+      }
+    }
+  }
+
+  testDifferentV2Checkpoints(
+      "v2 checkpoint default part size with 55K actions produces 2 sidecars") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name) {
+
+        spark.range(0).write.format("delta").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val fakeFiles = (1 to 55000).map { i =>
+          createTestAddFile(encodedPath = s"file-$i")
+        }
+        deltaLog.startTransaction().commit(fakeFiles, DeltaOperations.ManualUpdate)
+
+        deltaLog.checkpoint()
+        // 55000 / 50000 = 1.1 => ceil = 2 sidecars
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 2)
+      }
+    }
+  }
+
+  testDifferentV2Checkpoints(
+      "v2 checkpoint default part size with 45K actions produces 1 sidecar") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name) {
+
+        spark.range(0).write.format("delta").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val fakeFiles = (1 to 45000).map { i =>
+          createTestAddFile(encodedPath = s"file-$i")
+        }
+        deltaLog.startTransaction().commit(fakeFiles, DeltaOperations.ManualUpdate)
+
+        deltaLog.checkpoint()
+        // 45000 / 50000 = 0.9 => ceil = 1 sidecar
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 1)
+      }
+    }
+  }
+
   test("checkpoint does not contain CDC field") {
     withSQLConf(
         DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true"
@@ -592,6 +720,48 @@ class CheckpointsSuite
         checkAnswer(
           spark.sql(s"select * from delta.`$tablePath`"),
           Seq(0, 0, 1, 1, 2, 2, 3, 3, 4, 4).map { i => Row(i) })
+      }
+    }
+  }
+
+  test("non-AMT tables do not persist backReference or amtPassthrough in checkpoint or commit") {
+    withClassicCheckpointPolicyForCatalogOwned {
+      withTempDir { tempDir =>
+        val tablePath = tempDir.getAbsolutePath
+        spark.range(end = 10).write.format("delta").mode("overwrite").save(tablePath)
+        sql(s"DELETE FROM delta.`$tablePath` WHERE id < 5")
+
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        deltaLog.checkpoint()
+        val version = deltaLog.snapshot.version
+
+        // 1. The classic checkpoint parquet must carry neither backReference nor amtPassthrough.
+        val checkpointFile =
+          FileNames.checkpointFileSingular(deltaLog.logPath, version).toString
+        val checkpointSchema = spark.read.format("parquet").load(checkpointFile).schema
+        val addFields =
+          checkpointSchema("add").dataType.asInstanceOf[StructType].fieldNames.toSeq
+        val removeFields =
+          checkpointSchema("remove").dataType.asInstanceOf[StructType].fieldNames.toSeq
+        assert(!addFields.contains("backReference"),
+          s"checkpoint add struct must not contain backReference, got: $addFields")
+        assert(!removeFields.contains("backReference"),
+          s"checkpoint remove struct must not contain backReference, got: $removeFields")
+        assert(!addFields.contains("amtPassthrough"),
+          s"checkpoint add struct must not contain amtPassthrough, got: $addFields")
+
+        // 2. No commit JSON should mention backReference or amtPassthrough.
+        val commitProvider = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot)
+        val hadoopConf = deltaLog.newDeltaHadoopConf()
+        (0L to version).foreach { v =>
+          val deltaFile = commitProvider.deltaFile(v)
+          val content = deltaLog.store.read(deltaFile, hadoopConf)
+          assert(!content.exists(_.contains("backReference")),
+            s"commit JSON for version $v must not contain backReference: ${content.mkString("\n")}")
+          assert(!content.exists(_.contains("amtPassthrough")),
+            s"commit JSON for version $v must not contain amtPassthrough: " +
+              s"${content.mkString("\n")}")
+        }
       }
     }
   }
@@ -922,6 +1092,14 @@ class CheckpointsSuite
 
     val actionsToWrite = Checkpoints
       .buildCheckpoint(actionsDS, snapshot)
+      // buildCheckpoint drops backReference (add/remove) and amtPassthrough (add only) from the
+      // on-disk shape, so we re-materialize them as null columns before .as[SingleAction].
+      .withColumn("add", when(col("add.path").isNotNull,
+        col("add")
+          .withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))
+          .withField("amtPassthrough", lit(null).cast(AMTPassthrough.STRUCT_TYPE))))
+      .withColumn("remove", when(col("remove.path").isNotNull,
+        col("remove").withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))))
       .as[SingleAction]
       .collect()
       .toSeq
@@ -1029,7 +1207,9 @@ class CheckpointsSuite
     }
   }
 
-  test("validate metadata cleanup is not called with createCheckpointAtVersion API") {
+  test(
+      "validate metadata cleanup is not called with createCheckpointAtVersion API",
+      CatalogManagedMaintenanceIncompatible) {
     withTempDir { dir =>
       val usageRecords1 = Log4jUsageLogger.track {
         spark.range(10).write.format("delta").save(dir.getAbsolutePath)
