@@ -2669,8 +2669,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     Snapshot snapshotV10 =
         deltaLog.getSnapshotAt(
             10, Option.<CheckpointInstance>empty(), Option.<CatalogTable>empty(), false);
-    deltaLog.checkpoint(
-        snapshotV10, Option.<CatalogTable>empty(), Option.<AMTTriggerMode>empty());
+    deltaLog.checkpoint(snapshotV10, Option.<CatalogTable>empty(), Option.<AMTTriggerMode>empty());
 
     // Simulate log cleanup by timestamp: delete logs 0-5
     // This makes version 7 non-recreatable while allowing DeltaLog to load the latest snapshot
