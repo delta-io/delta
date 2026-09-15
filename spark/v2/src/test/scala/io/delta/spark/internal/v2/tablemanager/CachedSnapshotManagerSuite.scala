@@ -622,6 +622,8 @@ class CachedSnapshotManagerSuite
         val snapshots = new ConcurrentLinkedQueue[Snapshot]()
         val allFileSessions = new ConcurrentLinkedQueue[SparkSession]()
         val failures = new ConcurrentLinkedQueue[Throwable]()
+        val loadsCompleted = new CountDownLatch(operationSessions.size)
+        val materializeAllFiles = new CountDownLatch(1)
         val threads = operationSessions.zipWithIndex.map { case (operationSession, index) =>
           new Thread(() => {
             SparkSession.setActiveSession(operationSession)
@@ -629,6 +631,8 @@ class CachedSnapshotManagerSuite
               startBarrier.await(30L, TimeUnit.SECONDS)
               val snapshot = manager.loadLatestSnapshot()
               snapshots.add(snapshot)
+              loadsCompleted.countDown()
+              assert(materializeAllFiles.await(30L, TimeUnit.SECONDS))
               val allFiles = snapshot.allFiles
               assert(allFiles.count() > 0L)
               allFileSessions.add(allFiles.sparkSession)
@@ -651,10 +655,9 @@ class CachedSnapshotManagerSuite
           assertWaitsForSnapshotLock(threads.find(_.getName != lockWinner).get)
 
           CachedSnapshotManagerBlockingFileSystem.releaseListing()
-          threads.foreach(_.join(TimeUnit.SECONDS.toMillis(30L)))
           assert(
-            threads.forall(thread => !thread.isAlive),
-            "concurrent cold refresh threads did not terminate")
+            loadsCompleted.await(30L, TimeUnit.SECONDS),
+            "concurrent cold refreshes did not complete")
           assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
           assert(snapshots.size() == operationSessions.size)
           val returnedSnapshots = snapshots.asScala.toSeq
@@ -663,12 +666,20 @@ class CachedSnapshotManagerSuite
           assert(
             CachedSnapshotManagerBlockingFileSystem.listingThreadNames.distinct.size == 1,
             "only the lock winner should reconstruct the cold snapshot")
+
+          materializeAllFiles.countDown()
+          threads.foreach(_.join(TimeUnit.SECONDS.toMillis(30L)))
+          assert(
+            threads.forall(thread => !thread.isAlive),
+            "concurrent cold refresh threads did not terminate")
+          assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
           assert(allFileSessions.size() == operationSessions.size)
           assert(allFileSessions.asScala.forall(operationSessions.contains))
           assert(allFileSessions.asScala.toSeq.distinct.size == 1)
           assert(!allFileSessions.asScala.exists(_ eq spark))
         } finally {
           CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          materializeAllFiles.countDown()
           threads.foreach(_.interrupt())
           manager.retire()
         }
