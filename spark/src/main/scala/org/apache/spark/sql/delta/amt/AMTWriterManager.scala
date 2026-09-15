@@ -158,6 +158,13 @@ class AMTWriterManager(
   private var preCommitLatestAMTCheckpointProvider: LazyAMTCheckpointProvider =
     new LazyAMTCheckpointProvider(readSnapshotAMTCheckpointOpt, readSnapshot, readSnapshot.version)
 
+  /**
+   * The folded-latest AMT provider the committed actions' back references are stamped against after
+   * conflict resolution.
+   */
+  private[delta] def preCommitLatestAMTCheckpointProviderOpt: Option[AMTCheckpointProvider] =
+    preCommitLatestAMTCheckpointProvider.providerOpt
+
   /** The folded AMT tree version the committed actions were last re-stamped against. */
   private var lastRebasedAMTVersion: Option[Long] = None
 
