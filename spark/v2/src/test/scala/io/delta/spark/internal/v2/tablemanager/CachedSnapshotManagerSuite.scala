@@ -38,7 +38,6 @@ import io.delta.spark.internal.v2.kernel.{KernelContext, KernelEngineFactory}
 
 import io.delta.sql.{DeltaSparkSessionExtensionV1 => DeltaSparkSessionExtension}
 
-import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.catalog.{DeltaCatalogV1 => DeltaCatalog}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -83,7 +82,7 @@ class CachedSnapshotManagerSuite
     new CachedSnapshotManager(
       new Path(dir.getCanonicalPath),
       kernelContext,
-      new AtomicReference[Option[CatalogTable]](None))
+      new AtomicReference[CatalogTable]())
   }
 
   private def setRecordingMarkers(session: SparkSession, sessionMarker: String): Unit = {
@@ -518,30 +517,29 @@ class CachedSnapshotManagerSuite
     }
   }
 
-  test("history, version, and commit-range operations are unsupported") {
+  test("history, version, and commit-range operations delegate to an uncached manager") {
     withTempDir { dir =>
       createDeltaTable(dir)
       val mgr = createManager(dir)
-      val historyError = intercept[DeltaUnsupportedOperationException] {
-        mgr.getActiveCommitAtTime(
+      try {
+        val activeCommit = mgr.getActiveCommitAtTime(
           Long.MaxValue,
           /* canReturnLastCommit= */ true,
           /* mustBeRecreatable= */ true,
           /* canReturnEarliestCommit= */ false)
-      }
-      assert(historyError.getErrorClass == "INTERNAL_ERROR")
-      val versionError = intercept[DeltaUnsupportedOperationException] {
-        mgr.checkVersionExists(0L, mustBeRecreatable = true, allowOutOfRange = false)
-      }
-      assert(versionError.getErrorClass == "INTERNAL_ERROR")
+        assert(activeCommit.getVersion == 0L)
 
-      // scalastyle:off deltahadoopconfiguration
-      val kernelEngine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
-      // scalastyle:on deltahadoopconfiguration
-      val changesError = intercept[DeltaUnsupportedOperationException] {
-        mgr.getTableChanges(kernelEngine, 0L, Optional.empty())
+        mgr.checkVersionExists(0L, mustBeRecreatable = true, allowOutOfRange = false)
+
+        // scalastyle:off deltahadoopconfiguration
+        val kernelEngine =
+          KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
+        // scalastyle:on deltahadoopconfiguration
+        val changes = mgr.getTableChanges(kernelEngine, 0L, Optional.empty())
+        assert(changes != null)
+      } finally {
+        mgr.retire()
       }
-      assert(changesError.getErrorClass == "INTERNAL_ERROR")
     }
   }
 

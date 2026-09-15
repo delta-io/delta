@@ -21,7 +21,6 @@ import java.util.concurrent.locks.ReentrantLock
 
 import scala.jdk.OptionConverters._
 
-import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.spark.internal.v2.DeltaV2Logging
@@ -51,7 +50,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 private[tablemanager] class CachedSnapshotManager(
     tablePath: Path,
     kernelContext: KernelContext,
-    latestCatalogTableOpt: AtomicReference[Option[CatalogTable]])
+    latestCatalogTable: AtomicReference[CatalogTable])
     extends DeltaV2SnapshotManager
     with DeltaV2Logging {
 
@@ -78,29 +77,27 @@ private[tablemanager] class CachedSnapshotManager(
       timestampMillis: Long,
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
-      canReturnEarliestCommit: Boolean): KernelDeltaHistoryManager.Commit = {
-    throw new DeltaUnsupportedOperationException(
-      errorClass = "INTERNAL_ERROR",
-      messageParameters = Array("Cached manager does not support getActiveCommitAtTime"))
-  }
+      canReturnEarliestCommit: Boolean): KernelDeltaHistoryManager.Commit =
+    withUncachedSnapshotManager(latestCatalogTable.get())(
+      _.getActiveCommitAtTime(
+        timestampMillis,
+        canReturnLastCommit,
+        mustBeRecreatable,
+        canReturnEarliestCommit))
 
   override def checkVersionExists(
       version: Long,
       mustBeRecreatable: Boolean,
-      allowOutOfRange: Boolean): Unit = {
-    throw new DeltaUnsupportedOperationException(
-      errorClass = "INTERNAL_ERROR",
-      messageParameters = Array("Cached manager does not support checkVersionExists"))
-  }
+      allowOutOfRange: Boolean): Unit =
+    withUncachedSnapshotManager(latestCatalogTable.get())(
+      _.checkVersionExists(version, mustBeRecreatable, allowOutOfRange))
 
   override def getTableChanges(
       kernelEngine: KernelEngine,
       startVersion: Long,
-      endVersion: Optional[java.lang.Long]): KernelCommitRange = {
-    throw new DeltaUnsupportedOperationException(
-      errorClass = "INTERNAL_ERROR",
-      messageParameters = Array("Cached manager does not support getTableChanges"))
-  }
+      endVersion: Optional[java.lang.Long]): KernelCommitRange =
+    withUncachedSnapshotManager(latestCatalogTable.get())(
+      _.getTableChanges(kernelEngine, startVersion, endVersion))
 
   // === Snapshot lifecycle ===================================================
 
@@ -137,7 +134,7 @@ private[tablemanager] class CachedSnapshotManager(
     recordFrameProfile("cachedSnapshotManager.rebuild") {
       val validationStartedAt = System.currentTimeMillis()
       val existing = currentSnapshot
-      val refreshed = withUncachedSnapshotManager(latestCatalogTableOpt.get())(
+      val refreshed = withUncachedSnapshotManager(latestCatalogTable.get())(
         _.loadLatestSnapshot())
       val sameTable = existing != null && existing.snapshot.metadata.id == refreshed.metadata.id
       if (sameTable && existing.snapshot.version >= refreshed.version) {
@@ -186,7 +183,7 @@ private[tablemanager] class CachedSnapshotManager(
       return upperBound
     }
     // Historical snapshots are returned to the caller but never replace the cached latest snapshot.
-    val historicalSnapshot = withUncachedSnapshotManager(latestCatalogTableOpt.get())(
+    val historicalSnapshot = withUncachedSnapshotManager(latestCatalogTable.get())(
       _.loadSnapshotAt(version))
     historicalSnapshot
   }
@@ -194,12 +191,12 @@ private[tablemanager] class CachedSnapshotManager(
   // === Uncached loading =====================================================
 
   private def withUncachedSnapshotManager[T](
-      catalogTableOpt: Option[CatalogTable])(
+      catalogTable: CatalogTable)(
       f: DeltaV2SnapshotManager => T): T = {
     f(SnapshotManagerFactory.create(
       tablePath.toString,
       kernelContext.getDefaultEngine(),
-      catalogTableOpt.toJava))
+      Option(catalogTable).toJava))
   }
 
   private def isFresh(snapshot: CachedSnapshot, requiredFreshAfter: Long): Boolean =
