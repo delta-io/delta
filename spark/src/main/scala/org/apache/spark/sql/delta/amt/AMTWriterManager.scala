@@ -53,6 +53,15 @@ object AMTTriggerMode {
   case object InlineWithLargeCommitIncremental extends AMTTriggerMode(
     name = "INLINE_WITH_LARGE_COMMIT_INCREMENTAL",
     isIncremental = true)
+
+  /**
+   * An on-demand `DeltaLog.checkpoint` request on an AMT table: full rewrite. Such a request
+   * is done by callers like `commitLarge` e.g. RESTORE / CLONE that typically just replaced
+   * the file set wholesale, so there is nothing useful to build on incrementally.
+   */
+  case object OnDemandCheckpointFull extends AMTTriggerMode(
+    name = "ON_DEMAND_CHECKPOINT_FULL",
+    isIncremental = false)
 }
 
 /** Aggregated AMT metrics collected across all attempts of a single [[AMTWriterManager]]. */
