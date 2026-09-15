@@ -53,6 +53,15 @@ object AMTTriggerMode {
   case object InlineWithLargeCommitIncremental extends AMTTriggerMode(
     name = "INLINE_WITH_LARGE_COMMIT_INCREMENTAL",
     isIncremental = true)
+
+  /**
+   * An on-demand `DeltaLog.checkpoint` request on an AMT table: full rewrite. Such a request
+   * is done by callers like `commitLarge` e.g. RESTORE / CLONE that typically just replaced
+   * the file set wholesale, so there is nothing useful to build on incrementally.
+   */
+  case object OnDemandCheckpointFull extends AMTTriggerMode(
+    name = "ON_DEMAND_CHECKPOINT_FULL",
+    isIncremental = false)
 }
 
 /** Aggregated AMT metrics collected across all attempts of a single [[AMTWriterManager]]. */
@@ -157,6 +166,13 @@ class AMTWriterManager(
    */
   private var preCommitLatestAMTCheckpointProvider: LazyAMTCheckpointProvider =
     new LazyAMTCheckpointProvider(readSnapshotAMTCheckpointOpt, readSnapshot, readSnapshot.version)
+
+  /**
+   * The folded-latest AMT provider the committed actions' back references are stamped against after
+   * conflict resolution.
+   */
+  private[delta] def preCommitLatestAMTCheckpointProviderOpt: Option[AMTCheckpointProvider] =
+    preCommitLatestAMTCheckpointProvider.providerOpt
 
   /** The folded AMT tree version the committed actions were last re-stamped against. */
   private var lastRebasedAMTVersion: Option[Long] = None
