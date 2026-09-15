@@ -550,6 +550,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
     SparkSession sessionA = spark.newSession();
     SparkSession sessionB = spark.newSession();
+    Map<String, String> tableOptions = recordingFileSystemOptions(sessionA, sessionB);
 
     DeltaV2TableManagerCache$.MODULE$.clearCache();
     try {
@@ -573,43 +574,59 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
           method == ConstructionMethod.FROM_PATH ? Option.empty() : Option.apply(catalogTableA);
       Option<CatalogTable> catalogTableOptB =
           method == ConstructionMethod.FROM_PATH ? Option.empty() : Option.apply(catalogTableB);
-      DeltaV2Table table =
+      DeltaV2Table tableA =
           withActiveSession(
               sessionA,
               () ->
                   method == ConstructionMethod.FROM_PATH
-                      ? new DeltaV2Table(identifier, path)
-                      : new DeltaV2Table(identifier, catalogTableA, Collections.emptyMap()));
+                      ? new DeltaV2Table(identifier, path, tableOptions)
+                      : new DeltaV2Table(identifier, catalogTableA, tableOptions));
+      DeltaV2Table tableB =
+          withActiveSession(
+              sessionB,
+              () ->
+                  method == ConstructionMethod.FROM_PATH
+                      ? new DeltaV2Table(identifier, path, tableOptions)
+                      : new DeltaV2Table(identifier, catalogTableB, tableOptions));
       DeltaV2TableManager managerA =
           DeltaV2TableManagerCache$.MODULE$.forTable(
-              sessionA, path, Collections.emptyMap(), catalogTableOptA);
+              sessionA, path, tableOptions, catalogTableOptA);
       DeltaV2TableManager managerB =
           DeltaV2TableManagerCache$.MODULE$.forTable(
-              sessionB, path, Collections.emptyMap(), catalogTableOptB);
+              sessionB, path, tableOptions, catalogTableOptB);
 
-      assertTrue(table.getSnapshotManager() instanceof PathBasedSnapshotManager);
+      assertTrue(tableA.getSnapshotManager() instanceof PathBasedSnapshotManager);
+      assertTrue(tableB.getSnapshotManager() instanceof PathBasedSnapshotManager);
       assertSame(managerA, managerB);
-      assertSame(managerA.kernelContext().getDefaultEngine(), table.kernelEngine());
-      assertEquals("0", table.version());
+      assertSame(managerA.kernelContext(), managerB.kernelContext());
+      assertSame(managerA.kernelContext().getDefaultEngine(), tableA.kernelEngine());
+      assertSame(tableA.kernelEngine(), tableB.kernelEngine());
+      assertEquals("0", tableA.version());
+      assertEquals("0", tableB.version());
 
       withActiveSession(
           sessionA,
           () -> {
             sessionA.sql(String.format("INSERT INTO %s VALUES (1)", tableName));
-            assertLatestSnapshot(table, sessionA, 1L, 1L);
+            assertLatestSnapshot(tableA, sessionA, 1L, 1L);
             return null;
           });
       withActiveSession(
           sessionB,
           () -> {
             sessionB.sql(String.format("INSERT INTO %s VALUES (2)", tableName));
-            assertLatestSnapshot(table, sessionB, 2L, 2L);
+            assertLatestSnapshot(tableB, sessionB, 2L, 2L);
             return null;
           });
     } finally {
       DeltaV2TableManagerCache$.MODULE$.clearCache();
       spark.sql(String.format("DROP TABLE IF EXISTS %s", tableName));
     }
+  }
+
+  private static Map<String, String> recordingFileSystemOptions(
+      SparkSession sessionA, SparkSession sessionB) {
+    return Collections.emptyMap();
   }
 
   private static void assertLatestSnapshot(
