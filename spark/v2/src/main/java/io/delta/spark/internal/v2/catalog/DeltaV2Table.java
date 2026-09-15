@@ -27,12 +27,12 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.internal.v2.exception.NoRecreatableHistoryException;
 import io.delta.spark.internal.v2.exception.TableNotFoundException;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
-import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.read.DeltaV2ScanUtils;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.shims.CatalogV2UtilShims;
-import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
+import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManager;
+import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache$;
 import io.delta.spark.internal.v2.write.DeltaRowLevelOperationBuilder;
 import io.delta.spark.internal.v2.write.DeltaV2WriteBuilder;
 import java.util.ArrayList;
@@ -87,6 +87,7 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
+import scala.Option;
 import scala.jdk.javaapi.CollectionConverters;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
@@ -232,20 +233,24 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.catalogTable = catalogTable;
+    Option<CatalogTable> catalogTableOpt = toScalaOption(catalogTable);
     // Merge options: file system options from catalog + user options (user takes precedence)
     // This follows the same pattern as DeltaTableV2 in delta-spark
     Map<String, String> merged =
         new HashMap<>(
             scala.collection.JavaConverters.mapAsJavaMap(
-                DeltaFileSystemOptions.extractCatalogTableFsOptions(toScalaOption(catalogTable))));
+                DeltaFileSystemOptions.extractCatalogTableFsOptions(catalogTableOpt)));
     // User options override catalog properties
     merged.putAll(userOptions);
     this.options = Collections.unmodifiableMap(merged);
 
-    this.hadoopConf =
-        SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    this.kernelEngine = KernelEngineFactory.createDefaultEngine(this.hadoopConf);
-    this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
+    SparkSession activeSession = SparkSession.active();
+    this.hadoopConf = activeSession.sessionState().newHadoopConfWithOptions(toScalaMap(options));
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            activeSession, tablePath, options, catalogTableOpt);
+    this.kernelEngine = tableManager.kernelContext().getDefaultEngine();
+    this.snapshotManager = tableManager.snapshotManager(catalogTableOpt);
     try {
       if (timeTravelVersion.isPresent()) {
         this.initialSnapshot =
