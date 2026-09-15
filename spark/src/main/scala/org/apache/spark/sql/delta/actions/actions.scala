@@ -62,6 +62,7 @@ import org.apache.spark.sql.{Column, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.util.Utils
 
@@ -1573,6 +1574,28 @@ object CommitInfo {
     case f: FileAction => f.dataChange
     case _ => false
   }
+
+  def useCommitInfoForDataChangeEnabled: Boolean =
+    SQLConf.get.getConf(DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED)
+
+  /**
+   * The commit-level `dataChange` value. `None` when it has to fall back to
+   * inspecting the commit's file actions itself.
+   */
+  def commitChangedData(commitInfo: Option[CommitInfo]): Option[Boolean] = {
+    if (!useCommitInfoForDataChangeEnabled) None else commitInfo.flatMap(_.dataChange)
+  }
+
+  /**
+   * A predicate telling whether a file action of the commit changes data:
+   * taken from the commit-level summary when the commit records one, and from the action
+   * itself otherwise.
+   */
+  def fileActionChangesData(commitInfo: Option[CommitInfo]): FileAction => Boolean =
+    commitChangedData(commitInfo) match {
+      case Some(commitChangesData) => _ => commitChangesData
+      case None => _.dataChange
+    }
 
   // scalastyle:off argcount
 

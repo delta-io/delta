@@ -2278,6 +2278,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(ConsistentDataChangeValidationMode.values.map(_.name).toSet)
       .createWithDefault(ConsistentDataChangeValidationMode.LOG.name)
 
+  val DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED =
+    buildConf("commitInfo.dataChange.read.enabled")
+      .internal()
+      .doc("""
+             |When enabled, readers that need to know whether a commit changed data read the
+             |commit-level dataChange recorded in its CommitInfo instead of scanning the commit's
+             |file actions.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   object ValidateCheckConstraintsMode extends Enumeration {
     val OFF, LOG_ONLY, ASSERT = Value
 

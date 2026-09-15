@@ -1550,6 +1550,9 @@ private[delta] object ConflictChecker extends DeltaLogging {
    *  - `fatal`: record a Delta event and then throw an [[IllegalStateException]].
    *
    * Single pass, no materialization; the throw fires on the first detected inconsistency.
+   *
+   * When the commit carries a [[CommitInfo]] with a [[CommitInfo.dataChange]], this also records
+   * whether that value matches what the file actions say it should be.
    */
   def trackConsistentDataChange(
       spark: SparkSession,
@@ -1562,37 +1565,67 @@ private[delta] object ConflictChecker extends DeltaLogging {
     if (mode == DeltaSQLConf.ConsistentDataChangeValidationMode.OFF) return actions
     var firstDataChangeAction: Option[FileAction] = None
     var firstNoDataChangeAction: Option[FileAction] = None
-    var violationReported = false
-    actions.map { action =>
-      action match {
-        case f: FileAction if !f.isInstanceOf[AddCDCFile] =>
-          if (f.dataChange) {
-            if (firstDataChangeAction.isEmpty) firstDataChangeAction = Some(f)
-          } else {
-            if (firstNoDataChangeAction.isEmpty) firstNoDataChangeAction = Some(f)
-          }
-          if (!violationReported &&
-              firstDataChangeAction.isDefined && firstNoDataChangeAction.isDefined) {
-            violationReported = true
-            val message = "All FileActions in a single commit must share a consistent " +
-              "dataChange value, but this commit mixes dataChange = true and " +
-              "dataChange = false actions."
-            recordDeltaEvent(
-              deltaLog,
-              "delta.commit.inconsistentDataChange",
-              data = Map(
-                "callerContext" -> callerContext,
-                "operation" -> op.name,
-                "operationParameters" -> op.jsonEncodedValues,
-                "firstDataChangeAction" -> firstDataChangeAction,
-                "firstNoDataChangeAction" -> firstNoDataChangeAction))
-            if (mode == DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL) {
-              throw new IllegalStateException(message)
-            }
-          }
-        case _ =>
+    var mixedViolationReported = false
+    var commitInfoMismatchReported = false
+    var declaredDataChange: Option[Boolean] = None
+
+    def isCommitInfoDataChangeViolated(): Boolean =
+      declaredDataChange.exists { declared =>
+        (declared && firstNoDataChangeAction.isDefined) ||
+          (!declared && firstDataChangeAction.isDefined) ||
+          (!actions.hasNext && declared && firstDataChangeAction.isEmpty)
       }
-      action
+
+    new Iterator[Action] {
+      override def hasNext: Boolean = actions.hasNext
+      override def next(): Action = {
+        val action = actions.next()
+        action match {
+          case c: CommitInfo =>
+            declaredDataChange = c.dataChange
+          case f: FileAction if !f.isInstanceOf[AddCDCFile] =>
+            if (f.dataChange) {
+              if (firstDataChangeAction.isEmpty) firstDataChangeAction = Some(f)
+            } else {
+              if (firstNoDataChangeAction.isEmpty) firstNoDataChangeAction = Some(f)
+            }
+          case _ =>
+        }
+        if (!mixedViolationReported &&
+            firstDataChangeAction.isDefined && firstNoDataChangeAction.isDefined) {
+          mixedViolationReported = true
+          val message = "All FileActions in a single commit must share a consistent " +
+            "dataChange value, but this commit mixes dataChange = true and " +
+            "dataChange = false actions."
+          recordDeltaEvent(
+            deltaLog,
+            "delta.commit.inconsistentDataChange",
+            data = Map(
+              "callerContext" -> callerContext,
+              "operation" -> op.name,
+              "operationParameters" -> op.jsonEncodedValues,
+              "firstDataChangeAction" -> firstDataChangeAction,
+              "firstNoDataChangeAction" -> firstNoDataChangeAction))
+          if (mode == DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL) {
+            throw new IllegalStateException(message)
+          }
+        } else if (!commitInfoMismatchReported && isCommitInfoDataChangeViolated()) {
+          commitInfoMismatchReported = true
+          val declared = declaredDataChange.get
+          recordDeltaEvent(
+            deltaLog,
+            "delta.commit.commitInfoDataChangeMismatch",
+            data = Map(
+              "callerContext" -> callerContext,
+              "operation" -> op.name,
+              "operationParameters" -> op.jsonEncodedValues,
+              "declaredDataChange" -> declared,
+              "derivedDataChange" -> firstDataChangeAction.isDefined,
+              "firstDataChangeAction" -> firstDataChangeAction,
+              "firstNoDataChangeAction" -> firstNoDataChangeAction))
+        }
+        action
+      }
     }
   }
 
