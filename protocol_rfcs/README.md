@@ -28,6 +28,7 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 | 2026-04-22    | [iceberg-v4-metadata.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md)                     | https://github.com/delta-io/delta/issues/6640 | Iceberg V4 Adaptive Metadata Tree      |
 | 2026-06-23    | [interval-types.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/interval-types.md)                                         | https://github.com/delta-io/delta/issues/7077 | Interval Types                         |
 | 2026-07-06    | [file-type.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/file-type.md)                                         | https://github.com/delta-io/delta/issues/7147 | File Data Type                         |
+| 2026-08-27    | [user-defined-types.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/user-defined-types.md)                                               | https://github.com/delta-io/delta/issues/7559 | User-Defined Types (UDT)                            |
 
 ### Accepted RFCs
 

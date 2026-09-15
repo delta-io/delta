@@ -23,7 +23,6 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.catalyst.TableIdentifier
 
 /**
  * Tests that [[LastManifestCommit]] is surfaced reliably by [[Snapshot.lastManifestCommitOpt]].
@@ -297,29 +296,30 @@ trait SnapshotLastManifestCommitSuiteBase extends AMTCheckpointTestBase {
       sql(s"INSERT INTO $name VALUES (2)")        // v2: reaches the interval boundary
                                                   // v3: the FIRST AMT is always a deferred OPTIMIZE
                                                   //     CHECKPOINT (describing state@v2).
+      val deltaLog = deltaLogForName(name)
       sql(s"RESTORE TABLE $name VERSION AS OF 1") // v4: RESTORE commit (via commitLarge)
+                                                  // v5: RESTORE's follow-up full AMT (state@v4).
+      assert(deltaLog.snapshot.version == 5,
+        s"RESTORE plus its follow-up AMT should reach v5, but got v${deltaLog.snapshot.version}.")
 
-      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(name))
+      // RESTORE commits via commitLarge. The RESTORE commit (v4) itself emits no inline checkpoint
+      // and carries the previous manifest reference forward; commitLarge then emits a full AMT as a
+      // follow-up OPTIMIZE CHECKPOINT commit (v5) describing the restored state as of v4.
 
-      // RESTORE commits via commitLarge, which never emits AMT checkpoints, even when the
-      // checkpoint interval is reached. The lastManifestCommit valid as of its read snapshot must
-      // be carried forward.
-      assert(snapshot.version == 4, s"RESTORE should commit to v4, but got v${snapshot.version}.")
-      val expectedLmc = LastManifestCommit(version = 3, contentRootVersion = 2)
-
-      assert(checkpointAt(deltaLog, 4).isEmpty, s"v4 must not emit a checkpoint.")
-      // CommitLarge does not write a CRC, so we skip the CRC assertions.
+      // v4: the RESTORE commit emits no checkpoint and carries the reference from v3 forward.
+      val carriedLmc = LastManifestCommit(version = 3, contentRootVersion = 2)
+      assert(checkpointAt(deltaLog, 4).isEmpty, s"v4 (RESTORE) must not emit a checkpoint.")
       assert(
-        lastManifestCommitFromCommitInfoAt(deltaLog, 4).contains(expectedLmc),
-        s"v4 CommitInfo must carry LMC $expectedLmc.")
-      // When getting the snapshot to test, a real AMT provider is installed, but there is no CRC
-      // to cross-verify it, so reconciliation refuses it. We skip the snapshot-resolution assertion
-      // temporarily, until the CommitInfo fallback lands.
-      /*
+        lastManifestCommitFromCommitInfoAt(deltaLog, 4).contains(carriedLmc),
+        s"v4 CommitInfo must carry LMC $carriedLmc.")
+
+      // v5: the follow-up full AMT is written at v5 and describes the restored state as of v4, so
+      // the manifest-commit version is 5 but the content root version is 4.
+      val newLmc = LastManifestCommit(version = 5, contentRootVersion = 4)
+      assert(checkpointAt(deltaLog, 5).nonEmpty, s"v5 must emit the follow-up AMT checkpoint.")
       assert(
-        freshSnapshotAt(name, 4).lastManifestCommitOpt.contains(expectedLmc),
-        s"v4 snapshot must resolve LMC $expectedLmc.")
-      */
+        lastManifestCommitFromCommitInfoAt(deltaLog, 5).contains(newLmc),
+        s"v5 CommitInfo must carry LMC $newLmc.")
     }
   }
 }
