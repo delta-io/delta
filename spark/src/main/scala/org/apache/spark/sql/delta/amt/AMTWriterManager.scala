@@ -299,129 +299,9 @@ class AMTWriterManager(
     result
   }
 
-  /**
-   * The maintenance work a committed transaction should schedule for after it commits.
-   * The maintenance work will be done by CheckpointHook
-   */
-  def planMaintenance(
-      commitVersion: Long,
-      postCommitSnapshot: Snapshot): MaintenanceOperation = {
-    // if the commit itself was to do a checkpoint, don't schedule any maintenance as part
-    // of its post-commit hook.
-    if (!AMTUtils.amtEnabled(readSnapshot)
-        || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
-      return MaintenanceOperation()
-    }
-
-
-    val amtTriggerModeOpt = followUpTriggerMode(commitVersion, postCommitSnapshot)
-    MaintenanceOperation(
-      shouldCheckpoint = amtTriggerModeOpt.isDefined,
-      amtTriggerModeOpt = amtTriggerModeOpt)
-  }
-
-  /**
-   * The maintenance work to schedule after a large commit wrote its AMT inline.
-   *
-   * An inline write is always incremental. If a table keeps getting inline AMTs, we still want it
-   * to get a full AMT once in a while when the last full AMT was older than
-   * checkpointInterval * fullRewriteCheckpointIntervalMultiplier.
-   */
-  def planMaintenanceAfterInlineWrite(
-      commitVersion: Long,
-      postCommitSnapshot: Snapshot): MaintenanceOperation = {
-    // The follow-up OPTIMIZE CHECKPOINT commit itself must never schedule more maintenance.
-    if (!AMTUtils.amtEnabled(readSnapshot)
-        || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
-      return MaintenanceOperation()
-    }
-    val checkpointInterval = deltaLog.checkpointInterval(postCommitSnapshot.metadata)
-    if (isFullCheckpointOverdue(commitVersion, postCommitSnapshot, checkpointInterval)) {
-      MaintenanceOperation(
-        shouldCheckpoint = true,
-        amtTriggerModeOpt = Some(AMTTriggerMode.CheckpointIntervalFull))
-    } else {
-      MaintenanceOperation()
-    }
-  }
-
-  /** [[AMTTriggerMode]] for a followup AMT Checkpoint commit if any. */
-  private def followUpTriggerMode(
-      commitVersion: Long,
-      postCommitSnapshot: Snapshot): Option[AMTTriggerMode] = {
-    val checkpointInterval = deltaLog.checkpointInterval(postCommitSnapshot.metadata)
-    // -- case-1 --
-    // Assume v0 has an AMT. This is to make sure future AMTs land on even boundaries
-    // e.g. 10/20/30 instead of 9/19/29 (as classic checkpoints do).
-    val lastCheckpointVersion = postCommitSnapshot.logSegment.checkpointProvider.version
-    val lastAMTVersion = math.max(0L, lastCheckpointVersion)
-    val versionDiff = commitVersion - lastAMTVersion
-    // Emit only on the exact interval boundary (versionDiff a positive multiple of the interval),
-    // not >= the interval. This is what CheckpointTrigger does: if v10's follow-up AMT has not
-    // landed yet, a racing v11 still sees lastAMTVersion == 0, but 11 % 10 != 0 so it does not
-    // re-trigger; only v10, v20, ... do.
-    if (versionDiff > 0 && versionDiff % checkpointInterval == 0) {
-      // If checkpointInterval is 200 and fullRewriteCheckpointIntervalMultiplier is 5
-      // Then if 10220 is full tree, then 10420, 10620, 10820, 11020 will be incremental
-      // and then 11220 will be full tree again.
-      val fullRewriteSpan = checkpointInterval.toLong * fullRewriteCheckpointIntervalMultiplier
-      val needsFullRewrite = AMTWriteHelper.previousAMTContentRoot(postCommitSnapshot)
-        .flatMap(_.lastManifestCommitWithFullRewrite)
-        .forall(lastFull => commitVersion - lastFull >= fullRewriteSpan)
-      return Some(
-        if (needsFullRewrite) {
-          AMTTriggerMode.CheckpointIntervalFull
-        } else {
-          AMTTriggerMode.CheckpointIntervalIncremental
-        })
-    }
-
-    // -- case-1b --
-    // Backstop for an overdue full rewrite off the interval boundary. case-1 only fires at an
-    // interval boundary relative to the last AMT, and interval-boundary commits can be inlined.
-    // The inline path i.e. [[planMaintenanceAfterInlineWrite]] only schedules a full when it lands
-    // exactly on the full-rewrite cadence i.e. if checkpoint interval=10 and multiplier = 5 and
-    // last full is at 14 and then we say always have inline AMTs except 64/114/164/214 etc.). Such
-    // a table would never take case-1 and never get a follow-up full rewrite. Anchor this check to
-    // the last full rewrite (not the last AMT) and gate it on fullRewriteSpan: it fires the first
-    // version a full span has elapsed, and a racing follow-up that has not landed yet does not
-    // re-trigger on the very next commit (only once per interval), matching case-1's racing
-    // behavior.
-    if (isFullCheckpointOverdue(commitVersion, postCommitSnapshot, checkpointInterval)) {
-      return Some(AMTTriggerMode.CheckpointIntervalFull)
-    }
-
-
-    None
-  }
-
-  /**
-   * Whether a full rewrite is overdue at `commitVersion`: a full span has elapsed since the last
-   * full rewrite AND `commitVersion` sits on an interval boundary relative to that anchor. The
-   * boundary gate keeps this racing-safe -- while a scheduled follow-up is in flight it re-triggers
-   * at most once per interval, not on every commit -- matching `followUpTriggerMode`'s case-1.
-   */
-  private def isFullCheckpointOverdue(
-      commitVersion: Long,
-      postCommitSnapshot: Snapshot,
-      checkpointInterval: Long): Boolean = {
-    val fullRewriteSpan = checkpointInterval * fullRewriteCheckpointIntervalMultiplier
-    AMTWriteHelper.previousAMTContentRoot(postCommitSnapshot)
-      .flatMap(_.lastManifestCommitWithFullRewrite)
-      .exists { lastFull =>
-        val versionsSinceFull = commitVersion - lastFull
-        versionsSinceFull > 0 && versionsSinceFull % checkpointInterval == 0 &&
-          versionsSinceFull >= fullRewriteSpan
-      }
-  }
-
   private def largeCommitActionsCountThresholdForInlineManifestCommit: Long =
     spark.sessionState.conf.getConf(
       DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT)
-
-  private def fullRewriteCheckpointIntervalMultiplier: Int =
-    spark.sessionState.conf.getConf(
-      DeltaSQLConf.AMT_FULL_REWRITE_CHECKPOINT_INTERVAL_MULTIPLIER)
 
   /**
    * Updates the pre-commit AMTCheckpointProvider after resolving conflicts via [[ConflictChecker]].
@@ -496,4 +376,137 @@ class AMTWriterManager(
     lastRebasedAMTVersion = foldedAMTVersion
     currentTransactionInfo.copy(actions = restampedActions)
   }
+}
+object AMTWriterManager {
+
+  /**
+   * The maintenance work a committed transaction should schedule for after it commits.
+   * The maintenance work will be done by CheckpointHook
+   */
+  def planMaintenance(
+      spark: SparkSession,
+      readSnapshot: Snapshot,
+      initialOperation: DeltaOperations.Operation,
+      commitVersion: Long,
+      postCommitSnapshot: Snapshot): MaintenanceOperation = {
+    // if the commit itself was to do a checkpoint, don't schedule any maintenance as part
+    // of its post-commit hook.
+    if (!AMTUtils.amtEnabled(readSnapshot)
+        || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
+      return MaintenanceOperation()
+    }
+
+
+    val amtTriggerModeOpt =
+      followUpTriggerMode(spark, readSnapshot, commitVersion, postCommitSnapshot)
+    MaintenanceOperation(
+      shouldCheckpoint = amtTriggerModeOpt.isDefined,
+      amtTriggerModeOpt = amtTriggerModeOpt)
+  }
+
+  /**
+   * The maintenance work to schedule after a large commit wrote its AMT inline.
+   *
+   * An inline write is always incremental. If a table keeps getting inline AMTs, we still want it
+   * to get a full AMT once in a while when the last full AMT was older than
+   * checkpointInterval * fullRewriteCheckpointIntervalMultiplier.
+   */
+  def planMaintenanceAfterInlineWrite(
+      spark: SparkSession,
+      readSnapshot: Snapshot,
+      initialOperation: DeltaOperations.Operation,
+      commitVersion: Long,
+      postCommitSnapshot: Snapshot): MaintenanceOperation = {
+    // The follow-up OPTIMIZE CHECKPOINT commit itself must never schedule more maintenance.
+    if (!AMTUtils.amtEnabled(readSnapshot)
+        || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
+      return MaintenanceOperation()
+    }
+    val checkpointInterval = readSnapshot.deltaLog.checkpointInterval(postCommitSnapshot.metadata)
+    if (isFullCheckpointOverdue(spark, commitVersion, postCommitSnapshot, checkpointInterval)) {
+      MaintenanceOperation(
+        shouldCheckpoint = true,
+        amtTriggerModeOpt = Some(AMTTriggerMode.CheckpointIntervalFull))
+    } else {
+      MaintenanceOperation()
+    }
+  }
+
+  /** [[AMTTriggerMode]] for a followup AMT Checkpoint commit if any. */
+  private def followUpTriggerMode(
+      spark: SparkSession,
+      readSnapshot: Snapshot,
+      commitVersion: Long,
+      postCommitSnapshot: Snapshot): Option[AMTTriggerMode] = {
+    val checkpointInterval = readSnapshot.deltaLog.checkpointInterval(postCommitSnapshot.metadata)
+    // -- case-1 --
+    // Assume v0 has an AMT. This is to make sure future AMTs land on even boundaries
+    // e.g. 10/20/30 instead of 9/19/29 (as classic checkpoints do).
+    val lastCheckpointVersion = postCommitSnapshot.logSegment.checkpointProvider.version
+    val lastAMTVersion = math.max(0L, lastCheckpointVersion)
+    val versionDiff = commitVersion - lastAMTVersion
+    // Emit only on the exact interval boundary (versionDiff a positive multiple of the interval),
+    // not >= the interval. This is what CheckpointTrigger does: if v10's follow-up AMT has not
+    // landed yet, a racing v11 still sees lastAMTVersion == 0, but 11 % 10 != 0 so it does not
+    // re-trigger; only v10, v20, ... do.
+    if (versionDiff > 0 && versionDiff % checkpointInterval == 0) {
+      // If checkpointInterval is 200 and fullRewriteCheckpointIntervalMultiplier is 5
+      // Then if 10220 is full tree, then 10420, 10620, 10820, 11020 will be incremental
+      // and then 11220 will be full tree again.
+      val fullRewriteSpan =
+        checkpointInterval.toLong * fullRewriteCheckpointIntervalMultiplier(spark)
+      val needsFullRewrite = AMTWriteHelper.previousAMTContentRoot(postCommitSnapshot)
+        .flatMap(_.lastManifestCommitWithFullRewrite)
+        .forall(lastFull => commitVersion - lastFull >= fullRewriteSpan)
+      return Some(
+        if (needsFullRewrite) {
+          AMTTriggerMode.CheckpointIntervalFull
+        } else {
+          AMTTriggerMode.CheckpointIntervalIncremental
+        })
+    }
+
+    // -- case-1b --
+    // Backstop for an overdue full rewrite off the interval boundary. case-1 only fires at an
+    // interval boundary relative to the last AMT, and interval-boundary commits can be inlined.
+    // The inline path i.e. [[planMaintenanceAfterInlineWrite]] only schedules a full when it lands
+    // exactly on the full-rewrite cadence i.e. if checkpoint interval=10 and multiplier = 5 and
+    // last full is at 14 and then we say always have inline AMTs except 64/114/164/214 etc.). Such
+    // a table would never take case-1 and never get a follow-up full rewrite. Anchor this check to
+    // the last full rewrite (not the last AMT) and gate it on fullRewriteSpan: it fires the first
+    // version a full span has elapsed, and a racing follow-up that has not landed yet does not
+    // re-trigger on the very next commit (only once per interval), matching case-1's racing
+    // behavior.
+    if (isFullCheckpointOverdue(spark, commitVersion, postCommitSnapshot, checkpointInterval)) {
+      return Some(AMTTriggerMode.CheckpointIntervalFull)
+    }
+
+
+    None
+  }
+
+  /**
+   * Whether a full rewrite is overdue at `commitVersion`: a full span has elapsed since the last
+   * full rewrite AND `commitVersion` sits on an interval boundary relative to that anchor. The
+   * boundary gate keeps this racing-safe -- while a scheduled follow-up is in flight it re-triggers
+   * at most once per interval, not on every commit -- matching `followUpTriggerMode`'s case-1.
+   */
+  private def isFullCheckpointOverdue(
+      spark: SparkSession,
+      commitVersion: Long,
+      postCommitSnapshot: Snapshot,
+      checkpointInterval: Long): Boolean = {
+    val fullRewriteSpan = checkpointInterval * fullRewriteCheckpointIntervalMultiplier(spark)
+    AMTWriteHelper.previousAMTContentRoot(postCommitSnapshot)
+      .flatMap(_.lastManifestCommitWithFullRewrite)
+      .exists { lastFull =>
+        val versionsSinceFull = commitVersion - lastFull
+        versionsSinceFull > 0 && versionsSinceFull % checkpointInterval == 0 &&
+          versionsSinceFull >= fullRewriteSpan
+      }
+  }
+
+  private def fullRewriteCheckpointIntervalMultiplier(spark: SparkSession): Int =
+    spark.sessionState.conf.getConf(
+      DeltaSQLConf.AMT_FULL_REWRITE_CHECKPOINT_INTERVAL_MULTIPLIER)
 }

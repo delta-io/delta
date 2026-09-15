@@ -200,6 +200,13 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(n => n >= 0, "must not be negative.")
       .createWithDefault(2)
 
+  val DELTA_SNAPSHOT_FILESYSTEM_LISTING_FILTER_STAGED_COMMITS_ENABLED =
+    buildConf("snapshot.filesystemListing.filterStagedCommits.enabled")
+      .internal()
+      .doc("When true, raw filesystem listings accept only backfilled Delta commit files.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES =
     buildConf("commit.inconsistentList.maxRetries")
       .internal()
@@ -456,6 +463,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(1000000)
 
+  val DELTA_CONVERT_REBALANCE_FILE_LISTING =
+    buildConf("convert.rebalanceFileListing")
+      .internal()
+      .doc("When true, CONVERT TO DELTA rebalances the recursively-listed files " +
+        "across tasks (by file count) before reading Parquet footers for schema inference. " +
+        "Files are processed in path order for deterministic schema merging. " +
+        "recursiveListDirs otherwise parcels files by top-level directory, so a single large " +
+        "partition directory becomes one skewed task that reads all its footers alone.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CONVERT_METADATA_CHECK_ENABLED =
     buildConf("convert.metadataCheck.enabled")
       .doc(
@@ -538,6 +556,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "Prevents duplicating data on retry after a transient commit-response loss.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_COMMIT_IDEMPOTENCY_CHECK_VALIDATE_PREPARED_ACTIONS_ENABLED =
+    buildConf("commit.idempotencyCheck.validatePreparedActions.enabled")
+      .internal()
+      .doc("When enabled, on an idempotent self-commit (the write landed but the response was " +
+        "lost, detected on a later retry), validate that the prepared actions we finalize with " +
+        "match the actions read back from the landed commit, ignoring CommitInfo.version. This " +
+        "is a correctness check with a performance cost, intended to be removed once the " +
+        "idempotent self-commit finalization path is proven.")
+      .booleanConf
+      .createWithDefault(true)
 
   val FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED =
     buildConf("featureEnablement.conflictResolution.enabled")
@@ -2519,6 +2548,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_DROP_STATS_COLUMNS_ESCAPE_NAMES =
+    buildConf("stats.dropStatsColumns.escapeNames")
+      .internal()
+      .doc("Whether to properly escape surviving data skipping stats column names after dropping " +
+        "a column.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED =
     buildConf("alterTable.dropColumn.enabled")
       .internal()
@@ -3104,6 +3141,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         """
           |If enabled, when a column mapping table is replaced, the new schema will reuse as many
           |old schema's column mapping metadata (field id and physical name) as possible.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val RETAIN_COMMENTS_DURING_REPLACE_TABLE =
+    buildConf("retainCommentsDuringReplace")
+      .internal()
+      .doc(
+        """
+          |If enabled, replacing a table (CREATE OR REPLACE TABLE, REPLACE TABLE, or the
+          |DataFrameWriterV2 replace()/createOrReplace() APIs) retains table and column comments
+          |from the old table when the new DDL does not explicitly specify them.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)

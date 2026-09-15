@@ -3395,8 +3395,17 @@
   },
   "DELTA_UNSUPPORTED_DROP_COLUMN" : {
     "message" : [
-      "DROP COLUMN is not supported for your Delta table. <advice>"
+      "DROP COLUMN is not supported for your Delta table."
     ],
+    "subClass" : {
+      "ENABLE_COLUMN_MAPPING" : {
+        "message" : [
+          "Enable Column Mapping on your Delta table with mapping mode 'name' by running:",
+          "ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name').",
+          "If your table is not on the required protocol version it will be upgraded. Column mapping requires at least protocol (<readerVersion>, <writerVersion>)."
+        ]
+      }
+    },
     "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE" : {
@@ -3540,8 +3549,17 @@
   },
   "DELTA_UNSUPPORTED_RENAME_COLUMN" : {
     "message" : [
-      "Column rename is not supported for your Delta table. <advice>"
+      "Column rename is not supported for your Delta table."
     ],
+    "subClass" : {
+      "ENABLE_COLUMN_MAPPING" : {
+        "message" : [
+          "Enable Column Mapping on your Delta table with mapping mode 'name' by running:",
+          "ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name').",
+          "If your table is not on the required protocol version it will be upgraded. Column mapping requires at least protocol (<readerVersion>, <writerVersion>)."
+        ]
+      }
+    },
     "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_SCHEMA_DURING_READ" : {
