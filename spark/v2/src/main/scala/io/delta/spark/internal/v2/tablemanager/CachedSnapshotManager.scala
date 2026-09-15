@@ -133,16 +133,6 @@ private[tablemanager] class CachedSnapshotManager(
     }
   }
 
-  private def loadLatestSnapshotAtLeast(version: Long): Snapshot =
-    withSnapshotLockInterruptibly {
-      val existing = currentSnapshot
-      if (existing != null && existing.snapshot.version >= version) {
-        existing.snapshot
-      } else {
-        rebuildAndInstallInternal()
-      }
-    }
-
   private def rebuildAndInstallInternal(): Snapshot = {
     recordFrameProfile("cachedSnapshotManager.rebuild") {
       val validationStartedAt = System.currentTimeMillis()
@@ -177,7 +167,14 @@ private[tablemanager] class CachedSnapshotManager(
     // A request beyond the cache must refresh latest to establish a trustworthy upper bound.
     // An older request only refreshes latest when the configured staleness window requires it.
     val upperBound = if (existing == null || version > existing.snapshot.version) {
-      loadLatestSnapshotAtLeast(version)
+      withSnapshotLockInterruptibly {
+        val current = currentSnapshot
+        if (current != null && current.snapshot.version >= version) {
+          current.snapshot
+        } else {
+          rebuildAndInstallInternal()
+        }
+      }
     } else {
       loadLatestSnapshotInternal()
     }
