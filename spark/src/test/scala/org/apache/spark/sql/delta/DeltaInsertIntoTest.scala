@@ -278,7 +278,7 @@ trait DeltaInsertIntoTest
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      withSQLConf(
+      withConf(
           DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
         spark.read.table("source").write.mode(mode)
           .option("replaceOn", s"t.$whereCol = $whereValue")
@@ -301,7 +301,7 @@ trait DeltaInsertIntoTest
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      withSQLConf(
+      withConf(
           DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
         val deltaLog = DeltaLog.forTable(spark, TableIdentifier("target"))
         spark.read.table("source").write.mode(mode)
@@ -547,7 +547,7 @@ trait DeltaInsertIntoTest
               withSchemaEvolution = withSchemaEvolution
             )
 
-          withSQLConf(confs: _*) {
+          withConf(confs: _*) {
             expectedResult match {
               case ExpectedResult.Success(expectedSchema: StructType) =>
                 runInsert()
