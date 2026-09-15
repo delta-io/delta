@@ -16,10 +16,12 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaOperations, Snapshot, SnapshotDescriptor, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Path helpers for AMT (Adaptive Metadata Tree) manifest files.
@@ -160,4 +162,19 @@ object AMTUtils {
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
   private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
     ManifestBitmap.fromSerializedByteArray(bytes)
+
+  /**
+   * Emits the AMT for `snapshot` by committing a follow-up OPTIMIZE CHECKPOINT that
+   * rewrites the manifest tree, full or incremental per `amtTriggerModeOpt` (full when absent).
+   */
+  def emitAMTCheckpoint(
+      snapshot: Snapshot,
+      catalogTableOpt: Option[CatalogTable],
+      amtTriggerModeOpt: Option[AMTTriggerMode]): Unit = {
+    val triggerMode = amtTriggerModeOpt.getOrElse(AMTTriggerMode.OnDemandCheckpointFull)
+    val checkpointTxn = snapshot.deltaLog.startTransaction(catalogTableOpt, Some(snapshot))
+    checkpointTxn.commit(
+      Seq.empty,
+      DeltaOperations.OptimizeCheckpoint(triggerMode.isIncremental, triggerMode.name))
+  }
 }

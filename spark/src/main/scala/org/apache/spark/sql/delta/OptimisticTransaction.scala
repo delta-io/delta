@@ -2494,11 +2494,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
       log"${MDC(DeltaLogKeys.PATH, logPath)}. Wrote " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
 
-    // If the table has AMT enabled, do not emit a classic checkpoint.
-    if (AMTUtils.amtEnabled(currentSnapshot)) {
-      return currentSnapshot
-    }
-
     deltaLog.checkpoint(currentSnapshot, catalogTable)
     currentSnapshot
   }
