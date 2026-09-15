@@ -899,6 +899,48 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
+    "value DOUBLE",
+    "ceilPart LONG",
+    Map("ceilPart" -> "CEIL(value)"),
+    expectedPartitionExpr = CeilPartitionExpr("ceilPart"),
+    auxiliaryTestName = Option(" from ceil(double)"),
+    filterTestCases = Seq(
+      "value < 1.5" ->
+        Seq("((ceilPart <= 2) OR ((ceilPart <= 2) IS NULL))"),
+      "value <= 1.5" ->
+        Seq("((ceilPart <= 2) OR ((ceilPart <= 2) IS NULL))"),
+      "value = 1.5" ->
+        Seq("((ceilPart = 2) OR ((ceilPart = 2) IS NULL))"),
+      "value > 1.5" ->
+        Seq("((ceilPart >= 2) OR ((ceilPart >= 2) IS NULL))"),
+      "value >= 1.5" ->
+        Seq("((ceilPart >= 2) OR ((ceilPart >= 2) IS NULL))"),
+      "value is null" -> Seq("(ceilPart IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "value DOUBLE",
+    "floorPart LONG",
+    Map("floorPart" -> "FLOOR(value)"),
+    expectedPartitionExpr = FloorPartitionExpr("floorPart"),
+    auxiliaryTestName = Option(" from floor(double)"),
+    filterTestCases = Seq(
+      "value < 1.5" ->
+        Seq("((floorPart <= 1) OR ((floorPart <= 1) IS NULL))"),
+      "value <= 1.5" ->
+        Seq("((floorPart <= 1) OR ((floorPart <= 1) IS NULL))"),
+      "value = 1.5" ->
+        Seq("((floorPart = 1) OR ((floorPart = 1) IS NULL))"),
+      "value > 1.5" ->
+        Seq("((floorPart >= 1) OR ((floorPart >= 1) IS NULL))"),
+      "value >= 1.5" ->
+        Seq("((floorPart >= 1) OR ((floorPart >= 1) IS NULL))"),
+      "value is null" -> Seq("(floorPart IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
     "eventDate DATE",
     "eventTimeTrunc TIMESTAMP",
     Map("eventTimeTrunc" -> "date_trunc('DD', eventDate)"),
