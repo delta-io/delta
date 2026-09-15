@@ -30,7 +30,8 @@ import org.apache.hadoop.conf.Configuration;
  * - fs.gs.auth.access.token.expiration.ms: Optional expiration timestamp in epoch milliseconds
  *
  * If no expiration is provided, defaults to 1 hour from current time. This default does not
- * guarantee that the token will be valid for the entire duration of the query. If the actual token expires earlier, queries will fail.
+ * guarantee that the token will be valid for the entire duration of the query. If the actual
+ * token expires earlier, queries will fail.
  */
 public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
 
