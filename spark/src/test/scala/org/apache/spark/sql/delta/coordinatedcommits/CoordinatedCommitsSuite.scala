@@ -65,6 +65,12 @@ class CoordinatedCommitsSuite
     super.sparkConf
       .set(COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey, "tracking-in-memory")
       .set(COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey, JsonUtils.toJson(Map()))
+      // Several tests assert on the exact set of backfilled/staged `_delta_log` files. The
+      // log-compaction post-commit hook is on by default and, at the default interval (5), would
+      // both write `<x>.<y>.compacted.json` files and force backfills (ensureCommitFilesBackfilled)
+      // mid-sequence, perturbing those assertions. Disable the write hook here; compaction writing
+      // is covered by LogCompactionSuite.
+      .set(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_WRITES.key, "false")
   }
 
   test("helper method that recovers config from abstract metadata works properly") {
