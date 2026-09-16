@@ -850,6 +850,7 @@ object DeltaHistoryManager extends DeltaLogging {
     private val maybeDeleteFiles = new mutable.ArrayBuffer[FileStatus]()
     private var lastFile: FileStatus = _
     private var hasNextCalled: Boolean = false
+    private var reachedLastDeletionBoundary: Boolean = false
     // A map to keep track of multi-part checkpoints.
     val checkpointMap = new scala.collection.mutable.HashMap[(Long, Int),
       collection.mutable.Buffer[FileStatus]]()
@@ -918,6 +919,7 @@ object DeltaHistoryManager extends DeltaLogging {
             flushBuffer()
             maybeDeleteFiles.append(currentFile)
             continueBuffering = false
+            reachedLastDeletionBoundary = versionGetter(currentFile.getPath) > maxVersion
           } else {
             // Multi-part checkpoint
             val mpKey = versionGetter(currentFile.getPath) -> numParts.get
@@ -929,6 +931,7 @@ object DeltaHistoryManager extends DeltaLogging {
               partBuffer.foreach(f => maybeDeleteFiles.append(f))
               checkpointMap.remove(mpKey)
               continueBuffering = false
+              reachedLastDeletionBoundary = versionGetter(currentFile.getPath) > maxVersion
             }
           }
         } else {
@@ -940,7 +943,11 @@ object DeltaHistoryManager extends DeltaLogging {
 
     override def hasNext: Boolean = {
       hasNextCalled = true
-      if (filesToDelete.isEmpty) queueFilesInBuffer()
+      // LogStore listings are ordered by path (and therefore version). Once a complete checkpoint
+      // beyond maxVersion has released the preceding buffer, no later file can be deleted. Avoid
+      // consuming the rest of a lazy/paginated listing; timestamps alone are not an early-exit
+      // condition because modification times are not guaranteed to be monotonic.
+      if (filesToDelete.isEmpty && !reachedLastDeletionBoundary) queueFilesInBuffer()
       filesToDelete.nonEmpty
     }
 
