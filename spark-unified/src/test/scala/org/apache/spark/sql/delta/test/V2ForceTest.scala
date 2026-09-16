@@ -47,11 +47,30 @@ trait V2ForceTest extends DeltaSQLCommandTest with AdaptiveSparkPlanHelper {
 
   private val testsRun: mutable.Set[String] = mutable.Set.empty
 
+  override protected def beforeAll(): Unit = {
+    // assert that all tests listed in shouldFailTests actually exist
+    val nonExistingShouldFailTests = shouldFailTests.filterNot { shouldFailTest =>
+      testNames.contains(shouldFailTest) || testNames.contains(s"$shouldFailTest - $ignoreMsg")
+    }
+
+    if (nonExistingShouldFailTests.nonEmpty) {
+      fail(
+        s"""The following tests in $this are listed in 'shouldFailTests' but were not discovered:
+           |${nonExistingShouldFailTests.map("- " + _).mkString("\n")}
+           |""".stripMargin)
+    }
+
+    super.beforeAll()
+  }
+
   /**
    * When true, each `shouldPass` test additionally checks that no executed plan contains a V1
    * Delta file-source scan (this does not catch reads that are metadata-only). Off by default.
    */
   protected def assertNoV1Fallback: Boolean = false
+
+  private def ignoreMsg: String =
+    "expected to fail with Kernel-based V2 connector (not yet supported)"
 
   /**
    * Override `test` to apply the `shouldFail` logic.
@@ -62,8 +81,7 @@ trait V2ForceTest extends DeltaSQLCommandTest with AdaptiveSparkPlanHelper {
       testTags: Tag*)(testFun: => Any)(implicit pos: Position): Unit = {
     if (shouldFail(testName)) {
       // TODO(#5754): Assert on test failure instead of ignoring
-      super.ignore(
-        s"$testName - expected to fail with Kernel-based V2 connector (not yet supported)")(testFun)
+      super.ignore(s"$testName - $ignoreMsg")(testFun)
     } else {
       super.test(testName, testTags: _*) {
         testsRun.add(testName)

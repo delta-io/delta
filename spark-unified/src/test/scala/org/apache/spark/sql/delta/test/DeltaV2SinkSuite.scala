@@ -62,10 +62,6 @@ object DeltaV2SinkSuite {
     "DeltaSink.catalogTable is correctly populated - path-based table",
     "incompatible schema merging throws errors - first streaming then batch",
     "DeltaSink.deltaLog is not initialized in DeltaSink constructor",
-    // Path-based schema evolution: under STRICT these still hit the V1 sink (no catalog), so they
-    // would duplicate the base suite's V1 run rather than exercise the V2 Kernel sink.
-    "allow schema evolution after dropping column",
-    "allow schema evolution after renaming column",
 
     // ---- Genuine V2-sink gaps (name-based, route to V2, fail there) ----
     // No partition support: the V2 write rejects a partitioned target, surfaced as an async

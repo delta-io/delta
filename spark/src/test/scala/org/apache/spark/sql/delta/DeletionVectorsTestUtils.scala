@@ -50,7 +50,7 @@ trait PersistentDVDisabled extends SharedSparkSession {
 }
 
 trait PersistentDVEnabled extends DeletionVectorsTestUtils {
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectorsInNewTables(spark.conf)
   }

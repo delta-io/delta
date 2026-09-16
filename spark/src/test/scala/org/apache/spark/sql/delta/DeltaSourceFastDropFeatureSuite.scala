@@ -37,7 +37,7 @@ class DeltaSourceFastDropFeatureSuite
 
   import testImplicits._
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "true")
   }
