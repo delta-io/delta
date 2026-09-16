@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 /**
  * Process-cached [[DeltaV2TableManager]] implementation.
  *
- * Creates uncached snapshot managers using the table-scoped [[KernelContext]].
+ * Reuses a table-scoped snapshot manager backed by the table's [[KernelContext]].
  *
  * @param qualifiedTableDataPath the fully-qualified table data directory (parent of `_delta_log`).
  * @param sessionInvariantFsOptions filesystem-prefixed credential options (`fs.*`, `dfs.*`) that

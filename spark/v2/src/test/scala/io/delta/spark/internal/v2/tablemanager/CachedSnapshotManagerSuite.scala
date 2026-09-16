@@ -1101,17 +1101,19 @@ class CachedSnapshotManagerSuite
     }
   }
 
-  test("concurrent table identity validation is consistent") {
+  test("concurrent cold loads return one table identity") {
     withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
       withTempDir { dir =>
         createDeltaTable(dir)
         val mgr = createManager(dir)
         try {
+          val startBarrier = new CyclicBarrier(8)
           val snapshots = new ConcurrentLinkedQueue[Snapshot]()
           val failures = new ConcurrentLinkedQueue[Throwable]()
           val threads = (1 to 8).map { _ =>
             new Thread(() => {
               try {
+                startBarrier.await(30L, TimeUnit.SECONDS)
                 snapshots.add(mgr.loadLatestSnapshot())
               } catch {
                 case failure: Throwable => failures.add(failure)
@@ -1139,47 +1141,51 @@ class CachedSnapshotManagerSuite
       withTempDir { dir =>
         createDeltaTable(dir)
         val mgr = createManager(dir)
-        val initial = mgr.loadLatestSnapshot()
-        appendToDeltaTable(dir)
-        appendToDeltaTable(dir)
-        val currentResults = new ConcurrentLinkedQueue[Snapshot]()
-        val intermediateResults = new ConcurrentLinkedQueue[Snapshot]()
-        val historicalResults = new ConcurrentLinkedQueue[Snapshot]()
-        val failures = new ConcurrentLinkedQueue[Throwable]()
-        val numThreads = 12
-        val startBarrier = new CyclicBarrier(numThreads)
+        try {
+          val initial = mgr.loadLatestSnapshot()
+          appendToDeltaTable(dir)
+          appendToDeltaTable(dir)
+          val currentResults = new ConcurrentLinkedQueue[Snapshot]()
+          val intermediateResults = new ConcurrentLinkedQueue[Snapshot]()
+          val historicalResults = new ConcurrentLinkedQueue[Snapshot]()
+          val failures = new ConcurrentLinkedQueue[Throwable]()
+          val numThreads = 12
+          val startBarrier = new CyclicBarrier(numThreads)
 
-        val threads = (1 to numThreads).map { index =>
-          new Thread(() => {
-            try {
-              startBarrier.await(30L, TimeUnit.SECONDS)
-              val requestedVersion = index % 3
-              val result = mgr.loadSnapshotAt(requestedVersion)
-              assert(result.version == requestedVersion)
-              requestedVersion match {
-                case 0 => historicalResults.add(result)
-                case 1 => intermediateResults.add(result)
-                case 2 => currentResults.add(result)
+          val threads = (1 to numThreads).map { index =>
+            new Thread(() => {
+              try {
+                startBarrier.await(30L, TimeUnit.SECONDS)
+                val requestedVersion = index % 3
+                val result = mgr.loadSnapshotAt(requestedVersion)
+                assert(result.version == requestedVersion)
+                requestedVersion match {
+                  case 0 => historicalResults.add(result)
+                  case 1 => intermediateResults.add(result)
+                  case 2 => currentResults.add(result)
+                }
+              } catch {
+                case failure: Throwable => failures.add(failure)
               }
-            } catch {
-              case failure: Throwable => failures.add(failure)
-            }
-          })
-        }
-        startAndJoinThreads(threads)
+            })
+          }
+          startAndJoinThreads(threads)
 
-        assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
-        assert(currentResults.size() == 4)
-        assert(intermediateResults.size() == 4)
-        assert(historicalResults.size() == 4)
-        val cachedLatest = mgr.loadLatestSnapshot()
-        assert(cachedLatest.version == 2L)
-        assert(cachedLatest ne initial)
-        assert(cachedLatest.allFiles.count() > 0L)
-        while (!currentResults.isEmpty) assert(currentResults.poll() eq cachedLatest)
-        while (!intermediateResults.isEmpty) assert(intermediateResults.poll().version == 1L)
-        while (!historicalResults.isEmpty) assert(historicalResults.poll().version == 0L)
-        assert(mgr.loadLatestSnapshot() eq cachedLatest)
+          assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
+          assert(currentResults.size() == 4)
+          assert(intermediateResults.size() == 4)
+          assert(historicalResults.size() == 4)
+          val cachedLatest = mgr.loadLatestSnapshot()
+          assert(cachedLatest.version == 2L)
+          assert(cachedLatest ne initial)
+          assert(cachedLatest.allFiles.count() > 0L)
+          while (!currentResults.isEmpty) assert(currentResults.poll() eq cachedLatest)
+          while (!intermediateResults.isEmpty) assert(intermediateResults.poll().version == 1L)
+          while (!historicalResults.isEmpty) assert(historicalResults.poll().version == 0L)
+          assert(mgr.loadLatestSnapshot() eq cachedLatest)
+        } finally {
+          mgr.retire()
+        }
       }
     }
   }

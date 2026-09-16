@@ -42,8 +42,8 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  * and serves it to every operation on the same table.
  *
  * [[currentSnapshot]] remains `null` until the first successful load. The first installed snapshot
- * captures [[tableId]]. A subsequent table identity replaces the cached snapshot and is logged,
- * matching DeltaLog's drop-and-recreate behavior. Stale entries refresh through an uncached
+ * records its table identity. A subsequent table identity replaces the cached snapshot and is
+ * logged, matching DeltaLog's drop-and-recreate behavior. Stale entries refresh through an uncached
  * snapshot manager; dependent modules may layer incremental refresh strategies on this base.
  */
 private[tablemanager] class CachedSnapshotManager(
