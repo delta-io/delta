@@ -337,14 +337,18 @@ class CachedSnapshotManagerSuite
       withTempDir { dir =>
         createDeltaTable(dir)
         val mgr = createManager(dir)
-        val cachedLatest = mgr.loadLatestSnapshot()
-        appendToDeltaTable(dir)
+        try {
+          val cachedLatest = mgr.loadLatestSnapshot()
+          appendToDeltaTable(dir)
 
-        val versioned = mgr.loadSnapshotAt(1L)
-        val latestAgain = mgr.loadLatestSnapshot()
-        assert(versioned.version == 1L)
-        assert(versioned eq latestAgain)
-        assert(latestAgain ne cachedLatest)
+          val versioned = mgr.loadSnapshotAt(1L)
+          val latestAgain = mgr.loadLatestSnapshot()
+          assert(versioned.version == 1L)
+          assert(versioned eq latestAgain)
+          assert(latestAgain ne cachedLatest)
+        } finally {
+          mgr.retire()
+        }
       }
     }
   }
@@ -354,16 +358,20 @@ class CachedSnapshotManagerSuite
       withTempDir { dir =>
         createDeltaTable(dir)
         val mgr = createManager(dir)
-        val cachedLatest = mgr.loadLatestSnapshot()
-        appendToDeltaTable(dir)
-        appendToDeltaTable(dir)
+        try {
+          val cachedLatest = mgr.loadLatestSnapshot()
+          appendToDeltaTable(dir)
+          appendToDeltaTable(dir)
 
-        val versioned = mgr.loadSnapshotAt(1L)
-        val latestAgain = mgr.loadLatestSnapshot()
-        assert(versioned.version == 1L)
-        assert(latestAgain.version == 2L)
-        assert(latestAgain ne versioned)
-        assert(latestAgain ne cachedLatest)
+          val versioned = mgr.loadSnapshotAt(1L)
+          val latestAgain = mgr.loadLatestSnapshot()
+          assert(versioned.version == 1L)
+          assert(latestAgain.version == 2L)
+          assert(latestAgain ne versioned)
+          assert(latestAgain ne cachedLatest)
+        } finally {
+          mgr.retire()
+        }
       }
     }
   }
@@ -374,14 +382,18 @@ class CachedSnapshotManagerSuite
         createDeltaTable(dir)
         appendToDeltaTable(dir)
         val mgr = createManager(dir)
-        val cachedLatest = mgr.loadLatestSnapshot()
-        appendToDeltaTable(dir)
+        try {
+          val cachedLatest = mgr.loadLatestSnapshot()
+          appendToDeltaTable(dir)
 
-        val versioned = mgr.loadSnapshotAt(0L)
-        val latestAgain = mgr.loadLatestSnapshot()
-        assert(versioned.version == 0L)
-        assert(latestAgain eq cachedLatest)
-        assert(latestAgain.version == 1L)
+          val versioned = mgr.loadSnapshotAt(0L)
+          val latestAgain = mgr.loadLatestSnapshot()
+          assert(versioned.version == 0L)
+          assert(latestAgain eq cachedLatest)
+          assert(latestAgain.version == 1L)
+        } finally {
+          mgr.retire()
+        }
       }
     }
   }
@@ -392,15 +404,19 @@ class CachedSnapshotManagerSuite
         createDeltaTable(dir)
         appendToDeltaTable(dir)
         val mgr = createManager(dir)
-        val cachedLatest = mgr.loadLatestSnapshot()
-        appendToDeltaTable(dir)
+        try {
+          val cachedLatest = mgr.loadLatestSnapshot()
+          appendToDeltaTable(dir)
 
-        val versioned = mgr.loadSnapshotAt(0L)
-        val latestAgain = mgr.loadLatestSnapshot()
-        assert(versioned.version == 0L)
-        assert(latestAgain.version == 2L)
-        assert(latestAgain ne versioned)
-        assert(latestAgain ne cachedLatest)
+          val versioned = mgr.loadSnapshotAt(0L)
+          val latestAgain = mgr.loadLatestSnapshot()
+          assert(versioned.version == 0L)
+          assert(latestAgain.version == 2L)
+          assert(latestAgain ne versioned)
+          assert(latestAgain ne cachedLatest)
+        } finally {
+          mgr.retire()
+        }
       }
     }
   }
@@ -413,16 +429,20 @@ class CachedSnapshotManagerSuite
         withTempDir { dir =>
           createDeltaTable(dir)
           val mgr = createManager(dir)
-          val beforeRetire = mgr.loadLatestSnapshot()
+          try {
+            val beforeRetire = mgr.loadLatestSnapshot()
 
-          mgr.retire()
-          appendToDeltaTable(dir)
+            mgr.retire()
+            appendToDeltaTable(dir)
 
-          val afterRetire = mgr.loadSnapshotAt(1L)
-          assert(beforeRetire.version == 0L)
-          assert(afterRetire.version == 1L)
-          assert(afterRetire ne beforeRetire)
-          assert(mgr.loadLatestSnapshot() eq afterRetire)
+            val afterRetire = mgr.loadSnapshotAt(1L)
+            assert(beforeRetire.version == 0L)
+            assert(afterRetire.version == 1L)
+            assert(afterRetire ne beforeRetire)
+            assert(mgr.loadLatestSnapshot() eq afterRetire)
+          } finally {
+            mgr.retire()
+          }
         }
       }
     }
@@ -432,19 +452,23 @@ class CachedSnapshotManagerSuite
         withTempDir { dir =>
           createDeltaTable(dir)
           val mgr = createManager(dir)
-          val beforeRetire = mgr.loadLatestSnapshot()
+          try {
+            val beforeRetire = mgr.loadLatestSnapshot()
 
-          mgr.retire()
-          appendToDeltaTable(dir)
-          appendToDeltaTable(dir)
+            mgr.retire()
+            appendToDeltaTable(dir)
+            appendToDeltaTable(dir)
 
-          val historical = mgr.loadSnapshotAt(1L)
-          val latest = mgr.loadLatestSnapshot()
-          assert(beforeRetire.version == 0L)
-          assert(historical.version == 1L)
-          assert(latest.version == 2L)
-          assert(latest ne historical)
-          assert(latest ne beforeRetire)
+            val historical = mgr.loadSnapshotAt(1L)
+            val latest = mgr.loadLatestSnapshot()
+            assert(beforeRetire.version == 0L)
+            assert(historical.version == 1L)
+            assert(latest.version == 2L)
+            assert(latest ne historical)
+            assert(latest ne beforeRetire)
+          } finally {
+            mgr.retire()
+          }
         }
       }
     }
@@ -454,17 +478,21 @@ class CachedSnapshotManagerSuite
         withTempDir { dir =>
           createDeltaTable(dir)
           val mgr = createManager(dir)
-          val beforeRetire = mgr.loadLatestSnapshot()
+          try {
+            val beforeRetire = mgr.loadLatestSnapshot()
 
-          mgr.retire()
-          appendToDeltaTable(dir)
+            mgr.retire()
+            appendToDeltaTable(dir)
 
-          intercept[KernelException] {
-            mgr.loadSnapshotAt(2L)
+            intercept[KernelException] {
+              mgr.loadSnapshotAt(2L)
+            }
+            val latest = mgr.loadLatestSnapshot()
+            assert(latest.version == 1L)
+            assert(latest ne beforeRetire)
+          } finally {
+            mgr.retire()
           }
-          val latest = mgr.loadLatestSnapshot()
-          assert(latest.version == 1L)
-          assert(latest ne beforeRetire)
         }
       }
     }
