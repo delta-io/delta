@@ -751,9 +751,36 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.cannotChangeDataType("example message")
+        throw DeltaErrors.cannotChangeDataType(
+          DataTypeChangeViolation.ChangeDataType(
+            column = "col", fromType = IntegerType, toType = LongType))
       }
-      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE", "429BQ", Map("dataType" -> "example message"))
+      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE.CHANGE_DATA_TYPE", "429BQ",
+        Map("columnName" -> "col", "fromType" -> "INT", "toType" -> "BIGINT"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotChangeDataType(
+          DataTypeChangeViolation.AddNonNullableColumn("col"))
+      }
+      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE.ADD_NON_NULLABLE_COLUMN", "429BQ",
+        Map("columnName" -> "col"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotChangeDataType(
+          DataTypeChangeViolation.DropColumns(Seq("col1", "col2")))
+      }
+      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE.DROP_COLUMNS", "429BQ",
+        Map("columnNames" -> "col1, col2"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotChangeDataType(
+          DataTypeChangeViolation.TightenNullability("col"))
+      }
+      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE.TIGHTEN_NULLABILITY", "429BQ",
+        Map("columnName" -> "col"))
     }
     {
       val table = CatalogTable(TableIdentifier("my table"), null, null, null)
@@ -911,12 +938,16 @@ trait DeltaErrorsSuiteBase
       val s1 = StructType(Seq(StructField("c0", IntegerType)))
       val s2 = StructType(Seq(StructField("c0", StringType)))
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.alterTableReplaceColumnsException(s1, s2, "incompatible")
+        throw DeltaErrors.alterTableReplaceColumnsException(
+          s1, s2, DataTypeChangeViolation.ChangeDataType(
+            column = "c0", fromType = IntegerType, toType = StringType))
       }
-      checkError(e, "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP", "0AKDC", Map(
-        "details" -> "incompatible",
+      checkError(e, "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP.CHANGE_DATA_TYPE", "0AKDC", Map(
         "oldSchema" -> s1.treeString,
-        "newSchema" -> s2.treeString))
+        "newSchema" -> s2.treeString,
+        "columnName" -> "c0",
+        "fromType" -> "INT",
+        "toType" -> "STRING"))
     }
     {
       checkError(

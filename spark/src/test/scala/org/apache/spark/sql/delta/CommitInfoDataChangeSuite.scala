@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, SetTransaction}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.QueryTest
@@ -78,6 +79,30 @@ class CommitInfoDataChangeSuite
     assert(!cdc.dataChange)
     assert(!CommitInfo.dataChangeFromActions(Seq(cdc)))
     assert(CommitInfo.dataChangeFromActions(Seq(cdc, addFile("a", dataChange = true))))
+  }
+
+  test("commitChangedData reports the commit-level value only when it can be trusted") {
+    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED.key -> "true") {
+      assert(CommitInfo.commitChangedData(None).isEmpty)
+      // A commit predating the field, or written by a writer that does not populate it.
+      assert(CommitInfo.commitChangedData(Some(CommitInfo.empty())).isEmpty)
+      assert(
+        CommitInfo.commitChangedData(Some(CommitInfo.empty().copy(dataChange = Some(true))))
+          .contains(true))
+      assert(
+        CommitInfo.commitChangedData(Some(CommitInfo.empty().copy(dataChange = Some(false))))
+          .contains(false))
+    }
+  }
+
+  test("commitChangedData reports nothing while the read path is disabled") {
+    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED.key -> "false") {
+      Seq(Some(true), Some(false), None).foreach { dataChange =>
+        val commitInfo = CommitInfo.empty().copy(dataChange = dataChange)
+        assert(CommitInfo.commitChangedData(Some(commitInfo)).isEmpty,
+          s"the read path is off, so dataChange=$dataChange must not be reported")
+      }
+    }
   }
 
   test("append records dataChange = true") {
