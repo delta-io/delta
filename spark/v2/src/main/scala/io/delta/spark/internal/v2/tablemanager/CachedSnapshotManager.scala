@@ -160,23 +160,34 @@ private[tablemanager] class CachedSnapshotManager(
     if (existing != null && version == existing.snapshot.version) {
       return existing.snapshot
     }
-    // A request beyond the cache must refresh latest to establish a trustworthy upper bound.
-    // An older request only refreshes latest when the configured staleness window requires it.
-    val upperBound = if (existing == null || version > existing.snapshot.version) {
-      withSnapshotLockInterruptibly {
-        val current = currentSnapshot
-        if (current != null && current.snapshot.version >= version) {
-          current.snapshot
-        } else {
-          rebuildAndInstallInternal()
-        }
+    // Linearize upper-bound discovery and any exact fallback under one lock acquisition.
+    val upperBound = withSnapshotLockInterruptibly {
+      val current = currentSnapshot
+      if (current != null && version == current.snapshot.version) {
+        return current.snapshot
       }
-    } else {
-      loadLatestSnapshotInternal()
-    }
-    // If latest still trails the requested version, attempt the exact load before rejecting it.
-    if (version > upperBound.version) {
-      return loadAndInstallSnapshotAtInternal(version)
+      val refreshed = if (current == null || version > current.snapshot.version) {
+        rebuildAndInstallInternal()
+      } else {
+        loadLatestSnapshotInternal()
+      }
+      // If latest still trails the requested version, attempt the exact load before rejecting it.
+      if (version > refreshed.version) {
+        val loaded = withUncachedSnapshotManager(latestCatalogTable.get())(
+          _.loadSnapshotAt(version))
+        val previous = currentSnapshot
+        if (previous != null && previous.snapshot.metadata.id != loaded.metadata.id) {
+          logWarning(
+            s"Table identity changed while loading snapshot at version $version: " +
+              s"previous=${previous.snapshot.metadata.id}, current=${loaded.metadata.id}")
+        }
+        // An exact-version load proves this snapshot exists, but not that it is the latest.
+        currentSnapshot = CachedSnapshot(loaded, validatedAtMs = -1L)
+        retireSnapshotInternal(previous)
+        loaded
+      } else {
+        refreshed
+      }
     }
     if (version == upperBound.version) {
       return upperBound
@@ -186,30 +197,6 @@ private[tablemanager] class CachedSnapshotManager(
       _.loadSnapshotAt(version))
     historicalSnapshot
   }
-
-  private def loadAndInstallSnapshotAtInternal(version: Long): Snapshot =
-    withSnapshotLockInterruptibly {
-      val existing = currentSnapshot
-      if (existing != null && existing.snapshot.version == version) {
-        return existing.snapshot
-      }
-      val loaded = withUncachedSnapshotManager(latestCatalogTable.get())(
-        _.loadSnapshotAt(version))
-      val sameTable = existing != null && existing.snapshot.metadata.id == loaded.metadata.id
-      if (sameTable && existing.snapshot.version > loaded.version) {
-        loaded
-      } else {
-        if (existing != null && !sameTable) {
-          logWarning(
-            s"Table identity changed while loading snapshot at version $version: " +
-              s"previous=${existing.snapshot.metadata.id}, current=${loaded.metadata.id}")
-        }
-        // An exact-version load proves this snapshot exists, but not that it is the latest.
-        currentSnapshot = CachedSnapshot(loaded, validatedAtMs = -1L)
-        retireSnapshotInternal(existing)
-        loaded
-      }
-    }
 
   // === Uncached loading =====================================================
 
