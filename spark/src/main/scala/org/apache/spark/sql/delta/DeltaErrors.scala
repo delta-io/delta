@@ -40,7 +40,7 @@ import io.delta.exceptions
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
-import org.apache.spark.{SparkConf, SparkEnv, SparkException, SparkThrowable}
+import org.apache.spark.{ReadOnlySparkConf, SparkConf, SparkEnv, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -102,7 +102,7 @@ trait DocsPath {
    * The URL for the base path of Delta's docs. When changing this path, ensure that the new path
    * works with the error messages below.
    */
-  protected def baseDocsPath(conf: SparkConf): String = "https://docs.delta.io/latest"
+  protected def baseDocsPath(conf: ReadOnlySparkConf): String = "https://docs.delta.io/latest"
 
   def assertValidCallingFunction(): Unit = {
     val callingMethods = Thread.currentThread.getStackTrace
@@ -128,7 +128,7 @@ trait DocsPath {
    * @return The entire URL of the documentation link
    */
   def generateDocsLink(
-      conf: SparkConf,
+      conf: ReadOnlySparkConf,
       relativePath: String,
       skipValidation: Boolean = false): String = {
     require(conf != null)
@@ -142,7 +142,7 @@ trait DocsPath {
       relativePath: String,
       skipValidation: Boolean = false): Option[String] =
     Option(spark.sparkContext)
-      .map(context => generateDocsLink(context.getConf, relativePath, skipValidation))
+      .map(context => generateDocsLink(context.getReadOnlyConf, relativePath, skipValidation))
 
   /**
    * List of error function names for all errors that have URLs. When adding your error to this list
@@ -188,7 +188,7 @@ trait DeltaErrorsBase
     with DeltaLogging
     with QueryErrorsBase {
 
-  def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getConf)
+  def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getReadOnlyConf)
 
   val faqRelativePath: String = "/delta-intro.html#frequently-asked-questions"
 
