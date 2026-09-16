@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeletionVectorsTestUtils, DeltaLog, DeltaOperations, IsolationLevel, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeletionVectorsTestUtils, DeltaLog, DeltaOperations, IsolationLevel, OptimisticTransaction, Snapshot, WinningCommitMetrics}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -587,13 +587,14 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
             firstWinningVersion: Long,
             lastWinningVersion: Long,
             conflictingCommitFiles: Seq[FileStatus],
-            commitIsolationLevel: IsolationLevel): CurrentTransactionInfo = {
-          val resolved = super.resolveConflicts(currentTransactionInfo, firstWinningVersion,
-            lastWinningVersion, conflictingCommitFiles, commitIsolationLevel)
-          resolved.copy(actions = resolved.actions.map {
+            commitIsolationLevel: IsolationLevel)
+          : (CurrentTransactionInfo, Seq[WinningCommitMetrics]) = {
+          val (resolved, metrics) = super.resolveConflicts(currentTransactionInfo,
+            firstWinningVersion, lastWinningVersion, conflictingCommitFiles, commitIsolationLevel)
+          (resolved.copy(actions = resolved.actions.map {
             case r: RemoveFile if r.backReference.isDefined => r.copy(backReference = None)
             case other => other
-          })
+          }), metrics)
         }
       }
       val leafRemove = adds.head.removeWithTimestamp()

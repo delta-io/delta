@@ -2981,7 +2981,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected def prepareCommit(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
-      amtWriterManager: AMTWriterManager): PrepareCommitResult = {
+      amtWriterManager: AMTWriterManager,
+      winningCommitMetrics: Seq[WinningCommitMetrics] = Seq.empty): PrepareCommitResult = {
     val targetCatalogTable = catalogTable
     // If the table requires atomic Iceberg metadata generation
     // , generate iceberg metadata and update the transaction info.
@@ -3007,9 +3008,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
       }.getOrElse(currentTransactionInfo)
     val baseActions = updatedCurrentTransactionInfo.finalActionsToCommit
     val amtWriteResultOpt = amtWriterManager.writeAMT(
-      commitVersion = attemptVersion,
+      nextAttemptVersion = attemptVersion,
       currentTransactionInfo = updatedCurrentTransactionInfo,
-      preCommitLogSegment = preCommitLogSegment)
+      preCommitLogSegment = preCommitLogSegment,
+      winningCommitMetricsForConflictedRange = winningCommitMetrics)
     val actions = amtWriteResultOpt match {
       case Some(result) if !result.includeActionsInCommitJson =>
         throw new UnsupportedOperationException(
@@ -3071,7 +3073,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // when we resolve conflicts against no-data-change transaction - we might map our
     // readFiles or we might rollback the no-data-change transaction and update our actions
     // that we want to commit.
-    val (newCommitVersion, newCurrentTransactionInfo) = checkForConflicts(
+    val (newCommitVersion, newCurrentTransactionInfo, winningCommitMetrics) = checkForConflicts(
       commitVersion,
       currentTransactionInfo,
       attemptNumber,
@@ -3096,7 +3098,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     prepareCommit(
       newCommitVersion,
       rebasedTransactionInfo,
-      amtWriterManager)
+      amtWriterManager,
+      winningCommitMetrics)
   }
 
   /**
@@ -3430,7 +3433,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       attemptNumber: Int,
       commitIsolationLevel: IsolationLevel,
       amtWriterManager: AMTWriterManager)
-    : (Long, CurrentTransactionInfo) = recordDeltaOperation(
+    : (Long, CurrentTransactionInfo, Seq[WinningCommitMetrics]) = recordDeltaOperation(
         deltaLog,
         "delta.commit.retry.conflictCheck",
         tags = Map(TAG_LOG_STORE_CLASS -> commitLogStoreClassNameForTag)) {
@@ -3468,12 +3471,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
         log"${MDC(DeltaLogKeys.VERSION2, nextAttemptVersion)}) " +
         log"with current txn having " + txnDetailsLog)
 
-      val updatedCurrentTransactionInfo = {
+      val (updatedCurrentTransactionInfo, winningCommitMetrics) = {
         if (expected.isEmpty) {
-          currentTransactionInfo
+          (currentTransactionInfo, Seq.empty[WinningCommitMetrics])
         }
         else {
-          val currentTransactionInfoAfterResolvingConflicts = resolveConflicts(
+          val (currentTransactionInfoAfterResolvingConflicts, metrics) = resolveConflicts(
             currentTransactionInfo = currentTransactionInfo,
             firstWinningVersion = expected.head,
             lastWinningVersion = expected.last,
@@ -3484,7 +3487,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
           // references against it (a no-op otherwise).
           amtWriterManager.updatePreCommitLatestAMTCheckpointProvider(
             currentTransactionInfoAfterResolvingConflicts)
-          amtWriterManager.rebaseBackReferences(currentTransactionInfoAfterResolvingConflicts)
+          (amtWriterManager.rebaseBackReferences(currentTransactionInfoAfterResolvingConflicts),
+            metrics)
         }
       }
 
@@ -3496,7 +3500,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         log"with current txn having " + txnDetailsLog +
         log"${MDC(DeltaLogKeys.TIME_MS, clock.getTimeMillis() - commitAttemptStartTimeMillis)} " +
         log"ms since start")
-      (nextAttemptVersion, updatedCurrentTransactionInfo)
+      (nextAttemptVersion, updatedCurrentTransactionInfo, winningCommitMetrics)
     }
   }
 
@@ -3516,13 +3520,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
       firstWinningVersion: Long,
       lastWinningVersion: Long,
       conflictingCommitFiles: Seq[FileStatus],
-      commitIsolationLevel: IsolationLevel) : CurrentTransactionInfo = {
+      commitIsolationLevel: IsolationLevel)
+    : (CurrentTransactionInfo, Seq[WinningCommitMetrics]) = {
 
     var updatedCurrentTransactionInfo = currentTransactionInfo
+    val winningCommitMetrics = Seq.newBuilder[WinningCommitMetrics]
     (firstWinningVersion to lastWinningVersion)
       .zip(conflictingCommitFiles)
       .foreach { case (otherCommitVersion, otherCommitFileStatus) =>
         val winningCommitSummary = readWinningCommitSummary(otherCommitFileStatus)
+        winningCommitMetrics += WinningCommitMetrics.fromWinningCommitSummary(winningCommitSummary)
 
         val conflictChecker = new ConflictChecker(
           spark,
@@ -3540,7 +3547,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           log"${MDC(DeltaLogKeys.DURATION,
             clock.getTimeMillis() - commitAttemptStartTimeMillis)} ms since start")
       }
-    updatedCurrentTransactionInfo
+    (updatedCurrentTransactionInfo, winningCommitMetrics.result())
   }
 
   /**
