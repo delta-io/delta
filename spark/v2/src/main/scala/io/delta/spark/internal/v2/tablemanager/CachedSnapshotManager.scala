@@ -108,11 +108,7 @@ private[tablemanager] class CachedSnapshotManager(
   // === Acquisition ==========================================================
 
   private def loadLatestSnapshotInternal(): Snapshot = {
-    val now = System.currentTimeMillis()
-    val stalenessLimit = SparkSession.active.sessionState.conf
-      .getConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT)
-    val requiredFreshAfter =
-      if (stalenessLimit > 0) math.max(0, now - stalenessLimit) else now
+    val requiredFreshAfter = latestSnapshotFreshnessThreshold()
     recordFrameProfile("cachedSnapshotManager.loadLatestSnapshotInternal") {
       val existing = currentSnapshot
       if (isFresh(existing, requiredFreshAfter)) {
@@ -133,23 +129,26 @@ private[tablemanager] class CachedSnapshotManager(
     recordFrameProfile("cachedSnapshotManager.rebuild") {
       val validationStartedAt = System.currentTimeMillis()
       val existing = currentSnapshot
-      val refreshed = withUncachedSnapshotManager(latestCatalogTable.get())(
-        _.loadLatestSnapshot())
-      val sameTable = existing != null && existing.snapshot.metadata.id == refreshed.metadata.id
-      if (sameTable && existing.snapshot.version >= refreshed.version) {
+      val refreshed = CachedSnapshot(
+        withUncachedSnapshotManager(latestCatalogTable.get())(_.loadLatestSnapshot()),
+        validationStartedAt)
+      val sameTable =
+        existing != null && existing.snapshot.metadata.id == refreshed.snapshot.metadata.id
+      if (sameTable && existing.snapshot.version >= refreshed.snapshot.version) {
         val validatedAt = math.max(validationStartedAt, existing.validatedAtMs)
         currentSnapshot = CachedSnapshot(existing.snapshot, validatedAt)
-        retireSnapshotInternal(refreshed, existing.snapshot)
+        retireSnapshotInternal(refreshed)
         existing.snapshot
       } else {
         if (existing != null && !sameTable) {
           logWarning(
             s"Table identity changed while refreshing snapshot: " +
-              s"previous=${existing.snapshot.metadata.id}, current=${refreshed.metadata.id}")
+              s"previous=${existing.snapshot.metadata.id}, " +
+              s"current=${refreshed.snapshot.metadata.id}")
         }
-        currentSnapshot = CachedSnapshot(refreshed, validationStartedAt)
+        currentSnapshot = refreshed
         retireSnapshotInternal(existing)
-        refreshed
+        refreshed.snapshot
       }
     }
   }
@@ -166,25 +165,24 @@ private[tablemanager] class CachedSnapshotManager(
       if (current != null && version == current.snapshot.version) {
         return current.snapshot
       }
-      val refreshed = if (current == null || version > current.snapshot.version) {
-        rebuildAndInstallInternal()
-      } else {
-        loadLatestSnapshotInternal()
-      }
+      val refreshed =
+        if (isFresh(current, latestSnapshotFreshnessThreshold(), Some(version))) current.snapshot
+        else rebuildAndInstallInternal()
       // If latest still trails the requested version, attempt the exact load before rejecting it.
       if (version > refreshed.version) {
-        val loaded = withUncachedSnapshotManager(latestCatalogTable.get())(
-          _.loadSnapshotAt(version))
+        val loaded = CachedSnapshot(
+          withUncachedSnapshotManager(latestCatalogTable.get())(_.loadSnapshotAt(version)),
+          validatedAtMs = -1L)
         val previous = currentSnapshot
-        if (previous != null && previous.snapshot.metadata.id != loaded.metadata.id) {
+        if (previous != null && previous.snapshot.metadata.id != loaded.snapshot.metadata.id) {
           logWarning(
             s"Table identity changed while loading snapshot at version $version: " +
-              s"previous=${previous.snapshot.metadata.id}, current=${loaded.metadata.id}")
+              s"previous=${previous.snapshot.metadata.id}, current=${loaded.snapshot.metadata.id}")
         }
         // An exact-version load proves this snapshot exists, but not that it is the latest.
-        currentSnapshot = CachedSnapshot(loaded, validatedAtMs = -1L)
+        currentSnapshot = loaded
         retireSnapshotInternal(previous)
-        loaded
+        loaded.snapshot
       } else {
         refreshed
       }
@@ -209,8 +207,20 @@ private[tablemanager] class CachedSnapshotManager(
       Option(catalogTable).toJava))
   }
 
-  private def isFresh(snapshot: CachedSnapshot, requiredFreshAfter: Long): Boolean =
-    snapshot != null && snapshot.validatedAtMs >= requiredFreshAfter
+  private def latestSnapshotFreshnessThreshold(): Long = {
+    val now = System.currentTimeMillis()
+    val stalenessLimit = SparkSession.active.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT)
+    if (stalenessLimit > 0) math.max(0, now - stalenessLimit) else now
+  }
+
+  private def isFresh(
+      snapshot: CachedSnapshot,
+      requiredFreshAfter: Long,
+      requiredVersion: Option[Long] = None): Boolean =
+    snapshot != null &&
+      snapshot.validatedAtMs >= requiredFreshAfter &&
+      requiredVersion.forall(snapshot.snapshot.version >= _)
 
   private def withSnapshotLockInterruptibly[T](body: => T): T = {
     snapshotLock.lockInterruptibly()
@@ -221,17 +231,9 @@ private[tablemanager] class CachedSnapshotManager(
     }
   }
 
-  private def retireSnapshotInternal(
-      snapshotToRetire: Snapshot,
-      retainedSnapshot: Snapshot = null): Unit = {
-    if (snapshotToRetire != null && (snapshotToRetire ne retainedSnapshot)) {
-      snapshotToRetire.uncache()
-    }
-  }
-
   private def retireSnapshotInternal(cachedSnapshot: CachedSnapshot): Unit = {
     if (cachedSnapshot != null) {
-      retireSnapshotInternal(cachedSnapshot.snapshot)
+      cachedSnapshot.snapshot.uncache()
     }
   }
 
