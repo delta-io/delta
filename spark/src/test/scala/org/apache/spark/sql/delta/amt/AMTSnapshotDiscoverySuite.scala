@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaMinorCompactionTestUtils, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, LastManifestCommit}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
@@ -27,7 +27,9 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
-class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
+class AMTSnapshotDiscoverySuite
+  extends AMTCheckpointTestBase
+  with DeltaMinorCompactionTestUtils {
 
   /** Whether this suite runs with `.crc` files enabled, read from the effective conf. */
   protected def writeChecksumEnabled: Boolean =
@@ -654,6 +656,162 @@ class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
       context.postCheckpointSnapshot.logSegment.deltas.map(f => FileNames.deltaVersion(f))
     assert(segmentDeltaVersions.forall(_ > context.checkpoint.version),
       s"Log segment must trim deltas up to the checkpoint version; got $segmentDeltaVersions.")
+  }
+
+  //////////////////////////////////
+  // Minor compaction compatibility
+  //////////////////////////////////
+
+  private def buildDeltaLogWithCompactedDeltasAndStaleLastCheckpointHint(name: String)
+    : (DeltaLog, Snapshot, DeltaLog) = {
+    createAMTTable(name, checkpointInterval = 2)
+    // v1: INSERT (1)
+    // v2: INSERT (2)
+    // v3: OPTIMIZE CHECKPOINT (content root @v2)
+    (1 to 2).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+    assert(deltaLogForName(name).unsafeVolatileSnapshot.version == 3)
+
+    val staleHintAtV2 = readLastCheckpointBytes(name)
+    val staleLogAtV3 = deltaLogForName(name)
+    assert(staleLogAtV3.unsafeVolatileSnapshot.version == 3)
+    DeltaLog.clearCache()
+
+    // v4: INSERT (3)
+    // v5: OPTIMIZE CHECKPOINT (content root @v4)
+    sql(s"INSERT INTO $name VALUES (3)")
+    assert(deltaLogForName(name).unsafeVolatileSnapshot.version == 5)
+
+    // v6: Bump up checkpoint interval
+    // v7: INSERT (4)
+    // v8: INSERT (5)
+    sql(s"ALTER TABLE $name SET TBLPROPERTIES ('delta.checkpointInterval' = '1000')")
+    (4 to 5).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+
+    val latestDeltaLogAtV8 = deltaLogForName(name)
+    val latestSnapshotAtV8 = latestDeltaLogAtV8.update()
+    assert(latestSnapshotAtV8.version == 8)
+    assert(amtProvider(latestSnapshotAtV8).map(_.version).contains(4L))
+    assert(staleLogAtV3.unsafeVolatileSnapshot.version == 3)
+
+    // Deltas layout: 1, 2, [3, 4, 5], [6, 7, 8]
+    // Stale CP hint:   <2>
+    // Stale deltas:        [3, 4, 5], [6, 7, 8])
+    // Latest CP:              <4>
+    // Trimmed deltas:             5,  [6, 7, 8]
+    // (Stale means that this is the initial LogSegment built by `getLogSegmentForVersion`,
+    // which is not yet trimmed to the accurate checkpoint version by AMT reconciliation.)
+    Seq((3, 5), (6, 8)).foreach { case (start, end) =>
+      minorCompactDeltaLog(
+        tablePath = latestDeltaLogAtV8.dataPath.toString,
+        startVersion = start,
+        endVersion = end)
+    }
+    overwriteLastCheckpoint(name, staleHintAtV2)
+
+    (latestDeltaLogAtV8, latestSnapshotAtV8, staleLogAtV3)
+  }
+
+  private def assertSnapshotTrimmed(
+      snapshot: Snapshot,
+      expectedVersion: Long,
+      expectedAMTContentRootVersion: Long,
+      expectedIndividualDeltas: Seq[Long],
+      expectedCompactedDeltas: Seq[(Long, Long)],
+      expectedNonCompactedDeltas: Seq[Long],
+      expectedData: Set[Int]): Unit = {
+    assert(snapshot.version == expectedVersion)
+    assert(amtProvider(snapshot).map(_.version).contains(expectedAMTContentRootVersion))
+    val actualIndividualDeltas = snapshot.logSegment.deltas
+      .filterNot(FileNames.isCompactedDeltaFile)
+      .map(FileNames.deltaVersion)
+    assert(actualIndividualDeltas == expectedIndividualDeltas)
+    val actualCompactedDeltas = snapshot.logSegment.deltas
+      .filter(FileNames.isCompactedDeltaFile)
+      .map(FileNames.compactedDeltaVersions)
+    assert(actualCompactedDeltas == expectedCompactedDeltas)
+    val actualNonCompactedDeltas = snapshot.logSegment.nonCompactedDeltasOpt
+      .map(n => n.map(FileNames.deltaVersion))
+    assert(actualNonCompactedDeltas.contains(expectedNonCompactedDeltas))
+    val reconstructedData = snapshot.deltaLog
+      .createDataFrame(snapshot, snapshot.allFilesViaStateReconstruction.collect().toSeq)
+      .collect().map(_.getInt(0)).toSet
+    assert(reconstructedData == expectedData)
+  }
+
+  test("[minor compaction] a straddling compacted delta is dropped and its gap refilled: cold") {
+    val name = "amt_compaction_straddle_cold"
+    withTable(name) {
+      val (latestDeltaLogAtV8, latestSnapshotAtV8, _) =
+        buildDeltaLogWithCompactedDeltasAndStaleLastCheckpointHint(name)
+      // Cold path: a cold load builds the segment at content root 2 (stale hint) first, and then
+      // reconciles to trim to content root 4.
+      val (coldDeltaLog, coldSnapshot) = coldLoad(name)
+      assertSnapshotTrimmed(
+        coldSnapshot,
+        expectedVersion = 8,
+        expectedAMTContentRootVersion = 4,
+        expectedIndividualDeltas = Seq(5L),
+        expectedCompactedDeltas = Seq((6L, 8L)),
+        expectedNonCompactedDeltas = Seq(5L, 6L, 7L, 8L),
+        expectedData = Set(1, 2, 3, 4, 5))
+    }
+  }
+
+  test("[minor compaction] a straddling compacted delta is dropped and its gap refilled: warm") {
+    val name = "amt_compaction_straddle_warm"
+    withTable(name) {
+      val (latestDeltaLogAtV8, latestSnapshotAtV8, staleLogAtV3) =
+        buildDeltaLogWithCompactedDeltasAndStaleLastCheckpointHint(name)
+      // Warm path: a warm update builds the segment at content root 2 (stale hint + old checkpoint
+      // provider reuse) first, and then reconciles to trim to content root 4.
+      val warmSnapshot = staleLogAtV3.update(catalogTableOpt = Some(catalogTableFor(name)))
+      assert(warmSnapshot.version == 8, s"expected warm v8, got v${warmSnapshot.version}.")
+      assertSnapshotTrimmed(
+        warmSnapshot,
+        expectedVersion = 8,
+        expectedAMTContentRootVersion = 4,
+        expectedIndividualDeltas = Seq(5L),
+        expectedCompactedDeltas = Seq((6L, 8L)),
+        expectedNonCompactedDeltas = Seq(5L, 6L, 7L, 8L),
+        expectedData = Set(1, 2, 3, 4, 5))
+    }
+  }
+
+  test("[minor compaction] the post-commit fast path trims a compacted pre-commit segment") {
+    val name = "amt_compaction_post_commit"
+    withTable(name) {
+      val (latestDeltaLog, latestSnapshotAtV8, _) =
+        buildDeltaLogWithCompactedDeltasAndStaleLastCheckpointHint(name)
+      // Emit a deferred full checkpoint. All the previous deltas (compacted or not) will be trimmed
+      // as the checkpoint is installed. A compacted delta will never straddle on this content root,
+      // unless there has been concurrent updates on the table.
+      commitCheckpoint(latestDeltaLog, incremental = false) // V9: OPTIMIZE CHECKPOINT (AMT @V8)
+      val postCommitSnapshot = latestDeltaLog.unsafeVolatileSnapshot
+      assertSnapshotTrimmed(
+        postCommitSnapshot,
+        expectedVersion = 9L,
+        expectedAMTContentRootVersion = 8L,
+        expectedIndividualDeltas = Seq(9L),
+        expectedCompactedDeltas = Seq.empty,
+        expectedNonCompactedDeltas = Seq(9L),
+        expectedData = Set(1, 2, 3, 4, 5))
+    }
+  }
+
+  test("[minor compaction] an incremental checkpoint over a compacted pre-commit segment throws") {
+    val name = "amt_compaction_incremental"
+    withTable(name) {
+      val (_, _, _) =
+        buildDeltaLogWithCompactedDeltasAndStaleLastCheckpointHint(name)
+      // With compacted deltas in the pre-commit segment, Incremental AMT writer appends
+      // non-contiguous versions to InMemoryLogReplay, which fails the contiguity assertion.
+      // Cold load the delta log to incorporate the compacted deltas into the snapshot.
+      val (coldDeltaLog, _) = coldLoad(name)
+      val e = intercept[Throwable] {
+        commitCheckpoint(coldDeltaLog, incremental = true)
+      }
+      assert(e.getMessage().contains("Attempted to replay version"))
+    }
   }
 }
 

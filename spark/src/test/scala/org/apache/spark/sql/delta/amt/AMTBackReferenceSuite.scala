@@ -16,11 +16,11 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeletionVectorsTestUtils, DeltaLog, DeltaOperations, IsolationLevel, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.functions.col
@@ -331,7 +331,9 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
       n => sql(s"INSERT OVERWRITE $n VALUES (99)"),
       tombstones = leafPackedFiles, exact = true),
     PropagationCase("RESTORE", "amt_back_ref_restore",
-      n => sql(s"RESTORE TABLE $n TO VERSION AS OF 1"), tombstones = 1, exact = false))
+      n => sql(s"RESTORE TABLE $n TO VERSION AS OF 1"), tombstones = 1, exact = false),
+    PropagationCase("TRUNCATE", "amt_back_ref_truncate",
+      n => sql(s"TRUNCATE TABLE $n"), tombstones = leafPackedFiles, exact = true))
 
   propagationCases.foreach { c =>
     testAcrossAMTCheckpointScenarios(
@@ -498,6 +500,118 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
     }
   }
 
+  test("conflict-resolution rebase preserves a leaf-derived tombstone's back reference") {
+    withTable("amt_commit_rebase") {
+      val adds = emitStampedAddFiles("amt_commit_rebase")
+      assert(adds.size >= 2, "the scenario needs two distinct leaf-derived files.")
+      val deltaLog = deltaLogForName("amt_commit_rebase")
+      val vBefore = deltaLog.update().version
+
+      // T1 reads the current snapshot and plans to tombstone one leaf-derived file, carrying that
+      // file's stamped back reference.
+      val txn1 = deltaLog.startTransaction()
+      val leafRemove = adds.head.removeWithTimestamp()
+      assert(leafRemove.backReference.isDefined,
+        "precondition: the file T1 tombstones must be leaf-derived (carry a back reference).")
+
+      // A concurrent commit tombstones a different leaf-derived file and lands first, so T1 must
+      // rebase over it during conflict resolution rather than conflict outright.
+      deltaLog.startTransaction().commit(
+        Seq(adds.last.removeWithTimestamp()), DeltaOperations.ManualUpdate)
+
+      // T1 conflicts, rebases over the winner, and commits; the post-conflict-resolution invariant
+      // would throw here if the rebase dropped the RemoveFile's back reference.
+      txn1.commit(Seq(leafRemove), DeltaOperations.ManualUpdate)
+
+      val rebasedRemove = actionsAfter(deltaLog, vBefore).collect {
+        case r: RemoveFile if r.path == leafRemove.path => r
+      }
+      assert(rebasedRemove.size == 1,
+        s"T1's tombstone for ${leafRemove.path} must land exactly once after the rebase.")
+      assert(rebasedRemove.head.backReference == adds.head.backReference,
+        s"the rebased tombstone must keep its source file's back reference " +
+          s"${adds.head.backReference}, was ${rebasedRemove.head.backReference}.")
+    }
+  }
+
+  test("conflict-resolution rebase re-stamps a tombstone onto a winning commit's new tree") {
+    withTable("amt_commit_rebase_newtree") {
+      val adds = emitStampedAddFiles("amt_commit_rebase_newtree")
+      val deltaLog = deltaLogForName("amt_commit_rebase_newtree")
+
+      // T1 reads the current snapshot and plans to tombstone a leaf-derived file.
+      val txn1 = deltaLog.startTransaction()
+      val target = adds.head
+      val readSnapshotRef = target.backReference
+      assert(readSnapshotRef.isDefined,
+        "precondition: the file T1 tombstones must be leaf-derived (carry a back reference).")
+      val leafRemove = target.removeWithTimestamp()
+
+      // A concurrent full-rewrite OPTIMIZE CHECKPOINT wins T1's target version and installs a
+      // brand-new tree.
+      withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "1") {
+        commitCheckpoint(deltaLog, incremental = false)
+      }
+      val winnerSnapshot = deltaLog.update()
+      val winnerRef = stampedBackRefs(winnerSnapshot)(target.path)
+      assert(winnerRef.isDefined && winnerRef != readSnapshotRef,
+        s"precondition: the full rewrite must move the target to a new back reference; " +
+          s"read=$readSnapshotRef winner=$winnerRef.")
+
+      // T1 conflicts, rebases onto the winning tree
+      txn1.commit(Seq(leafRemove), DeltaOperations.ManualUpdate)
+
+      val rebasedRemove = actionsAfter(deltaLog, winnerSnapshot.version).collect {
+        case r: RemoveFile if r.path == target.path => r
+      }
+      assert(rebasedRemove.size == 1,
+        s"T1's tombstone for ${target.path} must land exactly once after the rebase.")
+      assert(rebasedRemove.head.backReference == winnerRef,
+        s"the rebased tombstone must carry the winning tree's back reference $winnerRef, " +
+          s"was ${rebasedRemove.head.backReference}.")
+    }
+  }
+
+  test("a conflict resolution that drops a back reference fails the post-commit invariant") {
+    withTable("amt_commit_rebase_drop") {
+      val adds = emitStampedAddFiles("amt_commit_rebase_drop")
+      assert(adds.size >= 2, "the scenario needs two distinct leaf-derived files.")
+      val deltaLog = deltaLogForName("amt_commit_rebase_drop")
+
+      // T1's overridden rebase drops the tombstone's back reference; the pre-conflict check already
+      // passed on the intact actions, so only the post-conflict-resolution invariant can catch it.
+      val txn1 = new OptimisticTransaction(
+          deltaLog, deltaLog.getInitialCatalogTable, deltaLog.update()) {
+        override protected def resolveConflicts(
+            currentTransactionInfo: CurrentTransactionInfo,
+            firstWinningVersion: Long,
+            lastWinningVersion: Long,
+            conflictingCommitFiles: Seq[FileStatus],
+            commitIsolationLevel: IsolationLevel): CurrentTransactionInfo = {
+          val resolved = super.resolveConflicts(currentTransactionInfo, firstWinningVersion,
+            lastWinningVersion, conflictingCommitFiles, commitIsolationLevel)
+          resolved.copy(actions = resolved.actions.map {
+            case r: RemoveFile if r.backReference.isDefined => r.copy(backReference = None)
+            case other => other
+          })
+        }
+      }
+      val leafRemove = adds.head.removeWithTimestamp()
+      assert(leafRemove.backReference.isDefined,
+        "precondition: the file T1 tombstones must be leaf-derived (carry a back reference).")
+
+      // A concurrent commit tombstones a different file and lands first, forcing T1 to rebase.
+      deltaLog.startTransaction().commit(
+        Seq(adds.last.removeWithTimestamp()), DeltaOperations.ManualUpdate)
+
+      val ex = intercept[IllegalStateException] {
+        txn1.commit(Seq(leafRemove), DeltaOperations.ManualUpdate)
+      }
+      assert(ex.getMessage.contains("does not match the AMT"))
+      assert(ex.getMessage.contains(leafRemove.path))
+    }
+  }
+
   /**
    * Builds an AMT source with stamped files, runs `clone(src, tgt)`, then asserts every AddFile
    * committed to the target carries no back reference.
@@ -603,6 +717,27 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
           s"but was ${a.backReference}.")
     }
     */
+  }
+
+
+  test("CONVERT TO DELTA adds files that carry no back reference") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      // A plain parquet dataset converted in place becomes an ordinary (non-AMT) Delta table, so
+      // none of the AddFiles the conversion commits may carry a back reference.
+      spark.range(0, 5).selectExpr("CAST(id AS INT) AS id")
+        .write.mode("overwrite").parquet(path)
+      sql(s"CONVERT TO DELTA parquet.`$path`")
+
+      val snapshot = DeltaLog.forTable(spark, new Path(path)).update()
+      assert(amtProvider(snapshot).isEmpty, "a converted parquet table must not be AMT-backed.")
+      val adds = snapshot.allFiles.collect()
+      assert(adds.nonEmpty, "CONVERT must add the parquet data files to the Delta log.")
+      adds.foreach { a =>
+        assert(a.backReference.isEmpty,
+          s"converted AddFile ${a.path} must carry no back reference.")
+      }
+    }
   }
 
 }

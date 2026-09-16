@@ -324,6 +324,7 @@ trait CDCReaderImpl extends CDCReaderBase {
           .flatMap(_.inCommitTimestamp)
           .map(ict => new Timestamp(ict))
           .getOrElse(nonICTTimestampsByVersion.get(v).orNull)
+        val changesDataFunc = CommitInfo.fileActionChangesData(commitInfo)
         // When `isStreaming` = `true` the [CommitInfo] action is only used for passing the
         // in-commit timestamp to this method. We should filter them out.
         commitInfo = if (isStreaming) None else commitInfo
@@ -344,8 +345,8 @@ trait CDCReaderImpl extends CDCReaderBase {
           } else {
             // Otherwise, we take the AddFile and RemoveFile actions with dataChange = true and
             // infer CDC from them.
-            val addActions = actions.collect { case a: AddFile if a.dataChange => a }
-            val removeActions = actions.collect { case r: RemoveFile if r.dataChange => r }
+            val addActions = actions.collect { case a: AddFile if changesDataFunc(a) => a }
+            val removeActions = actions.collect { case r: RemoveFile if changesDataFunc(r) => r }
             numAddFiles += addActions.size
             numRemoveFiles += removeActions.size
             totalBytes += addActions.map(_.size).sum

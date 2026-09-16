@@ -2494,11 +2494,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
       log"${MDC(DeltaLogKeys.PATH, logPath)}. Wrote " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
 
-    // If the table has AMT enabled, do not emit a classic checkpoint.
-    if (AMTUtils.amtEnabled(currentSnapshot)) {
-      return currentSnapshot
-    }
-
     deltaLog.checkpoint(currentSnapshot, catalogTable)
     currentSnapshot
   }
@@ -2712,16 +2707,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
       checkColumnDefaults(op)
     }
 
-    verifyAmtBackReferences(finalActions)
+    verifyAmtBackReferences(finalActions, amtCheckpointProviderOpt)
     finalActions
   }
 
   /**
    * Test-only invariant check for AMT back references, run on every commit to an AMT-backed table.
    */
-  private def verifyAmtBackReferences(finalActions: Seq[Action]): Unit = {
+  private def verifyAmtBackReferences(
+      finalActions: Seq[Action],
+      amtProviderOpt: => Option[AMTCheckpointProvider]): Unit = {
     if (!DeltaUtils.isTesting) return
-    amtCheckpointProviderOpt match {
+    amtProviderOpt match {
       case Some(amt) =>
         amt.verifyCommitBackReferences(spark, deltaLog, finalActions)
       case None =>
@@ -2887,6 +2884,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
             updatedUnpreparedCurrentTransactionInfo =
               rebaseResult.currentTransactionInfoBeforePreparedResult
             lastPreparedCommitResult = Some(rebaseResult)
+            // Re-check the AMT back references on the rebased actions after conflict resolution.
+            verifyAmtBackReferences(
+              rebaseResult.currentTransactionInfo.finalActionsToCommit,
+              amtWriterManager.preCommitLatestAMTCheckpointProviderOpt)
             doCommit(
               rebaseResult.commitVersion,
               rebaseResult.currentTransactionInfo,

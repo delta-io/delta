@@ -40,7 +40,7 @@ import io.delta.exceptions
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
-import org.apache.spark.{SparkConf, SparkEnv, SparkException, SparkThrowable}
+import org.apache.spark.{ReadOnlySparkConf, SparkConf, SparkEnv, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -54,12 +54,55 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 
+/**
+ * Enumerates the ways a data type change can be rejected. Each violation maps to an error
+ * subclass shared by `DELTA_CANNOT_CHANGE_DATA_TYPE` and
+ * `DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP`.
+ */
+sealed trait DataTypeChangeViolation {
+  /** Name of the error subclass that describes this violation. */
+  def subClass: String
+
+  /** Message parameters for this violation, in the order placeholders appear in the subclass. */
+  def parameters: Array[String]
+}
+
+object DataTypeChangeViolation {
+  case class TightenNullability(column: String) extends DataTypeChangeViolation {
+    override val subClass: String = "TIGHTEN_NULLABILITY"
+    override def parameters: Array[String] = Array(column)
+  }
+
+  case class AddNonNullableColumn(column: String) extends DataTypeChangeViolation {
+    override val subClass: String = "ADD_NON_NULLABLE_COLUMN"
+    override def parameters: Array[String] = Array(column)
+  }
+
+  case class DropColumns(columns: Seq[String]) extends DataTypeChangeViolation {
+    override val subClass: String = "DROP_COLUMNS"
+    override def parameters: Array[String] = Array(columns.mkString(", "))
+  }
+
+  case class ChangeDataType(column: String, fromType: DataType, toType: DataType)
+    extends DataTypeChangeViolation {
+    override val subClass: String = "CHANGE_DATA_TYPE"
+    // Render the types with their SQL names (e.g. INT, BIGINT) rather than the internal
+    // `DataType.toString` (IntegerType, LongType) for a user-facing message.
+    override def parameters: Array[String] = Array(column, fromType.sql, toType.sql)
+  }
+}
+
+class DeltaCannotChangeDataTypeException(val violation: DataTypeChangeViolation)
+  extends DeltaAnalysisException(
+    errorClass = s"DELTA_CANNOT_CHANGE_DATA_TYPE.${violation.subClass}",
+    messageParameters = violation.parameters)
+
 trait DocsPath {
   /**
    * The URL for the base path of Delta's docs. When changing this path, ensure that the new path
    * works with the error messages below.
    */
-  protected def baseDocsPath(conf: SparkConf): String = "https://docs.delta.io/latest"
+  protected def baseDocsPath(conf: ReadOnlySparkConf): String = "https://docs.delta.io/latest"
 
   def assertValidCallingFunction(): Unit = {
     val callingMethods = Thread.currentThread.getStackTrace
@@ -85,7 +128,7 @@ trait DocsPath {
    * @return The entire URL of the documentation link
    */
   def generateDocsLink(
-      conf: SparkConf,
+      conf: ReadOnlySparkConf,
       relativePath: String,
       skipValidation: Boolean = false): String = {
     require(conf != null)
@@ -99,7 +142,7 @@ trait DocsPath {
       relativePath: String,
       skipValidation: Boolean = false): Option[String] =
     Option(spark.sparkContext)
-      .map(context => generateDocsLink(context.getConf, relativePath, skipValidation))
+      .map(context => generateDocsLink(context.getReadOnlyConf, relativePath, skipValidation))
 
   /**
    * List of error function names for all errors that have URLs. When adding your error to this list
@@ -145,7 +188,7 @@ trait DeltaErrorsBase
     with DeltaLogging
     with QueryErrorsBase {
 
-  def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getConf)
+  def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getReadOnlyConf)
 
   val faqRelativePath: String = "/delta-intro.html#frequently-asked-questions"
 
@@ -966,10 +1009,11 @@ trait DeltaErrorsBase
   def alterTableReplaceColumnsException(
       oldSchema: StructType,
       newSchema: StructType,
-      reason: String): Throwable = {
+      violation: DataTypeChangeViolation): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP",
-      messageParameters = Array(reason, formatSchema(oldSchema), formatSchema(newSchema))
+      errorClass = s"DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP.${violation.subClass}",
+      messageParameters =
+        Array(formatSchema(oldSchema), formatSchema(newSchema)) ++ violation.parameters
     )
   }
 
@@ -2307,11 +2351,9 @@ trait DeltaErrorsBase
     )
   }
 
-  def cannotChangeDataType(msg: String): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_CANNOT_CHANGE_DATA_TYPE",
-      messageParameters = Array(msg)
-    )
+  def cannotChangeDataType(
+      violation: DataTypeChangeViolation): DeltaCannotChangeDataTypeException = {
+    new DeltaCannotChangeDataTypeException(violation)
   }
 
   def ambiguousDataTypeChange(column: String, from: StructType, to: StructType): Throwable = {
