@@ -16,16 +16,26 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaOperations, LogSegment, Snapshot, SnapshotManagement}
 import org.apache.spark.sql.delta.actions.{Action, Checkpoint}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.FileNames
 import io.delta.exceptions.ConcurrentWriteException
+import org.apache.hadoop.fs.FileStatus
 
 /**
  * Tests for [[AMTWriterManager]]: the emission policy (checkpoint-interval and accumulated-size
  * triggers), the unsupported OPTIMIZE-checkpoint branch, and the conflict-rebase hard-fail.
  */
 class AMTWriterManagerSuite extends AMTCheckpointTestBase {
+
+  // Models conflict resolution advancing the read snapshot's segment by one log-only commit.
+  private def advanceSegmentByOneCommit(segment: LogSegment): LogSegment = {
+    val newVersion = segment.version + 1
+    val commitFileStatus =
+      new FileStatus(1L, false, 1, 1L, 1L, FileNames.unsafeDeltaFile(segment.logPath, newVersion))
+    SnapshotManagement.appendCommitToLogSegment(segment, commitFileStatus, newVersion)
+  }
 
   // Reads the current snapshot and returns (manager, snapshot) for direct method-level tests.
   private def managerFor(
@@ -98,7 +108,7 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint(
         incremental = false, triggerName = AMTTriggerMode.CheckpointIntervalFull.name))
       // A retry: conflict resolution advanced the segment past the read snapshot's version.
-      val retrySegment = snapshot.logSegment.copy(version = snapshot.version + 1)
+      val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
       intercept[ConcurrentWriteException] {
         manager.writeAMT(
           commitVersion = snapshot.version + 2,
@@ -119,7 +129,7 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       assert(baseTree.isDefined, "the table must be AMT-backed for this case.")
       // The winner wrote no tree, so the base AMT is unchanged (the folded pointer still equals the
       // read snapshot's tree): a log-only commit rebases with no AMT write instead of hard-failing.
-      val retrySegment = snapshot.logSegment.copy(version = snapshot.version + 1)
+      val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
       val result = manager.writeAMT(
         commitVersion = snapshot.version + 2,
         currentTransactionInfo =
@@ -144,7 +154,7 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       // references against the winner tree happens in doCommit's rebaseBackReferences, exercised
       // end-to-end in AMTConflictResolutionSuite.
       val winnerTree = baseTree.copy(version = baseTree.version + 1)
-      val retrySegment = snapshot.logSegment.copy(version = snapshot.version + 1)
+      val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
       val result = manager.writeAMT(
         commitVersion = snapshot.version + 2,
         currentTransactionInfo = txnInfoFor(
@@ -163,7 +173,7 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       sql(s"INSERT INTO $name VALUES (1)")
 
       val (manager, snapshot) = managerFor(name)
-      val retrySegment = snapshot.logSegment.copy(version = snapshot.version + 1)
+      val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
       val result = manager.writeAMT(
         commitVersion = snapshot.version + 2,
         currentTransactionInfo = txnInfoFor(snapshot, actions = Seq.empty),

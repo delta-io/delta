@@ -560,10 +560,34 @@ trait Checkpoints extends DeltaLogging {
       val checkpoint = readCheckpointActionFromCommit(logSegment, lastManifestCommit)
       val newCheckpointProvider = AMTCheckpointProvider.fromCheckpoint(
         this, checkpoint, manifestCommitVersion)
-      logSegment.copy(
-        checkpointProvider = newCheckpointProvider,
-        deltas = logSegment.deltas.filter(f => deltaVersion(f) > newCheckpointProvider.version))
+      trimLogSegmentToAMTCheckpoint(logSegment, newCheckpointProvider)
     }
+  }
+
+  /**
+   * Trims the log segment to install the new checkpoint provider. Pads the gap with non-compacted
+   * deltas if the new checkpoint provider sits in the middle of a compacted delta.
+   */
+  private[delta] def trimLogSegmentToAMTCheckpoint(
+      logSegment: LogSegment,
+      newCheckpointProvider: AMTCheckpointProvider): LogSegment = {
+    val nonCompactedDeltas = logSegment.nonCompactedDeltasOpt.getOrElse {
+      throw new IllegalStateException(
+        s"The AMT log segment at version ${logSegment.version} has no non-compacted deltas.")
+    }
+    val deltasAndCompactedDeltas = (logSegment.deltas ++ nonCompactedDeltas)
+      .distinct.sortBy(f => f.getPath.getName)
+    val deltasAfterCheckpoint = nonCompactedDeltas
+      .filter(deltaVersion(_) > newCheckpointProvider.version).toArray
+    val trimmedDeltasAndCompactedDeltas = useCompactedDeltasForLogSegment(
+      deltasAndCompactedDeltas = deltasAndCompactedDeltas,
+      deltasAfterCheckpoint = deltasAfterCheckpoint,
+      latestCommitVersion = logSegment.version,
+      checkpointVersionToUse = newCheckpointProvider.version)
+    logSegment.copy(
+      deltas = trimmedDeltasAndCompactedDeltas,
+      nonCompactedDeltasOpt = Some(deltasAfterCheckpoint),
+      checkpointProvider = newCheckpointProvider)
   }
 
   /** Reads the [[actions.Checkpoint]] action from the manifest commit. */
