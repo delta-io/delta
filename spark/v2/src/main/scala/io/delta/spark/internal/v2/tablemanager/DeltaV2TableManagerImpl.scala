@@ -48,42 +48,22 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   def tablePath: Path = qualifiedTableDataPath
 
   /** Used to read and write physical log files and checkpoints. */
-  override private[v2] lazy val logStore = createLogStore(SparkSession.active)
+  override private[v2] val logStore = createLogStore(SparkSession.active)
 
-  override private[v2] lazy val kernelContext = KernelContext(sessionInvariantFsOptions, logStore)
+  override private[v2] val kernelContext = KernelContext(sessionInvariantFsOptions, logStore)
 
   private val latestCatalogTable =
     new AtomicReference[CatalogTable](initialCatalogTableOpt.orNull)
-  private val cachedSnapshotManagerRef = new AtomicReference[CachedSnapshotManager]()
-
-  /**
-   * Returns the one cached manager owned by this composite. Construction remains lazy so creating
-   * or retiring an unused table manager does not materialize a Kernel context on an eviction
-   * thread. Concurrent first callers may create candidates, but only the CAS winner is retained;
-   * unused candidates have not loaded snapshots and own no resources.
-   */
-  private def getOrCreateCachedSnapshotManager(): CachedSnapshotManager = {
-    val existing = cachedSnapshotManagerRef.get()
-    if (existing != null) {
-      return existing
-    }
-    val candidate = new CachedSnapshotManager(tablePath, kernelContext, latestCatalogTable)
-    if (cachedSnapshotManagerRef.compareAndSet(null, candidate)) {
-      candidate
-    } else {
-      cachedSnapshotManagerRef.get()
-    }
-  }
+  private val cachedSnapshotManager =
+    new CachedSnapshotManager(tablePath, kernelContext, latestCatalogTable)
 
   override private[v2] def snapshotManager(
       catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager = {
     // Catalog metadata is latest-wins best-effort state. A refresh captures one atomic value and
     // uses it consistently while selecting its path-based or catalog-managed uncached delegate.
     latestCatalogTable.set(catalogTableOpt.orNull)
-    getOrCreateCachedSnapshotManager()
+    cachedSnapshotManager
   }
 
-  override def retire(): Unit = {
-    Option(cachedSnapshotManagerRef.get()).foreach(_.retire())
-  }
+  override def retire(): Unit = cachedSnapshotManager.retire()
 }
