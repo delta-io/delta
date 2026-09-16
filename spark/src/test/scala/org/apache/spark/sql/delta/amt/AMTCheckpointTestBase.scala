@@ -23,12 +23,13 @@ import scala.collection.immutable.ListMap
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CommitStats, DeltaLog, DeltaOperations, Snapshot}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest}
@@ -72,6 +73,29 @@ trait AMTCheckpointTestBase
       case amt: AMTCheckpointProvider => Some(amt)
       case _ => None
     }
+
+  /**
+   * A fake AMT checkpoint provider built directly (not via `fromCheckpoint`, which would read the
+   * root manifest parquet).
+   */
+  protected def fakeAMTProviderAt(
+      cpVersion: Long,
+      protocol: Protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature),
+      metadata: Metadata = Metadata()): AMTCheckpointProvider = {
+    val checkpoint = Checkpoint(
+      version = cpVersion,
+      contentRoot = ContentRoot(path = "fake-root.parquet", sizeInBytes = 0L, version = cpVersion),
+      protocol = protocol,
+      metaData = metadata,
+      domainMetadata = Nil,
+      txns = Nil,
+      sidecars = Nil)
+    new AMTCheckpointProvider(
+      manifestCommitVersion = cpVersion,
+      checkpointAction = checkpoint,
+      leaves = Nil,
+      tableRoot = new Path("file:/fake-table-root"))
+  }
 
   /**
    * Runs `body` on the DATA (content_type=0) entry rows across `paths`, read straight off disk

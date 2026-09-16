@@ -38,6 +38,7 @@ import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.DataSkippingReaderConf
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.StateCache
@@ -473,6 +474,73 @@ class Snapshot(
     deltaLog.protocolRead(protocol)
     deltaLog.assertTableFeaturesMatchMetadata(protocol, metadata)
     SchemaUtils.recordUndefinedTypes(deltaLog, metadata.schema)
+    assertAMTInvariantsAtInit()
+  }
+
+  /**
+   * Asserts AMT invariants at snapshot initialization. Only effective in testing.
+   */
+  private def assertAMTInvariantsAtInit(): Unit = {
+    def toStrLMC(lastManifestCommit: LastManifestCommit): String = {
+      s"LastManifestCommit[version=${lastManifestCommit.version}, " +
+        s"contentRootVersion=${lastManifestCommit.contentRootVersion}]"
+    }
+    def toStrCP(amtCheckpointProvider: AMTCheckpointProvider): String = {
+      s"AMTCheckpointProvider[version=${amtCheckpointProvider.version}]"
+    }
+
+    if (!DeltaUtils.isTesting) {
+      return
+    }
+
+    val amtCheckpointProviderOpt = logSegment.checkpointProvider match {
+      case amtCheckpointProvider: AMTCheckpointProvider =>
+        if (amtCheckpointProvider.version > version) {
+          throw new IllegalStateException(
+            s"${toStrCP(amtCheckpointProvider)} exceeds snapshot version $version.")
+        }
+        Some(amtCheckpointProvider)
+      case _ => None
+    }
+
+    if (!AMTUtils.amtEnabled(this)) {
+      amtCheckpointProviderOpt.foreach { cp =>
+        throw new IllegalStateException(s"${toStrCP(cp)} is present but AMT is disabled.")
+      }
+      return
+    }
+
+    if (logSegment.nonCompactedDeltasOpt.isEmpty) {
+      throw new IllegalStateException(
+        s"An AMT-enabled snapshot must define nonCompactedDeltasOpt, got None.\n" +
+          s"${logSegment.toPrettyString}")
+    }
+
+    (amtCheckpointProviderOpt, lastManifestCommitOpt) match {
+      // Normally, the AMT checkpoint provider's version matches the lastManifestCommit exactly.
+      // However, during time travel it may instead describe something newer, i.e. a later manifest
+      // commit not yet discoverable at the target version, carried forward from lastCheckpointInfo.
+      // Thus, we only throw when the AMT checkpoint provider is stale.
+      // For example, if a table has the following latest state:
+      //   DeltaLog[commits v0~9, manifest-commit v10 (content root @v5), commits v11~20]
+      // Then `deltaLog.getSnapshotAt(version = 8)` could construct a LogSegment with:
+      //   LogSegment[AMTCheckpointProvider(version = 5), deltas = commits v6~8]
+      case (Some(amtCp), Some(lmc)) =>
+        if (lmc.contentRootVersion > amtCp.version) {
+          throw new IllegalStateException(
+            s"LastManifestCommit.contentRootVersion and AMTCheckpointProvider.version mismatch: " +
+              s"${toStrLMC(lmc)} vs ${toStrCP(amtCp)}")
+        }
+      // When that undiscoverable manifest commit is the first manifest commit, lastManifestCommit
+      // does not exist, so we will not throw here.
+      case (Some(amtCp), None) => ()
+      // But when the lastManifestCommit is present but the AMT checkpoint provider is missing,
+      // that's a mismatch.
+      case (None, Some(lmc)) =>
+        throw new IllegalStateException(
+          s"LastManifestCommit is present but AMTCheckpointProvider is missing. ${toStrLMC(lmc)}")
+      case (None, None) => ()
+    }
   }
 
   /** The current set of actions in this [[Snapshot]] as plain Rows */

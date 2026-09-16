@@ -477,6 +477,37 @@ trait DeltaCheckpointTestUtils
   }
 }
 
+trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
+  self: SparkFunSuite with SharedSparkSession =>
+
+  /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
+  protected def minorCompactDeltaLog(
+      tablePath: String,
+      startVersion: Long,
+      endVersion: Long): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    val snapshotForReplay = deltaLog.update()
+    val logReplay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = None,
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
+        snapshotForReplay.metadata, snapshotForReplay.protocol, spark))
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+
+    (startVersion to endVersion).foreach { versionToRead =>
+      val file = FileNames.unsafeDeltaFile(deltaLog.logPath, versionToRead)
+      val actionsIterator = deltaLog.store.readAsIterator(file, hadoopConf).map(Action.fromJson)
+      logReplay.append(versionToRead, actionsIterator)
+    }
+    deltaLog.store.write(
+      path = FileNames.compactedDeltaFile(deltaLog.logPath, startVersion, endVersion),
+      actions = logReplay.checkpoint.map(_.json).toIterator,
+      overwrite = true,
+      hadoopConf = hadoopConf)
+  }
+}
+
 object DeltaTestUtils extends DeltaTestUtilsBase {
 
   sealed trait TableIdentifierOrPath
