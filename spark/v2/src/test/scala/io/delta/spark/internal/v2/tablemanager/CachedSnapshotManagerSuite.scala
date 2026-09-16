@@ -35,13 +35,13 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.wrongOrderInGroup
 import org.apache.spark.sql.delta.storage.LogStore
 import io.delta.spark.internal.v2.kernel.{KernelContext, KernelEngineFactory}
+import io.delta.kernel.exceptions.KernelException
 
 import io.delta.sql.{DeltaSparkSessionExtensionV1 => DeltaSparkSessionExtension}
 
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.catalog.{DeltaCatalogV1 => DeltaCatalog}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import io.delta.spark.internal.v2.exception.VersionNotFoundException
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FSDataInputStream, Path, RawLocalFileSystem}
@@ -449,7 +449,7 @@ class CachedSnapshotManagerSuite
       }
     }
 
-    test(s"retire preserves latest refresh when requested version is missing: $stalenessLimit") {
+    test(s"failed exact load preserves latest refresh: $stalenessLimit") {
       withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> stalenessLimit) {
         withTempDir { dir =>
           createDeltaTable(dir)
@@ -459,12 +459,9 @@ class CachedSnapshotManagerSuite
           mgr.retire()
           appendToDeltaTable(dir)
 
-          val error = intercept[VersionNotFoundException] {
+          intercept[KernelException] {
             mgr.loadSnapshotAt(2L)
           }
-          assert(error.getUserVersion == 2L)
-          assert(error.getEarliest == 0L)
-          assert(error.getLatest == 1L)
           val latest = mgr.loadLatestSnapshot()
           assert(latest.version == 1L)
           assert(latest ne beforeRetire)
@@ -628,6 +625,8 @@ class CachedSnapshotManagerSuite
           LogStore.createLogStore(spark))
         val manager = createManager(dir, kernelContext)
         val operationSessions = Seq(spark.newSession(), spark.newSession())
+        operationSessions.foreach(
+          _.conf.set(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key, "60s"))
         val startBarrier = new CyclicBarrier(operationSessions.size)
         val snapshots = new ConcurrentLinkedQueue[Snapshot]()
         val allFileSessions = new ConcurrentLinkedQueue[SparkSession]()
@@ -708,6 +707,8 @@ class CachedSnapshotManagerSuite
           LogStore.createLogStore(spark))
         val manager = createManager(dir, kernelContext)
         val operationSessions = Seq(spark.newSession(), spark.newSession())
+        operationSessions.foreach(
+          _.conf.set(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key, "60s"))
         val startBarrier = new CyclicBarrier(operationSessions.size)
         val latestResult = new AtomicReference[Snapshot]()
         val timeTravelResult = new AtomicReference[Snapshot]()

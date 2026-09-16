@@ -20,7 +20,6 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 
 import scala.jdk.OptionConverters._
-import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -194,18 +193,8 @@ private[tablemanager] class CachedSnapshotManager(
       if (existing != null && existing.snapshot.version == version) {
         return existing.snapshot
       }
-      val loaded = withUncachedSnapshotManager(latestCatalogTable.get()) { manager =>
-        try {
-          manager.loadSnapshotAt(version)
-        } catch {
-          case NonFatal(loadFailure) =>
-            manager.checkVersionExists(
-              version,
-              /* mustBeRecreatable= */ true,
-              /* allowOutOfRange= */ false)
-            throw loadFailure
-        }
-      }
+      val loaded = withUncachedSnapshotManager(latestCatalogTable.get())(
+        _.loadSnapshotAt(version))
       val sameTable = existing != null && existing.snapshot.metadata.id == loaded.metadata.id
       if (sameTable && existing.snapshot.version > loaded.version) {
         loaded
