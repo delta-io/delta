@@ -20,11 +20,11 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 
 import scala.jdk.OptionConverters._
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.spark.internal.v2.DeltaV2Logging
-import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
@@ -175,9 +175,9 @@ private[tablemanager] class CachedSnapshotManager(
     } else {
       loadLatestSnapshotInternal()
     }
-    // The refreshed latest snapshot is retained even when the requested version does not exist.
+    // If latest still trails the requested version, attempt the exact load before rejecting it.
     if (version > upperBound.version) {
-      throw new VersionNotFoundException(version, 0, upperBound.version)
+      return loadAndInstallSnapshotAtInternal(version)
     }
     if (version == upperBound.version) {
       return upperBound
@@ -187,6 +187,40 @@ private[tablemanager] class CachedSnapshotManager(
       _.loadSnapshotAt(version))
     historicalSnapshot
   }
+
+  private def loadAndInstallSnapshotAtInternal(version: Long): Snapshot =
+    withSnapshotLockInterruptibly {
+      val existing = currentSnapshot
+      if (existing != null && existing.snapshot.version == version) {
+        return existing.snapshot
+      }
+      val loaded = withUncachedSnapshotManager(latestCatalogTable.get()) { manager =>
+        try {
+          manager.loadSnapshotAt(version)
+        } catch {
+          case NonFatal(loadFailure) =>
+            manager.checkVersionExists(
+              version,
+              /* mustBeRecreatable= */ true,
+              /* allowOutOfRange= */ false)
+            throw loadFailure
+        }
+      }
+      val sameTable = existing != null && existing.snapshot.metadata.id == loaded.metadata.id
+      if (sameTable && existing.snapshot.version > loaded.version) {
+        loaded
+      } else {
+        if (existing != null && !sameTable) {
+          logWarning(
+            s"Table identity changed while loading snapshot at version $version: " +
+              s"previous=${existing.snapshot.metadata.id}, current=${loaded.metadata.id}")
+        }
+        // An exact-version load proves this snapshot exists, but not that it is the latest.
+        currentSnapshot = CachedSnapshot(loaded, validatedAtMs = -1L)
+        retireSnapshotInternal(existing)
+        loaded
+      }
+    }
 
   // === Uncached loading =====================================================
 

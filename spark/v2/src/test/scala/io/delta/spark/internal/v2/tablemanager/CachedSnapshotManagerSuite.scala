@@ -697,8 +697,8 @@ class CachedSnapshotManagerSuite
     }
   }
 
-  test("concurrent latest and time-travel loads share one upper-bound refresh") {
-    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
+  test("concurrent cold latest and time-travel loads share one upper-bound refresh") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
       withTempDir { dir =>
         createDeltaTable(dir)
         val kernelContext = KernelContext(
@@ -707,8 +707,6 @@ class CachedSnapshotManagerSuite
             "fs.file.impl.disable.cache" -> "true"),
           LogStore.createLogStore(spark))
         val manager = createManager(dir, kernelContext)
-        val initial = manager.loadLatestSnapshot()
-        appendToDeltaTable(dir)
         val operationSessions = Seq(spark.newSession(), spark.newSession())
         val startBarrier = new CyclicBarrier(operationSessions.size)
         val latestResult = new AtomicReference[Snapshot]()
@@ -722,7 +720,7 @@ class CachedSnapshotManagerSuite
               val result = if (index == 0) {
                 manager.loadLatestSnapshot()
               } else {
-                manager.loadSnapshotAt(1L)
+                manager.loadSnapshotAt(0L)
               }
               if (index == 0) latestResult.set(result) else timeTravelResult.set(result)
             } catch {
@@ -749,17 +747,70 @@ class CachedSnapshotManagerSuite
             threads.forall(thread => !thread.isAlive),
             "mixed refresh threads did not terminate")
           assert(failures.isEmpty, s"Concurrent loads failed: ${failures.toArray.mkString(", ")}")
-          assert(latestResult.get().version == 1L)
-          assert(timeTravelResult.get().version == 1L)
+          assert(latestResult.get().version == 0L)
+          assert(timeTravelResult.get().version == 0L)
           assert(latestResult.get() eq timeTravelResult.get())
-          assert(latestResult.get() ne initial)
-          assert(manager.loadSnapshotAt(1L) eq latestResult.get())
+          assert(manager.loadSnapshotAt(0L) eq latestResult.get())
           assert(
             CachedSnapshotManagerBlockingFileSystem.listingThreadNames.distinct.size == 1,
             "the waiter should reuse the upper bound installed by the lock winner")
         } finally {
           CachedSnapshotManagerBlockingFileSystem.releaseListing()
           threads.foreach(_.interrupt())
+          manager.retire()
+        }
+      }
+    }
+  }
+
+  test("exact load advances when latest upper bound misses a concurrent append") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val kernelContext = KernelContext(
+          Map(
+            "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
+            "fs.file.impl.disable.cache" -> "true"),
+          LogStore.createLogStore(spark))
+        val manager = createManager(dir, kernelContext)
+        val result = new AtomicReference[Snapshot]()
+        val failure = new AtomicReference[Throwable]()
+        val loadThread = new Thread(() => {
+          try {
+            result.set(manager.loadSnapshotAt(2L))
+          } catch {
+            case NonFatal(error) => failure.set(error)
+          }
+        }, "stale-upper-bound")
+        loadThread.setDaemon(true)
+
+        try {
+          assert(manager.loadLatestSnapshot().version == 0L)
+          appendToDeltaTable(dir)
+          CachedSnapshotManagerBlockingFileSystem.arm(loadThread.getName)
+          loadThread.start()
+          assert(
+            CachedSnapshotManagerBlockingFileSystem.awaitCapturedListing(),
+            "latest load did not capture its stale transaction-log listing")
+
+          appendToDeltaTable(dir)
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          loadThread.join(TimeUnit.SECONDS.toMillis(30L))
+          assert(!loadThread.isAlive, "exact fallback load did not terminate")
+          assert(failure.get() == null, s"Exact fallback load failed: ${failure.get()}")
+          assert(result.get().version == 2L)
+          assert(manager.loadSnapshotAt(2L) eq result.get())
+
+          val listingsBeforeLatestValidation =
+            CachedSnapshotManagerBlockingFileSystem.listingThreadNames.size
+          assert(manager.loadLatestSnapshot() eq result.get())
+          assert(
+            CachedSnapshotManagerBlockingFileSystem.listingThreadNames.size >
+              listingsBeforeLatestValidation,
+            "an exact-version installation must not be treated as a validated latest snapshot")
+        } finally {
+          CachedSnapshotManagerBlockingFileSystem.releaseListing()
+          loadThread.interrupt()
           manager.retire()
         }
       }
