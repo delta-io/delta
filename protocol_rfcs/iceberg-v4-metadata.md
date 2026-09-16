@@ -716,4 +716,4 @@ When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint m
   will fail fast when encountering the feature in the protocol, as expected for reader features.
 
 - **Iceberg interoperability**: This feature uses Iceberg V4's manifest
-  format internally but does not enable Iceberg reader/writer access to the table. Iceberg interoperability requires the separate `icebergNativeV4` feature (not covered in this RFC).
+  format internally but does not enable Iceberg reader/writer access to the table. Iceberg interoperability [requires the separate `icebergNativeV4` feature](https://github.com/delta-io/delta/pull/7374/).
