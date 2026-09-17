@@ -1051,7 +1051,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.failRelativizePath("somePath")
       }
-      checkError(e, "DELTA_FAIL_RELATIVIZE_PATH", "XXKDS", Map(
+      checkError(e, "DELTA_FAIL_RELATIVIZE_PATH", "22KD1", Map(
         "path" -> "somePath",
         "config" -> DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR.key
       ))
