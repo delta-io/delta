@@ -49,7 +49,7 @@ When this feature is supported and enabled, writers must:
   - `decimal(p, s)` -> `decimal(q, s)` where `q > p`
 - Require that any column write default is a literal value. This allows the default to be faithfully exported as an Iceberg schema default value.
 
-## Enablement and Disablement of IcebergCompatV3
+## Enablement of IcebergCompatV3
 
 When `icebergCompatV3` is enabled on a table that already contains data, writers must ensure that every data file backing the Iceberg table satisfies all of the Writer Requirements above, in particular the reserved field IDs on the materialized Row Tracking columns and the `numRecords` statistic. A writer that cannot bring pre-existing files into compliance without rewriting them must either rewrite those files or refuse to enable the feature in place.
 
