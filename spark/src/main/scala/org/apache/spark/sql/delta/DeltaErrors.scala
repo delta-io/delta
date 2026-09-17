@@ -4187,7 +4187,14 @@ trait DeltaErrorsBase
       snapshot: SnapshotDescriptor,
       catalogTableOpt: Option[CatalogTable]): Unit = {
     if (snapshot.isCatalogOwned) {
-      throw operationBlockedOnCatalogManagedTable(operation)
+      val allowedOperations = catalogTableOpt
+        .flatMap(_.storage.properties.get(
+          CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY))
+        .map(_.split(","))
+        .getOrElse(Array.empty[String])
+      if (!allowedOperations.contains(operation)) {
+        throw operationBlockedOnCatalogManagedTable(operation)
+      }
     }
   }
 
