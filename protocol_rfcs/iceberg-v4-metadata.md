@@ -383,7 +383,7 @@ Summary information for `content_type` = DATA_MANIFEST entries. Includes file/ro
 
 ### Manifest Deletion Vectors (MDVs)
 
-A manifest deletion vector marks entries in a leaf manifest as not live by encoding their positions in a bitmap. A set bit at position P indicates that the entry at position P in the referenced leaf manifest is not live.
+A MDV marks entries in a leaf manifest as not live by encoding their positions in a bitmap. A set bit at position P indicates that the entry at position P in the referenced leaf manifest is not live.
 
 Manifest deletion vectors are encoded using the [Mumbling bitmap spec](https://iceberg.apache.org/mumbling-spec/) and stored inline on the root manifest entry that references the leaf manifest. The snapshot in which the vector last changed is recorded in `tracking.dv_snapshot_id`; the three bitmaps are:
 
