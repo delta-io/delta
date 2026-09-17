@@ -98,8 +98,11 @@ class ManualListingFileManifest(
   }
 
   override def close(): Unit = {
-    allFiles.unpersist()
-    listingToUnpersist.foreach(_.unpersist())
+    try {
+      allFiles.unpersist()
+    } finally {
+      listingToUnpersist.foreach(_.unpersist())
+    }
   }
 }
 
