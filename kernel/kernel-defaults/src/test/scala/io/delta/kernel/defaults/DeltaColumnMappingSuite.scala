@@ -246,16 +246,23 @@ trait DeltaColumnMappingSuiteBase extends AnyFunSuite with AbstractWriteUtils
   }
 
   Seq("name", "id").foreach { cmMode =>
-    test(s"test writing data into a column mapping enabled table is blocked: $cmMode") {
+    test(s"write data into a column mapping enabled table: $cmMode") {
       withTempDirAndEngine { (tablePath, engine) =>
         val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode)
         createEmptyTable(engine, tablePath, testSchema, tableProperties = props)
 
-        val ex = intercept[UnsupportedOperationException] {
-          appendData(engine, tablePath, data = Seq(Map.empty[String, Literal] -> dataBatches1))
-        }
-        assert(ex.getMessage.contains(
-          "Writing into column mapping enabled table is not supported yet."))
+        val logicalSchema = getMetadata(engine, tablePath).getSchema
+        val data = generateData(logicalSchema, Seq.empty, Map.empty, 200, 3)
+        appendData(engine, tablePath, data = Seq(Map.empty[String, Literal] -> data))
+
+        val kernelRowCount = readTableUsingKernel(engine, tablePath, logicalSchema)
+          .map(_.getData.getSize)
+          .sum
+        assert(kernelRowCount === 600)
+
+        val sparkRows = spark.read.format("delta").load(tablePath).select("id").collect()
+        assert(sparkRows.length === 600)
+        assert(sparkRows.count(_.isNullAt(0)) === 30)
       }
     }
   }
