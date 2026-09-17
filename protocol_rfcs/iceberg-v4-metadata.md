@@ -383,14 +383,13 @@ Summary information for `content_type` = DATA_MANIFEST entries. Includes file/ro
 
 ### Manifest Deletion Vectors (MDVs)
 
-MDVs track which entries in a leaf manifest have been deleted or replaced. The `dv` field in `manifest_info` contains a Roaring bitmap of all invalidated positions (cumulative, used for reading).  The `deleted_positions` and `replaced_positions` fields in `tracking` represent what changed in the current commit only (used for CDF):
+A manifest deletion vector marks entries in a leaf manifest as not live by encoding their positions in a bitmap. A set bit at position P indicates that the entry at position P in the referenced leaf manifest is not live.
 
-- **`manifest_info.dv`**: Cumulative set of all invalidated positions. Grows
-  monotonically. Used by readers to skip entries.
-- **`tracking.deleted_positions`**: Positions newly deleted in this
-  commit (for CDF).
-- **`tracking.replaced_positions`**: Positions newly replaced in this
-  commit (for CDF).
+Manifest deletion vectors are encoded using the [Mumbling bitmap spec](https://iceberg.apache.org/mumbling-spec/) and stored inline on the root manifest entry that references the leaf manifest. The snapshot in which the vector last changed is recorded in `tracking.dv_snapshot_id`; the three bitmaps are:
+
+- **`manifest_info.dv`**: Cumulative set of all invalidated positions, `manifest_info.dv_cardinality` is its cardinality. Grows monotonically. Used by readers to skip entries.
+- **`tracking.deleted_positions`**: Positions newly deleted in this commit (for CDF).
+- **`tracking.replaced_positions`**: Positions newly replaced in this commit (for CDF).
 
 A position cannot be set in both `deleted_positions` and `replaced_positions` simultaneously.
 
