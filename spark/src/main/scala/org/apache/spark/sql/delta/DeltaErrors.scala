@@ -40,7 +40,7 @@ import io.delta.exceptions
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
-import org.apache.spark.{SparkConf, SparkEnv, SparkException, SparkThrowable}
+import org.apache.spark.{ReadOnlySparkConf, SparkConf, SparkEnv, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -54,12 +54,55 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 
+/**
+ * Enumerates the ways a data type change can be rejected. Each violation maps to an error
+ * subclass shared by `DELTA_CANNOT_CHANGE_DATA_TYPE` and
+ * `DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP`.
+ */
+sealed trait DataTypeChangeViolation {
+  /** Name of the error subclass that describes this violation. */
+  def subClass: String
+
+  /** Message parameters for this violation, in the order placeholders appear in the subclass. */
+  def parameters: Array[String]
+}
+
+object DataTypeChangeViolation {
+  case class TightenNullability(column: String) extends DataTypeChangeViolation {
+    override val subClass: String = "TIGHTEN_NULLABILITY"
+    override def parameters: Array[String] = Array(column)
+  }
+
+  case class AddNonNullableColumn(column: String) extends DataTypeChangeViolation {
+    override val subClass: String = "ADD_NON_NULLABLE_COLUMN"
+    override def parameters: Array[String] = Array(column)
+  }
+
+  case class DropColumns(columns: Seq[String]) extends DataTypeChangeViolation {
+    override val subClass: String = "DROP_COLUMNS"
+    override def parameters: Array[String] = Array(columns.mkString(", "))
+  }
+
+  case class ChangeDataType(column: String, fromType: DataType, toType: DataType)
+    extends DataTypeChangeViolation {
+    override val subClass: String = "CHANGE_DATA_TYPE"
+    // Render the types with their SQL names (e.g. INT, BIGINT) rather than the internal
+    // `DataType.toString` (IntegerType, LongType) for a user-facing message.
+    override def parameters: Array[String] = Array(column, fromType.sql, toType.sql)
+  }
+}
+
+class DeltaCannotChangeDataTypeException(val violation: DataTypeChangeViolation)
+  extends DeltaAnalysisException(
+    errorClass = s"DELTA_CANNOT_CHANGE_DATA_TYPE.${violation.subClass}",
+    messageParameters = violation.parameters)
+
 trait DocsPath {
   /**
    * The URL for the base path of Delta's docs. When changing this path, ensure that the new path
    * works with the error messages below.
    */
-  protected def baseDocsPath(conf: SparkConf): String = "https://docs.delta.io/latest"
+  protected def baseDocsPath(conf: ReadOnlySparkConf): String = "https://docs.delta.io/latest"
 
   def assertValidCallingFunction(): Unit = {
     val callingMethods = Thread.currentThread.getStackTrace
@@ -85,7 +128,7 @@ trait DocsPath {
    * @return The entire URL of the documentation link
    */
   def generateDocsLink(
-      conf: SparkConf,
+      conf: ReadOnlySparkConf,
       relativePath: String,
       skipValidation: Boolean = false): String = {
     require(conf != null)
@@ -99,7 +142,7 @@ trait DocsPath {
       relativePath: String,
       skipValidation: Boolean = false): Option[String] =
     Option(spark.sparkContext)
-      .map(context => generateDocsLink(context.getConf, relativePath, skipValidation))
+      .map(context => generateDocsLink(context.getReadOnlyConf, relativePath, skipValidation))
 
   /**
    * List of error function names for all errors that have URLs. When adding your error to this list
@@ -124,7 +167,6 @@ trait DocsPath {
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
     "sourceNotDeterministicInMergeException",
-    "columnMappingAdviceMessage",
     "icebergClassMissing",
     "tableFeatureReadRequiresWriteException",
     "tableFeatureRequiresHigherReaderProtocolVersion",
@@ -146,7 +188,7 @@ trait DeltaErrorsBase
     with DeltaLogging
     with QueryErrorsBase {
 
-  def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getConf)
+  def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getReadOnlyConf)
 
   val faqRelativePath: String = "/delta-intro.html#frequently-asked-questions"
 
@@ -967,10 +1009,11 @@ trait DeltaErrorsBase
   def alterTableReplaceColumnsException(
       oldSchema: StructType,
       newSchema: StructType,
-      reason: String): Throwable = {
+      violation: DataTypeChangeViolation): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP",
-      messageParameters = Array(reason, formatSchema(oldSchema), formatSchema(newSchema))
+      errorClass = s"DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP.${violation.subClass}",
+      messageParameters =
+        Array(formatSchema(oldSchema), formatSchema(newSchema)) ++ violation.parameters
     )
   }
 
@@ -2308,11 +2351,9 @@ trait DeltaErrorsBase
     )
   }
 
-  def cannotChangeDataType(msg: String): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_CANNOT_CHANGE_DATA_TYPE",
-      messageParameters = Array(msg)
-    )
+  def cannotChangeDataType(
+      violation: DataTypeChangeViolation): DeltaCannotChangeDataTypeException = {
+    new DeltaCannotChangeDataTypeException(violation)
   }
 
   def ambiguousDataTypeChange(column: String, from: StructType, to: StructType): Throwable = {
@@ -2556,29 +2597,32 @@ trait DeltaErrorsBase
         mode.name))
   }
 
-  protected def columnMappingAdviceMessage(
-      requiredProtocol: Protocol = ColumnMappingTableFeature.minProtocolVersion): String = {
-    val readerVersion = requiredProtocol.minReaderVersion
-    val writerVersion = requiredProtocol.minWriterVersion
-    s"""
-       |Please enable Column Mapping on your Delta table with mapping mode 'name'.
-       |You can use one of the following commands.
-       |
-       |ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
-       |
-       |Note, if your table is not on the required protocol version it will be upgraded.
-       |Column mapping requires at least protocol ($readerVersion, $writerVersion)
-       |""".stripMargin
+  /**
+   * Returns the error class (either `mainErrorClass` or `mainErrorClass.<subClass>`) and message
+   * parameters for the "enable Column Mapping" advice. When `suggestUpgrade` is false the advice is
+   * omitted and the bare `mainErrorClass` is returned.
+   */
+  protected def withColumnMappingAdviceSubClass(
+      mainErrorClass: String, suggestUpgrade: Boolean): (String, Array[String]) = {
+    if (!suggestUpgrade) {
+      return (mainErrorClass, Array.empty[String])
+    }
+    val readerVersion = ColumnMappingTableFeature.minProtocolVersion.minReaderVersion
+    val writerVersion = ColumnMappingTableFeature.minProtocolVersion.minWriterVersion
+    (s"$mainErrorClass.ENABLE_COLUMN_MAPPING",
+      Array(readerVersion.toString, writerVersion.toString))
   }
 
   def columnRenameNotSupported: Throwable = {
-    val adviceMsg = columnMappingAdviceMessage()
-    new DeltaAnalysisException("DELTA_UNSUPPORTED_RENAME_COLUMN", Array(adviceMsg))
+    val (errorClass, params) =
+      withColumnMappingAdviceSubClass("DELTA_UNSUPPORTED_RENAME_COLUMN", suggestUpgrade = true)
+    new DeltaAnalysisException(errorClass, params)
   }
 
   def dropColumnNotSupported(suggestUpgrade: Boolean): Throwable = {
-    val adviceMsg = if (suggestUpgrade) columnMappingAdviceMessage() else ""
-    new DeltaAnalysisException("DELTA_UNSUPPORTED_DROP_COLUMN", Array(adviceMsg))
+    val (errorClass, params) =
+      withColumnMappingAdviceSubClass("DELTA_UNSUPPORTED_DROP_COLUMN", suggestUpgrade)
+    new DeltaAnalysisException(errorClass, params)
   }
 
   def dropNestedColumnsFromNonStructTypeException(struct : DataType) : Throwable = {
@@ -2677,6 +2721,10 @@ trait DeltaErrorsBase
         DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
     )
   }
+
+  def fullAMTWriteFailedWithConflict(
+      conflictingCommitVersion: Long): FullAMTWriteFailedWithConflict =
+    new FullAMTWriteFailedWithConflict(conflictingCommitVersion)
 
   def metadataChangedException(
       table: String,
@@ -4306,6 +4354,19 @@ class ConcurrentWriteException(message: String)
         s"read the table. Please try the operation again.",
       conflictingCommit))
 }
+
+/**
+ * Thrown by the AMT write path when a losing full maintenance OPTIMIZE checkpoint
+ * cannot be rebased and the commit fails. The caller could retry the full maintenance
+ * OPTIMIZE checkpoint if needed.
+ *
+ * @param conflictingCommitVersion the version at which the conflicting winner committed.
+ */
+class FullAMTWriteFailedWithConflict(
+    val conflictingCommitVersion: Long)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(
+    s"A concurrent commit at version $conflictingCommitVersion changed content this full AMT " +
+      "checkpoint describes; it must be regenerated against the updated snapshot.")
 
 /**
  * Thrown when time travelling to a version that does not exist in the Delta Log.

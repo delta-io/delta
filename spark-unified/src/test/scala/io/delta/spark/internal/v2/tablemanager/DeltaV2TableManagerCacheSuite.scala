@@ -19,9 +19,11 @@ import java.util.Collections
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
+import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache.CacheKey
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 
 import com.google.common.base.Ticker
@@ -399,6 +401,11 @@ class DeltaV2TableManagerCacheSuite
       assert(impl.qualifiedTableDataPath.toUri.getPath.contains(dir.getName))
       assert(impl.sessionInvariantFsOptions.isEmpty)
       assert(impl.initialCatalogTableOpt.isEmpty)
+      val tableStore = impl.logStore
+      val tableKernelContext = impl.kernelContext
+      assert(tableKernelContext.logStore eq tableStore)
+      assert(impl.kernelContext eq tableKernelContext)
+      assert(impl.logStore eq tableStore)
     }
   }
 }
@@ -416,7 +423,12 @@ private[tablemanager] class TestTicker extends Ticker {
 
 private[tablemanager] class StubTableManager(val id: String) extends DeltaV2TableManager {
   @volatile var retired: Boolean = false
-  override def snapshotManager(): DeltaV2SnapshotManager =
+  override private[v2] def kernelContext: KernelContext =
+    throw new UnsupportedOperationException("stub")
+  override private[v2] def logStore: LogStore =
+    throw new UnsupportedOperationException("stub")
+  override private[v2] def snapshotManager(
+      catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager =
     throw new UnsupportedOperationException("stub")
   override def retire(): Unit = { retired = true }
 }

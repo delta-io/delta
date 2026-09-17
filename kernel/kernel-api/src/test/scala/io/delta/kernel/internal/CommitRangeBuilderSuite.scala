@@ -31,7 +31,6 @@ import io.delta.kernel.test.{MockFileSystemClientUtils, MockListFromFileSystemCl
 import io.delta.kernel.test.MockSnapshotUtils.getMockSnapshot
 import io.delta.kernel.utils.FileStatus
 
-import junit.runner.Version
 import org.scalatest.funsuite.AnyFunSuite
 
 class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils

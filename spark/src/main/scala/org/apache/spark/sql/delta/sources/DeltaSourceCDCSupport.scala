@@ -431,11 +431,13 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         protocolAction,
         commitInfoAction)
     } else {
+      val changesDataFunc =
+        CommitInfo.fileActionChangesData(actions.collectFirst { case ci: CommitInfo => ci })
       (actions.filter {
         case a: AddFile =>
-          a.dataChange
+          changesDataFunc(a)
         case r: RemoveFile =>
-          r.dataChange
+          changesDataFunc(r)
         case m: Metadata =>
           checkAndCacheMetadata(m)
           false

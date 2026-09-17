@@ -449,19 +449,19 @@ object DeletionVectorDescriptor {
       cardinality = cardinality)
 
   /**
-   * Returns whether the path points to a deletion vector file.
-   * Note, external writers are no enforced to create DV files with the same naming convertions.
-   * This function is intended for testing. */
-  private[delta] def isDeletionVectorPath(path: Path): Boolean =
+   * Returns whether the path points to a deletion vector file written by this Spark
+   * implementation. This function is intended for testing. Use at your own risk.
+   */
+  private[delta] def isSparkImplDeletionVectorPath(path: Path): Boolean =
     deletionVectorFileNamePattern.matcher(path.getName).matches()
 
-  /** Only for testing. */
-  private[delta] def isDeletionVectorPath(path: String): Boolean =
-    isDeletionVectorPath(new Path(path))
+  /** This function is intended for testing. Use at your own risk. */
+  private[delta] def isSparkImplDeletionVectorPath(path: String): Boolean =
+    isSparkImplDeletionVectorPath(new Path(path))
 
-  /** Same as above but as a column expression. Only for testing. */
-  private[delta] def isDeletionVectorPath(pathCol: Column): Column =
-    DeltaUDF.booleanFromString(isDeletionVectorPath)(pathCol)
+  /** Same as above but as a column expression. Use at your own risk. */
+  private[delta] def isSparkImplDeletionVectorPath(pathCol: Column): Column =
+    DeltaUDF.booleanFromString(isSparkImplDeletionVectorPath)(pathCol)
 
   /** Returns a boolean column that corresponds to whether each deletion vector is inline. */
   def isInline(dv: Column): Column =

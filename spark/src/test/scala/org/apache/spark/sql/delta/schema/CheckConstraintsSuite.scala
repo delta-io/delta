@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.schema
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaConfigs, DeltaLog, DeltaTableProvider}
+import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaConfigs, DeltaLog, DeltaTableProvider, DeltaTestUtils}
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.ValidateCheckConstraintsMode
@@ -632,6 +632,40 @@ class CheckConstraintsSuite extends QueryTest
         checkAnswer(
           sql(s"SELECT * FROM $testTable"),
           Seq(Row(1, "test_data", "AB")))
+      }
+    }
+  }
+
+  test("check constraints with timestamp + interval (TimestampAddInterval) expression") {
+    assume(
+      DeltaTestUtils.sparkVersionBucket(spark) == "4.2+",
+      "TimestampAddInterval is only allowlisted in Spark 4.2")
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+      ValidateCheckConstraintsMode.ASSERT.toString) {
+      val testTable = "time_add_test"
+      withTable(testTable) {
+        sql(createTableSQL(testTable, "id INT, event_ts TIMESTAMP",
+          props = Map("delta.feature.checkConstraints" -> "supported")))
+        sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_time_add " +
+          "CHECK (event_ts > CAST('2020-01-01' AS TIMESTAMP) + INTERVAL 1 DAY)")
+        sql(s"INSERT INTO $testTable VALUES (1, '2025-06-15 10:00:00')")
+        checkAnswer(
+          sql(s"SELECT id FROM $testTable"),
+          Seq(Row(1)))
+      }
+    }
+  }
+
+  test("CREATE TABLE with a NULLIF check constraint succeeds") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+      ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_nullif_constraint"
+      withTable(tableName) {
+        sql(createTableSQL(
+          tableName,
+          "id INT, value STRING",
+          props = Map("delta.constraints.nullif_value" -> "NULLIF(value, value) IS NULL")))
+        sql(s"INSERT INTO $tableName VALUES (1, '')")
       }
     }
   }
