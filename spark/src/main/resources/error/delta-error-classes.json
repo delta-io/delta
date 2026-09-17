@@ -1311,7 +1311,7 @@
       "Using this SQL configuration could lead to accidental data loss, therefore we do",
       "not recommend the use of this flag unless this is for testing purposes."
     ],
-    "sqlState" : "XXKDS"
+    "sqlState" : "22KD1"
   },
   "DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH" : {
     "message" : [
