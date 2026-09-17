@@ -40,7 +40,7 @@ import io.delta.exceptions
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
-import org.apache.spark.{SparkConf, SparkEnv, SparkException, SparkThrowable}
+import org.apache.spark.{ReadOnlySparkConf, SparkConf, SparkEnv, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -102,7 +102,7 @@ trait DocsPath {
    * The URL for the base path of Delta's docs. When changing this path, ensure that the new path
    * works with the error messages below.
    */
-  protected def baseDocsPath(conf: SparkConf): String = "https://docs.delta.io/latest"
+  protected def baseDocsPath(conf: ReadOnlySparkConf): String = "https://docs.delta.io/latest"
 
   def assertValidCallingFunction(): Unit = {
     val callingMethods = Thread.currentThread.getStackTrace
@@ -128,7 +128,7 @@ trait DocsPath {
    * @return The entire URL of the documentation link
    */
   def generateDocsLink(
-      conf: SparkConf,
+      conf: ReadOnlySparkConf,
       relativePath: String,
       skipValidation: Boolean = false): String = {
     require(conf != null)
@@ -142,7 +142,7 @@ trait DocsPath {
       relativePath: String,
       skipValidation: Boolean = false): Option[String] =
     Option(spark.sparkContext)
-      .map(context => generateDocsLink(context.getConf, relativePath, skipValidation))
+      .map(context => generateDocsLink(context.getReadOnlyConf, relativePath, skipValidation))
 
   /**
    * List of error function names for all errors that have URLs. When adding your error to this list
@@ -188,7 +188,7 @@ trait DeltaErrorsBase
     with DeltaLogging
     with QueryErrorsBase {
 
-  def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getConf)
+  def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getReadOnlyConf)
 
   val faqRelativePath: String = "/delta-intro.html#frequently-asked-questions"
 
@@ -2722,6 +2722,10 @@ trait DeltaErrorsBase
     )
   }
 
+  def fullAMTWriteFailedWithConflict(
+      conflictingCommitVersion: Long): FullAMTWriteFailedWithConflict =
+    new FullAMTWriteFailedWithConflict(conflictingCommitVersion)
+
   def metadataChangedException(
       table: String,
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.MetadataChangedException = {
@@ -4350,6 +4354,19 @@ class ConcurrentWriteException(message: String)
         s"read the table. Please try the operation again.",
       conflictingCommit))
 }
+
+/**
+ * Thrown by the AMT write path when a losing full maintenance OPTIMIZE checkpoint
+ * cannot be rebased and the commit fails. The caller could retry the full maintenance
+ * OPTIMIZE checkpoint if needed.
+ *
+ * @param conflictingCommitVersion the version at which the conflicting winner committed.
+ */
+class FullAMTWriteFailedWithConflict(
+    val conflictingCommitVersion: Long)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(
+    s"A concurrent commit at version $conflictingCommitVersion changed content this full AMT " +
+      "checkpoint describes; it must be regenerated against the updated snapshot.")
 
 /**
  * Thrown when time travelling to a version that does not exist in the Delta Log.

@@ -278,15 +278,12 @@ trait DeltaInsertIntoTest
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      withConf(
-          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
-        spark.read.table("source").write.mode(mode)
-          .option("replaceOn", s"t.$whereCol = $whereValue")
-          .option("targetAlias", "t")
-          .option("mergeSchema", withSchemaEvolution.toString)
-          .format(writeFormat)
-          .insertInto("target")
-      }
+      spark.read.table("source").write.mode(mode)
+        .option("replaceOn", s"t.$whereCol = $whereValue")
+        .option("targetAlias", "t")
+        .option("mergeSchema", withSchemaEvolution.toString)
+        .format(writeFormat)
+        .insertInto("target")
     }
   }
 
@@ -301,16 +298,13 @@ trait DeltaInsertIntoTest
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      withConf(
-          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
-        val deltaLog = DeltaLog.forTable(spark, TableIdentifier("target"))
-        spark.read.table("source").write.mode(mode)
-          .option("replaceOn", s"t.$whereCol = $whereValue")
-          .option("targetAlias", "t")
-          .option("mergeSchema", withSchemaEvolution.toString)
-          .format(writeFormat)
-          .save(deltaLog.dataPath.toString)
-      }
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+      spark.read.table("source").write.mode(mode)
+        .option("replaceOn", s"t.$whereCol = $whereValue")
+        .option("targetAlias", "t")
+        .option("mergeSchema", withSchemaEvolution.toString)
+        .format(writeFormat)
+        .save(deltaLog.dataPath.toString)
     }
   }
 

@@ -196,6 +196,54 @@ private[delta] class WinningCommitSummary(
     .exists(_.toBoolean)
 }
 
+/** Compact information about [[WinningCommitSummary]]. */
+private[delta] case class WinningCommitMetrics(
+    isBlindAppend: Boolean,
+    minDefaultRowCommitVersion: Option[Long],
+    numAdds: Int,
+    numRemoves: Int,
+    numAddFilesWithBackreferences: Int,
+    numRemoveFilesWithBackreferences: Int,
+    checkpointAction: Option[Checkpoint],
+    commitInfo: Option[CommitInfo]) {
+
+  /**
+   * Whether every Add/Remove file action in this winning commit was created strictly after
+   * `baseVersion` (min `defaultRowCommitVersion` > `baseVersion`)
+   */
+  def allFileActionsHaveDefaultCommitVersionNewerThan(baseVersion: Long): Boolean =
+    (numAdds + numRemoves == 0) || minDefaultRowCommitVersion.exists(_ > baseVersion)
+}
+
+object WinningCommitMetrics {
+  def fromWinningCommitSummary(summary: WinningCommitSummary): WinningCommitMetrics = {
+    val defaultRowCommitVersions: Seq[Option[Long]] =
+      summary.addedFiles.map(_.defaultRowCommitVersion) ++
+        summary.removedFiles.map(_.defaultRowCommitVersion)
+    // If any AddFile/RemoveFile is missing defaultRowCommitVersion, then make
+    // minDefaultRowCommitVersion = None.
+    val minDefaultRowCommitVersion =
+      if (defaultRowCommitVersions.nonEmpty && defaultRowCommitVersions.forall(_.isDefined)) {
+        Some(defaultRowCommitVersions.flatten.min)
+      } else {
+        None
+      }
+    val numAdds = summary.addedFiles.size
+    val numRemoves = summary.removedFiles.size
+    val numAddFilesWithBackreferences = summary.addedFiles.count(_.backReference.isDefined)
+    val numRemoveFilesWithBackreferences = summary.removedFiles.count(_.backReference.isDefined)
+    WinningCommitMetrics(
+      isBlindAppend = summary.isBlindAppendOption.getOrElse(false),
+      minDefaultRowCommitVersion = minDefaultRowCommitVersion,
+      numAdds = numAdds,
+      numRemoves = numRemoves,
+      numAddFilesWithBackreferences = numAddFilesWithBackreferences,
+      numRemoveFilesWithBackreferences = numRemoveFilesWithBackreferences,
+      checkpointAction = summary.amtCheckpoint,
+      commitInfo = summary.commitInfo)
+  }
+}
+
 object WinningCommitSummary {
 
   /**

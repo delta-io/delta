@@ -1365,13 +1365,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       .select($"ts".cast("string")).as[String].head()
   }
 
-  /**
-   * Executes a DML SQL statement (DELETE, INSERT, etc.).
-   * Overridable so that V2 suites can route DML through the V1 connector,
-   * since SparkTable (V2) is read-only and does not support writes.
-   */
-  protected def executeDml(sqlText: String): Unit = sql(sqlText)
-
   /** Disable log cleanup to avoid deleting logs we are testing. */
   protected def disableLogCleanup(tablePath: String): Unit = {
     executeDml(s"alter table delta.`$tablePath` " +

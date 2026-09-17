@@ -641,6 +641,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "fullRewriteCheckpointIntervalMultiplier must be positive.")
       .createWithDefault(5)
 
+  val AMT_CONFLICT_CHECKING_MAX_FULL_REGENERATE_RETRIES =
+    buildConf("amt.conflictChecking.maxFullRegenerateRetries")
+      .internal()
+      .doc("Maximum number of times the AMT checkpoint path regenerates a losing full AMT " +
+        "OPTIMIZE checkpoint against a refreshed snapshot after a concurrent winner invalidated " +
+        "its base tree, before surfacing the conflict.")
+      .intConf
+      .checkValue(_ >= 0, "maxFullRegenerateRetries must be non-negative.")
+      .createWithDefault(5)
+
   val AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED =
     buildConf("amt.snapshotDiscovery.asyncCommitInfoRead.enabled")
       .internal()
