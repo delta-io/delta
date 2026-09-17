@@ -68,6 +68,13 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
       TimestampNTZType)
   }
 
+  test("effectiveFileSequenceNumber uses defaultRowCommitVersion") {
+    val add = createAddFileWithPartitionValue(Map.empty)
+      .copy(defaultRowCommitVersion = Some(10L))
+    assert(add.effectiveFileSequenceNumber.contains(10L))
+  }
+
+
   test("normalizedPartitionValues for non-timestamp partitions returns typed literals") {
     withSQLConf(DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true") {
       withTempDir { tempDir =>

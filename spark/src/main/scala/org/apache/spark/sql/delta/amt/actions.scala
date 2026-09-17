@@ -517,7 +517,8 @@ object DataEntry {
       // rowTracking-enabled table can reconstruct them on read.
       tracking = tracking.copy(
         first_row_id = add.baseRowId,
-        file_sequence_number = add.defaultRowCommitVersion),
+        sequence_number = add.defaultRowCommitVersion,
+        file_sequence_number = add.effectiveFileSequenceNumber),
       // Iceberg field 103 is the physical record count of the file, not the live/logical
       // count after deletes; throw rather than guess when the AddFile carries no stats.
       record_count = add.numPhysicalRecords.getOrElse(
