@@ -2722,6 +2722,10 @@ trait DeltaErrorsBase
     )
   }
 
+  def fullAMTWriteFailedWithConflict(
+      conflictingCommitVersion: Long): FullAMTWriteFailedWithConflict =
+    new FullAMTWriteFailedWithConflict(conflictingCommitVersion)
+
   def metadataChangedException(
       table: String,
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.MetadataChangedException = {
@@ -4350,6 +4354,19 @@ class ConcurrentWriteException(message: String)
         s"read the table. Please try the operation again.",
       conflictingCommit))
 }
+
+/**
+ * Thrown by the AMT write path when a losing full maintenance OPTIMIZE checkpoint
+ * cannot be rebased and the commit fails. The caller could retry the full maintenance
+ * OPTIMIZE checkpoint if needed.
+ *
+ * @param conflictingCommitVersion the version at which the conflicting winner committed.
+ */
+class FullAMTWriteFailedWithConflict(
+    val conflictingCommitVersion: Long)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(
+    s"A concurrent commit at version $conflictingCommitVersion changed content this full AMT " +
+      "checkpoint describes; it must be regenerated against the updated snapshot.")
 
 /**
  * Thrown when time travelling to a version that does not exist in the Delta Log.
