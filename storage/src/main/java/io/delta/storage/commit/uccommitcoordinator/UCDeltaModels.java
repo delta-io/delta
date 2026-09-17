@@ -35,9 +35,6 @@ import java.util.UUID;
  */
 public final class UCDeltaModels {
 
-  public static final String CLIENT_MAINTENANCE_OPERATIONS_PROPERTY =
-      "delta.clientMaintenanceOperations";
-
   private UCDeltaModels() {}
 
   public enum TableType {

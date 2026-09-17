@@ -230,8 +230,7 @@ class UCDeltaTokenBasedRestClientSuite
       assert(parsed.get("fields").get(0).get("name").asText() === "date")
       assert(parsed.get("fields").get(1).get("type").asText() === "integer")
       assert(info.getClientMaintenanceOperations.isEmpty)
-      assert(!info.getStorageProperties.containsKey(
-        UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY))
+      assert(!info.getStorageProperties.containsKey("delta.clientMaintenanceOperations"))
     }
   }
 
@@ -250,8 +249,7 @@ class UCDeltaTokenBasedRestClientSuite
       val info = c.loadTable(testIdentifier)
       assert(info.getClientMaintenanceOperations.asScala.toSeq === Seq(
         "DATA_REORGANIZATION", "DATA_CLEANUP", "METADATA_CLEANUP"))
-      assert(!info.getStorageProperties.containsKey(
-        UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY))
+      assert(!info.getStorageProperties.containsKey("delta.clientMaintenanceOperations"))
     }
   }
 

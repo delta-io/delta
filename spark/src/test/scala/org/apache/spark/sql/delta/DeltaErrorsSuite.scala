@@ -3145,7 +3145,7 @@ trait DeltaErrorsSuiteBase
   test("catalog-managed maintenance operation uses the catalog allowlist") {
     val managedSnapshot = mock(classOf[SnapshotDescriptor])
     when(managedSnapshot.isCatalogOwned).thenReturn(true)
-    val property = "delta.clientMaintenanceOperations"
+    val property = CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY
 
     def tableWithOperations(value: String): CatalogTable = CatalogTable(
       identifier = TableIdentifier("table"),

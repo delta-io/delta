@@ -32,7 +32,7 @@ import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, V1Table}
-import org.apache.spark.sql.delta.IcebergConstants
+import org.apache.spark.sql.delta.{CatalogManagedTableMaintenanceOperation, IcebergConstants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -739,7 +739,7 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
   }
 
   test("loadTable uses only the catalog maintenance operation list") {
-    val property = UCDeltaModels.CLIENT_MAINTENANCE_OPERATIONS_PROPERTY
+    val property = CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY
     val metadata = new TestMetadata(configuration = util.Map.of(property, "DATA_CLEANUP"))
 
     def loadTable(operations: util.List[String]): V1Table = {
