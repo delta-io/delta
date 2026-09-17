@@ -40,6 +40,28 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
     checkAllTestCasesImplemented()
   }
 
+  private val spark43ColumnListInserts: Set[Insert] = Set(
+    SQLInsertColList(SaveMode.Append),
+    SQLInsertColList(SaveMode.Overwrite),
+    SQLInsertOverwritePartitionColList)
+
+  private def expectedResultFor(
+      insert: Insert,
+      defaultExpectedAnswer: TestData,
+      spark43InsertedRow: String): ExpectedResult[TestData] = {
+    // Spark 4.3 matches struct fields inside arrays and maps by position for this INSERT syntax.
+    // For example, inserting {y: 5, x: 4} into {x, y} produces {x: 5, y: 4}.
+    // INSERT BY NAME still matches x and y by name.
+    val expectedAnswer = if (org.apache.spark.SPARK_VERSION.startsWith("4.3") &&
+        spark43ColumnListInserts.contains(insert)) {
+      defaultExpectedAnswer.copy(
+        data = defaultExpectedAnswer.data.dropRight(1) :+ spark43InsertedRow)
+    } else {
+      defaultExpectedAnswer
+    }
+    ExpectedResult.Success(expectedAnswer)
+  }
+
   // --- struct<arr: array<struct<x, y>>>: no cast ---
 
   for {
@@ -52,6 +74,7 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
         TestData("a int, s struct<arr: array<struct<x: int, y: int>>>",
           Seq("""{ "a": 1, "s": { "arr": [{ "x": 4, "y": 5 }] } }"""))
     )
+    insert <- inserts
   } {
     testInserts("struct with array of structs field reordering")(
       initialData = TestData(
@@ -62,8 +85,9 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
       insertData = TestData(
         "a int, s struct<arr: array<struct<y: int, x: int>>>",
         Seq("""{ "a": 1, "s": { "arr": [{ "y": 5, "x": 4 }] } }""")),
-      expectedResult = ExpectedResult.Success(expectedAnswer),
-      includeInserts = inserts
+      expectedResult = expectedResultFor(
+        insert, expectedAnswer, """{ "a": 1, "s": { "arr": [{ "x": 5, "y": 4 }] } }"""),
+      includeInserts = Set(insert)
     )
   }
 
@@ -144,6 +168,7 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
           Seq(
             """{ "a": 1, "s": { "m": { "k": { "x": 4, "y": 5 } } } }"""))
     )
+    insert <- inserts
   } {
     testInserts("struct with map of structs field reordering")(
       initialData = TestData(
@@ -156,8 +181,11 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
         "a int, s struct<m: map<string, struct<y: int, x: int>>>",
         Seq(
           """{ "a": 1, "s": { "m": { "k": { "y": 5, "x": 4 } } } }""")),
-      expectedResult = ExpectedResult.Success(expectedAnswer),
-      includeInserts = inserts
+      expectedResult = expectedResultFor(
+        insert,
+        expectedAnswer,
+        """{ "a": 1, "s": { "m": { "k": { "x": 5, "y": 4 } } } }"""),
+      includeInserts = Set(insert)
     )
   }
 
@@ -252,6 +280,7 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
           Seq(
             """{ "a": 1, "complex": [{ "k": { "x": 4, "y": 5 } }] }"""))
     )
+    insert <- inserts
   } {
     testInserts("array of maps with struct values field reordering")(
       initialData = TestData(
@@ -264,8 +293,11 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
         "a int, complex array<map<string, struct<y: int, x: int>>>",
         Seq(
           """{ "a": 1, "complex": [{ "k": { "y": 5, "x": 4 } }] }""")),
-      expectedResult = ExpectedResult.Success(expectedAnswer),
-      includeInserts = inserts
+      expectedResult = expectedResultFor(
+        insert,
+        expectedAnswer,
+        """{ "a": 1, "complex": [{ "k": { "x": 5, "y": 4 } }] }"""),
+      includeInserts = Set(insert)
     )
   }
 

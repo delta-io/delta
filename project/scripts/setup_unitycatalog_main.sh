@@ -83,8 +83,9 @@ set -euo pipefail
 # The pin. Bump both lines together if UC's version.sbt changed at the new SHA. build.sbt's
 # `unityCatalogVersion` is obtained by running this script with `--print-version`, so these two
 # values are the single source of truth.
-UC_PIN_SHA=b11188d2a92c9bf1395d03be4235706af26b2c45
-UC_BASE_VERSION=0.6.0-SNAPSHOT
+UC_PIN_SHA=d0f52b50afa9167c9916db1067089f4526f4a849
+UC_PIN_FETCH_REF=pull/1856/head
+UC_BASE_VERSION=0.7.0-SNAPSHOT
 # ---------------------------------------------------------------------------------------------
 
 UC_DIR="${UC_DIR:-/tmp/unitycatalog}"
@@ -151,7 +152,14 @@ mkdir -p "$UC_DIR"
 git -C "$UC_DIR" init --quiet
 git -C "$UC_DIR" remote add origin "$UC_REPO"
 # Full fetch (not --depth=1) so merge-base --is-ancestor can verify the pin.
-if [[ "$UC_REF" == "$UC_PIN_SHA" || "$UC_REF" == "main" ]]; then
+if [[ "$UC_REF" == "$UC_PIN_SHA" && -n "$UC_PIN_FETCH_REF" ]]; then
+  git -C "$UC_DIR" fetch --quiet origin "$UC_PIN_FETCH_REF"
+  FETCHED_SHA="$(git -C "$UC_DIR" rev-parse FETCH_HEAD)"
+  if [[ "$FETCHED_SHA" != "$UC_PIN_SHA" ]]; then
+    echo "ERROR: $UC_PIN_FETCH_REF resolved to $FETCHED_SHA, expected UC_PIN_SHA=$UC_PIN_SHA." >&2
+    exit 1
+  fi
+elif [[ "$UC_REF" == "$UC_PIN_SHA" || "$UC_REF" == "main" ]]; then
   git -C "$UC_DIR" fetch --quiet origin main
 else
   git -C "$UC_DIR" fetch --quiet origin "$UC_REF"
@@ -162,7 +170,7 @@ cd "$UC_DIR"
 # Safety check: the pinned SHA must be reachable from UC main. Local `merge-base --is-ancestor`
 # on the history we just fetched - no GitHub API, no token needed. Only applies when UC_REF is
 # the pinned SHA; UC_REF=main is trivially on main. Skipped in release mode.
-if [[ "$DELTA_RELEASE_MODE" != "1" && "$UC_REF" == "$UC_PIN_SHA" ]]; then
+if [[ "$DELTA_RELEASE_MODE" != "1" && "$UC_REF" == "$UC_PIN_SHA" && -z "$UC_PIN_FETCH_REF" ]]; then
   if ! git merge-base --is-ancestor "$UC_PIN_SHA" origin/main 2>/dev/null; then
     echo "ERROR: UC_PIN_SHA=$UC_PIN_SHA is not reachable from unitycatalog/unitycatalog main." >&2
     echo "       Pin must reference a commit on https://github.com/unitycatalog/unitycatalog/commits/main" >&2
@@ -172,7 +180,7 @@ fi
 
 if [[ "$UC_REF" == "main" ]]; then
   git checkout --quiet origin/main
-elif [[ "$UC_REF" == "$UC_PIN_SHA" ]]; then
+elif [[ "$UC_REF" == "$UC_PIN_SHA" && -z "$UC_PIN_FETCH_REF" ]]; then
   git checkout --quiet "$UC_PIN_SHA"
 else
   # FETCH_HEAD, not $UC_REF: `git fetch origin <tag>` doesn't create a local
