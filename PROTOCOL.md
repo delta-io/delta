@@ -1659,7 +1659,7 @@ Enablement:
 
 ## Row IDs
 
-Delta provides Row IDs. Row IDs are integers that are used to uniquely identify rows within a table.
+Delta provides Row IDs. Row IDs are non-negative integers that are used to uniquely identify rows within a table.
 Every row has two Row IDs:
 
 - A **fresh** or unstable **Row ID**.
