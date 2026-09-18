@@ -91,6 +91,12 @@ This design enables:
 
 <ins>Table-level aggregates (file count, total size, row count) are derived from the root manifest's aggregated metrics, not from a checkpoint that enumerates every file. Because checkpoints retain no remove tombstones, the count of removes is not part of checkpoint state, and multi-part checkpoint sizing based on that count does not apply.</ins>
 
+### Maintenance Operations on Catalog-managed Tables
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#maintenance-operations-on-catalog-managed-tables)***
+
+<ins>For catalog-managed tables with `adaptiveMetadata` enabled, a checkpoint embedded in a manifest commit follows the [manifest commit publishing requirements](#manifest-commit-publishing) below. All preceding commits must be published before the manifest commit is ratified, but the manifest commit itself may remain unpublished. Standalone checkpoints and log compaction files retain the existing requirement that the versions they cover must already be published.</ins>
+
 ### Action Reconciliation
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#action-reconciliation)***
@@ -671,7 +677,7 @@ Over time, MDVs can accumulate, degrading read performance. Writers should perio
 
 ## Catalog-Managed Tables
 
-*Note: The CC protocol extensions in this section are independent of the adaptive metadata tree and apply to catalog-managed tables generally. They are included here because the metadata tree benefits significantly from catalog-level checkpoint tracking and inline commits.*
+*Note: The [CC protocol extensions](#cc-protocol-extensions) below are independent of the adaptive metadata tree and apply to catalog-managed tables generally. The [manifest commit publishing requirements](#manifest-commit-publishing) apply when `adaptiveMetadata` is enabled.*
 
 For catalog-managed tables, the commit coordination protocol is extended to support the metadata tree.
 
@@ -701,6 +707,39 @@ The core reader and writer requirements are the same as for file-system-based ta
   manifest commits, allowing the catalog to track checkpoint state without parsing Delta files.
 - **Inline commits**: Small payloads (under ~100KB) can be sent
   inline with the Commit API call, avoiding a staged Delta file write.
+
+### Manifest Commit Publishing
+
+For a catalog-managed table with `adaptiveMetadata` enabled, let `M` be the version of a
+manifest commit and `C` be its `checkpointMetadata.version`, where `C <= M`.
+[Publishing](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#publishing-commits),
+also called backfilling, copies a ratified commit to its canonical `_delta_log/<version>.json` path.
+
+Before ratifying a manifest commit at version `M`, all commits with versions less than `M`
+must already be published. If a conflict moves the attempt to a later version, this requirement
+applies to all preceding commits at the new version as well. The manifest commit itself may
+remain unpublished after ratification and is published according to the catalog's normal commit
+protocol. This permits the checkpoint and the commit that contains it to become visible atomically.
+
+The resulting guarantee depends on the version the checkpoint describes:
+
+- If `C == M`, commits through `C - 1` are already published, but commit `C` may be unpublished.
+  A reader must not infer that `_delta_log/<C>.json` exists merely because it found the checkpoint.
+- If `C < M`, commits through `C` are already published; in fact, all commits through `M - 1`
+  are published. Commit `M` may still be unpublished and lies after the checkpoint version.
+
+For example, a table-creation commit at version 0 can be followed by a manifest commit at
+version 1 whose checkpoint describes version 0. Here `M = 1` and `C = 0`: commit 0 must be
+published before commit 1 is ratified, while commit 1 may remain unpublished.
+
+Readers must use the catalog to resolve an unpublished manifest commit, following the existing
+[catalog-managed reader requirements](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#reader-requirements-for-catalog-managed-tables).
+This also applies when `C == M` and no commits follow the checkpoint: the checkpoint's presence
+does not imply that all commits in the snapshot have been published. A checkpoint embedded in
+`_last_checkpoint` remains a hint and does not establish that its manifest commit is published.
+
+Standalone checkpoints still require every commit through their checkpoint version to be
+published. Log compaction files retain the existing publishing requirements as well.
 
 ## Feature Enablement
 
