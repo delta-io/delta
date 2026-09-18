@@ -252,6 +252,31 @@ class DeltaV2OptimisticTransactionSuite
     }
   }
 
+  test("commit to a row-tracking table drops the Kernel-owned row-tracking domain metadata") {
+    withTempDir { dir =>
+      withSQLConf(
+        "spark.databricks.delta.properties.defaults.enableRowTracking" -> "true") {
+        spark.range(0, 5).toDF("id").coalesce(1)
+          .write.format("delta").save(dir.getCanonicalPath)
+      }
+      val txn = startKernelTxn(dir)
+      val add = AddFile(
+        path = "synthetic-row-tracking-file",
+        partitionValues = Map.empty,
+        size = 1L,
+        modificationTime = 1L,
+        dataChange = true,
+        stats = """{"numRecords":3}""")
+      txn.commit(add :: Nil, DeltaOperations.ManualUpdate)
+
+      val post = latestKernelSnapshot(dir)
+      assert(post.version === 1L)
+      val committed =
+        post.allFiles.collect().find(_.path == "synthetic-row-tracking-file").get
+      assert(committed.baseRowId.isDefined)
+    }
+  }
+
   test("unsupported actions fail loudly") {
     withTempDir { dir =>
       seedTable(dir)
