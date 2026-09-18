@@ -28,55 +28,61 @@ import org.apache.spark.storage.StorageLevel
 
 class DeltaDatasetCacheSuite extends QueryTest with DeltaSQLCommandTest {
 
-  test("V1 relation identifies whether its Delta snapshot is version-pinned") {
-    val tableName = "delta_time_travel_file_index"
-    withConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-      withTable(tableName) {
-        spark.range(10).write.format("delta").saveAsTable(tableName)
+  private val v1BatchConnectorModes = Seq("AUTO", "NONE")
 
-        assert(!getDeltaLogFileIndex(spark.table(tableName)).isTimeTravel)
-        val pinned = spark.read.option("versionAsOf", 0).table(tableName)
-        assert(getDeltaLogFileIndex(pinned).isTimeTravel)
+  v1BatchConnectorModes.foreach { v2Mode =>
+    test(s"V1 relation identifies whether its Delta snapshot is version-pinned - $v2Mode") {
+      val tableName = "delta_time_travel_file_index"
+      withConf(DeltaSQLConf.V2_ENABLE_MODE.key -> v2Mode) {
+        withTable(tableName) {
+          spark.range(10).write.format("delta").saveAsTable(tableName)
+
+          assert(!getDeltaLogFileIndex(spark.table(tableName)).isTimeTravel)
+          val pinned = spark.read.option("versionAsOf", 0).table(tableName)
+          assert(getDeltaLogFileIndex(pinned).isTimeTravel)
+        }
       }
     }
   }
 
-  test("append does not recompute a cached version-pinned DataFrame") {
-    assume(
-      classOf[FileIndex].getMethods.exists(_.getName == "isTimeTravel"),
-      "requires Spark with FileIndex.isTimeTravel")
+  v1BatchConnectorModes.foreach { v2Mode =>
+    test(s"append does not recompute a cached version-pinned DataFrame - $v2Mode") {
+      assume(
+        classOf[FileIndex].getMethods.exists(_.getName == "isTimeTravel"),
+        "requires Spark with FileIndex.isTimeTravel")
 
-    val tableName = "delta_cached_time_travel"
-    withConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-      withTable(tableName) {
-        spark.range(10).write.format("delta").saveAsTable(tableName)
+      val tableName = "delta_cached_time_travel"
+      withConf(DeltaSQLConf.V2_ENABLE_MODE.key -> v2Mode) {
+        withTable(tableName) {
+          spark.range(10).write.format("delta").saveAsTable(tableName)
 
-        val udfCalls = spark.sparkContext.longAccumulator("cached-time-travel-udf-calls")
-        val expensiveUdf = functions.udf { id: Long =>
-          udfCalls.add(1L)
-          s"$id-${UUID.randomUUID()}"
-        }.asNondeterministic()
-        val pinned = spark.read
-          .option("versionAsOf", 0)
-          .table(tableName)
-          .withColumn("token", expensiveUdf(functions.col("id")))
-          .persist()
+          val udfCalls = spark.sparkContext.longAccumulator("cached-time-travel-udf-calls")
+          val expensiveUdf = functions.udf { id: Long =>
+            udfCalls.add(1L)
+            s"$id-${UUID.randomUUID()}"
+          }.asNondeterministic()
+          val pinned = spark.read
+            .option("versionAsOf", 0)
+            .table(tableName)
+            .withColumn("token", expensiveUdf(functions.col("id")))
+            .persist()
 
-        try {
-          val tokensBeforeAppend = collectTokens(pinned.orderBy("id").select("token").collect())
-          val callsAfterMaterialization = udfCalls.value
-          assert(callsAfterMaterialization === 10L)
+          try {
+            val tokensBeforeAppend = collectTokens(pinned.orderBy("id").select("token").collect())
+            val callsAfterMaterialization = udfCalls.value
+            assert(callsAfterMaterialization === 10L)
 
-          spark.range(10, 20).write.format("delta").mode("append").saveAsTable(tableName)
+            spark.range(10, 20).write.format("delta").mode("append").saveAsTable(tableName)
 
-          assert(pinned.storageLevel !== StorageLevel.NONE)
-          val tokensAfterAppend = collectTokens(pinned.orderBy("id").select("token").collect())
-          assert(udfCalls.value === callsAfterMaterialization)
-          assert(tokensAfterAppend === tokensBeforeAppend)
-          assert(pinned.count() === 10L)
-          assert(spark.table(tableName).count() === 20L)
-        } finally {
-          pinned.unpersist(blocking = true)
+            assert(pinned.storageLevel !== StorageLevel.NONE)
+            val tokensAfterAppend = collectTokens(pinned.orderBy("id").select("token").collect())
+            assert(udfCalls.value === callsAfterMaterialization)
+            assert(tokensAfterAppend === tokensBeforeAppend)
+            assert(pinned.count() === 10L)
+            assert(spark.table(tableName).count() === 20L)
+          } finally {
+            pinned.unpersist(blocking = true)
+          }
         }
       }
     }
