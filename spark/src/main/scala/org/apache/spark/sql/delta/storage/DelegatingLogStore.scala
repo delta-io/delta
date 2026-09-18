@@ -71,7 +71,7 @@ class DelegatingLogStore(hadoopConf: Configuration)
             schemeToLogStoreMap += scheme -> logStore
 
             val actualLogStoreClassName = logStore match {
-              case lsa: LogStoreAdaptor => s"LogStoreAdapter(${lsa.logStoreImpl.getClass.getName})"
+              case lsa: LogStoreAdaptor => s"LogStoreAdaptor(${lsa.logStoreImpl.getClass.getName})"
               case _ => logStore.getClass.getName
             }
             logInfo(log"LogStore ${MDC(DeltaLogKeys.SYSTEM_CLASS_NAME, actualLogStoreClassName)} " +
