@@ -27,6 +27,7 @@ import org.apache.iceberg.DataFile;
 import org.apache.iceberg.ManifestFile;
 import org.apache.iceberg.ManifestFiles;
 import org.apache.iceberg.ManifestReader;
+import org.apache.iceberg.SnapshotSummary;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.hadoop.HadoopTables;
 import org.apache.spark.sql.connector.catalog.Identifier;
@@ -157,6 +158,18 @@ public abstract class UCDeltaTableUniformIcebergTestBase extends UCDeltaTableInt
         meta.currentSnapshotParentId,
         "Iceberg snapshot chain must be preserved: parent snapshot ID mismatch");
     return meta;
+  }
+
+  /** Verifies the active data-file count reported by the current Iceberg snapshot. */
+  protected final void assertIcebergDataFileCount(Table icebergTable, long expectedCount) {
+    org.apache.iceberg.Snapshot icebergSnapshot = icebergTable.currentSnapshot();
+    Assertions.assertNotNull(icebergSnapshot, "Expected an Iceberg snapshot with active data");
+    String actualCount = icebergSnapshot.summary().get(SnapshotSummary.TOTAL_DATA_FILES_PROP);
+    Assertions.assertNotNull(actualCount, "Iceberg snapshot summary is missing total-data-files");
+    Assertions.assertEquals(
+        expectedCount,
+        Long.parseLong(actualCount),
+        "Unexpected number of active Iceberg data files");
   }
 
   /**
