@@ -153,10 +153,17 @@ public class StatsSchemaHelper {
   //////////////////////////////////////////////////////////////////////////////////
 
   private final StructType dataSchema;
-  /* Map of all leaf columns from logical to physical names */
-  private final Map<Column, Column> logicalToPhysicalColumn;
-  /* Map of all leaf logical columns to their data type */
-  private final Map<Column, DataType> logicalToDataType;
+  /*
+   * Map of all leaf columns from logical to physical names, keyed by the case-folded logical
+   * column path. Delta column names are case-insensitive (protocol requires uniqueness
+   * regardless of casing), but Column#equals/hashCode are case-sensitive by design since Column
+   * is used broadly for exact-name resolution elsewhere in the kernel. Folding the key here,
+   * rather than in Column itself, keeps that case-insensitive matching scoped to stats/skipping
+   * lookups instead of changing Column's contract everywhere it's used.
+   */
+  private final Map<List<String>, Column> logicalToPhysicalColumn;
+  /* Map of all leaf logical columns to their data type, keyed the same way as above. */
+  private final Map<List<String>, DataType> logicalToDataType;
 
   public StatsSchemaHelper(StructType dataSchema) {
     this.dataSchema = dataSchema;
@@ -166,13 +173,14 @@ public class StatsSchemaHelper {
         logicalToPhysicalColumnAndDataType.entrySet().stream()
             .collect(
                 Collectors.toMap(
-                    Map.Entry::getKey, e -> e.getValue()._1 // map to just the column
+                    e -> caseFoldedPath(e.getKey()), e -> e.getValue()._1 // map to just the column
                     ));
     this.logicalToDataType =
         logicalToPhysicalColumnAndDataType.entrySet().stream()
             .collect(
                 Collectors.toMap(
-                    Map.Entry::getKey, e -> e.getValue()._2 // map to just the data type
+                    e -> caseFoldedPath(e.getKey()),
+                    e -> e.getValue()._2 // map to just the data type
                     ));
   }
 
@@ -213,7 +221,7 @@ public class StatsSchemaHelper {
         column,
         collationIdentifier.isPresent() ? (" for collation " + collationIdentifier) : "",
         dataSchema);
-    DataType dataType = logicalToDataType.get(column);
+    DataType dataType = logicalToDataType.get(caseFoldedPath(column));
     Column maxColumn = getStatsColumn(column, MAX, collationIdentifier);
 
     // If this is a column of type Timestamp or TimestampNTZ
@@ -254,8 +262,9 @@ public class StatsSchemaHelper {
    * column exists, is a leaf column, and is of a skipping-eligible data-type.
    */
   public boolean isSkippingEligibleMinMaxColumn(Column column) {
-    return logicalToDataType.containsKey(column)
-        && isSkippingEligibleDataType(logicalToDataType.get(column));
+    List<String> key = caseFoldedPath(column);
+    return logicalToDataType.containsKey(key)
+        && isSkippingEligibleDataType(logicalToDataType.get(key));
   }
 
   /**
@@ -263,7 +272,7 @@ public class StatsSchemaHelper {
    * the column exists and is a leaf column as we only collect stats for leaf columns.
    */
   public boolean isSkippingEligibleNullCountColumn(Column column) {
-    return logicalToPhysicalColumn.containsKey(column);
+    return logicalToPhysicalColumn.containsKey(caseFoldedPath(column));
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -389,12 +398,13 @@ public class StatsSchemaHelper {
    */
   private Column getStatsColumn(
       Column column, String statType, Optional<CollationIdentifier> collationIdentifier) {
+    List<String> key = caseFoldedPath(column);
     checkArgument(
-        logicalToPhysicalColumn.containsKey(column),
+        logicalToPhysicalColumn.containsKey(key),
         "%s is not a valid leaf column for data schema: %s",
         column,
         dataSchema);
-    Column physicalColumn = logicalToPhysicalColumn.get(column);
+    Column physicalColumn = logicalToPhysicalColumn.get(key);
     // Use binary stats if collation is not specified or if it is the default Spark collation.
     if (collationIdentifier.isPresent()
         && collationIdentifier.get() != CollationIdentifier.SPARK_UTF8_BINARY) {
@@ -435,6 +445,18 @@ public class StatsSchemaHelper {
       }
     }
     return result;
+  }
+
+  /**
+   * Returns a case-folded form of the given column's path, suitable for use as a map key when
+   * looking up a logical column without regard to casing. Delta column names are case-insensitive
+   * (the protocol requires uniqueness regardless of casing), so a schema can never contain two leaf
+   * columns whose paths fold to the same key.
+   */
+  private static List<String> caseFoldedPath(Column column) {
+    return Arrays.stream(column.getNames())
+        .map(name -> name.toLowerCase(Locale.ROOT))
+        .collect(Collectors.toList());
   }
 
   /** Returns the provided column as a child column nested under {@code parentName} */
