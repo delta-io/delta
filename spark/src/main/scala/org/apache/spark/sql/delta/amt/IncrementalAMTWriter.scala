@@ -105,7 +105,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       intermediateLogCommits: Seq[FileStatus],
       attemptVersion: Long,
       actionsToCommit: Seq[Action],
-      trigger: String): (AMTWriteResult, SingleAMTWriteMetrics) = {
+      trigger: String): AMTWriteResult = {
     val startNanos = System.nanoTime()
     val oldAMT = oldAMTActionsProvider.load()
     val oldAMTVersion = oldAMT.version
@@ -220,11 +220,6 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       domainMetadata = processedActions.domainMetadatas,
       txns = processedActions.transactions,
       sidecars = Seq.empty)
-    val result = AMTWriteResult(
-      contentRootVersion = contentStateVersion,
-      checkpoint = checkpoint,
-      leaves = allLeafPointers,
-      includeActionsInCommitJson = true)
     val numOldLeavesUpdated = carriedLeafPointers.count(p =>
       leafPositions.newMDVPositionsByLeaf.getOrElse(p.location, Set.empty[Int]).nonEmpty)
     // Per-status breakdown over every leaf pointer in the new tree (carried + newly spilled).
@@ -261,7 +256,12 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       incremental = "true",
       materializeDurationMs = NANOSECONDS.toMillis(System.nanoTime() - startNanos),
       incrementalWriteMetrics = Some(incrementalWriteMetrics))
-    (result, metric)
+    AMTWriteResult(
+      contentRootVersion = contentStateVersion,
+      checkpoint = checkpoint,
+      leaves = allLeafPointers,
+      includeActionsInCommitJson = true,
+      amtWriteMetrics = metric)
   }
 
   /**
