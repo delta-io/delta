@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.stats.StatsCollectionUtils
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.SparkContext
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, EqualNullSafe, Expression, If, Literal, Not}
@@ -42,6 +42,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.catalyst.plans.logical.SupportsSubquery
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
 import org.apache.spark.sql.functions.input_file_name
@@ -168,8 +169,6 @@ case class DeleteCommand(
       sparkSession: SparkSession,
       deltaLog: DeltaLog,
       txn: OptimisticTransaction): (Seq[Action], DeleteMetric) = {
-    import org.apache.spark.sql.delta.implicits._
-
     var numRemovedFiles: Long = 0
     var numAddedFiles: Long = 0
     var numAddedChangeFiles: Long = 0
@@ -316,18 +315,42 @@ case class DeleteCommand(
             // that only involves the affected files instead of all files.
             val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
             val data = DataFrameUtils.ofRows(sparkSession, newTarget)
-            val incrDeletedCountExpr = IncrementMetric(TrueLiteral, metrics("numDeletedRows"))
             val filesToRewrite =
               withStatusCode("DELTA", FINDING_TOUCHED_FILES_MSG) {
                 if (candidateFiles.isEmpty) {
                   Array.empty[String]
                 } else {
-                  data.filter(Column(cond))
-                    .select(input_file_name())
-                    .filter(Column(incrDeletedCountExpr))
-                    .distinct()
-                    .as[String]
+                  val useFileMetadataColumn =
+                    conf.getConf(DeltaSQLConf.DELETE_USE_FILE_METADATA_COLUMN)
+                  val canUseFileMetadataColumn =
+                    useFileMetadataColumn &&
+                      data.queryExecution.analyzed
+                        .getMetadataAttributeByNameOpt(FileFormat.METADATA_NAME)
+                        .nonEmpty
+                  val filePathsOfMatchingRows = if (canUseFileMetadataColumn) {
+                    data.filter(Column(cond))
+                      .select(
+                        DeltaTableUtils.getFileMetadataColumn(data)
+                          .getField(FileFormat.FILE_PATH)
+                          .as(DeleteCommand.FILE_NAME_COLUMN))
+                  } else if (useFileMetadataColumn) {
+                    // Spark 4.0 and 4.1 do not expose metadata columns through temp views. Obtain
+                    // the file name before filtering because subquery filters can introduce joins.
+                    data.withColumn(DeleteCommand.FILE_NAME_COLUMN, input_file_name())
+                      .filter(Column(cond))
+                      .select(DeleteCommand.FILE_NAME_COLUMN)
+                  } else {
+                    data.filter(Column(cond))
+                      .select(input_file_name().as(DeleteCommand.FILE_NAME_COLUMN))
+                  }
+                  // Keep row counting in the same aggregate as file deduplication. A separate
+                  // IncrementMetric filter above the metadata projection triggers SPARK-59171.
+                  val filePathAndRowCounts = filePathsOfMatchingRows
+                    .groupBy(DeleteCommand.FILE_NAME_COLUMN)
+                    .count()
                     .collect()
+                  metrics("numDeletedRows").set(filePathAndRowCounts.map(_.getLong(1)).sum)
+                  filePathAndRowCounts.map(_.getString(0))
                 }
               }
 
