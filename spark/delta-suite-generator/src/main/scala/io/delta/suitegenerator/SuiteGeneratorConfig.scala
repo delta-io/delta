@@ -139,6 +139,7 @@ object SuiteGeneratorConfig {
     val ROW_TRACKING_ON = ROW_TRACKING.withValueAsDimension(_.last)
     val MERGE_PERSISTENT_DV_OFF = DimensionMixin("MergePersistentDV", suffix = "Disabled")
     val MERGE_ROW_TRACKING_DV = DimensionMixin("RowTrackingMergeDV")
+    val MERGE_AMT = DimensionMixin("MergeIntoAMT", alias = Some("AMT"))
     val COLUMN_MAPPING = DimensionWithMultipleValues(
       "DeltaColumnMappingEnable", List("IdMode", "NameMode"), alias = Some("ColMap"))
     val UPDATE_SCALA = DimensionMixin("UpdateScala", alias = Some("Scala"))
@@ -315,6 +316,33 @@ object SuiteGeneratorConfig {
               Dims.MERGE_SQL, Dims.NAME_BASED
             )
           )
+        )
+      )
+    ),
+    TestGroup(
+      packageName = "mergeamt",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.amt._",
+        importer"org.apache.spark.sql.delta.rowid._"
+      ),
+      testConfigs = List(
+        // The not-matched-by-source CDC suites enable change data feed on the table. Under AMT's
+        // mandatory column mapping, creating a CDF-enabled table with data is rejected by
+        // performCdcColumnMappingCheck (DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION), so they are
+        // not part of the AMT variants here.
+        TestConfig(
+          (Tests.MERGE_SQL ::: Tests.MERGE_BASE).filterNot(Set(
+            "MergeIntoNotMatchedBySourceCDCPart1Tests",
+            "MergeIntoNotMatchedBySourceCDCPart2Tests"
+          )) ::: List(
+            "MergeIntoNullTypeTests"
+          ),
+          List(List(Dims.MERGE_SQL, Dims.NAME_BASED, Dims.MERGE_AMT))
+        ),
+        TestConfig(
+          List("RowTrackingMergeCommonTests"),
+          List(List(Dims.NAME_BASED, Dims.MERGE_AMT, Dims.MERGE_ROW_TRACKING_DV.asOptional))
         )
       )
     ),
