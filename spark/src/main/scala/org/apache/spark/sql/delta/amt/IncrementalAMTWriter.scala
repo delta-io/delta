@@ -178,11 +178,17 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       processedActions.cdfNoBackrefRemoves, liveAddFiles, processedActions.rootAndWindowAdds,
       processedActions.commitAddedPaths)
 
+    // The version the tree describes: an inline commit describes itself; a deferred OPTIMIZE
+    // CHECKPOINT (no user actions) describes the last committed version (attemptVersion - 1).
+    val contentStateVersion =
+      if (actionsToCommit.isEmpty) attemptVersion - 1 else attemptVersion
+
     // ---- Step 4: spill entries into new leaves if the root would exceed the per-leaf cap. ----
     val fixedRootCount = carriedLeafPointers.size
     val (rootLiveEntries, rootRemoveEntries, spilledLeafPointers) =
       spillIfNeeded(liveEntries, removeEntries, fixedRootCount,
-        processedActions.postCommitMetadata, processedActions.postCommitProtocol)
+        processedActions.postCommitMetadata, processedActions.postCommitProtocol,
+        contentStateVersion)
     val allLeafPointers = carriedLeafPointers ++ spilledLeafPointers
 
     // ---- Step 5: write the new root. The post-commit metadata and protocol shape the persisted
@@ -192,10 +198,6 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       allLeafPointers.map(_.wrap) ++
         rootLiveEntries.map(_.wrap) ++
         rootRemoveEntries.map(_.wrap)
-    // The version the tree describes: an inline commit describes itself; a deferred OPTIMIZE
-    // CHECKPOINT (no user actions) describes the last committed version (attemptVersion - 1).
-    val contentStateVersion =
-      if (actionsToCommit.isEmpty) attemptVersion - 1 else attemptVersion
     val contentRootBase = AMTWriteHelper.writeRoot(
       spark, fs, hadoopConf, tableRoot, metadataDir, processedActions.postCommitMetadata,
       processedActions.postCommitProtocol, rootRows,
@@ -416,7 +418,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       removeEntries: Seq[DataEntry],
       fixedRootCount: Int,
       metadata: Metadata,
-      protocol: Protocol): (Seq[DataEntry], Seq[DataEntry], Seq[DataManifestEntry]) = {
+      protocol: Protocol,
+      contentStateVersion: Long): (Seq[DataEntry], Seq[DataEntry], Seq[DataManifestEntry]) = {
     val spilled = ArrayBuffer.empty[DataManifestEntry]
     var remainingLive = liveEntries
     var remainingRemoves = removeEntries
@@ -425,13 +428,15 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     while (rootRowCount > entriesPerLeaf && remainingLive.nonEmpty) {
       val (batch, rest) = remainingLive.splitAt(entriesPerLeaf)
       spilled += AMTWriteHelper.writeLeaf(
-        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, protocol, batch)
+        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, protocol, batch,
+        contentStateVersion)
       remainingLive = rest
     }
     while (rootRowCount > entriesPerLeaf && remainingRemoves.nonEmpty) {
       val (batch, rest) = remainingRemoves.splitAt(entriesPerLeaf)
       spilled += AMTWriteHelper.writeLeaf(
-        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, protocol, batch)
+        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, protocol, batch,
+        contentStateVersion)
       remainingRemoves = rest
     }
     (remainingLive, remainingRemoves, spilled.toSeq)
