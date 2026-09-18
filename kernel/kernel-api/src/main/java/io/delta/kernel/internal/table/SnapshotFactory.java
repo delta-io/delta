@@ -208,9 +208,7 @@ public class SnapshotFactory {
       metadata = result.metadata;
     }
 
-    // We require maxCatalogVersion to be provided for catalogManaged tables. We cannot validate
-    // this earlier since we need to first load the protocol.
-    validateMaxCatalogVersionPresence(protocol);
+    validateMaxCatalogVersionPresence(engine, protocol);
 
     // TODO: When LogReplay becomes static utilities, we can create it inside of SnapshotImpl
     final LogReplay logReplay = new LogReplay(engine, tablePath, lazyLogSegment, lazyCrcInfo);
@@ -275,7 +273,39 @@ public class SnapshotFactory {
     return Optional.empty();
   }
 
-  private void validateMaxCatalogVersionPresence(Protocol protocol) {
+  /**
+   * Validates maxCatalogVersion presence for the current query.
+   *
+   * <p>Latest queries validate against the loaded protocol, and timestamp queries validate against
+   * their supplied latest snapshot. Version time travel is already bounded when maxCatalogVersion
+   * is present or the target snapshot is filesystem-managed. Without either, a catalogManaged
+   * target is ambiguous: it could be a valid historical version after downgrade or an incorrect
+   * path-based read of a current catalogManaged table. In that case only, load the latest protocol
+   * to distinguish the two.
+   */
+  private void validateMaxCatalogVersionPresence(Engine engine, Protocol snapshotProtocol) {
+    if (!ctx.versionOpt.isPresent()) {
+      Protocol latestProtocol =
+          ctx.timestampQueryContextOpt
+              .map(query -> query._1.getProtocol())
+              .orElse(snapshotProtocol);
+      validateMaxCatalogVersionPresenceAgainstProtocol(latestProtocol);
+      return;
+    }
+
+    if (ctx.maxCatalogVersion.isPresent()
+        || !TableFeatures.isCatalogManagedSupported(snapshotProtocol)) {
+      return;
+    }
+
+    SnapshotQueryContext latestContext =
+        SnapshotQueryContext.forLatestSnapshot(tablePath.toString());
+    Protocol latestProtocol =
+        new SnapshotManager(tablePath).buildLatestSnapshot(engine, latestContext).getProtocol();
+    validateMaxCatalogVersionPresenceAgainstProtocol(latestProtocol);
+  }
+
+  private void validateMaxCatalogVersionPresenceAgainstProtocol(Protocol protocol) {
     boolean isCatalogManaged = TableFeatures.isCatalogManagedSupported(protocol);
     if (isCatalogManaged) {
       checkArgument(
