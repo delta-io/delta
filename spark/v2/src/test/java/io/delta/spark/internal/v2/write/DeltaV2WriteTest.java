@@ -118,7 +118,8 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             mgr,
             dataSchema,
             partitionSchema,
-            WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()));
+            WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()),
+            /* variantShreddingEnabled */ false);
 
     assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
     SortOrder[] ordering = write.requiredOrdering();
@@ -164,7 +165,8 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             mgr,
             dataSchema,
             partitionSchema,
-            WriteTestUtils.logicalWriteInfo(fullSchema, CaseInsensitiveStringMap.empty()));
+            WriteTestUtils.logicalWriteInfo(fullSchema, CaseInsensitiveStringMap.empty()),
+            /* variantShreddingEnabled */ false);
 
     assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
     SortOrder[] ordering = write.requiredOrdering();
@@ -197,6 +199,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
         snapshotManager,
         TABLE_SCHEMA,
         new StructType(),
-        info);
+        info,
+        /* variantShreddingEnabled */ false);
   }
 }

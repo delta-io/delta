@@ -84,6 +84,13 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
   private final StructType dataSchema;
   private final StructType partitionSchema;
   private final String queryId;
+  /**
+   * Whether the table opted into shredded variant writes. Resolved by the write builder, which
+   * holds the snapshot facade that exposes Delta metadata, and carried here so both write modes
+   * configure the Parquet writer identically.
+   */
+  private final boolean variantShreddingEnabled;
+
   private final LogicalWriteInfo writeInfo;
 
   /**
@@ -102,7 +109,8 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
       DeltaV2SnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
-      LogicalWriteInfo writeInfo) {
+      LogicalWriteInfo writeInfo,
+      boolean variantShreddingEnabled) {
     this.engine = requireNonNull(engine, "engine is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
@@ -112,6 +120,7 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
     this.writeInfo = requireNonNull(writeInfo, "writeInfo is null");
     this.queryId = requireNonNull(writeInfo.queryId(), "queryId is null");
+    this.variantShreddingEnabled = variantShreddingEnabled;
   }
 
   /**
@@ -127,7 +136,14 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
     // The batch path builds its own driver-side context (DeltaV2BatchWriteContext) and commits a
     // single transaction off initialSnapshot.
     return new DeltaV2BatchWrite(
-        engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
+        engine,
+        hadoopConf,
+        tablePath,
+        initialSnapshot,
+        dataSchema,
+        partitionSchema,
+        writeInfo,
+        variantShreddingEnabled);
   }
 
   @Override
@@ -136,11 +152,30 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
     // Build the operation-independent write context once; the streaming write drives its own
     // per-epoch transactions (Operation.STREAMING_UPDATE) and reuses buildDataWriterFactory to
     // produce the executor write state -- the same setup the batch path uses, no duplication.
+    // Every layout decision the context derives from initialSnapshot -- schema, column mapping,
+    // and whether variant columns are shredded -- is fixed here. V2Writes rebuilds this Write per
+    // micro-batch, but MicroBatchExecution captures the sink relation once for a non-transactional
+    // catalog, so initialSnapshot does not advance while the query runs. The streaming commit
+    // therefore re-reads the shredding property off the reloaded snapshot and fails the epoch when
+    // it diverges, the same way it already guards schema and protocol.
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
-            engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
+            engine,
+            hadoopConf,
+            tablePath,
+            initialSnapshot,
+            dataSchema,
+            partitionSchema,
+            writeInfo,
+            variantShreddingEnabled);
     return new DeltaV2StreamingWrite(
-        engine, initialSnapshot, snapshotManager, queryId, context::buildDataWriterFactory);
+        engine,
+        initialSnapshot,
+        snapshotManager,
+        queryId,
+        variantShreddingEnabled,
+        context.variantLayoutFollowsProperty(),
+        context::buildDataWriterFactory);
   }
 
   /**
