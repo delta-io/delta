@@ -196,7 +196,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
         writer.carryForwardOneLeaf(mixed, newMdvPositions = Seq.empty,
           deletedPositions = Seq.empty, replacedPositions = Seq.empty)
       }
-      assert(ex.getMessage.contains("mix of live files and tombstones"),
+      assert(ex.getMessage.contains("both live files and tombstones"),
         s"expected the live+tombstone-mix invariant; got: ${ex.getMessage}")
     }
   }

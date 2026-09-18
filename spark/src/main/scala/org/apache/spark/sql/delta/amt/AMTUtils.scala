@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import java.util.concurrent.TimeUnit
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaOperations, FullAMTWriteFailedWithConflict, Snapshot, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, DeltaOperations, FullAMTWriteFailedWithConflict, Snapshot, SnapshotDescriptor, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -50,6 +50,27 @@ object AMTUtils extends DeltaLogging {
   /** Whether AMT writes are enabled for `snapshot`. */
   def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
     amtEnabled(snapshot.metadata, snapshot.protocol)
+
+  /** Logs and throws an [[IllegalStateException]] when an AMT invariant does not hold. */
+  def invariantCheckWithLogging(
+      checkInvariant: => Boolean,
+      opTypeSuffix: String,
+      message: String,
+      deltaLog: DeltaLog = null,
+      data: Map[String, Any] = Map.empty): Unit = {
+    if (!checkInvariant) {
+      val stackTrace = Thread.currentThread().getStackTrace.drop(2).take(10).mkString("\n\t")
+      deltaAssertAndThrow(
+        check = false,
+        name = opTypeSuffix,
+        msg = message,
+        throwable = new DeltaIllegalStateException(
+          errorClass = "INTERNAL_ERROR",
+          messageParameters = Array(message)),
+        deltaLog = deltaLog,
+        data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
+    }
+  }
 
   private val PathSeparator = "/"
 

@@ -317,16 +317,27 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       newMdvPositions: Seq[Int],
       deletedPositions: Seq[Int],
       replacedPositions: Seq[Int]): DataManifestEntry = {
+    // The file counts in manifest_info describe the leaf when it was initially created. They are
+    // not updated when the leaf is carried forward; only its manifest deletion vector can grow.
     val liveFileCount = pointer.manifest_info.liveFilesCount
     val tombstoneFileCount = pointer.manifest_info.tombstoneFilesCount
-    if (liveFileCount > 0 && tombstoneFileCount > 0) {
-      throw new IllegalStateException(
-        "Leaves having mix of live files and tombstones are not supported yet")
-    }
-    if (newMdvPositions.nonEmpty && liveFileCount == 0) {
-      throw new IllegalStateException(
-        s"Leaf ${pointer.location} holds no live file but gained new MDV positions.")
-    }
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = liveFileCount == 0 || tombstoneFileCount == 0,
+      opTypeSuffix = AMTUsageLogs.ALERT_MIXED_LEAF_CONTENT,
+      message = "ManifestInfo representing a leaf's initial state must not contain both live " +
+        "files and tombstones.",
+      deltaLog = deltaLog,
+      data = Map("liveFileCount" -> liveFileCount, "tombstoneFileCount" -> tombstoneFileCount))
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = newMdvPositions.isEmpty || liveFileCount > 0,
+      opTypeSuffix = AMTUsageLogs.ALERT_MDV_WITHOUT_LIVE_FILES,
+      message = s"Leaf ${pointer.location} holds no live file but gained new MDV positions.",
+      deltaLog = deltaLog,
+      data = Map(
+        "leafLocation" -> pointer.location,
+        "liveFileCount" -> liveFileCount,
+        "tombstoneFileCount" -> tombstoneFileCount,
+        "newMdvPositionCount" -> newMdvPositions.size))
     val (tracking, manifestInfo) =
       if (tombstoneFileCount > 0) {
         // A carried leaf with no live file -- a tombstone-only leaf born ADDED last commit --
@@ -387,16 +398,22 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       //   - it is net-removed, so its (path, dv) is absent from the live set (a still-live key
       //     means a malformed add + remove of the same key in one commit); and
       //   - its originating add is present among root + window adds.
-      if (liveKeys.contains(removeKey)) {
-        throw new IllegalStateException(
+      AMTUtils.invariantCheckWithLogging(
+        checkInvariant = !liveKeys.contains(removeKey),
+        opTypeSuffix = AMTUsageLogs.ALERT_NO_BACKREF_REMOVE_STILL_LIVE,
+        message =
           s"Net-removed no-backref file ${r.path} (key $removeKey) is still in the live set; " +
-            "a file cannot be both removed and live in the same commit.")
-      }
-      val priorAddFile = addByKey.get(removeKey).getOrElse {
-        throw new IllegalStateException(
-          s"No originating AddFile for net-removed no-backref file ${r.path} (key " +
-            s"$removeKey); cannot build its CDF root entry.")
-      }
+            "a file cannot be both removed and live in the same commit.",
+        deltaLog = deltaLog,
+        data = Map("filePath" -> r.path, "removeKey" -> removeKey.toString))
+      AMTUtils.invariantCheckWithLogging(
+        checkInvariant = addByKey.contains(removeKey),
+        opTypeSuffix = AMTUsageLogs.ALERT_NO_BACKREF_REMOVE_MISSING_ADD,
+        message = s"No originating AddFile for net-removed no-backref file ${r.path} (key " +
+          s"$removeKey); cannot build its CDF root entry.",
+        deltaLog = deltaLog,
+        data = Map("filePath" -> r.path, "removeKey" -> removeKey.toString))
+      val priorAddFile = addByKey(removeKey)
       val tracking =
         if (commitAddedPaths.contains(r.path)) AMTWriteHelper.replacedTrackingForDataEntry()
         else AMTWriteHelper.removedTrackingForDataEntry()
@@ -564,7 +581,7 @@ private class ProcessedActions(
   // ---- Commit-shape invariants, checked once at construction. ----
   // True if `add` re-commits a file already live before this commit (its key is in the pre-commit
   // live set, or it carries a back reference to an existing leaf slot) and is not a replace (a
-  // replace changes the DV, a distinct key). Such a re-add is a metadata-only refresh.
+  // replace changes the DV, a distinct key). Such a re-add is only valid with dataChange=false.
   private def isReCommittedLiveAdd(add: AddFile): Boolean = {
     val preCommitLiveKeysContainAddFile = preCommitLiveKeys.contains(
       add.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity))
@@ -574,27 +591,43 @@ private class ProcessedActions(
   val reCommittedLiveAdd: Option[AddFile] = commitAddsBuf.find(isReCommittedLiveAdd)
   if (dataChange) {
     // (1) A data-changing commit must not re-add a file already live before it: a same-key re-add
-    // is a metadata-only refresh, so it must carry dataChange=false.
+    // must carry dataChange=false.
     reCommittedLiveAdd.foreach { add =>
-      throw new IllegalStateException(
-        s"Re-adding already-live file ${add.path} with dataChange=true is not allowed; a " +
-          "same-key re-add must be a metadata-only change (dataChange=false).")
+      AMTUtils.invariantCheckWithLogging(
+        checkInvariant = false,
+        opTypeSuffix = AMTUsageLogs.ALERT_DATA_CHANGE_READD,
+        message = s"Re-adding already-live file ${add.path} with dataChange=true is not allowed; " +
+          "a same-key re-add must use dataChange=false.",
+        data = Map("filePath" -> add.path, "dataChange" -> dataChange))
     }
   } else if (commitRemovesBuf.nonEmpty) {
-    // (2) A metadata-only commit that also removes files is a compaction (OPTIMIZE/REORG): its adds
-    // are freshly written files, so none may re-add a file already live before it.
+    // (2) A dataChange=false commit that also removes files is a compaction (OPTIMIZE/REORG):
+    // Its adds are freshly written files, so none may re-add a file already live before it.
     reCommittedLiveAdd.foreach { add =>
-      throw new IllegalStateException(
-        s"A metadata-only commit that removes files must not re-add an already-live file, but " +
-          s"${add.path} is re-added.")
+      AMTUtils.invariantCheckWithLogging(
+        checkInvariant = false,
+        opTypeSuffix = AMTUsageLogs.ALERT_COMPACTION_READD,
+        message = "A dataChange=false commit with removes must not re-add an already-live file, " +
+          s"but ${add.path} is re-added.",
+        data = Map(
+          "filePath" -> add.path,
+          "dataChange" -> dataChange,
+          "removeCount" -> commitRemovesBuf.size))
     }
   } else {
-    // (3) A metadata-only commit with no removes is a metadata refresh (e.g. stats/tags update):
+    // (3) A dataChange=false commit with no removes is a metadata refresh (e.g. stats/tags
+    // update):
     // every add must re-commit a file already live before it, under the same (path, dv) key.
     commitAddsBuf.find(a => !isReCommittedLiveAdd(a)).foreach { add =>
-      throw new IllegalStateException(
-        s"A metadata-only commit with no removes must re-add only already-live files, but " +
-          s"${add.path} is a new file.")
+      AMTUtils.invariantCheckWithLogging(
+        checkInvariant = false,
+        opTypeSuffix = AMTUsageLogs.ALERT_METADATA_REFRESH_DATA_CHANGE_FALSE_ADDS_NEW_FILE,
+        message = "A dataChange=false commit with no removes must re-add only already-live " +
+          s"files, but ${add.path} is a new file.",
+        data = Map(
+          "filePath" -> add.path,
+          "dataChange" -> dataChange,
+          "removeCount" -> commitRemovesBuf.size))
     }
   }
 }
