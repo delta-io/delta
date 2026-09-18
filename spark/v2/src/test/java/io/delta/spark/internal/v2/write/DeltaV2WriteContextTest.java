@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import io.delta.kernel.Operation;
 import io.delta.kernel.Snapshot;
@@ -29,12 +30,19 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
+import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.io.File;
 import java.time.ZoneId;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.delta.shims.VariantShreddingShims;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -65,7 +73,8 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
             snapshot,
             tableSchema,
             new StructType(),
-            new TestLogicalWriteInfo(tableSchema));
+            new TestLogicalWriteInfo(tableSchema),
+            /* variantShreddingEnabled */ false);
 
     assertSame(engine, context.getEngine());
     assertNotNull(context.getOutputWriterFactory());
@@ -99,7 +108,8 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
             snapshot,
             tableSchema,
             new StructType(),
-            new TestLogicalWriteInfo(tableSchema));
+            new TestLogicalWriteInfo(tableSchema),
+            /* variantShreddingEnabled */ false);
 
     // The base is operation-independent: any transaction (here a WRITE txn off the snapshot) can be
     // turned into the executor-side factory. A real factory with a serialized txn state proves the
@@ -139,7 +149,8 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
             snapshot,
             dataSchema,
             partitionSchema,
-            new TestLogicalWriteInfo(fullSchema));
+            new TestLogicalWriteInfo(fullSchema),
+            /* variantShreddingEnabled */ false);
 
     assertArrayEquals(dataSchema.fieldNames(), context.getDataSchema().fieldNames());
     assertArrayEquals(partitionSchema.fieldNames(), context.getPartitionSchema().fieldNames());
@@ -174,13 +185,58 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
             snapshot,
             dataSchema,
             partitionSchema,
-            new TestLogicalWriteInfo(mixedCaseWriteSchema));
+            new TestLogicalWriteInfo(mixedCaseWriteSchema),
+            /* variantShreddingEnabled */ false);
 
     Transaction txn =
         snapshot
             .buildUpdateTableTransaction(DeltaV2WriteContext.getEngineInfo(), Operation.WRITE)
             .build(engine);
     assertNotNull(context.buildDataWriterFactory(txn));
+  }
+
+  /**
+   * The table-derived shredding option must be the only surviving spelling of its key.
+   *
+   * <p>Asserted on the merge rather than on the resulting file layout, because the layout cannot
+   * tell which of two colliding spellings won: {@code ParquetOptions} collapses them through a
+   * case-insensitive map in iteration order, which a test cannot steer. Deleting the normalization
+   * in {@link DeltaV2WriteContext#mergeVariantShreddingOptions} fails this test.
+   */
+  @Test
+  public void mergeVariantShreddingOptionsOverridesCallerSpellings() {
+    Map<String, String> shreddingOptions =
+        ScalaUtils.toJavaMap(VariantShreddingShims.getVariantInferShreddingSchemaOptions(false));
+    assumeFalse(
+        shreddingOptions.isEmpty(),
+        "This Spark version has no shredding inference option to override");
+
+    Map<String, String> callerOptions = new HashMap<>();
+    callerOptions.put("unrelated.option", "kept");
+    for (String key : shreddingOptions.keySet()) {
+      // Two spellings that differ from the shim's key only in case, as a caller could pass.
+      callerOptions.put(key.toUpperCase(Locale.ROOT), "true");
+      callerOptions.put(key.substring(0, 1).toUpperCase(Locale.ROOT) + key.substring(1), "true");
+    }
+
+    Map<String, String> merged =
+        DeltaV2WriteContext.mergeVariantShreddingOptions(callerOptions, false);
+
+    assertEquals("kept", merged.get("unrelated.option"), "unrelated options must pass through");
+    for (Map.Entry<String, String> expected : shreddingOptions.entrySet()) {
+      List<String> spellings =
+          merged.keySet().stream()
+              .filter(key -> key.equalsIgnoreCase(expected.getKey()))
+              .collect(Collectors.toList());
+      assertEquals(
+          Collections.singletonList(expected.getKey()),
+          spellings,
+          "only the table-derived spelling of " + expected.getKey() + " may survive the merge");
+      assertEquals(
+          expected.getValue(),
+          merged.get(expected.getKey()),
+          "the surviving value must come from the table property, not the caller");
+    }
   }
 
   @Test
