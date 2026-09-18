@@ -354,7 +354,11 @@ object AMTWriteHelper extends DeltaLogging {
           modifiedFiles += 1
           modifiedRows += rows
         case other =>
-          throw new IllegalStateException(s"Unexpected leaf entry tracking status: $other.")
+          AMTUtils.invariantCheckWithLogging(
+            checkInvariant = false,
+            opTypeSuffix = AMTUsageLogs.ALERT_UNEXPECTED_LEAF_TRACKING_STATUS,
+            message = s"Unexpected leaf entry tracking status: $other.",
+            data = Map("unknownStatus" -> other))
       }
     }
     addedTrackingForLeaf(
