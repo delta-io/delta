@@ -398,6 +398,7 @@ object TableFeature {
       VariantTypeTableFeature,
       VariantShreddingPreviewTableFeature,
       VariantShreddingTableFeature,
+      FileTypePreviewTableFeature,
       CatalogOwnedTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
@@ -873,6 +874,18 @@ object VariantShreddingTableFeature
 
   override def requiredFeatures: Set[TableFeature] = Set(VariantTypeTableFeature)
 }
+
+/**
+ * Preview feature for the `file` data type (a reference to a range of bytes, inline or in an
+ * external file; maps to the Parquet `FILE` logical type). See the RFC at
+ * `protocol_rfcs/file-type.md` (discussion issue delta-io/delta#7147).
+ *
+ * This registers the `fileType-preview` table feature so it is recognized and can be gated while
+ * the type is developed behind the preview name (no forward-compatibility guarantee). Automatic
+ * enablement when a `file` column is present in the schema is added together with the type
+ * implementation (schema serialization / read / write / stats).
+ */
+object FileTypePreviewTableFeature extends ReaderWriterFeature(name = "fileType-preview")
 
 object DeletionVectorsTableFeature
   extends ReaderWriterFeature(name = "deletionVectors")
