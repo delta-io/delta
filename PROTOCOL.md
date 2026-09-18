@@ -1742,6 +1742,7 @@ When Row Tracking is supported (when the `writerFeatures` field of a table's `pr
   - Writers must track the high water mark, i.e. the highest fresh row id assigned.
     - The high water mark must be stored in a `domainMetadata` action with `delta.rowTracking` as the `domain`
       and a `configuration` containing a single key-value pair with `rowIdHighWaterMark` as the key and the highest assigned fresh row id as the value.
+    - When present, the `rowIdHighWaterMark` value must be greater than or equal to `-1`.
     - Writers must include a `domainMetadata` for `delta.rowTracking` whenever they assign new fresh Row IDs that are higher than `rowIdHighWaterMark` value of the current `domainMetadata` for `delta.rowTracking`.
       The `rowIdHighWaterMark` value in the `configuration` of this `domainMetadata` action must always be equal to or greater than the highest fresh Row ID committed so far.
       Writers can either commit this `domainMetadata` in the same commit, or they can reserve the fresh Row IDs in an earlier commit.
