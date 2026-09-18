@@ -292,15 +292,16 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
   }
 
   test("createStagingTable: suggested property unknown to Delta Spark is silently dropped") {
-    // UC may suggest Kernel-only properties (e.g. `delta.parquet.compression.codec`) that
-    // this Delta Spark build doesn't recognize. The suggested-properties path drops them
-    // instead of letting `DeltaConfigs.validateConfigurations` throw downstream.
+    // UC may suggest properties that this Delta Spark build doesn't recognize. The
+    // suggested-properties path drops them instead of letting
+    // `DeltaConfigs.validateConfigurations` throw downstream.
+    val unknownProperty = "delta.someFutureUnknownProperty"
     val (client, _) = newRecordingClient(
-      suggestedProperties = javaMap("delta.parquet.compression.codec" -> "snappy"))
+      suggestedProperties = javaMap(unknownProperty -> "someValue"))
     val out = client.createStagingTable(
       Identifier.of(Array("sch"), "tbl"),
       stageProps("delta.catalogManaged" -> "supported"))
-    assert(!out.containsKey("delta.parquet.compression.codec"),
+    assert(!out.containsKey(unknownProperty),
       "unknown delta.* suggested keys must not flow through")
   }
 
