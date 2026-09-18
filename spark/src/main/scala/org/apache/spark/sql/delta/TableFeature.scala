@@ -899,7 +899,10 @@ object DeletionVectorsTableFeature
    */
   override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = {
     val dvsWritable = DeletionVectorUtils.deletionVectorsWritable(snapshot)
-    val dvsExist = snapshot.numDeletionVectorsOpt.getOrElse(0L) > 0
+    val dvsExist = snapshot.numDeletionVectorsOpt.map(_ > 0).getOrElse {
+      // Metrics may be disabled; their absence does not mean the table is DV-free.
+      !DeletionVectorUtils.isTableDVFree(snapshot)
+    }
 
     !(dvsWritable || dvsExist)
   }
