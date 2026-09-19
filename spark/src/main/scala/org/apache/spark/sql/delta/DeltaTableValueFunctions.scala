@@ -32,9 +32,11 @@ import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedLeafNode, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, Literal, StringLiteral}
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
+import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, TimestampType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -127,6 +129,10 @@ trait CDCStatementBase extends DeltaTableValueFunction {
         case _: StringType => (keyPrefix + "Timestamp") -> evaluated
         case _: TimestampType => (keyPrefix + "Timestamp") -> {
           val fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
+          // The formatted string carries no zone, and it is re-parsed in the session time zone
+          // (see DeltaTimeTravelSpec.getTimestamp). Format in the session time zone as well so the
+          // rendered wall-clock refers to the same instant on both sides.
+          fmt.setTimeZone(DateTimeUtils.getTimeZone(SQLConf.get.sessionLocalTimeZone))
           // when evaluated the time is represented with microseconds, which needs to be trimmed.
           fmt.format(new Date(evaluated.toLong / 1000))
         }
