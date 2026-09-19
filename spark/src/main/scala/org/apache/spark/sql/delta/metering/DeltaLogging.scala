@@ -30,7 +30,6 @@ import com.databricks.spark.util.TagDefinitions.{
   TAG_TAHOE_ID,
   TAG_TAHOE_PATH
 }
-import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -155,7 +154,7 @@ trait DeltaLogging
       check: => Boolean,
       name: String,
       msg: String,
-      deltaLog: DeltaLog = null,
+      provider: DeltaLoggingProvider = null,
       data: AnyRef = null,
       path: Option[Path] = None)
     : Unit = {
@@ -163,7 +162,7 @@ trait DeltaLogging
       assert(check, msg)
     } else if (!check) {
       recordDeltaEvent(
-        provider = deltaLog,
+        provider = provider,
         opType = s"delta.assertions.$name",
         data = data,
         path = path
