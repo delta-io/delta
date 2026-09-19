@@ -309,6 +309,35 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   @Test
+  public void testAlterTableRenameColumnRejectedWithoutColumnMapping() throws Exception {
+    // Parity pin: RENAME COLUMN requires column mapping. On a UC-managed Delta table created
+    // without column mapping the rename is rejected, matching DBR behavior and the Unity Catalog
+    // server's own guard. This guards against a rename being forwarded as a destructive drop+add.
+    withNewTable(
+        "alter_rename_no_column_mapping_test",
+        "id INT, old_name STRING",
+        TableType.MANAGED,
+        tableName ->
+            assertThrowsWithCauseContaining(
+                "Column rename is not supported for your Delta table",
+                () -> sql("ALTER TABLE %s RENAME COLUMN old_name TO new_name", tableName)));
+  }
+
+  @Test
+  public void testAlterTableDropColumnRejectedWithoutColumnMapping() throws Exception {
+    // Parity pin: DROP COLUMN likewise requires column mapping and is rejected without it, matching
+    // DBR behavior. Complements the rename parity pin above.
+    withNewTable(
+        "alter_drop_no_column_mapping_test",
+        "id INT, name STRING, extra STRING",
+        TableType.MANAGED,
+        tableName ->
+            assertThrowsWithCauseContaining(
+                "DROP COLUMN is not supported for your Delta table",
+                () -> sql("ALTER TABLE %s DROP COLUMN (extra)", tableName)));
+  }
+
+  @Test
   public void testAlterTableChangeColumnCommentAndPositionUpdatesUcDeltaMetadata()
       throws Exception {
     withNewTable(
