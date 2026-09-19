@@ -582,6 +582,31 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
   }
 
   testAcrossAMTCheckpointScenarios(
+      "new leaf pointers carry manifest sequence numbers and the minimum first row ID",
+      "amt_leaf_tracking",
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
+    val leaves = context.provider.leaves
+    assertLeafCount(leaves)
+    leaves.foreach { leaf =>
+      assert(leaf.tracking.sequence_number.contains(context.checkpoint.version))
+      assert(leaf.tracking.file_sequence_number.contains(context.checkpoint.version))
+      val childFirstRowIds = withManifestDataEntries(
+        Seq(leaf.toFileStatus(context.provider.tableRoot).getPath.toString)) { entries =>
+        entries.select("tracking.first_row_id").collect().map { row =>
+          if (row.isNullAt(0)) None else Some(row.getLong(0))
+        }
+      }
+      assert(childFirstRowIds.forall(_.isDefined),
+        s"Every entry in ${leaf.location} must carry a first_row_id: $childFirstRowIds")
+      assert(leaf.tracking.first_row_id.contains(childFirstRowIds.flatten.min),
+        s"${leaf.location} must carry the minimum child first_row_id: $childFirstRowIds")
+    }
+  }
+
+  testAcrossAMTCheckpointScenarios(
       "full rewrite records each distributed leaf's entry count",
       "amt_leaf_counts",
       deferredScenarios = Seq(AMTCheckpointScenario.DeferredFull),

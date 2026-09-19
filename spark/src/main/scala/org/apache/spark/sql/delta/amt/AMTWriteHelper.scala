@@ -35,6 +35,7 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, hash, struct}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
 /** Helpers for emitting an inline AMT checkpoint during a commit. */
@@ -191,7 +192,8 @@ object AMTWriteHelper extends DeltaLogging {
       addFilesDf = addFilesDf,
       metadata = metadata,
       protocol = protocol,
-      desiredNumLeaves = desiredNumLeaves)
+      desiredNumLeaves = desiredNumLeaves,
+      contentStateVersion = contentStateVersion)
     leafEntries match {
       case Seq(onlyLeaf) =>
         // If there is only one leaf, promote it to the root.
@@ -225,23 +227,28 @@ object AMTWriteHelper extends DeltaLogging {
       addFilesDf: DataFrame,
       metadata: Metadata,
       protocol: Protocol,
-      desiredNumLeaves: Int): Seq[DataManifestEntry] = {
+      desiredNumLeaves: Int,
+      contentStateVersion: Long): Seq[DataManifestEntry] = {
     import org.apache.spark.sql.delta.implicits._
     val addFilesDs = addFilesDf.as[AddFile]
 
     // Capture values so the closures do not reach back into the object / non-serializable Path.
     // The rewritten files already exist in the table, so their leaf entries are EXISTING.
-    val tracking = existingTrackingForDataEntry()
+    val dataEntryTracking = existingTrackingForDataEntry()
     val tableRootSparkPath = SparkPath.fromPath(tableRoot)
     val metadataDirSparkPath = SparkPath.fromPath(metadataDir)
     val tableRootPath = tableRootSparkPath.toPath
     val amtDs = addFilesDs.map(add =>
-      DataEntry.fromAddFile(add, tracking, tableRootPath).wrap
+      DataEntry.fromAddFile(add, dataEntryTracking, tableRootPath).wrap
     )
     val amtWithPartition = AMTPartitionValues.forWrite(amtDs.toDF(), metadata.partitionSchema)
     val amtDf = AMTContentStats.forWrite(amtWithPartition, metadata, protocol)
     val schema = AMTSingleAction.persistedSchema(metadata, protocol)
     val recordCountIdx = amtDf.schema.fieldIndex("record_count")
+    val trackingIdx = amtDf.schema.fieldIndex("tracking")
+    val trackingSchema = amtDf.schema(trackingIdx).dataType.asInstanceOf[StructType]
+    val trackingFieldCount = trackingSchema.length
+    val firstRowIdIdx = trackingSchema.fieldIndex("first_row_id")
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
@@ -264,9 +271,18 @@ object AMTWriteHelper extends DeltaLogging {
 
           var entryCount = 0
           var entryRows = 0L
+          var allEntriesHaveFirstRowId = true
+          var minFirstRowId: Option[Long] = None
           val countingRows = iter.map { row =>
             entryCount += 1
             entryRows += row.getLong(recordCountIdx)
+            val rowTracking = row.getStruct(trackingIdx, trackingFieldCount)
+            if (rowTracking.isNullAt(firstRowIdIdx)) {
+              allEntriesHaveFirstRowId = false
+            } else {
+              val firstRowId = rowTracking.getLong(firstRowIdIdx)
+              minFirstRowId = Some(minFirstRowId.fold(firstRowId)(math.min(_, firstRowId)))
+            }
             row
           }
           val status = Checkpoints.writeSingleFileOnExecutor(
@@ -288,7 +304,9 @@ object AMTWriteHelper extends DeltaLogging {
             existingFileAndRowCount = FileRowCount(entryCount, entryRows),
             deletedFileAndRowCount = emptyFileRowCount,
             replacedFileAndRowCount = emptyFileRowCount,
-            modifiedFileAndRowCount = emptyFileRowCount)
+            modifiedFileAndRowCount = emptyFileRowCount,
+            contentStateVersion = contentStateVersion,
+            firstRowId = if (allEntriesHaveFirstRowId) minFirstRowId else None)
           Iterator.single(DataManifestEntry(
             location = AMTUtils.relativizeLocation(
               tableRootSparkPath.toPath.toString, leafFile.toString),
@@ -330,13 +348,23 @@ object AMTWriteHelper extends DeltaLogging {
    * `record_count` rows to the count group for its tracking status (ADDED, EXISTING, DELETED,
    * REPLACED, or MODIFIED).
    */
-  private[amt] def addedTrackingForLeaf(entries: Seq[DataEntry]): (Tracking, ManifestInfo) = {
+  private[amt] def addedTrackingForLeaf(
+      entries: Seq[DataEntry],
+      contentStateVersion: Long): (Tracking, ManifestInfo) = {
     // Accumulate per-status file and row counts in a single pass. Plain Long accumulators avoid
     // allocating an intermediate object per entry.
     var addedFiles, existingFiles, deletedFiles, replacedFiles, modifiedFiles = 0
     var addedRows, existingRows, deletedRows, replacedRows, modifiedRows = 0L
+    var allEntriesHaveFirstRowId = true
+    var minFirstRowId: Option[Long] = None
     entries.foreach { entry =>
       val rows = entry.record_count
+      entry.tracking.first_row_id match {
+        case Some(firstRowId) =>
+          minFirstRowId = Some(minFirstRowId.fold(firstRowId)(math.min(_, firstRowId)))
+        case None =>
+          allEntriesHaveFirstRowId = false
+      }
       entry.tracking.status match {
         case Tracking.Status.Added =>
           addedFiles += 1
@@ -362,7 +390,9 @@ object AMTWriteHelper extends DeltaLogging {
       existingFileAndRowCount = FileRowCount(existingFiles, existingRows),
       deletedFileAndRowCount = FileRowCount(deletedFiles, deletedRows),
       replacedFileAndRowCount = FileRowCount(replacedFiles, replacedRows),
-      modifiedFileAndRowCount = FileRowCount(modifiedFiles, modifiedRows))
+      modifiedFileAndRowCount = FileRowCount(modifiedFiles, modifiedRows),
+      contentStateVersion = contentStateVersion,
+      firstRowId = if (allEntriesHaveFirstRowId) minFirstRowId else None)
   }
 
   /** Tracking + ManifestInfo for a freshly written leaf from its per-status file and row counts. */
@@ -371,8 +401,13 @@ object AMTWriteHelper extends DeltaLogging {
       existingFileAndRowCount: FileRowCount,
       deletedFileAndRowCount: FileRowCount,
       replacedFileAndRowCount: FileRowCount,
-      modifiedFileAndRowCount: FileRowCount): (Tracking, ManifestInfo) = {
-    val tracking = initializeTracking(Tracking.Status.Added)
+      modifiedFileAndRowCount: FileRowCount,
+      contentStateVersion: Long,
+      firstRowId: Option[Long]): (Tracking, ManifestInfo) = {
+    val tracking = initializeTracking(Tracking.Status.Added).copy(
+      sequence_number = Some(contentStateVersion),
+      file_sequence_number = Some(contentStateVersion),
+      first_row_id = firstRowId)
     val manifestInfo = emptyManifestInfo.copy(
       added_files_count = addedFileAndRowCount.fileCount,
       existing_files_count = existingFileAndRowCount.fileCount,
@@ -471,13 +506,14 @@ object AMTWriteHelper extends DeltaLogging {
       metadataDir: Path,
       metadata: Metadata,
       protocol: Protocol,
-      entries: Seq[DataEntry]): DataManifestEntry = {
+      entries: Seq[DataEntry],
+      contentStateVersion: Long): DataManifestEntry = {
     val leafFile = FileNames.newAMTLeafManifestFile(metadataDir)
     writeAMTParquet(spark, hadoopConf, leafFile, metadata, protocol, entries.map(_.wrap))
     val fileStatus = fs.getFileStatus(leafFile)
     // A freshly written leaf is always ADDED -- even one holding only tombstones, whose
     // manifest_info still counts the DELETED / REPLACED entries and their rows.
-    val (tracking, manifestInfo) = addedTrackingForLeaf(entries)
+    val (tracking, manifestInfo) = addedTrackingForLeaf(entries, contentStateVersion)
     DataManifestEntry(
       location = AMTUtils.relativizeLocation(tableRoot.toString, leafFile.toString),
       file_format = AMTSingleAction.FileFormatParquet,
