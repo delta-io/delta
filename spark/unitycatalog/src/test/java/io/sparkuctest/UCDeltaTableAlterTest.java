@@ -308,6 +308,78 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
+  // These pins use name-mode column mapping (COLUMN_MAPPING_PROPERTIES). OSS Delta does not let a
+  // user create an id-mode table directly, so id-mode rename is exercised at the server layer.
+
+  @Test
+  public void testAlterTableRenamePartitionColumnSucceedsForUcManagedTable() throws Exception {
+    withNewTable(
+        "alter_rename_partition_col_test",
+        "id INT, region STRING",
+        "region",
+        TableType.MANAGED,
+        COLUMN_MAPPING_PROPERTIES,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1, 'us')", tableName);
+          sql("ALTER TABLE %s RENAME COLUMN region TO region2", tableName);
+
+          // UC Delta REST metadata reflects the renamed partition column.
+          DeltaLoadTableResponse response = loadTableViaDeltaRest(tableName);
+          assertEquals(List.of("id", "region2"), fieldNames(response.getMetadata().getColumns()));
+          // Data survives and the renamed partition column is still queryable, including as a
+          // filter.
+          check(sql("SELECT id, region2 FROM %s ORDER BY id", tableName), List.of(row("1", "us")));
+          check(
+              sql("SELECT id, region2 FROM %s WHERE region2 = 'us'", tableName),
+              List.of(row("1", "us")));
+        });
+  }
+
+  @Test
+  public void testAlterTableRenameThenReAddOldNameSucceedsForUcManagedTable() throws Exception {
+    withNewTable(
+        "alter_rename_readd_test",
+        "id INT, name STRING",
+        null,
+        TableType.MANAGED,
+        COLUMN_MAPPING_PROPERTIES,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1, 'original')", tableName);
+          sql("ALTER TABLE %s RENAME COLUMN name TO full_name", tableName);
+          // Re-add a new column reusing the vacated old name; it must coexist with the renamed one.
+          sql("ALTER TABLE %s ADD COLUMNS (name STRING)", tableName);
+
+          DeltaLoadTableResponse response = loadTableViaDeltaRest(tableName);
+          assertEquals(
+              List.of("id", "full_name", "name"), fieldNames(response.getMetadata().getColumns()));
+          // Original data stays under the renamed column; the re-added column is a distinct new
+          // one.
+          check(
+              sql("SELECT id, full_name FROM %s ORDER BY id", tableName),
+              List.of(row("1", "original")));
+        });
+  }
+
+  @Test
+  public void testAlterTableWriteAfterRenameSucceedsForUcManagedTable() throws Exception {
+    withNewTable(
+        "alter_rename_then_write_test",
+        "id INT, old_name STRING",
+        null,
+        TableType.MANAGED,
+        COLUMN_MAPPING_PROPERTIES,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1, 'before')", tableName);
+          sql("ALTER TABLE %s RENAME COLUMN old_name TO new_name", tableName);
+          // Delta write path after a rename: a new insert referencing the new name reads back
+          // alongside the pre-rename row (physical column preserved under column mapping).
+          sql("INSERT INTO %s VALUES (2, 'after')", tableName);
+          check(
+              sql("SELECT id, new_name FROM %s ORDER BY id", tableName),
+              List.of(row("1", "before"), row("2", "after")));
+        });
+  }
+
   @Test
   public void testAlterTableChangeColumnCommentAndPositionUpdatesUcDeltaMetadata()
       throws Exception {
