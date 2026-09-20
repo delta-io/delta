@@ -80,13 +80,15 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
   test("parsePlanWithParameters substitutes named parameters in an IDENTIFIER clause") {
     assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
-    val delegate = new SparkSqlParser()
-    val parser = new DeltaSqlParser(delegate)
+    val parser = new DeltaSqlParser(new SparkSqlParser())
 
-    val actual = ParameterizedQueryShim.parsePlanWithNamedParameters(
+    val plan = ParameterizedQueryShim.parsePlanWithNamedParameters(
       parser, "CREATE DATABASE IF NOT EXISTS IDENTIFIER(:name)", Map("name" -> "my_db"))
-    val expected = delegate.parsePlan("CREATE DATABASE IF NOT EXISTS IDENTIFIER('my_db')")
-    assert(actual.sameResult(expected))
+    // Spark 4.1 keeps `IDENTIFIER(...)` unresolved through `PlanWithUnresolvedIdentifier`, whose
+    // plan builder is a lambda without structural equality, so compare the identifier text
+    // instead of comparing plans.
+    assert(plan.toString.contains("my_db"), plan.toString)
+    assert(!plan.toString.contains("namedparameter"), plan.toString)
   }
 
   test("parsePlanWithParameters substitutes positional parameters") {
