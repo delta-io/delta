@@ -139,7 +139,9 @@ case class ClusterByParserUtils(clusterByPlan: ClusterByPlan, delegate: ParserIn
    * @param sqlText: original SQL text.
    * @return the logical plan after parsing.
    */
-  def parsePlan(sqlText: String): LogicalPlan = {
+  def parsePlan(
+      sqlText: String,
+      delegateParse: String => LogicalPlan = delegate.parsePlan): LogicalPlan = {
     val colText =
       sqlText.substring(clusterByPlan.parenStartIndex, clusterByPlan.parenStopIndex + 1)
     // Replace CLUSTER BY with PARTITIONED BY to let SparkSqlParser do the validation for us.
@@ -151,7 +153,7 @@ case class ClusterByParserUtils(clusterByPlan: ClusterByPlan, delegate: ParserIn
         partitionedByText +
         sqlText.substring(clusterByPlan.stopIndex + 1)
     try {
-      delegate.parsePlan(newSqlText) match {
+      delegateParse(newSqlText) match {
         case create: CreateTable =>
           create.copy(partitioning = updatePartitioning(create.partitioning))
         case ctas: CreateTableAsSelect =>

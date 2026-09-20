@@ -25,13 +25,15 @@ import org.apache.spark.sql.delta.CloneTableSQLTestUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.{UnresolvedPathBasedDeltaTable, UnresolvedPathBasedTable}
 import org.apache.spark.sql.delta.commands.{DeltaOptimizeContext, DescribeDeltaDetailCommand, DescribeDeltaHistory, OptimizeTableCommand, DeltaReorgTable}
+import org.apache.spark.sql.delta.test.shims.ParameterizedQueryShim
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
-import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
-import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.analysis.{NamedParameter, UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Literal}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTableDropFeature, CloneTableStatement, CreateTable, CreateTableAsSelect, LogicalPlan, ReplaceTable, ReplaceTableAsSelect, RestoreTableStatement}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableDropFeature, CloneTableStatement, CreateTable, CreateTableAsSelect, LogicalPlan, Project, ReplaceTable, ReplaceTableAsSelect, RestoreTableStatement}
 import org.apache.spark.sql.execution.SparkSqlParser
 
 class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
@@ -63,6 +65,102 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
       VacuumTableCommand(
         UnresolvedPathBasedDeltaTable("/tmp/table", Map.empty, "VACUUM"), None, None, None, false,
         None))
+  }
+
+  test("parsePlanWithParameters substitutes named parameters in a SELECT query") {
+    assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
+    val delegate = new SparkSqlParser()
+    val parser = new DeltaSqlParser(delegate)
+
+    val actual = ParameterizedQueryShim.parsePlanWithNamedParameters(
+      parser, "SELECT :x AS v", Map("x" -> 1))
+    val expected = delegate.parsePlan("SELECT 1 AS v")
+    assert(actual.sameResult(expected))
+  }
+
+  test("parsePlanWithParameters substitutes named parameters in an IDENTIFIER clause") {
+    assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
+    val delegate = new SparkSqlParser()
+    val parser = new DeltaSqlParser(delegate)
+
+    val actual = ParameterizedQueryShim.parsePlanWithNamedParameters(
+      parser, "CREATE DATABASE IF NOT EXISTS IDENTIFIER(:name)", Map("name" -> "my_db"))
+    val expected = delegate.parsePlan("CREATE DATABASE IF NOT EXISTS IDENTIFIER('my_db')")
+    assert(actual.sameResult(expected))
+  }
+
+  test("parsePlanWithParameters substitutes positional parameters") {
+    assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
+    val delegate = new SparkSqlParser()
+    val parser = new DeltaSqlParser(delegate)
+
+    val actual = ParameterizedQueryShim.parsePlanWithPositionalParameters(
+      parser, "SELECT ? AS v, ? AS w", Seq(1, "hello"))
+    val expected = delegate.parsePlan("SELECT 1 AS v, 'hello' AS w")
+    assert(actual.sameResult(expected))
+  }
+
+  test("parameter values containing variable references are not expanded") {
+    assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
+    val parser = new DeltaSqlParser(new SparkSqlParser())
+
+    withSQLConf("review.param" -> "EXPANDED") {
+      val plan = ParameterizedQueryShim.parsePlanWithNamedParameters(
+        parser, "SELECT :x AS v", Map("x" -> "${review.param}"))
+      val value = plan.collectFirst {
+        case Project(Seq(Alias(l: Literal, _)), _) => l.value
+      }
+      assert(value.map(_.toString) === Some("${review.param}"))
+    }
+  }
+
+  test("empty parameter context does not break Delta statements with ':' or '?'") {
+    assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
+    val parser = new DeltaSqlParser(new SparkSqlParser())
+
+    Seq(
+      "VACUUM 's3://bucket/table'",
+      "VACUUM '/tmp/table' /* ? */",
+      "DESCRIBE DETAIL 's3://bucket/table'"
+    ).foreach { sqlText =>
+      val actual = ParameterizedQueryShim.parsePlanWithEmptyParameters(parser, sqlText)
+      assert(actual.sameResult(parser.parsePlan(sqlText)), s"plan mismatch for: $sqlText")
+    }
+  }
+
+  test("CLUSTER BY delegation keeps working with a parameter context") {
+    assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
+    val parser = new DeltaSqlParser(new SparkSqlParser())
+
+    Seq(true, false).foreach { asSelect =>
+      val sqlText = clusterByStatement("CREATE", asSelect, "a int, b string", "CLUSTER BY (a)")
+      val actual = ParameterizedQueryShim.parsePlanWithEmptyParameters(parser, sqlText)
+      assert(actual === parser.parsePlan(sqlText), s"plan mismatch for: $sqlText")
+    }
+  }
+
+  test("unbound parameter markers keep the UNBOUND_SQL_PARAMETER error") {
+    assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
+    val parser = new DeltaSqlParser(new SparkSqlParser())
+
+    val e = intercept[AnalysisException] {
+      ParameterizedQueryShim.parsePlanWithEmptyParameters(parser, "SELECT :x AS v")
+    }
+    assert(e.getErrorClass === "UNBOUND_SQL_PARAMETER")
+  }
+
+  test("legacy parameter substitution mode leaves markers for the analyzer") {
+    assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
+    val parser = new DeltaSqlParser(new SparkSqlParser())
+
+    withSQLConf("spark.sql.legacy.parameterSubstitution.constantsOnly" -> "true") {
+      val plan = ParameterizedQueryShim.parsePlanWithNamedParameters(
+        parser, "SELECT :x AS v", Map("x" -> 1))
+      val markerNames = plan.collect { case p: LogicalPlan => p.expressions }
+        .flatten
+        .flatMap(_.collect { case n: NamedParameter => n.name })
+      assert(markerNames === Seq("x"))
+    }
   }
 
   test("Restore command is parsed as expected") {

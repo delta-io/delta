@@ -72,16 +72,31 @@ import org.apache.spark.sql.types._
  * forward the call to `delegate`.
  */
 class DeltaSqlParser(val delegate: ParserInterface)
-    extends ParserInterface {
+    extends ParserInterface
+    with DeltaParserWithParametersShim {
   private val builder = new DeltaSqlAstBuilder
   private val substitution = new VariableSubstitution
 
-  override def parsePlan(sqlText: String): LogicalPlan = parse(sqlText) { parser =>
-    builder.visit(parser.singleStatement()) match {
+  override def parsePlan(sqlText: String): LogicalPlan =
+    parsePlanWithFallback(sqlText, delegate.parsePlan)
+
+  /**
+   * Parses `sqlText` with Delta's grammar and falls back to `delegateParse` for statements that
+   * are not Delta-specific.
+   *
+   * The fallback is invoked outside of `parse`'s exception handling so that errors raised by the
+   * delegate (e.g. `UNBOUND_SQL_PARAMETER`) propagate unchanged instead of being wrapped in
+   * `DELTA_PARSING_ANALYSIS_ERROR`.
+   */
+  private[parser] def parsePlanWithFallback(
+      sqlText: String,
+      delegateParse: String => LogicalPlan): LogicalPlan = {
+    val visited = parse(sqlText) { parser => builder.visit(parser.singleStatement()) }
+    visited match {
       case clusterByPlan: ClusterByPlan =>
-        ClusterByParserUtils(clusterByPlan, delegate).parsePlan(sqlText)
+        ClusterByParserUtils(clusterByPlan, delegate).parsePlan(sqlText, delegateParse)
       case plan: LogicalPlan => plan
-      case _ => delegate.parsePlan(sqlText)
+      case _ => delegateParse(sqlText)
     }
   }
 
