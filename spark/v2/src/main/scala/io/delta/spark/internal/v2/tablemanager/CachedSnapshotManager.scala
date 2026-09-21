@@ -253,13 +253,21 @@ private[tablemanager] class CachedSnapshotManager(
         advanceCatalogAuthorityHighWatermark(existing, requestedAuthority))
       val sameTable =
         existing != null && existing.snapshot.metadata.id == refreshed.snapshot.metadata.id
+      val sameRoute =
+        existing != null && existing.requestAuthority.sameRoute(refreshed.requestAuthority)
       val publicationAuthority =
         if (existing != null) {
           existing.requestAuthority.advanceRouteTo(refreshed.requestAuthority)
         } else {
           refreshed.requestAuthority
         }
-      if (sameTable && existing.snapshot.version >= refreshed.snapshot.version) {
+      if (sameTable && !sameRoute && existing.snapshot.version > refreshed.snapshot.version) {
+        retireSnapshotInternal(refreshed)
+        throw new DeltaUnsupportedOperationException(
+          "DELTA_OPERATION_NOT_ALLOWED",
+          Array("replacing cached request resources with an older snapshot"))
+      } else if (
+          sameTable && sameRoute && existing.snapshot.version >= refreshed.snapshot.version) {
         val validatedAt = math.max(validationStartedAt, existing.validatedAtMs)
         currentSnapshot = CachedSnapshot(
           existing.snapshot,

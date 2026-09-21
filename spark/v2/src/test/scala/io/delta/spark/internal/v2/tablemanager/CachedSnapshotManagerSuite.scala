@@ -221,6 +221,78 @@ class CachedSnapshotManagerSuite
     }
   }
 
+  test("equal-version route change replaces snapshot-bound request resources") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        val manager = createManager(dir)
+        try {
+          val pathSnapshot =
+            manager.loadLatestSnapshot(Optional.of(DeltaV2QueryContext(None)))
+          val catalogSnapshot = manager.loadLatestSnapshot(
+            Optional.of(catalogQueryContextForExactLoad))
+
+          assert(catalogSnapshot ne pathSnapshot)
+          assert(catalogSnapshot.version == pathSnapshot.version)
+          assert(catalogSnapshot.metadata.id == pathSnapshot.metadata.id)
+          assert(
+            manager.loadLatestSnapshot(Optional.of(catalogQueryContextForExactLoad)) eq
+              catalogSnapshot)
+        } finally {
+          manager.retire()
+        }
+      }
+    }
+  }
+
+  test("older snapshot cannot replace request resources across a route change") {
+    withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "60000") {
+      withTempDir { dir =>
+        createDeltaTable(dir)
+        appendToDeltaTable(dir)
+        val tablePath = new Path(dir.getCanonicalPath)
+        val rejectedSnapshot = new AtomicReference[Snapshot]()
+        val kernelContext = KernelContext(Map.empty, LogStore.createLogStore(spark))
+        val manager = new CachedSnapshotManager(tablePath, kernelContext) {
+          override private[tablemanager] def createUncachedSnapshotManager(
+              queryContext: DeltaV2QueryContext): DeltaV2SnapshotManager = {
+            val delegate = SnapshotManagerFactory.create(
+              tablePath.toString,
+              kernelContext.getDefaultEngine(),
+              Optional.empty[CatalogTable]())
+            if (queryContext.catalogTableOpt.isEmpty) {
+              delegate
+            } else {
+              val older = delegate.loadSnapshotAt(0L, Optional.of(queryContext))
+              rejectedSnapshot.set(older)
+              val staleDelegate = org.mockito.Mockito.spy(delegate)
+              org.mockito.Mockito.doReturn(older.asInstanceOf[AnyRef], Nil: _*)
+                .when(staleDelegate)
+                .loadLatestSnapshot(
+                  org.mockito.ArgumentMatchers.any[Optional[DeltaV2QueryContext]]())
+              staleDelegate
+            }
+          }
+        }
+
+        try {
+          val cached = manager.loadLatestSnapshot(Optional.of(DeltaV2QueryContext(None)))
+          assert(cached.version == 1L)
+
+          val error = intercept[DeltaUnsupportedOperationException] {
+            manager.loadLatestSnapshot(Optional.of(catalogQueryContextForExactLoad))
+          }
+          assert(error.getErrorClass == "DELTA_OPERATION_NOT_ALLOWED")
+          assert(rejectedSnapshot.get().version == 0L)
+          assert(rejectedSnapshot.get().metadata.id == cached.metadata.id)
+          assert(manager.loadLatestSnapshot(Optional.of(DeltaV2QueryContext(None))) eq cached)
+        } finally {
+          manager.retire()
+        }
+      }
+    }
+  }
+
 
 
   // === Staleness triggers full reload ==========================
