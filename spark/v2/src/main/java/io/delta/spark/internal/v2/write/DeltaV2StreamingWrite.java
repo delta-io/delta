@@ -27,12 +27,14 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
+import java.util.Optional;
 import java.util.function.Function;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.connector.write.streaming.StreamingDataWriterFactory;
 import org.apache.spark.sql.connector.write.streaming.StreamingWrite;
 import org.apache.spark.sql.delta.DeltaConfigs;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.slf4j.Logger;
@@ -65,6 +67,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
 
   private final Engine engine;
   private final DeltaV2SnapshotManager snapshotManager;
+  private final DeltaV2QueryContext queryContext;
   private final String queryId;
   private final DeltaV2DataWriterFactory dataWriterFactory;
   // The write state's schema/protocol baseline; the per-epoch guard fails if the table diverges.
@@ -82,6 +85,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
    * @param engine Kernel engine (driver-only)
    * @param initialSnapshot the batch's planned snapshot; write-state source and guard baseline
    * @param snapshotManager reloads the latest snapshot per epoch (see {@link #commit})
+   * @param queryContext request-scoped catalog inputs used when reloading each epoch's snapshot
    * @param queryId streaming query id; the transaction application id for cross-restart idempotency
    * @param variantShreddingEnabled the table's shredding property as the write state was built with
    *     it; the per-epoch guard baseline
@@ -94,6 +98,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
       Engine engine,
       Snapshot initialSnapshot,
       DeltaV2SnapshotManager snapshotManager,
+      DeltaV2QueryContext queryContext,
       String queryId,
       boolean variantShreddingEnabled,
       boolean variantLayoutFollowsProperty,
@@ -101,6 +106,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     this.engine = requireNonNull(engine, "engine is null");
     requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
+    this.queryContext = requireNonNull(queryContext, "queryContext is null");
     this.queryId = requireNonNull(queryId, "queryId is null");
     requireNonNull(dataWriterFactoryBuilder, "dataWriterFactoryBuilder is null");
     this.writeSchema = initialSnapshot.getSchema();
@@ -135,7 +141,8 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     // getLatestTransactionVersion for the epoch-skip check.
     // One reload, so the skip check, guards, and the transaction below all judge the same snapshot.
     SnapshotImpl latestSnapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
+            snapshotManager.loadLatestSnapshot(Optional.of(queryContext)));
 
     // Skip an already-committed epoch before any guard runs. StreamingWrite.commit may be called
     // more than once for one epoch and must be idempotent, so a repeated commit of a committed
