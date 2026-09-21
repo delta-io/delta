@@ -30,10 +30,8 @@ final case class DeltaV2QueryContext(catalogTableOpt: Option[CatalogTable]) {
 }
 
 object DeltaV2QueryContext {
-  val empty: DeltaV2QueryContext = DeltaV2QueryContext(None)
-
-  /** Creates a query context from a Java optional CatalogTable. */
-  def fromJava(catalogTableOpt: Optional[CatalogTable]): DeltaV2QueryContext = {
+  /** Creates a query context from optional catalog metadata. */
+  def apply(catalogTableOpt: Optional[CatalogTable]): DeltaV2QueryContext = {
     DeltaV2QueryContext(Objects.requireNonNull(catalogTableOpt, "catalogTableOpt is null").toScala)
   }
 }

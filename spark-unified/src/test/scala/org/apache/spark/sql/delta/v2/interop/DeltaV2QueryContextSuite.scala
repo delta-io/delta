@@ -25,10 +25,6 @@ import org.apache.spark.sql.types.StructType
 
 class DeltaV2QueryContextSuite extends SparkFunSuite {
 
-  test("empty query context has no catalog metadata") {
-    assert(DeltaV2QueryContext.empty.catalogTableOpt.isEmpty)
-  }
-
   test("Java catalog metadata is preserved by identity") {
     val catalogTable = CatalogTable(
       identifier = TableIdentifier("test_table"),
@@ -36,18 +32,18 @@ class DeltaV2QueryContextSuite extends SparkFunSuite {
       storage = CatalogStorageFormat.empty,
       schema = StructType(Nil))
 
-    val queryContext = DeltaV2QueryContext.fromJava(Optional.of(catalogTable))
+    val queryContext = DeltaV2QueryContext(Optional.of(catalogTable))
 
     assert(queryContext.catalogTableOpt.exists(_ eq catalogTable))
-    assert(DeltaV2QueryContext.fromJava(Optional.empty()).catalogTableOpt.isEmpty)
+    assert(DeltaV2QueryContext(Optional.empty[CatalogTable]()).catalogTableOpt.isEmpty)
   }
 
   test("null context inputs are rejected") {
     intercept[NullPointerException] {
-      DeltaV2QueryContext(null)
+      DeltaV2QueryContext(null: Option[CatalogTable])
     }
     intercept[NullPointerException] {
-      DeltaV2QueryContext.fromJava(null)
+      DeltaV2QueryContext(null: Optional[CatalogTable])
     }
   }
 }
