@@ -15,15 +15,12 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
-import java.util.concurrent.atomic.AtomicReference
-
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Process-cached [[DeltaV2TableManager]] implementation.
@@ -33,14 +30,11 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  * @param qualifiedTableDataPath the fully-qualified table data directory (parent of `_delta_log`).
  * @param sessionInvariantFsOptions filesystem-prefixed credential options (`fs.*`, `dfs.*`) that
  *   were used to resolve the table path. Retained for downstream engine construction.
- * @param initialCatalogTableOpt the catalog table supplied by the first caller that loaded this
- *   entry, if any.
  */
 private[tablemanager] class DeltaV2TableManagerImpl(
     val qualifiedTableDataPath: Path,
-    val sessionInvariantFsOptions: Map[String, String],
-    val initialCatalogTableOpt: Option[CatalogTable])
-    extends DeltaV2TableManager
+    val sessionInvariantFsOptions: Map[String, String]
+    ) extends DeltaV2TableManager
     with LogStoreProvider
 {
 
@@ -52,18 +46,9 @@ private[tablemanager] class DeltaV2TableManagerImpl(
 
   override private[v2] val kernelContext = KernelContext(sessionInvariantFsOptions, logStore)
 
-  private val latestCatalogTable =
-    new AtomicReference[CatalogTable](initialCatalogTableOpt.orNull)
-  private val cachedSnapshotManager =
-    new CachedSnapshotManager(tablePath, kernelContext, latestCatalogTable)
+  private val cachedSnapshotManager = new CachedSnapshotManager(tablePath, kernelContext)
 
-  override private[v2] def snapshotManager(
-      catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager = {
-    // Catalog metadata is latest-wins best-effort state. A refresh captures one atomic value and
-    // uses it consistently while selecting its path-based or catalog-managed uncached delegate.
-    latestCatalogTable.set(catalogTableOpt.orNull)
-    cachedSnapshotManager
-  }
+  override private[v2] def snapshotManager: DeltaV2SnapshotManager = cachedSnapshotManager
 
   override def retire(): Unit = cachedSnapshotManager.retire()
 }

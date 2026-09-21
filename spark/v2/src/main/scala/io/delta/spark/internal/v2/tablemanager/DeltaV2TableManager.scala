@@ -19,8 +19,6 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
 
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
-
 /**
  * Contract for a Delta table manager used by the DSv2 connector.
  */
@@ -32,8 +30,11 @@ private[v2] trait DeltaV2TableManager {
   /** Returns the table-scoped log store. */
   private[v2] def logStore: LogStore
 
-  /** Returns a snapshot manager using the caller's current catalog metadata. */
-  private[v2] def snapshotManager(catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager
+  /**
+   * Returns the table-scoped snapshot manager. Each operation supplies the caller's current query
+   * context, including catalog metadata used to select the authoritative snapshot route.
+   */
+  private[v2] def snapshotManager: DeltaV2SnapshotManager
 
   /** Retires this manager and releases any resources it owns. */
   def retire(): Unit = {}

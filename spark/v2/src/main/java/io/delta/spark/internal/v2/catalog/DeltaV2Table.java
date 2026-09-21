@@ -254,7 +254,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         DeltaV2TableManagerCache$.MODULE$.forTable(
             activeSession, tablePath, options, catalogTableOpt);
     this.kernelEngine = tableManager.kernelContext().getDefaultEngine();
-    this.snapshotManager = tableManager.snapshotManager(catalogTableOpt);
+    this.snapshotManager = tableManager.snapshotManager();
     try {
       if (timeTravelVersion.isPresent()) {
         this.initialSnapshot =
@@ -410,16 +410,18 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
    * share a singular load once the snapshot manager exposes it TODO(#5999).
    */
   private static long resolveTimestampToVersion(
-      DeltaV2SnapshotManager manager, long timestampMicros, DeltaV2QueryContext queryContext) {
+      DeltaV2SnapshotManager snapshotManager,
+      long timestampMicros,
+      DeltaV2QueryContext queryContext) {
     long timeMillis = timestampMicros / 1000;
     DeltaHistoryManager.Commit commit =
-        manager.getActiveCommitAtTime(
+        snapshotManager.getActiveCommitAtTime(
             timeMillis,
             /* canReturnLastCommit = */ true,
             /* mustBeRecreatable = */ true,
             /* canReturnEarliestCommit = */ true,
             queryContext);
-    long latestVersion = manager.loadLatestSnapshot(queryContext).version();
+    long latestVersion = snapshotManager.loadLatestSnapshot(queryContext).version();
     if (commit.getTimestamp() > timeMillis) {
       // The earliest available commit is younger than the requested time.
       throw new TimestampOutOfRangeException(timeMillis, commit.getTimestamp(), false);

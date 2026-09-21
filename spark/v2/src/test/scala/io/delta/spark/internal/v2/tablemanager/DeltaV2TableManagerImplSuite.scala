@@ -16,9 +16,10 @@
 package io.delta.spark.internal.v2.tablemanager
 
 import java.io.File
-import java.util.Collections
+import java.util.{Collections, Optional}
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
@@ -62,7 +63,6 @@ class DeltaV2TableManagerImplSuite
           val manager = DeltaV2TableManagerCache
             .forTable(spark, path, Collections.emptyMap(), catalogTableOpt)
             .asInstanceOf[DeltaV2TableManagerImpl]
-          assert(manager.initialCatalogTableOpt === catalogTableOpt)
           testFn(manager, catalogTableOpt)
         }
     }
@@ -77,23 +77,24 @@ class DeltaV2TableManagerImplSuite
 
       forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
         val kernelEngine = manager.kernelContext.getDefaultEngine()
-        val atVersionZeroManager = manager.snapshotManager(catalogTableOpt)
-        val atVersionOneManager = manager.snapshotManager(catalogTableOpt)
-        val latestManager = manager.snapshotManager(catalogTableOpt)
+        val atVersionZeroManager = manager.snapshotManager
+        val atVersionOneManager = manager.snapshotManager
+        val latestManager = manager.snapshotManager
 
         assert(atVersionZeroManager eq atVersionOneManager)
         assert(atVersionOneManager eq latestManager)
         assert(manager.kernelContext.getDefaultEngine() eq kernelEngine)
 
-        val atVersionZero = atVersionZeroManager.loadSnapshotAt(0)
+        val queryContext = DeltaV2QueryContext(catalogTableOpt)
+        val atVersionZero = atVersionZeroManager.loadSnapshotAt(0, Optional.of(queryContext))
         assert(atVersionZero.version == 0)
         assert(atVersionZero.allFiles.count() == 1)
 
-        val atVersionOne = atVersionOneManager.loadSnapshotAt(1)
+        val atVersionOne = atVersionOneManager.loadSnapshotAt(1, Optional.of(queryContext))
         assert(atVersionOne.version == 1)
         assert(atVersionOne.allFiles.count() == 2)
 
-        val latest = latestManager.loadLatestSnapshot()
+        val latest = latestManager.loadLatestSnapshot(Optional.of(queryContext))
         assert(latest.version == 2)
         assert(latest.allFiles.count() == 3)
       }
