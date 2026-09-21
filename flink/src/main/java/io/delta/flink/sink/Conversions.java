@@ -137,10 +137,14 @@ public class Conversions {
       if (rowData.isNullAt(colIdx)) {
         return Literal.ofNull(dataType);
       }
-      if (dataType.equivalent(io.delta.kernel.types.IntegerType.INTEGER)) {
-        return Literal.ofInt(rowData.getInt(colIdx));
+      if (dataType.equivalent(io.delta.kernel.types.BooleanType.BOOLEAN)) {
+        return Literal.ofBoolean(rowData.getBoolean(colIdx));
       } else if (dataType.equivalent(io.delta.kernel.types.ByteType.BYTE)) {
         return Literal.ofByte(rowData.getByte(colIdx));
+      } else if (dataType.equivalent(io.delta.kernel.types.ShortType.SHORT)) {
+        return Literal.ofShort(rowData.getShort(colIdx));
+      } else if (dataType.equivalent(io.delta.kernel.types.IntegerType.INTEGER)) {
+        return Literal.ofInt(rowData.getInt(colIdx));
       } else if (dataType.equivalent(io.delta.kernel.types.LongType.LONG)) {
         return Literal.ofLong(rowData.getLong(colIdx));
       } else if (dataType.equivalent(io.delta.kernel.types.StringType.STRING)) {

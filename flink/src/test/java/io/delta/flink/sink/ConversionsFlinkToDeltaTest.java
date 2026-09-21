@@ -24,6 +24,7 @@ import io.delta.kernel.types.StructType;
 import java.util.Arrays;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.data.StringData;
 import org.apache.flink.table.types.logical.*;
 import org.apache.flink.table.types.logical.DayTimeIntervalType.DayTimeResolution;
 import org.apache.flink.table.types.logical.RowType.RowField;
@@ -191,6 +192,54 @@ public class ConversionsFlinkToDeltaTest implements FlinkTypeTests {
 
     io.delta.kernel.types.StructType actual = Conversions.FlinkToDelta.schema(flinkSchema);
     assertTrue(expected.equivalent(actual));
+  }
+
+  @Test
+  void testPrimitiveDataConversion() {
+    RowType flinkSchema =
+        row(
+            f("s", new VarCharType(VarCharType.MAX_LENGTH)),
+            f("ti", new TinyIntType()),
+            f("sm", new SmallIntType()),
+            f("i", new IntType()),
+            f("l", new BigIntType()),
+            f("bool", new BooleanType()),
+            f("d", new DoubleType()),
+            f("dt", new DateType()),
+            f("ts", new LocalZonedTimestampType(6)),
+            f("tsNtz", new TimestampType(6)));
+
+    StructType deltaSchema = Conversions.FlinkToDelta.schema(flinkSchema);
+
+    GenericRowData rowData =
+        GenericRowData.of(
+            StringData.fromString("hello"),
+            (byte) 42,
+            (short) 1000,
+            123456,
+            987654321L,
+            true,
+            3.14d,
+            18993,
+            1640995200000000L,
+            1640995200000000L);
+
+    assertEquals(Literal.ofString("hello"), Conversions.FlinkToDelta.data(deltaSchema, rowData, 0));
+    assertEquals(Literal.ofByte((byte) 42), Conversions.FlinkToDelta.data(deltaSchema, rowData, 1));
+    assertEquals(
+        Literal.ofShort((short) 1000), Conversions.FlinkToDelta.data(deltaSchema, rowData, 2));
+    assertEquals(Literal.ofInt(123456), Conversions.FlinkToDelta.data(deltaSchema, rowData, 3));
+    assertEquals(
+        Literal.ofLong(987654321L), Conversions.FlinkToDelta.data(deltaSchema, rowData, 4));
+    assertEquals(Literal.ofBoolean(true), Conversions.FlinkToDelta.data(deltaSchema, rowData, 5));
+    assertEquals(Literal.ofDouble(3.14d), Conversions.FlinkToDelta.data(deltaSchema, rowData, 6));
+    assertEquals(Literal.ofDate(18993), Conversions.FlinkToDelta.data(deltaSchema, rowData, 7));
+    assertEquals(
+        Literal.ofTimestamp(1640995200000000L),
+        Conversions.FlinkToDelta.data(deltaSchema, rowData, 8));
+    assertEquals(
+        Literal.ofTimestampNtz(1640995200000000L),
+        Conversions.FlinkToDelta.data(deltaSchema, rowData, 9));
   }
 
   @TestAllFlinkTypes
