@@ -591,6 +591,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         hadoopConf,
         initialSnapshot,
         snapshotManager,
+        queryContext,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
         info);

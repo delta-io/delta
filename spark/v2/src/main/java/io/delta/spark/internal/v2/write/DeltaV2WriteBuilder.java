@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.types.StructType;
@@ -47,6 +48,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   private final Configuration hadoopConf;
   private final Snapshot initialSnapshot;
   private final DeltaV2SnapshotManager snapshotManager;
+  private final DeltaV2QueryContext queryContext;
   private final StructType dataSchema;
   private final StructType partitionSchema;
   private final LogicalWriteInfo writeInfo;
@@ -58,6 +60,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
    * @param initialSnapshot Kernel snapshot loaded at table construction time
    * @param snapshotManager reloads the latest snapshot; used by the streaming write to build each
    *     epoch's commit against the current table state (see {@link DeltaV2StreamingWrite})
+   * @param queryContext request-scoped catalog inputs used when reloading streaming snapshots
    * @param dataSchema the table's data (non-partition) schema, from DeltaV2Table's SchemaProvider
    * @param partitionSchema the table's partition columns in partition order (empty if
    *     unpartitioned), from DeltaV2Table's SchemaProvider
@@ -69,6 +72,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       Configuration hadoopConf,
       Snapshot initialSnapshot,
       DeltaV2SnapshotManager snapshotManager,
+      DeltaV2QueryContext queryContext,
       StructType dataSchema,
       StructType partitionSchema,
       LogicalWriteInfo writeInfo) {
@@ -77,6 +81,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
+    this.queryContext = requireNonNull(queryContext, "queryContext is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
     this.writeInfo = requireNonNull(writeInfo, "writeInfo is null");
@@ -117,6 +122,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         tablePath,
         DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
         snapshotManager,
+        queryContext,
         dataSchema,
         partitionSchema,
         writeInfo);

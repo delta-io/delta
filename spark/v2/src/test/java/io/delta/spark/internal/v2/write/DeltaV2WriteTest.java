@@ -26,10 +26,12 @@ import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.spark.sql.connector.distributions.UnspecifiedDistribution;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.SortOrder;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
@@ -116,6 +118,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             path,
             DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
             mgr,
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
             dataSchema,
             partitionSchema,
             WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()));
@@ -162,6 +165,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             path,
             DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
             mgr,
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
             dataSchema,
             partitionSchema,
             WriteTestUtils.logicalWriteInfo(fullSchema, CaseInsensitiveStringMap.empty()));
@@ -195,6 +199,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
         path,
         snapshot,
         snapshotManager,
+        DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
         TABLE_SCHEMA,
         new StructType(),
         info);
