@@ -181,6 +181,28 @@ trait MergeIntoMaterializeSourceErrorTests extends MergeIntoMaterializeSourceMix
         sparkEx.getMessageParameters.get("rddBlockId").contains(s"rdd_${rdd.id}"))
   }
 
+  test("checkpoint block error without rddBlockId does not throw NullPointerException") {
+    val injectEx = new SparkException(
+      message = "Checkpoint block not found",
+      cause = null,
+      errorClass = Some("CHECKPOINT_RDD_BLOCK_ID_NOT_FOUND"),
+      messageParameters = Map.empty)
+
+    testWithCustomErrorInjected[SparkException](injectEx) { (thrownEx, error) =>
+      val checkpointError = Iterator
+        .iterate(thrownEx: Throwable)(_.getCause)
+        .takeWhile(_ != null)
+        .collectFirst {
+          case e: SparkException
+              if e.getErrorClass == "CHECKPOINT_RDD_BLOCK_ID_NOT_FOUND" => e
+        }
+
+      assert(checkpointError.isDefined, thrownEx)
+      assert(!checkpointError.get.getMessageParameters.containsKey("rddBlockId"))
+      assert(error.isEmpty)
+    }
+  }
+
   for {
     materialized <- BOOLEAN_DOMAIN
   } test(s"merge logs out of disk errors - materialized=$materialized") {
@@ -975,4 +997,3 @@ trait MergeIntoMaterializeSourceTests extends MergeIntoMaterializeSourceMixin {
     stats.materializeSourceReason.get
   }
 }
-
