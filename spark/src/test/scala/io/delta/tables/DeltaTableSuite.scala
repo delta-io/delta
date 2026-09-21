@@ -38,6 +38,7 @@ import org.apache.spark.SparkException
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{functions, AnalysisException, DataFrame, Dataset, QueryTest, Row}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -135,6 +136,64 @@ class DeltaTableSuite extends QueryTest
       checkAnswer(
         DeltaTable.forPath(dir.getAbsolutePath).as("tbl").toDF.select("tbl.value"),
         testData.select("value").collect().toSeq)
+    }
+  }
+
+  test("delete - with char column") {
+    withTable("t") {
+      spark.sql("CREATE TABLE t (charcol CHAR(3)) USING DELTA")
+      spark.sql("INSERT INTO t VALUES ('67')")
+
+      if (SQLConf.get.readSideCharPadding) {
+        checkAnswer(spark.table("t"), Row("67 "))
+      } else {
+        checkAnswer(spark.table("t"), Row("67"))
+      }
+
+      DeltaTable.forName(spark, "t").delete()
+      checkAnswer(spark.table("t"), Nil)
+    }
+  }
+
+  test("update - with char column") {
+    withTable("t") {
+      spark.sql("CREATE TABLE t (charcol CHAR(3)) USING DELTA")
+      spark.sql("INSERT INTO t VALUES ('67')")
+
+      if (SQLConf.get.readSideCharPadding) {
+        checkAnswer(spark.table("t"), Row("67 "))
+      } else {
+        checkAnswer(spark.table("t"), Row("67"))
+      }
+
+      DeltaTable.forName(spark, "t").updateExpr(Map("charcol" -> "42"))
+
+      checkAnswer(spark.table("t"), Row("42 "))
+    }
+  }
+
+  test("merge - with char column") {
+    withTable("s", "t") {
+      spark.sql("CREATE TABLE t (key1 CHAR(3), value1 BIGINT) USING DELTA")
+      spark.sql("INSERT INTO t VALUES ('1', 10), ('2', 20)")
+
+      spark.sql("CREATE TABLE s (key2 CHAR(3), value2 BIGINT) USING DELTA")
+      spark.sql("INSERT INTO s VALUES ('1', 100), ('3', 30)")
+
+      val target = DeltaTable.forName(spark, "t")
+      val source = DeltaTable.forName(spark, "s")
+
+      target.merge(source.toDF, "key1 = key2")
+        .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
+        .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
+        .whenNotMatchedBySource().updateExpr(Map("key1" -> "42"))
+        .execute()
+
+      if (SQLConf.get.readSideCharPadding) {
+        checkAnswer(spark.table("t"), Row("1  ", 100) :: Row("42 ", 20) :: Row("3  ", 30) :: Nil)
+      } else {
+        checkAnswer(spark.table("t"), Row("1", 100) :: Row("42", 20) :: Row("3", 30) :: Nil)
+      }
     }
   }
 
