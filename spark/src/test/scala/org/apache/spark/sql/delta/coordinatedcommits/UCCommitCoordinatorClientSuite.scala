@@ -382,6 +382,9 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     }
   }
 
+  /** Mirrors UCCommitCoordinatorClient.MAX_RETRIES_ON_TRANSIENT_ERROR, which is not public. */
+  private val maxRetriesOnTransientError = 15
+
   /**
    * A UC client that reports an unknown commit outcome, the way UC does when it cannot tell
    * whether an add-commit it received already landed. `acceptCommit` decides whether UC actually
@@ -442,6 +445,41 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
       }
       super.getCommits(tableId, tableUri, tableIdentifier, startVersion, endVersion)
     }
+  }
+
+  /**
+   * A UC client whose first `attemptsFailingBeforeDispatch` calls fail without reaching UC, and
+   * whose next call reaches UC, is accepted, and then loses its response. Set the count to the
+   * client's internal retry budget to land the ambiguous attempt on the last one it is allowed.
+   */
+  private class LostResponseOnFinalAttemptUCClient(attemptsFailingBeforeDispatch: Int)
+    extends InMemoryUCClient(metastoreId.toString, ucCommitCoordinator) {
+
+    /** Number of add-commit calls this client has received. */
+    var commitAttempts = 0
+
+    // scalastyle:off argcount
+    override def commit(
+        tableId: String,
+        tableUri: java.net.URI,
+        tableIdentifier: JTableIdentifier,
+        commit: Optional[JCommit],
+        lastKnownBackfilledVersion: Optional[JLong],
+        oldMetadata: Optional[AbstractMetadata],
+        newMetadata: Optional[AbstractMetadata],
+        oldProtocol: Optional[AbstractProtocol],
+        newProtocol: Optional[AbstractProtocol],
+        transactionDomainMetadata: JList[AbstractDomainMetadata],
+        uniform: Optional[UniformMetadata]): Unit = {
+      commitAttempts += 1
+      if (commitAttempts <= attemptsFailingBeforeDispatch) {
+        throw new IOException(s"Connection refused on attempt $commitAttempts")
+      }
+      super.commit(tableId, tableUri, tableIdentifier, commit, lastKnownBackfilledVersion,
+        oldMetadata, newMetadata, oldProtocol, newProtocol, transactionDomainMetadata, uniform)
+      throw new IOException(s"Response lost after UC accepted attempt $commitAttempts")
+    }
+    // scalastyle:on argcount
   }
 
   private def ucCoordinatorClientFor(client: UCClient): UCCommitCoordinatorClient =
@@ -701,6 +739,27 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
 
       assert(!e.getRetryable && !e.getConflict)
       assert(ucClientWithLostAck.commitAttempts == 1)
+    }
+  }
+
+  test("lost add-commit response: the last allowed attempt is recovered before giving up") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      // Burn the whole transient-error budget before dispatch, so the attempt that UC accepts
+      // and then fails to acknowledge is the last one the client is allowed to make. Returning
+      // a retryable failure here would hand control back to Spark, which restarts the commit
+      // with a fresh staged UUID and can no longer tell that version 1 is already its own.
+      val ucClientWithLostAck =
+        new LostResponseOnFinalAttemptUCClient(maxRetriesOnTransientError)
+      val tcc = createTableCommitCoordinatorClient(log)
+        .copy(commitCoordinatorClient = ucCoordinatorClientFor(ucClientWithLostAck))
+      writeCommitZero(logPath)
+
+      commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+
+      assert(ucClientWithLostAck.commitAttempts == maxRetriesOnTransientError + 1)
+      assert(tcc.getCommits().getCommits.asScala.map(_.getVersion) == Seq(1L))
     }
   }
 

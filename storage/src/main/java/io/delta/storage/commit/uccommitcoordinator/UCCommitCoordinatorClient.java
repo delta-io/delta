@@ -499,12 +499,10 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         if (outcome == CommitRecoveryOutcome.UNDETERMINED) {
           recordUsageLog.accept(
             Optional.of(unknownOutcome), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
-          throw new CommitFailedException(
-            false /* retryable */,
-            false /* conflict */,
-            "Could not establish whether version " + commitVersion + " of table " + tableId +
-              " was committed. Re-sending would risk duplicating the data and rebasing would " +
-              "risk losing it, so the commit is failed: " + unknownOutcome.getMessage(),
+          throw undeterminedOutcome(
+            commitVersion,
+            tableId,
+            "UC received the commit but could not report whether the version already landed",
             unknownOutcome);
         }
         // NOT_ACCEPTED: UC never took the proposal, so re-sending the identical add-commit
@@ -540,13 +538,11 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           }
           if (outcome == CommitRecoveryOutcome.UNDETERMINED) {
             recordUsageLog.accept(Optional.of(cfe), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
-            throw new CommitFailedException(
-              false /* retryable */,
-              false /* conflict */,
-              "Version " + commitVersion + " of table " + tableId + " conflicts, but an earlier " +
-                "attempt failed without reporting its outcome and it could not be established " +
-                "whether that attempt is what now holds the version. Rebasing would risk " +
-                "duplicating the data, so the commit is failed: " + cfe.getMessage(),
+            throw undeterminedOutcome(
+              commitVersion,
+              tableId,
+              "it conflicts, but an earlier attempt failed without reporting its outcome and it " +
+                "could not be established whether that attempt is what now holds the version",
               cfe);
           }
         }
@@ -555,8 +551,35 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         throw cfe;
       } catch (IOException ioe) {
         if (transientErrorRetryCount == MAX_RETRIES_ON_TRANSIENT_ERROR) {
-          // Rethrow exception in case we've reached the retry limit.
+          // This is the last attempt, so the ambiguity has to be settled here. Handing a
+          // retryable failure back to the caller restarts commitImpl under a freshly generated
+          // staged UUID, and the recovery can no longer recognise a version this writer already
+          // won: it would compare the new UUID against the ratified old one and call it a
+          // concurrent writer.
+          CommitRecoveryOutcome outcome =
+            recoverUnknownCommitState(logStore, hadoopConf, tableDesc, commitVersion, commitFile);
+          eventData.put("transientErrorBudgetExhaustedRecovery", outcome.name());
           recordUsageLog.accept(Optional.of(ioe), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
+          if (outcome == CommitRecoveryOutcome.ACCEPTED) {
+            // The final attempt did land; only its answer was lost. Resume from publishing.
+            break;
+          }
+          if (outcome == CommitRecoveryOutcome.LOST_RACE) {
+            throw new CommitFailedException(
+              true /* retryable */,
+              true /* conflict */,
+              "A concurrent writer won version " + commitVersion + " of table " + tableId +
+                " while this commit was failing to reach UC: " + ioe.getMessage(),
+              ioe);
+          }
+          if (outcome == CommitRecoveryOutcome.UNDETERMINED) {
+            throw undeterminedOutcome(
+              commitVersion,
+              tableId,
+              "the last attempt allowed by the retry budget failed without reporting its outcome",
+              ioe);
+          }
+          // NOT_ACCEPTED: UC does not hold the version, so the caller may safely start over.
           throw new CommitFailedException(
             true /* retryable */,
             false /* conflict */,
@@ -685,6 +708,22 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
    * and the maximum retry count is 15, with the wait capped at 1 min, so a fully exhausted
    * budget spans ~8 min.
    */
+  /**
+   * Builds the failure raised when neither outcome of a commit could be established. Re-sending
+   * risks committing the same data twice and rebasing risks dropping it, so the commit is failed
+   * outright rather than handed back as something the caller may retry or resolve as a conflict.
+   */
+  private CommitFailedException undeterminedOutcome(
+      long commitVersion, String tableId, String because, Exception cause) {
+    return new CommitFailedException(
+      false /* retryable */,
+      false /* conflict */,
+      "Could not establish whether version " + commitVersion + " of table " + tableId +
+        " was committed: " + because + ". Re-sending would risk duplicating the data and " +
+        "rebasing would risk losing it, so the commit is failed: " + cause.getMessage(),
+      cause);
+  }
+
   protected void backOffBeforeResend(int retryCount, String reason) {
     long sleepTime = Math.min(
       TRANSIENT_ERROR_RETRY_INITIAL_WAIT_MS << retryCount,
