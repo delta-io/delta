@@ -559,11 +559,13 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           CommitRecoveryOutcome outcome =
             recoverUnknownCommitState(logStore, hadoopConf, tableDesc, commitVersion, commitFile);
           eventData.put("transientErrorBudgetExhaustedRecovery", outcome.name());
-          recordUsageLog.accept(Optional.of(ioe), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
           if (outcome == CommitRecoveryOutcome.ACCEPTED) {
-            // The final attempt did land; only its answer was lost. Resume from publishing.
+            // The final attempt did land; only its answer was lost. Resume from publishing,
+            // which reports the commit itself, rather than also reporting a failure here.
             break;
           }
+          // Every remaining outcome ends the commit, so the failure is reported once here.
+          recordUsageLog.accept(Optional.of(ioe), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
           if (outcome == CommitRecoveryOutcome.LOST_RACE) {
             throw new CommitFailedException(
               true /* retryable */,
@@ -704,11 +706,6 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   }
 
   /**
-   * Exponentially backs off before re-sending an {@code add-commit}. The initial wait is 100ms
-   * and the maximum retry count is 15, with the wait capped at 1 min, so a fully exhausted
-   * budget spans ~8 min.
-   */
-  /**
    * Builds the failure raised when neither outcome of a commit could be established. Re-sending
    * risks committing the same data twice and rebasing risks dropping it, so the commit is failed
    * outright rather than handed back as something the caller may retry or resolve as a conflict.
@@ -724,6 +721,11 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       cause);
   }
 
+  /**
+   * Exponentially backs off before re-sending an {@code add-commit}. The initial wait is 100ms
+   * and the maximum retry count is 15, with the wait capped at 1 min, so a fully exhausted
+   * budget spans ~8 min.
+   */
   protected void backOffBeforeResend(int retryCount, String reason) {
     long sleepTime = Math.min(
       TRANSIENT_ERROR_RETRY_INITIAL_WAIT_MS << retryCount,

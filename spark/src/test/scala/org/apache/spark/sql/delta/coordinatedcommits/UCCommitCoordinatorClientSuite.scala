@@ -756,10 +756,17 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
         .copy(commitCoordinatorClient = ucCoordinatorClientFor(ucClientWithLostAck))
       writeCommitZero(logPath)
 
-      commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+      val usageLogs = Log4jUsageLogger.track {
+        commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+      }
 
       assert(ucClientWithLostAck.commitAttempts == maxRetriesOnTransientError + 1)
       assert(tcc.getCommits().getCommits.asScala.map(_.getVersion) == Seq(1L))
+      // The recovered commit is one commit, so it reports one commit stat. Reporting the
+      // ambiguous IOException as well would count the same commit twice, once as a failure.
+      assert(usageLogs.count { record =>
+        record.tags.get("opType").contains(UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS)
+      } == 1)
     }
   }
 
