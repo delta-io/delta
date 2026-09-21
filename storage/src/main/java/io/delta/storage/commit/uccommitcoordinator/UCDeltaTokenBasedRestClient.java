@@ -109,6 +109,13 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private static final int HTTP_BAD_REQUEST = 400;
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
+  private static final int HTTP_INTERNAL_SERVER_ERROR = 500;
+
+  /**
+   * The {@code DeltaErrorType} UC reports when it received an {@code add-commit} but cannot tell
+   * whether that version already landed.
+   */
+  private static final String COMMIT_STATE_UNKNOWN_ERROR_TYPE = "CommitStateUnknownException";
 
   private DeltaTablesApi deltaTablesApi;
   private MetastoresApi metastoresApi;
@@ -1012,6 +1019,19 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
             String.format("Table not found %s.%s.%s: %s",
                 catalog, schema, table, responseBody));
       default:
+        // UC answers 500 CommitStateUnknownException when it received the commit but cannot
+        // establish whether the version already landed. Collapsing it into an IOException would
+        // leave the coordinator client re-sending the identical add-commit instead of running the
+        // protocol's commit-recovery sequence. Substring-match the body for the same reason
+        // loadTable does: it avoids coupling to an ErrorResponse parser.
+        if (statusCode == HTTP_INTERNAL_SERVER_ERROR
+            && responseBody != null
+            && responseBody.contains(COMMIT_STATE_UNKNOWN_ERROR_TYPE)) {
+          throw new CommitOutcomeUnknownException(
+              String.format("Commit outcome unknown for %s.%s.%s: %s",
+                  catalog, schema, table, responseBody),
+              e);
+        }
         throw new IOException(
             String.format("Failed to update table %s.%s.%s (HTTP %s): %s",
                 catalog, schema, table, statusCode, responseBody), e);

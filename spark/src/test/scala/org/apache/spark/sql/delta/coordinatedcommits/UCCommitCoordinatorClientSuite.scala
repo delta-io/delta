@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.IOException
 import java.lang.{Long => JLong}
-import java.util.{Collections, List => JList, Optional}
+import java.util.{Collections, List => JList, Optional, UUID}
 
 import scala.collection.JavaConverters._
 import scala.jdk.OptionConverters._
@@ -49,6 +49,9 @@ import io.delta.storage.commit.{
 }
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{
+  CommitCompletionUnknownException,
+  CommitOutcomeUnknownException,
+  UCClient,
   UCCommitCoordinatorClient,
   UCCoordinatedCommitsUsageLogs}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
@@ -379,4 +382,233 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     }
   }
 
+  /**
+   * A UC client that reports an unknown commit outcome, the way UC does when it cannot tell
+   * whether an add-commit it received already landed. `acceptCommit` decides whether UC actually
+   * took the proposal before the answer was lost -- the very thing the client cannot know from
+   * the error alone.
+   */
+  private class UnknownCommitStateUCClient(
+      acceptCommit: Boolean,
+      unknownResponses: Int = 1,
+      beforeReportingUnknownState: JCommit => Unit = _ => (),
+      failTableReload: Boolean = false,
+      useDeprecatedSignal: Boolean = false)
+    extends InMemoryUCClient(metastoreId.toString, ucCommitCoordinator) {
+
+    /** Number of add-commit calls this client has received. */
+    var commitAttempts = 0
+
+    // scalastyle:off argcount
+    override def commit(
+        tableId: String,
+        tableUri: java.net.URI,
+        tableIdentifier: JTableIdentifier,
+        commit: Optional[JCommit],
+        lastKnownBackfilledVersion: Optional[JLong],
+        oldMetadata: Optional[AbstractMetadata],
+        newMetadata: Optional[AbstractMetadata],
+        oldProtocol: Optional[AbstractProtocol],
+        newProtocol: Optional[AbstractProtocol],
+        transactionDomainMetadata: JList[AbstractDomainMetadata],
+        uniform: Optional[UniformMetadata]): Unit = {
+      commitAttempts += 1
+      val reportUnknownState = commitAttempts <= unknownResponses
+      if (acceptCommit || !reportUnknownState) {
+        super.commit(tableId, tableUri, tableIdentifier, commit, lastKnownBackfilledVersion,
+          oldMetadata, newMetadata, oldProtocol, newProtocol, transactionDomainMetadata, uniform)
+      }
+      if (reportUnknownState) {
+        commit.ifPresent(c => beforeReportingUnknownState(c))
+        val message =
+          s"Could not determine whether commit version ${commit.get.getVersion} is a replay: " +
+            "unable to read the staged or published commit file; retry the request."
+        if (useDeprecatedSignal) {
+          throw new CommitCompletionUnknownException(message)
+        }
+        throw new CommitOutcomeUnknownException(message)
+      }
+    }
+    // scalastyle:on argcount
+
+    override def getCommits(
+        tableId: String,
+        tableUri: java.net.URI,
+        tableIdentifier: JTableIdentifier,
+        startVersion: Optional[JLong],
+        endVersion: Optional[JLong]): JGetCommitsResponse = {
+      if (failTableReload) {
+        throw new IOException("Simulated UC outage")
+      }
+      super.getCommits(tableId, tableUri, tableIdentifier, startVersion, endVersion)
+    }
+  }
+
+  private def ucCoordinatorClientFor(client: UCClient): UCCommitCoordinatorClient =
+    new UCCommitCoordinatorClient(Map.empty[String, String].asJava, client) with DeltaLogging {
+      override protected def recordDeltaEvent(opType: String, data: Any, path: Path): Unit = {
+        data match {
+          case ref: AnyRef => recordDeltaEvent(null, opType = opType, data = ref, path = Some(path))
+        }
+      }
+    }
+
+  /** Ratifies `version` in UC under a staged file name that this writer did not generate. */
+  private def ratifyCommitFromOtherWriter(log: DeltaLog, version: Long): Unit = {
+    val fileName = f"$version%020d.${UUID.randomUUID()}.json"
+    val fileStatus = new FileStatus(
+      1L, false, 0, 0, 1L, new Path(FileNames.commitDirPath(log.logPath), fileName))
+    ucClient.commit(
+      tableUUID.toString,
+      JCoordinatedCommitsUtils.getTablePath(log.logPath).toUri,
+      null, // tableIdentifier
+      Optional.of(new JCommit(version, fileStatus, 1L)),
+      Optional.empty(), // lastKnownBackfilledVersion
+      Optional.empty(), // oldMetadata
+      Optional.empty(), // newMetadata
+      Optional.empty(), // oldProtocol
+      Optional.empty(), // newProtocol
+      Collections.emptyList[AbstractDomainMetadata](),
+      Optional.empty() /* uniform */)
+  }
+
+  test("unknown commit state: UC holds this writer's commit, so publishing resumes") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val ucClientWithLostAck = new UnknownCommitStateUCClient(acceptCommit = true)
+      val tcc = createTableCommitCoordinatorClient(log)
+        .copy(commitCoordinatorClient = ucCoordinatorClientFor(ucClientWithLostAck))
+      writeCommitZero(logPath)
+
+      commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+
+      // The reload told the client it had already won version 1, so the add-commit was not
+      // re-sent even once.
+      assert(ucClientWithLostAck.commitAttempts == 1)
+      validateBackfillStrategy(tcc, logPath, version = 1)
+    }
+  }
+
+  test("unknown commit state: UC never took the proposal, so the add-commit is re-sent") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val ucClientRejectingFirstAttempt = new UnknownCommitStateUCClient(acceptCommit = false)
+      val tcc = createTableCommitCoordinatorClient(log)
+        .copy(commitCoordinatorClient = ucCoordinatorClientFor(ucClientRejectingFirstAttempt))
+      writeCommitZero(logPath)
+
+      commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+
+      assert(ucClientRejectingFirstAttempt.commitAttempts == 2)
+      validateBackfillStrategy(tcc, logPath, version = 1)
+    }
+  }
+
+  test("unknown commit state: a concurrent writer won the version, so the client rebases") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val ucClientWithLostAck = new UnknownCommitStateUCClient(acceptCommit = false)
+      val tcc = createTableCommitCoordinatorClient(log)
+        .copy(commitCoordinatorClient = ucCoordinatorClientFor(ucClientWithLostAck))
+      writeCommitZero(logPath)
+      ratifyCommitFromOtherWriter(log, version = 1)
+
+      val e = intercept[JCommitFailedException] {
+        super.commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+      }
+
+      assert(e.getRetryable && e.getConflict)
+      assert(e.getMessage.contains("concurrent writer"))
+      assert(ucClientWithLostAck.commitAttempts == 1)
+    }
+  }
+
+  test("unknown commit state: the deprecated signal runs the same recovery") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val ucClientWithLostAck = new UnknownCommitStateUCClient(
+        acceptCommit = true, useDeprecatedSignal = true)
+      val tcc = createTableCommitCoordinatorClient(log)
+        .copy(commitCoordinatorClient = ucCoordinatorClientFor(ucClientWithLostAck))
+      writeCommitZero(logPath)
+
+      commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+
+      // Recovery found the commit in UC, so the client stopped rather than propagating the
+      // deprecated exception's retryable-conflict flags, which would have driven a rebase.
+      assert(ucClientWithLostAck.commitAttempts == 1)
+      assert(tcc.getCommits().getCommits.asScala.map(_.getVersion) == Seq(1L))
+    }
+  }
+
+  test("unknown commit state: a published commit with this writer's content resumes") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val tcc = createTableCommitCoordinatorClient(log)
+      writeCommitZero(logPath)
+      commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+      // Once the published file is registered, UC stops tracking the staged file name for
+      // version 1, so the reload can only answer via the published commit's content.
+      registerBackfillOp(tcc, log, version = 1)
+
+      val ucClientWithLostAck = new UnknownCommitStateUCClient(acceptCommit = false)
+      val retryTcc =
+        tcc.copy(commitCoordinatorClient = ucCoordinatorClientFor(ucClientWithLostAck))
+
+      super.commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = retryTcc)
+
+      assert(ucClientWithLostAck.commitAttempts == 1)
+    }
+  }
+
+  test("unknown commit state: an unverifiable commit fails instead of rebasing") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val fs = logPath.getFileSystem(log.newDeltaHadoopConf())
+      val tcc = createTableCommitCoordinatorClient(log)
+      writeCommitZero(logPath)
+      commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+      registerBackfillOp(tcc, log, version = 1)
+
+      // With the staged file gone there is nothing left to compare the published commit
+      // against. Rebasing here would re-commit version 1's contents as version 2.
+      val ucClientWithLostAck = new UnknownCommitStateUCClient(
+        acceptCommit = false,
+        beforeReportingUnknownState = c => fs.delete(c.getFileStatus.getPath, false))
+      val retryTcc =
+        tcc.copy(commitCoordinatorClient = ucCoordinatorClientFor(ucClientWithLostAck))
+
+      val e = intercept[JCommitFailedException] {
+        super.commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = retryTcc)
+      }
+
+      assert(!e.getRetryable && !e.getConflict)
+      assert(ucClientWithLostAck.commitAttempts == 1)
+    }
+  }
+
+  test("unknown commit state: a failed table reload fails the commit instead of re-sending") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val unreachableUCClient =
+        new UnknownCommitStateUCClient(acceptCommit = false, failTableReload = true)
+      val tcc = createTableCommitCoordinatorClient(log)
+        .copy(commitCoordinatorClient = ucCoordinatorClientFor(unreachableUCClient))
+      writeCommitZero(logPath)
+
+      val e = intercept[JCommitFailedException] {
+        super.commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+      }
+
+      assert(!e.getRetryable && !e.getConflict)
+      assert(unreachableUCClient.commitAttempts == 1)
+    }
+  }
 }

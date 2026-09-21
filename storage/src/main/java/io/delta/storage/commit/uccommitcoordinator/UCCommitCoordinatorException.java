@@ -23,4 +23,8 @@ public abstract class UCCommitCoordinatorException extends Exception {
   public UCCommitCoordinatorException(String message) {
     super(message);
   }
+
+  public UCCommitCoordinatorException(String message, Throwable cause) {
+    super(message, cause);
+  }
 }

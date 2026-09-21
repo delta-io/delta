@@ -20,17 +20,26 @@ import io.delta.storage.commit.CommitFailedException;
 
 /**
  * Raised when UC cannot determine whether the commit at the requested version already landed: the
- * version is at or below the latest commit, but UC retains no row at it (the row was backfilled and
- * cleaned up), so UC cannot tell whether the version holds this caller's own commit or a different
- * writer's.
+ * version is at or below the latest commit, but UC can neither match it by staged file name (the
+ * row was backfilled and cleaned up) nor read the staged or published file to compare contents, so
+ * it cannot tell whether the version holds this caller's own commit or a different writer's.
  *
- * <p>The client must verify its staged commit against the backfilled {@code <version>.json} on the
- * filesystem before rebasing; a content match means the commit already landed and must not be
- * re-committed (otherwise a lost-ACK retry double-commits the data at version+1).
+ * <p>The client must not act on the error alone. It reloads the table and compares UC's ratified
+ * file name for the version against the UUID file name it generated, falling back to comparing the
+ * published {@code <version>.json} against its staged commit. Re-sending without that check
+ * double-commits the data at version+1 whenever the original commit had in fact landed.
  *
  * <p>Extends {@link CommitFailedException} (retryable + conflict) on purpose: it must be caught by
- * the commit-coordinator retry loop, where the filesystem verification lives.
+ * the commit-coordinator retry loop, where the recovery lives.
+ *
+ * @deprecated Use {@link CommitOutcomeUnknownException}. Carrying an unknown outcome as a
+ *     retryable conflict makes it fail open: a caller that does not special-case this subclass
+ *     reads the flags, rebases onto the winning version, and re-commits data that may already have
+ *     landed. Retained because it ships in delta-storage 4.4.0 and {@code UCClient} implementations
+ *     may already throw it; it is still recognised by
+ *     {@link UCCommitCoordinatorClient#commit}, which routes it through the same recovery.
  */
+@Deprecated
 public class CommitCompletionUnknownException extends CommitFailedException {
   public CommitCompletionUnknownException(String message) {
     super(true /* retryable */, true /* conflict */, message);
