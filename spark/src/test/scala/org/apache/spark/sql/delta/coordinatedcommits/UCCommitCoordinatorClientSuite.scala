@@ -451,6 +451,10 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
           case ref: AnyRef => recordDeltaEvent(null, opType = opType, data = ref, path = Some(path))
         }
       }
+
+      // These tests assert which requests are sent, not how long the client waits between them,
+      // and the real backoff runs for minutes once the retry budget is exhausted.
+      override protected def backOffBeforeResend(retryCount: Int, reason: String): Unit = {}
     }
 
   /** Ratifies `version` in UC under a staged file name that this writer did not generate. */
@@ -593,6 +597,37 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     }
   }
 
+  test("lost add-commit response: UC never stored the commit, so the resend is safe") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val tcc = createTableCommitCoordinatorClient(log)
+      writeCommitZero(logPath)
+
+      ucCommitCoordinator.throwIOExceptionBeforeCommit = true
+      commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+
+      assert(tcc.getCommits().getCommits.asScala.map(_.getVersion) == Seq(1L))
+    }
+  }
+
+  test("lost add-commit response: UC stored the commit, so the resend must not rebase") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val tcc = createTableCommitCoordinatorClient(log)
+      writeCommitZero(logPath)
+
+      // UC took the commit and then the connection dropped, so the client cannot tell the
+      // difference between this and the test above from the IOException alone. Reporting a
+      // conflict here would make the caller rebase and re-commit version 1's data as version 2.
+      ucCommitCoordinator.throwIOExceptionAfterCommit = true
+      commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+
+      assert(tcc.getCommits().getCommits.asScala.map(_.getVersion) == Seq(1L))
+    }
+  }
+
   test("unknown commit state: a failed table reload fails the commit instead of re-sending") {
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
@@ -609,6 +644,84 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
 
       assert(!e.getRetryable && !e.getConflict)
       assert(unreachableUCClient.commitAttempts == 1)
+    }
+  }
+
+  test("unknown commit state: a published commit with another writer's content rebases") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val fs = logPath.getFileSystem(log.newDeltaHadoopConf())
+      val tcc = createTableCommitCoordinatorClient(log)
+      writeCommitZero(logPath)
+      commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+      registerBackfillOp(tcc, log, version = 1)
+
+      // The published version 1 is readable but holds different bytes from what this writer
+      // staged, which is the one case where rebasing is the correct answer.
+      val ucClientWithLostAck = new UnknownCommitStateUCClient(
+        acceptCommit = false,
+        beforeReportingUnknownState = c => {
+          val out = fs.create(c.getFileStatus.getPath, true /* overwrite */)
+          try {
+            out.write("{\"commitInfo\":{\"someOtherWriter\":true}}\n".getBytes)
+          } finally {
+            out.close()
+          }
+        })
+      val retryTcc =
+        tcc.copy(commitCoordinatorClient = ucCoordinatorClientFor(ucClientWithLostAck))
+
+      val e = intercept[JCommitFailedException] {
+        super.commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = retryTcc)
+      }
+
+      assert(e.getRetryable && e.getConflict)
+      assert(e.getMessage.contains("concurrent writer"))
+    }
+  }
+
+  test("unknown commit state: UC trailing the commit's base version cannot be reasoned about") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val tcc = createTableCommitCoordinatorClient(log)
+      writeCommitZero(logPath)
+      commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+
+      // Proposing version 3 against a UC that reports version 1 leaves latestTableVersion below
+      // the version this commit was built on, a state that says nothing about the proposal.
+      val ucClientWithLostAck = new UnknownCommitStateUCClient(acceptCommit = false)
+      val retryTcc =
+        tcc.copy(commitCoordinatorClient = ucCoordinatorClientFor(ucClientWithLostAck))
+
+      val e = intercept[JCommitFailedException] {
+        super.commit(version = 3, timestamp = 3, tableCommitCoordinatorClient = retryTcc)
+      }
+
+      assert(!e.getRetryable && !e.getConflict)
+      assert(ucClientWithLostAck.commitAttempts == 1)
+    }
+  }
+
+  test("unknown commit state: a server stuck on unknown exhausts the retry budget") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      // Never accept, and keep answering "unknown" past the transient-error budget so the
+      // client gives up instead of re-sending forever.
+      val alwaysUnknownUCClient =
+        new UnknownCommitStateUCClient(acceptCommit = false, unknownResponses = Int.MaxValue)
+      val tcc = createTableCommitCoordinatorClient(log)
+        .copy(commitCoordinatorClient = ucCoordinatorClientFor(alwaysUnknownUCClient))
+      writeCommitZero(logPath)
+
+      val e = intercept[JCommitFailedException] {
+        super.commit(version = 1, timestamp = 1, tableCommitCoordinatorClient = tcc)
+      }
+
+      assert(e.getRetryable && !e.getConflict)
+      assert(alwaysUnknownUCClient.commitAttempts > 1)
     }
   }
 }

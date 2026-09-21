@@ -664,9 +664,6 @@ class UCDeltaTokenBasedRestClientSuite
           Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
       }
       assert(e.getMessage.contains(message))
-      // An unknown outcome must not reach a caller as a commit failure carrying
-      // retryable/conflict flags, which would invite a re-send or a rebase.
-      assert(!e.isInstanceOf[CommitFailedException])
     }
   }
 

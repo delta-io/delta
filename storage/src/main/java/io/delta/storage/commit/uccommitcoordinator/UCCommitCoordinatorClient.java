@@ -523,22 +523,36 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         transientErrorRetryCount++;
         eventData.put("transientErrorRetryCount", transientErrorRetryCount);
       } catch (CommitFailedException cfe) {
-        if (transientErrorRetryCount > 0 && cfe.getConflict() && cfe.getRetryable() &&
-          hasSameContent(
-            logStore,
-            hadoopConf,
-            logPath,
-            CoordinatedCommitsUtils.getBackfilledDeltaFilePath(logPath, commitVersion),
-            commitFile.getPath())) {
-          // The commit was persisted in UC, but we did not get a response. Continue
-          // because the commit was successful
-          eventData.put("alreadyBackfilledCommitCausedConflict", true);
-          break;
-        } else {
-          // Rethrow the exception here as is because the caller needs to handle it.
-          recordUsageLog.accept(Optional.of(cfe), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
-          throw cfe;
+        // A conflict reported after a transient error is ambiguous: the earlier attempt may have
+        // landed and merely failed to report back, in which case the version this "conflict" is
+        // against holds this writer's own commit. Re-sending is safe on its own -- the same
+        // staged file, and therefore the same UUID, goes out every time -- so the risk lives
+        // entirely in how the answer is read. Run the same recovery as for an unknown outcome
+        // rather than only comparing the published file, which is not written yet while UC has
+        // ratified the staged commit but nothing has been published.
+        if (transientErrorRetryCount > 0 && cfe.getConflict() && cfe.getRetryable()) {
+          CommitRecoveryOutcome outcome =
+            recoverUnknownCommitState(logStore, hadoopConf, tableDesc, commitVersion, commitFile);
+          eventData.put("conflictAfterTransientErrorRecovery", outcome.name());
+          if (outcome == CommitRecoveryOutcome.ACCEPTED) {
+            eventData.put("alreadyBackfilledCommitCausedConflict", true);
+            break;
+          }
+          if (outcome == CommitRecoveryOutcome.UNDETERMINED) {
+            recordUsageLog.accept(Optional.of(cfe), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
+            throw new CommitFailedException(
+              false /* retryable */,
+              false /* conflict */,
+              "Version " + commitVersion + " of table " + tableId + " conflicts, but an earlier " +
+                "attempt failed without reporting its outcome and it could not be established " +
+                "whether that attempt is what now holds the version. Rebasing would risk " +
+                "duplicating the data, so the commit is failed: " + cfe.getMessage(),
+              cfe);
+          }
         }
+        // Rethrow the exception here as is because the caller needs to handle it.
+        recordUsageLog.accept(Optional.of(cfe), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
+        throw cfe;
       } catch (IOException ioe) {
         if (transientErrorRetryCount == MAX_RETRIES_ON_TRANSIENT_ERROR) {
           // Rethrow exception in case we've reached the retry limit.
@@ -671,7 +685,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
    * and the maximum retry count is 15, with the wait capped at 1 min, so a fully exhausted
    * budget spans ~8 min.
    */
-  private void backOffBeforeResend(int retryCount, String reason) {
+  protected void backOffBeforeResend(int retryCount, String reason) {
     long sleepTime = Math.min(
       TRANSIENT_ERROR_RETRY_INITIAL_WAIT_MS << retryCount,
       TRANSIENT_ERROR_RETRY_MAX_WAIT_MS
