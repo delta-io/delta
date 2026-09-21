@@ -3601,6 +3601,25 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .bytesConf(ByteUnit.MiB)
       .createWithDefault(512)
 
+  val DELTA_OPTIMIZE_WRITE_SHUFFLE_READ_MODE =
+    buildConf("optimizeWrite.shuffleReadMode")
+      .internal()
+      .doc("How the optimized writer reads the shuffle data it bin-packs. " +
+        "'blockFetcher' uses ShuffleBlockFetcherIterator, which addresses individual " +
+        "shuffle blocks and only works with Spark's built-in shuffle. 'shuffleManager' " +
+        "uses ShuffleManager.getReader(), reading at (shuffle partition, map-index " +
+        "range) granularity, the same API Spark AQE uses for skew splitting, which " +
+        "works with any shuffle manager including remote shuffle services. Both greedily " +
+        "fill bins up to binSize and both bin-pack within a single shuffle partition; " +
+        "they differ only in the order blocks are considered, by size for 'blockFetcher' " +
+        "and by map index for 'shuffleManager', since a map-index range has to be " +
+        "contiguous. 'auto', the default, uses 'shuffleManager' when a non-default " +
+        "shuffle manager is configured and 'blockFetcher' otherwise.")
+      .stringConf
+      .transform(_.toLowerCase(java.util.Locale.ROOT))
+      .checkValues(Set("auto", "blockfetcher", "shufflemanager"))
+      .createWithDefault("auto")
+
   val DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE =
   buildConf("optimize.clustering.mergeStrategy.minCubeSize.threshold")
     .internal()
