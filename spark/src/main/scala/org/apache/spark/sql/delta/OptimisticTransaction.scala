@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTMetrics, AMTUtils, AMTWriteResult, AMTWriterManager}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTUtils, AMTWriteResult, AMTWriterManager}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -96,7 +96,6 @@ case class CoordinatedCommitsStats(
  * final [[CommitStats]].
  */
 case class CommitPrepMetrics(
-    amtMetrics: AMTMetrics = AMTMetrics(),
     icebergMetadataGenerationDurationMsOpt: Option[Long] = None)
 
 /**
@@ -170,8 +169,8 @@ case class CommitStats(
   isIdempotentRetry: Boolean = false,
   numOfDomainMetadatas: Long = 0,
   txnId: Option[String] = None,
-  /** Metrics for the inline AMT (Adaptive Metadata Tree) write, if this commit emitted one. */
-  amtWriteMetrics: Option[AMTMetrics] = None
+  /** Metrics for the AMT (Adaptive Metadata Tree) write used by this commit, if any. */
+  amtCommitStats: Option[AMTCommitStats] = None
 )
 
 /**
@@ -2804,7 +2803,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // edits. This is the logical set of actions we want to commit, and it is what gets fed to
       // the ConflictChecker in case of a conflict.
       var updatedUnpreparedCurrentTransactionInfo = currentTransactionInfo
-      val amtWriterManager = new AMTWriterManager(snapshot, currentTransactionInfo.op)
+      val amtWriterManager =
+        new AMTWriterManager(currentTransactionInfo.txnId, snapshot, currentTransactionInfo.op)
       val isFsToCcCommit =
         snapshot.metadata.coordinatedCommitsCoordinatorName.isEmpty &&
           metadata.coordinatedCommitsCoordinatorName.nonEmpty
@@ -3046,7 +3046,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
       actionsToWriteInLogFile = actions,
       amtWriteResultForLastCheckpointOpt = amtWriteResultOpt,
       prepMetrics = CommitPrepMetrics(
-        amtMetrics = amtWriterManager.metrics.copy(),
         icebergMetadataGenerationDurationMsOpt = icebergMetadataGenerationDurationMsOpt))
   }
 
@@ -3239,10 +3238,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
       fileSizeHistogramOpt = postCommitSnapshot.checksumOpt.flatMap(_.fileSizeHistogram),
       commitInfoOpt = committedTransactionInfo.commitInfo,
       commitSizeBytes = commitSizeBytes,
-      amtWriteMetricsOpt = Option.when(
-        prepMetrics.amtMetrics.writeAttempts.nonEmpty ||
-          prepMetrics.amtMetrics.backrefRebaseAttempts.nonEmpty)(
-        prepMetrics.amtMetrics),
+      amtCommitStatsOpt = amtWriteResultOpt.map { result =>
+        AMTCommitStats(
+          contentRootVersion = result.contentRootVersion,
+          lastAMTWriteMetrics = result.amtWriteMetrics,
+          includeActionsInCommitJson = result.includeActionsInCommitJson)
+      },
       isIdempotentRetry = isIdempotentRetry
     )
 

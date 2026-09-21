@@ -18,8 +18,10 @@ package org.apache.spark.sql.delta.amt
 
 import scala.concurrent.duration.Duration
 
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.{ConcurrentWriteException, DeltaLog, FullAMTWriteFailedWithConflict}
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.Row
@@ -34,9 +36,31 @@ class AMTConflictResolutionSuite
   with PhaseLockingTestMixin
   with TransactionExecutionTestMixin {
 
+  import AMTConflictResolutionRoundMetrics._
+  import BackRefRebaseMetrics._
+
   // A large interval keeps the checkpoint-interval maintenance hook from firing its own checkpoint
   // mid-test; every AMT write here is one the test drives explicitly.
   private val noAutoCheckpointInterval = 1000
+
+  private def trackConflictResolutionRounds(
+      f: => Unit): Seq[AMTConflictResolutionRoundMetrics] = {
+    val metrics = Log4jUsageLogger.track(f)
+      .filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains(AMTUsageLogs.CONFLICT_RESOLUTION_ROUND))
+      .map(e => JsonUtils.fromJson[AMTMetrics](e.blob))
+      .filter(_.conflictResolutionMetrics.nonEmpty)
+      .sortBy(_.roundId)
+    assert(metrics.forall(m => m.txnId.nonEmpty && m.roundId > 0),
+      s"conflict rounds must identify their transaction and positive round ID: $metrics")
+    metrics.flatMap(_.conflictResolutionMetrics)
+  }
+
+  private def singleConflictResolutionRound(
+      rounds: Seq[AMTConflictResolutionRoundMetrics]): AMTConflictResolutionRoundMetrics = {
+    assert(rounds.size == 1, s"expected exactly one AMT conflict round, got $rounds")
+    rounds.head
+  }
 
   /** A transaction body that commits an incremental OPTIMIZE CHECKPOINT (writes a new AMT tree). */
   private def optimizeCheckpointTxn(deltaLog: DeltaLog): () => Array[Row] = () => {
@@ -111,11 +135,17 @@ class AMTConflictResolutionSuite
         // A is a losing OPTIMIZE checkpoint describing the read snapshot; B is a plain append that
         // wins A's target version and only adds brand-new files (defaultRowCommitVersion past A's
         // read version), so A's tree stays exact and is recommitted as-is.
-        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
-          losingCheckpointTxn(deltaLog),
-          appendTxn(name, id = 100))
-        ThreadUtils.awaitResult(futureB, Duration.Inf)
-        ThreadUtils.awaitResult(futureA, Duration.Inf)
+        val rounds = trackConflictResolutionRounds {
+          val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+            losingCheckpointTxn(deltaLog),
+            appendTxn(name, id = 100))
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          ThreadUtils.awaitResult(futureA, Duration.Inf)
+        }
+        val round = singleConflictResolutionRound(rounds)
+        assert(round.treeOutcome == REUSED_LOSING_TREE)
+        assert(round.winningCommits.numLogOnly == 1)
+        assert(round.winningCommits.allLogWinnersPreserveLosingTree.contains(true))
 
         // B survives and A reused its base: the live set reconstructs through A's reused tree plus
         // B's log delta. The reused checkpoint is A's first-attempt tree recommitted as-is, so its
@@ -150,13 +180,19 @@ class AMTConflictResolutionSuite
         // that both win versions ahead of A. Both winners only add brand-new files (their
         // defaultRowCommitVersion postdates A's read version), so A's tree stays exact and it is
         // recommitted as-is across both winners.
-        val (futureA, futureB, futureC) = runTxnsWithOrder__A_Start__B__C__A_End(
-          losingCheckpointTxn(deltaLog),
-          appendTxn(name, id = 100),
-          appendTxn(name, id = 200))
-        ThreadUtils.awaitResult(futureB, Duration.Inf)
-        ThreadUtils.awaitResult(futureC, Duration.Inf)
-        ThreadUtils.awaitResult(futureA, Duration.Inf)
+        val rounds = trackConflictResolutionRounds {
+          val (futureA, futureB, futureC) = runTxnsWithOrder__A_Start__B__C__A_End(
+            losingCheckpointTxn(deltaLog),
+            appendTxn(name, id = 100),
+            appendTxn(name, id = 200))
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          ThreadUtils.awaitResult(futureC, Duration.Inf)
+          ThreadUtils.awaitResult(futureA, Duration.Inf)
+        }
+        val round = singleConflictResolutionRound(rounds)
+        assert(round.treeOutcome == REUSED_LOSING_TREE)
+        assert(round.winningCommits.numLogOnly == 2)
+        assert(round.winningCommits.allLogWinnersPreserveLosingTree.contains(true))
 
         // All commits survive: the live set reconstructs through A's reused tree plus B's and C's
         // log deltas. The reused checkpoint is A's first-attempt tree recommitted as-is, so its
@@ -184,7 +220,7 @@ class AMTConflictResolutionSuite
       // couple of actions) stays log-only. So A is a tree writer losing to a log-only winner -- it
       // must rebase and rebuild its tree with B folded into the incremental window rather than
       // hard-failing. Capture A's per-attempt AMT write metrics to inspect the window growth.
-      val perAttempt = trackIncrementalAMTWriteMetricsPerAttempt(deltaLog.update().version) {
+      val perAttempt = trackIncrementalAMTWriteMetricsPerAttempt {
         withInlineThreshold(6) {
           val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
             () => { appendRowsAsSeparateFiles(name, numFiles = 10, startId = 100); Array.empty },
@@ -284,13 +320,14 @@ class AMTConflictResolutionSuite
       // CHECKPOINT) and wins A's target version. A must rebase past the new tree -- re-deriving its
       // RemoveFile's back reference against it when the tree's leaf set moved -- rather than
       // hard-failing.
-      val rebaseMetrics = trackBackrefRebaseMetricsAt(deltaLog.update().version) {
+      val rounds = trackConflictResolutionRounds {
         val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
           deleteTxn(name, id = 1),
           optimizeCheckpointTxn(deltaLog))
         ThreadUtils.awaitResult(futureB, Duration.Inf)
         ThreadUtils.awaitResult(futureA, Duration.Inf)
       }
+      val round = singleConflictResolutionRound(rounds)
 
       val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
       assert(liveIdsAfter == liveIdsBefore - 1,
@@ -299,8 +336,8 @@ class AMTConflictResolutionSuite
       assert(amtProvider(deltaLog.update()).isDefined,
         "the table must remain AMT-backed after the rebase.")
       // The rebase really ran: one round re-derived A's RemoveFile back reference against B's tree.
-      assert(rebaseMetrics.size == 1 && rebaseMetrics.head.numActionsRegeneratingBackref >= 1,
-        s"A must record one back-ref rebase that re-derived its RemoveFile; got $rebaseMetrics")
+      assert(round.backRefRebaseMetrics.numActionsRegeneratingBackref.exists(_ >= 1),
+        s"A must record one back-ref rebase that re-derived its RemoveFile; got $round")
     }
   }
 
@@ -314,13 +351,14 @@ class AMTConflictResolutionSuite
       // (OPTIMIZE CHECKPOINT, incremental = false) and wins A's target version. A full rewrite
       // moves every leaf position, so A's RemoveFile back reference is re-derived from scratch
       // against B's tree before A commits, rather than hard-failing.
-      val rebaseMetrics = trackBackrefRebaseMetricsAt(deltaLog.update().version) {
+      val rounds = trackConflictResolutionRounds {
         val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
           deleteTxn(name, id = 1),
           fullCheckpointTxn(deltaLog))
         ThreadUtils.awaitResult(futureB, Duration.Inf)
         ThreadUtils.awaitResult(futureA, Duration.Inf)
       }
+      val round = singleConflictResolutionRound(rounds)
 
       val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
       assert(liveIdsAfter == liveIdsBefore - 1,
@@ -330,8 +368,8 @@ class AMTConflictResolutionSuite
         "the table must remain AMT-backed after the rebase.")
       // The rebase really ran: the full rewrite forced A's RemoveFile back reference to be
       // re-derived against B's tree.
-      assert(rebaseMetrics.size == 1 && rebaseMetrics.head.numActionsRegeneratingBackref >= 1,
-        s"A must record one back-ref rebase that re-derived its RemoveFile; got $rebaseMetrics")
+      assert(round.backRefRebaseMetrics.numActionsRegeneratingBackref.exists(_ >= 1),
+        s"A must record one back-ref rebase that re-derived its RemoveFile; got $round")
     }
   }
 
@@ -377,11 +415,18 @@ class AMTConflictResolutionSuite
       // A is driven as a direct checkpoint commit here, so that signal surfaces to the caller
       // (folding the winner into the reused base is Part 4.5; CheckpointHook's refresh-and-retry is
       // covered below).
-      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
-        fullCheckpointTxn(deltaLog),
-        deleteTxn(name, id = 1))
-      ThreadUtils.awaitResult(futureB, Duration.Inf)
-      assertRetrySignal(futureA)
+      val rounds = trackConflictResolutionRounds {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+          fullCheckpointTxn(deltaLog),
+          deleteTxn(name, id = 1))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        assertRetrySignal(futureA)
+      }
+      val round = singleConflictResolutionRound(rounds)
+      assert(round.treeOutcome == REGENERATE_VIA_TXN_RETRY)
+      assert(round.exceptionThrown.contains(classOf[FullAMTWriteFailedWithConflict].getSimpleName))
+      assert(round.winnerTreeSatisfiesRequirement.isEmpty)
+      assert(round.winningCommits.allLogWinnersPreserveLosingTree.contains(false))
       assert(amtProvider(deltaLog.update()).isDefined,
         "the table must remain AMT-backed after the winner's commit.")
     }
