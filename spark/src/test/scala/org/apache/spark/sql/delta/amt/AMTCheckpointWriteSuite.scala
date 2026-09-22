@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.amt
 import java.io.File
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaOperations, LastCheckpointInfo}
+import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaOperations, LastCheckpointInfo, RowId}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -579,6 +579,32 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       s"Expected 21 live files, got ${context.postCheckpointSnapshot.allFiles.count()}.")
     assert(context.provider.leaves.size == 3,
       s"21 files at entriesPerLeaf=7 must pack into 3 leaves; got ${context.provider.leaves.size}.")
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "new leaf pointers carry manifest sequence numbers and the next unassigned row ID",
+      "amt_leaf_tracking",
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
+    val leaves = context.provider.leaves
+    assertLeafCount(leaves)
+    val expectedFirstRowId =
+      AMTWriteHelper.firstRowIdAfter(RowId.extractHighWatermark(context.postCheckpointSnapshot))
+    leaves.foreach { leaf =>
+      assert(leaf.tracking.sequence_number.contains(context.checkpoint.version))
+      assert(leaf.tracking.file_sequence_number.contains(context.checkpoint.version))
+      assert(leaf.tracking.first_row_id.contains(expectedFirstRowId))
+      val childFirstRowIds = withManifestDataEntries(
+        Seq(leaf.toFileStatus(context.provider.tableRoot).getPath.toString)) { entries =>
+        entries.select("tracking.first_row_id").collect().map { row =>
+          if (row.isNullAt(0)) None else Some(row.getLong(0))
+        }
+      }
+      assert(childFirstRowIds.forall(_.isDefined),
+        s"Every entry in ${leaf.location} must carry a first_row_id: $childFirstRowIds")
+    }
   }
 
   testAcrossAMTCheckpointScenarios(
