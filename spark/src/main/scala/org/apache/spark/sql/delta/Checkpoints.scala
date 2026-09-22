@@ -938,7 +938,7 @@ object Checkpoints
   private[delta] def buildLastCheckpointInfoForAMT(
       manifestCommitVersion: Long,
       writeResult: AMTWriteResult): LastCheckpointInfo = {
-    val AMTWriteResult(contentRootVersion, checkpoint, leaves, _) = writeResult
+    val AMTWriteResult(contentRootVersion, checkpoint, leaves, _, _) = writeResult
     val lastAMTCheckpoint = LastAMTCheckpoint(
       manifestCommitVersion = manifestCommitVersion,
       checkpoint = Some(checkpoint),

@@ -960,6 +960,12 @@ case class AddFile(
 
   def remove: RemoveFile = removeWithTimestamp()
 
+  /**
+   * Returns the file sequence number, currently euquals to [[defaultRowCommitVersion]].
+   */
+  @JsonIgnore
+  def effectiveFileSequenceNumber: Option[Long] = defaultRowCommitVersion
+
   def removeWithTimestamp(
       timestamp: Long = System.currentTimeMillis(),
       dataChange: Boolean = true

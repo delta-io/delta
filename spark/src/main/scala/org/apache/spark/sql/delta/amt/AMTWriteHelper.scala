@@ -52,7 +52,7 @@ object AMTWriteHelper extends DeltaLogging {
       commitVersion: Long,
       postCommitProtocol: Protocol,
       postCommitMetadata: Metadata,
-      trigger: String): (AMTWriteResult, SingleAMTWriteMetrics) = {
+      trigger: String): AMTWriteResult = {
     val deltaLog = readSnapshot.deltaLog
     val startNanos = System.nanoTime()
     val hadoopConf = deltaLog.newDeltaHadoopConf()
@@ -113,7 +113,7 @@ object AMTWriteHelper extends DeltaLogging {
   }
 
   /**
-   * Assembles the inline Checkpoint action, write result, and metric shared by both materialization
+   * Assembles the inline Checkpoint action and write result shared by both materialization
    * paths. `contentStateVersion` is the table version the tree describes and is stamped on the
    * checkpoint action and write result.
    */
@@ -126,7 +126,7 @@ object AMTWriteHelper extends DeltaLogging {
       domainMetadata: Seq[DomainMetadata],
       txns: Seq[SetTransaction],
       trigger: String,
-      startNanos: Long): (AMTWriteResult, SingleAMTWriteMetrics) = {
+      startNanos: Long): AMTWriteResult = {
     val checkpoint = Checkpoint(
       version = contentStateVersion,
       contentRoot = contentRoot,
@@ -135,16 +135,16 @@ object AMTWriteHelper extends DeltaLogging {
       domainMetadata = domainMetadata,
       txns = txns,
       sidecars = Seq.empty)
-    val result = AMTWriteResult(
-      contentRootVersion = contentStateVersion,
-      checkpoint = checkpoint,
-      leaves = leaves,
-      includeActionsInCommitJson = true)
     val singleMetric = SingleAMTWriteMetrics(
       trigger = trigger,
       incremental = contentRoot.isIncremental.map(_.toString).getOrElse("UNKNOWN"),
       materializeDurationMs = NANOSECONDS.toMillis(System.nanoTime() - startNanos))
-    (result, singleMetric)
+    AMTWriteResult(
+      contentRootVersion = contentStateVersion,
+      checkpoint = checkpoint,
+      leaves = leaves,
+      includeActionsInCommitJson = true,
+      amtWriteMetrics = singleMetric)
   }
 
   // The ContentRoot of the AMT tree `snapshot` is already backed by, if any. Used to carry forward

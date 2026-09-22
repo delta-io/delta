@@ -41,7 +41,7 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       operation: DeltaOperations.Operation = DeltaOperations.ManualUpdate):
       (AMTWriterManager, Snapshot) = {
     val snapshot = deltaLogForName(tableName).update()
-    (new AMTWriterManager(snapshot, operation), snapshot)
+    (new AMTWriterManager("txn", snapshot, operation), snapshot)
   }
 
   // A minimal transaction info over `snapshot` carrying `actions`, for direct writeAMT calls.
@@ -99,9 +99,6 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
         assertLeafCount(result.leaves)
         // The commit carries no user actions, so the tree describes state as of the read version.
         assert(result.contentRootVersion == snapshot.version)
-        // The metric records the trigger name carried on the operation.
-        assert(manager.metrics.writeAttempts.head.trigger ==
-          AMTTriggerMode.CheckpointIntervalFull.name)
       }
     }
   }

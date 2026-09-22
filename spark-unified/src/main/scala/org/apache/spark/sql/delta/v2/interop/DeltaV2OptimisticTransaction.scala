@@ -26,8 +26,8 @@ import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
 import scala.jdk.OptionConverters._
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, LogSegment, OptimisticTransaction, Snapshot, VersionChecksum, WinningCommitSummary}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, CommitInfo, Protocol}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, LogSegment, OptimisticTransaction, RowId, Snapshot, VersionChecksum, WinningCommitSummary}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, CommitInfo, DomainMetadata, Protocol}
 import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
@@ -276,6 +276,7 @@ private[v2] class DeltaV2OptimisticTransaction(
     actions.foreach {
       case a: AddFile => addFiles += a
       case _: CommitInfo => // Kernel generates its own; V1 operation provenance is an JNR gap.
+      case d: DomainMetadata if RowId.RowTrackingMetadataDomain.isSameDomain(d) =>
       case other =>
         throw new UnsupportedOperationException(
           "DeltaV2 unsupported operation: cannot commit action " +
