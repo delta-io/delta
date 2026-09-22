@@ -1611,9 +1611,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
   }
 
-  /** Ensure that actions do not contain duplicates for the same path. */
+  /**
+   * Ensure that actions do not contain duplicates for the same path.
+   * This check is performed using AMT-aware object identity mode.
+   */
   protected def checkNoDuplicateActions(actions: Seq[Action]): Unit = {
-    ConflictChecker.checkNoDuplicateActions(spark, actions.iterator).foreach(_ => ())
+    val useDVObjectIdentity =
+      FileAction.useDeletionVectorObjectIdentity(metadata, protocol, spark)
+    ConflictChecker.checkNoDuplicateActions(
+      spark, actions.iterator, dataPath, useDVObjectIdentity)
+      .foreach(_ => ())
   }
 
   /**
