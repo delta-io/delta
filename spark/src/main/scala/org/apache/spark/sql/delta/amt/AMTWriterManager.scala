@@ -538,14 +538,21 @@ class AMTWriterManager(
       s"Cached AMT provider ${amtProviderOpt.map(_.checkpointAction.version)} is out of sync " +
         "with preCommitLatestAMTCheckpointOpt " +
         s"${currentTransactionInfo.preCommitLatestAMTCheckpointOpt.map(_.version)}.")
-    if (incremental && amtProviderOpt.isDefined) {
-      val amtProvider = amtProviderOpt.get
-      val oldAMTVersion = amtProvider.checkpointAction.contentRoot.version
+    if (incremental) {
+      // A retry may have advanced to a winning AMT. Prefer that tree over snapshot bootstrap.
+      val (baseActionsProvider, oldAMTVersion): (BaseAMTActionsProvider, Long) =
+        amtProviderOpt match {
+          case Some(amtProvider) =>
+            (new BaseAMTCheckpointActionsProvider(deltaLog, amtProvider),
+              amtProvider.checkpointAction.contentRoot.version)
+          case None =>
+            (new BaseSnapshotActionsProvider(readSnapshot), readSnapshot.version)
+        }
       // The commits written after the old AMT, up to the last committed version.
       val intermediateLogCommits = preCommitLogSegment.deltas
         .filter(f => FileNames.getFileVersion(f) > oldAMTVersion)
       new IncrementalAMTWriter(spark, deltaLog).writeIncremental(
-        oldAMTActionsProvider = new BaseAMTCheckpointActionsProvider(deltaLog, amtProvider),
+        oldAMTActionsProvider = baseActionsProvider,
         intermediateLogCommits = intermediateLogCommits,
         attemptVersion = commitVersion,
         actionsToCommit = currentTransactionInfo.actions,
