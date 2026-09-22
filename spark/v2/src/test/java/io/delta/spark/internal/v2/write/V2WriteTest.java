@@ -370,17 +370,21 @@ public class V2WriteTest extends V2TestBase {
   }
 
   /**
-   * The state left behind by {@code REORG ... APPLY (UNSHRED VARIANT)}: the {@code
-   * variantShredding} feature stays in the protocol while the table property is gone. Shredding
-   * must follow the property, not the protocol, so a later write must not silently re-shred the
-   * table.
+   * The distinguishing state: the {@code variantShredding} feature is in the protocol while the
+   * table property does not enable shredding. Shredding must follow the property, not the protocol
+   * feature, so neither connector may shred here. On DBR this state also arises after {@code REORG
+   * ... APPLY (UNSHRED VARIANT)}, but that syntax is not in the OSS SQL parser, so the state is
+   * built directly at creation via {@code delta.feature.variantShredding = supported} with the
+   * property explicitly disabled.
    */
   @Test
-  public void variantWriteFollowsPropertyAfterUnshred(@TempDir File deltaTablePath) {
-    // Seeds a shredded table before unshredding it, so it needs shredding support.
+  public void variantWriteFollowsPropertyWhenFeaturePresentButDisabled(
+      @TempDir File deltaTablePath) {
+    // Adding the feature and asserting the no-shred outcome both need shredding support.
     assumeTrue(shreddedWritesSupported(), SHREDDING_UNSUPPORTED);
-    String tablePath = new File(deltaTablePath, "unshred").getAbsolutePath();
-    String tbl = "variant_unshred_tbl";
+    String enableKey = DeltaConfigs.ENABLE_VARIANT_SHREDDING().key();
+    String tablePath = new File(deltaTablePath, "featureNoProp").getAbsolutePath();
+    String tbl = "variant_feature_disabled_tbl";
     withShreddedWritesAllowed(
         () -> {
           try {
@@ -388,30 +392,23 @@ public class V2WriteTest extends V2TestBase {
             spark.sql(
                 str(
                     "CREATE TABLE %s (id INT, v VARIANT) USING delta LOCATION '%s' "
-                        + "TBLPROPERTIES ('%s' = 'true')",
-                    tbl, tablePath, DeltaConfigs.ENABLE_VARIANT_SHREDDING().key()));
-            spark.sql(str("INSERT INTO %s %s", tbl, VARIANT_ROW));
-            assertTrue(snapshotHasShreddedVariant(tbl), "Expected the opt-in write to be shredded");
-
-            // Unsets the property and rewrites the files; the protocol feature stays behind.
-            spark.sql(str("REORG TABLE %s APPLY (UNSHRED VARIANT)", tbl));
-            assertFalse(
-                snapshotHasShreddedVariant(tbl), "REORG UNSHRED must leave no shredded file");
+                        + "TBLPROPERTIES ('delta.feature.variantShredding' = 'supported', "
+                        + "'%s' = 'false')",
+                    tbl, tablePath, enableKey));
             assertTrue(
                 tableFeatures(tbl).contains("variantShredding"),
-                "Premise: the protocol feature outlives the property, so the two cannot be "
-                    + "conflated");
+                "Premise: the protocol carries the shredding feature");
             assertFalse(
-                tableProperties(tbl).containsKey(DeltaConfigs.ENABLE_VARIANT_SHREDDING().key()),
-                "Premise: REORG UNSHRED leaves the property absent rather than false");
+                "true".equalsIgnoreCase(tableProperties(tbl).getOrDefault(enableKey, "false")),
+                "Premise: the property does not enable shredding, so the two cannot be conflated");
 
-            // Neither connector may re-shred while the property is absent.
+            // Neither connector may shred while the property does not enable it.
             spark.sql(str("INSERT INTO dsv2.delta.`%s` %s", tablePath, VARIANT_ROW));
             assertFalse(
                 snapshotHasShreddedVariant(tbl),
-                "A DSv2 write must not re-shred a table whose property is absent");
+                "A DSv2 write must not shred a table whose property does not enable shredding");
             spark.sql(str("INSERT INTO %s %s", tbl, VARIANT_ROW));
-            assertFalse(snapshotHasShreddedVariant(tbl), "A V1 write must not re-shred it either");
+            assertFalse(snapshotHasShreddedVariant(tbl), "A V1 write must not shred it either");
           } finally {
             spark.sql(str("DROP TABLE IF EXISTS %s", tbl));
           }

@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.delta.kernel.Snapshot;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
@@ -33,6 +34,7 @@ import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.connector.write.streaming.StreamingDataWriterFactory;
 import org.apache.spark.sql.delta.DeltaConfigs;
+import org.apache.spark.sql.delta.shims.VariantShreddingShims;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
@@ -190,6 +192,9 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
   @Test
   public void testCommit_failsWhenShreddingPropertyChangeAffectsLayout(@TempDir File tempDir)
       throws Exception {
+    // On a Spark version without shredding support the layout cannot depend on the property, so the
+    // guard is a deliberate no-op and the commit succeeds; the assertion below would not hold.
+    assumeTrue(shreddedWritesSupported(), SHREDDING_UNSUPPORTED);
     String shreddingKey = DeltaConfigs.ENABLE_VARIANT_SHREDDING().key();
     String path = createVariantTable(tempDir, "streaming_shredding_layout_change", true);
     DeltaV2StreamingWrite write = newVariantWrite(path, /* variantShreddingEnabled */ true);
@@ -531,6 +536,14 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             info,
             variantShreddingEnabled);
     return (DeltaV2StreamingWrite) write.toStreaming();
+  }
+
+  private static final String SHREDDING_UNSUPPORTED =
+      "This Spark version cannot infer a variant shredding schema, so nothing shreds on write";
+
+  /** Whether writes can shred variant columns on this Spark version (empty shim map means no). */
+  private static boolean shreddedWritesSupported() {
+    return !VariantShreddingShims.getVariantInferShreddingSchemaOptions(true).isEmpty();
   }
 
   private String createVariantTable(File tempDir, String tableName, boolean shreddingEnabled) {

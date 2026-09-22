@@ -33,7 +33,6 @@ import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.catalyst.expressions.variant.VariantExpressionEvalUtils$;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.delta.shims.VariantShreddingShims;
 import org.apache.spark.sql.execution.datasources.OutputWriterFactory;
@@ -234,6 +233,49 @@ class DeltaV2WriteContext {
   }
 
   /**
+   * Whether a later change to {@code delta.enableVariantShredding} could change this write's file
+   * layout. Mirrors the three conditions Parquet actually gates the shredded writer on ({@code
+   * ParquetOptions#inferShreddingForVariant} and {@code ParquetUtils#needShreddingInference}): the
+   * version shim must supply the inference option (absent on Spark 4.0, where the map is empty),
+   * the {@code spark.sql.variant.writeShredding.enabled} kill switch must be on, and the data
+   * schema must have a shreddable variant column. When any is false the property cannot flip the
+   * layout, so the streaming guard must ignore a change to it rather than fail an epoch that could
+   * not have shredded anyway.
+   */
+  private boolean computeVariantLayoutFollowsProperty(SparkSession session) {
+    boolean shreddingSupported =
+        !VariantShreddingShims.getVariantInferShreddingSchemaOptions(true).isEmpty();
+    boolean killSwitchOn =
+        (boolean) session.sessionState().conf().getConf(SQLConf.VARIANT_WRITE_SHREDDING_ENABLED());
+    return shreddingSupported && killSwitchOn && hasShreddableVariant(dataSchema);
+  }
+
+  /**
+   * Whether {@code schema} has a variant column the shredding writer would actually shred. Matches
+   * {@code InferVariantShreddingSchema.getPathsToVariant}: a variant at the top level or nested
+   * only through structs. Variants reached through an array or map element are not shredded, so a
+   * shredding-property change leaves their files unchanged and must not be treated as layout-
+   * sensitive.
+   */
+  private static boolean hasShreddableVariant(StructType schema) {
+    for (StructField field : schema.fields()) {
+      if (field.dataType() instanceof org.apache.spark.sql.types.VariantType) {
+        return true;
+      }
+      if (field.dataType() instanceof StructType
+          && hasShreddableVariant((StructType) field.dataType())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** See {@link #variantLayoutFollowsProperty}. */
+  boolean variantLayoutFollowsProperty() {
+    return variantLayoutFollowsProperty;
+  }
+
+  /**
    * Builds the executor-side write state from {@code transaction}: the serialized transaction state
    * and target directory (from a Kernel write context), packaged with the shared Parquet {@link
    * OutputWriterFactory}, Hadoop conf, and data schema into a {@link DeltaV2DataWriterFactory}.
@@ -242,30 +284,6 @@ class DeltaV2WriteContext {
    * Operation.STREAMING_UPDATE}) can build its factory from its own transaction without duplicating
    * the driver-side Parquet / schema setup done in the constructor.
    */
-  /**
-   * Whether a later change to {@code delta.enableVariantShredding} could change this write's file
-   * layout. Mirrors the three conditions Parquet actually gates the shredded writer on ({@code
-   * ParquetOptions#inferShreddingForVariant} and {@code ParquetUtils#needShreddingInference}): the
-   * version shim must supply the inference option (absent on Spark 4.0, where the map is empty),
-   * the {@code spark.sql.variant.writeShredding.enabled} kill switch must be on, and the data
-   * schema must contain a variant column. When any is false the property cannot flip the layout, so
-   * the streaming guard must ignore a change to it rather than fail an epoch that could not have
-   * shredded anyway.
-   */
-  private boolean computeVariantLayoutFollowsProperty(SparkSession session) {
-    boolean shreddingSupported =
-        !VariantShreddingShims.getVariantInferShreddingSchemaOptions(true).isEmpty();
-    boolean killSwitchOn =
-        (boolean) session.sessionState().conf().getConf(SQLConf.VARIANT_WRITE_SHREDDING_ENABLED());
-    boolean schemaHasVariant = VariantExpressionEvalUtils$.MODULE$.typeContainsVariant(dataSchema);
-    return shreddingSupported && killSwitchOn && schemaHasVariant;
-  }
-
-  /** See {@link #variantLayoutFollowsProperty}. */
-  boolean variantLayoutFollowsProperty() {
-    return variantLayoutFollowsProperty;
-  }
-
   DeltaV2DataWriterFactory buildDataWriterFactory(Transaction transaction) {
     Row txnState = transaction.getTransactionState(engine);
     SerializableKernelRowWrapper serializedTxnState = new SerializableKernelRowWrapper(txnState);

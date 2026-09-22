@@ -17,10 +17,12 @@ package io.delta.spark.internal.v2.write;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.delta.kernel.Operation;
 import io.delta.kernel.Snapshot;
@@ -242,6 +244,61 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
   @Test
   public void engineInfoUsesExpectedPrefix() {
     assertTrue(DeltaV2WriteContext.getEngineInfo().startsWith("Apache-Spark/"));
+  }
+
+  /**
+   * {@code variantLayoutFollowsProperty} must track the writer's actual shredding eligibility: a
+   * variant at the top level or nested through structs, but not one reached through an array or map
+   * element ({@code InferVariantShreddingSchema.getPathsToVariant}). For an unshreddable schema a
+   * shredding-property change cannot alter any file, so the layout must not be marked
+   * property-sensitive.
+   */
+  @Test
+  public void variantLayoutFollowsPropertyMatchesShreddingEligibility(@TempDir File tempDir)
+      throws Exception {
+    StructType arrayOfVariant =
+        new StructType()
+            .add("id", DataTypes.IntegerType)
+            .add("arr", DataTypes.createArrayType(DataTypes.VariantType, true));
+    assertFalse(
+        buildContext(new File(tempDir, "arr"), arrayOfVariant).variantLayoutFollowsProperty(),
+        "array-of-variant is not shreddable, so its layout does not follow the property");
+
+    // The shreddable schemas depend on the property only where this Spark version can shred (the
+    // kill switch is on under test); on a version without shredding the layout follows nothing.
+    assumeTrue(
+        !VariantShreddingShims.getVariantInferShreddingSchemaOptions(true).isEmpty(),
+        "no variant shredding support on this Spark version");
+    StructType topLevelVariant =
+        new StructType().add("id", DataTypes.IntegerType).add("v", DataTypes.VariantType);
+    assertTrue(
+        buildContext(new File(tempDir, "top"), topLevelVariant).variantLayoutFollowsProperty(),
+        "top-level variant is shreddable, so its layout follows the property");
+    StructType structNestedVariant =
+        new StructType()
+            .add("id", DataTypes.IntegerType)
+            .add("s", new StructType().add("v", DataTypes.VariantType));
+    assertTrue(
+        buildContext(new File(tempDir, "struct"), structNestedVariant)
+            .variantLayoutFollowsProperty(),
+        "struct-nested variant is shreddable, so its layout follows the property");
+  }
+
+  private DeltaV2WriteContext buildContext(File dir, StructType schema) throws Exception {
+    String path = dir.getAbsolutePath();
+    Configuration hadoopConf = spark.sessionState().newHadoopConf();
+    Engine engine = DefaultEngine.create(hadoopConf);
+    createKernelTable(path, schema, engine);
+    Snapshot snapshot = TableManager.loadSnapshot(path).build(engine);
+    return DeltaV2WriteContext.create(
+        engine,
+        hadoopConf,
+        path,
+        snapshot,
+        schema,
+        new StructType(),
+        new TestLogicalWriteInfo(schema),
+        /* variantShreddingEnabled */ false);
   }
 
   private static void createKernelTable(String path, StructType schema, Engine engine) {
