@@ -116,6 +116,8 @@ To support this feature:
 - The feature `columnMapping` must exist in the table protocol's `readerFeatures` and
   `writerFeatures`.
 - The table property `delta.columnMapping.mode` must be set to `name` or `id`.
+- The feature `rowTracking` must exist in the table protocol's `readerFeatures` and
+  `writerFeatures`.
 
 Column Updates store values in [Column Files](#column-file-format) that are tracked in metadata
 using [Column File Descriptors](#column-file-descriptor-struct).
