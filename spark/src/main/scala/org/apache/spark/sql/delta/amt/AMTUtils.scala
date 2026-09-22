@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import java.util.concurrent.TimeUnit
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, DeltaOperations, FullAMTWriteFailedWithConflict, Snapshot, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, ConcurrentAMTCheckpointLandedException, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, DeltaOperations, FullAMTWriteFailedWithConflict, Snapshot, SnapshotDescriptor, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -219,6 +219,17 @@ object AMTUtils extends DeltaLogging {
           DeltaOperations.OptimizeCheckpoint(triggerMode.isIncremental, triggerMode.name))
         return
       } catch {
+        case e: ConcurrentAMTCheckpointLandedException =>
+          // A concurrent winner already installed an up-to-date AMT tree while this maintenance
+          // checkpoint was rebasing, so its work is redundant. Skip it as a graceful no-op -- the
+          // winner's tree already serves as the checkpoint -- rather than surfacing an error or
+          // rescheduling via a deferred ConcurrentWriteException.
+          logInfo(log"Skipping redundant AMT checkpoint on " +
+            log"${MDC(DeltaLogKeys.PATH, deltaLog.dataPath)}: a concurrent commit already " +
+            log"installed an AMT tree at manifest commit version " +
+            log"${MDC(DeltaLogKeys.VERSION, e.manifestCommitVersion)} " +
+            log"(content-root version ${MDC(DeltaLogKeys.VERSION2, e.contentRootVersion)}).")
+          return
         case e: FullAMTWriteFailedWithConflict if attemptsRemaining > 0 =>
           // A concurrent winner changed content the base tree describes, so this full checkpoint
           // cannot reuse it and must regenerate its full AMT against the post-winner snapshot.

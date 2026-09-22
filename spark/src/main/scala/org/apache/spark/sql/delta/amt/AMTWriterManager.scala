@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, FullAMTWriteFailedWithConflict, LogSegment, MaintenanceOperation, Snapshot, WinningCommitMetrics}
+import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, FullAMTWriteFailedWithConflict, LogSegment, MaintenanceOperation, Snapshot, WinningCommitMetrics}
 import org.apache.spark.sql.delta.actions.{Action, Checkpoint, FileAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -333,16 +333,43 @@ class AMTWriterManager(
         winningCommitMetricsForConflictedRange, lastAttemptVersion, nextAttemptVersion)
       initializeAMTMetricsDuringRebase(
         metrics, nextAttemptVersion, winningCommitMetricsForConflictedRange)
-      // A concurrent commit won our target version and we are rebasing. In the table below a
-      // "new-tree commit" is a winner that installed a new AMT tree (an OPTIMIZE checkpoint or a
-      // large inline commit); scenarios handled:
-      //   Winning commit  | Losing commit          | Action taken
-      //   Log commit      | Log commit             | usual conflict checking; back refs stay valid
-      //   Log commit      | Inline AMT commit      | rebuild the inline tree; back refs stay valid
-      //   New-tree commit | Log commit             | rebase onto the new tree; re-derive back refs
-      //   New-tree commit | Inline AMT commit      | re-seat + rebuild; re-derive back refs
-      //   Log commit      | Full AMT commit        | reuse the base as-is, else regenerate on retry
-      //   Log commit      | Incremental AMT commit | reuse the base as-is, else regenerate on retry
+      // A concurrent commit won our target version and we are rebasing. This matrix summarizes the
+      // result by losing commit (rows) and winning commit (columns):
+      //
+      //   |-------------------|----------------|----------------|----------------|----------------|
+      //   | Winning commit -> | Log-only       | Inline         | Incremental    | Full           |
+      //   | ------------------|                | incremental    | checkpoint     | checkpoint     |
+      //   | Losing commit     |                |                |                |                |
+      //   |-------------------|----------------|----------------|----------------|----------------|
+      //   | Log-only          | Conflict check |              Rebase on winner tree;              |
+      //   |                   | keep existing  |          re-derive back references [1]           |
+      //   |                   | back refs      |                                                  |
+      //   |-------------------|----------------|----------------|----------------|----------------|
+      //   | Inline            | Rebuild inline |             Use winner tree as base;             |
+      //   | incremental       | tree; include  |      re-derive affected back references [1]      |
+      //   |                   | winner in the  |               rebuild inline tree                |
+      //   |                   | fold window    |                                                  |
+      //   |-------------------|----------------|----------------|----------------|----------------|
+      //   | Incremental       | Reuse base if  | Skip: winner   | Skip: winner   | Skip: winner   |
+      //   | checkpoint        | valid [2];     | installed an   | installed an   | installed a    |
+      //   |                   | otherwise      | incremental    | incremental    | full tree      |
+      //   |                   | regenerate via | tree           | tree           |                |
+      //   |                   | txn retry      |                |                |                |
+      //   |-------------------|----------------|----------------|----------------|----------------|
+      //   | Full              | Reuse base if  | Regenerate:    | Regenerate:    | Skip: winner   |
+      //   | checkpoint        | valid [2];     | winner made    | winner made    | installed a    |
+      //   |                   | otherwise      | incr. tree;    | incr. tree;    | full tree      |
+      //   |                   | regenerate via | we want full   | we want full   |                |
+      //   |                   | txn retry      | chkpt          | chkpt          |                |
+      //   |-------------------|----------------|----------------|----------------|----------------|
+      //
+      // [1] back references are selectively re-derived against an
+      // incremental winner and fully re-derived against a full winner. Back references are not
+      // re-derived for blind appends. With multiple tree winners, an incremental checkpoint always
+      // skips; a full checkpoint skips if any winner wrote a full tree, even when a later winner
+      // wrote an incremental tree.
+      // [2] The losing new tree remains valid if every winning log commit's file actions have a
+      // defaultRowCommitVersion newer than the losing tree's content-root version.
     }
 
     def materializeNewTree(incremental: Boolean, trigger: String): AMTWriteResult = {
@@ -394,6 +421,9 @@ class AMTWriterManager(
       case e: FullAMTWriteFailedWithConflict if rebasing =>
         recordAMTMetrics(metrics, rebasing)
         throw e
+      case e: ConcurrentAMTCheckpointLandedException if rebasing =>
+        recordAMTMetrics(metrics, rebasing)
+        throw e
       case NonFatal(e) =>
         recordDeltaEvent(
           deltaLog,
@@ -434,60 +464,106 @@ class AMTWriterManager(
    * exact -- recommit it as-is (this holds whether the base was a full or an incremental rewrite).
    * Otherwise a winner changed content the base tree describes, so the tree must be rebuilt: signal
    * [[FullAMTWriteFailedWithConflict]] for the caller (CheckpointHook) to refresh and redo the
-   * rewrite from scratch. A winner that installed its own tree still defers via ConcurrentWrite.
+   * rewrite from scratch. A winner that installed its own tree makes a redundant checkpoint skip as
+   * a clean no-op ([[ConcurrentAMTCheckpointLandedException]]); a losing full checkpoint whose
+   * winner wrote only an incremental tree signals [[FullAMTWriteFailedWithConflict]] to regenerate.
    */
   private def handleLosingOptimizeCheckpoint(
       preCommitLogSegment: LogSegment,
       currentTransactionInfo: CurrentTransactionInfo,
       winningCommitMetricsForConflictedRange: Seq[WinningCommitMetrics],
       metrics: AMTMetrics): Option[AMTWriteResult] = {
-    lastAMTWriteResultOpt match {
-      case Some(baseResult) =>
-        if (winningCommitInstalledNewAMTTree(currentTransactionInfo)) {
-          // A winner installed its own tree; rebasing the losing checkpoint onto it is deferred.
-          throw DeltaErrors.concurrentWriteException(conflictingCommit = None)
-        }
-        val baseVersion = baseResult.contentRootVersion
-        if (winningCommitMetricsForConflictedRange.forall(
-            _.allFileActionsHaveDefaultCommitVersionNewerThan(baseVersion))) {
-          // Every file action in every winner commit is a new FileAction with
-          // defaultRowCommitVersion > Losing FULL AMT's checkpoint version (X)
-          // This means, none of them should have backreferences also.
-          // Reasoning: if they have backreferences (which points to an old tree pointing
-          // to version < X)
-          // => they are old files (readded / removed)
-          //  => they should have old defaultRowCommitVersion
-          // Which contradicts the above check.
-          winningCommitMetricsForConflictedRange.foreach { m =>
-            AMTUtils.invariantCheckWithLogging(
-              checkInvariant = m.numAddFilesWithBackreferences == 0 &&
-                m.numRemoveFilesWithBackreferences == 0,
-              opTypeSuffix =
-                AMTUsageLogs.ALERT_FILE_CONTAINS_NEW_SEQ_NUMBERS_BUT_NON_EMPTY_BACKREFERENCE,
-              message = "A base-preserving winner must carry no back references into the " +
-                s"base tree at version $baseVersion, but found " +
-                s"${m.numAddFilesWithBackreferences} Add and " +
-                s"${m.numRemoveFilesWithBackreferences} Remove file actions with back references.",
-              deltaLog = deltaLog)
-          }
-          metrics.conflictResolutionMetrics.foreach(_.updateOutcome(REUSED_LOSING_TREE))
-          Some(baseResult)
-        } else {
-          // A winner changed content the base tree describes, so it cannot be reused as-is.
-          // The caller should do a retry in this case.
-          metrics.conflictResolutionMetrics.foreach { conflictResolutionMetrics =>
-            conflictResolutionMetrics.updateOutcome(
-              treeOutcome = REGENERATE_VIA_TXN_RETRY,
-              exceptionThrown = Some(classOf[FullAMTWriteFailedWithConflict].getSimpleName))
-          }
-          throw DeltaErrors.fullAMTWriteFailedWithConflict(
-            conflictingCommitVersion = preCommitLogSegment.version)
-        }
-      case None =>
-        // An OPTIMIZE checkpoint always materializes a tree on its first attempt, so by the time it
-        // rebases there must be a cached result.
-        throw new IllegalStateException(
-          "A losing OPTIMIZE checkpoint has no cached AMT write from its first attempt.")
+    def updateExceptionOutcome(
+        treeOutcome: String,
+        winnerTreeSatisfiesRequirement: Option[Boolean],
+        exception: Throwable): Unit = {
+      metrics.conflictResolutionMetrics.foreach(_.updateOutcome(
+        treeOutcome = treeOutcome,
+        winnerTreeSatisfiesRequirement = winnerTreeSatisfiesRequirement,
+        exceptionThrown = Some(exception.getClass.getSimpleName)))
+    }
+
+    val baseResult = lastAMTWriteResultOpt.getOrElse {
+      // An OPTIMIZE checkpoint always materializes a tree on its first attempt, so by the time it
+      // rebases there must be a cached result.
+      throw new IllegalStateException(
+        "A losing OPTIMIZE checkpoint has no cached AMT write from its first attempt.")
+    }
+    if (winningCommitInstalledNewAMTTree(currentTransactionInfo)) {
+      //  - If this txn wants an Incremental AMT checkpoint and an incremental / full AMT
+      //    checkpoint already landed, then abort this transaction and signal this to the
+      //    caller via a [[ConcurrentAMTCheckpointLandedException]] so it can stop retrying.
+      //  - Same holds true when this txn wants a Full AMT and a Full AMT happens concurrently.
+      //  - If this txn wants a Full AMT, but winning commit is an Incremental AMT, throw an
+      //    exception [[FullAMTWriteFailedWithConflict]] so that caller can retry if they are
+      //    not exhausted.
+      val loserWroteFullTree =
+        baseResult.checkpoint.contentRoot.isIncremental.contains(false)
+      val winnerWroteFullTree = winningCommitMetricsForConflictedRange.exists(
+        _.checkpointAction.exists(_.contentRoot.isIncremental.contains(false)))
+      val latestWinnerTree = currentTransactionInfo.preCommitLatestAMTCheckpointOpt.get
+      val lastManifestCommitOpt =
+        currentTransactionInfo.commitInfo.flatMap(_.lastManifestCommit)
+      val winnerManifestCommitVersion =
+        lastManifestCommitOpt.map(_.version).getOrElse(latestWinnerTree.version)
+      val winnerMakesCheckpointRedundant =
+        if (loserWroteFullTree) winnerWroteFullTree else true
+      if (winnerMakesCheckpointRedundant) {
+        val exception = DeltaErrors.concurrentAMTCheckpointLandedException(
+          latestManifestCommitVersion = winnerManifestCommitVersion,
+          latestContentRootVersion = lastManifestCommitOpt.map(_.contentRootVersion)
+            .getOrElse(latestWinnerTree.contentRoot.version))
+        updateExceptionOutcome(
+          treeOutcome = SKIP_WINNER_SATISFIES_REQUIREMENT,
+          winnerTreeSatisfiesRequirement = Some(true),
+          exception = exception)
+        throw exception
+      }
+      val exception = DeltaErrors.fullAMTWriteFailedWithConflict(
+        conflictingCommitVersion = winnerManifestCommitVersion)
+      updateExceptionOutcome(
+        treeOutcome = REGENERATE_VIA_TXN_RETRY,
+        winnerTreeSatisfiesRequirement = Some(false),
+        exception = exception)
+      throw exception
+    }
+    val baseVersion = baseResult.contentRootVersion
+    if (winningCommitMetricsForConflictedRange.forall(
+        _.allFileActionsHaveDefaultCommitVersionNewerThan(baseVersion))) {
+      // Every file action in every winner commit is a new FileAction with
+      // defaultRowCommitVersion > Losing FULL AMT's checkpoint version (X)
+      // This means, none of them should have backreferences also.
+      // Reasoning: if they have backreferences (which points to an old tree pointing
+      // to version < X)
+      // => they are old files (readded / removed)
+      //  => they should have old defaultRowCommitVersion
+      // Which contradicts the above check.
+      winningCommitMetricsForConflictedRange.foreach { m =>
+        AMTUtils.invariantCheckWithLogging(
+          checkInvariant = m.numAddFilesWithBackreferences == 0 &&
+            m.numRemoveFilesWithBackreferences == 0,
+          opTypeSuffix =
+            AMTUsageLogs.ALERT_FILE_CONTAINS_NEW_SEQ_NUMBERS_BUT_NON_EMPTY_BACKREFERENCE,
+          message = "A base-preserving winner must carry no back references into the " +
+            s"base tree at version $baseVersion, but found " +
+            s"${m.numAddFilesWithBackreferences} Add and " +
+            s"${m.numRemoveFilesWithBackreferences} Remove file actions with back references.",
+          deltaLog = deltaLog)
+      }
+      metrics.conflictResolutionMetrics.foreach(_.updateOutcome(REUSED_LOSING_TREE))
+      Some(baseResult)
+    } else {
+      // A winner changed content the base tree describes, so it cannot be reused as-is.
+      // The caller should do a retry in this case.
+      val winnerWroteTree =
+        winningCommitMetricsForConflictedRange.exists(_.checkpointAction.isDefined)
+      val exception = DeltaErrors.fullAMTWriteFailedWithConflict(
+        conflictingCommitVersion = preCommitLogSegment.version)
+      updateExceptionOutcome(
+        treeOutcome = REGENERATE_VIA_TXN_RETRY,
+        winnerTreeSatisfiesRequirement = if (winnerWroteTree) Some(false) else None,
+        exception = exception)
+      throw exception
     }
   }
 
