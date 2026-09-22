@@ -179,7 +179,7 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase {
     inlineCheckpointTriggerActionsOrSQL = insertThirdRow
   ) { context =>
     val deltaLog = deltaLogForName(context.tableName)
-    val firstLogCommit = context.preCheckpointSnapshot.version
+    val firstLogCommit = context.postSetupSnapshot.version
     assert(checkpointAt(deltaLog, firstLogCommit).isEmpty, s"v$firstLogCommit must be a log commit")
     val commits = DeltaFileProviderUtils.getCommitsInVersionRange(
       spark,

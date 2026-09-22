@@ -191,6 +191,7 @@ class UCDeltaCatalogClientImplMetricsSuite extends QueryTest
       job = None, notebook = None, clusterId = None,
       readVersion = None, isolationLevel = None,
       isBlindAppend = Some(false),
+      dataChange = None,
       operationMetrics = operationMetrics,
       userMetadata = None, tags = None, engineInfo = None, txnId = None,
       lastManifestCommit = None)

@@ -25,9 +25,9 @@ import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
-trait DeltaInsertIntoEvolutionSuiteBase extends DeltaInsertIntoTest {
+trait DeltaInsertIntoEvolutionSuiteBase extends DeltaInsertIntoTest with DeltaTableProvider {
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
@@ -295,8 +295,8 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteB
   test("insert by name with extra top-level column and implicit cast fails " +
       "when byNameSchemaEvolution is disabled") {
     withTable("target") {
-      sql("CREATE TABLE target (a INT, b INT) USING DELTA")
-      withSQLConf(
+      sql(createTableSQL("target", "a INT, b INT"))
+      withConf(
           DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true",
           DeltaSQLConf.DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED.key -> "false") {
         val ex = intercept[SparkThrowable] {

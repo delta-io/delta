@@ -18,17 +18,10 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.clustering.ClusteringColumnInfo;
-import io.delta.kernel.commit.Committer;
 import io.delta.kernel.commit.PublishFailedException;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.checksum.CRCInfo;
-import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.replay.CreateCheckpointIterator;
-import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
@@ -126,99 +119,6 @@ public interface Snapshot {
 
   /** @return statistics about this snapshot */
   SnapshotStatistics getStatistics();
-
-  /**
-   * Returns the table protocol at this snapshot.
-   *
-   * @return the {@link Protocol} for this snapshot
-   * @since 4.4.0
-   */
-  Protocol getProtocol();
-
-  /**
-   * Returns the table metadata at this snapshot.
-   *
-   * @return the {@link Metadata} for this snapshot
-   * @since 4.4.0
-   */
-  Metadata getMetadata();
-
-  /**
-   * Returns the {@link Committer} used to commit transactions against this snapshot's table.
-   *
-   * @return the committer for this snapshot
-   * @since 4.4.0
-   */
-  Committer getCommitter();
-
-  /**
-   * Returns the table data path, i.e. the same location as {@link #getPath()} in {@link Path} form.
-   *
-   * <p>When turning the result back into a string for file paths, use {@link Path#toString()}
-   * rather than {@code toUri().toString()}: the latter percent-encodes special characters, which
-   * breaks resolution for table roots containing e.g. spaces.
-   *
-   * @return the table data path
-   * @since 4.4.0
-   */
-  default Path getDataPath() {
-    return new Path(getPath());
-  }
-
-  /**
-   * Returns the path to this table's {@code _delta_log} directory.
-   *
-   * @return the {@code _delta_log} path
-   * @since 4.4.0
-   */
-  default Path getLogPath() {
-    return new Path(getDataPath(), "_delta_log");
-  }
-
-  /**
-   * Returns the latest transaction version recorded in the Delta log for the given application id,
-   * or empty if none exists.
-   *
-   * @param engine the engine to use for IO operations
-   * @param applicationId identifier of the application that wrote transaction identifiers into the
-   *     Delta log
-   * @return the last transaction version for {@code applicationId}, or empty if none
-   * @since 4.4.0
-   */
-  default Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
-    return Optional.empty();
-  }
-
-  /**
-   * Returns the checksum ({@code CRC}) information for this snapshot if it was loaded from a
-   * checksum file, otherwise empty.
-   *
-   * <p>An empty result means no checksum was read, not that the table has no checksum file.
-   *
-   * @return the {@link CRCInfo} for this snapshot, or empty if no checksum was loaded
-   * @since 4.4.0
-   */
-  default Optional<CRCInfo> getCurrentCrcInfo() {
-    return Optional.empty();
-  }
-
-  /**
-   * Returns the log segment that backs this snapshot.
-   *
-   * @return the {@link LogSegment} for this snapshot
-   * @since 4.4.0
-   */
-  LogSegment getLogSegment();
-
-  /**
-   * Returns an iterator over the actions that should be written into a checkpoint for this
-   * snapshot.
-   *
-   * @param engine the engine to use for IO operations
-   * @return iterator of filtered columnar batches for checkpoint writing
-   * @since 4.4.0
-   */
-  CreateCheckpointIterator getCreateCheckpointIterator(Engine engine);
 
   /**
    * Get per-clustering-column descriptors with the physical column reference (as stored in the

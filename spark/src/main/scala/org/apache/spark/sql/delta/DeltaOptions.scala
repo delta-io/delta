@@ -154,8 +154,7 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
     // neither must be given. In all other cases, throw an exception.
     val numOptions = txnVersion.size + txnAppId.size
     if (numOptions != 0 && numOptions != 2) {
-      throw DeltaErrors.invalidIdempotentWritesOptionsException("Both txnVersion and txnAppId " +
-      "must be specified for idempotent data frame writes")
+      throw DeltaErrors.invalidIdempotentWritesMissingWriteOptionsException()
     }
   }
 
@@ -400,9 +399,11 @@ object DeltaOptions extends DeltaLogging {
     USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
     PARTITION_OVERWRITE_MODE_OPTION,
     MAX_FILES_PER_TRIGGER_OPTION,
+    MAX_BYTES_PER_TRIGGER_OPTION,
     IGNORE_FILE_DELETION_OPTION,
     IGNORE_CHANGES_OPTION,
     IGNORE_DELETES_OPTION,
+    SKIP_CHANGE_COMMITS_OPTION,
     FAIL_ON_DATA_LOSS_OPTION,
     OPTIMIZE_WRITE_OPTION,
     DATA_CHANGE_OPTION,
@@ -423,6 +424,9 @@ object DeltaOptions extends DeltaLogging {
     SCHEMA_TRACKING_LOCATION,
     SCHEMA_TRACKING_LOCATION_ALIAS,
     STREAMING_SOURCE_TRACKING_ID,
+    ALLOW_SOURCE_COLUMN_RENAME,
+    ALLOW_SOURCE_COLUMN_DROP,
+    ALLOW_SOURCE_COLUMN_TYPE_CHANGE,
     "queryName",
     "checkpointLocation",
     "path",

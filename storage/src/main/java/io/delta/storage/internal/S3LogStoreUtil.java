@@ -27,6 +27,7 @@ import java.util.HashSet;
 import static org.apache.hadoop.fs.s3a.Constants.DEFAULT_MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.Constants.MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
+import static org.apache.hadoop.fs.s3a.S3AUtils.maybeAddTrailingSlash;
 
 
 /**
@@ -66,7 +67,8 @@ public final class S3LogStoreUtil {
                     ListObjectsV2Request.builder()
                         .bucket(s3afs.getBucket())
                         .maxKeys(maxKeys)
-                        .prefix(s3afs.pathToKey(parentPath))
+                        .prefix(maybeAddTrailingSlash(s3afs.pathToKey(parentPath)))
+                        .delimiter("/")
                         .startAfter(keyBefore(s3afs.pathToKey(resolvedPath)))
                         .build()
                 ), ACCEPT_ALL,

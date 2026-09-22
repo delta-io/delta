@@ -18,11 +18,12 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.{File, FileNotFoundException}
 import java.net.URISyntaxException
+import java.util.UUID
 
 import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
-import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor._
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest}
@@ -38,6 +39,7 @@ import org.apache.parquet.hadoop.ParquetFileReader
 
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkException
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
@@ -45,6 +47,7 @@ import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{StringType, StructField, StructType}
 
 class DeletionVectorsSuite extends QueryTest
   with SharedSparkSession
@@ -734,6 +737,56 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
+  test("object uniqueIdExpression matches descriptor uniqueId") {
+    val tableRoot = new Path("s3a://table/test path")
+    val uuid = UUID.randomUUID()
+    val uDv = onDiskWithUuidRelativePath(
+      uuid, randomPrefix = "prefix + %space", sizeInBytes = 15, cardinality = 25, offset = Some(8))
+    val rDv = rFormOf(uuid, "prefix + %space", offset = Some(8))
+    val pDv = onDiskWithAbsolutePath(
+      SparkPath.fromPath(new Path(tableRoot, "data/a space + b.bin")).urlEncoded,
+      sizeInBytes = 15,
+      cardinality = 25,
+      offset = Some(8))
+    val pElsewhere = onDiskWithAbsolutePath(
+      SparkPath.fromPath(
+        new Path(s"s3a://other-bucket/tbl/prefix/${DELETION_VECTOR_FILE_NAME_CORE}_$uuid.bin"))
+        .urlEncoded,
+      sizeInBytes = 15,
+      cardinality = 25,
+      offset = Some(8))
+
+    val testCases = Seq(uDv, rDv, pDv, pElsewhere).map { dv =>
+      (
+        dv,
+        dv.uniqueId(tableRoot, useObjectIdentity = true),
+        dv.uniqueId(tableRoot, useObjectIdentity = false))
+    }
+    val rows = testCases.map { case (dv, expectedObjectId, expectedLegacyId) =>
+      Row(dvStructRow(dv), expectedObjectId, expectedLegacyId)
+    }
+    val input = spark.createDataFrame(
+      spark.sparkContext.parallelize(rows),
+      dvExpressionTestSchema)
+    val actual = input.select(
+      DeletionVectorDescriptor
+        .uniqueIdExpression(col("dv"), tableRoot, useObjectIdentity = true)
+        .as("actualObjectId"),
+      col("expectedObjectId"),
+      DeletionVectorDescriptor
+        .uniqueIdExpression(col("dv"), tableRoot, useObjectIdentity = false)
+        .as("actualLegacyId"),
+      col("expectedLegacyId"))
+
+    checkAnswer(actual, testCases.map { case (_, expectedObjectId, expectedLegacyId) =>
+      Row(
+        expectedObjectId,
+        expectedObjectId,
+        expectedLegacyId,
+        expectedLegacyId)
+    })
+  }
+
   test("Check no resource leak when DV files are missing (table corrupted)") {
     withTempDir { tempDir =>
       val source = new File(table2Path)
@@ -837,6 +890,36 @@ class DeletionVectorsSuite extends QueryTest
     val optimizedPlan = queryDf.queryExecution.analyzed.toString()
     assert(optimizedPlan.contains(expected), s"Plan is missing `$expected`: $optimizedPlan")
   }
+
+  /** The `r` form of the `u` DV that `uuid`/`prefix` describe. */
+  private def rFormOf(
+      uuid: UUID,
+      prefix: String,
+      offset: Option[Int]): DeletionVectorDescriptor = {
+    val path = if (prefix.isEmpty) {
+      s"${DELETION_VECTOR_FILE_NAME_CORE}_$uuid.bin"
+    } else {
+      s"$prefix/${DELETION_VECTOR_FILE_NAME_CORE}_$uuid.bin"
+    }
+    createRelativePathDVDescriptor(path, sizeInBytes = 15, cardinality = 25, offset = offset)
+  }
+
+  private def dvStructRow(dv: DeletionVectorDescriptor): Row = {
+    Row.fromSeq(DeletionVectorDescriptor.STRUCT_TYPE.fieldNames.map {
+      case "storageType" => dv.storageType
+      case "pathOrInlineDv" => dv.pathOrInlineDv
+      case "offset" => dv.offset.map(Int.box).orNull
+      case "sizeInBytes" => Int.box(dv.sizeInBytes)
+      case "cardinality" => Long.box(dv.cardinality)
+      case "maxRowIndex" => dv.maxRowIndex.map(Long.box).orNull
+      case field => fail(s"Unexpected deletion vector field in test schema: $field")
+    })
+  }
+
+  private def dvExpressionTestSchema = StructType(Seq(
+    StructField("dv", DeletionVectorDescriptor.STRUCT_TYPE, nullable = false),
+    StructField("expectedObjectId", StringType, nullable = false),
+    StructField("expectedLegacyId", StringType, nullable = false)))
 }
 
 object DeletionVectorsSuite {

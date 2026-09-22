@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -34,6 +35,9 @@ import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.CachedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManager;
+import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache$;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -45,9 +49,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.function.BiFunction;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField;
@@ -58,10 +65,12 @@ import org.apache.spark.sql.connector.catalog.SupportsWrite;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -70,6 +79,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
 
@@ -531,6 +541,118 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
         "version() should remain pinned to the construction-time snapshot");
   }
 
+  @ParameterizedTest(name = "{0}")
+  @EnumSource(ConstructionMethod.class)
+  public void testUsesTableManagerKernelContextAndLoadsSnapshotsAcrossSessions(
+      ConstructionMethod method, @TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "test_table_manager_" + method.name().toLowerCase();
+    spark.sql(String.format("CREATE TABLE %s (id INT) USING delta LOCATION '%s'", tableName, path));
+    Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
+    SparkSession sessionA = spark.newSession();
+    SparkSession sessionB = spark.newSession();
+    Map<String, String> tableOptions = recordingFileSystemOptions(sessionA, sessionB);
+
+    DeltaV2TableManagerCache$.MODULE$.clearCache();
+    try {
+      CatalogTable catalogTableA =
+          withActiveSession(
+              sessionA,
+              () ->
+                  sessionA
+                      .sessionState()
+                      .catalog()
+                      .getTableMetadata(new TableIdentifier(tableName)));
+      CatalogTable catalogTableB =
+          withActiveSession(
+              sessionB,
+              () ->
+                  sessionB
+                      .sessionState()
+                      .catalog()
+                      .getTableMetadata(new TableIdentifier(tableName)));
+      Option<CatalogTable> catalogTableOptA =
+          method == ConstructionMethod.FROM_PATH ? Option.empty() : Option.apply(catalogTableA);
+      Option<CatalogTable> catalogTableOptB =
+          method == ConstructionMethod.FROM_PATH ? Option.empty() : Option.apply(catalogTableB);
+      DeltaV2Table tableA =
+          withActiveSession(
+              sessionA,
+              () ->
+                  method == ConstructionMethod.FROM_PATH
+                      ? new DeltaV2Table(identifier, path, tableOptions)
+                      : new DeltaV2Table(identifier, catalogTableA, tableOptions));
+      DeltaV2Table tableB =
+          withActiveSession(
+              sessionB,
+              () ->
+                  method == ConstructionMethod.FROM_PATH
+                      ? new DeltaV2Table(identifier, path, tableOptions)
+                      : new DeltaV2Table(identifier, catalogTableB, tableOptions));
+      DeltaV2TableManager managerA =
+          DeltaV2TableManagerCache$.MODULE$.forTable(
+              sessionA, path, tableOptions, catalogTableOptA);
+      DeltaV2TableManager managerB =
+          DeltaV2TableManagerCache$.MODULE$.forTable(
+              sessionB, path, tableOptions, catalogTableOptB);
+
+      assertTrue(tableA.getSnapshotManager() instanceof CachedSnapshotManager);
+      assertTrue(tableB.getSnapshotManager() instanceof CachedSnapshotManager);
+      assertSame(managerA, managerB);
+      assertSame(managerA.kernelContext(), managerB.kernelContext());
+      assertSame(managerA.kernelContext().getDefaultEngine(), tableA.kernelEngine());
+      assertSame(tableA.kernelEngine(), tableB.kernelEngine());
+      assertEquals("0", tableA.version());
+      assertEquals("0", tableB.version());
+
+      withActiveSession(
+          sessionA,
+          () -> {
+            sessionA.sql(String.format("INSERT INTO %s VALUES (1)", tableName));
+            assertLatestSnapshot(tableA, sessionA, 1L, 1L);
+            return null;
+          });
+      withActiveSession(
+          sessionB,
+          () -> {
+            sessionB.sql(String.format("INSERT INTO %s VALUES (2)", tableName));
+            assertLatestSnapshot(tableB, sessionB, 2L, 2L);
+            return null;
+          });
+    } finally {
+      DeltaV2TableManagerCache$.MODULE$.clearCache();
+      spark.sql(String.format("DROP TABLE IF EXISTS %s", tableName));
+    }
+  }
+
+  private static Map<String, String> recordingFileSystemOptions(
+      SparkSession sessionA, SparkSession sessionB) {
+    return Collections.emptyMap();
+  }
+
+  private static void assertLatestSnapshot(
+      DeltaV2Table table, SparkSession activeSession, long expectedVersion, long expectedFiles) {
+    Snapshot snapshot = table.getSnapshotManager().loadLatestSnapshot();
+    Dataset<?> allFiles = snapshot.allFiles();
+    assertEquals(expectedVersion, snapshot.version());
+    assertSame(activeSession, allFiles.sparkSession());
+    assertEquals(expectedFiles, allFiles.count());
+  }
+
+  private static <T> T withActiveSession(SparkSession session, Callable<T> body) throws Exception {
+    Option<SparkSession> originalSession = SparkSession.getActiveSession();
+    SparkSession.setActiveSession(session);
+    try {
+      return body.call();
+    } finally {
+      if (originalSession.isDefined()) {
+        SparkSession.setActiveSession(originalSession.get());
+      } else {
+        SparkSession.clearActiveSession();
+      }
+    }
+  }
+
   @Test
   public void testNewWriteBuilderReturnsWriteBuilder(@TempDir File tempDir) throws Exception {
     String path = tempDir.getAbsolutePath();
@@ -787,7 +909,8 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     // Capture v0 metadata BEFORE evolving the table.
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
-    SnapshotImpl snapshotV0 = (SnapshotImpl) snapshotManager.loadSnapshotAt(0L);
+    SnapshotImpl snapshotV0 =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(0L));
     Metadata metadataV0 = snapshotV0.getMetadata();
     Protocol protocolV0 = snapshotV0.getProtocol();
     String tableId = metadataV0.getId();

@@ -271,7 +271,11 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
         op = DeltaOperations.AddDeletionVectorsTombstones,
         newProtocolOpt = None,
         context = Map.empty,
-        metrics = Map("dvTombstonesWithinRetentionPeriod" -> tombstonesToAddCount.toString))
+        metrics = Map("dvTombstonesWithinRetentionPeriod" -> tombstonesToAddCount.toString),
+        // The commit is only DV tombstones: RemoveFiles whose path is a deletion vector file
+        // rather than a data file, written so that VACUUM can delete those DVs. They drop no
+        // rows so dataChange is false.
+        dataChange = Some(false))
     } else {
       table.startTransaction(Some(snapshotToUse))
         .commit(actionsToCommit.toList, DeltaOperations.AddDeletionVectorsTombstones)
@@ -336,6 +340,15 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
       opType = "delta.deletionVectorsFeatureRemovalMetrics",
       data = metrics)
     PreDowngradeStatus(performedChanges = tracesFound)
+  }
+}
+
+case class AdaptiveMetadataPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    throw new UnsupportedOperationException(
+      s"Dropping the ${AdaptiveMetadataTableFeature.name} table feature is not yet supported.")
   }
 }
 

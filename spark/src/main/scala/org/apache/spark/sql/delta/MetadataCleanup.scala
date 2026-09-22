@@ -67,6 +67,14 @@ trait MetadataCleanup extends DeltaLogging {
       snapshotToCleanup: Snapshot,
       catalogTableOpt: Option[CatalogTable]): Unit = {
     if (enableExpiredLogCleanup(unsafeVolatileSnapshot.metadata)) {
+      try {
+        DeltaErrors.checkCatalogManagedTableOperationAllowed(
+          CatalogManagedTableMaintenanceOperation.METADATA_CLEANUP,
+          snapshotToCleanup,
+          catalogTableOpt)
+      } catch {
+        case _: DeltaUnsupportedOperationException => return
+      }
       cleanUpExpiredLogs(snapshotToCleanup, catalogTableOpt)
     }
   }
@@ -77,6 +85,11 @@ trait MetadataCleanup extends DeltaLogging {
       catalogTableOpt: Option[CatalogTable] = None,
       deltaRetentionMillisOpt: Option[Long] = None,
       cutoffTruncationGranularity: TruncationGranularity = DAY): Unit = {
+    DeltaErrors.checkCatalogManagedTableOperationAllowed(
+      CatalogManagedTableMaintenanceOperation.METADATA_CLEANUP,
+      snapshotToCleanup,
+      catalogTableOpt)
+
     recordDeltaOperation(this, "delta.log.cleanup") {
       val retentionMillis =
         deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(unsafeVolatileSnapshot.metadata))

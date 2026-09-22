@@ -260,6 +260,11 @@ abstract class CloneTableBase(
         }
       }
 
+      // Every file action above is stamped with `dataChangeInFileAction`, so the commit changes
+      // data exactly when that is true and there is at least one file action.
+      val fileActionCount = addedFileCount
+      val commitDataChange = dataChangeInFileAction && fileActionCount > 0
+
       recordDeltaOperation(
         destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
         txn.commitLarge(
@@ -268,7 +273,8 @@ abstract class CloneTableBase(
           Some(newProtocol),
           deltaOperation,
           context,
-          commitOpMetrics.mapValues(_.toString()).toMap)
+          commitOpMetrics.mapValues(_.toString()).toMap,
+          dataChange = Some(commitDataChange))
       }
 
       val cloneLogData = getOperationMetricsForEventRecord(opMetrics) ++ Map(

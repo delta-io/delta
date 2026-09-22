@@ -189,7 +189,8 @@ class InCommitTimestampSuite
             newProtocolOpt = None,
             DeltaOperations.ManualUpdate,
             context = Map.empty,
-            metrics = Map.empty)
+            metrics = Map.empty,
+            dataChange = Some(true))
         } else {
           deltaLog.startTransaction().commit(
             Seq(createTestAddFile("1")),

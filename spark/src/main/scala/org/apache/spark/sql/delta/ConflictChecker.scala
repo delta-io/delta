@@ -70,7 +70,8 @@ private[delta] case class CurrentTransactionInfo(
     val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
     val op: DeltaOperations.Operation,
-    val preCommitLatestAMTCheckpointOpt: Option[Checkpoint] = None
+    val preCommitLatestAMTCheckpointOpt: Option[Checkpoint] = None,
+    val currentCommitAttemptAMTCheckpointOpt: Option[Checkpoint] = None
     , val convertedIcebergMetadata: Option[UniformMetadata] = None
     , idempotentCommitAlreadyLandedAt: Option[Long] = None
  ) {
@@ -195,6 +196,54 @@ private[delta] class WinningCommitSummary(
     .exists(_.toBoolean)
 }
 
+/** Compact information about [[WinningCommitSummary]]. */
+private[delta] case class WinningCommitMetrics(
+    isBlindAppend: Boolean,
+    minDefaultRowCommitVersion: Option[Long],
+    numAdds: Int,
+    numRemoves: Int,
+    numAddFilesWithBackreferences: Int,
+    numRemoveFilesWithBackreferences: Int,
+    checkpointAction: Option[Checkpoint],
+    commitInfo: Option[CommitInfo]) {
+
+  /**
+   * Whether every Add/Remove file action in this winning commit was created strictly after
+   * `baseVersion` (min `defaultRowCommitVersion` > `baseVersion`)
+   */
+  def allFileActionsHaveDefaultCommitVersionNewerThan(baseVersion: Long): Boolean =
+    (numAdds + numRemoves == 0) || minDefaultRowCommitVersion.exists(_ > baseVersion)
+}
+
+object WinningCommitMetrics {
+  def fromWinningCommitSummary(summary: WinningCommitSummary): WinningCommitMetrics = {
+    val defaultRowCommitVersions: Seq[Option[Long]] =
+      summary.addedFiles.map(_.defaultRowCommitVersion) ++
+        summary.removedFiles.map(_.defaultRowCommitVersion)
+    // If any AddFile/RemoveFile is missing defaultRowCommitVersion, then make
+    // minDefaultRowCommitVersion = None.
+    val minDefaultRowCommitVersion =
+      if (defaultRowCommitVersions.nonEmpty && defaultRowCommitVersions.forall(_.isDefined)) {
+        Some(defaultRowCommitVersions.flatten.min)
+      } else {
+        None
+      }
+    val numAdds = summary.addedFiles.size
+    val numRemoves = summary.removedFiles.size
+    val numAddFilesWithBackreferences = summary.addedFiles.count(_.backReference.isDefined)
+    val numRemoveFilesWithBackreferences = summary.removedFiles.count(_.backReference.isDefined)
+    WinningCommitMetrics(
+      isBlindAppend = summary.isBlindAppendOption.getOrElse(false),
+      minDefaultRowCommitVersion = minDefaultRowCommitVersion,
+      numAdds = numAdds,
+      numRemoves = numRemoves,
+      numAddFilesWithBackreferences = numAddFilesWithBackreferences,
+      numRemoveFilesWithBackreferences = numRemoveFilesWithBackreferences,
+      checkpointAction = summary.amtCheckpoint,
+      commitInfo = summary.commitInfo)
+  }
+}
+
 object WinningCommitSummary {
 
   /**
@@ -311,8 +360,11 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     resolveTimestampOrderingConflicts()
 
-    currentTransactionInfo = AMTUtils.updateCurrentTransactionInfo(
-      currentTransactionInfo, winningCommitSummary)
+    // Fold the winning commit into our transaction info before the next attempt: this advances
+    // `preCommitLatestAMTCheckpointOpt` to the winner's inline AMT checkpoint (when the winner
+    // wrote one) and clears `currentCommitAttemptAMTCheckpointOpt`.
+    currentTransactionInfo =
+      AMTUtils.updateCurrentTransactionInfo(currentTransactionInfo, winningCommitSummary)
 
     logMetrics()
     currentTransactionInfo
@@ -1260,9 +1312,8 @@ private[delta] class ConflictChecker(
         case (domain, _) if RowTrackingMetadataDomain.isSameDomain(domain) => domain
         case (_, Some(_)) =>
           // Any conflict not specifically handled by a previous case must fail the transaction.
-          throw new io.delta.exceptions.ConcurrentTransactionException(
-            s"A conflicting metadata domain ${domainMetadataFromCurrentTransaction.domain} is " +
-              "added.")
+          throw DeltaErrors.conflictingMetadataDomainException(
+            domainMetadataFromCurrentTransaction.domain)
       }
 
     val mergedDomainMetadata = mutable.Buffer.empty[DomainMetadata]
@@ -1547,6 +1598,9 @@ private[delta] object ConflictChecker extends DeltaLogging {
    *  - `fatal`: record a Delta event and then throw an [[IllegalStateException]].
    *
    * Single pass, no materialization; the throw fires on the first detected inconsistency.
+   *
+   * When the commit carries a [[CommitInfo]] with a [[CommitInfo.dataChange]], this also records
+   * whether that value matches what the file actions say it should be.
    */
   def trackConsistentDataChange(
       spark: SparkSession,
@@ -1559,37 +1613,67 @@ private[delta] object ConflictChecker extends DeltaLogging {
     if (mode == DeltaSQLConf.ConsistentDataChangeValidationMode.OFF) return actions
     var firstDataChangeAction: Option[FileAction] = None
     var firstNoDataChangeAction: Option[FileAction] = None
-    var violationReported = false
-    actions.map { action =>
-      action match {
-        case f: FileAction if !f.isInstanceOf[AddCDCFile] =>
-          if (f.dataChange) {
-            if (firstDataChangeAction.isEmpty) firstDataChangeAction = Some(f)
-          } else {
-            if (firstNoDataChangeAction.isEmpty) firstNoDataChangeAction = Some(f)
-          }
-          if (!violationReported &&
-              firstDataChangeAction.isDefined && firstNoDataChangeAction.isDefined) {
-            violationReported = true
-            val message = "All FileActions in a single commit must share a consistent " +
-              "dataChange value, but this commit mixes dataChange = true and " +
-              "dataChange = false actions."
-            recordDeltaEvent(
-              deltaLog,
-              "delta.commit.inconsistentDataChange",
-              data = Map(
-                "callerContext" -> callerContext,
-                "operation" -> op.name,
-                "operationParameters" -> op.jsonEncodedValues,
-                "firstDataChangeAction" -> firstDataChangeAction,
-                "firstNoDataChangeAction" -> firstNoDataChangeAction))
-            if (mode == DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL) {
-              throw new IllegalStateException(message)
-            }
-          }
-        case _ =>
+    var mixedViolationReported = false
+    var commitInfoMismatchReported = false
+    var declaredDataChange: Option[Boolean] = None
+
+    def isCommitInfoDataChangeViolated(): Boolean =
+      declaredDataChange.exists { declared =>
+        (declared && firstNoDataChangeAction.isDefined) ||
+          (!declared && firstDataChangeAction.isDefined) ||
+          (!actions.hasNext && declared && firstDataChangeAction.isEmpty)
       }
-      action
+
+    new Iterator[Action] {
+      override def hasNext: Boolean = actions.hasNext
+      override def next(): Action = {
+        val action = actions.next()
+        action match {
+          case c: CommitInfo =>
+            declaredDataChange = c.dataChange
+          case f: FileAction if !f.isInstanceOf[AddCDCFile] =>
+            if (f.dataChange) {
+              if (firstDataChangeAction.isEmpty) firstDataChangeAction = Some(f)
+            } else {
+              if (firstNoDataChangeAction.isEmpty) firstNoDataChangeAction = Some(f)
+            }
+          case _ =>
+        }
+        if (!mixedViolationReported &&
+            firstDataChangeAction.isDefined && firstNoDataChangeAction.isDefined) {
+          mixedViolationReported = true
+          val message = "All FileActions in a single commit must share a consistent " +
+            "dataChange value, but this commit mixes dataChange = true and " +
+            "dataChange = false actions."
+          recordDeltaEvent(
+            deltaLog,
+            "delta.commit.inconsistentDataChange",
+            data = Map(
+              "callerContext" -> callerContext,
+              "operation" -> op.name,
+              "operationParameters" -> op.jsonEncodedValues,
+              "firstDataChangeAction" -> firstDataChangeAction,
+              "firstNoDataChangeAction" -> firstNoDataChangeAction))
+          if (mode == DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL) {
+            throw new IllegalStateException(message)
+          }
+        } else if (!commitInfoMismatchReported && isCommitInfoDataChangeViolated()) {
+          commitInfoMismatchReported = true
+          val declared = declaredDataChange.get
+          recordDeltaEvent(
+            deltaLog,
+            "delta.commit.commitInfoDataChangeMismatch",
+            data = Map(
+              "callerContext" -> callerContext,
+              "operation" -> op.name,
+              "operationParameters" -> op.jsonEncodedValues,
+              "declaredDataChange" -> declared,
+              "derivedDataChange" -> firstDataChangeAction.isDefined,
+              "firstDataChangeAction" -> firstDataChangeAction,
+              "firstNoDataChangeAction" -> firstNoDataChangeAction))
+        }
+        action
+      }
     }
   }
 
@@ -1620,7 +1704,7 @@ private[delta] object ConflictChecker extends DeltaLogging {
     actions.map { action =>
       action match {
         case add: AddFile =>
-          val dvId = add.getDeletionVectorUniqueId
+          val dvId = add.getLegacyDeletionVectorUniqueId
           addPaths.put(add.path, dvId).foreach { existingDVId =>
             failDuplicate("add", add.path, dvId, existingDVId)
           }
@@ -1631,7 +1715,7 @@ private[delta] object ConflictChecker extends DeltaLogging {
             }
           }
         case remove: RemoveFile =>
-          val dvId = remove.getDeletionVectorUniqueId
+          val dvId = remove.getLegacyDeletionVectorUniqueId
           removePaths.put(remove.path, dvId).foreach { existingDVId =>
             failDuplicate("remove", remove.path, dvId, existingDVId)
           }

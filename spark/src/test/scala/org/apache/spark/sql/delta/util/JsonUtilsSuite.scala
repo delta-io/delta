@@ -61,6 +61,7 @@ class JsonUtilsSuite
       readVersion = Some(1),
       isolationLevel = None,
       isBlindAppend = Some(false),
+      dataChange = Some(true),
       operationMetrics = None,
       userMetadata = Some("I am a test and not a user"),
       tags = None,

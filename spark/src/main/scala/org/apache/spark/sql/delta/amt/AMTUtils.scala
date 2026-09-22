@@ -16,11 +16,19 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, WinningCommitSummary}
-import org.apache.spark.sql.delta.actions.LastManifestCommit
-import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
-import org.apache.spark.sql.delta.util.DeltaFileOperations
-import org.apache.hadoop.fs.{FileSystem, Path}
+import java.util.concurrent.TimeUnit
+
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaOperations, FullAMTWriteFailedWithConflict, Snapshot, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
+import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.hadoop.fs.Path
+
+import org.apache.spark.internal.MDC
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Path helpers for AMT (Adaptive Metadata Tree) manifest files.
@@ -30,15 +38,83 @@ import org.apache.hadoop.fs.{FileSystem, Path}
  * file lives under it and resolved back by string concatenation (`tableRoot + "/" + relative`).
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
-object AMTUtils {
+object AMTUtils extends DeltaLogging {
 
   /**
-   * Relativizes an AMT manifest file `path` against `tableRoot`, returning the raw
-   * (non-URL-encoded) string to store in a manifest `location` / `contentRoot.path`. Paths under
-   * the table root become relative; paths elsewhere are returned absolute.
+   * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
+   * `metadata`.
    */
-  def relativizeManifestPathToTableRoot(fs: FileSystem, tableRoot: Path, path: Path): String =
-    DeltaFileOperations.tryRelativizePath(fs, tableRoot, path).toString
+  def amtEnabled(metadata: Metadata, protocol: Protocol): Boolean =
+    protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+
+  /** Whether AMT writes are enabled for `snapshot`. */
+  def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
+    amtEnabled(snapshot.metadata, snapshot.protocol)
+
+  private val PathSeparator = "/"
+
+  /**
+   * Returns true if the location contains a URI scheme, per RFC 3986 section 3.1.
+   * https://datatracker.ietf.org/doc/html/rfc3986#section-3.1
+   */
+  private[amt] def hasScheme(location: String): Boolean = {
+    var i = 0
+    while (i < location.length) {
+      val ch = location.charAt(i)
+      if (ch == ':') {
+        return i > 0
+      }
+      if (!isSchemeChar(ch, i)) {
+        return false
+      }
+      i += 1
+    }
+    false
+  }
+
+  private def isSchemeChar(ch: Char, position: Int): Boolean = {
+    (ch >= 'a' && ch <= 'z') ||
+      (ch >= 'A' && ch <= 'Z') ||
+      (position > 0 && ((ch >= '0' && ch <= '9') || ch == '+' || ch == '-' || ch == '.'))
+  }
+
+  /**
+   * Returns true if a location is absolute.
+   * NOTE: This is not the same implementation as Hadoop [[Path.isAbsolute]].
+   */
+  def isAbsoluteLocation(location: String): Boolean = {
+    hasScheme(location) || location.startsWith(PathSeparator)
+  }
+
+  /**
+   * Relativizes a location against a table location. A trailing slash on `tableLocation` is
+   * ignored. If `location` starts with the normalized table location immediately followed by `/`,
+   * the prefix and separator are removed. Otherwise, `location` is returned as-is.
+   * This is a lightweight string manipulation.
+   *
+   * Because the relativization is prefix matching based, callers are expected to pass locations in
+   * the same format and encoding (either both raw or both URL-encoded).
+   * No such checks are performed here.
+   */
+  def relativizeLocation(tableLocation: String, location: String): String = {
+    // Strip trailing slash from tableLocation if present.
+    val normalizedTableLocation =
+      if (tableLocation.length > PathSeparator.length && tableLocation.endsWith(PathSeparator)) {
+        tableLocation.dropRight(PathSeparator.length)
+      } else {
+        tableLocation
+      }
+
+    // Prefix matching based location relativization
+    val prefixLength = normalizedTableLocation.length
+    if (location.length > prefixLength &&
+        location.startsWith(PathSeparator, prefixLength) &&
+        location.startsWith(normalizedTableLocation)) {
+      location.substring(prefixLength + PathSeparator.length)
+    } else {
+      location
+    }
+  }
 
   /**
    * Resolves a manifest `location` / `contentRoot.path` back to an absolute [[Path]] against
@@ -63,15 +139,15 @@ object AMTUtils {
   }
 
   /**
-   * Returns a copy of the passed-in current transaction info with the AMT fields updated to reflect
-   * the winning commit.
+   * Returns a copy of the passed-in current transaction info folded onto the winning commit, ready
+   * for the next commit attempt.
    */
   def updateCurrentTransactionInfo(
       currentTransactionInfo: CurrentTransactionInfo,
       winningCommitSummary: WinningCommitSummary): CurrentTransactionInfo = {
     // If the winning commit emitted an inline AMT checkpoint, it is now the latest checkpoint
     // before the next commit attempt.
-    winningCommitSummary.amtCheckpoint.map { winningAMTCheckpoint =>
+    val withWinnerTree = winningCommitSummary.amtCheckpoint.map { winningAMTCheckpoint =>
       currentTransactionInfo.copy(
         // If the winning commit emitted an inline AMT checkpoint, it is now the latest checkpoint
         // before the next commit attempt.
@@ -80,16 +156,66 @@ object AMTUtils {
         commitInfo = currentTransactionInfo.commitInfo.map(_.copy(
           lastManifestCommit = Some(LastManifestCommit(
             version = winningCommitSummary.commitVersion,
-            contentRootVersion = winningAMTCheckpoint.version))))
+            contentRootVersion = winningAMTCheckpoint.contentRoot.version))))
       )
     }.getOrElse(currentTransactionInfo)
+    // Clear `currentCommitAttemptAMTCheckpointOpt` because it is stale once we rebase.
+    withWinnerTree.copy(currentCommitAttemptAMTCheckpointOpt = None)
   }
 
   // Serializes a Manifest Deletion Vector to the on-disk byte form carried in `manifest_info.dv`.
-  private[amt] def serializeMdv(mdv: RoaringBitmapArray): Array[Byte] =
-    mdv.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
+  private[amt] def serializeMdv(mdv: ManifestBitmap): Array[Byte] =
+    mdv.serializeAsByteArray()
 
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
-  private[amt] def deserializeMdv(bytes: Array[Byte]): RoaringBitmapArray =
-    RoaringBitmapArray.readFrom(bytes)
+  private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
+    ManifestBitmap.fromSerializedByteArray(bytes)
+
+  /**
+   * Emits the AMT for `snapshot` by committing a follow-up OPTIMIZE CHECKPOINT that
+   * rewrites the manifest tree, full or incremental per `amtTriggerModeOpt` (full when absent).
+   *
+   * A losing full checkpoint that cannot reuse its base against a concurrent winner surfaces a
+   * [[FullAMTWriteFailedWithConflict]]; refresh the snapshot and retry, bounded so a pathological
+   * run of concurrent winners cannot spin forever. At least one attempt always runs.
+   */
+  def emitAMTCheckpoint(
+      snapshot: Snapshot,
+      catalogTableOpt: Option[CatalogTable],
+      amtTriggerModeOpt: Option[AMTTriggerMode]): Unit = {
+    val triggerMode = amtTriggerModeOpt.getOrElse(AMTTriggerMode.OnDemandCheckpointFull)
+    val deltaLog = snapshot.deltaLog
+    var attemptsRemaining = math.max(1, SparkSession.active.sessionState.conf.getConf(
+      DeltaSQLConf.AMT_CONFLICT_CHECKING_MAX_FULL_REGENERATE_RETRIES))
+    var readSnapshot: Snapshot = snapshot
+    while (attemptsRemaining > 0) {
+      attemptsRemaining -= 1
+      val checkpointTxn = deltaLog.startTransaction(catalogTableOpt, Some(readSnapshot))
+      val attemptStartNs = System.nanoTime()
+      try {
+        checkpointTxn.commit(
+          Seq.empty,
+          DeltaOperations.OptimizeCheckpoint(triggerMode.isIncremental, triggerMode.name))
+        return
+      } catch {
+        case e: FullAMTWriteFailedWithConflict if attemptsRemaining > 0 =>
+          // A concurrent winner changed content the base tree describes, so this full checkpoint
+          // cannot reuse it and must regenerate its full AMT against the post-winner snapshot.
+          // Refresh and retry rather than surfacing the conflict.
+          recordDeltaEvent(
+            deltaLog,
+            opType = AMTUsageLogs.CHECKPOINT_FULL_REGENERATE_RETRY,
+            data = Map(
+              "conflictingCommitVersion" -> e.conflictingCommitVersion,
+              "attemptsRemaining" -> attemptsRemaining,
+              "timeTakenMs" ->
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - attemptStartNs)))
+          logInfo(log"Retrying full AMT checkpoint on " +
+            log"${MDC(DeltaLogKeys.PATH, deltaLog.dataPath)} after a concurrent commit at " +
+            log"version ${MDC(DeltaLogKeys.VERSION, e.conflictingCommitVersion)}; regenerating " +
+            log"against the refreshed snapshot.")
+          readSnapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
+      }
+    }
+  }
 }

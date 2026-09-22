@@ -39,12 +39,12 @@ jobs:
           key: delta-sbt-cache-cross-spark-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
 
       # publishM2 compiles every aggregated project, including storage, which has
-      # unitycatalog-client as a compile-scope dependency. test_cross_spark_publish.py also
+      # unitycatalog-client as a compile-scope dependency. test_published_artifacts.py also
       # iterates over released Spark versions (sbt -DsparkVersion=<X.Y>), so we need UC's
       # spark connector published for each variant Delta will resolve. Discover the version list
       # at runtime from project/spark-versions.json (same source the matrix workflows use) and
       # invoke the setup script per variant; cache hits (the steady state) make the script a
-      # no-op. Snapshot versions are skipped by the cross-Spark test, so only released ones are
+      # no-op. Snapshot versions are skipped by the published-artifact test, so only released ones are
       # published here.
       - name: Set up pinned Unity Catalog for each released Spark version
         run: |
@@ -54,8 +54,8 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: Run cross-Spark build test
-        run: python project/tests/test_cross_spark_publish.py
+      - name: Test published artifacts
+        run: python project/tests/test_published_artifacts.py
 
       - name: Save SBT cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'

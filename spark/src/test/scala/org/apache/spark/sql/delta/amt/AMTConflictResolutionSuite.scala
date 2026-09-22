@@ -1,0 +1,435 @@
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.spark.sql.delta.amt
+
+import scala.concurrent.duration.Duration
+
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
+import org.apache.spark.sql.delta.{ConcurrentWriteException, DeltaLog, FullAMTWriteFailedWithConflict}
+import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
+import org.apache.spark.sql.delta.util.JsonUtils
+
+import org.apache.spark.SparkException
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.util.ThreadUtils
+
+/**
+ * Conflict-resolution behavior for AMT-backed tables.
+ */
+class AMTConflictResolutionSuite
+  extends AMTCheckpointTestBase
+  with PhaseLockingTestMixin
+  with TransactionExecutionTestMixin {
+
+  import AMTConflictResolutionRoundMetrics._
+  import BackRefRebaseMetrics._
+
+  // A large interval keeps the checkpoint-interval maintenance hook from firing its own checkpoint
+  // mid-test; every AMT write here is one the test drives explicitly.
+  private val noAutoCheckpointInterval = 1000
+
+  private def trackConflictResolutionRounds(
+      f: => Unit): Seq[AMTConflictResolutionRoundMetrics] = {
+    val metrics = Log4jUsageLogger.track(f)
+      .filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains(AMTUsageLogs.CONFLICT_RESOLUTION_ROUND))
+      .map(e => JsonUtils.fromJson[AMTMetrics](e.blob))
+      .filter(_.conflictResolutionMetrics.nonEmpty)
+      .sortBy(_.roundId)
+    assert(metrics.forall(m => m.txnId.nonEmpty && m.roundId > 0),
+      s"conflict rounds must identify their transaction and positive round ID: $metrics")
+    metrics.flatMap(_.conflictResolutionMetrics)
+  }
+
+  private def singleConflictResolutionRound(
+      rounds: Seq[AMTConflictResolutionRoundMetrics]): AMTConflictResolutionRoundMetrics = {
+    assert(rounds.size == 1, s"expected exactly one AMT conflict round, got $rounds")
+    rounds.head
+  }
+
+  /** A transaction body that commits an incremental OPTIMIZE CHECKPOINT (writes a new AMT tree). */
+  private def optimizeCheckpointTxn(deltaLog: DeltaLog): () => Array[Row] = () => {
+    commitCheckpoint(deltaLog, incremental = true)
+    Array.empty
+  }
+
+  /** A transaction body that commits a full-rewrite OPTIMIZE CHECKPOINT (a brand-new AMT tree). */
+  private def fullCheckpointTxn(deltaLog: DeltaLog): () => Array[Row] = () => {
+    commitCheckpoint(deltaLog, incremental = false)
+    Array.empty
+  }
+
+  /** A transaction body that appends `id` as a plain (log-only, no tree) business commit. */
+  private def appendTxn(tableName: String, id: Int): () => Array[Row] = () => {
+    spark.sql(s"INSERT INTO $tableName VALUES ($id)").collect()
+  }
+
+  /** A transaction body that deletes `id` -- a non-blind commit. */
+  private def deleteTxn(tableName: String, id: Int): () => Array[Row] = () => {
+    spark.sql(s"DELETE FROM $tableName WHERE id = $id").collect()
+  }
+
+  /**
+   * Creates an AMT table with a full checkpoint base and a few seeded files, then returns its
+   * [[DeltaLog]].
+   */
+  private def setupAMTTable(tableName: String): DeltaLog = {
+    createAMTTable(tableName, checkpointInterval = noAutoCheckpointInterval)
+    val deltaLog = deltaLogForName(tableName)
+    // Do a full checkpoint -- it is to make sure that incremental checkpoints can be done in tests.
+    commitCheckpoint(deltaLog, incremental = false)
+    appendRowsAsSeparateFiles(tableName, numFiles = 3, startId = 1)
+    deltaLog
+  }
+
+  /**
+   * Awaits `future`, asserting that a losing full maintenance checkpoint signaled a full-AMT
+   * regenerate via [[FullAMTWriteFailedWithConflict]] (distinct from a deferred
+   * [[ConcurrentWriteException]]). Used when the checkpoint is driven directly rather than through
+   * `CheckpointHook`, so the signal surfaces to the caller instead of being retried.
+   */
+  private def assertRetrySignal(future: scala.concurrent.Future[Array[Row]]): Unit = {
+    val ex = intercept[SparkException] {
+      ThreadUtils.awaitResult(future, Duration.Inf)
+    }
+    val causes = Iterator
+      .iterate[Throwable](ex)(t => if (t.getCause eq t) null else t.getCause)
+      .takeWhile(_ != null)
+      .take(50)
+      .toList
+    assert(causes.exists(_.isInstanceOf[FullAMTWriteFailedWithConflict]),
+      s"expected a FullAMTWriteFailedWithConflict in the cause chain, got " +
+        causes.map(_.getClass.getName).mkString(" -> "))
+    assert(!causes.exists(_.isInstanceOf[ConcurrentWriteException]),
+      "the regenerate signal must be distinct from a deferred ConcurrentWriteException.")
+  }
+
+  // A losing OPTIMIZE checkpoint -- whether its first attempt wrote a full or an incremental
+  // tree -- that loses its target version to a single base-preserving log-only winner recommits
+  // its already-written tree as-is at the next version instead of folding the winner in or redoing
+  // the rewrite. The winner survives and the reused tree keeps its full/incremental flag.
+  for ((label, losingCheckpointTxn, reusedTreeIsIncremental) <- Seq(
+      ("full", fullCheckpointTxn _, false),
+      ("incremental", optimizeCheckpointTxn _, true))) {
+    test(s"one Log Commit vs a losing $label OPTIMIZE checkpoint - reuses base") {
+      withTable(s"amt_conflict_${label}_ckpt_one_log_reuse") {
+        val name = s"amt_conflict_${label}_ckpt_one_log_reuse"
+        val deltaLog = setupAMTTable(name)
+        val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+        // A is a losing OPTIMIZE checkpoint describing the read snapshot; B is a plain append that
+        // wins A's target version and only adds brand-new files (defaultRowCommitVersion past A's
+        // read version), so A's tree stays exact and is recommitted as-is.
+        val rounds = trackConflictResolutionRounds {
+          val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+            losingCheckpointTxn(deltaLog),
+            appendTxn(name, id = 100))
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          ThreadUtils.awaitResult(futureA, Duration.Inf)
+        }
+        val round = singleConflictResolutionRound(rounds)
+        assert(round.treeOutcome == REUSED_LOSING_TREE)
+        assert(round.winningCommits.numLogOnly == 1)
+        assert(round.winningCommits.allLogWinnersPreserveLosingTree.contains(true))
+
+        // B survives and A reused its base: the live set reconstructs through A's reused tree plus
+        // B's log delta. The reused checkpoint is A's first-attempt tree recommitted as-is, so its
+        // incremental flag matches the first attempt (full or incremental).
+        val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+        assert(liveIdsAfter == liveIdsBefore + 100,
+          s"B's append must survive A's base reuse; before=$liveIdsBefore after=$liveIdsAfter")
+        val latest = deltaLog.update()
+        val checkpoint = checkpointAt(deltaLog, latest.version).getOrElse(
+          fail("A's rebased commit must carry an AMT checkpoint."))
+        assert(checkpoint.contentRoot.isIncremental.contains(reusedTreeIsIncremental),
+          s"a base-preserving winner must let A recommit its $label base as-is.")
+        assert(amtProvider(latest).isDefined, "the table must remain AMT-backed after the reuse.")
+      }
+    }
+  }
+
+  // A losing OPTIMIZE checkpoint -- whether its first attempt wrote a full or an incremental
+  // tree -- that loses its target version to two base-preserving log-only winners recommits its
+  // already-written tree as-is across the whole conflicted range: both winners survive and a
+  // second base-preserving log winner does not drop it to a ConcurrentWriteException.
+  for ((label, losingCheckpointTxn, reusedTreeIsIncremental) <- Seq(
+      ("full", fullCheckpointTxn _, false),
+      ("incremental", optimizeCheckpointTxn _, true))) {
+    test(s"two Log Commits vs a losing $label OPTIMIZE checkpoint - reuses base") {
+      withTable(s"amt_conflict_${label}_ckpt_two_log_reuse") {
+        val name = s"amt_conflict_${label}_ckpt_two_log_reuse"
+        val deltaLog = setupAMTTable(name)
+        val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+        // A is a losing OPTIMIZE checkpoint describing the read snapshot; B and C are plain appends
+        // that both win versions ahead of A. Both winners only add brand-new files (their
+        // defaultRowCommitVersion postdates A's read version), so A's tree stays exact and it is
+        // recommitted as-is across both winners.
+        val rounds = trackConflictResolutionRounds {
+          val (futureA, futureB, futureC) = runTxnsWithOrder__A_Start__B__C__A_End(
+            losingCheckpointTxn(deltaLog),
+            appendTxn(name, id = 100),
+            appendTxn(name, id = 200))
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          ThreadUtils.awaitResult(futureC, Duration.Inf)
+          ThreadUtils.awaitResult(futureA, Duration.Inf)
+        }
+        val round = singleConflictResolutionRound(rounds)
+        assert(round.treeOutcome == REUSED_LOSING_TREE)
+        assert(round.winningCommits.numLogOnly == 2)
+        assert(round.winningCommits.allLogWinnersPreserveLosingTree.contains(true))
+
+        // All commits survive: the live set reconstructs through A's reused tree plus B's and C's
+        // log deltas. The reused checkpoint is A's first-attempt tree recommitted as-is, so its
+        // incremental flag matches the first attempt (full or incremental).
+        val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+        assert(liveIdsAfter == liveIdsBefore ++ Set(100, 200),
+          s"all commits must survive A's base reuse; before=$liveIdsBefore after=$liveIdsAfter")
+        val latest = deltaLog.update()
+        val checkpoint = checkpointAt(deltaLog, latest.version).getOrElse(
+          fail("A's rebased commit must carry an AMT checkpoint."))
+        assert(checkpoint.contentRoot.isIncremental.contains(reusedTreeIsIncremental),
+          s"a base-preserving winner must let A recommit its $label base as-is.")
+        assert(amtProvider(latest).isDefined, "the table must remain AMT-backed after the reuse.")
+      }
+    }
+  }
+
+  test("Winning Commit [Log Commit] vs Losing commit [inline-incremental commit] - Success") {
+    withTable("amt_conflict_inline_rebase") {
+      val name = "amt_conflict_inline_rebase"
+      val deltaLog = setupAMTTable(name)
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // Threshold 6: A's 10-file insert inlines its AMT tree, while B's single-file append (a
+      // couple of actions) stays log-only. So A is a tree writer losing to a log-only winner -- it
+      // must rebase and rebuild its tree with B folded into the incremental window rather than
+      // hard-failing. Capture A's per-attempt AMT write metrics to inspect the window growth.
+      val perAttempt = trackIncrementalAMTWriteMetricsPerAttempt {
+        withInlineThreshold(6) {
+          val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+            () => { appendRowsAsSeparateFiles(name, numFiles = 10, startId = 100); Array.empty },
+            appendTxn(name, id = 200))
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          ThreadUtils.awaitResult(futureA, Duration.Inf)
+        }
+      }
+
+      // Reading the live set back goes through A's rebased inline tree, so a correct id set proves
+      // the tree folded the winning append.
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore ++ (100 to 109).toSet ++ Set(200),
+        s"both commits must survive the rebase; before=$liveIdsBefore after=$liveIdsAfter")
+      // A's commit rode an inline AMT checkpoint, confirming it took the tree-writing rebase path.
+      val latest = deltaLog.update()
+      assert(checkpointAt(deltaLog, latest.version).isDefined,
+        "the rebased inline commit must carry an AMT checkpoint at its version.")
+      assert(amtProvider(latest).isDefined, "the table must remain AMT-backed after the rebase.")
+
+      // A materialized its tree exactly twice -- once on its first attempt and once on the rebase
+      // -- and the rebase's incremental window folds in exactly one extra commit, the winning
+      // append, so its numIntermediateCommits is precisely one more than the first attempt's.
+      val numIntermediateCommits = perAttempt.map(_.numIntermediateCommits)
+      assert(numIntermediateCommits.size == 2,
+        s"A must materialize exactly twice (first attempt + rebase); got $numIntermediateCommits")
+      assert(numIntermediateCommits(1) == numIntermediateCommits(0) + 1,
+        "the rebase must fold exactly one more intermediate commit (the winning append) than the " +
+          s"first attempt; got $numIntermediateCommits")
+    }
+  }
+
+  test("Winning Commit [Incremental checkpoint commit] vs Losing commit " +
+    "[inline-incremental commit] - Success") {
+    withTable("amt_conflict_inline_vs_tree_winner") {
+      val name = "amt_conflict_inline_vs_tree_winner"
+      val deltaLog = setupAMTTable(name)
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // A's 10-file insert inlines a tree; B installs a new tree (OPTIMIZE CHECKPOINT) and wins A's
+      // target version. A must re-seat its incremental write onto B's tree and rebuild its own tree
+      // on top (re-deriving back references if B's leaf set moved), rather than hard-failing.
+      withInlineThreshold(6) {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+          () => { appendRowsAsSeparateFiles(name, numFiles = 10, startId = 100); Array.empty },
+          optimizeCheckpointTxn(deltaLog))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        ThreadUtils.awaitResult(futureA, Duration.Inf)
+      }
+
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore ++ (100 to 109).toSet,
+        s"A's files must survive the rebase onto the winner's tree; before=$liveIdsBefore " +
+          s"after=$liveIdsAfter")
+      // A's rebased commit rode an inline AMT checkpoint built on the winner's tree.
+      val latest = deltaLog.update()
+      assert(checkpointAt(deltaLog, latest.version).isDefined,
+        "the rebased inline commit must carry an AMT checkpoint at its version.")
+      assert(amtProvider(latest).isDefined, "the table must remain AMT-backed after the rebase.")
+    }
+  }
+
+  test("Winning Commit [log commit] vs Losing commit [log commit] - SUCCESS") {
+    withTable("amt_conflict_log_vs_log") {
+      val name = "amt_conflict_log_vs_log"
+      val deltaLog = setupAMTTable(name)
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // Both A and B are plain appends of distinct rows: neither writes a tree and blind appends do
+      // not logically conflict, so A must rebase past B and commit.
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+        appendTxn(name, id = 100),
+        appendTxn(name, id = 200))
+
+      // Neither future may fail: B wins its version and A rebases onto it.
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+
+      // Neither commit writes a tree, so the base AMT is unchanged. Reading the live set back
+      // still goes through it, and a correct id set proves A rebased its log actions past B.
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore ++ Set(100, 200),
+        s"both appends must survive the rebase; before=$liveIdsBefore after=$liveIdsAfter")
+      assert(amtProvider(deltaLog.update()).isDefined,
+        "the table must remain AMT-backed after the rebase.")
+    }
+  }
+
+  test("Winning Commit [Incremental checkpoint commit] vs Losing commit [log commit] - " +
+    "Success") {
+    withTable("amt_conflict_log_vs_tree_winner") {
+      val name = "amt_conflict_log_vs_tree_winner"
+      val deltaLog = setupAMTTable(name)
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // A is a non-blind DELETE (it removes id 1's file); B installs a new tree (OPTIMIZE
+      // CHECKPOINT) and wins A's target version. A must rebase past the new tree -- re-deriving its
+      // RemoveFile's back reference against it when the tree's leaf set moved -- rather than
+      // hard-failing.
+      val rounds = trackConflictResolutionRounds {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+          deleteTxn(name, id = 1),
+          optimizeCheckpointTxn(deltaLog))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        ThreadUtils.awaitResult(futureA, Duration.Inf)
+      }
+      val round = singleConflictResolutionRound(rounds)
+
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore - 1,
+        s"A's delete must survive the rebase onto the winner's tree; before=$liveIdsBefore " +
+          s"after=$liveIdsAfter")
+      assert(amtProvider(deltaLog.update()).isDefined,
+        "the table must remain AMT-backed after the rebase.")
+      // The rebase really ran: one round re-derived A's RemoveFile back reference against B's tree.
+      assert(round.backRefRebaseMetrics.numActionsRegeneratingBackref.exists(_ >= 1),
+        s"A must record one back-ref rebase that re-derived its RemoveFile; got $round")
+    }
+  }
+
+  test("Winning Commit [Full checkpoint commit] vs Losing commit [log commit] - Success") {
+    withTable("amt_conflict_log_vs_full_tree_winner") {
+      val name = "amt_conflict_log_vs_full_tree_winner"
+      val deltaLog = setupAMTTable(name)
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // A is a non-blind DELETE (it removes id 1's file); B installs a brand-new FULL-rewrite tree
+      // (OPTIMIZE CHECKPOINT, incremental = false) and wins A's target version. A full rewrite
+      // moves every leaf position, so A's RemoveFile back reference is re-derived from scratch
+      // against B's tree before A commits, rather than hard-failing.
+      val rounds = trackConflictResolutionRounds {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+          deleteTxn(name, id = 1),
+          fullCheckpointTxn(deltaLog))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        ThreadUtils.awaitResult(futureA, Duration.Inf)
+      }
+      val round = singleConflictResolutionRound(rounds)
+
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore - 1,
+        s"A's delete must survive the rebase onto the full-rewrite winner's tree; " +
+          s"before=$liveIdsBefore after=$liveIdsAfter")
+      assert(amtProvider(deltaLog.update()).isDefined,
+        "the table must remain AMT-backed after the rebase.")
+      // The rebase really ran: the full rewrite forced A's RemoveFile back reference to be
+      // re-derived against B's tree.
+      assert(round.backRefRebaseMetrics.numActionsRegeneratingBackref.exists(_ >= 1),
+        s"A must record one back-ref rebase that re-derived its RemoveFile; got $round")
+    }
+  }
+
+  test("Winning Commit [Full checkpoint commit] vs Losing commit " +
+    "[inline-incremental commit] - Success") {
+    withTable("amt_conflict_inline_vs_full_tree_winner") {
+      val name = "amt_conflict_inline_vs_full_tree_winner"
+      val deltaLog = setupAMTTable(name)
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // A's 10-file insert inlines a tree; B installs a brand-new FULL-rewrite tree and wins A's
+      // target version. A must re-seat its incremental write onto B's full tree and rebuild its
+      // own tree on top, re-deriving all its back references, rather than hard-failing.
+      withInlineThreshold(6) {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+          () => { appendRowsAsSeparateFiles(name, numFiles = 10, startId = 100); Array.empty },
+          fullCheckpointTxn(deltaLog))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        ThreadUtils.awaitResult(futureA, Duration.Inf)
+      }
+
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore ++ (100 to 109).toSet,
+        s"A's files must survive the rebase onto the full-rewrite winner's tree; " +
+          s"before=$liveIdsBefore after=$liveIdsAfter")
+      val latest = deltaLog.update()
+      assert(checkpointAt(deltaLog, latest.version).isDefined,
+        "the rebased inline commit must carry an AMT checkpoint at its version.")
+      assert(amtProvider(latest).isDefined, "the table must remain AMT-backed after the rebase.")
+    }
+  }
+
+  test("a full OPTIMIZE checkpoint signals a regenerate past a non-base-preserving winner") {
+    withTable("amt_conflict_full_ckpt_regenerate") {
+      val name = "amt_conflict_full_ckpt_regenerate"
+      // setupAMTTable seeds ids 1..3 as separate files before A reads, so their
+      // defaultRowCommitVersion predates A's read version (the full base A rewrote).
+      val deltaLog = setupAMTTable(name)
+
+      // A is a full OPTIMIZE checkpoint. B deletes id = 1, rewriting a file that predates A's base
+      // (its defaultRowCommitVersion < the base version), so B is NOT base-preserving: A cannot
+      // recommit the base as-is and signals a full-AMT regenerate (FullAMTWriteFailedWithConflict).
+      // A is driven as a direct checkpoint commit here, so that signal surfaces to the caller
+      // (folding the winner into the reused base is Part 4.5; CheckpointHook's refresh-and-retry is
+      // covered below).
+      val rounds = trackConflictResolutionRounds {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+          fullCheckpointTxn(deltaLog),
+          deleteTxn(name, id = 1))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        assertRetrySignal(futureA)
+      }
+      val round = singleConflictResolutionRound(rounds)
+      assert(round.treeOutcome == REGENERATE_VIA_TXN_RETRY)
+      assert(round.exceptionThrown.contains(classOf[FullAMTWriteFailedWithConflict].getSimpleName))
+      assert(round.winnerTreeSatisfiesRequirement.isEmpty)
+      assert(round.winningCommits.allLogWinnersPreserveLosingTree.contains(false))
+      assert(amtProvider(deltaLog.update()).isDefined,
+        "the table must remain AMT-backed after the winner's commit.")
+    }
+  }
+
+}

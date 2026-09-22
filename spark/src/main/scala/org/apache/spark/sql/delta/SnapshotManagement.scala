@@ -124,10 +124,18 @@ trait SnapshotManagement { self: DeltaLog =>
     } catch {
       case _: FileNotFoundException => None
     }
+    val filterStagedCommits = spark.conf.get(
+      DeltaSQLConf.DELTA_SNAPSHOT_FILESYSTEM_LISTING_FILTER_STAGED_COMMITS_ENABLED)
     val files =
       filesOpt.map {
       _.flatMap {
-        case DeltaFile(f, fileVersion) =>
+        // A recursive listing can return files from `_staged_commits`. A file in this directory is
+        // not a valid commit until the commit coordinator approves it. By default, accept only
+        // backfilled commit files from the listing. If filtering is disabled, accept all Delta
+        // commit file names as before.
+        case DeltaFile(f, fileVersion) if !filterStagedCommits =>
+          Some((f, FileType.DELTA, fileVersion))
+        case BackfilledDeltaFile(f, fileVersion) =>
           Some((f, FileType.DELTA, fileVersion))
         case CompactedDeltaFile(f, startVersion, endVersion)
             if includeMinorCompactions && versionToLoad.forall(endVersion <= _) =>
@@ -409,11 +417,13 @@ trait SnapshotManagement { self: DeltaLog =>
   private def createLogSegment(
       previousSnapshot: Snapshot,
       catalogTableOpt: Option[CatalogTable],
-      commitCoordinatorOpt: Option[TableCommitCoordinatorClient]): Option[LogSegment] = {
+      commitCoordinatorOpt: Option[TableCommitCoordinatorClient],
+      lastCheckpointInfo: Option[LastCheckpointInfo]): Option[LogSegment] = {
     createLogSegment(
       oldCheckpointProviderOpt = Some(previousSnapshot.checkpointProvider),
       tableCommitCoordinatorClientOpt = commitCoordinatorOpt,
-      catalogTableOpt = catalogTableOpt)
+      catalogTableOpt = catalogTableOpt,
+      lastCheckpointInfo = lastCheckpointInfo)
   }
 
   /**
@@ -437,7 +447,7 @@ trait SnapshotManagement { self: DeltaLog =>
    *                            no checkpoint is selected.
    * @param versionToLoad - version for which we want to create the Snapshot.
    */
-  private def validateDeltaVersions(
+  protected def validateDeltaVersions(
       selectedDeltas: Array[FileStatus],
       checkpointVersion: Long,
       versionToLoad: Option[Long]): Unit = {
@@ -514,8 +524,12 @@ trait SnapshotManagement { self: DeltaLog =>
       val (checkpoints, deltasAndCompactedDeltas) = newFiles.partition(isCheckpointFile)
       val (deltas, compactedDeltas) = deltasAndCompactedDeltas.partition(isDeltaFile)
       // Find the latest checkpoint in the listing that is not older than the versionToLoad
-      val checkpointFiles = checkpoints.map(f => CheckpointInstance(f.getPath))
-      val newCheckpoint = getLatestCompleteCheckpointFromList(checkpointFiles, versionToLoad)
+      val fileBasedCheckpointInstances = checkpoints.map(f => CheckpointInstance(f.getPath))
+      // An AMT checkpoint has no dedicated file in the listing; it is resolved from hint instead.
+      val amtCheckpointInstances = resolveAMTCheckpointInstances(
+        lastCheckpointInfo, oldCheckpointProviderOpt)
+      val checkpointInstances = fileBasedCheckpointInstances ++ amtCheckpointInstances
+      val newCheckpoint = getLatestCompleteCheckpointFromList(checkpointInstances, versionToLoad)
       val newCheckpointVersion = newCheckpoint.map(_.version).getOrElse {
         // If we do not have any checkpoint, pass new checkpoint version as -1 so that first
         // delta version can be 0.
@@ -596,17 +610,25 @@ trait SnapshotManagement { self: DeltaLog =>
         checkpointVersion = newCheckpointVersion,
         versionToLoad = versionToLoad)
 
+      // Supply the non-compacted deltas only when the validation flag is true, which indicates that
+      // the deltas are continuous without gaps.
+      val nonCompactedDeltasOpt = Option.when(validateLogSegmentWithoutCompactedDeltas)(
+        deltasAfterCheckpoint.toSeq)
+
       Some(LogSegment(
         logPath,
         newVersion,
-        deltasAndCompactedDeltasForLogSegment,
-        checkpointProviderOpt,
+        deltas = deltasAndCompactedDeltasForLogSegment,
+        nonCompactedDeltasOpt = nonCompactedDeltasOpt,
+        checkpointProviderOpt = checkpointProviderOpt,
         lastCommitTimestamp))
     }
   }
 
   /**
-   * @param deltasAndCompactedDeltas - all deltas or compacted deltas which could be used
+   * @param deltasAndCompactedDeltas - all deltas or compacted deltas which could be used, assumed
+   *                                   to be sorted lexicographically by filename, e.g.:
+   *                                   [v4.json, v5.v10.compacted.json, v5.json, v6.json, ...]
    * @param deltasAfterCheckpoint - deltas after the last checkpoint file
    * @param latestCommitVersion - commit version for which we are trying to create Snapshot for
    * @param checkpointVersionToUse - underlying checkpoint version to use in Snapshot, -1 if no
@@ -625,7 +647,15 @@ trait SnapshotManagement { self: DeltaLog =>
     val commitRangeCovered = mutable.ArrayBuffer.empty[Long]
     // track if there is at least 1 compacted delta in `deltasAndCompactedDeltas`
     var hasCompactedDeltas = false
+    // track if `deltasAndCompactedDeltas` is already sorted
+    var lastFileNameSeen = ""
+    var isDeltasAndCompactedDeltasSorted = true
     for (file <- deltasAndCompactedDeltas) {
+      if (file.getPath.getName < lastFileNameSeen) {
+        isDeltasAndCompactedDeltasSorted = false
+      }
+      lastFileNameSeen = file.getPath.getName
+
       val (startVersion, endVersion) = file match {
         case CompactedDeltaFile(_, startVersion, endVersion) =>
           hasCompactedDeltas = true
@@ -636,6 +666,8 @@ trait SnapshotManagement { self: DeltaLog =>
 
       // select the compacted delta if the startVersion doesn't straddle `highestVersionSeen` and
       // the endVersion doesn't cross the latestCommitVersion.
+      // When a compacted delta and a non-compacted delta have the same start version, we need the
+      // compacted delta to be evaluated first to prioritize selecting the compacted delta.
       if (highestVersionSeen < startVersion && endVersion <= latestCommitVersion) {
         commitRangeCovered.appendAll(startVersion to endVersion)
         selectedDeltas += file
@@ -654,7 +686,9 @@ trait SnapshotManagement { self: DeltaLog =>
     // either represented by compacted delta or by the delta.
     val requiredCommits = (checkpointVersionToUse + 1) to latestCommitVersion
     val missingCommits = requiredCommits.toSet -- coveredCommits
-    if (!hasDuplicates && missingCommits.isEmpty) return selectedDeltas.toArray
+    if (!hasDuplicates && missingCommits.isEmpty && isDeltasAndCompactedDeltasSorted) {
+      return selectedDeltas.toArray
+    }
 
     // If the above check failed, that means the compacted delta validation failed.
     // Just record that event and return just the deltas (deltasAfterCheckpoint).
@@ -664,8 +698,15 @@ trait SnapshotManagement { self: DeltaLog =>
       "latestCommitVersion" -> latestCommitVersion,
       "checkpointVersionToUse" -> checkpointVersionToUse,
       "hasDuplicates" -> hasDuplicates,
-      "missingCommits" -> missingCommits
+      "missingCommits" -> missingCommits,
+      "isDeltasAndCompactedDeltasSorted" -> isDeltasAndCompactedDeltasSorted
     )
+    deltaAssert(
+      check = isDeltasAndCompactedDeltasSorted,
+      name = "v4amt.useCompactedDeltasForLogSegment.isDeltasAndCompactedDeltasSorted",
+      msg = s"Deltas and compacted deltas are not sorted. [${JsonUtils.toJson(eventData)}]",
+      deltaLog = this,
+      data = eventData)
     recordDeltaEvent(
       provider = this,
       opType = "delta.getLogSegmentForVersion.compactedDeltaValidationFailed",
@@ -701,6 +742,7 @@ trait SnapshotManagement { self: DeltaLog =>
           initialSegmentForNewSnapshot = initialSegmentForNewSnapshot,
           initialTableCommitCoordinatorClient = None,
           catalogTableOpt = initialCatalogTable,
+          lastCheckpointInfo = lastCheckpointOpt,
           isAsync = false)
         currentSnapshot = CapturedSnapshot(snapshot, snapshotInitWallclockTime)
       }
@@ -740,7 +782,8 @@ trait SnapshotManagement { self: DeltaLog =>
       initSegment: LogSegment,
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
-      checksumOpt: Option[VersionChecksum]): Snapshot = {
+      checksumOpt: Option[VersionChecksum],
+      shouldReconcileAMTCheckpointProvider: Boolean = true): Snapshot = {
     val startingFrom = if (!initSegment.checkpointProvider.isEmpty) {
       log" starting from checkpoint version " +
       log"${MDC(DeltaLogKeys.START_VERSION, initSegment.checkpointProvider.version)}."
@@ -749,13 +792,23 @@ trait SnapshotManagement { self: DeltaLog =>
       log"Loading version ${MDC(DeltaLogKeys.VERSION, initSegment.version)}" + startingFrom)
     createSnapshotFromGivenOrEquivalentLogSegment(
         initSegment, tableCommitCoordinatorClientOpt, catalogTableOpt) { segment =>
+      // Start reading the latest commit's CommitInfo (the fallback source of the last manifest
+      // commit reference, used when no CRC is available) in parallel with the CRC read below.
+      val lastCommitInfoFutureOpt = maybeReadLastCommitInfoAsync(
+        segment, shouldReconcileAMTCheckpointProvider)
+      val checksumOptAfterRead = checksumOpt.orElse(
+        readChecksum(segment.version, lastSeenChecksumFileStatusOpt))
+      val finalLogSegment = if (shouldReconcileAMTCheckpointProvider) {
+        reconcileAMTCheckpointProvider(segment, checksumOptAfterRead, lastCommitInfoFutureOpt)
+      } else {
+        segment
+      }
       new Snapshot(
         path = logPath,
         version = segment.version,
-        logSegment = segment,
+        logSegment = finalLogSegment,
         deltaLog = this,
-        checksumOpt = checksumOpt.orElse(
-          readChecksum(segment.version, lastSeenChecksumFileStatusOpt))
+        checksumOpt = checksumOptAfterRead
       )
     }
   }
@@ -826,9 +879,12 @@ trait SnapshotManagement { self: DeltaLog =>
         Some(LogSegment(
           logPath,
           snapshotVersion,
-          deltas,
-          Some(checkpointProvider),
-          deltas.last.getModificationTime))
+          deltas = deltasAfterCheckpoint,
+          // `deltasAfterCheckpoint` comes from a listing with `includeMinorCompactions = false`,
+          // so it must not contain compacted deltas.
+          nonCompactedDeltasOpt = Some(deltasAfterCheckpoint),
+          checkpointProviderOpt = Some(checkpointProvider),
+          deltasAfterCheckpoint.last.getModificationTime))
       case None =>
         val listFromResult =
           listDeltaCompactedDeltaAndCheckpointFiles(
@@ -859,6 +915,9 @@ trait SnapshotManagement { self: DeltaLog =>
           logPath = logPath,
           version = snapshotVersion,
           deltas = deltas,
+          // `deltas` came from a listing with `includeMinorCompactions = false`, so it must not
+          // contain compacted deltas.
+          nonCompactedDeltasOpt = Some(deltas),
           checkpointProviderOpt = None,
           lastCommitTimestamp = deltas.last.getModificationTime))
     }
@@ -876,7 +935,7 @@ trait SnapshotManagement { self: DeltaLog =>
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
       oldCheckpointProvider: CheckpointProvider,
-      amtCheckpointProviderOpt: Option[CheckpointProvider] = None
+      amtCheckpointProviderOpt: Option[AMTCheckpointProvider] = None
       ): LogSegment = recordFrameProfile(
     "Delta", "SnapshotManagement.getLogSegmentAfterCommit") {
     // If the table doesn't have any competing updates, then go ahead and use the optimized
@@ -893,11 +952,7 @@ trait SnapshotManagement { self: DeltaLog =>
         preCommitLogSegment, commit.getFileStatus, committedVersion)
       // The AMT manifest tree is authoritative for state up to its checkpoint version, so install
       // the provider and trim the segment's deltas to versions after it.
-      amtCheckpointProviderOpt.map { cp =>
-        segment.copy(
-          checkpointProvider = cp,
-          deltas = segment.deltas.filter(f => deltaVersion(f) > cp.version))
-      }.getOrElse(segment)
+      amtCheckpointProviderOpt.map(trimLogSegmentToAMTCheckpoint(segment, _)).getOrElse(segment)
     } else {
       val latestCheckpointProvider =
         Seq(preCommitLogSegment.checkpointProvider, oldCheckpointProvider).maxBy(_.version)
@@ -1015,16 +1070,29 @@ trait SnapshotManagement { self: DeltaLog =>
       // the Delta log.
       return (oldLogSegment, Nil)
     }
+    // Pass only checkpoint files that follow the deterministic checkpoint file naming pattern to
+    // getLogSegmentForVersion: every file in its `files` argument must be a FileNames
+    // isCheckpointFile / isCompactedDeltaFile / isDeltaFile, otherwise it fails classifying it.
+    val checkpointTopLevelFiles =
+      oldLogSegment.checkpointProvider.topLevelFiles.filter(isCheckpointFile)
+    // Collect the compacted and non-compacted deltas from the old log segment. The result should be
+    // identical to a listing within this window, which is sorted by the file name.
+    val deltasAndCompactedDeltas =
+      (oldLogSegment.deltas ++ oldLogSegment.nonCompactedDeltasOpt.getOrElse(Seq.empty))
+        .distinct
+        .sortBy(_.getPath.getName)
     val allFiles = (
-      oldLogSegment.checkpointProvider.topLevelFiles ++
-        oldLogSegment.deltas ++
+      checkpointTopLevelFiles ++
+        deltasAndCompactedDeltas ++
         newFiles
       ).toArray
     val lastCheckpointInfo = Option.empty[LastCheckpointInfo]
     val newLogSegment = getLogSegmentForVersion(
       versionToLoad = None,
       files = Some(allFiles),
-      validateLogSegmentWithoutCompactedDeltas = false,
+      // If the old segment's non-compacted deltas are defined, the deltas in `allFiles` will be
+      // continuous without gaps, and hence validatable.
+      validateLogSegmentWithoutCompactedDeltas = oldLogSegment.nonCompactedDeltasOpt.isDefined,
       tableCommitCoordinatorClientOpt = tableCommitCoordinatorClientOpt,
       catalogTableOpt = catalogTableOpt,
       lastCheckpointInfo = lastCheckpointInfo,
@@ -1079,10 +1147,6 @@ trait SnapshotManagement { self: DeltaLog =>
     // that there's no chance of a race condition changing the snapshot partway through the update.
     val capturedSnapshot = currentSnapshot
     val oldVersion = capturedSnapshot.snapshot.version
-    // TODO: implement deltaLog.update() rediscovery for AMT tables.
-    if (capturedSnapshot.snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
-      return capturedSnapshot.snapshot
-    }
     def sendEvent(
       newSnapshot: Snapshot,
       snapshotAlreadyUpdatedAfterRequiredTimestamp: Boolean = false
@@ -1177,12 +1241,14 @@ trait SnapshotManagement { self: DeltaLog =>
     val segmentOpt = createLogSegment(
       previousSnapshot,
       catalogTableOpt,
-      commitCoordinatorOpt)
+      commitCoordinatorOpt,
+      lastCheckpointInfo = None)
     val newSnapshot = getUpdatedSnapshot(
       oldSnapshotOpt = Some(previousSnapshot),
       initialSegmentForNewSnapshot = segmentOpt,
       initialTableCommitCoordinatorClient = commitCoordinatorOpt,
       catalogTableOpt = catalogTableOpt,
+      lastCheckpointInfo = None,
       isAsync = isAsync)
     installSnapshot(newSnapshot, updateStartTimeMs)
   }
@@ -1204,6 +1270,7 @@ trait SnapshotManagement { self: DeltaLog =>
       initialSegmentForNewSnapshot: Option[LogSegment],
       initialTableCommitCoordinatorClient: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
+      lastCheckpointInfo: Option[LastCheckpointInfo],
       isAsync: Boolean): Snapshot = {
     var newSnapshot = getSnapshotForLogSegment(
       oldSnapshotOpt,
@@ -1232,7 +1299,8 @@ trait SnapshotManagement { self: DeltaLog =>
       val segmentOpt = createLogSegment(
         newSnapshot,
         catalogTableOpt,
-        commitCoordinatorOpt)
+        commitCoordinatorOpt,
+        lastCheckpointInfo)
       newSnapshot = getSnapshotForLogSegment(
         Some(newSnapshot),
         segmentOpt,
@@ -1379,7 +1447,8 @@ trait SnapshotManagement { self: DeltaLog =>
       newChecksumOpt: Option[VersionChecksum],
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
-      committedVersion: Long): Snapshot = {
+      committedVersion: Long,
+      shouldReconcileAMTCheckpointProvider: Boolean): Snapshot = {
     logInfo(
       log"Creating a new snapshot v${MDC(DeltaLogKeys.VERSION, initSegment.version)} " +
         log"for commit version ${MDC(DeltaLogKeys.VERSION2, committedVersion)}")
@@ -1399,7 +1468,9 @@ trait SnapshotManagement { self: DeltaLog =>
         initSegment,
         tableCommitCoordinatorClientOpt,
         catalogTableOpt,
-        checksumOpt)
+        checksumOpt,
+        // The AMT checkpoint provider installed here comes from the commit and is authoritative.
+        shouldReconcileAMTCheckpointProvider)
     }
 
     var newSnapshot = createSnapshotWithCrc(snapChecksumOpt)
@@ -1469,7 +1540,7 @@ trait SnapshotManagement { self: DeltaLog =>
       newChecksumOpt: Option[VersionChecksum],
       preCommitLogSegment: LogSegment,
       catalogTableOpt: Option[CatalogTable],
-      amtCheckpointOpt: Option[Checkpoint] = None,
+      amtCheckpointWrittenInCommitOpt: Option[Checkpoint] = None,
       isIdempotentRetry: Boolean = false): Snapshot = {
     var previousSnapshot: Snapshot = null
     recordDeltaOperation(this, "delta.log.updateAfterCommit") {
@@ -1481,8 +1552,8 @@ trait SnapshotManagement { self: DeltaLog =>
         val commitCoordinatorOpt = populateCommitCoordinator(
           spark, catalogTableOpt, previousSnapshot
         )
-        val amtCheckpointProviderOpt =
-          amtCheckpointOpt.map(cp => AMTCheckpointProvider.fromCheckpoint(spark, this, cp))
+        val amtCheckpointProviderOpt = amtCheckpointWrittenInCommitOpt.map(
+          AMTCheckpointProvider.fromCheckpoint(this, _, committedVersion))
         val segment = if (isIdempotentRetry) {
           // The commit already landed and the preCommitLogSegment has been advanced to a
           // segment at  >= committedVersion by conflict checking, so it is already the
@@ -1493,7 +1564,12 @@ trait SnapshotManagement { self: DeltaLog =>
             throw new IllegalStateException(
               "A Commit is required to build the post-commit log segment.")
           }
-          getLogSegmentAfterCommit(
+          // The listing can be stale for a few seconds after a commit due to an
+          // incident on the cloud provider side. Retry the operation a few times.
+          val maxRetries =
+            spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES)
+          var attempt = 0
+          def fetchSegment(): LogSegment = getLogSegmentAfterCommit(
             committedVersion,
             newChecksumOpt,
             preCommitLogSegment,
@@ -1502,23 +1578,45 @@ trait SnapshotManagement { self: DeltaLog =>
             catalogTableOpt,
             previousSnapshot.checkpointProvider,
             amtCheckpointProviderOpt = amtCheckpointProviderOpt)
+          var fetched = fetchSegment()
+          while (attempt < maxRetries && fetched.version < committedVersion) {
+            val backoffMs = math.min(30.seconds.toMillis, 1000L << attempt)
+            logWarning(log"Stale log segment after commit: listed version " +
+              log"${MDC(DeltaLogKeys.VERSION, fetched.version)} < committed version " +
+              log"${MDC(DeltaLogKeys.VERSION2, committedVersion)}.")
+            Thread.sleep(backoffMs)
+            attempt += 1
+            fetched = fetchSegment()
+          }
+          if (attempt > 0 && fetched.version >= committedVersion) {
+            recordDeltaEvent(this, "delta.commit.mitigatedInconsistentList", data = Map(
+              "numRetries" -> attempt,
+              "committedVersion" -> committedVersion,
+              "currentVersion" -> fetched.version
+            ))
+          }
+          fetched
         }
 
         // This likely implies a list-after-write inconsistency
         if (segment.version < committedVersion) {
-          recordDeltaEvent(this, "delta.commit.inconsistentList", data = Map(
+          recordDeltaEvent(this, "delta.assertions.commit.inconsistentList", data = Map(
             "committedVersion" -> committedVersion,
             "currentVersion" -> segment.version
           ))
           throw DeltaErrors.invalidCommittedVersion(committedVersion, segment.version)
         }
 
+        // We only trust the post-commit segment if we've written the AMT checkpoint in this commit.
+        val shouldReconcileAMTCheckpointProvider = amtCheckpointWrittenInCommitOpt.isEmpty &&
+          previousSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
         val newSnapshot = createSnapshotAfterCommit(
           segment,
           newChecksumOpt,
           commitCoordinatorOpt,
           catalogTableOpt,
-          committedVersion)
+          committedVersion,
+          shouldReconcileAMTCheckpointProvider)
         installSnapshot(newSnapshot, updateTimestamp)
       }
       logMetadataTableIdChange(previousSnapshot, updatedSnapshot)
@@ -1679,9 +1777,12 @@ trait SnapshotManagement { self: DeltaLog =>
 }
 
 object SnapshotManagement extends DeltaLogging {
-  // A thread pool for reading checkpoint files and collecting checkpoint v2 actions like
+  // A thread pool for checkpoint resolution.
+  // For v2 checkpoints, we use it to read the checkpoint files and collect the v2 actions like
   // checkpointMetadata, sidecarFiles.
-  private[delta] lazy val checkpointV2ThreadPool = {
+  // For AMT checkpoints, we use it to read the latest commit's CommitInfo during snapshot
+  // construction, as a fallback source when CRC is absent.
+  private[delta] lazy val checkpointThreadPool = {
     val numThreads = SparkSession.active.sessionState.conf.getConf(
       DeltaSQLConf.CHECKPOINT_V2_DRIVER_THREADPOOL_PARALLELISM)
     DeltaThreadPool("checkpointV2-threadpool", numThreads)
@@ -1762,6 +1863,7 @@ object SnapshotManagement extends DeltaLogging {
     oldLogSegment.copy(
       version = committedVersion,
       deltas = oldLogSegment.deltas :+ commitFileStatus,
+      nonCompactedDeltasOpt = oldLogSegment.nonCompactedDeltasOpt.map(_ :+ commitFileStatus),
       lastCommitFileModificationTimestamp = commitFileStatus.getModificationTime)
   }
 }
@@ -1810,7 +1912,10 @@ object SerializableFileStatus {
  *
  * @param logPath The path to the _delta_log directory
  * @param version The Snapshot version to generate
- * @param deltas The delta commit files (.json) to read
+ * @param deltas The delta commit files (.json) to read; may include compacted deltas.
+ * @param nonCompactedDeltasOpt The full list of non-compacted delta commit files, if known. When
+ *                              provided, it must represent all the individual delta files in range
+ *                              [checkpointProvider.version + 1, version].
  * @param checkpointProvider provider to give information about Checkpoint files.
  * @param lastCommitFileModificationTimestamp The "unadjusted" file modification timestamp of the
  *          last commit within this segment. By unadjusted, we mean that the commit timestamps may
@@ -1820,8 +1925,26 @@ case class LogSegment(
     logPath: Path,
     version: Long,
     deltas: Seq[FileStatus],
+    nonCompactedDeltasOpt: Option[Seq[FileStatus]],
     checkpointProvider: UninitializedCheckpointProvider,
     lastCommitFileModificationTimestamp: Long) {
+
+  // Assert the invariants of nonCompactedDeltasOpt in testing.
+  if (DeltaUtils.isTesting) {
+    nonCompactedDeltasOpt.foreach { nonCompactedDeltas =>
+      if (nonCompactedDeltas.exists(!isDeltaFile(_))) {
+        throw new IllegalArgumentException(
+          "nonCompactedDeltasOpt must contain only non-compacted delta files, but got " +
+            s"${nonCompactedDeltas.map(_.getPath.getName)}.")
+      }
+      val actualVersions = nonCompactedDeltas.map(deltaVersion).toList
+      val expectedVersions = ((checkpointProvider.version + 1) to version).toList
+      if (actualVersions != expectedVersions) {
+        throw new IllegalArgumentException(
+          s"Expected nonCompactedDeltasOpt to be $expectedVersions, but got $actualVersions.")
+      }
+    }
+  }
 
   override def hashCode(): Int =
     logPath.hashCode() * 31 + (lastCommitFileModificationTimestamp % 10000).toInt
@@ -1867,6 +1990,28 @@ case class LogSegment(
     // which correctly initializes the lastBackfilledVersionInSegment.
     CoordinatedCommitsUtils.getLastBackfilledFile(deltas).map(getFileVersion)
       .getOrElse(checkpointProvider.version)
+
+  def toPrettyString: String = {
+    // E.g., "[1, 2, <3, 4, 5>, 6]".
+    def renderDeltas(files: Seq[FileStatus]): String = {
+      files.map {
+        case CompactedDeltaFile(_, startVersion, endVersion) =>
+          s"<${(startVersion to endVersion).mkString(", ")}>"
+        case delta =>
+          deltaVersion(delta).toString
+      }.mkString("[", ", ", "]")
+    }
+    s"""
+      |LogSegment(
+      |  logPath = $logPath,
+      |  version = $version,
+      |  deltas = ${renderDeltas(deltas)},
+      |  nonCompactedDeltasOpt = ${nonCompactedDeltasOpt.map(renderDeltas).getOrElse("None")},
+      |  checkpointProvider = ${checkpointProvider.version},
+      |  lastCommitFileModificationTimestamp = $lastCommitFileModificationTimestamp
+      |)
+    """.stripMargin
+  }
 }
 
 /** Exception thrown When [[TableCommitCoordinatorClient.getCommits]] fails due to any reason. */
@@ -1878,10 +2023,12 @@ object LogSegment {
       logPath: Path,
       version: Long,
       deltas: Seq[FileStatus],
+      nonCompactedDeltasOpt: Option[Seq[FileStatus]],
       checkpointProviderOpt: Option[UninitializedCheckpointProvider],
       lastCommitTimestamp: Long): LogSegment = {
     val checkpointProvider = checkpointProviderOpt.getOrElse(EmptyCheckpointProvider)
-    LogSegment(logPath, version, deltas, checkpointProvider, lastCommitTimestamp)
+    LogSegment(
+      logPath, version, deltas, nonCompactedDeltasOpt, checkpointProvider, lastCommitTimestamp)
   }
 
   /** The LogSegment for an empty transaction log directory. */
@@ -1889,6 +2036,7 @@ object LogSegment {
     logPath = path,
     version = -1L,
     deltas = Nil,
+    nonCompactedDeltasOpt = Some(Nil),
     checkpointProviderOpt = None,
     lastCommitTimestamp = -1L)
 }

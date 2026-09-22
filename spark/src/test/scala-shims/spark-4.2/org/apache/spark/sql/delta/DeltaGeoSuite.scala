@@ -606,7 +606,7 @@ class DeltaGeoSuite extends QueryTest
           "'delta.enableDeletionVectors' = 'false'" +
           ")")
       }
-      assert(ex.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+      assert(ex.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION.HUDI_UNSUPPORTED_DATA_TYPE",
         s"Expected DELTA_UNIVERSAL_FORMAT_VIOLATION, got: ${ex.getErrorClass}")
       assert(ex.getMessage.toLowerCase(java.util.Locale.ROOT).contains("geometry"),
         s"Expected message to mention GeometryType, got: ${ex.getMessage}")
@@ -622,7 +622,7 @@ class DeltaGeoSuite extends QueryTest
           "'delta.enableDeletionVectors' = 'false'" +
           ")")
       }
-      assert(ex.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+      assert(ex.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION.HUDI_UNSUPPORTED_DATA_TYPE",
         s"Expected DELTA_UNIVERSAL_FORMAT_VIOLATION, got: ${ex.getErrorClass}")
       assert(ex.getMessage.toLowerCase(java.util.Locale.ROOT).contains("geography"),
         s"Expected message to mention GeographyType, got: ${ex.getMessage}")
@@ -640,7 +640,7 @@ class DeltaGeoSuite extends QueryTest
           "'delta.enableDeletionVectors' = 'false'" +
           ")")
       }
-      assert(ex.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+      assert(ex.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION.HUDI_UNSUPPORTED_DATA_TYPE",
         s"Expected DELTA_UNIVERSAL_FORMAT_VIOLATION, got: ${ex.getErrorClass}")
     }
   }
@@ -1161,7 +1161,7 @@ class DeltaGeoSuite extends QueryTest
           "'delta.enableDeletionVectors' = 'false', " +
           "'delta.columnMapping.mode' = 'name')")
       }
-      assert(ex.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+      assert(ex.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION.HUDI_UNSUPPORTED_DATA_TYPE",
         s"Unexpected error class: ${ex.getErrorClass}")
       assert(ex.getMessage.contains("hudi"),
         s"Expected message to mention hudi, got: ${ex.getMessage}")

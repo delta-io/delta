@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CommittedTransaction, DeltaOperations}
+import org.apache.spark.sql.delta.CommittedTransaction
+import org.apache.spark.sql.delta.amt.AMTUtils
 
 import org.apache.spark.sql.SparkSession
 
@@ -27,37 +28,23 @@ object CheckpointHook extends PostCommitHook {
   override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
     if (!txn.maintenanceOperation.shouldCheckpoint) return
 
-    // AMT tables checkpoint by rewriting their manifest tree via a follow-up OPTIMIZE CHECKPOINT
-    // commit rather than a standalone checkpoint file.
-    if (txn.postCommitSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
-      val triggerMode = txn.maintenanceOperation.amtTriggerModeOpt.getOrElse {
-        throw new IllegalStateException(
-          "An AMT table scheduled a checkpoint but carries no AMTTriggerMode.")
+    val snapshotToCheckpoint =
+      if (AMTUtils.amtEnabled(txn.postCommitSnapshot)) {
+        txn.postCommitSnapshot
+      } else {
+        // Two txns writing multi-part checkpoints at the same version has the risk of corruption.
+        // So make sure the txn write the checkpoint only for the version it created.
+        val cp = txn.postCommitSnapshot.checkpointProvider
+        txn.deltaLog.getSnapshotAt(
+          txn.committedVersion,
+          lastCheckpointHint = None,
+          lastCheckpointProvider = Some(cp),
+          catalogTableOpt = txn.catalogTable,
+          enforceTimeTravelWithinDeletedFileRetention = false)
       }
-      writeAMTCheckpoint(
-        txn, incremental = triggerMode.isIncremental, triggerName = triggerMode.name)
-      return
-    }
-
-    // Since the postCommitSnapshot isn't guaranteed to match committedVersion, we have to
-    // explicitly checkpoint the snapshot at the committedVersion.
-    val cp = txn.postCommitSnapshot.checkpointProvider
-    val snapshotToCheckpoint = txn.deltaLog.getSnapshotAt(
-      txn.committedVersion,
-      lastCheckpointHint = None,
-      lastCheckpointProvider = Some(cp),
-      catalogTableOpt = txn.catalogTable,
-      enforceTimeTravelWithinDeletedFileRetention = false)
-    txn.deltaLog.checkpoint(snapshotToCheckpoint, txn.catalogTable)
-  }
-
-  /**
-   * Attempts a Manifest Commit on the table.
-   */
-  private def writeAMTCheckpoint(
-      txn: CommittedTransaction, incremental: Boolean, triggerName: String): Unit = {
-    val checkpointTxn =
-      txn.deltaLog.startTransaction(txn.catalogTable, Some(txn.postCommitSnapshot))
-    checkpointTxn.commit(Seq.empty, DeltaOperations.OptimizeCheckpoint(incremental, triggerName))
+    txn.deltaLog.checkpoint(
+      snapshotToCheckpoint,
+      txn.catalogTable,
+      amtTriggerModeOpt = txn.maintenanceOperation.amtTriggerModeOpt)
   }
 }

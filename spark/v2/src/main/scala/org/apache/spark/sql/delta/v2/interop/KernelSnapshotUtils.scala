@@ -19,18 +19,13 @@ package org.apache.spark.sql.delta.v2.interop
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.OptionConverters._
 
-import org.apache.spark.sql.delta.actions.{
-  AddFile,
-  DeletionVectorDescriptor => V1DeletionVectorDescriptor
-}
-import org.apache.spark.sql.delta.implicits._
 import io.delta.kernel.data.MapValue
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl}
-import io.delta.kernel.internal.actions.{
-  AddFile => KernelAddFile,
-  DeletionVectorDescriptor => KernelDeletionVectorDescriptor
-}
+import io.delta.kernel.internal.actions.{AddFile => KernelAddFile, DeletionVectorDescriptor => KernelDeletionVectorDescriptor}
+
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor => V1DeletionVectorDescriptor}
+import org.apache.spark.sql.delta.implicits._
 
 import org.apache.spark.sql.{Dataset, SparkSession}
 
@@ -67,7 +62,7 @@ private[delta] object KernelSnapshotUtils {
       kernelSnapshot: SnapshotImpl,
       engine: Engine): Seq[AddFile] = {
     val scan = kernelSnapshot.getScanBuilder.build().asInstanceOf[ScanImpl]
-    val scanFileBatches = scan.getScanFiles(engine, true /* includeStats */)
+    val scanFileBatches = scan.getScanFiles(engine, true /* includeStats */ )
     try {
       val files = ArrayBuffer.empty[AddFile]
       while (scanFileBatches.hasNext) {
@@ -75,7 +70,7 @@ private[delta] object KernelSnapshotUtils {
         try {
           while (rows.hasNext) {
             val kernelAddFile = new KernelAddFile(
-              rows.next().getStruct(0 /* addFileColumnOrdinal */))
+              rows.next().getStruct(0 /* addFileColumnOrdinal */ ))
             files += toV1AddFile(kernelAddFile)
           }
         } finally {
@@ -92,8 +87,8 @@ private[delta] object KernelSnapshotUtils {
    * Builds one V1 [[AddFile]] from one Kernel AddFile.
    *
    * The returned AddFile keeps the path, partition values, size, modification time, stats,
-   * deletion vector, and row tracking fields from Kernel. The row tracking fields are baseRowId
-   * and defaultRowCommitVersion.
+   * tags, deletion vector, and row tracking fields from Kernel. The row tracking fields are
+   * baseRowId and defaultRowCommitVersion.
    */
   private def toV1AddFile(kernelAddFile: KernelAddFile): AddFile = {
     AddFile(
@@ -104,6 +99,7 @@ private[delta] object KernelSnapshotUtils {
       // V1 Snapshot.allFiles normalizes active files to dataChange = false.
       dataChange = false,
       stats = kernelAddFile.getStatsJson.toScala.orNull,
+      tags = toV1Tags(kernelAddFile),
       deletionVector = toV1DeletionVectorDescriptor(kernelAddFile),
       baseRowId = kernelAddFile.getBaseRowId.toScala.map(_.longValue()),
       defaultRowCommitVersion =
@@ -152,5 +148,24 @@ private[delta] object KernelSnapshotUtils {
     } else {
       Map.empty
     }
+  }
+
+  /**
+   * Returns the tags for one AddFile as a Scala map.
+   *
+   * Kernel stores tags as an optional string-to-string map, the same shape as partition values.
+   * A missing Kernel tags map stays null, matching V1 AddFile.tags.
+   */
+  private def toV1Tags(kernelAddFile: KernelAddFile): Map[String, String] = {
+    kernelAddFile.getTags.toScala
+      .map { tags =>
+        val keys = tags.getKeys
+        val values = tags.getValues
+        (0 until tags.getSize).map { index =>
+          val value = if (values.isNullAt(index)) null else values.getString(index)
+          keys.getString(index) -> value
+        }.toMap
+      }
+      .orNull
   }
 }
