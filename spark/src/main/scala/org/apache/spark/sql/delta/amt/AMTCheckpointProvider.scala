@@ -237,8 +237,7 @@ final class AMTCheckpointProvider(
     if (committedFiles.isEmpty) return
 
     val expectedKeyToBackreferenceMap =
-      liveAddSingleActions(spark, deltaLog)
-        .collect()
+        liveAddSingleActions(spark, deltaLog).collect()
         .map { singleAction =>
           singleAction.add.toUniqueFileActionTuple(tableRoot, useObjectIdentity = true) ->
             singleAction.add.backReference
@@ -401,10 +400,11 @@ object AMTCheckpointProvider {
       DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
     // The root manifest is small (one row per leaf), so collect it to the driver to enumerate the
     // leaf pointers.
-    val leaves = loadEntries(deltaLog, index, checkpoint.metaData, checkpoint.protocol)
-      .collect().toSeq
-      .filter(_.content_type == AMTSingleAction.ContentType.Type.DataManifest)
-      .map(_.unwrap.asInstanceOf[DataManifestEntry])
+    val leaves =
+      loadEntries(deltaLog, index, checkpoint.metaData, checkpoint.protocol).collect()
+        .toSeq
+        .filter(_.content_type == AMTSingleAction.ContentType.Type.DataManifest)
+        .map(_.unwrap.asInstanceOf[DataManifestEntry])
     new AMTCheckpointProvider(
       manifestCommitVersion = manifestCommitVersion,
       checkpointAction = checkpoint,
@@ -420,8 +420,8 @@ object AMTCheckpointProvider {
     val rootFile = checkpoint.contentRoot.toFileStatus(tableRoot)
     val index =
       DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
-    loadEntries(deltaLog, index, checkpoint.metaData, checkpoint.protocol)
-      .collect().toSeq
+    loadEntries(deltaLog, index, checkpoint.metaData, checkpoint.protocol).collect()
+      .toSeq
       .filter(_.content_type == AMTSingleAction.ContentType.Type.Data)
       .map(_.unwrap.asInstanceOf[DataEntry])
       .filter(e => Tracking.Status.liveEntryStatuses.contains(e.tracking.status))

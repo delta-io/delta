@@ -517,7 +517,8 @@ object DataEntry {
       // rowTracking-enabled table can reconstruct them on read.
       tracking = tracking.copy(
         first_row_id = add.baseRowId,
-        file_sequence_number = add.defaultRowCommitVersion),
+        sequence_number = add.defaultRowCommitVersion,
+        file_sequence_number = add.effectiveFileSequenceNumber),
       // Iceberg field 103 is the physical record count of the file, not the live/logical
       // count after deletes; throw rather than guess when the AddFile carries no stats.
       record_count = add.numPhysicalRecords.getOrElse(
@@ -733,16 +734,22 @@ case class DataManifestEntry(
    * populated pair is malformed and rejected.
    */
   @JsonIgnore
-  def manifestDV: Option[(Array[Byte], Long)] =
-    (manifest_info.dv, manifest_info.dv_cardinality) match {
-      case (Some(dvBytes), Some(cardinality)) => Some((dvBytes, cardinality))
-      case (None, None) => None
-      case _ =>
-        throw new IllegalStateException(
-          s"Malformed manifest DV on leaf $location: dv and dv_cardinality must both be set or " +
-            s"both unset (dv.isDefined=${manifest_info.dv.isDefined}, " +
-            s"dv_cardinality=${manifest_info.dv_cardinality}).")
+  def manifestDV: Option[(Array[Byte], Long)] = {
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = manifest_info.dv.isDefined == manifest_info.dv_cardinality.isDefined,
+      opTypeSuffix = AMTUsageLogs.ALERT_MALFORMED_MANIFEST_DV,
+      message =
+        s"Malformed manifest DV on leaf $location: dv and dv_cardinality must both be set or " +
+          s"both unset (dv.isDefined=${manifest_info.dv.isDefined}, " +
+          s"dv_cardinality=${manifest_info.dv_cardinality}).",
+      data = Map(
+        "leafLocation" -> location,
+        "dvIsDefined" -> manifest_info.dv.isDefined,
+        "dvCardinalityIsDefined" -> manifest_info.dv_cardinality.isDefined))
+    manifest_info.dv.flatMap { dv =>
+      manifest_info.dv_cardinality.map(cardinality => (dv, cardinality))
     }
+  }
 }
 
 /**

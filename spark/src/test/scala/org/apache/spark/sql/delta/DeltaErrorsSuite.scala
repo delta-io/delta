@@ -41,17 +41,19 @@ import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
+import org.mockito.Mockito.{mock, when}
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.{SparkContext, SparkThrowable}
+import org.apache.spark.{ErrorClassesJsonReader, SparkContext, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable}
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, Length, LessThanOrEqual, Literal, SparkVersion}
 import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
+import org.apache.spark.sql.catalyst.util.sideBySide
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryErrorsBase
@@ -90,8 +92,6 @@ trait DeltaErrorsSuiteBase
       DeltaErrors.incorrectLogStoreImplementationException(sparkConf, new Throwable()),
     "sourceNotDeterministicInMergeException" ->
       DeltaErrors.sourceNotDeterministicInMergeException(spark),
-    "columnMappingAdviceMessage" ->
-      DeltaErrors.columnRenameNotSupported,
     "icebergClassMissing" -> DeltaErrors.icebergClassMissing(sparkConf, new Throwable()),
     "tableFeatureReadRequiresWriteException" ->
       DeltaErrors.tableFeatureReadRequiresWriteException(requiredWriterVersion = 7),
@@ -752,9 +752,36 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.cannotChangeDataType("example message")
+        throw DeltaErrors.cannotChangeDataType(
+          DataTypeChangeViolation.ChangeDataType(
+            column = "col", fromType = IntegerType, toType = LongType))
       }
-      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE", "429BQ", Map("dataType" -> "example message"))
+      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE.CHANGE_DATA_TYPE", "429BQ",
+        Map("columnName" -> "col", "fromType" -> "INT", "toType" -> "BIGINT"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotChangeDataType(
+          DataTypeChangeViolation.AddNonNullableColumn("col"))
+      }
+      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE.ADD_NON_NULLABLE_COLUMN", "429BQ",
+        Map("columnName" -> "col"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotChangeDataType(
+          DataTypeChangeViolation.DropColumns(Seq("col1", "col2")))
+      }
+      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE.DROP_COLUMNS", "429BQ",
+        Map("columnNames" -> "col1, col2"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotChangeDataType(
+          DataTypeChangeViolation.TightenNullability("col"))
+      }
+      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE.TIGHTEN_NULLABILITY", "429BQ",
+        Map("columnName" -> "col"))
     }
     {
       val table = CatalogTable(TableIdentifier("my table"), null, null, null)
@@ -912,12 +939,16 @@ trait DeltaErrorsSuiteBase
       val s1 = StructType(Seq(StructField("c0", IntegerType)))
       val s2 = StructType(Seq(StructField("c0", StringType)))
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.alterTableReplaceColumnsException(s1, s2, "incompatible")
+        throw DeltaErrors.alterTableReplaceColumnsException(
+          s1, s2, DataTypeChangeViolation.ChangeDataType(
+            column = "c0", fromType = IntegerType, toType = StringType))
       }
-      checkError(e, "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP", "0AKDC", Map(
-        "details" -> "incompatible",
+      checkError(e, "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP.CHANGE_DATA_TYPE", "0AKDC", Map(
         "oldSchema" -> s1.treeString,
-        "newSchema" -> s2.treeString))
+        "newSchema" -> s2.treeString,
+        "columnName" -> "c0",
+        "fromType" -> "INT",
+        "toType" -> "STRING"))
     }
     {
       checkError(
@@ -1021,7 +1052,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.failRelativizePath("somePath")
       }
-      checkError(e, "DELTA_FAIL_RELATIVIZE_PATH", "XXKDS", Map(
+      checkError(e, "DELTA_FAIL_RELATIVIZE_PATH", "22KD1", Map(
         "path" -> "somePath",
         "config" -> DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR.key
       ))
@@ -3049,6 +3080,97 @@ trait DeltaErrorsSuiteBase
     }
     checkError(wrapped, "DELTA_CHANGELOG_READ_FAILED.PLAN_INPUT_PARTITIONS", "XXKDS",
       Map.empty[String, String])
+  }
+
+  // Message templates keyed by the fully-qualified error class (including any sub-class).
+  protected lazy val deltaErrorClassToInfoMap =
+    new ErrorClassesJsonReader(Seq(DeltaThrowableHelper.deltaErrorClassSource)).errorInfoMap
+
+  /**
+   * Asserts that the message of sub-class `subClass` is byte-for-byte identical across every error
+   * class in `errorClasses`. Duplicated messages that are meant to stay in sync drift apart over
+   * time; this check catches accidental divergence so a single edit cannot silently desync them.
+   */
+  protected def assertIdenticalSubClassMessage(
+      errorClasses: Seq[String], subClass: String): Unit = {
+    // Group the error classes by their message for `subClass`. They must all share one message,
+    // i.e. the grouping must collapse to a single entry.
+    val classesByMessage = errorClasses.groupBy { errorClass =>
+      deltaErrorClassToInfoMap(errorClass).subClass.getOrElse(Map.empty)(subClass).messageTemplate
+    }
+    if (classesByMessage.size > 1) {
+      val groups =
+        classesByMessage.values.map(_.sorted.mkString("{", ", ", "}")).mkString(", ")
+      val differingMessages = classesByMessage.keys.take(2).toSeq
+      val diff = sideBySide(differingMessages(0), differingMessages(1)).mkString("\n")
+      fail(
+        s"The '$subClass' sub-class message must be identical across " +
+          s"${errorClasses.mkString(", ")}, but these groups use different messages: " +
+          s"$groups\nExample difference:\n$diff")
+    }
+  }
+
+  test("ENABLE_COLUMN_MAPPING advice is identical across the DROP/RENAME COLUMN errors") {
+    assertIdenticalSubClassMessage(
+      Seq("DELTA_UNSUPPORTED_DROP_COLUMN", "DELTA_UNSUPPORTED_RENAME_COLUMN"),
+      "ENABLE_COLUMN_MAPPING")
+  }
+
+  test("DROP/RENAME COLUMN advise enabling column mapping") {
+    val minProtocol = ColumnMappingTableFeature.minProtocolVersion
+    val versionParams = Map(
+      "readerVersion" -> minProtocol.minReaderVersion.toString,
+      "writerVersion" -> minProtocol.minWriterVersion.toString)
+
+    // Without a column-mapping suggestion, only the base message (no sub-class) is used.
+    checkError(
+      intercept[DeltaAnalysisException] {
+        throw DeltaErrors.dropColumnNotSupported(suggestUpgrade = false)
+      },
+      "DELTA_UNSUPPORTED_DROP_COLUMN", "0AKDC", Map.empty[String, String])
+
+    checkError(
+      intercept[DeltaAnalysisException] {
+        throw DeltaErrors.dropColumnNotSupported(suggestUpgrade = true)
+      },
+      "DELTA_UNSUPPORTED_DROP_COLUMN.ENABLE_COLUMN_MAPPING", "0AKDC", versionParams)
+
+    checkError(
+      intercept[DeltaAnalysisException] {
+        throw DeltaErrors.columnRenameNotSupported
+      },
+      "DELTA_UNSUPPORTED_RENAME_COLUMN.ENABLE_COLUMN_MAPPING", "0AKDC", versionParams)
+  }
+
+  test("catalog-managed maintenance operation uses the catalog allowlist") {
+    val managedSnapshot = mock(classOf[SnapshotDescriptor])
+    when(managedSnapshot.isCatalogOwned).thenReturn(true)
+    val property = CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY
+
+    def tableWithOperations(value: String): CatalogTable = CatalogTable(
+      identifier = TableIdentifier("table"),
+      tableType = CatalogTableType.MANAGED,
+      storage = CatalogStorageFormat.empty.copy(
+        properties = Map(property -> value)),
+      schema = new StructType())
+
+    DeltaErrors.checkCatalogManagedTableOperationAllowed(
+      CatalogManagedTableMaintenanceOperation.DATA_CLEANUP,
+      managedSnapshot,
+      Some(tableWithOperations("DATA_CLEANUP,METADATA_CLEANUP")))
+
+    intercept[DeltaUnsupportedOperationException] {
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_REORGANIZATION,
+        managedSnapshot,
+        Some(tableWithOperations("DATA_CLEANUP,METADATA_CLEANUP")))
+    }
+    intercept[DeltaUnsupportedOperationException] {
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_CLEANUP,
+        managedSnapshot,
+        None)
+    }
   }
 
   private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {

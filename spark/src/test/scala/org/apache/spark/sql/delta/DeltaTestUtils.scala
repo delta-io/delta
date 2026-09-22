@@ -477,6 +477,37 @@ trait DeltaCheckpointTestUtils
   }
 }
 
+trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
+  self: SparkFunSuite with SharedSparkSession =>
+
+  /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
+  protected def minorCompactDeltaLog(
+      tablePath: String,
+      startVersion: Long,
+      endVersion: Long): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    val snapshotForReplay = deltaLog.update()
+    val logReplay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = None,
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
+        snapshotForReplay.metadata, snapshotForReplay.protocol, spark))
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+
+    (startVersion to endVersion).foreach { versionToRead =>
+      val file = FileNames.unsafeDeltaFile(deltaLog.logPath, versionToRead)
+      val actionsIterator = deltaLog.store.readAsIterator(file, hadoopConf).map(Action.fromJson)
+      logReplay.append(versionToRead, actionsIterator)
+    }
+    deltaLog.store.write(
+      path = FileNames.compactedDeltaFile(deltaLog.logPath, startVersion, endVersion),
+      actions = logReplay.checkpoint.map(_.json).toIterator,
+      overwrite = true,
+      hadoopConf = hadoopConf)
+  }
+}
+
 object DeltaTestUtils extends DeltaTestUtilsBase {
 
   sealed trait TableIdentifierOrPath
@@ -503,6 +534,25 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
       dataChange: Boolean = true,
       stats: String = "{\"numRecords\": 1}"): AddFile = {
     AddFile(encodedPath, partitionValues, size, modificationTime, dataChange, stats)
+  }
+
+  /**
+   * Rewrites the `dataChange` an existing commit records in its [[CommitInfo]], leaving its file
+   * actions untouched so that the two can be made to disagree -- which no write path produces, and
+   * which is the only way to observe which of the two a reader consulted.
+   */
+  def recordDataChangeInCommitInfo(
+      deltaLog: DeltaLog, version: Long, dataChange: Option[Boolean]): Unit = {
+    val conf = deltaLog.newDeltaHadoopConf()
+    val commitFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+    val rewritten = deltaLog.store.read(commitFile, conf).map { line =>
+      Action.fromJson(line) match {
+        case commitInfo: CommitInfo => commitInfo.copy(dataChange = dataChange).json
+        case _ => line
+      }
+    }
+    deltaLog.store.write(commitFile, rewritten.toIterator, overwrite = true, conf)
+    DeltaLog.clearCache()
   }
 
 
