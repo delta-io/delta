@@ -122,15 +122,19 @@ using [Column File Descriptors](#column-file-descriptor-struct).
 
 ## Column File Format
 
-A column file is a Parquet file associated with exactly one base data file. Its columns are
-`_last_updated_sequence_number` and a subset of columns of the base file with nullability on top
-(i.e. `INTEGER NOT NULL`/`Int` in the base file becomes `INTEGER`/`Option[Int]` in the column file).
-It has one row for each physical row in the base file.
+A column file is a Parquet file associated with exactly one base data file. It contains the
+following columns:
 
-`_last_updated_sequence_number` stores row lineage information for Iceberg V4 change detection. In
-Delta, it contains either the commit version of the update that last changed this row, or `NULL` to
-indicate that the most recent update changed this row. The name mentions sequence numbers only for
-Iceberg compatibility, in Delta it still stores the Delta commit version.
+- a row commit version field (`delta.rowTracking.materializedRowCommitVersionColumnName`), this
+  column gets field id 2147483539 for Iceberg V4 compatibility,
+- a subset of base file columns with added nullability (i.e. `INTEGER NOT NULL`/`Int` in the base
+  file becomes `INTEGER`/`Option[Int]` in the column file).
+
+A column file has one row for each physical row in the base file, and these rows are in the same
+order.
+
+The row commit version column contains either the commit version of the update that last changed
+this row, or `NULL` to indicate that the most recent update changed this row.
 
 The rest are value columns that represent the current values for the associated base file columns.
 Values associated with base file rows that are already deleted by a DV might contain either stale
@@ -153,11 +157,11 @@ sizeInBytes | Long | The size of the column file in bytes. | required
 `ColumnFileDescriptor` within a single `add`. At the moment, only top-level fields are supported for
 Column Updates.
 
-`_last_updated_sequence_number`, despite being a metadata column that is always included in the
-file, gets field id 2147483539, which must only be included to indicate that the associated column
-file is the most recently written one. This implies that for file actions that contain any non-zero
-amount of column files, there must be exactly one `ColumnFileDescriptor` that contains the field id
-for `_last_updated_sequence_number`.
+The row commit version field, despite being a metadata column that is always included in the file,
+gets field id 2147483539, which must only be included in `fieldIds` to indicate that the associated
+column file is the most recently written one. This implies that for file actions that contain any
+non-zero amount of column files, there must be exactly one `ColumnFileDescriptor` that contains this
+field id.
 
 ## Column File Set Identity
 
@@ -187,17 +191,22 @@ same number of physical rows as base files.
 
 ## Writer Requirements for Column Updates
 
-During a write that uses the Column Updates feature, the writer must:
+During a write that uses the Column Updates feature, the writer is free to choose for each file
+whether to write out a column file, a DV, or any other way of updating data.
+
+If the writer chooses to not write a column file, the only requirement is not dropping any
+`ColumnFileDescriptor`s if keeping the same base file.
+
+If the writer chooses to write a column file, the writer must:
 
 1. copy over all previous `ColumnFileDescriptor`s;
 2. for each field that contains changes in the current write, remove its field id from all
    `ColumnFileDescriptor`s;
-3. remove field id for `_last_updated_sequence_number` from any `ColumnFileDescriptor`s that contain
-   it;
+3. remove the commit version field id from any `ColumnFileDescriptor`s that contain it;
 4. add a new `ColumnFileDescriptor` that contains the newly written column file path, along with all
-   field ids that contain changes in the current write and field id for
-   `_last_updated_sequence_number`;
-5. remove all `ColumnFileDescriptor`s that contain no associated field ids as a result of step (2).
+   field ids that contain changes in the current write and the commit version field id;
+5. remove all `ColumnFileDescriptor`s that contain no associated field ids as a result of step (2);
+6. update the `defaultRowCommitVersion` to the commit version of the current operation.
 
 ## Column File Cleanup
 
@@ -212,7 +221,7 @@ file.
 
 This table shows the Parquet files and log actions after each statement, assuming every `UPDATE`
 uses the Column Updates feature. The example assumes that the column `foo` has Column Mapping ID 7,
-and column `bar` has ID 8. The table abbreviates `_last_updated_sequence_number` to `_lusn`, and
+and column `bar` has ID 8. The table uses `_lusn` as the row commit version column name, and
 `add`/`remove` actions only contain relevant fields.
 
 <table>
@@ -374,6 +383,24 @@ WHERE key = 'a'
 </table>
 
 --------
+
+## Interactions with other table features
+
+### Adaptive Metadata Tree
+
+When `adaptiveMetadata` is enabled, the `remove` and replacement `add` actions for a column update
+must reference the old base file entry according to the AMT
+[backreference requirements](iceberg-v4-metadata.md#backreferences).
+
+`file_sequence_number`s contain information about versions in which the base file was introduced,
+column updates must keep these unchanged.
+
+`latest_column_file_snapshot_id`s contain information about the snapshot that introduced the latest
+column file, column updates should rewrite them to new values.
+
+For example, a base file added in version 10 and updated through a column file in version 20 has
+`file_sequence_number = 10` and `sequence_number = 20`. DV-only updates and metadata-only rewrites
+must preserve all three tracking fields.
 
 ## Valid Feature Names in Table Features
 
