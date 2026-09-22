@@ -459,18 +459,15 @@ class AMTWriterManager(
           //  => they should have old defaultRowCommitVersion
           // Which contradicts the above check.
           winningCommitMetricsForConflictedRange.foreach { m =>
-            deltaAssertAndThrow(
-              check = m.numAddFilesWithBackreferences == 0 &&
+            AMTUtils.invariantCheckWithLogging(
+              checkInvariant = m.numAddFilesWithBackreferences == 0 &&
                 m.numRemoveFilesWithBackreferences == 0,
-              name = AMTUsageLogs
-                .ALERT_SUFFIX_FILE_CONTAINS_NEW_SEQ_NUMBERS_BUT_NON_EMPTY_BACKREFERENCE,
-              msg = "A base-preserving winner must carry no back references into the base tree " +
-                s"at version $baseVersion, but found ${m.numAddFilesWithBackreferences} Add and " +
+              opTypeSuffix =
+                AMTUsageLogs.ALERT_FILE_CONTAINS_NEW_SEQ_NUMBERS_BUT_NON_EMPTY_BACKREFERENCE,
+              message = "A base-preserving winner must carry no back references into the " +
+                s"base tree at version $baseVersion, but found " +
+                s"${m.numAddFilesWithBackreferences} Add and " +
                 s"${m.numRemoveFilesWithBackreferences} Remove file actions with back references.",
-              throwable = new IllegalStateException(
-                s"Base-preserving winner has ${m.numAddFilesWithBackreferences} Add and " +
-                  s"${m.numRemoveFilesWithBackreferences} Remove file actions with back " +
-                  s"references at base version $baseVersion."),
               deltaLog = deltaLog)
           }
           metrics.conflictResolutionMetrics.foreach(_.updateOutcome(REUSED_LOSING_TREE))
