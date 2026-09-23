@@ -29,7 +29,6 @@ import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinition
 import com.databricks.spark.util.TagDefinitions._
-import org.apache.spark.sql.delta.v2.interop.DeltaV2TableManager
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
@@ -91,8 +90,7 @@ class DeltaLog private(
   with DeltaFileFormat
   with ProvidesUniFormConverters
   with ReadChecksum
-  with DeltaLoggingProvider
-  with DeltaV2TableManager {
+  with DeltaLoggingProvider {
 
   import org.apache.spark.sql.delta.files.TahoeFileIndex
   import org.apache.spark.sql.delta.util.FileNames._

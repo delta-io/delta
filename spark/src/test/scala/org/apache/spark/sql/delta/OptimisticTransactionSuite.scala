@@ -227,7 +227,7 @@ class OptimisticTransactionSuite
       t => t.metadata
     ),
     concurrentWrites = Seq(
-      Metadata()),
+      testDefaultMetadata()),
     actions = Nil)
 
   check(
@@ -288,6 +288,25 @@ class OptimisticTransactionSuite
       RemoveFile("a", Some(4L))),
     actions = Seq(
       AddFile("b", Map.empty, 1, 1, dataChange = true)))
+
+  check(
+    "multiple concurrent appends",
+    conflicts = false,
+    initialSetup = { log =>
+      Seq(testDefaultMetadata(), testDefaultProtocol()).foreach { action =>
+        log.startTransaction().commit(Seq(action), ManualUpdate)
+      }
+    },
+    reads = Nil,
+    concurrentTxns = Seq(
+      t => t.commit(Seq(createTestAddFile(encodedPath = "winner-1")), Truncate()),
+      t => t.commit(Seq(createTestAddFile(encodedPath = "winner-2")), Truncate())),
+    actions = Seq(createTestAddFile(encodedPath = "loser")),
+    operation = Truncate(),
+    expectedErrorClass = None,
+    expectedErrorMessageParameters = None,
+    exceptionClass = None,
+    additionalSQLConfs = Seq.empty)
 
   override def beforeEach(): Unit = {
     super.beforeEach()
@@ -603,6 +622,25 @@ class OptimisticTransactionSuite
       assert(testTxn.preCommitLogSegment.lastCommitFileModificationTimestamp < testTxnEndTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointProvider.version == 10)
+    }
+  }
+
+  test("commit fails after exhausting the retry budget") {
+    withSQLConf(DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> "0") {
+      withTempDir { dir =>
+        val log = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath))
+        Seq(testDefaultMetadata(), testDefaultProtocol()).foreach { action =>
+          log.startTransaction().commit(Seq(action), ManualUpdate)
+        }
+        val txn = startTestTransaction(log.dataPath)
+        log.startTransaction().commit(
+          Seq(createTestAddFile(encodedPath = "winner-1")), Truncate())
+
+        val e = intercept[DeltaIllegalStateException] {
+          txn.commit(Seq(createTestAddFile(encodedPath = "loser")), Truncate())
+        }
+        assert(e.getErrorClass == "DELTA_MAX_COMMIT_RETRIES_EXCEEDED")
+      }
     }
   }
 

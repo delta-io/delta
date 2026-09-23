@@ -64,9 +64,9 @@ class AdaptiveMetadataTableFeatureSuite
   private def protocolOf(tableName: String) =
     DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(tableName))._2.protocol
 
-  test("feature is a ReaderWriterFeature and is NOT a RemovableFeature") {
+  test("feature is a ReaderWriterFeature and a RemovableFeature") {
     assert(AdaptiveMetadataTableFeature.isReaderWriterFeature)
-    assert(!AdaptiveMetadataTableFeature.isInstanceOf[RemovableFeature])
+    assert(AdaptiveMetadataTableFeature.isInstanceOf[RemovableFeature])
   }
 
   test("feature is not automatically enabled by metadata") {

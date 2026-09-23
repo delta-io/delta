@@ -2229,7 +2229,47 @@ trait GeneratedColumnSuiteBase
       }
     }
   }
+
+  test("validateGeneratedColumns: NULLIF with regexp_extract") {
+    Seq(false, true).foreach { alwaysInlineCommonExpr =>
+      withSQLConf(SQLConf.ALWAYS_INLINE_COMMON_EXPR.key -> alwaysInlineCommonExpr.toString) {
+        val body = StructField("body", StringType)
+        val shortUrlId = withGenerationExpression(
+          StructField("short_url_id", StringType),
+          "NULLIF(regexp_extract(body, 'short/([^ ]+)', 1), '')")
+        validateGeneratedColumns(spark, StructType(Seq(body, shortUrlId)))
+      }
+    }
+  }
+
+  test("OPTIMIZE rewrites files with a NULLIF generated column") {
+    withTableName("nullif_generated_column") { table =>
+      withSQLConf(
+        DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "false") {
+        createTable(
+          table,
+          None,
+          "body STRING, short_url_id STRING",
+          Map("short_url_id" -> "NULLIF(regexp_extract(body, 'short/([^ ]+)', 1), '')"),
+          Nil)
+
+        sql(s"INSERT INTO $table (body) VALUES ('short/abc')")
+        sql(s"INSERT INTO $table (body) VALUES ('no-match')")
+
+        val deltaLog = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))._1
+        assert(deltaLog.update().numOfFiles > 1)
+        val numFilesAdded = sql(s"OPTIMIZE $table")
+          .select($"metrics.numFilesAdded")
+          .as[Long]
+          .head()
+        assert(numFilesAdded > 0)
+        checkAnswer(
+          sql(s"SELECT body, short_url_id FROM $table"),
+          Seq(Row("short/abc", "abc"), Row("no-match", null)))
+      }
+    }
+  }
 }
 
 class GeneratedColumnSuite extends GeneratedColumnSuiteBase
-

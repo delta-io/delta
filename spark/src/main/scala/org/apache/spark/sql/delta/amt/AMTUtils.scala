@@ -16,11 +16,11 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, Snapshot, SnapshotDescriptor, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
-import org.apache.spark.sql.delta.util.DeltaFileOperations
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.hadoop.fs.Path
 
 /**
  * Path helpers for AMT (Adaptive Metadata Tree) manifest files.
@@ -30,7 +30,7 @@ import org.apache.hadoop.fs.{FileSystem, Path}
  * file lives under it and resolved back by string concatenation (`tableRoot + "/" + relative`).
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
-object AMTUtils {
+object AMTUtils extends DeltaLogging {
   /**
    * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
    * `metadata`.
@@ -41,6 +41,27 @@ object AMTUtils {
   /** Whether AMT writes are enabled for `snapshot`. */
   def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
     amtEnabled(snapshot.metadata, snapshot.protocol)
+
+  /** Logs and throws an [[IllegalStateException]] when an AMT invariant does not hold. */
+  def invariantCheckWithLogging(
+      checkInvariant: => Boolean,
+      opTypeSuffix: String,
+      message: String,
+      deltaLog: DeltaLog = null,
+      data: Map[String, Any] = Map.empty): Unit = {
+    if (!checkInvariant) {
+      val stackTrace = Thread.currentThread().getStackTrace.drop(2).take(10).mkString("\n\t")
+      deltaAssertAndThrow(
+        check = false,
+        name = opTypeSuffix,
+        msg = message,
+        throwable = new DeltaIllegalStateException(
+          errorClass = "INTERNAL_ERROR",
+          messageParameters = Array(message)),
+        deltaLog = deltaLog,
+        data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
+    }
+  }
 
   private val PathSeparator = "/"
 
@@ -81,11 +102,11 @@ object AMTUtils {
    * Relativizes a location against a table location. A trailing slash on `tableLocation` is
    * ignored. If `location` starts with the normalized table location immediately followed by `/`,
    * the prefix and separator are removed. Otherwise, `location` is returned as-is.
-   * This is a lightweight string manipulation compared to [[DeltaFileOperations.tryRelativizePath]]
-   * and should be preferred in hot paths.
+   * This is a lightweight string manipulation.
    *
    * Because the relativization is prefix matching based, callers are expected to pass locations in
-   * the same format and encoding. No such checks are performed here.
+   * the same format and encoding (either both raw or both URL-encoded).
+   * No such checks are performed here.
    */
   def relativizeLocation(tableLocation: String, location: String): String = {
     // Strip trailing slash from tableLocation if present.
@@ -106,14 +127,6 @@ object AMTUtils {
       location
     }
   }
-
-  /**
-   * Relativizes an AMT manifest file `path` against `tableRoot`, returning the raw
-   * (non-URL-encoded) string to store in a manifest `location` / `contentRoot.path`. Paths under
-   * the table root become relative; paths elsewhere are returned absolute.
-   */
-  def relativizeManifestPathToTableRoot(fs: FileSystem, tableRoot: Path, path: Path): String =
-    DeltaFileOperations.tryRelativizePath(fs, tableRoot, path).toString
 
   /**
    * Resolves a manifest `location` / `contentRoot.path` back to an absolute [[Path]] against

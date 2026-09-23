@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.amt
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CommitStats, DeltaLog}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, DeltaLog}
 import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.actions.Checkpoint
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
@@ -50,20 +50,19 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
     (0L to latest).flatMap(v => checkpointAt(deltaLog, v).map(cp => (v, cp)))
   }
 
-  /** The trigger name recorded in the AMT write metrics of the commit `f` produces at `version`. */
-  private def amtTriggerNameAt(f: => Unit, version: Long): String =
-    amtWriteMetricsAt(f, version).trigger
+  /** The trigger name recorded in the AMT write metrics produced while running `f`. */
+  private def amtTriggerNameAt(f: => Unit): String =
+    amtWriteMetricsAt(f).trigger
 
-  /** The AMT write metrics logged for the commit `f` produces at `version`. */
-  private def amtWriteMetricsAt(f: => Unit, version: Long): SingleAMTWriteMetrics = {
+  /** The AMT write metrics produced while running `f`. */
+  private def amtWriteMetricsAt(f: => Unit): SingleAMTWriteMetrics = {
     Log4jUsageLogger.track(f)
       .filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
-        e.tags.get("opType").contains("delta.commit.stats"))
-      .map(e => JsonUtils.fromJson[CommitStats](e.blob))
-      .find(_.commitVersion == version)
-      .flatMap(_.amtWriteMetrics)
-      .flatMap(_.attempts.headOption)
-      .getOrElse(fail(s"No AMT write metrics logged for version $version."))
+        e.tags.get("opType").contains(AMTUsageLogs.CONFLICT_RESOLUTION_ROUND))
+      .map(e => JsonUtils.fromJson[AMTMetrics](e.blob))
+      .flatMap(_.singleAMTWriteMetrics)
+      .headOption
+      .getOrElse(fail("No AMT write metrics logged."))
   }
 
   /**
@@ -160,7 +159,7 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
       // interval 2, default multiplier 5 -> v2 is NOT a 5x boundary, but it is the first AMT.
       createAMTTable(name, checkpointInterval = 2)
       sql(s"INSERT INTO $name VALUES (1)")
-      val v3Trigger = amtTriggerNameAt(sql(s"INSERT INTO $name VALUES (2)"), version = 3)
+      val v3Trigger = amtTriggerNameAt(sql(s"INSERT INTO $name VALUES (2)"))
       assert(v3Trigger == AMTTriggerMode.CheckpointIntervalFull.name,
         s"The first AMT must be a full rewrite; got $v3Trigger")
 
@@ -281,7 +280,7 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
           "The first AMT is a full rewrite.")
 
         // Now a full AMT exists. The next large commit (v4) writes its AMT inline (incrementally).
-        val v4Metrics = amtWriteMetricsAt(sql(s"INSERT INTO $name VALUES (3)"), version = 4)
+        val v4Metrics = amtWriteMetricsAt(sql(s"INSERT INTO $name VALUES (3)"))
         assert(v4Metrics.trigger == AMTTriggerMode.InlineWithLargeCommitIncremental.name,
           s"Once a full AMT exists, a large commit inlines its AMT; got ${v4Metrics.trigger}")
         assert(v4Metrics.incremental == "true",

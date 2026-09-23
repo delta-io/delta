@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.functions.col
@@ -1295,12 +1296,16 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       .getOrElse(fail("AMT provider must contribute leaf-derived file actions."))
       .where("add is not null").select("add.path").as[String].collect().toSet
 
-  /** Maps a leaf's parquet row positions to their entry `location`s (bypasses the format check). */
+  /** Maps a leaf's parquet row positions to the encoded AddFile paths they reconstruct as. */
   private def leafPosToLoc(leaf: DataManifestEntry, tableRoot: Path): Map[Long, String] =
     allowReadWithinDeltaLog {
       spark.read.parquet(leaf.getAbsolutePath(tableRoot).toString)
         .select(col("_metadata.row_index").as("pos"), col("location"))
-        .as[(Long, String)].collect().toMap
+        .as[(Long, String)]
+        .collect()
+        .map { case (pos, location) =>
+          pos -> SparkPath.fromPathString(location).urlEncoded
+        }.toMap
     }
 
   /** Serializes a manifest DV bitmap over the given leaf entry positions. */

@@ -50,7 +50,7 @@ trait MergeIntoMaterializeSourceMixin
     with DeltaSQLTestUtils
     with DeltaTestUtilsBase {
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     // trigger source materialization in all tests
     spark.conf.set(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key, "all")
@@ -69,10 +69,6 @@ trait MergeIntoMaterializeSourceMixin
     // Data does not need to be big; there is enough latency to unpersist even with small data.
     val targetDF = spark.range(100).toDF("id")
     targetDF.write.format("delta").saveAsTable(tblName)
-    spark.range(90, 120).toDF("id").createOrReplaceTempView("s")
-    val mergeQuery =
-      s"MERGE INTO $tblName t USING s ON t.id = s.id " +
-      "WHEN MATCHED THEN DELETE WHEN NOT MATCHED THEN INSERT *"
 
     // Killer thread tries to unpersist any persisted mergeMaterializedSource RDDs,
     // until it has seen more than numKills distinct ones (from distinct Merge retries)
@@ -138,7 +134,13 @@ trait MergeIntoMaterializeSourceMixin
 
     val events = Log4jUsageLogger.track {
       try {
-        sql(mergeQuery)
+        withTempView("s") {
+          spark.range(90, 120).toDF("id").createOrReplaceTempView("s")
+          val mergeQuery =
+            s"MERGE INTO $tblName t USING s ON t.id = s.id " +
+            "WHEN MATCHED THEN DELETE WHEN NOT MATCHED THEN INSERT *"
+          sql(mergeQuery)
+        }
       } catch {
         case NonFatal(ex) =>
           if (numKills < maxAttempts) {
@@ -224,30 +226,32 @@ trait MergeIntoMaterializeSourceErrorTests extends MergeIntoMaterializeSourceMix
       withTable(tblName) {
         val targetDF = spark.range(10).toDF("id").withColumn("value", rand())
         targetDF.write.format("delta").saveAsTable(tblName)
-        spark
-          .range(10)
-          .mapPartitions { x =>
-            throw inject
-            x
-          }
-          .toDF("id")
-          .withColumn("value", rand())
-          .createOrReplaceTempView("s")
-        var thrownException: Intercept = null
-        val events = Log4jUsageLogger
-          .track {
-            thrownException = intercept[Intercept] {
-              sql(s"MERGE INTO $tblName t USING s ON t.id = s.id " +
-                s"WHEN MATCHED THEN DELETE WHEN NOT MATCHED THEN INSERT *")
+        withTempView("s") {
+          spark
+            .range(10)
+            .mapPartitions { x =>
+              throw inject
+              x
             }
-          }
-          .filter { e =>
-            e.metric == MetricDefinitions.EVENT_TAHOE.name &&
-            e.tags.get("opType").contains(MergeIntoMaterializeSourceError.OP_TYPE)
-          }
-        val error = events.headOption
-          .map(e => JsonUtils.fromJson[MergeIntoMaterializeSourceError](e.blob))
-        handle(thrownException, error)
+            .toDF("id")
+            .withColumn("value", rand())
+            .createOrReplaceTempView("s")
+          var thrownException: Intercept = null
+          val events = Log4jUsageLogger
+            .track {
+              thrownException = intercept[Intercept] {
+                sql(s"MERGE INTO $tblName t USING s ON t.id = s.id " +
+                  s"WHEN MATCHED THEN DELETE WHEN NOT MATCHED THEN INSERT *")
+              }
+            }
+            .filter { e =>
+              e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+              e.tags.get("opType").contains(MergeIntoMaterializeSourceError.OP_TYPE)
+            }
+          val error = events.headOption
+            .map(e => JsonUtils.fromJson[MergeIntoMaterializeSourceError](e.blob))
+          handle(thrownException, error)
+        }
       }
     }
   }

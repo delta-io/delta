@@ -236,7 +236,8 @@ class DeltaV2Snapshot(
 
   private def unimplemented: Nothing =
     throw new UnsupportedOperationException(
-      "This member is not yet supported on a Kernel-backed DeltaV2Snapshot")
+      "DeltaV2 unsupported operation: this member is not yet supported on a Kernel-backed " +
+        "DeltaV2Snapshot")
 }
 
 object DeltaV2Snapshot {

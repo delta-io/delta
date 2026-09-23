@@ -60,7 +60,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       AMTWriteHelper.writeAMTParquet(
         spark, hadoopConf, file, base.metaData, base.protocol, rows)
       val fs = file.getFileSystem(hadoopConf)
-      val location = AMTUtils.relativizeManifestPathToTableRoot(fs, deltaLog.dataPath, file)
+      val location = AMTUtils.relativizeLocation(deltaLog.dataPath.toString, file.toString)
       (location, fs.getFileStatus(file).getLen)
     }
 
