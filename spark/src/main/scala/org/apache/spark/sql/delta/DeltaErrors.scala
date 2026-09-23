@@ -2726,6 +2726,12 @@ trait DeltaErrorsBase
       conflictingCommitVersion: Long): FullAMTWriteFailedWithConflict =
     new FullAMTWriteFailedWithConflict(conflictingCommitVersion)
 
+  def concurrentAMTCheckpointLandedException(
+      latestManifestCommitVersion: Long,
+      latestContentRootVersion: Long): ConcurrentAMTCheckpointLandedException =
+    new ConcurrentAMTCheckpointLandedException(
+      latestManifestCommitVersion, latestContentRootVersion)
+
   def metadataChangedException(
       table: String,
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.MetadataChangedException = {
@@ -4374,6 +4380,28 @@ class FullAMTWriteFailedWithConflict(
   extends io.delta.exceptions.DeltaConcurrentModificationException(
     s"A concurrent commit at version $conflictingCommitVersion changed content this full AMT " +
       "checkpoint describes; it must be regenerated against the updated snapshot.")
+
+/**
+ * Thrown by the AMT write path when a losing maintenance OPTIMIZE checkpoint finds that a
+ * concurrent winning commit already installed a new AMT tree that makes this checkpoint redundant.
+ *
+ * Unlike [[io.delta.exceptions.ConcurrentWriteException]], this is never surfaced to the caller:
+ * the maintenance checkpoint commit site ([[org.apache.spark.sql.delta.amt.AMTUtils]]
+ * `emitAMTCheckpoint`) catches it and treats the checkpoint as a graceful no-op, because the
+ * winner's tree -- committed at `manifestCommitVersion`, describing content-root version
+ * `contentRootVersion` -- already provides an up-to-date AMT.
+ * Since this is not user-facing, it does not use an `errorClass`.
+ *
+ * @param manifestCommitVersion the version at which the winner committed the superseding AMT tree.
+ * @param contentRootVersion    the table version that winner's content root describes.
+ */
+class ConcurrentAMTCheckpointLandedException(
+    val manifestCommitVersion: Long,
+    val contentRootVersion: Long)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(
+    s"A concurrent commit already installed an up-to-date AMT tree (manifest commit version " +
+      s"$manifestCommitVersion, content-root version $contentRootVersion); the losing " +
+      "maintenance checkpoint is redundant and was skipped.")
 
 /**
  * Thrown when time travelling to a version that does not exist in the Delta Log.

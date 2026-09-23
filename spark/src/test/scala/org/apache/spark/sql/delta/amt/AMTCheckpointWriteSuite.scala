@@ -19,8 +19,8 @@ package org.apache.spark.sql.delta.amt
 import java.io.File
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaOperations, LastCheckpointInfo}
-import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, RemoveFile}
+import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaOperations, LastCheckpointInfo, RowId}
+import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
@@ -582,6 +582,32 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
   }
 
   testAcrossAMTCheckpointScenarios(
+      "new leaf pointers carry manifest sequence numbers and the next unassigned row ID",
+      "amt_leaf_tracking",
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
+    val leaves = context.provider.leaves
+    assertLeafCount(leaves)
+    val expectedFirstRowId =
+      AMTWriteHelper.firstRowIdAfter(RowId.extractHighWatermark(context.postCheckpointSnapshot))
+    leaves.foreach { leaf =>
+      assert(leaf.tracking.sequence_number.contains(context.checkpoint.version))
+      assert(leaf.tracking.file_sequence_number.contains(context.checkpoint.version))
+      assert(leaf.tracking.first_row_id.contains(expectedFirstRowId))
+      val childFirstRowIds = withManifestDataEntries(
+        Seq(leaf.toFileStatus(context.provider.tableRoot).getPath.toString)) { entries =>
+        entries.select("tracking.first_row_id").collect().map { row =>
+          if (row.isNullAt(0)) None else Some(row.getLong(0))
+        }
+      }
+      assert(childFirstRowIds.forall(_.isDefined),
+        s"Every entry in ${leaf.location} must carry a first_row_id: $childFirstRowIds")
+    }
+  }
+
+  testAcrossAMTCheckpointScenarios(
       "full rewrite records each distributed leaf's entry count",
       "amt_leaf_counts",
       deferredScenarios = Seq(AMTCheckpointScenario.DeferredFull),
@@ -639,31 +665,40 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       .getOrElse(fail(s"No commit stats logged for version $version."))
   }
 
-  test("the follow-up OPTIMIZE CHECKPOINT commit stats carry AMT write metrics") {
+  test("the follow-up OPTIMIZE CHECKPOINT emits round and commit AMT metrics") {
     withTable("amt_commit_stats") {
       val name = "amt_commit_stats"
       createAMTTable(name, checkpointInterval = 2)
       sql(s"INSERT INTO $name VALUES (1)") // v1: below the interval, no maintenance.
 
       // v2 hits the interval boundary; the AMT is written by the follow-up commit at v3, so the
-      // AMT write metrics are recorded on v3's stats, not v2's.
-      val allStats = Log4jUsageLogger.track {
+      // AMT write metrics are emitted immediately by the v3 writer and summarized in its commit
+      // stats after that attempt commits successfully.
+      val events = Log4jUsageLogger.track {
         sql(s"INSERT INTO $name VALUES (2)")
-      }.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+      }
+      val allStats = events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
           e.tags.get("opType").contains("delta.commit.stats"))
         .map(e => JsonUtils.fromJson[CommitStats](e.blob))
 
       val v2Stats = allStats.find(_.commitVersion == 2).getOrElse(fail("No stats for v2."))
-      assert(v2Stats.amtWriteMetrics.isEmpty, "v2 defers the AMT; its stats carry no AMT metrics.")
+      assert(v2Stats.amtCommitStats.isEmpty, "v2 defers the AMT; its stats carry no AMT metrics.")
 
       val v3Stats = allStats.find(_.commitVersion == 3).getOrElse(fail("No stats for v3."))
-      val metrics = v3Stats.amtWriteMetrics
-        .getOrElse(fail("The follow-up commit's stats should carry AMT write metrics."))
-      assert(metrics.writeAttempts.size == 1,
-        s"Expected one AMT write attempt, got ${metrics.writeAttempts}")
+      val metrics = events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+          e.tags.get("opType").contains(AMTUsageLogs.CONFLICT_RESOLUTION_ROUND))
+        .map(e => JsonUtils.fromJson[AMTMetrics](e.blob))
+        .find(_.singleAMTWriteMetrics.nonEmpty)
+        .getOrElse(fail("The follow-up commit should emit AMT write metrics."))
+      assert(metrics.txnId.nonEmpty)
+      assert(metrics.roundId == 0)
+      assert(metrics.conflictResolutionMetrics.isEmpty)
       // The first AMT has no prior tree to build on, so it is always a full rewrite.
-      assert(metrics.writeAttempts.head.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
-      assert(metrics.writeAttempts.head.materializeDurationMs >= 0L)
+      val writeMetrics = metrics.singleAMTWriteMetrics.get
+      assert(writeMetrics.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
+      assert(writeMetrics.materializeDurationMs >= 0L)
+      assert(v3Stats.amtCommitStats.map(_.lastAMTWriteMetrics).contains(writeMetrics),
+        "the successful follow-up commit must retain its last AMT write metrics.")
     }
   }
 
@@ -674,7 +709,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
       val commitStats = commitStatsAt(sql(s"INSERT INTO $name VALUES (1)"), version = 1)
 
-      assert(commitStats.amtWriteMetrics.isEmpty,
+      assert(commitStats.amtCommitStats.isEmpty,
         "Commit stats must not carry AMT write metrics when no AMT is emitted.")
     }
   }
