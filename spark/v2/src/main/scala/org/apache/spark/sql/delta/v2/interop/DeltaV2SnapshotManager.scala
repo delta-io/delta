@@ -43,7 +43,7 @@ trait DeltaV2SnapshotManager {
   def loadLatestSnapshot(): Snapshot
 
   /** Loads the latest snapshot using inputs scoped to the current query. */
-  def loadLatestSnapshot(queryContextOpt: Optional[DeltaV2QueryContext]): Snapshot = {
+  def loadLatestSnapshot(queryContextOpt: Option[DeltaV2QueryContext]): Snapshot = {
     Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
     loadLatestSnapshot()
   }
@@ -59,7 +59,7 @@ trait DeltaV2SnapshotManager {
   /** Loads a versioned snapshot using inputs scoped to the current query. */
   def loadSnapshotAt(
       version: Long,
-      queryContextOpt: Optional[DeltaV2QueryContext]): Snapshot = {
+      queryContextOpt: Option[DeltaV2QueryContext]): Snapshot = {
     Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
     loadSnapshotAt(version)
   }
@@ -88,7 +88,7 @@ trait DeltaV2SnapshotManager {
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
       canReturnEarliestCommit: Boolean,
-      queryContextOpt: Optional[DeltaV2QueryContext]): DeltaHistoryManager.Commit = {
+      queryContextOpt: Option[DeltaV2QueryContext]): DeltaHistoryManager.Commit = {
     Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
     getActiveCommitAtTime(
       timestampMillis,
@@ -120,7 +120,7 @@ trait DeltaV2SnapshotManager {
       version: Long,
       mustBeRecreatable: Boolean,
       allowOutOfRange: Boolean,
-      queryContextOpt: Optional[DeltaV2QueryContext]): Unit = {
+      queryContextOpt: Option[DeltaV2QueryContext]): Unit = {
     Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
     checkVersionExists(version, mustBeRecreatable, allowOutOfRange)
   }
@@ -143,7 +143,7 @@ trait DeltaV2SnapshotManager {
       kernelEngine: Engine,
       startVersion: Long,
       endVersion: Optional[java.lang.Long],
-      queryContextOpt: Optional[DeltaV2QueryContext]): CommitRange = {
+      queryContextOpt: Option[DeltaV2QueryContext]): CommitRange = {
     Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
     getTableChanges(kernelEngine, startVersion, endVersion)
   }

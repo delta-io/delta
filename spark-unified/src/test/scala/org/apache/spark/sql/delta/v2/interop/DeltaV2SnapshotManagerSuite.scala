@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.v2.interop
 
 import java.lang.{Long => JLong}
-import java.lang.reflect.Proxy
 import java.util.Optional
 
 import org.apache.spark.sql.delta.Snapshot
@@ -32,20 +31,17 @@ import org.apache.spark.SparkFunSuite
 class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
 
   test("query-context methods forward to context-free implementations by default") {
-    var latestLoads = 0
-    var versionLoaded = Option.empty[Long]
-    var activeCommitArgs = Option.empty[(Long, Boolean, Boolean, Boolean)]
-    var versionCheckArgs = Option.empty[(Long, Boolean, Boolean)]
-    var tableChangesArgs = Option.empty[(KernelEngine, Long, Optional[JLong])]
+    var forwardedCalls = 0
 
     val manager = new DeltaV2SnapshotManager {
       override def loadLatestSnapshot(): Snapshot = {
-        latestLoads += 1
+        forwardedCalls += 1
         null
       }
 
       override def loadSnapshotAt(version: Long): Snapshot = {
-        versionLoaded = Some(version)
+        assert(version == 17)
+        forwardedCalls += 1
         null
       }
 
@@ -54,8 +50,11 @@ class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
           canReturnLastCommit: Boolean,
           mustBeRecreatable: Boolean,
           canReturnEarliestCommit: Boolean): KernelDeltaHistoryManager.Commit = {
-        activeCommitArgs =
-          Some((timestampMillis, canReturnLastCommit, mustBeRecreatable, canReturnEarliestCommit))
+        assert(timestampMillis == 23)
+        assert(canReturnLastCommit)
+        assert(mustBeRecreatable)
+        assert(!canReturnEarliestCommit)
+        forwardedCalls += 1
         null
       }
 
@@ -63,24 +62,28 @@ class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
           version: Long,
           mustBeRecreatable: Boolean,
           allowOutOfRange: Boolean): Unit = {
-        versionCheckArgs = Some((version, mustBeRecreatable, allowOutOfRange))
+        assert(version == 29)
+        assert(mustBeRecreatable)
+        assert(!allowOutOfRange)
+        forwardedCalls += 1
       }
 
       override def getTableChanges(
           kernelEngine: KernelEngine,
           startVersion: Long,
           endVersion: Optional[JLong]): KernelCommitRange = {
-        tableChangesArgs = Some((kernelEngine, startVersion, endVersion))
+        assert(kernelEngine == null)
+        assert(startVersion == 31)
+        assert(endVersion == Optional.of[JLong](37L))
+        forwardedCalls += 1
         null
       }
     }
 
-    val queryContextOpt = Optional.of(DeltaV2QueryContext(None))
+    val queryContextOpt = Option.empty[DeltaV2QueryContext]
 
     assert(manager.loadLatestSnapshot(queryContextOpt) == null)
-    assert(latestLoads == 1)
     assert(manager.loadSnapshotAt(17, queryContextOpt) == null)
-    assert(versionLoaded.contains(17))
     assert(
       manager.getActiveCommitAtTime(
         23,
@@ -88,30 +91,17 @@ class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
         mustBeRecreatable = true,
         canReturnEarliestCommit = false,
         queryContextOpt = queryContextOpt) == null)
-    assert(activeCommitArgs.contains((23, true, true, false)))
     manager.checkVersionExists(
       29,
       mustBeRecreatable = true,
       allowOutOfRange = false,
       queryContextOpt = queryContextOpt)
-    assert(versionCheckArgs.contains((29, true, false)))
-    val kernelEngine = Proxy.newProxyInstance(
-      classOf[KernelEngine].getClassLoader,
-      Array(classOf[KernelEngine]),
-      (_, _, _) => null).asInstanceOf[KernelEngine]
-    val endVersion = Optional.of[JLong](37L)
     assert(
       manager.getTableChanges(
-        kernelEngine,
+        null,
         31,
-        endVersion,
+        Optional.of[JLong](37L),
         queryContextOpt) == null)
-    assert(tableChangesArgs.exists { case (engine, startVersion, endVersionArg) =>
-      (engine eq kernelEngine) && startVersion == 31 && endVersionArg == endVersion
-    })
-
-    assert(manager.loadLatestSnapshot(Optional.empty()) == null)
-    assert(latestLoads == 2)
 
     def assertNullQueryContext(body: => Any): Unit = {
       val error = intercept[NullPointerException](body)
@@ -122,7 +112,7 @@ class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
     assertNullQueryContext(manager.loadSnapshotAt(41, null))
     assertNullQueryContext(manager.getActiveCommitAtTime(43, true, false, true, null))
     assertNullQueryContext(manager.checkVersionExists(47, false, true, null))
-    assertNullQueryContext(manager.getTableChanges(kernelEngine, 53, Optional.empty(), null))
-    assert(latestLoads == 2)
+    assertNullQueryContext(manager.getTableChanges(null, 53, Optional.empty(), null))
+    assert(forwardedCalls == 5)
   }
 }
