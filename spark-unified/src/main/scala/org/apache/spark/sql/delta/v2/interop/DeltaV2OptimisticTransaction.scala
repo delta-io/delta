@@ -206,7 +206,7 @@ private[v2] class DeltaV2OptimisticTransaction(
         kernelEngine,
         startVersion,
         Optional.of(java.lang.Long.valueOf(endVersion)),
-        Optional.of(queryContext))
+        Some(queryContext))
       .asInstanceOf[KernelCommitRangeImpl]
     val actionSet = java.util.EnumSet.allOf(classOf[KernelDeltaAction])
     val commitActionsIter = commitRange.getCommitActions(kernelEngine, actionSet)
@@ -230,7 +230,7 @@ private[v2] class DeltaV2OptimisticTransaction(
    * Gets the conflicting versions through Kernel, from the previous attempt version to the latest.
    */
   override protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {
-    val latestVersion = deltaV2SnapshotManager.loadLatestSnapshot(Optional.of(queryContext)).version
+    val latestVersion = deltaV2SnapshotManager.loadLatestSnapshot(Some(queryContext)).version
     if (previousAttemptVersion > latestVersion) {
       return Seq.empty
     }
