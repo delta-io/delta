@@ -5,9 +5,9 @@ DECFLOAT is an IEEE 754 decimal floating-point type. This RFC proposes two Delta
 `decfloat(16)` and `decfloat(34)`, and a ReaderWriter table feature named `decFloat`. Experimental
 implementations may use `decFloat-preview` until the RFC is accepted.
 
-The Parquet mapping below is the current proposal. The DBR prototype also writes
+The Parquet mapping below is the current proposal. An experimental implementation also writes
 `com.databricks.spark.decfloat.encoding=bid-le-v1`; whether that marker belongs in the Delta
-protocol or remains a DBR implementation detail is open for RFC review.
+protocol or remains an implementation detail is open for RFC review.
 
 --------
 
@@ -95,9 +95,8 @@ A writer that supports `decFloat` must:
 
 ## Statistics and Data Skipping
 
-Private Preview support for DECFLOAT is limited to `nullCount` statistics. Min/max statistics and
-data skipping require a standardized physical representation and comparison contract, likely
-defined by an official Parquet logical type.
+This proposal defines `nullCount` statistics for DECFLOAT but does not define min/max statistics
+or data skipping. Those require a standardized physical representation and comparison contract.
 
 ## Compatibility with Other Delta Features
 
