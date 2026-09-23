@@ -826,6 +826,55 @@ trait DeltaCDCStreamSuiteBase
     }
   }
 
+  test("CDF stream rolls the offset past a change-data commit (keeps END marker)") {
+    // Regression guard: a processed change-data (AddCDCFile) commit must roll the
+    // offset to (version + 1, BASE_INDEX), not park on its last real index. Plain (non-shared)
+    // Delta on purpose: the sharing mock can't reproduce it (offset comes from latestOffset).
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        withTempDir { outputDir =>
+          // v0: two AddFiles (one per partition).
+          spark.range(2)
+            .withColumn("part", 'id % 2)
+            .withColumn("col3", lit(0))
+            .repartition(1)
+            .write
+            .format("delta")
+            .partitionBy("part")
+            .option("enableChangeDataFeed", "true")
+            .save(inputDir.getAbsolutePath)
+          val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
+          // v1, v2: UPDATEs -> AddCDCFile commits; the last version processed is change data.
+          deltaTable.update(expr("col3 < 2"), Map("col3" -> lit("1")))
+          deltaTable.update(expr("col3 < 2"), Map("col3" -> lit("2")))
+
+          val query = loadStreamWithOptions(inputDir.getAbsolutePath, Map(
+              DeltaOptions.CDC_READ_OPTION -> "true",
+              "startingVersion" -> "0"))
+            .select("id")
+            .writeStream
+            .format("delta")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.getAbsolutePath)
+          try {
+            query.processAllAvailable()
+          } finally {
+            query.stop()
+            query.awaitTermination()
+          }
+
+          val endOffset =
+            JsonUtils.fromJson[DeltaSourceOffset](query.lastProgress.sources.head.endOffset)
+          assert(endOffset.index === DeltaSourceOffset.BASE_INDEX,
+            s"CDF offset parked on a real index instead of rolling past the change-data " +
+            s"commit: $endOffset")
+          assert(endOffset.reservoirVersion === 3L, s"endOffset = $endOffset")
+        }
+      }
+    }
+  }
+
   test("maxFilesPerTrigger - batch reject stops iteration to prevent data loss") {
     withTempDir { inputDir =>
       // v0: 2 AddFiles (one per partition)
