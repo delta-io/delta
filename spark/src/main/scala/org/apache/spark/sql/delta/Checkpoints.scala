@@ -29,7 +29,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, Checkpoint, CheckpointMetadata, CommitInfo, LastManifestCommit, Metadata, SidecarFile, SingleAction}
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTTriggerMode, AMTUtils, AMTWriteResult}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTTriggerMode, AMTUtils, AMTWriteResult, AMTWriterManager}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -388,7 +388,7 @@ trait Checkpoints extends DeltaLogging {
       amtTriggerModeOpt: Option[AMTTriggerMode] = None): Unit = {
     if (AMTUtils.amtEnabled(snapshotToCheckpoint)) {
       // Note: This also takes care of writing the last checkpoint file via optimistic transaction
-      AMTUtils.emitAMTCheckpoint(snapshotToCheckpoint, catalogTableOpt, amtTriggerModeOpt)
+      AMTWriterManager.emitAMTCheckpoint(snapshotToCheckpoint, catalogTableOpt, amtTriggerModeOpt)
       return
     }
     val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint, catalogTableOpt)
