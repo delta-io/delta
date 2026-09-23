@@ -68,7 +68,7 @@ object DeltaTestUtilsBase {
   def nullTypeColumnsSupported: Boolean = !org.apache.spark.SPARK_VERSION.startsWith("4.0")
 }
 
-trait CDCTestMixin extends SharedSparkSession {
+trait CDCTestMixin {
   // Setting the spark Conf is left to the test implementation.
 
   def computeCDC(
@@ -81,7 +81,10 @@ trait CDCTestMixin extends SharedSparkSession {
   }
 }
 
-trait ChangelogV2CDCUtilMixin extends CDCTestMixin with ChangelogSyntaxSupportedShim {
+trait ChangelogV2CDCUtilMixin
+  extends SharedSparkSession
+  with CDCTestMixin
+  with ChangelogSyntaxSupportedShim {
 
   // Tests skipped on the V2 changelog read path.
   protected def excludedV2Exact: Set[String] = Set(
@@ -474,6 +477,37 @@ trait DeltaCheckpointTestUtils
   }
 }
 
+trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
+  self: SparkFunSuite with SharedSparkSession =>
+
+  /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
+  protected def minorCompactDeltaLog(
+      tablePath: String,
+      startVersion: Long,
+      endVersion: Long): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    val snapshotForReplay = deltaLog.update()
+    val logReplay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = None,
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
+        snapshotForReplay.metadata, snapshotForReplay.protocol, spark))
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+
+    (startVersion to endVersion).foreach { versionToRead =>
+      val file = FileNames.unsafeDeltaFile(deltaLog.logPath, versionToRead)
+      val actionsIterator = deltaLog.store.readAsIterator(file, hadoopConf).map(Action.fromJson)
+      logReplay.append(versionToRead, actionsIterator)
+    }
+    deltaLog.store.write(
+      path = FileNames.compactedDeltaFile(deltaLog.logPath, startVersion, endVersion),
+      actions = logReplay.checkpoint.map(_.json).toIterator,
+      overwrite = true,
+      hadoopConf = hadoopConf)
+  }
+}
+
 object DeltaTestUtils extends DeltaTestUtilsBase {
 
   sealed trait TableIdentifierOrPath
@@ -500,6 +534,25 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
       dataChange: Boolean = true,
       stats: String = "{\"numRecords\": 1}"): AddFile = {
     AddFile(encodedPath, partitionValues, size, modificationTime, dataChange, stats)
+  }
+
+  /**
+   * Rewrites the `dataChange` an existing commit records in its [[CommitInfo]], leaving its file
+   * actions untouched so that the two can be made to disagree -- which no write path produces, and
+   * which is the only way to observe which of the two a reader consulted.
+   */
+  def recordDataChangeInCommitInfo(
+      deltaLog: DeltaLog, version: Long, dataChange: Option[Boolean]): Unit = {
+    val conf = deltaLog.newDeltaHadoopConf()
+    val commitFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+    val rewritten = deltaLog.store.read(commitFile, conf).map { line =>
+      Action.fromJson(line) match {
+        case commitInfo: CommitInfo => commitInfo.copy(dataChange = dataChange).json
+        case _ => line
+      }
+    }
+    deltaLog.store.write(commitFile, rewritten.toIterator, overwrite = true, conf)
+    DeltaLog.clearCache()
   }
 
 
@@ -812,7 +865,6 @@ trait DeltaDMLTestUtils
   with DeltaTableProvider
   with BeforeAndAfterEach
   with CDCTestMixin {
-  self: SharedSparkSession =>
 
   import testImplicits._
 
@@ -903,11 +955,11 @@ trait DeltaDMLTestUtils
       spark.read
         .schema(schema)
         .option("mode", FailFastMode.name)
-        .json(data.toDS)
+        .json(spark.createDataset(data))
     } else {
       spark.read
         .option("mode", FailFastMode.name)
-        .json(data.toDS)
+        .json(spark.createDataset(data))
     }
   }
 
@@ -1032,7 +1084,6 @@ trait DeltaDMLInMemoryTestUtils
 }
 
 trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
-  self: SharedSparkSession =>
 
   protected var tempDir: File = _
 
@@ -1065,8 +1116,7 @@ trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
  */
 case object NameBasedAccessIncompatible extends Tag("NameBasedAccessIncompatible")
 
-trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
-  self: SharedSparkSession =>
+trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils with SharedSparkSession {
 
   override protected def test(testName: String, testTags: Tag*)(testFun: => Any)(
       implicit pos: Position): Unit = {

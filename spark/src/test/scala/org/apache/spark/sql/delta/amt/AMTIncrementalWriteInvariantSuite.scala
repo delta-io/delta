@@ -52,8 +52,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
         // hole -> the Step-0 coverage assert must fire.
         intercept[AssertionError] {
           new IncrementalAMTWriter(spark, amtDeltaLog).writeIncremental(
-            oldAMTVersion = oldAMTVersion,
-            oldAMTCheckpointProvider = provider,
+            oldAMTActionsProvider = new BaseAMTCheckpointActionsProvider(amtDeltaLog, provider),
             intermediateLogCommits = intermediateLogCommits,
             attemptVersion = snapshot.version + 5,
             actionsToCommit = Seq.empty,
@@ -197,7 +196,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
         writer.carryForwardOneLeaf(mixed, newMdvPositions = Seq.empty,
           deletedPositions = Seq.empty, replacedPositions = Seq.empty)
       }
-      assert(ex.getMessage.contains("mix of live files and tombstones"),
+      assert(ex.getMessage.contains("both live files and tombstones"),
         s"expected the live+tombstone-mix invariant; got: ${ex.getMessage}")
     }
   }
@@ -209,7 +208,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
       // there is nothing left to mask.
       val tombstoneOnly = carriedLeafPointer(deletedFiles = 3)
       val ex = intercept[IllegalStateException] {
-        writer.carryForwardOneLeaf(tombstoneOnly, newMdvPositions = Seq(0L),
+        writer.carryForwardOneLeaf(tombstoneOnly, newMdvPositions = Seq(0),
           deletedPositions = Seq.empty, replacedPositions = Seq.empty)
       }
       assert(ex.getMessage.contains("no live file but gained new MDV positions"),

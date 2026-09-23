@@ -395,7 +395,7 @@ class IcebergConverter
         // If `rowTrackingBackfillRequired` is enabled, the Row Tracking Backfill command
         // will first be triggered, adding one or more ROW TRACKING BACKFILL commits
         // to the table. After backfilling completes, here we must regenerate the entire
-        // Iceberg metadata to keep the snapshot version in sync.
+        // Iceberg metadata to keep snapshot sequence numbers in sync with Delta versions.
         case _ if rowTrackingJustEnabled =>
           val commitInfos = createSnapshotsForReplaceTable(
             snapshotToConvert, prevConvertedSnapshotOpt, icebergTxn, catalogTable,
@@ -843,7 +843,24 @@ class IcebergConverter
           }
           addFiles = addBuffer.toSeq
           removeFiles = removeBuffer.toSeq
-          val dataChange = DataChange(dataChangeBits)
+          val fileActionsDataChange = DataChange(dataChangeBits)
+          val dataChange = CommitInfo.commitChangedData(commitInfo) match {
+            // Nothing to convert either way, so the recorded value cannot say otherwise.
+            case Some(_) if dataChangeBits == 0 => DataChange.Empty
+            case Some(true) => DataChange.All
+            case Some(false) => DataChange.None
+            // No recorded value: fall back to what the file actions say.
+            case None => fileActionsDataChange
+          }
+
+          if (dataChange != fileActionsDataChange) {
+            throw new IllegalStateException(
+              s"Iceberg conversion dataChange mismatch at version ${targetSnapshot.version}: " +
+                s"commitInfo says $dataChange but file actions say $fileActionsDataChange " +
+                s"(operation=${commitInfo.map(_.operation).getOrElse("")}, " +
+                s"hasAdd=${addFiles.nonEmpty}, hasRemove=${removeFiles.nonEmpty}, " +
+                s"hasDv=$hasDv)")
+          }
 
           (addFiles.nonEmpty, removeFiles.nonEmpty, dataChange) match {
           case (true, false, DataChange.All) if !hasDv =>

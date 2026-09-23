@@ -65,7 +65,7 @@ case class UpdateCommand(
   extends LeafRunnableCommand with DeltaCommand {
 
   override val output: Seq[Attribute] = {
-    Seq(AttributeReference("num_affected_rows", LongType)())
+    Seq(AttributeReference("num_affected_rows", LongType, nullable = false)())
   }
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)

@@ -23,7 +23,6 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.catalyst.TableIdentifier
 
 /**
  * Tests that [[LastManifestCommit]] is surfaced reliably by [[Snapshot.lastManifestCommitOpt]].
@@ -87,13 +86,18 @@ trait SnapshotLastManifestCommitSuiteBase extends AMTCheckpointTestBase {
    * AMT checkpoint.
    */
   protected def snapshotForLmcResolution(deltaLog: DeltaLog, version: Long): Snapshot = {
+    require(version > 0, "Version must be greater than 0.")
     val base = deltaLog.unsafeVolatileSnapshot
     new Snapshot(
       path = base.path,
       version = version,
       logSegment = base.logSegment.copy(
         version = version,
-        deltas = base.logSegment.deltas.filter(f => FileNames.deltaVersion(f) <= version)),
+        deltas = base.logSegment.deltas.filter(f => FileNames.deltaVersion(f) == version),
+        nonCompactedDeltasOpt = base.logSegment.nonCompactedDeltasOpt
+          .map(_.filter(f => FileNames.deltaVersion(f) == version)),
+        checkpointProvider = fakeAMTProviderAt(
+          version - 1, protocol = base.protocol, metadata = base.metadata)),
       deltaLog = deltaLog,
       checksumOpt = deltaLog.readChecksum(version)
     )
@@ -119,8 +123,8 @@ trait SnapshotLastManifestCommitSuiteBase extends AMTCheckpointTestBase {
       sql(s"INSERT INTO $name VALUES (3)")
 
       val deltaLog = deltaLogForName(name)
-      val lmcV1 = LastManifestCommit(version = 1, contentRootVersion = 1)
-      val lmcV3 = LastManifestCommit(version = 3, contentRootVersion = 3)
+      val lmcV1 = LastManifestCommit(version = 1, contentRootVersion = 0)
+      val lmcV3 = LastManifestCommit(version = 3, contentRootVersion = 2)
       injectLmc(deltaLog, version = 1, lmc = Some(lmcV1)) // v1: carries a reference.
       // v2: no reference.
       injectLmc(deltaLog, version = 3, lmc = Some(lmcV3)) // v3: carries a different reference.
@@ -145,7 +149,6 @@ trait SnapshotLastManifestCommitSuiteBase extends AMTCheckpointTestBase {
     // The in-commit-timestamp and last-manifest-commit are sibling fields in CommitInfo, so a
     // single commit carries both on one reconstruction row; both must survive. Catalog-managed
     // tables have in-commit timestamps enabled by default, so no explicit enablement is needed.
-    val lmc = LastManifestCommit(version = 7, contentRootVersion = 5)
     withTable("amt_lmc_ict") {
       val name = "amt_lmc_ict"
       createAMTTable(name, checkpointInterval = 100)
@@ -157,6 +160,7 @@ trait SnapshotLastManifestCommitSuiteBase extends AMTCheckpointTestBase {
       val expectedIct = deltaLog.unsafeVolatileSnapshot.getInCommitTimestampOpt.getOrElse {
         fail("Expected a non-None in-commit-timestamp.")
       }
+      val lmc = LastManifestCommit(version = version, contentRootVersion = version - 1)
       injectLmc(deltaLog, version, lmc = Some(lmc))
 
       val snapshot = snapshotForLmcResolution(deltaLog, version)
@@ -297,29 +301,30 @@ trait SnapshotLastManifestCommitSuiteBase extends AMTCheckpointTestBase {
       sql(s"INSERT INTO $name VALUES (2)")        // v2: reaches the interval boundary
                                                   // v3: the FIRST AMT is always a deferred OPTIMIZE
                                                   //     CHECKPOINT (describing state@v2).
+      val deltaLog = deltaLogForName(name)
       sql(s"RESTORE TABLE $name VERSION AS OF 1") // v4: RESTORE commit (via commitLarge)
+                                                  // v5: RESTORE's follow-up full AMT (state@v4).
+      assert(deltaLog.snapshot.version == 5,
+        s"RESTORE plus its follow-up AMT should reach v5, but got v${deltaLog.snapshot.version}.")
 
-      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(name))
+      // RESTORE commits via commitLarge. The RESTORE commit (v4) itself emits no inline checkpoint
+      // and carries the previous manifest reference forward; commitLarge then emits a full AMT as a
+      // follow-up OPTIMIZE CHECKPOINT commit (v5) describing the restored state as of v4.
 
-      // RESTORE commits via commitLarge, which never emits AMT checkpoints, even when the
-      // checkpoint interval is reached. The lastManifestCommit valid as of its read snapshot must
-      // be carried forward.
-      assert(snapshot.version == 4, s"RESTORE should commit to v4, but got v${snapshot.version}.")
-      val expectedLmc = LastManifestCommit(version = 3, contentRootVersion = 2)
-
-      assert(checkpointAt(deltaLog, 4).isEmpty, s"v4 must not emit a checkpoint.")
-      // CommitLarge does not write a CRC, so we skip the CRC assertions.
+      // v4: the RESTORE commit emits no checkpoint and carries the reference from v3 forward.
+      val carriedLmc = LastManifestCommit(version = 3, contentRootVersion = 2)
+      assert(checkpointAt(deltaLog, 4).isEmpty, s"v4 (RESTORE) must not emit a checkpoint.")
       assert(
-        lastManifestCommitFromCommitInfoAt(deltaLog, 4).contains(expectedLmc),
-        s"v4 CommitInfo must carry LMC $expectedLmc.")
-      // When getting the snapshot to test, a real AMT provider is installed, but there is no CRC
-      // to cross-verify it, so reconciliation refuses it. We skip the snapshot-resolution assertion
-      // temporarily, until the CommitInfo fallback lands.
-      /*
+        lastManifestCommitFromCommitInfoAt(deltaLog, 4).contains(carriedLmc),
+        s"v4 CommitInfo must carry LMC $carriedLmc.")
+
+      // v5: the follow-up full AMT is written at v5 and describes the restored state as of v4, so
+      // the manifest-commit version is 5 but the content root version is 4.
+      val newLmc = LastManifestCommit(version = 5, contentRootVersion = 4)
+      assert(checkpointAt(deltaLog, 5).nonEmpty, s"v5 must emit the follow-up AMT checkpoint.")
       assert(
-        freshSnapshotAt(name, 4).lastManifestCommitOpt.contains(expectedLmc),
-        s"v4 snapshot must resolve LMC $expectedLmc.")
-      */
+        lastManifestCommitFromCommitInfoAt(deltaLog, 5).contains(newLmc),
+        s"v5 CommitInfo must carry LMC $newLmc.")
     }
   }
 }
@@ -382,7 +387,6 @@ class SnapshotLastManifestCommitWithoutCRCSuite extends SnapshotLastManifestComm
   testInline("lastManifestCommitOpt falls back to reading CommitInfo with no other sources") {
     // With CRC unavailable, when the snapshot sits on an AMT checkpoint, there is no trailing delta
     // to provide the CommitInfo during P&M query, so we must fallback to a direct CommitInfo read.
-    val lmc = LastManifestCommit(version = 7, contentRootVersion = 5)
     withTable("amt_lmc_fallback") {
       val name = "amt_lmc_fallback"
       createAMTTable(name, checkpointInterval = 2)
@@ -396,33 +400,16 @@ class SnapshotLastManifestCommitWithoutCRCSuite extends SnapshotLastManifestComm
       sql(s"INSERT INTO $name VALUES (2)") // v2: boundary -> deferred full AMT follow-up at v3.
       sql(s"INSERT INTO $name VALUES (3)") // v4: boundary -> inline AMT checkpoint action.
 
-      val deltaLog = deltaLogForName(name)
-      injectLmc(deltaLog, version = 4, lmc = Some(lmc))
-
-      // Build the AMT provider from v4's emitted inline checkpoint action and stub it into a real
-      // snapshot's log segment, trimming the version's delta as cold discovery eventually will.
-      val checkpoint = checkpointAt(deltaLog, 4).getOrElse {
-        fail("v4 must emit an inline AMT checkpoint action.")
-      }
-      val provider = AMTCheckpointProvider.fromCheckpoint(
-        deltaLog, checkpoint, manifestCommitVersion = 4L)
-      val baseSnapshot = deltaLog.unsafeVolatileSnapshot
-      assert(baseSnapshot.version == 4,
-        s"Expected volatile snapshot at v4, got ${baseSnapshot.version}.")
-      val segment = baseSnapshot.logSegment.copy(checkpointProvider = provider, deltas = Nil)
-      val snapshot = new Snapshot(
-        path = baseSnapshot.path,
-        version = baseSnapshot.version,
-        logSegment = segment,
-        deltaLog = baseSnapshot.deltaLog,
-        checksumOpt = None // No CRC, so reconstruction has no source other than the CommitInfo.
-      )
-
-      assert(amtProvider(snapshot).isDefined, "Snapshot must carry the (stubbed) AMT provider.")
-      assert(snapshot.logSegment.deltas.isEmpty, "Segment must have no trailing deltas.")
-      assert(snapshot.checksumOpt.isEmpty, "Snapshot must have no CRC.")
-
       implicit val usageLogs: Seq[UsageRecord] = Log4jUsageLogger.track {
+        DeltaLog.clearCache()
+        val snapshot = deltaLogForName(name).unsafeVolatileSnapshot
+
+        assert(snapshot.version == 4, s"Expected volatile snapshot at v4, got ${snapshot.version}.")
+        assert(amtProvider(snapshot).isDefined, "Snapshot must carry the AMT provider.")
+        assert(snapshot.logSegment.deltas.isEmpty, "Segment must have no trailing deltas.")
+        assert(snapshot.checksumOpt.isEmpty, "Snapshot must have no CRC.")
+
+        val lmc = LastManifestCommit(version = 4, contentRootVersion = 4)
         assert(snapshot.lastManifestCommitOpt.contains(lmc),
           "The CommitInfo fallback must resolve the reference.")
       }

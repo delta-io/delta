@@ -154,8 +154,30 @@
   },
   "DELTA_CANNOT_CHANGE_DATA_TYPE" : {
     "message" : [
-      "Cannot change data type: <dataType>"
+      "Cannot change the table schema."
     ],
+    "subClass" : {
+      "ADD_NON_NULLABLE_COLUMN" : {
+        "message" : [
+          "Adding non-nullable column <columnName> is not supported."
+        ]
+      },
+      "CHANGE_DATA_TYPE" : {
+        "message" : [
+          "Changing the data type of column <columnName> from <fromType> to <toType> is not supported."
+        ]
+      },
+      "DROP_COLUMNS" : {
+        "message" : [
+          "Dropping column(s) <columnNames> is not supported."
+        ]
+      },
+      "TIGHTEN_NULLABILITY" : {
+        "message" : [
+          "Tightening the nullability of column <columnName> is not supported."
+        ]
+      }
+    },
     "sqlState" : "429BQ"
   },
   "DELTA_CANNOT_CHANGE_LOCATION" : {
@@ -1289,7 +1311,7 @@
       "Using this SQL configuration could lead to accidental data loss, therefore we do",
       "not recommend the use of this flag unless this is for testing purposes."
     ],
-    "sqlState" : "XXKDS"
+    "sqlState" : "22KD1"
   },
   "DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH" : {
     "message" : [
@@ -2973,12 +2995,12 @@
   "DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART" : {
     "message" : [
       "The streaming query's schema does not match the current table schema.",
+      "",
       "Query schema (from analysis): <querySchema>",
       "",
       "Current table schema: <tableSchema>",
       "",
-      "The table schema has changed since this streaming query was created.",
-      "Please create a new streaming DataFrame to pick up the current schema."
+      "The table schema has changed since this streaming query was created. Create a new streaming DataFrame to pick up the current schema."
     ],
     "sqlState" : "KD007"
   },
@@ -3189,8 +3211,21 @@
   },
   "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED" : {
     "message" : [
-      "Failed to convert the table version <version> to the universal format <format>. <message>"
+      "Failed to convert the table version <version> to the universal format <format>."
     ],
+    "subClass" : {
+      "CAUSED_BY_ERROR" : {
+        "message" : [
+          "<causeErrorMessage>",
+          ""
+        ]
+      },
+      "UNEXPECTED_PARTITION_DATA_TYPE" : {
+        "message" : [
+          "Unexpected partition data type <dataType>."
+        ]
+      }
+    },
     "sqlState" : "KD00E"
   },
   "DELTA_UNIVERSAL_FORMAT_VIOLATION" : {
@@ -3279,13 +3314,35 @@
   },
   "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP" : {
     "message" : [
-      "Unsupported ALTER TABLE REPLACE COLUMNS operation. Reason: <details>",
-      "",
+      "Unsupported ALTER TABLE REPLACE COLUMNS operation.",
       "Failed to change schema from:",
       "<oldSchema>",
       "to:",
-      "<newSchema>"
+      "<newSchema>",
+      "Reason:"
     ],
+    "subClass" : {
+      "ADD_NON_NULLABLE_COLUMN" : {
+        "message" : [
+          "Adding non-nullable column <columnName> is not supported."
+        ]
+      },
+      "CHANGE_DATA_TYPE" : {
+        "message" : [
+          "Changing the data type of column <columnName> from <fromType> to <toType> is not supported."
+        ]
+      },
+      "DROP_COLUMNS" : {
+        "message" : [
+          "Dropping column(s) <columnNames> is not supported."
+        ]
+      },
+      "TIGHTEN_NULLABILITY" : {
+        "message" : [
+          "Tightening the nullability of column <columnName> is not supported."
+        ]
+      }
+    },
     "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_CREATION" : {
@@ -3382,8 +3439,17 @@
   },
   "DELTA_UNSUPPORTED_DROP_COLUMN" : {
     "message" : [
-      "DROP COLUMN is not supported for your Delta table. <advice>"
+      "DROP COLUMN is not supported for your Delta table."
     ],
+    "subClass" : {
+      "ENABLE_COLUMN_MAPPING" : {
+        "message" : [
+          "Enable Column Mapping on your Delta table with mapping mode 'name' by running:",
+          "ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name').",
+          "If your table is not on the required protocol version it will be upgraded. Column mapping requires at least protocol (<readerVersion>, <writerVersion>)."
+        ]
+      }
+    },
     "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE" : {
@@ -3527,8 +3593,17 @@
   },
   "DELTA_UNSUPPORTED_RENAME_COLUMN" : {
     "message" : [
-      "Column rename is not supported for your Delta table. <advice>"
+      "Column rename is not supported for your Delta table."
     ],
+    "subClass" : {
+      "ENABLE_COLUMN_MAPPING" : {
+        "message" : [
+          "Enable Column Mapping on your Delta table with mapping mode 'name' by running:",
+          "ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name').",
+          "If your table is not on the required protocol version it will be upgraded. Column mapping requires at least protocol (<readerVersion>, <writerVersion>)."
+        ]
+      }
+    },
     "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_SCHEMA_DURING_READ" : {

@@ -18,15 +18,32 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.AdaptiveMetadataTableFeature
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.test.SharedSparkSession
 
-class AMTUtilsSuite extends SparkFunSuite {
+class AMTUtilsSuite extends QueryTest with SharedSparkSession {
 
-  private val tableRoot = new Path("file:/tables/t1")
-  private val fs = tableRoot.getFileSystem(new Configuration())
+  test("invariantCheckWithLogging: succeeds when the invariant holds") {
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = true,
+      opTypeSuffix = AMTUsageLogs.ALERT_MIXED_LEAF_CONTENT,
+      message = "valid AMT invariant")
+  }
+
+
+  test("invariantCheckWithLogging: evaluates the check once") {
+    var checkCount = 0
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = {
+        checkCount += 1
+        true
+      },
+      opTypeSuffix = AMTUsageLogs.ALERT_MIXED_LEAF_CONTENT,
+      message = "valid AMT invariant")
+    assert(checkCount === 1)
+  }
 
   test("hasScheme: follows URI scheme grammar") {
     assert(AMTUtils.hasScheme("s3://bucket/path"))
@@ -90,26 +107,6 @@ class AMTUtilsSuite extends SparkFunSuite {
       "data/00000-0.parquet")
   }
 
-  test("relativizeManifestPathToTableRoot: a file under the table root becomes relative") {
-    val leaf = new Path("file:/tables/t1/metadata/leaf-1.parquet")
-    assert(AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, leaf) ===
-      "metadata/leaf-1.parquet")
-  }
-
-  test("relativizeManifestPathToTableRoot: a file outside the table root stays absolute") {
-    val outside = new Path("file:/other/metadata/leaf-1.parquet")
-    assert(AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, outside) ===
-      "file:/other/metadata/leaf-1.parquet")
-  }
-
-  test("relativizeManifestPathToTableRoot: result is raw, not URL-encoded") {
-    val leaf = new Path("file:/tables/t1/metadata/leaf a.parquet")
-    val relative = AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, leaf)
-    assert(relative === "metadata/leaf a.parquet",
-      s"space must stay raw, not percent-encoded; got $relative")
-    assert(!relative.contains("%20"))
-  }
-
   test("absolutePathForManifestFile: a relative location joins raw onto the table root") {
     val resolved = AMTUtils.absolutePathForManifestFile(
       new Path("s3://bucket/tables/t1"), "metadata/leaf a.parquet")
@@ -127,7 +124,7 @@ class AMTUtilsSuite extends SparkFunSuite {
   test("relativize then absolutize round-trips a file under the table root") {
     val root = new Path("file:/tables/t1")
     val leaf = new Path("file:/tables/t1/metadata/leaf-1.parquet")
-    val relative = AMTUtils.relativizeManifestPathToTableRoot(fs, root, leaf)
+    val relative = AMTUtils.relativizeLocation(root.toString, leaf.toString)
     assert(AMTUtils.absolutePathForManifestFile(root, relative) === leaf)
   }
 

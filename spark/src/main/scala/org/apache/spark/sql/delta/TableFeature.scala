@@ -920,7 +920,8 @@ object DeletionVectorsTableFeature
 }
 
 object AdaptiveMetadataTableFeature
-  extends ReaderWriterFeature(name = "adaptiveMetadata-preview") {
+  extends ReaderWriterFeature(name = "adaptiveMetadata-preview")
+  with RemovableFeature {
 
   // The [[AdaptiveMetadataTableFeature]] relies on the following features:
   //  - catalogManaged: adaptive metadata tables are catalog managed (CCv2) only.
@@ -936,6 +937,13 @@ object AdaptiveMetadataTableFeature
     DomainMetadataTableFeature,
     DeletionVectorsTableFeature,
     ColumnMappingTableFeature)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    AdaptiveMetadataPreDowngradeCommand(table)
+
+  override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = true
+
+  override def actionUsesFeature(action: Action): Boolean = false
 }
 
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")

@@ -23,12 +23,13 @@ import scala.collection.immutable.ListMap
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CommitStats, DeltaLog, DeltaOperations, Snapshot}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest}
@@ -72,6 +73,29 @@ trait AMTCheckpointTestBase
       case amt: AMTCheckpointProvider => Some(amt)
       case _ => None
     }
+
+  /**
+   * A fake AMT checkpoint provider built directly (not via `fromCheckpoint`, which would read the
+   * root manifest parquet).
+   */
+  protected def fakeAMTProviderAt(
+      cpVersion: Long,
+      protocol: Protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature),
+      metadata: Metadata = Metadata()): AMTCheckpointProvider = {
+    val checkpoint = Checkpoint(
+      version = cpVersion,
+      contentRoot = ContentRoot(path = "fake-root.parquet", sizeInBytes = 0L, version = cpVersion),
+      protocol = protocol,
+      metaData = metadata,
+      domainMetadata = Nil,
+      txns = Nil,
+      sidecars = Nil)
+    new AMTCheckpointProvider(
+      manifestCommitVersion = cpVersion,
+      checkpointAction = checkpoint,
+      leaves = Nil,
+      tableRoot = new Path("file:/fake-table-root"))
+  }
 
   /**
    * Runs `body` on the DATA (content_type=0) entry rows across `paths`, read straight off disk
@@ -506,8 +530,24 @@ trait AMTCheckpointTestBase
         e.tags.get("opType").contains("delta.commit.stats"))
       .map(e => JsonUtils.fromJson[CommitStats](e.blob))
       .find(_.commitVersion == commitVersion)
-      .flatMap(_.amtWriteMetrics)
-      .flatMap(_.attempts.headOption)
+      .flatMap(_.amtCommitStats)
+      .flatMap(_.lastAMTWriteMetrics.incrementalWriteMetrics)
+  }
+
+  /**
+   * Like [[trackIncrementalAMTWriteMetrics]] but returns one entry per attempt that made an
+   * incremental write, in attempt order -- a conflict retry materializes the tree more than once,
+   * so this exposes each attempt's shape.
+   */
+  protected def trackIncrementalAMTWriteMetricsPerAttempt(
+      commit: => Unit): Seq[IncrementalAMTWriteMetrics] = {
+    val events = Log4jUsageLogger.track {
+      commit
+    }
+    events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains(AMTUsageLogs.CONFLICT_RESOLUTION_ROUND))
+      .map(e => JsonUtils.fromJson[AMTMetrics](e.blob))
+      .flatMap(_.singleAMTWriteMetrics)
       .flatMap(_.incrementalWriteMetrics)
   }
 
@@ -579,11 +619,13 @@ trait AMTCheckpointTestBase
   }
 
   /** Forces every write to inline its AMT incrementally (a low action-count threshold). */
-  protected def withInline[T](body: => T): T =
+  protected def withInline[T](body: => T): T = withInlineThreshold(1)(body)
+
+  /** Runs `body` with the inline-manifest threshold at `n` actions. */
+  protected def withInlineThreshold[T](n: Int)(body: => T): T =
     withSQLConf(
-      DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key -> "1") {
-      body
-    }
+      DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+        -> n.toString)(body)
 
   /**
    * Runs the test with inline writes forced (a low action-count threshold).
@@ -619,6 +661,23 @@ trait AMTCheckpointTestBase
   /** Returns the actions committed at exactly `version`. */
   protected def actionsAt(deltaLog: DeltaLog, version: Long): Seq[Action] =
     deltaLog.getChanges(version).find(_._1 == version).map(_._2).getOrElse(Seq.empty)
+
+  /**
+   * The live `AddFile` set reconstructed from the commit-log deltas alone (not the AMT tree). An
+   * AMT-backed table reconstructs its on-disk DVs as relative `r` descriptors through `allFiles`,
+   * so a test that needs the DV descriptors a commit actually recorded reads them from the log.
+   */
+  protected def liveAddFilesFromLog(deltaLog: DeltaLog): Seq[AddFile] = {
+    val live = scala.collection.mutable.LinkedHashMap.empty[String, AddFile]
+    deltaLog.getChanges(0).foreach { case (_, actions) =>
+      actions.foreach {
+        case a: AddFile => live(a.path) = a
+        case r: RemoveFile => live.remove(r.path)
+        case _ =>
+      }
+    }
+    live.values.toSeq
+  }
 
   /** The [[Checkpoint]] committed at exactly `version`, if any. */
   protected def checkpointAt(deltaLog: DeltaLog, version: Long): Option[Checkpoint] = {
