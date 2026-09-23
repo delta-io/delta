@@ -154,11 +154,7 @@ trait DeltaLogging
       check: => Boolean,
       name: String,
       msg: String,
-<<<<<<< HEAD
       provider: DeltaLoggingProvider = null,
-=======
-      deltaLog: DeltaLoggingProvider = null,
->>>>>>> upstream/master
       data: AnyRef = null,
       path: Option[Path] = None)
     : Unit = {
