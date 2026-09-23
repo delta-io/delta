@@ -155,7 +155,7 @@ trait DeltaLogging
       check: => Boolean,
       name: String,
       msg: String,
-      deltaLog: DeltaLog = null,
+      deltaLog: DeltaLoggingProvider = null,
       data: AnyRef = null,
       path: Option[Path] = None)
     : Unit = {
@@ -182,7 +182,7 @@ trait DeltaLogging
       check: => Boolean,
       name: String,
       msg: String,
-      deltaLog: DeltaLog = null,
+      deltaLog: DeltaLoggingProvider = null,
       data: AnyRef = null,
       path: Option[Path] = None
     ): Unit = {
@@ -207,7 +207,7 @@ trait DeltaLogging
       name: String,
       msg: String,
       throwable: Throwable,
-      deltaLog: DeltaLog = null,
+      deltaLog: DeltaLoggingProvider = null,
       data: AnyRef = null,
       path: Option[Path] = None
     ): Unit = {
