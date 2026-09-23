@@ -313,12 +313,6 @@ private[delta] class ConflictChecker(
     if (!hasActionsChanged(updatedInfo)) return
     ConflictChecker.checkNoDuplicateActions(spark, updatedInfo.actions.iterator)
       .foreach(_ => ())
-    ConflictChecker.trackConsistentDataChange(
-      spark,
-      updatedInfo.actions.iterator,
-      deltaLog,
-      updatedInfo.op,
-      callerContext = "checkConflictsAndValidateActions").foreach(_ => ())
   }
 
   /**
@@ -1587,33 +1581,41 @@ private[delta] class ConflictChecker(
 
 private[delta] object ConflictChecker extends DeltaLogging {
   /**
-   * Returns an iterator that validates all [[AddFile]] and [[RemoveFile]] actions in
-   * `actions` share a consistent `dataChange` value. [[AddCDCFile]] is excluded because
-   * change-data-feed files are always emitted with `dataChange = false`.
+   * Returns an iterator that validates two `dataChange` invariants in one pass:
+   *  - all [[AddFile]] and [[RemoveFile]] actions share a consistent value; and
+   *  - every file action matches [[DeltaOperations.Operation.expectedFileDataChange]], when set.
    *
-   * Behavior is controlled by
-   * [[DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE]]:
-   *  - `off`:   skip the check entirely.
-   *  - `log`:   record a Delta event on violation but do not throw.
-   *  - `fatal`: record a Delta event and then throw an [[IllegalStateException]].
+   * [[AddCDCFile]] is excluded because change-data-feed files always carry `dataChange = false`.
+   * Each check is independently controlled by its corresponding commit-validation mode. A
+   * violation is reported only once per invariant, and fatal mode throws on the first violation.
    *
-   * Single pass, no materialization; the throw fires on the first detected inconsistency.
-   *
-   * When the commit carries a [[CommitInfo]] with a [[CommitInfo.dataChange]], this also records
-   * whether that value matches what the file actions say it should be.
+   * When consistency validation is enabled and the commit carries a [[CommitInfo]] with a
+   * [[CommitInfo.dataChange]], this also records whether that value matches the file actions.
    */
-  def trackConsistentDataChange(
+  def trackDataChange(
       spark: SparkSession,
       actions: Iterator[Action],
       deltaLog: DeltaLog,
       op: DeltaOperations.Operation,
       callerContext: String): Iterator[Action] = {
-    val mode =
-      DeltaSQLConf.ConsistentDataChangeValidationMode.fromConf(spark.sessionState.conf)
-    if (mode == DeltaSQLConf.ConsistentDataChangeValidationMode.OFF) return actions
+    val consistentMode = DeltaSQLConf.DataChangeValidationMode.consistentDataChangeMode(
+      spark.sessionState.conf)
+    val expectedMode = DeltaSQLConf.DataChangeValidationMode.expectedDataChangeMode(
+      spark.sessionState.conf)
+    val expectedDataChange = op.expectedFileDataChange
+
+    val consistentCheckEnabled =
+      consistentMode != DeltaSQLConf.DataChangeValidationMode.OFF
+    val expectedCheckEnabled =
+      expectedMode != DeltaSQLConf.DataChangeValidationMode.OFF &&
+        expectedDataChange.isDefined
+
+    if (!consistentCheckEnabled && !expectedCheckEnabled) return actions
+
     var firstDataChangeAction: Option[FileAction] = None
     var firstNoDataChangeAction: Option[FileAction] = None
-    var mixedViolationReported = false
+    var inconsistentDataChangeReported = false
+    var unexpectedDataChangeReported = false
     var commitInfoMismatchReported = false
     var declaredDataChange: Option[Boolean] = None
 
@@ -1629,9 +1631,9 @@ private[delta] object ConflictChecker extends DeltaLogging {
       override def next(): Action = {
         val action = actions.next()
         action match {
-          case c: CommitInfo =>
+          case c: CommitInfo if consistentCheckEnabled =>
             declaredDataChange = c.dataChange
-          case f: FileAction if !f.isInstanceOf[AddCDCFile] =>
+          case f: FileAction if consistentCheckEnabled && !f.isInstanceOf[AddCDCFile] =>
             if (f.dataChange) {
               if (firstDataChangeAction.isEmpty) firstDataChangeAction = Some(f)
             } else {
@@ -1639,9 +1641,9 @@ private[delta] object ConflictChecker extends DeltaLogging {
             }
           case _ =>
         }
-        if (!mixedViolationReported &&
+        if (consistentCheckEnabled && !inconsistentDataChangeReported &&
             firstDataChangeAction.isDefined && firstNoDataChangeAction.isDefined) {
-          mixedViolationReported = true
+          inconsistentDataChangeReported = true
           val message = "All FileActions in a single commit must share a consistent " +
             "dataChange value, but this commit mixes dataChange = true and " +
             "dataChange = false actions."
@@ -1654,10 +1656,11 @@ private[delta] object ConflictChecker extends DeltaLogging {
               "operationParameters" -> op.jsonEncodedValues,
               "firstDataChangeAction" -> firstDataChangeAction,
               "firstNoDataChangeAction" -> firstNoDataChangeAction))
-          if (mode == DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL) {
+          if (consistentMode == DeltaSQLConf.DataChangeValidationMode.FATAL) {
             throw new IllegalStateException(message)
           }
-        } else if (!commitInfoMismatchReported && isCommitInfoDataChangeViolated()) {
+        } else if (consistentCheckEnabled && !commitInfoMismatchReported &&
+            isCommitInfoDataChangeViolated()) {
           commitInfoMismatchReported = true
           val declared = declaredDataChange.get
           recordDeltaEvent(
@@ -1671,6 +1674,29 @@ private[delta] object ConflictChecker extends DeltaLogging {
               "derivedDataChange" -> firstDataChangeAction.isDefined,
               "firstDataChangeAction" -> firstDataChangeAction,
               "firstNoDataChangeAction" -> firstNoDataChangeAction))
+        }
+
+        action match {
+          case f: FileAction if expectedCheckEnabled && !f.isInstanceOf[AddCDCFile] &&
+              !unexpectedDataChangeReported && expectedDataChange.exists(_ != f.dataChange) =>
+            unexpectedDataChangeReported = true
+            val expected = expectedDataChange.get
+            val error = DeltaErrors.unexpectedCommittedDataChange(
+              op.name, f.getClass.getSimpleName, f.dataChange, expected)
+            recordDeltaEvent(
+              deltaLog,
+              "delta.commit.unexpectedDataChange",
+              data = Map(
+                "callerContext" -> callerContext,
+                "operation" -> op.name,
+                "operationParameters" -> op.jsonEncodedValues,
+                "actualDataChange" -> f.dataChange,
+                "path" -> f.path))
+            if (expectedMode == DeltaSQLConf.DataChangeValidationMode.FATAL) {
+              throw error
+            }
+            logError(error.getMessage)
+          case _ =>
         }
         action
       }

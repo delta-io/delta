@@ -2254,23 +2254,26 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(GeneratedColumnValidateOnWriteMode.values.map(_.toString))
       .createWithDefault(GeneratedColumnValidateOnWriteMode.LOG_ONLY.toString)
 
-  sealed abstract class ConsistentDataChangeValidationMode(val name: String) {
+  sealed abstract class DataChangeValidationMode(val name: String) {
     override def toString: String = name
   }
-  object ConsistentDataChangeValidationMode {
+  object DataChangeValidationMode {
     /** Skip the validation entirely. */
-    case object OFF extends ConsistentDataChangeValidationMode("off")
+    case object OFF extends DataChangeValidationMode("off")
     /** Record a Delta event on violation but do not throw. */
-    case object LOG extends ConsistentDataChangeValidationMode("log")
+    case object LOG extends DataChangeValidationMode("log")
     /** Throw an exception on violation. */
-    case object FATAL extends ConsistentDataChangeValidationMode("fatal")
+    case object FATAL extends DataChangeValidationMode("fatal")
 
-    val values: Seq[ConsistentDataChangeValidationMode] = Seq(OFF, LOG, FATAL)
-    private val byName: Map[String, ConsistentDataChangeValidationMode] =
+    val values: Seq[DataChangeValidationMode] = Seq(OFF, LOG, FATAL)
+    private val byName: Map[String, DataChangeValidationMode] =
       values.map(m => m.name -> m).toMap
 
-    def fromConf(conf: SQLConf): ConsistentDataChangeValidationMode =
+    def consistentDataChangeMode(conf: SQLConf): DataChangeValidationMode =
       byName(conf.getConf(DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE))
+
+    def expectedDataChangeMode(conf: SQLConf): DataChangeValidationMode =
+      byName(conf.getConf(DELTA_COMMIT_VALIDATE_EXPECTED_DATA_CHANGE_MODE))
   }
 
   val DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE =
@@ -2285,8 +2288,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
              |""".stripMargin)
       .stringConf
       .transform(_.toLowerCase(Locale.ROOT))
-      .checkValues(ConsistentDataChangeValidationMode.values.map(_.name).toSet)
-      .createWithDefault(ConsistentDataChangeValidationMode.LOG.name)
+      .checkValues(DataChangeValidationMode.values.map(_.name).toSet)
+      .createWithDefault(DataChangeValidationMode.LOG.name)
+
+  val DELTA_COMMIT_VALIDATE_EXPECTED_DATA_CHANGE_MODE =
+    buildConf("commitValidation.expectedDataChange.mode")
+      .internal()
+      .doc("""
+             |Controls validation that every FileAction an operation commits carries the dataChange
+             |value the operation declares via DeltaOperations.Operation.expectedFileDataChange
+             |(operations that leave it unset are not validated).
+             | - off:   Skip the validation entirely.
+             | - log:   Record a Delta event on violation but do not throw.
+             | - fatal: Throw an exception on violation.
+             |""".stripMargin)
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(DataChangeValidationMode.values.map(_.name).toSet)
+      .createWithDefault(DataChangeValidationMode.LOG.name)
 
   val DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED =
     buildConf("commitInfo.dataChange.read.enabled")

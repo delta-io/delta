@@ -316,6 +316,17 @@ trait DeltaErrorsBase
       messageParameters = Array(columns.mkString("[", ",", "]")))
   }
 
+  def unexpectedCommittedDataChange(
+      operation: String,
+      actionType: String,
+      actualDataChange: Boolean,
+      expectedDataChange: Boolean): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_COMMIT_UNEXPECTED_DATA_CHANGE",
+      messageParameters =
+        Array(operation, actionType, actualDataChange.toString, expectedDataChange.toString))
+  }
+
   /**
    * Thrown when a CDC query contains conflict 'starting' or 'ending' options, e.g. when both
    * starting version and starting timestamp are specified.

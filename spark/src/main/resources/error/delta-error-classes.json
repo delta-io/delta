@@ -733,6 +733,12 @@
     ],
     "sqlState" : "42P01"
   },
+  "DELTA_COMMIT_UNEXPECTED_DATA_CHANGE" : {
+    "message" : [
+      "Operation <operation> committed a <actionType> with dataChange = <actualDataChange>, but expected <expectedDataChange>."
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE" : {
     "message" : [
       " Found nested NullType in column <columName> which is of <dataType>. Delta doesn't support writing NullType in complex types."

@@ -1898,9 +1898,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
       validateActionsAddFileInvariants(preparedActions, metadata)
 
       checkNoDuplicateActions(preparedActions)
-      ConflictChecker.trackConsistentDataChange(
-        spark, preparedActions.iterator, deltaLog, op, callerContext = "commit")
-        .foreach(_ => ())
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -2195,8 +2192,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
         }
         action
       }
-      allActions = ConflictChecker.trackConsistentDataChange(
-        spark, allActions, deltaLog, op, callerContext = "commitLarge")
       val (allActions2, acStatsCollector) = collectAutoOptimizeStats(allActions)
       allActions = allActions2
 
@@ -2227,6 +2222,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       val commitStatsComputer = new CommitStatsComputer()
       allActions = commitStatsComputer.addToCommitStats(allActions)
+      allActions = ConflictChecker.trackDataChange(
+        spark, allActions, deltaLog, op, callerContext = "commitLarge")
       executionObserver.beginDoCommit()
       if (readVersion < 0) {
         deltaLog.createLogDirectoriesIfNotExists()
@@ -3007,6 +3004,14 @@ trait OptimisticTransactionImpl extends TransactionHelper
         updatedInfo
       }.getOrElse(currentTransactionInfo)
     val baseActions = updatedCurrentTransactionInfo.finalActionsToCommit
+    // Validate the complete post-conflict-resolution action set before AMT can replace file actions
+    // in the commit JSON with a checkpoint representation.
+    ConflictChecker.trackDataChange(
+      spark,
+      baseActions.iterator,
+      deltaLog,
+      updatedCurrentTransactionInfo.op,
+      callerContext = "doCommit").foreach(_ => ())
     val amtWriteResultOpt = amtWriterManager.writeAMT(
       nextAttemptVersion = attemptVersion,
       currentTransactionInfo = updatedCurrentTransactionInfo,
