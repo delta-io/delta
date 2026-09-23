@@ -290,7 +290,7 @@ The root manifest contains entries of the following types:
 | Field ID | Field Name | Delta Type | Required | Applicable To | Description |
 |----------|------------|------------|----------|---------------|-------------|
 | 147 | `tracking` | Struct ([Tracking](#tracking)) | Required | All | Tracking information for this entry |
-| 134 | `content_type` | Int | Required | All | 0=DATA, 3=DATA_MANIFEST, 4=DELETE_MANIFEST |
+| 134 | `content_type` | Int | Required | All | 0=DATA, 3=DATA_MANIFEST |
 | 157 | `format_version` | Int | Required | All | Iceberg writer format version; 0: for ≤v3, 4 for V4. |
 | 100 | `location` | String | Required | All | Path relative to table root (e.g., `metadata/leaf-m1.parquet` or `data/part-00001.parquet`). May be absolute URI. |
 | 101 | `file_format` | String | Required | All | File format name. Delta only supports `parquet`. |
