@@ -67,7 +67,7 @@ object AMTUtils extends DeltaLogging {
         throwable = new DeltaIllegalStateException(
           errorClass = "INTERNAL_ERROR",
           messageParameters = Array(message)),
-        deltaLog = deltaLog,
+        provider = deltaLog,
         data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
     }
   }

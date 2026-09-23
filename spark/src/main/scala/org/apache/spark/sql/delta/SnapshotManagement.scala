@@ -705,7 +705,7 @@ trait SnapshotManagement { self: DeltaLog =>
       check = isDeltasAndCompactedDeltasSorted,
       name = "v4amt.useCompactedDeltasForLogSegment.isDeltasAndCompactedDeltasSorted",
       msg = s"Deltas and compacted deltas are not sorted. [${JsonUtils.toJson(eventData)}]",
-      deltaLog = this,
+      provider = this,
       data = eventData)
     recordDeltaEvent(
       provider = this,

@@ -181,13 +181,13 @@ trait DeltaLogging
       check: => Boolean,
       name: String,
       msg: String,
-      deltaLog: DeltaLoggingProvider = null,
+      provider: DeltaLoggingProvider = null,
       data: AnyRef = null,
       path: Option[Path] = None
     ): Unit = {
     if (!check) {
       recordDeltaEvent(
-        provider = deltaLog,
+        provider = provider,
         opType = s"delta.assertions.$name",
         data = data,
         path = path
@@ -206,13 +206,13 @@ trait DeltaLogging
       name: String,
       msg: String,
       throwable: Throwable,
-      deltaLog: DeltaLoggingProvider = null,
+      provider: DeltaLoggingProvider = null,
       data: AnyRef = null,
       path: Option[Path] = None
     ): Unit = {
     if (!check) {
       recordDeltaEvent(
-        provider = deltaLog,
+        provider = provider,
         opType = s"delta.assertions.$name",
         data = data,
         path = path

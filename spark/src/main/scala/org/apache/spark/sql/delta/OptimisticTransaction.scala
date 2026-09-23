@@ -2967,7 +2967,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       name = "idempotentCommitPreparedActionsMismatch",
       msg = msg,
       throwable = new IllegalStateException(msg),
-      deltaLog = deltaLog)
+      provider = deltaLog)
   }
 
   /**
