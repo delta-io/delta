@@ -4,20 +4,20 @@
 
 ## Overview
 
-Delta already supports [Identity Columns](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#identity-columns):
-a writer generates unique `start + k * step` values for a column and records the highest value it
+Delta already supports [Identity Columns](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#identity-columns).
+A writer generates unique `start + k * step` values for a column and records the highest value it
 emitted in the column's `delta.identity.highWaterMark` schema metadata, bumping that key in the same
-commit that writes the rows. That serializes identity generation through the commit: a writer cannot
+commit that writes the rows. That serializes identity generation through the commit. A writer cannot
 know which values are safe to assign until it has read the current mark, and two writers that read the
-same mark would generate overlapping values. An identity-column table therefore admits only one
-concurrent writer of new identity values, a poor fit for high-throughput ingestion.
+same mark generate overlapping values. An identity-column table therefore admits only one concurrent
+writer of new identity values, making it unsuitable for parallel workload.
 
 This RFC proposes a new **writer-only** table feature, `concurrentIdentityColumns`, that removes the
 high-water mark from the write path. An identity column is instead bound to a **monotonic sequence**
 owned by the table's catalog. Writers *reserve* disjoint ranges of values from the sequence and assign
-them locally, so many writers (and many tasks within a writer) can generate identity values in parallel
-without coordinating through the Delta commit. Because ranges are disjoint by construction, uniqueness
-no longer depends on winning the commit or on reading a shared mark.
+them locally. Many writers (and many tasks within a writer) can then generate identity values in
+parallel without coordinating through the Delta commit. Because ranges are disjoint by construction,
+uniqueness no longer depends on winning the commit or on reading a shared mark.
 
 The sequence lives in, and is allocated by, the same catalog that coordinates the table's commits, so
 the feature is restricted to [Catalog-Managed Tables](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/catalog-managed.md).
@@ -47,9 +47,9 @@ additionally contain:
   values for this column. This is a string type value. Its presence marks the column as a
   **concurrent identity column**: its values are allocated from the named sequence rather than derived from
   `delta.identity.highWaterMark`, and the two keys are mutually exclusive. It is an opaque pointer to
-  the column's *current* sequence, not a stable column identifier: a writer must not change it during
-  ordinary writes, it is replaced when the column is re-bound to a fresh sequence, and it is removed
-  when the column is converted back to a classic identity column.
+  the column's *current* sequence, not a stable column identifier. A writer must not change it
+  during ordinary writes, it is replaced when the column is re-bound to a fresh sequence, and it is
+  removed when the column is converted back to a classic identity column.
 
 > ***New Section after the [Identity Columns](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#identity-columns) section***
 
@@ -71,7 +71,7 @@ To support this feature:
   and must satisfy the identity-column requirements (`start`, `step`, `allowExplicitInsert`); only
   value generation and the highest-value bookkeeping are delegated to the sequence.
 
-`concurrentIdentityColumns` is a table-level mode for identity generation, not a per-column opt-in: on
+`concurrentIdentityColumns` is a table-level mode for identity generation, not a per-column opt-in. On
 a table that supports the feature, **every** identity column must be concurrent. Uniformity keeps
 the write path unambiguous, no writer has to reconcile two generation models. Consequently:
 - A writer that adds the feature to a table must bind every existing identity column to a sequence in
@@ -85,7 +85,7 @@ the write path unambiguous, no writer has to reconcile two generation models. Co
 ### The sequence
 
 A sequence is a catalog-hosted counter identified by `delta.identity.concurrent.sequenceId` and scoped
-by `(table, sequenceId)`: the contract is that a persisted `sequenceId` resolves, via the table's
+by `(table, sequenceId)`. The contract is that a persisted `sequenceId` resolves, via the table's
 catalog, to the sequence the column's values are drawn from. Each identity column is bound to its own
 sequence, so a table with several identity columns has several independent counters.
 
@@ -94,7 +94,7 @@ The sequence service hands out values `start + k * step` for strictly increasing
 largest `k` it has allocated, not a numeric extreme, so a negative `step` works unchanged. Every
 reservation must return a range disjoint from every range that sequence has ever returned, and must
 advance the allocation frontier atomically and durably before returning it. Reservations are not
-idempotent: retrying after a timeout or lost response is a new request that must allocate a new range.
+idempotent. Retrying after a timeout or lost response is a new request that must allocate a new range.
 
 Any allocation or transition that would produce a value outside the signed 64-bit `BIGINT` range must
 fail rather than wrap.
@@ -102,22 +102,22 @@ fail rather than wrap.
 **Gaps are acceptable.** The sequence guarantees only that a generated value is never reused, not that
 generated values are contiguous. A range a writer reserves but does not fully use (it crashes, aborts,
 or under-fills) leaves those values permanently unallocated, so a concurrent identity column's values may
-contain holes, exactly as a classic identity column's may after a failed write. Writers must not return
-or replay an unused range to close the hole.
+contain holes. Writers must not return or replay an unused range to close the hole.
 
 ### Writer Requirements for Concurrent Identity Columns
 
 A writer to a table that supports `concurrentIdentityColumns` must:
 
-- Obtain each concurrent identity column's values by **reserving disjoint ranges** from that column's
-  sequence via the catalog, and assign only values drawn from ranges it has reserved. Writers must not
-  generate a concurrent identity column's values from `delta.identity.highWaterMark` or from any local
-  counter, and must never write or advance that key during ordinary writes.
+- Obtain each concurrent identity column's values by **reserving ranges** from that column's
+  sequence via the catalog, and assign only values drawn from ranges it has reserved. The catalog is
+  responsible for serving **disjoint ranges**. Writers must not generate a concurrent identity
+  column's values from `delta.identity.highWaterMark` or from any local counter, and must never
+  write or advance that key during ordinary writes.
 - Honor `delta.identity.allowExplicitInsert` exactly as for classic identity columns. Explicitly
   inserted values are not drawn from the sequence and the catalog does not account for them, just as
   they do not advance the high-water mark today, so when `allowExplicitInsert` is `true` a
   user-supplied value may collide with a generated one. Writers neither detect nor report such a
-  collision, exactly as for classic identity columns: an identity column is not a uniqueness
+  collision, exactly as for classic identity columns. An identity column is not a uniqueness
   constraint, and deduplicating explicit inserts remains the user's responsibility.
 - When creating a concurrent identity column, or converting a classic identity column to a
   concurrent one, bind the column to a sequence and persist its `sequenceId` in the column
@@ -128,8 +128,8 @@ A writer to a table that supports `concurrentIdentityColumns` must:
 ### Establishing, Repairing, and Removing a Sequence Binding
 
 Three operations establish, re-establish, or tear down a column's binding to a sequence. Each is a
-table-metadata transaction that must conflict with every concurrent transaction on the table:
-whichever commits first, the loser aborts and retries against the new table state, and a retried
+table-metadata transaction that must conflict with every concurrent transaction on the table.
+Whichever commits first, the loser aborts and retries against the new table state, and a retried
 writer must obtain new reservations rather than commit identity values generated from a binding that
 is no longer current.
 
@@ -147,8 +147,8 @@ is no longer current.
   `ALTER TABLE ... ALTER COLUMN c SYNC IDENTITY`.)
 - **Removing the binding.** In the version that removes `concurrentIdentityColumns` from the table's
   `writerFeatures`, a writer must convert every concurrent identity column back to a classic identity
-  column: rather than scan the data, it reserves a **single** value from the column's sequence, writes
-  that value into `delta.identity.highWaterMark`, and removes
+  column. Rather than to scan the data, it reserves a **single** value from the column's sequence,
+  writes that value into `delta.identity.highWaterMark`, and removes
   `delta.identity.concurrent.sequenceId`. The reserved value is past everything the sequence has handed
   out, so the next classic value (`highWaterMark + step`) clears them all.
 
@@ -212,12 +212,11 @@ A catalog that backs this feature is expected to expose three operations on a se
 `(table, sequenceId)`. This sketch is **informative**: a concrete catalog is free to shape, batch, or
 name these calls differently as long as it honors the contract above.
 
-- **`createSequences`**: register a new sequence for a column, seeded as described in
+- **`batchCreate`**: register new sequences for a column, seeded as described in
   [Establishing, Repairing, and Removing a Sequence Binding](#establishing-repairing-and-removing-a-sequence-binding).
   Idempotent create-or-get, so a post-commit retry is safe.
-- **`reserveRanges`**: reserve a contiguous range of `count` values from an existing sequence and return
-  its inclusive bounds. Removing the binding uses the degenerate `count = 1` case to read back the next
-  value as the classic high-water mark.
-- **`dropSequences`**: retire a sequence the table no longer references. Best-effort: a failed drop only
-  strands a sequence the table no longer points at, never leaves a live table pointing at a dropped
-  sequence.
+- **`batchReserveRanges`**: for multiple existing sequences reserve a contiguous range of `count` values from
+  an and return the inclusive bounds. 
+- **`batchDelete`**: retire sequences the table no longer references. Best-effort: a failed drop
+  only strands a sequences the table no longer points at, never leaves a live table pointing at
+  dropped sequences.
