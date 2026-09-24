@@ -2751,21 +2751,17 @@ trait DeltaErrorsBase
 
   def protocolChangedException(
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ProtocolChangedException = {
-    val additionalInfo = conflictingCommit.map { v =>
-      if (v.version.getOrElse(-1) == 0) {
-        "This happens when multiple writers are writing to an empty directory. " +
-          "Creating the table ahead of time will avoid this conflict. "
-      } else {
-        ""
-      }
-    }.getOrElse("")
-    new io.delta.exceptions.ProtocolChangedException(
-      Array(
-        additionalInfo,
-        conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
-        DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
-      )
-    )
+    val docLink = DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
+    conflictingCommit match {
+      case Some(ci) if ci.version.getOrElse(-1L) == 0 =>
+        io.delta.exceptions.ProtocolChangedException(
+          "WRITE_TO_EMPTY_DIRECTORY", Array(docLink))
+      case Some(ci) =>
+        io.delta.exceptions.ProtocolChangedException(
+          "CONFLICTING_COMMIT", Array(docLink, JsonUtils.toJson(ci)))
+      case None =>
+        new io.delta.exceptions.ProtocolChangedException(Array(docLink))
+    }
   }
 
   def unsupportedReaderTableFeaturesInTableException(
