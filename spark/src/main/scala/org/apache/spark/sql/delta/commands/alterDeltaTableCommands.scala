@@ -154,9 +154,6 @@ case class AlterTableSetPropertiesDeltaCommand(
           true
       }.toMap
 
-      // For Coordinated Commits table validation
-      CoordinatedCommitsUtils.validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
-        existingConfs = metadata.configuration, propertyOverrides = filteredConfs)
       // For Catalog Owned table validation
       CatalogOwnedTableUtils.validatePropertiesForAlterTableSetPropertiesDeltaCommand(
         txn.snapshot, propertyOverrides = filteredConfs)
@@ -239,8 +236,6 @@ case class AlterTableUnsetPropertiesDeltaCommand(
       }
 
       if (!fromDropFeatureCommand) {
-        CoordinatedCommitsUtils.validateConfigurationsForAlterTableUnsetPropertiesDeltaCommand(
-          existingConfs = metadata.configuration, propKeysToUnset = normalizedKeys)
         CatalogOwnedTableUtils.validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
           txn.snapshot, propKeysToUnset = normalizedKeys)
       }
