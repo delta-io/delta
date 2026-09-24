@@ -16,19 +16,11 @@
 
 package org.apache.spark.sql.delta.amt
 
-import java.util.concurrent.TimeUnit
-
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaOperations, FullAMTWriteFailedWithConflict, Snapshot, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, Snapshot, SnapshotDescriptor, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
-import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
-
-import org.apache.spark.internal.MDC
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Path helpers for AMT (Adaptive Metadata Tree) manifest files.
@@ -39,7 +31,6 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
 object AMTUtils extends DeltaLogging {
-
   /**
    * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
    * `metadata`.
@@ -50,6 +41,27 @@ object AMTUtils extends DeltaLogging {
   /** Whether AMT writes are enabled for `snapshot`. */
   def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
     amtEnabled(snapshot.metadata, snapshot.protocol)
+
+  /** Logs and throws an [[IllegalStateException]] when an AMT invariant does not hold. */
+  def invariantCheckWithLogging(
+      checkInvariant: => Boolean,
+      opTypeSuffix: String,
+      message: String,
+      deltaLog: DeltaLog = null,
+      data: Map[String, Any] = Map.empty): Unit = {
+    if (!checkInvariant) {
+      val stackTrace = Thread.currentThread().getStackTrace.drop(2).take(10).mkString("\n\t")
+      deltaAssertAndThrow(
+        check = false,
+        name = opTypeSuffix,
+        msg = message,
+        throwable = new DeltaIllegalStateException(
+          errorClass = "INTERNAL_ERROR",
+          messageParameters = Array(message)),
+        deltaLog = deltaLog,
+        data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
+    }
+  }
 
   private val PathSeparator = "/"
 
@@ -170,52 +182,4 @@ object AMTUtils extends DeltaLogging {
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
   private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
     ManifestBitmap.fromSerializedByteArray(bytes)
-
-  /**
-   * Emits the AMT for `snapshot` by committing a follow-up OPTIMIZE CHECKPOINT that
-   * rewrites the manifest tree, full or incremental per `amtTriggerModeOpt` (full when absent).
-   *
-   * A losing full checkpoint that cannot reuse its base against a concurrent winner surfaces a
-   * [[FullAMTWriteFailedWithConflict]]; refresh the snapshot and retry, bounded so a pathological
-   * run of concurrent winners cannot spin forever. At least one attempt always runs.
-   */
-  def emitAMTCheckpoint(
-      snapshot: Snapshot,
-      catalogTableOpt: Option[CatalogTable],
-      amtTriggerModeOpt: Option[AMTTriggerMode]): Unit = {
-    val triggerMode = amtTriggerModeOpt.getOrElse(AMTTriggerMode.OnDemandCheckpointFull)
-    val deltaLog = snapshot.deltaLog
-    var attemptsRemaining = math.max(1, SparkSession.active.sessionState.conf.getConf(
-      DeltaSQLConf.AMT_CONFLICT_CHECKING_MAX_FULL_REGENERATE_RETRIES))
-    var readSnapshot: Snapshot = snapshot
-    while (attemptsRemaining > 0) {
-      attemptsRemaining -= 1
-      val checkpointTxn = deltaLog.startTransaction(catalogTableOpt, Some(readSnapshot))
-      val attemptStartNs = System.nanoTime()
-      try {
-        checkpointTxn.commit(
-          Seq.empty,
-          DeltaOperations.OptimizeCheckpoint(triggerMode.isIncremental, triggerMode.name))
-        return
-      } catch {
-        case e: FullAMTWriteFailedWithConflict if attemptsRemaining > 0 =>
-          // A concurrent winner changed content the base tree describes, so this full checkpoint
-          // cannot reuse it and must regenerate its full AMT against the post-winner snapshot.
-          // Refresh and retry rather than surfacing the conflict.
-          recordDeltaEvent(
-            deltaLog,
-            opType = AMTUsageLogs.CHECKPOINT_FULL_REGENERATE_RETRY,
-            data = Map(
-              "conflictingCommitVersion" -> e.conflictingCommitVersion,
-              "attemptsRemaining" -> attemptsRemaining,
-              "timeTakenMs" ->
-                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - attemptStartNs)))
-          logInfo(log"Retrying full AMT checkpoint on " +
-            log"${MDC(DeltaLogKeys.PATH, deltaLog.dataPath)} after a concurrent commit at " +
-            log"version ${MDC(DeltaLogKeys.VERSION, e.conflictingCommitVersion)}; regenerating " +
-            log"against the refreshed snapshot.")
-          readSnapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
-      }
-    }
-  }
 }

@@ -16,10 +16,13 @@
 
 package org.apache.spark.sql.delta.amt
 
+import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 
-import org.apache.spark.sql.delta.{ConcurrentWriteException, DeltaLog, FullAMTWriteFailedWithConflict}
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
+import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, ConcurrentWriteException, DeltaLog, FullAMTWriteFailedWithConflict}
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.Row
@@ -34,9 +37,58 @@ class AMTConflictResolutionSuite
   with PhaseLockingTestMixin
   with TransactionExecutionTestMixin {
 
+  import AMTConflictResolutionRoundMetrics._
+  import BackRefRebaseMetrics._
+
   // A large interval keeps the checkpoint-interval maintenance hook from firing its own checkpoint
   // mid-test; every AMT write here is one the test drives explicitly.
   private val noAutoCheckpointInterval = 1000
+
+  private def trackConflictResolutionRounds(
+      f: => Unit): Seq[AMTConflictResolutionRoundMetrics] = {
+    val metrics = Log4jUsageLogger.track(f)
+      .filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains(AMTUsageLogs.CONFLICT_RESOLUTION_ROUND))
+      .map(e => JsonUtils.fromJson[AMTMetrics](e.blob))
+      .filter(_.conflictResolutionMetrics.nonEmpty)
+      .sortBy(_.roundId)
+    assert(metrics.forall(m => m.txnId.nonEmpty && m.roundId > 0),
+      s"conflict rounds must identify their transaction and positive round ID: $metrics")
+    metrics.flatMap(_.conflictResolutionMetrics)
+  }
+
+  // Asserts the common conflict-round grid metrics for a run that produced exactly one conflict
+  // round, and returns that round so a caller can assert anything not covered here.
+  private def assertSingleAMTConflictRoundMetrics(
+      rounds: Seq[AMTConflictResolutionRoundMetrics],
+      expectedLosingCommitType: String,
+      expectedTreeOutcome: String,
+      expectedWinnerTreeSatisfiesRequirement: Option[Boolean],
+      expectedLosingTreeType: Option[String] = None,
+      expectedException: Option[Class[_ <: Throwable]] = None,
+      numLogOnlyWinners: Int = 0,
+      numIncrementalCheckpointWinners: Int = 0,
+      numFullCheckpointWinners: Int = 0,
+      allLogWinnersPreserveLosingTree: Option[Boolean] = None)
+    : AMTConflictResolutionRoundMetrics = {
+    assert(rounds.size == 1, s"expected exactly one AMT conflict round, got $rounds")
+    val round = rounds.head
+    assert(round.losingCommitType == expectedLosingCommitType)
+    assert(round.losingTreeType == expectedLosingTreeType)
+    assert(round.treeOutcome == expectedTreeOutcome)
+    assert(round.winnerTreeSatisfiesRequirement ==
+      expectedWinnerTreeSatisfiesRequirement)
+    assert(round.exceptionThrown == expectedException.map(_.getSimpleName))
+    assert(round.winningCommits.numLogOnly == numLogOnlyWinners)
+    assert(round.winningCommits.numInlineIncremental == 0)
+    assert(round.winningCommits.numIncrementalCheckpoints ==
+      numIncrementalCheckpointWinners)
+    assert(round.winningCommits.numFullCheckpoints == numFullCheckpointWinners)
+    assert((round.winningCommits.numFullCheckpoints > 0) == (numFullCheckpointWinners > 0))
+    assert(round.winningCommits.allLogWinnersPreserveLosingTree ==
+      allLogWinnersPreserveLosingTree)
+    round
+  }
 
   /** A transaction body that commits an incremental OPTIMIZE CHECKPOINT (writes a new AMT tree). */
   private def optimizeCheckpointTxn(deltaLog: DeltaLog): () => Array[Row] = () => {
@@ -79,7 +131,7 @@ class AMTConflictResolutionSuite
    * [[ConcurrentWriteException]]). Used when the checkpoint is driven directly rather than through
    * `CheckpointHook`, so the signal surfaces to the caller instead of being retried.
    */
-  private def assertRetrySignal(future: scala.concurrent.Future[Array[Row]]): Unit = {
+  private def assertRetrySignal(future: Future[Array[Row]]): Unit = {
     val ex = intercept[SparkException] {
       ThreadUtils.awaitResult(future, Duration.Inf)
     }
@@ -93,6 +145,28 @@ class AMTConflictResolutionSuite
         causes.map(_.getClass.getName).mkString(" -> "))
     assert(!causes.exists(_.isInstanceOf[ConcurrentWriteException]),
       "the regenerate signal must be distinct from a deferred ConcurrentWriteException.")
+  }
+
+  /**
+   * Awaits `future`, asserting that a losing maintenance checkpoint signaled a clean skip via
+   * [[ConcurrentAMTCheckpointLandedException]] (distinct from a deferred
+   * [[ConcurrentWriteException]]). Used when the checkpoint is driven directly rather than through
+   * the maintenance path, so the skip signal surfaces to the caller instead of being suppressed.
+   */
+  private def assertCleanSkipSignal(future: Future[Array[Row]]): Unit = {
+    val ex = intercept[SparkException] {
+      ThreadUtils.awaitResult(future, Duration.Inf)
+    }
+    val causes = Iterator
+      .iterate[Throwable](ex)(t => if (t.getCause eq t) null else t.getCause)
+      .takeWhile(_ != null)
+      .take(50)
+      .toList
+    assert(causes.exists(_.isInstanceOf[ConcurrentAMTCheckpointLandedException]),
+      s"expected a ConcurrentAMTCheckpointLandedException in the cause chain, got " +
+        causes.map(_.getClass.getName).mkString(" -> "))
+    assert(!causes.exists(_.isInstanceOf[ConcurrentWriteException]),
+      "the clean-skip signal must be distinct from a deferred ConcurrentWriteException.")
   }
 
   // A losing OPTIMIZE checkpoint -- whether its first attempt wrote a full or an incremental
@@ -111,11 +185,23 @@ class AMTConflictResolutionSuite
         // A is a losing OPTIMIZE checkpoint describing the read snapshot; B is a plain append that
         // wins A's target version and only adds brand-new files (defaultRowCommitVersion past A's
         // read version), so A's tree stays exact and is recommitted as-is.
-        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
-          losingCheckpointTxn(deltaLog),
-          appendTxn(name, id = 100))
-        ThreadUtils.awaitResult(futureB, Duration.Inf)
-        ThreadUtils.awaitResult(futureA, Duration.Inf)
+        val rounds = trackConflictResolutionRounds {
+          val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+            losingCheckpointTxn(deltaLog),
+            appendTxn(name, id = 100))
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          ThreadUtils.awaitResult(futureA, Duration.Inf)
+        }
+        assertSingleAMTConflictRoundMetrics(
+          rounds,
+          expectedLosingCommitType =
+            if (reusedTreeIsIncremental) INCREMENTAL_CHECKPOINT else FULL_CHECKPOINT,
+          expectedLosingTreeType =
+            Some(if (reusedTreeIsIncremental) INCREMENTAL_TREE else FULL_TREE),
+          expectedTreeOutcome = REUSED_LOSING_TREE,
+          expectedWinnerTreeSatisfiesRequirement = None,
+          numLogOnlyWinners = 1,
+          allLogWinnersPreserveLosingTree = Some(true))
 
         // B survives and A reused its base: the live set reconstructs through A's reused tree plus
         // B's log delta. The reused checkpoint is A's first-attempt tree recommitted as-is, so its
@@ -150,13 +236,25 @@ class AMTConflictResolutionSuite
         // that both win versions ahead of A. Both winners only add brand-new files (their
         // defaultRowCommitVersion postdates A's read version), so A's tree stays exact and it is
         // recommitted as-is across both winners.
-        val (futureA, futureB, futureC) = runTxnsWithOrder__A_Start__B__C__A_End(
-          losingCheckpointTxn(deltaLog),
-          appendTxn(name, id = 100),
-          appendTxn(name, id = 200))
-        ThreadUtils.awaitResult(futureB, Duration.Inf)
-        ThreadUtils.awaitResult(futureC, Duration.Inf)
-        ThreadUtils.awaitResult(futureA, Duration.Inf)
+        val rounds = trackConflictResolutionRounds {
+          val (futureA, futureB, futureC) = runTxnsWithOrder__A_Start__B__C__A_End(
+            losingCheckpointTxn(deltaLog),
+            appendTxn(name, id = 100),
+            appendTxn(name, id = 200))
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          ThreadUtils.awaitResult(futureC, Duration.Inf)
+          ThreadUtils.awaitResult(futureA, Duration.Inf)
+        }
+        assertSingleAMTConflictRoundMetrics(
+          rounds,
+          expectedLosingCommitType =
+            if (reusedTreeIsIncremental) INCREMENTAL_CHECKPOINT else FULL_CHECKPOINT,
+          expectedLosingTreeType =
+            Some(if (reusedTreeIsIncremental) INCREMENTAL_TREE else FULL_TREE),
+          expectedTreeOutcome = REUSED_LOSING_TREE,
+          expectedWinnerTreeSatisfiesRequirement = None,
+          numLogOnlyWinners = 2,
+          allLogWinnersPreserveLosingTree = Some(true))
 
         // All commits survive: the live set reconstructs through A's reused tree plus B's and C's
         // log deltas. The reused checkpoint is A's first-attempt tree recommitted as-is, so its
@@ -184,7 +282,7 @@ class AMTConflictResolutionSuite
       // couple of actions) stays log-only. So A is a tree writer losing to a log-only winner -- it
       // must rebase and rebuild its tree with B folded into the incremental window rather than
       // hard-failing. Capture A's per-attempt AMT write metrics to inspect the window growth.
-      val perAttempt = trackIncrementalAMTWriteMetricsPerAttempt(deltaLog.update().version) {
+      val perAttempt = trackIncrementalAMTWriteMetricsPerAttempt {
         withInlineThreshold(6) {
           val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
             () => { appendRowsAsSeparateFiles(name, numFiles = 10, startId = 100); Array.empty },
@@ -284,13 +382,19 @@ class AMTConflictResolutionSuite
       // CHECKPOINT) and wins A's target version. A must rebase past the new tree -- re-deriving its
       // RemoveFile's back reference against it when the tree's leaf set moved -- rather than
       // hard-failing.
-      val rebaseMetrics = trackBackrefRebaseMetricsAt(deltaLog.update().version) {
+      val rounds = trackConflictResolutionRounds {
         val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
           deleteTxn(name, id = 1),
           optimizeCheckpointTxn(deltaLog))
         ThreadUtils.awaitResult(futureB, Duration.Inf)
         ThreadUtils.awaitResult(futureA, Duration.Inf)
       }
+      val round = assertSingleAMTConflictRoundMetrics(
+        rounds,
+        expectedLosingCommitType = LOG_ONLY,
+        expectedTreeOutcome = NO_TREE_REBASE,
+        expectedWinnerTreeSatisfiesRequirement = None,
+        numIncrementalCheckpointWinners = 1)
 
       val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
       assert(liveIdsAfter == liveIdsBefore - 1,
@@ -299,8 +403,8 @@ class AMTConflictResolutionSuite
       assert(amtProvider(deltaLog.update()).isDefined,
         "the table must remain AMT-backed after the rebase.")
       // The rebase really ran: one round re-derived A's RemoveFile back reference against B's tree.
-      assert(rebaseMetrics.size == 1 && rebaseMetrics.head.numActionsRegeneratingBackref >= 1,
-        s"A must record one back-ref rebase that re-derived its RemoveFile; got $rebaseMetrics")
+      assert(round.backRefRebaseMetrics.numActionsRegeneratingBackref.exists(_ >= 1),
+        s"A must record one back-ref rebase that re-derived its RemoveFile; got $round")
     }
   }
 
@@ -314,13 +418,19 @@ class AMTConflictResolutionSuite
       // (OPTIMIZE CHECKPOINT, incremental = false) and wins A's target version. A full rewrite
       // moves every leaf position, so A's RemoveFile back reference is re-derived from scratch
       // against B's tree before A commits, rather than hard-failing.
-      val rebaseMetrics = trackBackrefRebaseMetricsAt(deltaLog.update().version) {
+      val rounds = trackConflictResolutionRounds {
         val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
           deleteTxn(name, id = 1),
           fullCheckpointTxn(deltaLog))
         ThreadUtils.awaitResult(futureB, Duration.Inf)
         ThreadUtils.awaitResult(futureA, Duration.Inf)
       }
+      val round = assertSingleAMTConflictRoundMetrics(
+        rounds,
+        expectedLosingCommitType = LOG_ONLY,
+        expectedTreeOutcome = NO_TREE_REBASE,
+        expectedWinnerTreeSatisfiesRequirement = None,
+        numFullCheckpointWinners = 1)
 
       val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
       assert(liveIdsAfter == liveIdsBefore - 1,
@@ -330,8 +440,8 @@ class AMTConflictResolutionSuite
         "the table must remain AMT-backed after the rebase.")
       // The rebase really ran: the full rewrite forced A's RemoveFile back reference to be
       // re-derived against B's tree.
-      assert(rebaseMetrics.size == 1 && rebaseMetrics.head.numActionsRegeneratingBackref >= 1,
-        s"A must record one back-ref rebase that re-derived its RemoveFile; got $rebaseMetrics")
+      assert(round.backRefRebaseMetrics.numActionsRegeneratingBackref.exists(_ >= 1),
+        s"A must record one back-ref rebase that re-derived its RemoveFile; got $round")
     }
   }
 
@@ -364,6 +474,219 @@ class AMTConflictResolutionSuite
     }
   }
 
+  test("Winning Commit [Full checkpoint commit] vs Losing commit " +
+    "[incremental checkpoint commit] - SKIP") {
+    withTable("amt_conflict_incr_ckpt_vs_full_winner") {
+      val name = "amt_conflict_incr_ckpt_vs_full_winner"
+      val deltaLog = setupAMTTable(name)
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // A is an incremental OPTIMIZE checkpoint; B installs a brand-new full AMT tree and wins A's
+      // target version. B's tree supersedes A's, so the losing incremental checkpoint is redundant
+      // and cleanly skips (ConcurrentAMTCheckpointLandedException) rather than hard-failing. A is a
+      // direct checkpoint commit, so the skip signal surfaces to the caller.
+      val rounds = trackConflictResolutionRounds {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+          optimizeCheckpointTxn(deltaLog),
+          fullCheckpointTxn(deltaLog))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        assertCleanSkipSignal(futureA)
+      }
+      assertSingleAMTConflictRoundMetrics(
+        rounds,
+        expectedLosingCommitType = INCREMENTAL_CHECKPOINT,
+        expectedLosingTreeType = Some(INCREMENTAL_TREE),
+        expectedTreeOutcome = SKIP_WINNER_SATISFIES_REQUIREMENT,
+        expectedWinnerTreeSatisfiesRequirement = Some(true),
+        expectedException = Some(classOf[ConcurrentAMTCheckpointLandedException]),
+        numFullCheckpointWinners = 1)
+
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore,
+        s"the skipped checkpoint must not change the live set; before=$liveIdsBefore " +
+          s"after=$liveIdsAfter")
+      assert(amtProvider(deltaLog.update()).isDefined,
+        "the table must remain AMT-backed after the winner's checkpoint.")
+    }
+  }
+
+  test("Winning Commit [Incremental checkpoint commit] vs Losing commit " +
+    "[incremental checkpoint commit] - SKIP") {
+    withTable("amt_conflict_incr_ckpt_skips") {
+      val name = "amt_conflict_incr_ckpt_skips"
+      val deltaLog = setupAMTTable(name)
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // A and B are both incremental OPTIMIZE checkpoints. B wins A's target version and installs a
+      // new tree, so A's checkpoint is redundant: the writer signals a clean skip
+      // (ConcurrentAMTCheckpointLandedException) rather than deferring. A is a direct checkpoint
+      // commit, so that skip signal surfaces to the caller.
+      val rounds = trackConflictResolutionRounds {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+          optimizeCheckpointTxn(deltaLog),
+          optimizeCheckpointTxn(deltaLog))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        assertCleanSkipSignal(futureA)
+      }
+      assertSingleAMTConflictRoundMetrics(
+        rounds,
+        expectedLosingCommitType = INCREMENTAL_CHECKPOINT,
+        expectedLosingTreeType = Some(INCREMENTAL_TREE),
+        expectedTreeOutcome = SKIP_WINNER_SATISFIES_REQUIREMENT,
+        expectedWinnerTreeSatisfiesRequirement = Some(true),
+        expectedException = Some(classOf[ConcurrentAMTCheckpointLandedException]),
+        numIncrementalCheckpointWinners = 1)
+
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore,
+        s"the skipped checkpoint must not change the live set; before=$liveIdsBefore " +
+          s"after=$liveIdsAfter")
+      assert(amtProvider(deltaLog.update()).isDefined,
+        "the table must remain AMT-backed after the winner's checkpoint.")
+    }
+  }
+
+  test("Winning Commit [Full checkpoint commit] vs Losing commit " +
+    "[full checkpoint commit] - SKIP") {
+    withTable("amt_conflict_full_ckpt_skips") {
+      val name = "amt_conflict_full_ckpt_skips"
+      val deltaLog = setupAMTTable(name)
+
+      // A and B are both full OPTIMIZE checkpoints. B wins A's target version and installs a
+      // full-rewrite tree that already provides an up-to-date AMT, so A's full checkpoint is
+      // redundant and cleanly skips (as opposed to the full-vs-incremental-winner case, which
+      // defers). A is a direct checkpoint commit, so the skip signal surfaces to the caller.
+      val rounds = trackConflictResolutionRounds {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+          fullCheckpointTxn(deltaLog),
+          fullCheckpointTxn(deltaLog))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        assertCleanSkipSignal(futureA)
+      }
+      assertSingleAMTConflictRoundMetrics(
+        rounds,
+        expectedLosingCommitType = FULL_CHECKPOINT,
+        expectedLosingTreeType = Some(FULL_TREE),
+        expectedTreeOutcome = SKIP_WINNER_SATISFIES_REQUIREMENT,
+        expectedWinnerTreeSatisfiesRequirement = Some(true),
+        expectedException = Some(classOf[ConcurrentAMTCheckpointLandedException]),
+        numFullCheckpointWinners = 1)
+      assert(amtProvider(deltaLog.update()).isDefined,
+        "the table must remain AMT-backed after the winner's checkpoint.")
+    }
+  }
+
+  test("Winning Commit [Incremental checkpoint commit] vs Losing commit " +
+    "[full checkpoint commit] - regenerate") {
+    withTable("amt_conflict_full_ckpt_regenerates_vs_incr_winner") {
+      val name = "amt_conflict_full_ckpt_regenerates_vs_incr_winner"
+      val deltaLog = setupAMTTable(name)
+
+      // A is a full OPTIMIZE checkpoint; B installs an incremental tree and wins A's target
+      // version. B's incremental tree neither satisfies A's requested full AMT nor serves as a full
+      // base to fold onto, so A signals a full-AMT regenerate (FullAMTWriteFailedWithConflict) for
+      // the maintenance path to refresh and retry -- distinct from a clean skip. A is a direct
+      // checkpoint commit, so the signal surfaces to the caller.
+      val rounds = trackConflictResolutionRounds {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+          fullCheckpointTxn(deltaLog),
+          optimizeCheckpointTxn(deltaLog))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        assertRetrySignal(futureA)
+      }
+      assertSingleAMTConflictRoundMetrics(
+        rounds,
+        expectedLosingCommitType = FULL_CHECKPOINT,
+        expectedLosingTreeType = Some(FULL_TREE),
+        expectedTreeOutcome = REGENERATE_VIA_TXN_RETRY,
+        expectedWinnerTreeSatisfiesRequirement = Some(false),
+        expectedException = Some(classOf[FullAMTWriteFailedWithConflict]),
+        numIncrementalCheckpointWinners = 1)
+    }
+  }
+
+  test("Winning Commits [Full checkpoint then Incremental checkpoint] vs Losing commit " +
+    "[full checkpoint commit] - SKIP") {
+    withTable("amt_conflict_full_ckpt_skips_full_then_incr_winners") {
+      val name = "amt_conflict_full_ckpt_skips_full_then_incr_winners"
+      val deltaLog = setupAMTTable(name)
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // A is a full OPTIMIZE checkpoint. Two winners land ahead of it in one conflicted range: B
+      // installs a full-rewrite tree, then C folds an incremental tree on top of B. The latest
+      // installed tree is therefore incremental, but a full rewrite (B) already happened in A's
+      // conflicted range, so A's periodic full-rewrite intent is satisfied and it cleanly skips
+      // (ConcurrentAMTCheckpointLandedException) rather than regenerating. Deciding this off only
+      // the latest installed tree (C's incremental) would wrongly signal a full-AMT regenerate.
+      val rounds = trackConflictResolutionRounds {
+        val (futureA, futureB, futureC) = runTxnsWithOrder__A_Start__B__C__A_End(
+          fullCheckpointTxn(deltaLog),
+          fullCheckpointTxn(deltaLog),
+          optimizeCheckpointTxn(deltaLog))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        ThreadUtils.awaitResult(futureC, Duration.Inf)
+        assertCleanSkipSignal(futureA)
+      }
+      assertSingleAMTConflictRoundMetrics(
+        rounds,
+        expectedLosingCommitType = FULL_CHECKPOINT,
+        expectedLosingTreeType = Some(FULL_TREE),
+        expectedTreeOutcome = SKIP_WINNER_SATISFIES_REQUIREMENT,
+        expectedWinnerTreeSatisfiesRequirement = Some(true),
+        expectedException = Some(classOf[ConcurrentAMTCheckpointLandedException]),
+        numIncrementalCheckpointWinners = 1,
+        numFullCheckpointWinners = 1)
+
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore,
+        s"the skipped checkpoint must not change the live set; before=$liveIdsBefore " +
+          s"after=$liveIdsAfter")
+      assert(amtProvider(deltaLog.update()).isDefined,
+        "the table must remain AMT-backed after the winners' checkpoints.")
+    }
+  }
+
+  test("Winning Commits [Incremental checkpoint then Full checkpoint] vs Losing commit " +
+    "[full checkpoint commit] - SKIP") {
+    withTable("amt_conflict_full_ckpt_skips_incr_then_full_winners") {
+      val name = "amt_conflict_full_ckpt_skips_incr_then_full_winners"
+      val deltaLog = setupAMTTable(name)
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // The mirror of the previous case: A is a full OPTIMIZE checkpoint and two winners land ahead
+      // of it in one conflicted range, but now B folds an incremental tree first and C then writes
+      // a full-rewrite tree last. A full rewrite (C) still happened in A's conflicted range, so A's
+      // periodic full-rewrite intent is satisfied and it cleanly skips regardless of the earlier
+      // incremental winner. Here the full winner is also the latest installed tree, so the skip
+      // decision holds whether the full rewrite is the earliest or the latest winner in the range.
+      val rounds = trackConflictResolutionRounds {
+        val (futureA, futureB, futureC) = runTxnsWithOrder__A_Start__B__C__A_End(
+          fullCheckpointTxn(deltaLog),
+          optimizeCheckpointTxn(deltaLog),
+          fullCheckpointTxn(deltaLog))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        ThreadUtils.awaitResult(futureC, Duration.Inf)
+        assertCleanSkipSignal(futureA)
+      }
+      assertSingleAMTConflictRoundMetrics(
+        rounds,
+        expectedLosingCommitType = FULL_CHECKPOINT,
+        expectedLosingTreeType = Some(FULL_TREE),
+        expectedTreeOutcome = SKIP_WINNER_SATISFIES_REQUIREMENT,
+        expectedWinnerTreeSatisfiesRequirement = Some(true),
+        expectedException = Some(classOf[ConcurrentAMTCheckpointLandedException]),
+        numIncrementalCheckpointWinners = 1,
+        numFullCheckpointWinners = 1)
+
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore,
+        s"the skipped checkpoint must not change the live set; before=$liveIdsBefore " +
+          s"after=$liveIdsAfter")
+      assert(amtProvider(deltaLog.update()).isDefined,
+        "the table must remain AMT-backed after the winners' checkpoints.")
+    }
+  }
+
   test("a full OPTIMIZE checkpoint signals a regenerate past a non-base-preserving winner") {
     withTable("amt_conflict_full_ckpt_regenerate") {
       val name = "amt_conflict_full_ckpt_regenerate"
@@ -377,11 +700,22 @@ class AMTConflictResolutionSuite
       // A is driven as a direct checkpoint commit here, so that signal surfaces to the caller
       // (folding the winner into the reused base is Part 4.5; CheckpointHook's refresh-and-retry is
       // covered below).
-      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
-        fullCheckpointTxn(deltaLog),
-        deleteTxn(name, id = 1))
-      ThreadUtils.awaitResult(futureB, Duration.Inf)
-      assertRetrySignal(futureA)
+      val rounds = trackConflictResolutionRounds {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+          fullCheckpointTxn(deltaLog),
+          deleteTxn(name, id = 1))
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        assertRetrySignal(futureA)
+      }
+      assertSingleAMTConflictRoundMetrics(
+        rounds,
+        expectedLosingCommitType = FULL_CHECKPOINT,
+        expectedLosingTreeType = Some(FULL_TREE),
+        expectedTreeOutcome = REGENERATE_VIA_TXN_RETRY,
+        expectedWinnerTreeSatisfiesRequirement = None,
+        expectedException = Some(classOf[FullAMTWriteFailedWithConflict]),
+        numLogOnlyWinners = 1,
+        allLogWinnersPreserveLosingTree = Some(false))
       assert(amtProvider(deltaLog.update()).isDefined,
         "the table must remain AMT-backed after the winner's commit.")
     }

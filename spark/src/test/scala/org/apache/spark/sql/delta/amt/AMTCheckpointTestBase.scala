@@ -530,52 +530,25 @@ trait AMTCheckpointTestBase
         e.tags.get("opType").contains("delta.commit.stats"))
       .map(e => JsonUtils.fromJson[CommitStats](e.blob))
       .find(_.commitVersion == commitVersion)
-      .flatMap(_.amtWriteMetrics)
-      .flatMap(_.writeAttempts.headOption)
-      .flatMap(_.incrementalWriteMetrics)
+      .flatMap(_.amtCommitStats)
+      .flatMap(_.lastAMTWriteMetrics.incrementalWriteMetrics)
   }
 
   /**
    * Like [[trackIncrementalAMTWriteMetrics]] but returns one entry per attempt that made an
    * incremental write, in attempt order -- a conflict retry materializes the tree more than once,
-   * so this exposes each attempt's shape. `commitVersion` is by-name so callers can pass the final
-   * committed version, which is only known after `commit` runs.
+   * so this exposes each attempt's shape.
    */
   protected def trackIncrementalAMTWriteMetricsPerAttempt(
-      commitVersion: => Long)(commit: => Unit): Seq[IncrementalAMTWriteMetrics] = {
+      commit: => Unit): Seq[IncrementalAMTWriteMetrics] = {
     val events = Log4jUsageLogger.track {
       commit
     }
-    val version = commitVersion
     events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
-        e.tags.get("opType").contains("delta.commit.stats"))
-      .map(e => JsonUtils.fromJson[CommitStats](e.blob))
-      .find(_.commitVersion == version)
-      .toSeq
-      .flatMap(_.amtWriteMetrics.toSeq)
-      .flatMap(_.writeAttempts)
+        e.tags.get("opType").contains(AMTUsageLogs.CONFLICT_RESOLUTION_ROUND))
+      .map(e => JsonUtils.fromJson[AMTMetrics](e.blob))
+      .flatMap(_.singleAMTWriteMetrics)
       .flatMap(_.incrementalWriteMetrics)
-  }
-
-  /**
-   * Runs `commit` and returns the [[BackRefRebaseMetrics]] logged for the commit at
-   * `commitVersion` -- one entry per conflict round that re-derived back references against a
-   * newly installed tree. `commitVersion` is by-name so callers can pass the final committed
-   * version, which is only known after `commit` runs.
-   */
-  protected def trackBackrefRebaseMetricsAt(
-      commitVersion: => Long)(commit: => Unit): Seq[BackRefRebaseMetrics] = {
-    val events = Log4jUsageLogger.track {
-      commit
-    }
-    val version = commitVersion
-    events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
-        e.tags.get("opType").contains("delta.commit.stats"))
-      .map(e => JsonUtils.fromJson[CommitStats](e.blob))
-      .find(_.commitVersion == version)
-      .toSeq
-      .flatMap(_.amtWriteMetrics.toSeq)
-      .flatMap(_.backrefRebaseAttempts)
   }
 
   private def assertAMTCheckpointScenarioInvariants(

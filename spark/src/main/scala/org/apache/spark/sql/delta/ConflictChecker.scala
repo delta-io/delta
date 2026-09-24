@@ -35,7 +35,7 @@ import org.apache.spark.sql.delta.util.FileNames
 import io.delta.storage.commit.UpdatedActions
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import io.delta.storage.commit.uniform.UniformMetadata
-import org.apache.hadoop.fs.FileStatus
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -311,7 +311,10 @@ private[delta] class ConflictChecker(
   /** Run invariants on new set of actions in case they changed. */
   private def checkInvariants(updatedInfo: CurrentTransactionInfo): Unit = {
     if (!hasActionsChanged(updatedInfo)) return
-    ConflictChecker.checkNoDuplicateActions(spark, updatedInfo.actions.iterator)
+    val useDVObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
+      updatedInfo.metadata, updatedInfo.protocol, spark)
+    ConflictChecker.checkNoDuplicateActions(
+      spark, updatedInfo.actions.iterator, deltaLog.dataPath, useDVObjectIdentity)
       .foreach(_ => ())
     ConflictChecker.trackConsistentDataChange(
       spark,
@@ -1682,13 +1685,22 @@ private[delta] object ConflictChecker extends DeltaLogging {
    * streams. Checks: duplicate adds, duplicate removes, and same path+DV both
    * added and removed. Single pass, no materialization. Returns `actions`
    * unchanged when [[DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED]] is off.
+   *
+   * This check is performed using AMT-aware object identity mode. In most cases,
+   * using object identity or not doesn't influence outcome given actions comes
+   * from the same snapshot. Some callers, e.g. conflict resolution, must pass
+   * `true` for AMT compatibility.
    */
   def checkNoDuplicateActions(
       spark: SparkSession,
-      actions: Iterator[Action]): Iterator[Action] = {
+      actions: Iterator[Action],
+      tableRoot: Path,
+      useDVObjectIdentity: Boolean): Iterator[Action] = {
     if (!spark.conf.get(DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED)) return actions
     val addPaths = mutable.Map.empty[String, Option[String]]
     val removePaths = mutable.Map.empty[String, Option[String]]
+    def dvIdOf(fileAction: FileAction): Option[String] =
+      Option(fileAction.deletionVector).map(_.uniqueId(tableRoot, useDVObjectIdentity))
     def pathAndDVString(path: String, dvIdOpt: Option[String]): String = {
       dvIdOpt.map(dvId => s"$path DV $dvId").getOrElse(path)
     }
@@ -1704,7 +1716,7 @@ private[delta] object ConflictChecker extends DeltaLogging {
     actions.map { action =>
       action match {
         case add: AddFile =>
-          val dvId = add.getLegacyDeletionVectorUniqueId
+          val dvId = dvIdOf(add)
           addPaths.put(add.path, dvId).foreach { existingDVId =>
             failDuplicate("add", add.path, dvId, existingDVId)
           }
@@ -1715,7 +1727,7 @@ private[delta] object ConflictChecker extends DeltaLogging {
             }
           }
         case remove: RemoveFile =>
-          val dvId = remove.getLegacyDeletionVectorUniqueId
+          val dvId = dvIdOf(remove)
           removePaths.put(remove.path, dvId).foreach { existingDVId =>
             failDuplicate("remove", remove.path, dvId, existingDVId)
           }
