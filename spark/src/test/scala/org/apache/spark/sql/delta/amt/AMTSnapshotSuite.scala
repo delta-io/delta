@@ -1041,6 +1041,49 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     }.isDefined, "Reconstruction must read leaves through a distributed file scan.")
   }
 
+  test("RESTORE reconciles u / r DV of the same blob by object identity") {
+    withTable("amt_restore_dv") {
+      val t = "amt_restore_dv"
+      createAMTTable(t, checkpointInterval = 100)
+      Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(t)
+
+      val log = deltaLogForName(t)
+      val filesV1 = log.update().allFiles.collect()
+      assert(filesV1.length == 1, "the two rows must land in a single file")
+
+      // Commit an u DV.
+      val dvActions = writeFileWithDVOnDisk(log, filesV1.head, RoaringBitmapArray(0L))
+      withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false") {
+        log.startTransaction().commit(dvActions, DeltaOperations.Delete(predicate = Nil))
+      }
+      val dvVersion = log.update().version
+      val jsonDv = log.update().allFiles.collect().head.deletionVector
+      assert(jsonDv != null && jsonDv.storageType == DeletionVectorDescriptor.UUID_DV_MARKER,
+        "the DV committed to the log must be in `u` form")
+
+      // Materialize an AMT full checkpoint.
+      commitCheckpoint(log, incremental = false)
+      val latest = log.unsafeVolatileSnapshot
+      amtProvider(latest).getOrElse(
+        fail("latest snapshot must be AMT-backed after the checkpoint"))
+      val amtDv = latest.allFiles.collect().head.deletionVector
+      assert(amtDv != null && amtDv.storageType == DeletionVectorDescriptor.RELATIVE_DV_MARKER,
+        "after the checkpoint the same blob must be read back in `r` form")
+      assert(dvVersion < latest.version, "there must be a newer version to restore from")
+
+      // Restore back to the u DV. We assert the restore commit is empty.
+      locally {
+        val metrics = sql(s"RESTORE TABLE $t VERSION AS OF $dvVersion")
+          .select("num_restored_files", "num_removed_files")
+          .head()
+        assert(metrics.getLong(0) == 0L && metrics.getLong(1) == 0L)
+
+        // The restored table still reads the single surviving logical row.
+        checkAnswer(spark.table(t), Seq(Row(2)))
+      }
+    }
+  }
+
   test("reconstruction surfaces DATA entries that live directly in the root") {
     withTable("amt_root_data") {
       val name = "amt_root_data"
