@@ -41,9 +41,9 @@ import org.apache.hudi.avro.model.HoodieActionInstant
 import org.apache.hudi.avro.model.HoodieCleanerPlan
 import org.apache.hudi.avro.model.HoodieCleanFileInfo
 import org.apache.hudi.client.HoodieJavaWriteClient
-import org.apache.hudi.client.HoodieTimelineArchiver
 import org.apache.hudi.client.WriteStatus
 import org.apache.hudi.client.common.HoodieJavaEngineContext
+import org.apache.hudi.client.timeline.versioning.v2.TimelineArchiverV2
 import org.apache.hudi.common.HoodieCleanStat
 import org.apache.hudi.common.config.HoodieMetadataConfig
 import org.apache.hudi.common.engine.HoodieEngineContext
@@ -51,6 +51,7 @@ import org.apache.hudi.common.model.{HoodieAvroPayload, HoodieBaseFile, HoodieCl
 import org.apache.hudi.common.table.HoodieTableMetaClient
 import org.apache.hudi.common.table.timeline.{HoodieInstant, HoodieInstantTimeGenerator, HoodieTimeline, TimelineMetadataUtils}
 import org.apache.hudi.common.table.timeline.HoodieInstantTimeGenerator.{MILLIS_INSTANT_TIMESTAMP_FORMAT_LENGTH, SECS_INSTANT_ID_LENGTH, SECS_INSTANT_TIMESTAMP_FORMAT}
+import org.apache.hudi.common.table.timeline.versioning.v2.InstantComparatorV2
 import org.apache.hudi.common.util.{Option => HudiOption}
 import org.apache.hudi.common.util.CleanerUtils
 import org.apache.hudi.common.util.ExternalFilePathUtil
@@ -135,10 +136,11 @@ class HudiConversionTransaction(
     val engineContext: HoodieEngineContext = new HoodieJavaEngineContext(metaClient.getStorageConf)
     val writeClient = new HoodieJavaWriteClient[AnyRef](engineContext, writeConfig)
     try {
-      writeClient.startCommitWithTime(instantTime, HoodieTimeline.REPLACE_COMMIT_ACTION)
+      metaClient.getActiveTimeline.createRequestedCommitWithReplaceMetadata(
+        instantTime, HoodieTimeline.REPLACE_COMMIT_ACTION)
       metaClient.getActiveTimeline.transitionReplaceRequestedToInflight(
         new HoodieInstant(HoodieInstant.State.REQUESTED, HoodieTimeline.REPLACE_COMMIT_ACTION,
-          instantTime),
+          instantTime, InstantComparatorV2.REQUESTED_TIME_BASED_COMPARATOR),
         HudiOption.empty[Array[Byte]])
       val syncMetadata: Map[String, String] = Map(
         HudiConverter.DELTA_VERSION_PROPERTY -> version.toString,
@@ -241,7 +243,7 @@ class HudiConversionTransaction(
       val earliestInstantToRetain = earliestInstant
         .map[HoodieActionInstant]((earliestInstantToRetain: HoodieInstant) =>
           new HoodieActionInstant(
-            earliestInstantToRetain.getTimestamp,
+            earliestInstantToRetain.getCompletionTime,
             earliestInstantToRetain.getAction,
             earliestInstantToRetain.getState.name))
         .orElse(null)
@@ -251,16 +253,25 @@ class HudiConversionTransaction(
         Collections.emptyList[String], Collections.emptyMap[String, String])
       // create a clean instant and mark it as requested with the clean plan
       val requestedCleanInstant = new HoodieInstant(HoodieInstant.State.REQUESTED,
-        HoodieTimeline.CLEAN_ACTION, cleanTime)
+        HoodieTimeline.CLEAN_ACTION, cleanTime, InstantComparatorV2.REQUESTED_TIME_BASED_COMPARATOR)
       activeTimeline.saveToCleanRequested(
-        requestedCleanInstant, TimelineMetadataUtils.serializeCleanerPlan(cleanerPlan))
+        requestedCleanInstant,
+        HudiOption.of(cleanerPlan)
+      )
       val inflightClean = activeTimeline
-        .transitionCleanRequestedToInflight(requestedCleanInstant, HudiOption.empty[Array[Byte]])
+        .transitionCleanRequestedToInflight(requestedCleanInstant)
       val cleanStats = cleanInfoPerPartition.entrySet.asScala.map(entry => {
         val partitionPath = entry.getKey
         val deletePaths = entry.getValue.asScala.map(_.getFilePath).asJava
-        new HoodieCleanStat(HoodieCleaningPolicy.KEEP_LATEST_COMMITS, partitionPath, deletePaths,
-          deletePaths, Collections.emptyList[String], earliestInstant.get.getTimestamp, instantTime)
+          new HoodieCleanStat(
+            HoodieCleaningPolicy.KEEP_LATEST_COMMITS,
+            partitionPath,
+            deletePaths,
+            deletePaths,
+            Collections.emptyList[String],
+            earliestInstant.get.getCompletionTime,
+            instantTime
+          )
       }).toSeq.asJava
       val cleanMetadata =
         CleanerUtils.convertCleanMetadata(cleanTime, HudiOption.empty[java.lang.Long], cleanStats,
@@ -270,8 +281,11 @@ class HudiConversionTransaction(
       hoodieTableMetadataWriter.performTableServices(HudiOption.empty[String])
       hoodieTableMetadataWriter.update(cleanMetadata, cleanTime)
       // mark the commit as complete on the table timeline
-      activeTimeline.transitionCleanInflightToComplete(inflightClean,
-        TimelineMetadataUtils.serializeCleanMetadata(cleanMetadata))
+      activeTimeline.transitionCleanInflightToComplete(
+        true, // shouldLock
+        inflightClean,
+        HudiOption.of(cleanMetadata)
+      )
     } catch {
       case ex: IOException =>
         throw new UncheckedIOException("Unable to clean Hudi timeline", ex)
@@ -281,7 +295,7 @@ class HudiConversionTransaction(
   private def runArchiver(table: HoodieJavaTable[_ <: HoodieAvroPayload],
       config: HoodieWriteConfig, engineContext: HoodieEngineContext): Unit = {
     // trigger archiver manually
-    val archiver = new HoodieTimelineArchiver(config, table)
+    val archiver = new TimelineArchiverV2(config, table)
     archiver.archiveIfRequired(engineContext, true)
   }
 
@@ -291,7 +305,7 @@ class HudiConversionTransaction(
     properties.setProperty(HoodieMetadataConfig.AUTO_INITIALIZE.key, "false")
     HoodieWriteConfig.newBuilder
       .withIndexConfig(HoodieIndexConfig.newBuilder.withIndexType(INMEMORY).build)
-      .withPath(metaClient.getBasePathV2.toString)
+      .withPath(metaClient.getBasePath.toString)
       .withPopulateMetaFields(metaClient.getTableConfig.populateMetaFields)
       .withEmbeddedTimelineServerEnabled(false)
       .withSchema(if (schema == null) "" else schema.toString)
