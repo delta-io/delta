@@ -240,6 +240,58 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
   }
 
   /**
+   * Verifies that an ALTER TABLE DROP COLUMN during an active streaming read surfaces a structured
+   * schema-change error, rather than silently producing rows with the old schema. DROP COLUMN is a
+   * non-additive schema evolution that requires the reader to either restart with the new schema or
+   * use {@code schemaTrackingLocation}; without either, the stream must fail loudly.
+   *
+   * <p>This complements {@link #testStreamingDeleteFailsWithHelpfulError}, which covers the
+   * DELETE-data-change failure; here the table data is unchanged but the schema is.
+   */
+  @TestAllTableTypes
+  public void testStreamingFailsWhenColumnIsDroppedMidStream(TableType tableType) throws Exception {
+    withNewTable(
+        "streaming_drop_column_mid_stream_test",
+        "id INT, dropme STRING",
+        // partitionFields
+        null,
+        tableType,
+        // Column-mapping is required for DROP COLUMN to be allowed.
+        "'delta.columnMapping.mode'='name'",
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')", tableName);
+
+          List<Integer> result = new ArrayList<>();
+          StreamingQuery query =
+              spark()
+                  .readStream()
+                  .format("delta")
+                  .table(tableName)
+                  .writeStream()
+                  .option("checkpointLocation", checkpoint())
+                  .foreachBatch(
+                      (VoidFunction2<Dataset<Row>, Long>) (df, id) -> result.addAll(ids(df)))
+                  .start();
+          try {
+            query.processAllAvailable();
+            assertThat(result).containsExactlyInAnyOrder(1, 2, 3);
+
+            sql("ALTER TABLE %s DROP COLUMN (dropme)", tableName);
+            sql("INSERT INTO %s VALUES (4)", tableName);
+
+            // Anchor on Delta's streaming-source error class family. The two members today are
+            // DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE and ...USE_SCHEMA_LOG; matching the
+            // shared prefix is specific enough to reject unrelated "schema"-mentioning errors
+            // while tolerating Delta-side additions to the family.
+            assertStreamingThrowsContaining(
+                query::processAllAvailable, "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE");
+          } finally {
+            query.stop();
+          }
+        });
+  }
+
+  /**
    * CDF streaming reads work for both EXTERNAL and MANAGED tables.
    *
    * <p>Verifies that inserts and a delete produce the expected typed change events. Under the
