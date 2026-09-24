@@ -997,3 +997,4 @@ trait MergeIntoMaterializeSourceTests extends MergeIntoMaterializeSourceMixin {
     stats.materializeSourceReason.get
   }
 }
+
