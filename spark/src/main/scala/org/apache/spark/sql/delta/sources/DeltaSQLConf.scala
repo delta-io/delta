@@ -93,6 +93,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createOptional
 
+  val TEST_BARRIER_ENABLED =
+    buildConf("testBarrier.enabled")
+      .internal()
+      .doc("If true, tests are allowed to use TestBarrier via DeltaTestBarrier. " +
+        "This allows test to pause and release a Delta code path deterministically.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_COLLECT_STATS =
     buildConf("stats.collect")
       .internal()
