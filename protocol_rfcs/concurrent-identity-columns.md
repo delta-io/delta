@@ -161,6 +161,31 @@ None beyond those already imposed by the required `catalogManaged` reader-writer
 values are fully materialized into the data files by writers, exactly as for classic identity columns,
 and `delta.identity.concurrent.sequenceId` is write-path bookkeeping.
 
+### Compatibility with other Delta Features
+
+`concurrentIdentityColumns` changes where a column's values come from, not what an identity column
+is. It adds two requirements of its own, and inherits everything else from
+[Identity Columns](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#identity-columns).
+
+Feature | Support for Concurrent Identity Columns
+-|-
+[Identity Columns](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#identity-columns) | **Required.** On a table that supports `concurrentIdentityColumns`, every identity column must be a concurrent identity column.
+[Catalog-Managed Tables](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/catalog-managed.md) | **Required.** The catalog owns and allocates the sequence, so a table must not support `concurrentIdentityColumns` without `catalogManaged`.
+
+**Everything below follows from requiring `identityColumns`: these are the existing identity-column
+rules, which `concurrentIdentityColumns` neither relaxes nor extends.**
+
+Feature | Support for Concurrent Identity Columns
+-|-
+Partition Columns | **Unsupported:** an identity column cannot be a partition column, and binding it to a sequence does not change that. <br/> **Supported:** a concurrent identity column may be a non-partition column of a partitioned table.
+Clustered Tables | **Supported:** a concurrent identity column may be a clustering column. Clustering determines data layout, not value generation, and a reserved range is independent of which file its values land in.
+Generated Columns | **Unsupported:** a column must not be both an identity column and a generated column. <br/> **Supported:** a table may contain concurrent identity columns and generated columns as separate columns, and a generated column's expression may read a concurrent identity column.
+Default Column Values | **Unsupported:** a column must not be both an identity column and a column with a default value. <br/> **Supported:** a table may contain concurrent identity columns and columns with default values as separate columns.
+Type Widening | **Unsupported:** `ALTER TABLE ALTER COLUMN` is not supported on identity columns, so the type of a concurrent identity column cannot be changed. Widening other columns of the table is unaffected. The column type must be `BIGINT`.
+Deletion Vectors, Row Tracking, Change Data Feed, Time Travel | **Supported, with no interaction.** Identity values are materialized into the data files by the writer, so deleting, tracking, or replaying rows reads the values that were written, with no dependency on the current state of the sequence.
+Per-file Statistics | **Supported.** Statistics for a concurrent identity column are computed from the materialized values exactly as for any other `BIGINT` column.
+Iceberg Compatibility | **Supported.** A concurrent identity column is a plain `BIGINT` column in the data files, and `delta.identity.concurrent.sequenceId` is Delta metadata that these features do not read.
+
 ## Valid Feature Names in Table Features
 
 > ***Add the following row after In-Commit Timestamps in [Valid Feature Names in Table Features](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#valid-feature-names-in-table-features).***
