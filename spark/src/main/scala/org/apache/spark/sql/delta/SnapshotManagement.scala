@@ -1991,6 +1991,19 @@ case class LogSegment(
     CoordinatedCommitsUtils.getLastBackfilledFile(deltas).map(getFileVersion)
       .getOrElse(checkpointProvider.version)
 
+  // Override the case-class toString so logging a LogSegment cannot OOM the driver: the generated
+  // toString expands the full deltas / nonCompactedDeltasOpt collections, which can be very large.
+  // The per-element rendering matches the generated toString (each file's FileStatus); only the
+  // number of files is capped. See [[LogSegment.truncatedDeltaString]].
+  override def toString: String = {
+    def renderDeltas(files: Seq[FileStatus]): String =
+      LogSegment.truncatedDeltaString(files)(_.toString)
+    val nonCompactedDeltasStr =
+      nonCompactedDeltasOpt.map(files => s"Some(${renderDeltas(files)})").getOrElse("None")
+    s"LogSegment($logPath, $version, ${renderDeltas(deltas)}, $nonCompactedDeltasStr, " +
+      s"$checkpointProvider, $lastCommitFileModificationTimestamp)"
+  }
+
   def toPrettyString: String = {
     // E.g., "[1, 2, <3, 4, 5>, 6]".
     def renderDeltas(files: Seq[FileStatus]): String = {
@@ -2039,4 +2052,26 @@ object LogSegment {
     nonCompactedDeltasOpt = Some(Nil),
     checkpointProviderOpt = None,
     lastCommitTimestamp = -1L)
+
+  /**
+   * Renders `elems` for a log/error message, keeping at most
+   * [[DeltaSQLConf.DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT]] entries. Rendering every element of a
+   * very large collection can materialize a huge string and OOM the driver, so only the retained
+   * entries are stringified; this is safe to call on an arbitrarily large collection.
+   */
+  private[delta] def truncatedDeltaString[T](elems: Seq[T])(render: T => String): String = {
+    val truncationThresholdKey = DeltaSQLConf.DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT
+    val truncationThreshold = SparkSession.getActiveSession
+      .map(_.sessionState.conf.getConf(truncationThresholdKey))
+      .getOrElse(truncationThresholdKey.defaultValue.get)
+    val size = elems.size
+    // -1 (or any negative value) disables truncation; otherwise the threshold is below `size`
+    // here, so it fits in an Int for `take`.
+    if (truncationThreshold >= 0 && size > truncationThreshold) {
+      elems.iterator.take(truncationThreshold.toInt).map(render)
+        .mkString("[", ", ", s", ... (${size - truncationThreshold} of $size deltas omitted)]")
+    } else {
+      elems.iterator.map(render).mkString("[", ", ", "]")
+    }
+  }
 }
