@@ -98,6 +98,11 @@ public class ParquetIOUtils {
           }
         };
       }
+
+      @Override
+      public String getPath() {
+        return kernelOutputFile.path();
+      }
     };
   }
 
