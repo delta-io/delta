@@ -131,11 +131,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     // Call columnarSupportMode before any planning
     scan.columnarSupportMode();
 
-    // Verify the scan has not been planned yet
-    Field plannedField = DeltaV2Scan.class.getDeclaredField("planned");
-    plannedField.setAccessible(true);
-    assertFalse(
-        (boolean) plannedField.get(scan), "columnarSupportMode() should not trigger file planning");
+    assertFalse(getPlanned(scan), "columnarSupportMode() should not trigger file planning");
   }
 
   @Test
@@ -535,10 +531,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   }
 
   private static List<PartitionedFile> getPartitionedFiles(DeltaV2Scan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
-    Field field = DeltaV2Scan.class.getDeclaredField("partitionedFiles");
-    field.setAccessible(true);
-    return (List<PartitionedFile>) field.get(scan);
+    return (List<PartitionedFile>) getPlanField(scan, "partitionedFiles");
   }
 
   @Test
@@ -584,10 +577,14 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   }
 
   private static long getTotalBytes(DeltaV2Scan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
-    Field field = DeltaV2Scan.class.getDeclaredField("totalBytes");
+    scan.estimateStatistics();
+    Object plan = getPublishedPlan(scan);
+    if (plan == null) {
+      return 0L;
+    }
+    Field field = plan.getClass().getDeclaredField("totalBytes");
     field.setAccessible(true);
-    return (long) field.get(scan);
+    return (long) field.get(plan);
   }
 
   private static long getEstimatedSizeInBytes(DeltaV2Scan scan) throws Exception {
@@ -602,23 +599,39 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   }
 
   private static boolean getPlanned(DeltaV2Scan scan) throws Exception {
-    Field field = DeltaV2Scan.class.getDeclaredField("planned");
-    field.setAccessible(true);
-    return (boolean) field.get(scan);
+    return getPublishedPlan(scan) != null;
   }
 
   private static long getTotalRows(DeltaV2Scan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
-    Field field = DeltaV2Scan.class.getDeclaredField("totalRows");
-    field.setAccessible(true);
-    return (long) field.get(scan);
+    return (long) getPlanField(scan, "totalRows");
   }
 
   private static boolean isRowCountKnown(DeltaV2Scan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
-    Field field = DeltaV2Scan.class.getDeclaredField("rowCountKnown");
+    return (boolean) getPlanField(scan, "rowCountKnown");
+  }
+
+  private static Object getPlanField(DeltaV2Scan scan, String fieldName) throws Exception {
+    scan.sizeInBytes();
+    Object plan = getPublishedPlan(scan);
+    assertNotNull(plan, "planning should publish an immutable plan");
+    Field field = plan.getClass().getDeclaredField(fieldName);
     field.setAccessible(true);
-    return (boolean) field.get(scan);
+    return field.get(plan);
+  }
+
+  private static Object getPublishedPlan(DeltaV2Scan scan) throws Exception {
+    Field runtimePlanField = DeltaV2Scan.class.getDeclaredField("runtimeFilteredPlan");
+    runtimePlanField.setAccessible(true);
+    Object runtimePlan = runtimePlanField.get(scan);
+    if (runtimePlan != null) {
+      return runtimePlan;
+    }
+    Field supplierField = DeltaV2Scan.class.getDeclaredField("plannedScanSupplier");
+    supplierField.setAccessible(true);
+    Object supplier = supplierField.get(scan);
+    Field valueField = supplier.getClass().getDeclaredField("value");
+    valueField.setAccessible(true);
+    return valueField.get(supplier);
   }
 
   // ================================================================================================
