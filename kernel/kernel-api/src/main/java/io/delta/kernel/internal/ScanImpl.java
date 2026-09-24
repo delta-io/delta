@@ -101,6 +101,17 @@ public class ScanImpl implements Scan {
               .filter(field -> partitionColNames.contains(field.getName().toLowerCase(Locale.ROOT)))
               .collect(toMap(field -> field.getName().toLowerCase(Locale.ROOT), identity()));
         };
+      if (metadata.getConfiguration().containsKey("delta.partitionFilterRequired")) {
+          if ("true".equalsIgnoreCase(metadata.getConfiguration().get("delta.partitionFilterRequired"))) {
+              Optional<Predicate> partitionColumnPredicate = partitionAndDataFilters.map(
+                      padf -> padf._1);
+              if (!partitionColumnPredicate.isPresent()
+                      || AlwaysTrue.ALWAYS_TRUE.equals(partitionColumnPredicate.get())) {
+                  throw new IllegalArgumentException("Cannot query over table without a filter" +
+                          " that can be used for partition elimination");
+              }
+          }
+      }
     this.snapshotReport = snapshotReport;
   }
 
