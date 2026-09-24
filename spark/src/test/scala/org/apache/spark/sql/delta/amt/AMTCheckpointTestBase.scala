@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
@@ -51,10 +51,9 @@ trait AMTCheckpointTestBase
   with DeltaSQLCommandTest {
 
   // Register the in-memory commit coordinator so catalog-managed AMT tables can be created locally.
-  // Backfill batch size 1 so every commit is backfilled to a standard NNN.json immediately (rather
-  // than staying as a UUID-named staged commit); the suites read commit actions via
-  // `deltaLog.getChanges`, which only sees backfilled deltas.
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+  // With a small, non-1 batch size (3), commits are backfilled intermittently, creating off-by-one
+  // scenarios heuristically, maximizing the test coverage.
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(3)
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key, "false")
@@ -367,8 +366,8 @@ trait AMTCheckpointTestBase
   /**
    * Registers one test for each requested production-supported checkpoint scenario.
    *
-   * For each scenario, the harness creates an AMT table and a full bootstrap checkpoint, then runs
-   * `setup`.
+   * For each scenario, the harness runs `beforeTableCreation`, creates an AMT table and a full
+   * bootstrap checkpoint, then runs `setup`.
    *
    *  - When `inlineCheckpointTriggerActionsOrSQL` is defined, every scenario executes that
    *    table-name-aware business commit and the harness registers an
@@ -392,6 +391,7 @@ trait AMTCheckpointTestBase
       sqlConfs: Seq[(String, String)] = Seq.empty,
       tableSchema: String = "id INT",
       partitionColumns: Seq[String] = Seq.empty)(
+      beforeTableCreation: () => Unit = () => (),
       setup: String => Unit = _ => (),
       inlineCheckpointTriggerActionsOrSQL: Option[AMTCheckpointTrigger] = None)(
       body: AMTCheckpointScenarioContext => Unit): Unit = {
@@ -409,6 +409,7 @@ trait AMTCheckpointTestBase
         val scenarioTable = s"${tableName}_${scenario.name.replace(' ', '_')}"
         withSQLConf(sqlConfs: _*) {
           withTable(scenarioTable) {
+            beforeTableCreation()
             createAMTTable(
               scenarioTable,
               checkpointInterval = Int.MaxValue,
@@ -659,8 +660,16 @@ trait AMTCheckpointTestBase
     metadataFiles(path, isRootFileName)
 
   /** Returns the actions committed at exactly `version`. */
-  protected def actionsAt(deltaLog: DeltaLog, version: Long): Seq[Action] =
+  protected def actionsAt(deltaLog: DeltaLog, version: Long): Seq[Action] = {
+    // TODO: Restore this call once `CoordinatedCommitsUtils.commitFilesIterator` discovers
+    // unbackfilled manifest commits.
+    /*
     deltaLog.getChanges(version).find(_._1 == version).map(_._2).getOrElse(Seq.empty)
+    */
+    val snapshot = deltaLog.update()
+    val path = DeltaCommitFileProvider(snapshot).deltaFile(version)
+    deltaLog.store.read(path, deltaLog.newDeltaHadoopConf()).map(Action.fromJson)
+  }
 
   /**
    * The live `AddFile` set reconstructed from the commit-log deltas alone (not the AMT tree). An

@@ -3032,6 +3032,24 @@ trait OptimisticTransactionImpl extends TransactionHelper
             version = attemptVersion,
             contentRootVersion = result.contentRootVersion)
         )
+        // CatalogOwned tables assume that before a checkpoint is written, all the commits till the
+        // checkpoint version (inclusive) have been backfilled (in [[Checkpoints.writeCheckpoint]]).
+        // For AMT though, since the checkpoint itself is a (manifest) commit, we lose the inclusive
+        // guarantee: the manifest commit itself cannot be backfilled as it hasn't been written yet.
+        // We still backfill up to the previous version (attemptVersion - 1), and we store the
+        // unbackfilled manifest commit file status in an extra field in LogSegment.
+        // We assume the readSnapshot's commit-coordinator is unchanged, otherwise the conflict
+        // checker would have detected a conflict earlier.
+        CatalogOwnedTableUtils
+          .populateTableCommitCoordinatorFromCatalog(spark, targetCatalogTable, snapshot)
+          .foreach { readSnapshotTableCommitCoordinatorClient =>
+            CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
+              version = attemptVersion - 1,
+              deltaLog = deltaLog,
+              tableCommitCoordinatorClient = readSnapshotTableCommitCoordinatorClient,
+              deltaCommitFileProvider = DeltaCommitFileProvider(logPath, preCommitLogSegment),
+              catalogTableOpt = targetCatalogTable)
+          }
         // Recompute the actions from the patched txn info so the committed CommitInfo carries the
         // reference, then append the inline checkpoint action.
         updatedCurrentTransactionInfo.finalActionsToCommit :+ result.checkpoint
