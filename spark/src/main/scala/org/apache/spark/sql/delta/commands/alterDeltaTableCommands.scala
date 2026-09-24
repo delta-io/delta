@@ -229,6 +229,7 @@ case class AlterTableUnsetPropertiesDeltaCommand(
       val txn = startTransaction()
       val metadata = txn.metadata
 
+
       val normalizedKeys = DeltaConfigs.normalizeConfigKeys(propKeys)
       if (!ifExists) {
         normalizedKeys.foreach { k =>
