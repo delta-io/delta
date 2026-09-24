@@ -952,4 +952,47 @@ class SnapshotManagementParallelListingSuite extends QueryTest
       }
     }
   }
+
+  test("LogSegment.toString truncates deltas above the configured limit") {
+    val logPath = new Path("/tmp/fake-table/_delta_log")
+    def deltaStatus(version: Long): FileStatus =
+      new FileStatus(1L, false, 1, 1L, version, FileNames.unsafeDeltaFile(logPath, version))
+    val segment = LogSegment(
+      logPath,
+      version = 19L,
+      deltas = (0L until 20L).map(deltaStatus),
+      nonCompactedDeltasOpt = None,
+      checkpointProviderOpt = None,
+      lastCommitTimestamp = 0L)
+
+    // Each rendered delta path ends in ".json"; the truncation marker does not.
+    def numRenderedDeltas(str: String): Int = str.split("\\.json", -1).length - 1
+
+    withSQLConf(DeltaSQLConf.DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT.key -> "5") {
+      val str = segment.toString
+      assert(str.contains("15 of 20 deltas omitted"), str)
+      assert(numRenderedDeltas(str) === 5, str)
+    }
+
+    // A negative limit disables truncation.
+    withSQLConf(DeltaSQLConf.DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT.key -> "-1") {
+      val str = segment.toString
+      assert(!str.contains("omitted"), str)
+      assert(numRenderedDeltas(str) === 20, str)
+    }
+
+    // Below the limit, every delta is rendered with no truncation marker.
+    withSQLConf(DeltaSQLConf.DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT.key -> "100") {
+      val str = segment.toString
+      assert(!str.contains("omitted"), str)
+      assert(numRenderedDeltas(str) === 20, str)
+    }
+
+    // Values below -1 are rejected.
+    intercept[IllegalArgumentException] {
+      withSQLConf(DeltaSQLConf.DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT.key -> "-2") {
+        segment.toString
+      }
+    }
+  }
 }
