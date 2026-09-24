@@ -127,7 +127,7 @@ This design enables:
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>dataChange</ins> | <ins>Boolean</ins> | <ins>Whether this commit changed the data of the table. Must be `true` if any `add` or `remove` action in the commit sets `dataChange` to `true`, and `false` otherwise. A commit with no `add` or `remove` action records `false`; `cdc` actions never affect the value because their `dataChange` is always `false`. **Required when the `adaptiveMetadata` table feature is enabled**; optional otherwise, in which case readers fall back to the `dataChange` flags of the individual [file actions](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file) when it is absent.</ins> |
+| <ins>dataChange</ins> | <ins>Boolean</ins> | <ins>Whether the commit changes the logical records of the table. This must be `false` when the commit only rearranges existing data or adds new statistics without changing the table's logical records; it must be `true` otherwise. **Required when the `adaptiveMetadata` table feature is enabled**; optional otherwise, in which case readers fall back to the `dataChange` flags of the individual [file actions](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file) when it is absent.</ins> |
 
 <ins>When the `adaptiveMetadata` table feature is enabled, writers must include the `dataChange` field in the `commitInfo` action of every commit, and readers must treat it as the source of truth for whether the commit changed data.</ins>
 
