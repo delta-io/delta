@@ -27,7 +27,6 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
-import java.util.Optional;
 import java.util.function.Function;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
@@ -124,7 +123,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     // getLatestTransactionVersion for the epoch-skip check.
     SnapshotImpl latestSnapshot =
         DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-            snapshotManager.loadLatestSnapshot(Optional.of(queryContext)));
+            snapshotManager.loadLatestSnapshot(queryContext));
 
     // TODO(#7140): no implicit type cast and mergeSchema. Fail loudly on a concurrent
     // schema/protocol change.

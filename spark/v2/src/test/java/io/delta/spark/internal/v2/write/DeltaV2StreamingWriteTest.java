@@ -111,14 +111,14 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
   public void testCommit_loadsLatestSnapshotWithQueryContext(@TempDir File tempDir)
       throws Exception {
     String path = createTable(tempDir, "streaming_query_context");
-    AtomicReference<Optional<DeltaV2QueryContext>> observedContext = new AtomicReference<>();
+    AtomicReference<DeltaV2QueryContext> observedContext = new AtomicReference<>();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf()) {
           @Override
           public org.apache.spark.sql.delta.Snapshot loadLatestSnapshot(
-              Optional<DeltaV2QueryContext> queryContextOpt) {
-            observedContext.set(queryContextOpt);
-            return super.loadLatestSnapshot(queryContextOpt);
+              DeltaV2QueryContext queryContext) {
+            observedContext.set(queryContext);
+            return super.loadLatestSnapshot(queryContext);
           }
         };
     Snapshot snapshot =
@@ -142,8 +142,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
 
     write.commit(0L, new WriterCommitMessage[] {writeEpoch(write, 0L, 1, "Alice")});
 
-    assertTrue(observedContext.get().isPresent());
-    assertEquals(queryContext, observedContext.get().get());
+    assertEquals(queryContext, observedContext.get());
   }
 
   /**
