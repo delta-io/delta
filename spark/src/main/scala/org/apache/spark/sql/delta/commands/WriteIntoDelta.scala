@@ -388,10 +388,9 @@ case class WriteIntoDelta(
 
         if (!useDynamicPartitionOverwriteMode &&
             options.useNullIntolerantEqualityWithDPO.isDefined) {
-          throw DeltaErrors.illegalDeltaOptionException(
+          throw DeltaErrors.illegalDeltaOptionDynamicPartitionOverwriteOnly(
             name = DeltaOptions.USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
-            input = options.useNullIntolerantEqualityWithDPO.get.toString,
-            explain = "This option should be specified only in Dynamic Partition Overwrite mode.")
+            input = options.useNullIntolerantEqualityWithDPO.get.toString)
         }
 
         val deletedFiles = if (useDynamicPartitionOverwriteMode) {

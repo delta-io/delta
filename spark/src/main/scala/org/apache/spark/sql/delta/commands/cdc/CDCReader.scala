@@ -670,7 +670,7 @@ trait CDCReaderImpl extends CDCReaderBase {
     // but CDCReader use CaseInsensitiveStringMap vs. CaseInsensitiveMap used by DataFrameReader.
     def toBoolean(input: String, name: String): Boolean = {
       Try(input.toBoolean).toOption.getOrElse {
-        throw DeltaErrors.illegalDeltaOptionException(name, input, "must be 'true' or 'false'")
+        throw DeltaErrors.illegalDeltaOptionMustBeBoolean(name, input)
       }
     }
 
