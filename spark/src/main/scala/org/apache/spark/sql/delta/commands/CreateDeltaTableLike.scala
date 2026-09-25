@@ -191,10 +191,12 @@ trait CreateDeltaTableLike extends SQLConfHelper {
           - IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP
           - IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP))
     val (metadataPath, _) = {
-      // deltaAttemptVersion is only used to compute actions to convert
-      // Explicitly use deltaAttemptVersion = 0 so only actions would be used for conversion
+      // Use the committed snapshot version so Iceberg sequence numbers align with Delta.
+      // Because dummyTxnInfo.readSnapshot is this same snapshot, finalActionsToCommit contains
+      // the complete active-file set and the converter does not replay a base snapshot.
       snapshot.deltaLog.icebergConverter.convertUncommitedTxn(
-        dummyTxnInfo, deltaAttemptVersion = 0, snapshot.deltaLog, cleanedCatalogTable)
+        dummyTxnInfo, deltaAttemptVersion = snapshot.version, snapshot.deltaLog,
+        cleanedCatalogTable)
     }
     Some(new UniformMetadata(new IcebergMetadata(
       metadataPath,

@@ -133,6 +133,7 @@ public class UCDeltaTableUniformIcebergV2Test extends UCDeltaTableUniformIceberg
       assertNoUniformPropsOnServer(fullTableName);
       IcebergMeta meta0 =
           verifyNonIncrementalUniForm(fullTableName, 0L, /* expectSnapshot= */ true);
+      assertIcebergDataFileCount(meta0.table, 1L);
 
       // Write 1 — incremental from delta v0 (CTAS)
       sql("INSERT INTO %s VALUES (2, 'b')", fullTableName);
