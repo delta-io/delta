@@ -141,6 +141,22 @@ trait DeltaLogKeysBase {
   case object VACUUM_STATS extends DeltaLogKey
   case object VERSION extends DeltaLogKey
   case object VERSION2 extends DeltaLogKey
+  // Concurrent Identity Columns (CIC) sequence-reservation logging keys.
+  case object NUM_IDS extends DeltaLogKey
+  case object NUM_PARKED extends DeltaLogKey
+  case object NUM_REFILLS_FAILED extends DeltaLogKey
+  case object NUM_REFILLS_IGNORED extends DeltaLogKey
+  case object NUM_REFILLS_KICKED extends DeltaLogKey
+  case object NUM_RESERVATIONS extends DeltaLogKey
+  case object NUM_SERVED_REQUESTS extends DeltaLogKey
+  case object PARTITION_ID extends DeltaLogKey
+  case object RANGE_END extends DeltaLogKey
+  case object RANGE_START extends DeltaLogKey
+  case object REMOVAL_CAUSE extends DeltaLogKey
+  case object SEQUENCE_ID extends DeltaLogKey
+  case object STAGE_ID extends DeltaLogKey
+  case object STEP extends DeltaLogKey
+  case object TASK_ATTEMPT_ID extends DeltaLogKey
 }
 
 object DeltaLogKeys extends DeltaLogKeysBase

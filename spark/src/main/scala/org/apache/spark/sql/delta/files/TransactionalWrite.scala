@@ -139,6 +139,12 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       options.get.options.contains(ColumnWithDefaultExprUtils.USE_NULL_AS_DEFAULT_DELTA_OPTION)
     val enforcesDefaultExprs = ColumnWithDefaultExprUtils.tableHasDefaultExpr(
       protocol, metadata, nullAsDefault)
+    // CIC service-backed write path: when the table has ConcurrentIdentityColumnsTableFeature,
+    // build a reservation so identity values come from the IdentitySequenceService rather than
+    // the metadata-domain HWM. Values are not reserved up front; each executor task reserves its
+    // range from the driver on demand.
+    val identityColumnReservation = ConcurrentIdentityColumnWriteReservation
+      .maybeReserveForWrite(spark, deltaLog, catalogTable, metadata, protocol, normalizedData)
     val (dataWithDefaultExprs, generatedColumnConstraints, trackHighWaterMarks) =
       if (enforcesDefaultExprs) {
         ColumnWithDefaultExprUtils.addDefaultExprsOrReturnConstraints(
@@ -149,7 +155,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           data.queryExecution,
           metadata.schema,
           normalizedData,
-          nullAsDefault)
+          nullAsDefault,
+          identityColumnReservation = identityColumnReservation)
       } else {
         (normalizedData, Nil, Set[String]())
       }
