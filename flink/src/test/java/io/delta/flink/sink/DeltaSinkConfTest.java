@@ -18,6 +18,7 @@ package io.delta.flink.sink;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -57,8 +58,24 @@ class DeltaSinkConfTest {
     List<StructType> blockTableSchemas =
         List.of(
             new StructType().add("id", IntegerType.INTEGER),
+            new StructType().add("name", StringType.STRING).add("id", IntegerType.INTEGER),
+            new StructType()
+                .add("id", IntegerType.INTEGER)
+                .add("inserted", StringType.STRING)
+                .add("name", StringType.STRING),
             new StructType().add("id", IntegerType.INTEGER).add("name", IntegerType.INTEGER),
-            new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING, false));
+            new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING, false),
+            new StructType()
+                .add("id", IntegerType.INTEGER)
+                .add("name", StringType.STRING)
+                .add("required", LongType.LONG, false),
+            new StructType()
+                .add("id", IntegerType.INTEGER)
+                .add(
+                    "name",
+                    new StructType()
+                        .add("last", StringType.STRING)
+                        .add("first", StringType.STRING)));
     assertTrue(
         blockTableSchemas.stream()
             .allMatch(
@@ -76,14 +93,14 @@ class DeltaSinkConfTest {
         List.of(
             new StructType()
                 .add(
-                    "name",
-                    StringType.STRING,
+                    "id",
+                    IntegerType.INTEGER,
                     true,
                     FieldMetadata.builder()
                         .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "uuid1")
                         .putString(ColumnMapping.COLUMN_MAPPING_ID_KEY, "1")
                         .build())
-                .add("id", IntegerType.INTEGER),
+                .add("name", StringType.STRING),
             new StructType()
                 .add(
                     "id",
@@ -109,6 +126,98 @@ class DeltaSinkConfTest {
     assertTrue(
         allowTableSchemas.stream()
             .allMatch(
+                tableSchema -> conf.getSchemaEvolutionPolicy().allowEvolve(tableSchema, schema)));
+
+    StructType reorderedTableSchema =
+        new StructType()
+            .add(
+                "name",
+                StringType.STRING,
+                true,
+                FieldMetadata.builder()
+                    .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "uuid1")
+                    .putString(ColumnMapping.COLUMN_MAPPING_ID_KEY, "1")
+                    .build())
+            .add("id", IntegerType.INTEGER);
+    assertFalse(conf.getSchemaEvolutionPolicy().allowEvolve(reorderedTableSchema, schema));
+  }
+
+  @Test
+  void testNoEvolutionChecksLogicalNamesRecursively() {
+    StructType schema =
+        new StructType()
+            .add("id", IntegerType.INTEGER)
+            .add(
+                "profile",
+                new StructType().add("first", StringType.STRING).add("last", StringType.STRING));
+    DeltaSinkConf conf = new DeltaSinkConf(schema, Map.of());
+
+    assertTrue(conf.getSchemaEvolutionPolicy().allowEvolve(schema, schema));
+    assertFalse(
+        conf.getSchemaEvolutionPolicy()
+            .allowEvolve(
+                new StructType()
+                    .add("renamed", IntegerType.INTEGER)
+                    .add("profile", schema.at(1).getDataType()),
+                schema));
+    assertFalse(
+        conf.getSchemaEvolutionPolicy()
+            .allowEvolve(
+                new StructType()
+                    .add("id", IntegerType.INTEGER)
+                    .add(
+                        "profile",
+                        new StructType()
+                            .add("last", StringType.STRING)
+                            .add("first", StringType.STRING)),
+                schema));
+  }
+
+  @Test
+  void testNoEvolutionChecksCollectionTypesRecursively() {
+    StructType child =
+        new StructType().add("first", StringType.STRING).add("last", StringType.STRING);
+    StructType schema =
+        new StructType()
+            .add("items", new ArrayType(child, true))
+            .add("lookup", new MapType(StringType.STRING, child, true));
+    DeltaSinkConf conf = new DeltaSinkConf(schema, Map.of());
+    StructType reorderedChild =
+        new StructType().add("last", StringType.STRING).add("first", StringType.STRING);
+    StructType mappedChild =
+        new StructType()
+            .add(
+                "first",
+                StringType.STRING,
+                true,
+                FieldMetadata.builder()
+                    .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "uuid1")
+                    .build())
+            .add("last", StringType.STRING);
+
+    StructType mappedSchema =
+        new StructType()
+            .add("items", new ArrayType(mappedChild, true))
+            .add("lookup", new MapType(StringType.STRING, mappedChild, true));
+    assertTrue(conf.getSchemaEvolutionPolicy().allowEvolve(mappedSchema, schema));
+
+    List<StructType> incompatibleSchemas =
+        List.of(
+            new StructType()
+                .add("items", new ArrayType(reorderedChild, true))
+                .add("lookup", new MapType(StringType.STRING, child, true)),
+            new StructType()
+                .add("items", new ArrayType(child, false))
+                .add("lookup", new MapType(StringType.STRING, child, true)),
+            new StructType()
+                .add("items", new ArrayType(child, true))
+                .add("lookup", new MapType(StringType.STRING, reorderedChild, true)),
+            new StructType()
+                .add("items", new ArrayType(child, true))
+                .add("lookup", new MapType(StringType.STRING, child, false)));
+    assertTrue(
+        incompatibleSchemas.stream()
+            .noneMatch(
                 tableSchema -> conf.getSchemaEvolutionPolicy().allowEvolve(tableSchema, schema)));
   }
 
