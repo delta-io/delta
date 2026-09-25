@@ -89,11 +89,13 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     implicit val fileNameAndSizeEncoder: Encoder[SerializableFileStatus] =
       org.apache.spark.sql.Encoders.product[SerializableFileStatus]
 
-    // filter out required fields from provided inventory DF
-    val inventorySchema = StructType(
-        inventory.schema.fields.filter(f => INVENTORY_SCHEMA.fields.map(_.name).contains(f.name))
-      )
-    if (inventorySchema != INVENTORY_SCHEMA) {
+    val hasRequiredFields = INVENTORY_SCHEMA.fields.forall { requiredField =>
+      inventory.schema.fields.exists { inventoryField =>
+        inventoryField.name == requiredField.name &&
+          inventoryField.dataType == requiredField.dataType
+      }
+    }
+    if (!hasRequiredFields) {
       throw DeltaErrors.invalidInventorySchema(INVENTORY_SCHEMA.treeString)
     }
 
