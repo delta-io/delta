@@ -96,6 +96,8 @@ trait SnapshotLastManifestCommitSuiteBase extends AMTCheckpointTestBase {
         deltas = base.logSegment.deltas.filter(f => FileNames.deltaVersion(f) == version),
         nonCompactedDeltasOpt = base.logSegment.nonCompactedDeltasOpt
           .map(_.filter(f => FileNames.deltaVersion(f) == version)),
+        deltaAtCheckpointVersionOpt = base.logSegment.deltas
+          .find(f => FileNames.deltaVersion(f) == version - 1),
         checkpointProvider = fakeAMTProviderAt(
           version - 1, protocol = base.protocol, metadata = base.metadata)),
       deltaLog = deltaLog,

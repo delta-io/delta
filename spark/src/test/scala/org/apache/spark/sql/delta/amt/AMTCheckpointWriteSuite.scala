@@ -21,8 +21,10 @@ import java.io.File
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaOperations, LastCheckpointInfo, RowId}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot}
+import org.apache.spark.sql.delta.coordinatedcommits.TrackingInMemoryCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
+import io.delta.storage.commit.CoordinatedCommitsUtils.getBackfilledDeltaFilePath
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.Row
@@ -120,6 +122,49 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       assert((rootFiles(path) ++ leafFiles(path)).exists(_.getName == rootName),
         s"contentRoot must reference an on-disk manifest; got $rootName")
     }
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "checkpoint backfills preceding commits while its manifest commit remains staged",
+      "amt_checkpoint_backfill")(
+      beforeTableCreation = () => {
+        // Keep periodic coordinator backfill from publishing any of these commits.
+        clearBuilders()
+        registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(batchSize = 100))
+      },
+      setup = name => {
+        (2 to 3).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+        val deltaLog = deltaLogForName(name)
+        val snapshot = deltaLog.update()
+        assert(snapshot.version == 3L)
+        val commitFileProvider = DeltaCommitFileProvider(snapshot)
+        val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+        // The bootstrap manifest and both INSERTs must still need backfilling.
+        (1L to snapshot.version).foreach { version =>
+          val commitFile = commitFileProvider.deltaFile(version)
+          assert(FileNames.isUnbackfilledDeltaFile(commitFile))
+          assert(fs.exists(commitFile))
+          assert(!fs.exists(getBackfilledDeltaFilePath(deltaLog.logPath, version)),
+            s"v$version must not be backfilled before the tested checkpoint")
+        }
+      },
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (3)"))) { context =>
+    val snapshot = context.postCheckpointSnapshot
+    val deltaLog = snapshot.deltaLog
+    val manifestCommitVersion = context.manifestCommitVersion
+    val commitFileProvider = DeltaCommitFileProvider(snapshot)
+    val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+
+    (0L until manifestCommitVersion).foreach { version =>
+      assert(fs.exists(getBackfilledDeltaFilePath(deltaLog.logPath, version)),
+        s"v$version must be backfilled before manifest commit v$manifestCommitVersion")
+    }
+    val manifestCommitFile = commitFileProvider.deltaFile(manifestCommitVersion)
+    assert(FileNames.isUnbackfilledDeltaFile(manifestCommitFile))
+    assert(fs.exists(manifestCommitFile))
+    assert(!fs.exists(getBackfilledDeltaFilePath(deltaLog.logPath, manifestCommitVersion)),
+      s"Manifest commit v$manifestCommitVersion must remain unbackfilled")
   }
 
   testAcrossAMTCheckpointScenarios(
