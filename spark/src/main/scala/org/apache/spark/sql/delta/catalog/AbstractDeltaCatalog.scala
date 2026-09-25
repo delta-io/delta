@@ -56,7 +56,7 @@ import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNa
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
 import org.apache.spark.sql.catalyst.util.{GeneratedColumn => SparkGeneratedColumn, IdentityColumn => SparkIdentityColumn}
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Column, DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableCatalogCapability, TableChange, V1Table}
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Column, DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableCatalogCapability, TableChange, TableWritePrivilege, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
@@ -411,13 +411,28 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     loadTable(ident)
   }
 
-  override def loadTable(ident: Identifier): Table = recordFrameProfile(
+  override def loadTable(ident: Identifier): Table =
+    loadTableWithWriteIntent(ident, writeIntent = false, () => super.loadTable(ident))
+
+  // Spark resolves the target of INSERT / UPDATE / DELETE / MERGE through this overload; pass
+  // the declared intent on so the catalog client can request matching storage credentials. The
+  // delegate fallback drops the privileges: `DelegatingCatalogExtension` has no privileged
+  // forward, so the delegate would receive them stripped by the default method anyway.
+  override def loadTable(
+      ident: Identifier,
+      writePrivileges: util.Set[TableWritePrivilege]): Table =
+    loadTableWithWriteIntent(ident, writeIntent = true, () => super.loadTable(ident))
+
+  private def loadTableWithWriteIntent(
+      ident: Identifier,
+      writeIntent: Boolean,
+      loadFromDelegate: () => Table): Table = recordFrameProfile(
       "DeltaCatalog", "loadTable") {
     setVariantBlockingConfigIfUC()
     try {
       val table = deltaCatalogClient
-        .map(_.loadTable(ident))
-        .getOrElse(super.loadTable(ident))
+        .map(_.loadTable(ident, writeIntent))
+        .getOrElse(loadFromDelegate())
 
       table match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
