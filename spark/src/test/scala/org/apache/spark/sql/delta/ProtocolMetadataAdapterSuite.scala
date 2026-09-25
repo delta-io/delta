@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.test.SharedSparkSession
@@ -159,6 +160,23 @@ abstract class ProtocolMetadataAdapterSuiteBase
     }
   }
 
+  /** Field metadata recording one type change, as a writer applying it would leave behind. */
+  private def recordedTypeChange(
+      fromType: String,
+      toType: String): org.apache.spark.sql.types.Metadata =
+    new MetadataBuilder()
+      .putMetadataArray("delta.typeChanges", Array(
+        new MetadataBuilder()
+          .putLong("tableVersion", 1L)
+          .putString("fromType", fromType)
+          .putString("toType", toType)
+          .build()
+      ))
+      .build()
+
+  private val typeWideningEnabled = Map(DeltaConfigs.ENABLE_TYPE_WIDENING.key -> "true")
+  private val typeWideningSupported = Some(Set(TypeWideningTableFeature.name))
+
   Seq[(String, Option[org.apache.spark.sql.types.Metadata], Boolean, Map[String, String],
     Option[Set[String]], Option[Set[String]])](
     // Table with no special features should be readable
@@ -166,19 +184,23 @@ abstract class ProtocolMetadataAdapterSuiteBase
      None, None),
     // Table with unsupported type widening (string -> integer), should not be readable
     ("table with unsupported type widening",
-      Some(new MetadataBuilder()
-        .putMetadataArray("delta.typeChanges", Array(
-          new MetadataBuilder()
-            .putLong("tableVersion", 1L)
-            .putString("fromType", "string")
-            .putString("toType", "integer")
-            .build()
-        ))
-        .build()),
+      Some(recordedTypeChange("string", "integer")),
      false,
-      Map(DeltaConfigs.ENABLE_TYPE_WIDENING.key -> "true"),
-      Some(Set(TypeWideningTableFeature.name)),
-      Some(Set(TypeWideningTableFeature.name)))
+      typeWideningEnabled, typeWideningSupported, typeWideningSupported),
+    // The readable case above has no type change to inspect, so this is the only case asserting
+    // that a supported one is accepted.
+    ("table with supported type widening",
+      Some(recordedTypeChange("integer", "long")),
+     true,
+      typeWideningEnabled, typeWideningSupported, typeWideningSupported),
+    ("table with type widening enabled and no type change",
+      None, true,
+      typeWideningEnabled, typeWideningSupported, typeWideningSupported),
+    // Type change metadata left behind after the feature was dropped.
+    ("table with type change metadata but the feature not supported",
+      Some(recordedTypeChange("string", "integer")),
+     true,
+      Map.empty, None, None)
   ).foreach { case (testCaseName, typeChangeMetadata, tableReadable, config,
     readerFeatures, writerFeatures) =>
     test(s"assertTableReadable with $testCaseName") {
@@ -206,6 +228,28 @@ abstract class ProtocolMetadataAdapterSuiteBase
           wrapper.assertTableReadable(spark)
         }
       }
+    }
+  }
+
+  test("assertTableReadable with unsupported type widening and the check bypassed") {
+    // Separate from the cases above because those cannot express a conf override.
+    val wrapper = createWrapper(
+      minReaderVersion = 3,
+      minWriterVersion = 7,
+      readerFeatures = typeWideningSupported,
+      writerFeatures = typeWideningSupported,
+      schema = new StructType()
+        .add("col1", IntegerType, nullable = true,
+          metadata = recordedTypeChange("string", "integer")),
+      configuration = typeWideningEnabled)
+
+    intercept[Exception] {
+      wrapper.assertTableReadable(spark)
+    }
+
+    withSQLConf(
+        DeltaSQLConf.DELTA_TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK.key -> "true") {
+      wrapper.assertTableReadable(spark)
     }
   }
 
