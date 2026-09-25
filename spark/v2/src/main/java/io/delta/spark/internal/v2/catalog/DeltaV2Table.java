@@ -263,8 +263,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
       } else {
         this.initialSnapshot =
             recordFrameProfileValue(
-                "snapshot.loadLatest",
-                () -> snapshotManager.loadLatestSnapshot(queryContext));
+                "snapshot.loadLatest", () -> snapshotManager.loadLatestSnapshot(queryContext));
       }
     } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
       // Rethrow as the Delta-module wrapper so catalog/interop layer never names a Kernel type.
@@ -573,12 +572,8 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
   private Snapshot loadSnapshotAtCheckedVersion(
       DeltaV2SnapshotManager manager, long version, DeltaV2QueryContext queryContext) {
     manager.checkVersionExists(
-        version,
-        /* mustBeRecreatable = */ true,
-        /* allowOutOfRange = */ false,
-        queryContext);
-    final Supplier<Snapshot> loadSnapshot =
-        () -> manager.loadSnapshotAt(version, queryContext);
+        version, /* mustBeRecreatable = */ true, /* allowOutOfRange = */ false, queryContext);
+    final Supplier<Snapshot> loadSnapshot = () -> manager.loadSnapshotAt(version, queryContext);
     return recordFrameProfileValue("snapshot.loadAtVersion", loadSnapshot);
   }
 
