@@ -31,7 +31,8 @@ case class UnityCatalogMetadata(
     catalogName: String,
     ucUri: String,
     override val tokenSupplier: Option[() => String],
-    tableProps: Map[String, String]) extends ServerSidePlanningMetadata {
+    tableProps: Map[String, String],
+    override val authConfig: Map[String, String] = Map.empty) extends ServerSidePlanningMetadata {
 
   override def planningEndpointUri: String = {
     val base = if (ucUri.endsWith("/")) ucUri.dropRight(1) else ucUri
@@ -67,7 +68,7 @@ object UnityCatalogMetadata {
     }
 
     val tableProps = Map.empty[String, String]
-    UnityCatalogMetadata(catalogName, ucUri, supplier, tableProps)
+    UnityCatalogMetadata(catalogName, ucUri, supplier, tableProps, authConfig)
   }
 
   /**

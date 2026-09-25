@@ -31,8 +31,13 @@ class IcebergRESTCatalogPlanningClientFactory extends ServerSidePlanningClientFa
     val catalogName = metadata.catalogName
     val supplier: () => String =
       metadata.tokenSupplier.getOrElse(() => "")
+    val credentialRefreshConfig = metadata match {
+      case uc: UnityCatalogMetadata if uc.ucUri.nonEmpty && uc.authConfig.nonEmpty =>
+        Some(ScanPlanCredentialRefreshConfig(uc.ucUri, uc.authConfig))
+      case _ => None
+    }
 
     new IcebergRESTCatalogPlanningClient(
-      baseUri, catalogName, supplier)
+      baseUri, catalogName, supplier, credentialRefreshConfig)
   }
 }

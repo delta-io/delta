@@ -189,8 +189,26 @@ trait ScanPlanStorageCredentials {
 }
 
 /**
+ * Information needed to renew credentials for one authorized Iceberg server-side scan plan.
+ * The opaque plan ID, rather than a source table ID, keeps each refresh request scoped to the
+ * same FGAC plan that produced the scan files.
+ */
+case class ScanPlanCredentialRefresh(
+    catalogUri: String,
+    credentialsEndpoint: String,
+    planId: String,
+    authConfig: Map[String, String],
+    storageSchemes: Seq[String])
+
+/** Catalog-level inputs retained by a planning client until the server returns a plan ID. */
+case class ScanPlanCredentialRefreshConfig(
+    catalogUri: String,
+    authConfig: Map[String, String])
+
+/**
  * Result of a table scan plan operation.
  */
 case class ScanPlan(
     files: Seq[ScanFile],
-    credentials: Option[ScanPlanStorageCredentials] = None)
+    credentials: Option[ScanPlanStorageCredentials] = None,
+    credentialRefresh: Option[ScanPlanCredentialRefresh] = None)
