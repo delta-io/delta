@@ -501,7 +501,6 @@ trait DeltaInsertIntoTest
     checkAnswer(actual, expectedData.toDF)
   }
 
-  // TODO(LC-16787) inline this as soon as reyden-compat crutches not needed anymore
   protected def createTableFromTestData(
       tableName: String,
       data: TestData,
