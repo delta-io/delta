@@ -22,6 +22,8 @@ import scala.concurrent.duration.Duration
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, ConcurrentWriteException, DeltaLog, FullAMTWriteFailedWithConflict}
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.DeltaTestBarrier
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.SparkException
@@ -39,6 +41,16 @@ class AMTConflictResolutionSuite
 
   import AMTConflictResolutionRoundMetrics._
   import BackRefRebaseMetrics._
+
+  // The phase-locking tests pause a transaction mid-commit at a TestBarrier, then commit a
+  // concurrent winner from the test thread. The commit lock (enabled by default here) is held for
+  // the whole commit attempt, so the paused transaction would block that winner and deadlock the
+  // interleaving; disable it for the whole suite.
+  override protected def sparkConf =
+    super.sparkConf
+      .set(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED.key, "false")
+      // The phase-locking tests arm a DeltaTestBarrier, which requires this config.
+      .set(DeltaSQLConf.TEST_BARRIER_ENABLED.key, "true")
 
   // A large interval keeps the checkpoint-interval maintenance hook from firing its own checkpoint
   // mid-test; every AMT write here is one the test drives explicitly.
@@ -721,4 +733,317 @@ class AMTConflictResolutionSuite
     }
   }
 
+
+  private def runTwoTreeRoundsReuseRegenerate(loserInlinesTree: Boolean): Unit = {
+    val tableSuffix = if (loserInlinesTree) "inline" else "log"
+    withTable(s"amt_conflict_two_tree_rounds_$tableSuffix") {
+      val name = s"amt_conflict_two_tree_rounds_$tableSuffix"
+      // Seed a MIXED tree so a rebase can both reuse and regenerate back references: a full
+      // checkpoint packs id 1-10 into leaves (each leaf-resident, carrying a back reference), then
+      // an incremental checkpoint promotes id 11-12 into the root (root-resident, no back
+      // reference). A trailing log insert (id 13) is left pending so round 1's incremental winner
+      // has a new file to fold.
+      createAMTTable(name, checkpointInterval = noAutoCheckpointInterval)
+      val deltaLog = deltaLogForName(name)
+      withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "5") {
+        appendRowsAsSeparateFiles(name, numFiles = 10, startId = 1)
+        commitCheckpoint(deltaLog, incremental = false)
+        appendRowsAsSeparateFiles(name, numFiles = 2, startId = 11)
+        commitCheckpoint(deltaLog, incremental = true)
+        appendRowsAsSeparateFiles(name, numFiles = 1, startId = 13)
+      }
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // A (a non-blind DELETE) removes id 2 (leaf-resident) and id 11 (root-resident), then loses
+      // two tree-installing rounds. Round 1's winner B is an incremental checkpoint that leaves the
+      // leaves untouched, so A reuses id 2's still-valid leaf back reference and regenerates only
+      // id 11's root-resident one. Round 2's winner C is a FULL rewrite that moves every leaf, so A
+      // regenerates BOTH. A TestBarrier pauses A right after round 1 so C can win A's rebased
+      // target version and force the second round.
+      val deleteLoser = () => spark.sql(s"DELETE FROM $name WHERE id IN (2, 11)").collect()
+      val label = AMTWriterManager.REBASE_BACK_REFERENCES_TEST_BARRIER
+      // A low inline threshold forces A's DELETE to inline its own tree instead of staying
+      // log-only, so a log and an inline-AMT losing commit both exercise the same back-ref rebase.
+      def maybeInline[T](body: => T): T =
+        if (loserInlinesTree) withInlineThreshold(1)(body) else body
+      val rounds = maybeInline {
+        trackConflictResolutionRounds {
+          val Seq(futureA) =
+            runFunctionsWithOrderingFromObserver(Seq(deleteLoser)) {
+              case observerA :: Nil =>
+                // A reads the table, then is held before it commits.
+                unblockUntilPreCommit(observerA)
+                waitForPrecommit(observerA)
+                // B installs a new tree (incremental OPTIMIZE checkpoint) and wins A's version.
+                commitCheckpoint(deltaLog, incremental = true)
+                // Arm the barrier so A pauses right after folding B, before its retry write.
+                val barrier =
+                  DeltaTestBarrier.createBarrier(spark.sessionState.conf, label)
+                try {
+                  unblockCommit(observerA)
+                  barrier.waitUntilBlocked()
+                  // C installs a FULL-rewrite tree and wins A's rebased target version.
+                  commitCheckpoint(deltaLog, incremental = false)
+                } finally {
+                  DeltaTestBarrier.destroyBarrier(label)
+                }
+                waitForCommit(observerA)
+            }
+          ThreadUtils.awaitResult(futureA, Duration.Inf)
+        }
+      }
+
+      // A survived after rebasing past both tree winners; only id 2 and id 11 are gone.
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore -- Set(2, 11),
+        s"A's delete must survive both tree rebases; before=$liveIdsBefore after=$liveIdsAfter")
+      assert(rounds.size == 2,
+        s"expected two AMT conflict rounds across two tree-installing winners, got $rounds")
+      val Seq(round1, round2) = rounds
+      // Round 1's incremental winner left the leaves untouched: reuse id 2's leaf back reference,
+      // regenerate only id 11's root-resident one.
+      assert(!round1.backRefRebaseMetrics.skipped)
+      assert(round1.backRefRebaseMetrics.skipReason.isEmpty)
+      assert(round1.backRefRebaseMetrics.numActionsReusingBackref.contains(1) &&
+        round1.backRefRebaseMetrics.numActionsRegeneratingBackref.contains(1))
+      // Round 2's full rewrite moved every leaf, so both back references are regenerated.
+      assert(!round2.backRefRebaseMetrics.skipped)
+      assert(round2.backRefRebaseMetrics.skipReason.isEmpty)
+      assert(round2.backRefRebaseMetrics.numActionsReusingBackref.contains(0) &&
+        round2.backRefRebaseMetrics.numActionsRegeneratingBackref.contains(2))
+    }
+  }
+
+  test("Losing commit rebasing through two tree-installing conflict rounds reuses and " +
+    "regenerates back references (log loser)") {
+    runTwoTreeRoundsReuseRegenerate(loserInlinesTree = false)
+  }
+
+  test("Losing commit rebasing through two tree-installing conflict rounds reuses and " +
+    "regenerates back references (inline-AMT loser)") {
+    runTwoTreeRoundsReuseRegenerate(loserInlinesTree = true)
+  }
+  // A losing OPTIMIZE checkpoint -- full or incremental -- whose winner rewrote a pre-base file
+  // (non-base-preserving) cannot reuse its base: it signals FullAMTWriteFailedWithConflict, and
+  // deltaLog.checkpoint must refresh (deltaLog.update()) and retry, regenerating the AMT against
+  // the post-winner snapshot rather than swallowing it or surfacing an error. The regenerated tree
+  // keeps its full/incremental characteristic.
+  for ((label, triggerMode, regeneratedTreeIsIncremental) <- Seq(
+      ("full", AMTTriggerMode.CheckpointIntervalFull, false),
+      ("incremental", AMTTriggerMode.CheckpointIntervalIncremental, true))) {
+    test(s"deltaLog.checkpoint regenerates a $label checkpoint that lost to a " +
+        "non-base-preserving winner") {
+      withTable(s"amt_ckpt_hook_regenerates_$label") {
+        val name = s"amt_ckpt_hook_regenerates_$label"
+        val deltaLog = setupAMTTable(name)
+        // The maintenance checkpoint reads this snapshot; a winner commits past it first.
+        val staleSnapshot = deltaLog.update()
+
+        // A concurrent winner deletes id = 1 -- a log commit rewriting a file predating the base.
+        spark.sql(s"DELETE FROM $name WHERE id = 1").collect()
+        val versionBeforeRetry = deltaLog.update().version
+
+        val rounds = trackConflictResolutionRounds {
+          deltaLog.checkpoint(
+            staleSnapshot, catalogTableOpt = None, amtTriggerModeOpt = Some(triggerMode))
+        }
+        assertSingleAMTConflictRoundMetrics(
+          rounds,
+          expectedLosingCommitType =
+            if (regeneratedTreeIsIncremental) INCREMENTAL_CHECKPOINT else FULL_CHECKPOINT,
+          expectedLosingTreeType =
+            Some(if (regeneratedTreeIsIncremental) INCREMENTAL_TREE else FULL_TREE),
+          expectedTreeOutcome = REGENERATE_VIA_TXN_RETRY,
+          expectedWinnerTreeSatisfiesRequirement = None,
+          expectedException = Some(classOf[FullAMTWriteFailedWithConflict]),
+          numLogOnlyWinners = 1,
+          allLogWinnersPreserveLosingTree = Some(false))
+
+        // The retry committed a fresh checkpoint past the winner (not a silent no-op), the delete
+        // survived, and the table stays AMT-backed.
+        val latest = deltaLog.update()
+        assert(latest.version > versionBeforeRetry,
+          s"the retry must commit a new checkpoint past the winner; before=$versionBeforeRetry " +
+            s"after=${latest.version}")
+        val checkpoint = checkpointAt(deltaLog, latest.version).getOrElse(
+          fail("the retried checkpoint must carry an AMT checkpoint at its version."))
+        assert(checkpoint.contentRoot.isIncremental.contains(regeneratedTreeIsIncremental),
+          s"the regenerated checkpoint must be a fresh $label tree.")
+        val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+        assert(!liveIdsAfter.contains(1) && liveIdsAfter.contains(2) && liveIdsAfter.contains(3),
+          s"the delete of id=1 must survive the regenerated checkpoint; after=$liveIdsAfter")
+        assert(amtProvider(latest).isDefined,
+          "the table must remain AMT-backed after the regenerated checkpoint.")
+      }
+    }
+  }
+
+  test("deltaLog.checkpoint skips a maintenance checkpoint that lost to a tree-installing winner") {
+    withTable("amt_ckpt_hook_skips_vs_tree_winner") {
+      val name = "amt_ckpt_hook_skips_vs_tree_winner"
+      val deltaLog = setupAMTTable(name)
+      // The maintenance checkpoint reads this snapshot; a tree-installing winner commits past it.
+      val staleSnapshot = deltaLog.update()
+
+      // A concurrent winner installs a brand-new full AMT tree, superseding what the losing
+      // checkpoint would write.
+      commitCheckpoint(deltaLog, incremental = false)
+      val versionAfterWinner = deltaLog.update().version
+      val liveIdsBefore = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+
+      // The losing checkpoint reads the stale snapshot, finds the winner's tree already serves as
+      // an up-to-date AMT, and skips as a graceful no-op: emitAMTCheckpoint suppresses the
+      // ConcurrentAMTCheckpointLandedException rather than surfacing it or committing a new tree.
+      val rounds = trackConflictResolutionRounds {
+        deltaLog.checkpoint(
+          staleSnapshot, catalogTableOpt = None,
+          amtTriggerModeOpt = Some(AMTTriggerMode.CheckpointIntervalFull))
+      }
+      assertSingleAMTConflictRoundMetrics(
+        rounds,
+        expectedLosingCommitType = FULL_CHECKPOINT,
+        expectedLosingTreeType = Some(FULL_TREE),
+        expectedTreeOutcome = SKIP_WINNER_SATISFIES_REQUIREMENT,
+        expectedWinnerTreeSatisfiesRequirement = Some(true),
+        expectedException = Some(classOf[ConcurrentAMTCheckpointLandedException]),
+        numFullCheckpointWinners = 1)
+
+      val latest = deltaLog.update()
+      assert(latest.version == versionAfterWinner,
+        s"the skipped checkpoint must not commit a new version; winner=$versionAfterWinner " +
+          s"after=${latest.version}")
+      val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
+      assert(liveIdsAfter == liveIdsBefore,
+        s"the skipped checkpoint must not change the live set; before=$liveIdsBefore " +
+          s"after=$liveIdsAfter")
+      assert(amtProvider(latest).isDefined,
+        "the table must remain AMT-backed via the winner's checkpoint after the skip.")
+    }
+  }
+
+  test("deltaLog.checkpoint retries a full checkpoint that lost to an incremental winner") {
+    withTable("amt_ckpt_hook_retries_vs_incr_winner") {
+      val name = "amt_ckpt_hook_retries_vs_incr_winner"
+      val deltaLog = setupAMTTable(name)
+      // The maintenance checkpoint reads this snapshot; an incremental-tree winner commits past it.
+      val staleSnapshot = deltaLog.update()
+
+      // A concurrent winner installs an incremental AMT tree. It does not satisfy the requested
+      // full AMT and cannot serve as a full base to fold onto, so the full checkpoint must
+      // regenerate against the refreshed snapshot rather than skip.
+      commitCheckpoint(deltaLog, incremental = true)
+      val versionBeforeRetry = deltaLog.update().version
+
+      val rounds = trackConflictResolutionRounds {
+        deltaLog.checkpoint(
+          staleSnapshot, catalogTableOpt = None,
+          amtTriggerModeOpt = Some(AMTTriggerMode.CheckpointIntervalFull))
+      }
+      assertSingleAMTConflictRoundMetrics(
+        rounds,
+        expectedLosingCommitType = FULL_CHECKPOINT,
+        expectedLosingTreeType = Some(FULL_TREE),
+        expectedTreeOutcome = REGENERATE_VIA_TXN_RETRY,
+        expectedWinnerTreeSatisfiesRequirement = Some(false),
+        expectedException = Some(classOf[FullAMTWriteFailedWithConflict]),
+        numIncrementalCheckpointWinners = 1)
+
+      // The retry committed a fresh full checkpoint past the winner (not a skip / no-op).
+      val latest = deltaLog.update()
+      assert(latest.version > versionBeforeRetry,
+        s"the retry must commit a new full checkpoint past the incremental winner; " +
+          s"before=$versionBeforeRetry after=${latest.version}")
+      val checkpoint = checkpointAt(deltaLog, latest.version).getOrElse(
+        fail("the retried checkpoint must carry an AMT checkpoint at its version."))
+      assert(checkpoint.contentRoot.isIncremental.contains(false),
+        "the regenerated checkpoint must be a fresh full tree.")
+      assert(amtProvider(latest).isDefined,
+        "the table must remain AMT-backed after the regenerated checkpoint.")
+    }
+  }
+
+  test("deltaLog.checkpoint stops regenerating a full checkpoint after the configured " +
+      "retry bound") {
+    withTable("amt_ckpt_hook_retry_bound") {
+      val name = "amt_ckpt_hook_retry_bound"
+      val deltaLog = setupAMTTable(name) // seeds ids 1, 2, 3
+      val maxRetries = 3
+      withSQLConf(
+          DeltaSQLConf.AMT_CONFLICT_CHECKING_MAX_FULL_REGENERATE_RETRIES.key ->
+            maxRetries.toString) {
+        val staleSnapshot = deltaLog.update()
+        // A non-base-preserving winner lands before the maintenance checkpoint commits, so its
+        // first attempt signals FullAMTWriteFailedWithConflict.
+        spark.sql(s"DELETE FROM $name WHERE id = 1").collect()
+
+        // The barrier pauses the checkpoint on each regenerate retry (after it refreshes its
+        // snapshot). The test lands one more non-base-preserving winner per retry so every attempt
+        // keeps conflicting; after `maxRetries` attempts the loop gives up and the last
+        // FullAMTWriteFailedWithConflict propagates.
+        val label = AMTWriterManager.FULL_AMT_REGENERATE_RETRY_TEST_BARRIER
+        val barrier = DeltaTestBarrier.createBarrier(spark.sessionState.conf, label)
+        @volatile var caught: Throwable = null
+        val checkpointThread = new Thread(() => {
+          SparkSession.setActiveSession(spark)
+          try {
+            deltaLog.checkpoint(
+              staleSnapshot,
+              catalogTableOpt = None,
+              amtTriggerModeOpt = Some(AMTTriggerMode.CheckpointIntervalFull))
+          } catch {
+            case t: Throwable => caught = t
+          }
+        })
+        checkpointThread.setDaemon(true)
+        val rounds = trackConflictResolutionRounds {
+          try {
+            checkpointThread.start()
+            // Drive maxRetries - 1 retries: each hits the barrier, lands a fresh conflicting
+            // winner, and is released. The final attempt then conflicts with no retries left and
+            // propagates.
+            (2 to maxRetries).foreach { deleteId =>
+              barrier.waitUntilBlocked()
+              spark.sql(s"DELETE FROM $name WHERE id = $deleteId").collect()
+              barrier.releaseOne()
+              // Let the released retry leave the barrier before waiting on the next hit, so the
+              // next waitUntilBlocked() can't observe this now-stale block.
+              val deadlineMs = System.currentTimeMillis() + 120000L
+              while (barrier.getNumBlockedThreads > 0) {
+                assert(System.currentTimeMillis() < deadlineMs,
+                  "timed out waiting for the retry to leave the barrier.")
+                Thread.sleep(50)
+              }
+            }
+          } finally {
+            checkpointThread.join(120000L)
+            DeltaTestBarrier.destroyBarrier(label)
+          }
+        }
+        assert(rounds.size == maxRetries,
+          s"expected one metric per failed checkpoint attempt, got $rounds")
+        rounds.foreach { round =>
+          assertSingleAMTConflictRoundMetrics(
+            Seq(round),
+            expectedLosingCommitType = FULL_CHECKPOINT,
+            expectedLosingTreeType = Some(FULL_TREE),
+            expectedTreeOutcome = REGENERATE_VIA_TXN_RETRY,
+            expectedWinnerTreeSatisfiesRequirement = None,
+            expectedException = Some(classOf[FullAMTWriteFailedWithConflict]),
+            numLogOnlyWinners = 1,
+            allLogWinnersPreserveLosingTree = Some(false))
+        }
+        assert(!checkpointThread.isAlive,
+          "the retry loop must terminate once the bound is exhausted.")
+        val causes = caught match {
+          case null => Nil
+          case t => Iterator
+            .iterate[Throwable](t)(c => if (c.getCause eq c) null else c.getCause)
+            .takeWhile(_ != null).take(50).toList
+        }
+        assert(causes.exists(_.isInstanceOf[FullAMTWriteFailedWithConflict]),
+          s"the last conflict past the retry bound must propagate a " +
+            s"FullAMTWriteFailedWithConflict; got $caught")
+      }
+    }
+  }
 }
