@@ -28,6 +28,8 @@ import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.InCommitTimestampUtils;
+import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -41,20 +43,63 @@ public class ProtocolMetadataLogReplay {
 
   private static final Logger logger = LoggerFactory.getLogger(ProtocolMetadataLogReplay.class);
 
-  /** Read schema when searching for the latest Protocol and Metadata. */
+  /**
+   * Minimal CommitInfo sub-schema containing only the {@code inCommitTimestamp} field. Using this
+   * instead of {@link io.delta.kernel.internal.actions.CommitInfo#FULL_SCHEMA} avoids reading
+   * fields that are not needed during Protocol/Metadata loading.
+   *
+   * <p>{@code inCommitTimestamp} must be at ordinal 0 here, matching its position in {@code
+   * CommitInfo.FULL_SCHEMA}, so that {@link
+   * InCommitTimestampUtils#tryExtractInCommitTimestamp(ColumnarBatch)} works correctly with both
+   * schemas.
+   */
+  private static final StructType COMMIT_INFO_ICT_READ_SCHEMA =
+      new StructType().add("inCommitTimestamp", LongType.LONG, true /* nullable */);
+
+  /**
+   * Read schema used for <b>delta JSON commit files</b> when searching for the latest Protocol,
+   * Metadata, and InCommitTimestamp. The {@code commitInfo} field uses a minimal sub-schema to
+   * avoid reading unnecessary fields.
+   *
+   * <p>This schema must NOT be used for Parquet checkpoint files; use {@link
+   * #PROTOCOL_METADATA_CHECKPOINT_READ_SCHEMA} for those instead, since Parquet readers may fail on
+   * columns that are absent from the file's physical schema.
+   */
   public static final StructType PROTOCOL_METADATA_READ_SCHEMA =
+      new StructType()
+          .add("protocol", Protocol.FULL_SCHEMA)
+          .add("metaData", Metadata.FULL_SCHEMA)
+          .add("commitInfo", COMMIT_INFO_ICT_READ_SCHEMA);
+
+  /**
+   * Read schema used for <b>checkpoint files</b> (Parquet or JSON v2 checkpoints) when searching
+   * for the latest Protocol and Metadata. Omits {@code commitInfo} because checkpoint files do not
+   * contain CommitInfo actions, and some Parquet implementations throw on missing columns.
+   */
+  private static final StructType PROTOCOL_METADATA_CHECKPOINT_READ_SCHEMA =
       new StructType().add("protocol", Protocol.FULL_SCHEMA).add("metaData", Metadata.FULL_SCHEMA);
 
-  /** Result of loading Protocol and Metadata from a LogSegment. */
+  /** Result of loading Protocol, Metadata, and (optionally) InCommitTimestamp from a LogSegment. */
   public static class Result {
     public final Protocol protocol;
     public final Metadata metadata;
     private final long numDeltaFilesRead;
+    /**
+     * The InCommitTimestamp read from the snapshot version's commit file during P/M loading, if
+     * available. Empty when the snapshot version's commit file was not read (e.g. when a CRC file
+     * at the exact snapshot version was used), or when the table does not have ICT enabled.
+     */
+    public final Optional<Long> inCommitTimestampOpt;
 
-    public Result(Protocol protocol, Metadata metadata, long numDeltaFilesRead) {
+    public Result(
+        Protocol protocol,
+        Metadata metadata,
+        long numDeltaFilesRead,
+        Optional<Long> inCommitTimestampOpt) {
       this.protocol = protocol;
       this.metadata = metadata;
       this.numDeltaFilesRead = numDeltaFilesRead;
+      this.inCommitTimestampOpt = inCommitTimestampOpt;
     }
   }
 
@@ -108,7 +153,8 @@ public class ProtocolMetadataLogReplay {
 
         final Protocol protocol = crcInfo.get().getProtocol();
         final Metadata metadata = crcInfo.get().getMetadata();
-        return new Result(protocol, metadata, 0 /* logFilesRead */);
+        // ICT is not stored in the CRC file; leave it empty so SnapshotImpl reads it lazily.
+        return new Result(protocol, metadata, 0 /* logFilesRead */, Optional.empty());
       }
     }
 
@@ -118,12 +164,20 @@ public class ProtocolMetadataLogReplay {
     long numDeltaFilesRead = 0;
     Protocol protocol = null;
     Metadata metadata = null;
+    // ICT captured from the snapshot version's commit file (the first file we encounter since we
+    // iterate in reverse). Empty if that file is not a regular commit file (e.g. log compaction).
+    Optional<Long> ictOpt = Optional.empty();
+    boolean ictExtractionAttempted = false;
 
+    // Use separate schemas for JSON delta files (which may contain commitInfo) and checkpoint
+    // files (which never contain commitInfo and may fail on unexpected columns).
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
             logSegment.allFilesWithCompactionsReversed(),
             PROTOCOL_METADATA_READ_SCHEMA,
+            PROTOCOL_METADATA_CHECKPOINT_READ_SCHEMA,
+            Optional.empty(),
             Optional.empty())) {
       while (reverseIter.hasNext()) {
         final ActionWrapper nextElem = reverseIter.next();
@@ -132,9 +186,26 @@ public class ProtocolMetadataLogReplay {
         // Load this lazily (as needed). We may be able to just use the CRC.
         ColumnarBatch columnarBatch = null;
 
-        if (protocol == null) {
+        // Opportunistically capture the ICT from the first commit file at the snapshot version.
+        // CommitInfo (containing ICT) is guaranteed to be the first action in commit files when
+        // ICT is enabled, so reading it here avoids a separate cloud read in getTimestamp().
+        // We skip log-compaction files because they do not contain CommitInfo actions.
+        if (!ictExtractionAttempted
+            && version == snapshotVersion
+            && !nextElem.isFromCheckpoint()
+            && FileNames.isCommitFile(nextElem.getFilePath())) {
+          ictExtractionAttempted = true;
           columnarBatch = nextElem.getColumnarBatch();
-          assert (columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
+          ictOpt = InCommitTimestampUtils.tryExtractInCommitTimestamp(columnarBatch);
+        }
+
+        if (protocol == null) {
+          if (columnarBatch == null) {
+            columnarBatch = nextElem.getColumnarBatch();
+          }
+          // protocol is always at ordinal 0 in both PROTOCOL_METADATA_READ_SCHEMA and
+          // PROTOCOL_METADATA_CHECKPOINT_READ_SCHEMA
+          assert (columnarBatch.getSchema().at(0).getName().equals("protocol"));
 
           final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
 
@@ -144,7 +215,7 @@ public class ProtocolMetadataLogReplay {
 
               if (metadata != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                return new Result(protocol, metadata, numDeltaFilesRead);
+                return new Result(protocol, metadata, numDeltaFilesRead, ictOpt);
               }
 
               break; // We just found the protocol, exit this for-loop
@@ -155,7 +226,8 @@ public class ProtocolMetadataLogReplay {
         if (metadata == null) {
           if (columnarBatch == null) {
             columnarBatch = nextElem.getColumnarBatch();
-            assert (columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
+            // metaData is always at ordinal 1 in both read schemas
+            assert (columnarBatch.getSchema().at(1).getName().equals("metaData"));
           }
           final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
 
@@ -165,7 +237,7 @@ public class ProtocolMetadataLogReplay {
 
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                return new Result(protocol, metadata, numDeltaFilesRead);
+                return new Result(protocol, metadata, numDeltaFilesRead, ictOpt);
               }
 
               break; // We just found the metadata, exit this for-loop
@@ -188,7 +260,7 @@ public class ProtocolMetadataLogReplay {
               metadata = crcInfo.get().getMetadata();
             }
 
-            return new Result(protocol, metadata, numDeltaFilesRead);
+            return new Result(protocol, metadata, numDeltaFilesRead, ictOpt);
           }
         }
       }
@@ -206,7 +278,7 @@ public class ProtocolMetadataLogReplay {
           String.format("No metadata found at version %s", logSegment.getVersion()));
     }
 
-    return new Result(protocol, metadata, numDeltaFilesRead);
+    return new Result(protocol, metadata, numDeltaFilesRead, ictOpt);
   }
 
   private static void validateCrcInfoMatchesExpectedVersion(CRCInfo crcInfo, long expectedVersion) {

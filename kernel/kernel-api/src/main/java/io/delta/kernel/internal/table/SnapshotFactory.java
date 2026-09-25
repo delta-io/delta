@@ -192,6 +192,10 @@ public class SnapshotFactory {
 
     Protocol protocol;
     Metadata metadata;
+    // ICT captured during P/M loading to avoid a redundant cloud read in getTimestamp().
+    // Remains empty when protocolAndMetadataOpt is pre-populated (e.g. post-commit snapshots
+    // inject the ICT separately via the SnapshotImpl constructor).
+    Optional<Long> inCommitTimestampOpt = Optional.empty();
 
     if (ctx.protocolAndMetadataOpt.isPresent()) {
       protocol = ctx.protocolAndMetadataOpt.get()._1;
@@ -206,6 +210,7 @@ public class SnapshotFactory {
               snapshotCtx.getSnapshotMetrics());
       protocol = result.protocol;
       metadata = result.metadata;
+      inCommitTimestampOpt = result.inCommitTimestampOpt;
     }
 
     // We require maxCatalogVersion to be provided for catalogManaged tables. We cannot validate
@@ -224,7 +229,7 @@ public class SnapshotFactory {
         metadata,
         ctx.committerOpt.orElse(DefaultFileSystemManagedTableOnlyCommitter.INSTANCE),
         snapshotCtx,
-        Optional.empty() /* inCommitTimestampOpt */);
+        inCommitTimestampOpt);
   }
 
   private SnapshotQueryContext getSnapshotQueryContext() {
