@@ -33,7 +33,7 @@ import io.delta.kernel.unitycatalog.adapters.UniformAdapter
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
 import io.delta.storage.commit.{CommitFailedException => StorageCFE}
 import io.delta.storage.commit.Commit
-import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
+import io.delta.storage.commit.uccommitcoordinator.{CommitCompletionUnknownException, CommitOutcomeUnknownException, InvalidTargetTableException}
 
 import InMemoryUCClient.TableData
 import org.scalatest.funsuite.AnyFunSuite
@@ -533,6 +533,39 @@ class UCCatalogManagedCommitterSuite
       assert(!ex.isRetryable && !ex.isConflict)
       assert(ex.getMessage.contains("Target table does not exist"))
     }
+  }
+
+  // An unknown commit outcome must never be reported as retryable or as a conflict: either would
+  // send TransactionImpl back around its retry loop and re-commit data that may already have
+  // landed. Covers both the current signal and the deprecated one, which is shaped as a
+  // retryable conflict and so would otherwise be forwarded verbatim by storageCFEtoKernelCFE.
+  Seq(
+    ("CommitOutcomeUnknownException", () => new CommitOutcomeUnknownException("Outcome unknown")),
+    (
+      "deprecated CommitCompletionUnknownException",
+      () => new CommitCompletionUnknownException("Outcome unknown"))).foreach {
+    case (signalName, newSignal) =>
+      test(s"CATALOG_WRITE: $signalName during UC commit => CFE(retryable=false, conflict=false)") {
+        withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+          // ===== GIVEN =====
+          val ucClient = new InMemoryUCClient("ucMetastoreId") {
+            override def forceThrowInCommitMethod(): Unit = throw newSignal()
+          }
+          val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
+          ucClient.insertTableData(testUcTableId, tableData)
+          val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+          val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
+
+          // ===== WHEN =====
+          val ex = intercept[CommitFailedException] {
+            committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+          }
+
+          // ===== THEN =====
+          assert(!ex.isRetryable && !ex.isConflict)
+          assert(ex.getMessage.contains("Outcome unknown"))
+        }
+      }
   }
 
   // ================================================================

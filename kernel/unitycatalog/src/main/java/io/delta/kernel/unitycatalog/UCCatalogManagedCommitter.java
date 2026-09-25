@@ -40,6 +40,7 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractDomainMetadata;
+import io.delta.storage.commit.uccommitcoordinator.CommitCompletionUnknownException;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaClient;
@@ -493,6 +494,18 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                 domainMetadatas,
                 uniformMetadataOpt);
             return null;
+          } catch (CommitCompletionUnknownException unknownOutcome) {
+            // Must precede the CommitFailedException catch below: the deprecated unknown-outcome
+            // signal is shaped as a retryable conflict, and forwarding those flags would send the
+            // transaction down TransactionImpl's conflict-resolution path, re-committing this
+            // data at the next version when the original commit had in fact landed. An unknown
+            // outcome is not a conflict, so fail instead. CommitOutcomeUnknownException, which
+            // replaces it, is handled by the UCCommitCoordinatorException catch below.
+            throw new CommitFailedException(
+                false /* retryable */,
+                false /* conflict */,
+                unknownOutcome.getMessage(),
+                unknownOutcome);
           } catch (io.delta.storage.commit.CommitFailedException cfe) {
             throw storageCFEtoKernelCFE(cfe);
           } catch (IOException ex) {
@@ -503,6 +516,8 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
             // - CommitLimitReachedException -> TODO: publish in this case
             // - InvalidTargetTableException
             // - UpgradeNotAllowedException
+            // - CommitOutcomeUnknownException -> TODO: run the protocol's commit recovery here,
+            //   the way UCCommitCoordinatorClient does, instead of failing the transaction.
             // We can add specific catch statements for these exceptions if needed in the future.
             throw new CommitFailedException(
                 false /* retryable */, false /* conflict */, ucce.getMessage(), ucce);

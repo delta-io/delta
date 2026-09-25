@@ -456,73 +456,139 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     int transientErrorRetryCount = 0;
     while (transientErrorRetryCount <= MAX_RETRIES_ON_TRANSIENT_ERROR) {
       try {
-        commitToUC(
-          tableId,
-          tableDesc,
-          Optional.of(commitFile),
-          Optional.of(commitVersion),
-          Optional.of(commitTimestamp),
-          Optional.of(lastKnownBackfilledVersion.get()),
-          catalogTrackedInfo,
-          oldMetadata,
-          newMetadata,
-          oldProtocol,
-          newProtocol
-        );
+        try {
+          commitToUC(
+            tableId,
+            tableDesc,
+            Optional.of(commitFile),
+            Optional.of(commitVersion),
+            Optional.of(commitTimestamp),
+            Optional.of(lastKnownBackfilledVersion.get()),
+            catalogTrackedInfo,
+            oldMetadata,
+            newMetadata,
+            oldProtocol,
+            newProtocol
+          );
+        } catch (CommitCompletionUnknownException legacyUnknownOutcome) {
+          // The deprecated signal carries the same meaning but is shaped as a retryable conflict.
+          // Normalize it here so there is exactly one unknown-outcome path below, and so it can
+          // never reach the CommitFailedException handling that would treat it as a real conflict.
+          throw new CommitOutcomeUnknownException(
+            legacyUnknownOutcome.getMessage(), legacyUnknownOutcome);
+        }
         break;
-      } catch (CommitCompletionUnknownException ccue) {
-        if (hasSameContent(
-            logStore,
-            hadoopConf,
-            logPath,
-            CoordinatedCommitsUtils.getBackfilledDeltaFilePath(logPath, commitVersion),
-            commitFile.getPath())) {
-          eventData.put("alreadyBackfilledCommitCausedConflict", true);
+      } catch (CommitOutcomeUnknownException unknownOutcome) {
+        CommitRecoveryOutcome outcome =
+          recoverUnknownCommitState(logStore, hadoopConf, tableDesc, commitVersion, commitFile);
+        eventData.put("unknownCommitOutcomeRecovery", outcome.name());
+        if (outcome == CommitRecoveryOutcome.ACCEPTED) {
+          // UC holds this commit, so there is nothing left to send; resume from publishing.
           break;
-        } else {
-          recordUsageLog.accept(Optional.of(ccue), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
-          throw ccue;
         }
+        if (outcome == CommitRecoveryOutcome.LOST_RACE) {
+          recordUsageLog.accept(
+            Optional.of(unknownOutcome), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
+          throw new CommitFailedException(
+            true /* retryable */,
+            true /* conflict */,
+            "A concurrent writer won version " + commitVersion + " of table " + tableId +
+              " while the outcome of this commit was unknown: " + unknownOutcome.getMessage(),
+            unknownOutcome);
+        }
+        if (outcome == CommitRecoveryOutcome.UNDETERMINED) {
+          recordUsageLog.accept(
+            Optional.of(unknownOutcome), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
+          throw undeterminedOutcome(
+            commitVersion,
+            tableId,
+            "UC received the commit but could not report whether the version already landed",
+            unknownOutcome);
+        }
+        // NOT_ACCEPTED: UC never took the proposal, so re-sending the identical add-commit
+        // cannot duplicate anything. Reuse the transient-error budget so a server that keeps
+        // answering this way does not get hammered indefinitely.
+        if (transientErrorRetryCount == MAX_RETRIES_ON_TRANSIENT_ERROR) {
+          recordUsageLog.accept(
+            Optional.of(unknownOutcome), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
+          throw new CommitFailedException(
+            true /* retryable */,
+            false /* conflict */,
+            unknownOutcome.getMessage(),
+            unknownOutcome);
+        }
+        backOffBeforeResend(transientErrorRetryCount, unknownOutcome.getMessage());
+        transientErrorRetryCount++;
+        eventData.put("transientErrorRetryCount", transientErrorRetryCount);
       } catch (CommitFailedException cfe) {
-        if (transientErrorRetryCount > 0 && cfe.getConflict() && cfe.getRetryable() &&
-          hasSameContent(
-            logStore,
-            hadoopConf,
-            logPath,
-            CoordinatedCommitsUtils.getBackfilledDeltaFilePath(logPath, commitVersion),
-            commitFile.getPath())) {
-          // The commit was persisted in UC, but we did not get a response. Continue
-          // because the commit was successful
-          eventData.put("alreadyBackfilledCommitCausedConflict", true);
-          break;
-        } else {
-          // Rethrow the exception here as is because the caller needs to handle it.
-          recordUsageLog.accept(Optional.of(cfe), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
-          throw cfe;
+        // A conflict reported after a transient error is ambiguous: the earlier attempt may have
+        // landed and merely failed to report back, in which case the version this "conflict" is
+        // against holds this writer's own commit. Re-sending is safe on its own -- the same
+        // staged file, and therefore the same UUID, goes out every time -- so the risk lives
+        // entirely in how the answer is read. Run the same recovery as for an unknown outcome
+        // rather than only comparing the published file, which is not written yet while UC has
+        // ratified the staged commit but nothing has been published.
+        if (transientErrorRetryCount > 0 && cfe.getConflict() && cfe.getRetryable()) {
+          CommitRecoveryOutcome outcome =
+            recoverUnknownCommitState(logStore, hadoopConf, tableDesc, commitVersion, commitFile);
+          eventData.put("conflictAfterTransientErrorRecovery", outcome.name());
+          if (outcome == CommitRecoveryOutcome.ACCEPTED) {
+            eventData.put("alreadyBackfilledCommitCausedConflict", true);
+            break;
+          }
+          if (outcome == CommitRecoveryOutcome.UNDETERMINED) {
+            recordUsageLog.accept(Optional.of(cfe), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
+            throw undeterminedOutcome(
+              commitVersion,
+              tableId,
+              "it conflicts, but an earlier attempt failed without reporting its outcome and it " +
+                "could not be established whether that attempt is what now holds the version",
+              cfe);
+          }
         }
+        // Rethrow the exception here as is because the caller needs to handle it.
+        recordUsageLog.accept(Optional.of(cfe), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
+        throw cfe;
       } catch (IOException ioe) {
         if (transientErrorRetryCount == MAX_RETRIES_ON_TRANSIENT_ERROR) {
-          // Rethrow exception in case we've reached the retry limit.
+          // This is the last attempt, so the ambiguity has to be settled here. Handing a
+          // retryable failure back to the caller restarts commitImpl under a freshly generated
+          // staged UUID, and the recovery can no longer recognise a version this writer already
+          // won: it would compare the new UUID against the ratified old one and call it a
+          // concurrent writer.
+          CommitRecoveryOutcome outcome =
+            recoverUnknownCommitState(logStore, hadoopConf, tableDesc, commitVersion, commitFile);
+          eventData.put("transientErrorBudgetExhaustedRecovery", outcome.name());
+          if (outcome == CommitRecoveryOutcome.ACCEPTED) {
+            // The final attempt did land; only its answer was lost. Resume from publishing,
+            // which reports the commit itself, rather than also reporting a failure here.
+            break;
+          }
+          // Every remaining outcome ends the commit, so the failure is reported once here.
           recordUsageLog.accept(Optional.of(ioe), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
+          if (outcome == CommitRecoveryOutcome.LOST_RACE) {
+            throw new CommitFailedException(
+              true /* retryable */,
+              true /* conflict */,
+              "A concurrent writer won version " + commitVersion + " of table " + tableId +
+                " while this commit was failing to reach UC: " + ioe.getMessage(),
+              ioe);
+          }
+          if (outcome == CommitRecoveryOutcome.UNDETERMINED) {
+            throw undeterminedOutcome(
+              commitVersion,
+              tableId,
+              "the last attempt allowed by the retry budget failed without reporting its outcome",
+              ioe);
+          }
+          // NOT_ACCEPTED: UC does not hold the version, so the caller may safely start over.
           throw new CommitFailedException(
             true /* retryable */,
             false /* conflict */,
             ioe.getMessage(),
             ioe);
         }
-        // Exponentially back off. The initial wait time is set to 100ms and the max retry count
-        // is 15. The max wait time is 1 min so overall, we'll be waiting for a max of ~8 min.
-        long sleepTime = Math.min(
-          TRANSIENT_ERROR_RETRY_INITIAL_WAIT_MS << transientErrorRetryCount,
-          TRANSIENT_ERROR_RETRY_MAX_WAIT_MS
-        );
-        LOG.info("Sleeping for " + sleepTime + "ms before retrying commit after transient error " +
-          ioe.getMessage());
-        try {
-          Thread.sleep(sleepTime);
-        } catch (InterruptedException e) {
-          throw new RuntimeException(e);
-        }
+        backOffBeforeResend(transientErrorRetryCount, ioe.getMessage());
         transientErrorRetryCount++;
         eventData.put("transientErrorRetryCount", transientErrorRetryCount);
       } catch (UpgradeNotAllowedException
@@ -637,6 +703,127 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
 
     recordUsageLog.accept(Optional.empty(), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
     return new CommitResponse(new Commit(commitVersion, commitFile, commitTimestamp));
+  }
+
+  /**
+   * Builds the failure raised when neither outcome of a commit could be established. Re-sending
+   * risks committing the same data twice and rebasing risks dropping it, so the commit is failed
+   * outright rather than handed back as something the caller may retry or resolve as a conflict.
+   */
+  private CommitFailedException undeterminedOutcome(
+      long commitVersion, String tableId, String because, Exception cause) {
+    return new CommitFailedException(
+      false /* retryable */,
+      false /* conflict */,
+      "Could not establish whether version " + commitVersion + " of table " + tableId +
+        " was committed: " + because + ". Re-sending would risk duplicating the data and " +
+        "rebasing would risk losing it, so the commit is failed: " + cause.getMessage(),
+      cause);
+  }
+
+  /**
+   * Exponentially backs off before re-sending an {@code add-commit}. The initial wait is 100ms
+   * and the maximum retry count is 15, with the wait capped at 1 min, so a fully exhausted
+   * budget spans ~8 min.
+   */
+  protected void backOffBeforeResend(int retryCount, String reason) {
+    long sleepTime = Math.min(
+      TRANSIENT_ERROR_RETRY_INITIAL_WAIT_MS << retryCount,
+      TRANSIENT_ERROR_RETRY_MAX_WAIT_MS
+    );
+    LOG.info("Sleeping for " + sleepTime + "ms before re-sending the commit: " + reason);
+    try {
+      Thread.sleep(sleepTime);
+    } catch (InterruptedException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  /** What a table reload established about a commit whose outcome UC could not report. */
+  protected enum CommitRecoveryOutcome {
+    /** UC holds this writer's own commit at the proposed version. */
+    ACCEPTED,
+    /** A concurrent writer holds the proposed version; the caller must rebase. */
+    LOST_RACE,
+    /** UC never took the proposal, so the identical add-commit may be re-sent. */
+    NOT_ACCEPTED,
+    /**
+     * Neither outcome could be established. Re-sending risks committing the same data twice and
+     * rebasing risks dropping it, so the caller must fail.
+     */
+    UNDETERMINED
+  }
+
+  /**
+   * Establishes what happened to {@code commitVersion} after UC reported an unknown commit state,
+   * following the recovery sequence in the UC managed-tables protocol: reload the table, then
+   * compare {@code latest-table-version} against the proposed version and the ratified file name
+   * against the UUID file name this writer generated.
+   *
+   * <p>The file name is the whole decision. UC's {@code add-commit} carries no idempotency token,
+   * so the UUID in {@code <version>.<uuid>.json} is the only handle that distinguishes "my commit
+   * won this version" from "someone else's did". Once the version is published UC no longer
+   * retains that name, and the published file's content is the only remaining substitute; when
+   * neither file can be read the outcome stays {@link CommitRecoveryOutcome#UNDETERMINED} rather
+   * than defaulting to either answer.
+   */
+  protected CommitRecoveryOutcome recoverUnknownCommitState(
+      LogStore logStore,
+      Configuration hadoopConf,
+      TableDescriptor tableDesc,
+      long commitVersion,
+      FileStatus commitFile) {
+    Path logPath = tableDesc.getLogPath();
+    GetCommitsResponse response;
+    try {
+      response = getCommits(tableDesc, null, null);
+    } catch (RuntimeException e) {
+      LOG.error("Could not reload table at {} to recover the state of commit {} due to: {}",
+        logPath, commitVersion, exceptionString(e));
+      return CommitRecoveryOutcome.UNDETERMINED;
+    }
+
+    long latestTableVersion = response.getLatestTableVersion();
+    if (latestTableVersion == commitVersion - 1) {
+      return CommitRecoveryOutcome.NOT_ACCEPTED;
+    }
+    if (latestTableVersion < commitVersion - 1) {
+      // UC is further behind than the version this commit was built on. Nothing about the
+      // proposal can be concluded from a table state that shouldn't exist.
+      LOG.error("Table at {} reports latest version {} while recovering commit {}",
+        logPath, latestTableVersion, commitVersion);
+      return CommitRecoveryOutcome.UNDETERMINED;
+    }
+
+    Optional<Commit> ratifiedCommit = response.getCommits().stream()
+      .filter(commit -> commit.getVersion() == commitVersion)
+      .findFirst();
+    if (ratifiedCommit.isPresent()) {
+      String ratifiedFileName = ratifiedCommit.get().getFileStatus().getPath().getName();
+      return ratifiedFileName.equals(commitFile.getPath().getName())
+        ? CommitRecoveryOutcome.ACCEPTED
+        : CommitRecoveryOutcome.LOST_RACE;
+    }
+
+    // UC has published the version and dropped the staged file name along with it, so fall back
+    // to comparing the published commit against what this writer staged.
+    Path publishedCommit =
+      CoordinatedCommitsUtils.getBackfilledDeltaFilePath(logPath, commitVersion);
+    try {
+      FileSystem fs = logPath.getFileSystem(hadoopConf);
+      if (!fs.exists(publishedCommit) || !fs.exists(commitFile.getPath())) {
+        LOG.error("Commit {} of the table at {} is past UC's latest version {} but cannot be " +
+          "compared against {}", commitVersion, logPath, latestTableVersion, commitFile.getPath());
+        return CommitRecoveryOutcome.UNDETERMINED;
+      }
+      return hasSameContent(logStore, hadoopConf, logPath, publishedCommit, commitFile.getPath())
+        ? CommitRecoveryOutcome.ACCEPTED
+        : CommitRecoveryOutcome.LOST_RACE;
+    } catch (IOException | RuntimeException e) {
+      LOG.error("Could not compare {} against {} while recovering commit {} due to: {}",
+        publishedCommit, commitFile.getPath(), commitVersion, exceptionString(e));
+      return CommitRecoveryOutcome.UNDETERMINED;
+    }
   }
 
   /**

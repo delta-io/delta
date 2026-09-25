@@ -644,6 +644,50 @@ class UCDeltaTokenBasedRestClientSuite
     }
   }
 
+  test("commit throws CommitOutcomeUnknownException on 500 CommitStateUnknownException") {
+    val message = "Could not determine whether commit version 1 is a replay: unable to read " +
+      "the staged or published commit file for the table at s3://b/t; retry the request."
+    deltaHandler = (exchange, _) => {
+      if (exchange.getRequestMethod == "POST") {
+        sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR,
+          s"""{"error":{"code":500,"type":"CommitStateUnknownException",""" +
+            s""""message":"$message"}}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+    withClient { c =>
+      val e = intercept[CommitOutcomeUnknownException] {
+        c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
+      }
+      assert(e.getMessage.contains(message))
+    }
+  }
+
+  test("commit throws IOException on a 500 that is not CommitStateUnknownException") {
+    deltaHandler = (exchange, _) => {
+      if (exchange.getRequestMethod == "POST") {
+        sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR,
+          """{"error":{"code":500,"type":"InternalServerErrorException",""" +
+            """"message":"boom"}}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+    withClient { c =>
+      val e = intercept[java.io.IOException] {
+        c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
+      }
+      assert(e.getMessage.contains("HTTP 500"))
+    }
+  }
+
   test("commit throws InvalidTargetTableException on 404") {
     deltaHandler = (exchange, _) => {
       if (exchange.getRequestMethod == "POST") {
