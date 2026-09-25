@@ -61,17 +61,31 @@ That means specifically that for any commit…
 - it is **legal** to commit an existing `path`, `dvId` and `columnFileSetId` combination again (this
   allows metadata updates).
 
-> ***Add the following row to the schema of the `add` action, after `clusteringProvider`.***
+> ***Add the following rows to the schema of the `add` action, after `clusteringProvider`.***
 
 Field Name | Data Type | Description | optional/required
 -|-|-|-
+fileCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table | optional
 columnFiles | Array[[ColumnFileDescriptor Struct](#column-file-descriptor-struct)] | The column files associated with this data file. See also [Column Updates](#column-updates). | optional
+
+> ***Replace the row with field name `defaultRowCommitVersion` in the schema of the `add` action.
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+defaultRowCommitVersion | Long | First commit version in which an `add` action with the same `path` and the same set of column files was committed. | optional
 
 > ***Add the following row to the schema of the `remove` action, after `defaultRowCommitVersion`.***
 
 Field Name | Data Type | Description | optional/required
 -|-|-|-
+fileCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table | optional
 columnFiles | Array[[ColumnFileDescriptor Struct](#column-file-descriptor-struct)] | The column files associated with the logical file being removed. See also [Column Updates](#column-updates). | optional
+
+> ***Replace the row with field name `defaultRowCommitVersion` in the schema of the `remove` action.***
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+defaultRowCommitVersion | Long | First commit version in which an `add` action with the same `path` and the same set of column files was committed. | optional
 
 ## Action Reconciliation
 
@@ -120,6 +134,7 @@ To support this feature:
   `writerFeatures`.
 - The feature `catalogManaged` must exist in the table protocol's `readerFeatures` and
   `writerFeatures`.
+- The feature `changeDataFeed` must not exist in the table protocol's `writerFeatures`.
 
 Column Updates store values in [Column Files](#column-file-format) that are tracked in metadata
 using [Column File Descriptors](#column-file-descriptor-struct).
@@ -212,6 +227,13 @@ If the writer chooses to write a column file, the writer must:
 5. remove all `ColumnFileDescriptor`s that contain no associated field ids as a result of step (2);
 6. update the `defaultRowCommitVersion` to the commit version of the current operation.
 
+## `defaultRowCommitVersion` vs `fileCommitVersion`
+
+Column files introduce writers being able to add new data for an `add` action without changing the
+base file's `path`. `defaultRowCommitVersion` is thus modified in a way where it still represents
+the commit version that last introduced new data. `fileCommitVersion` keeps track of which version
+originally introduced the base file.
+
 ## Column File Cleanup
 
 Column files are table data. VACUUM must preserve all column files referenced by a retained file
@@ -264,7 +286,9 @@ INSERT INTO t
 ```
 {
   "add": {
-    "path": "base.parquet"
+    "path": "base.parquet",
+    "defaultRowCommitVersion": 0,
+    "fileCommitVersion": 0
   }
 }
 ```
@@ -303,10 +327,14 @@ UPDATE t SET
 ```
 {
   "remove": {
-    "path": "base.parquet"
+    "path": "base.parquet",
+    "defaultRowCommitVersion": 0,
+    "fileCommitVersion": 0
   },
   "add": {
     "path": "base.parquet",
+    "defaultRowCommitVersion": 1,
+    "fileCommitVersion": 0,
     "columnFiles": [
       {
         "path": "column-1.parquet",
@@ -350,7 +378,7 @@ WHERE key = 'a'
 | _lusn | foo (7) |
 |-|-|
 | NULL | 500 |
-| 2 | 200 |
+| 1 | 200 |
 
 </td>
 <td>
@@ -359,6 +387,8 @@ WHERE key = 'a'
 {
   "remove": {
     "path": "base.parquet",
+    "defaultRowCommitVersion": 1,
+    "fileCommitVersion": 0,
     "columnFiles": [
       {
         "path": "column-1.parquet",
@@ -368,6 +398,8 @@ WHERE key = 'a'
   },
   "add": {
     "path": "base.parquet",
+    "defaultRowCommitVersion": 2,
+    "fileCommitVersion": 0,
     "columnFiles": [
       {
         "path": "column-1.parquet",
@@ -397,7 +429,8 @@ must reference the old base file entry according to the AMT
 [backreference requirements](iceberg-v4-metadata.md#backreferences).
 
 `file_sequence_number`s contain information about versions in which the base file was introduced,
-column updates must keep these unchanged.
+column updates must keep these unchanged. This field corresponds to `fileCommitVersion` in a Delta
+file action.
 
 `latest_column_file_snapshot_id`s contain information about the snapshot that introduced the latest
 column file, column updates should rewrite them to new values.
@@ -405,6 +438,9 @@ column file, column updates should rewrite them to new values.
 For example, a base file added in version 10 and updated through a column file in version 20 has
 `file_sequence_number = 10` and `sequence_number = 20`. DV-only updates and metadata-only rewrites
 must preserve all three tracking fields.
+
+AMT manifest commits are required to produce more fields for column files than Delta keeps within
+`add` actions -- all extra fields are wired through `amtPassthrough`.
 
 ## Valid Feature Names in Table Features
 
