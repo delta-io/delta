@@ -55,7 +55,10 @@ class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit
     extensions.injectHintResolutionRule { session =>
       new SetDSv2SchemaEvolutionShims(session)
     }
-    extensions.injectResolutionRule { session =>
+    // Inject as a hint-resolution rule so it runs BEFORE Spark's built-in ResolveRelations, which
+    // would otherwise resolve a bare `delta.`path`` relation via the V2 session catalog
+    // `loadTable(ident)` (dropping per-relation options) before this rule can preserve them.
+    extensions.injectHintResolutionRule { session =>
       ResolveDeltaPathTable(session)
     }
     extensions.injectResolutionRule { session =>
