@@ -15,8 +15,11 @@
  */
 package io.delta.kernel.internal.skipping
 
+import java.util.Optional
+
 import scala.collection.JavaConverters.setAsJavaSetConverter
 
+import io.delta.kernel.expressions.Column
 import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, CollationIdentifier, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -424,5 +427,71 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
 
     val statsSchema = StatsSchemaHelper.getStatsSchema(dataSchema, collations.asJava)
     assert(statsSchema == expectedStatsSchema)
+  }
+
+  ///////////////////////////////////////////////////////////////////////////////////////////
+  // Column lookups must be case-insensitive, per the protocol's requirement that column
+  // names be unique regardless of casing. See https://github.com/delta-io/delta/issues/6247.
+  ///////////////////////////////////////////////////////////////////////////////////////////
+
+  test("column lookups match a mixed-case schema column regardless of query casing") {
+    val dataSchema = new StructType().add("Value", IntegerType.INTEGER)
+    val helper = new StatsSchemaHelper(dataSchema)
+
+    // Query using a different casing than the schema ("value" vs. "Value").
+    val queryColumn = new Column("value")
+
+    assert(helper.isSkippingEligibleMinMaxColumn(queryColumn))
+    assert(helper.isSkippingEligibleNullCountColumn(queryColumn))
+
+    // The resolved stats column should reflect the schema's actual casing ("Value"), not the
+    // query's casing.
+    assert(
+      helper.getMinColumn(queryColumn, Optional.empty())._1.getNames.toSeq ==
+        Seq(StatsSchemaHelper.MIN, "Value"))
+    assert(
+      helper.getMaxColumn(queryColumn, Optional.empty())._1.getNames.toSeq ==
+        Seq(StatsSchemaHelper.MAX, "Value"))
+    assert(
+      helper.getNullCountColumn(queryColumn).getNames.toSeq ==
+        Seq(StatsSchemaHelper.NULL_COUNT, "Value"))
+  }
+
+  test("column lookups match a lowercase schema column when queried with mixed case") {
+    // Same as above, with the casings reversed, to confirm the match isn't one-directional.
+    val dataSchema = new StructType().add("value", IntegerType.INTEGER)
+    val helper = new StatsSchemaHelper(dataSchema)
+
+    val queryColumn = new Column("Value")
+
+    assert(helper.isSkippingEligibleMinMaxColumn(queryColumn))
+    assert(helper.isSkippingEligibleNullCountColumn(queryColumn))
+    assert(
+      helper.getMinColumn(queryColumn, Optional.empty())._1.getNames.toSeq ==
+        Seq(StatsSchemaHelper.MIN, "value"))
+  }
+
+  test("column lookups are case-insensitive for nested columns") {
+    val dataSchema = new StructType()
+      .add("A", new StructType().add("B", IntegerType.INTEGER))
+    val helper = new StatsSchemaHelper(dataSchema)
+
+    // Every level of the path is queried with different casing than the schema.
+    val queryColumn = new Column(Array("a", "b"))
+
+    assert(helper.isSkippingEligibleMinMaxColumn(queryColumn))
+    assert(
+      helper.getMinColumn(queryColumn, Optional.empty())._1.getNames.toSeq ==
+        Seq(StatsSchemaHelper.MIN, "A", "B"))
+  }
+
+  test("column lookups still reject a genuinely nonexistent column") {
+    val dataSchema = new StructType().add("Value", IntegerType.INTEGER)
+    val helper = new StatsSchemaHelper(dataSchema)
+
+    val nonexistentColumn = new Column("other")
+
+    assert(!helper.isSkippingEligibleMinMaxColumn(nonexistentColumn))
+    assert(!helper.isSkippingEligibleNullCountColumn(nonexistentColumn))
   }
 }
