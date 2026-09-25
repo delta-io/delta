@@ -282,7 +282,12 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
 
     Optional<PersistedMetadata> persistedMetadata =
         MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-            SparkSession.active(), initialSnapshot, options, snapshotManager, kernelEngine);
+            SparkSession.active(),
+            initialSnapshot,
+            options,
+            snapshotManager,
+            kernelEngine,
+            queryContext);
 
     StructType rawSchema;
     List<String> partitionColumnNames;

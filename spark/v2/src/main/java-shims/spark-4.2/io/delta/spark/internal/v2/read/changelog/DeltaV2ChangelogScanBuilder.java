@@ -52,7 +52,11 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
     Engine engine = KernelEngineFactory.createDefaultEngine(hadoopConf);
     DeltaV2SnapshotManager snapshotManager = deltaV2Table.getSnapshotManager();
     CommitRange commitRange =
-        snapshotManager.getTableChanges(engine, startVersion, Optional.of(endVersion));
+        snapshotManager.getTableChanges(
+            engine,
+            startVersion,
+            Optional.of(endVersion),
+            deltaV2Table.getQueryContext());
     // Boundary checks: both endpoints must already carry the schema + RT state that
     // DeltaV2ChangelogBatch will validate each in-range Metadata action against. Without these,
     // an RT-disabled boundary with no in-range toggle commit would surface as a raw
@@ -63,9 +67,13 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
     // enabled), so emit DELTA_CHANGELOG_REQUIRES_ROW_TRACKING. Only if the end has RT
     // but the start does not, the toggle happened within the range -- emit
     // DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE with the offending start version.
-    Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
+    Snapshot startSnapshot =
+        snapshotManager.loadSnapshotAt(
+            startVersion, deltaV2Table.getQueryContext());
     SnapshotImpl startSnapshotImpl = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(startSnapshot);
-    Snapshot endSnapshot = snapshotManager.loadSnapshotAt(endVersion);
+    Snapshot endSnapshot =
+        snapshotManager.loadSnapshotAt(
+            endVersion, deltaV2Table.getQueryContext());
     StructType endSchema = endSnapshot.schema();
     if (!RowTracking$.MODULE$.isEnabled(endSnapshot.protocol(), endSnapshot.metadata())) {
       DeltaErrors.throwChangelogRequiresRowTracking(deltaV2Table.name());
