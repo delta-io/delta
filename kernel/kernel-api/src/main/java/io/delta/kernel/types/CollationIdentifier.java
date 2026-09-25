@@ -23,7 +23,7 @@ import java.util.Optional;
 
 /**
  * Identifies collation for string type. <a
- * href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md#collation-identifiers">
+ * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#collation-identifiers">
  * Collation identifiers</a>
  *
  * @since 3.3.0
