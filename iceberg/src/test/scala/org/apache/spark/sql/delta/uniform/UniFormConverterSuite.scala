@@ -18,15 +18,18 @@ package org.apache.spark.sql.delta.uniform
 
 import java.util.UUID
 
+import scala.collection.JavaConverters._
+
 import com.databricks.spark.util.Log4jUsageLogger
 import shadedForDelta.org.apache.iceberg.BaseTable
 import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
+import shadedForDelta.org.apache.iceberg.types.{Conversions, Types}
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeletionVectorsTestUtils, DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableReadPredicate, IcebergConstants, Snapshot}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeletionVectorsTestUtils, DeltaColumnMapping, DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableReadPredicate, IcebergConstants, Snapshot}
 import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
 import org.apache.spark.sql.delta.NonSparkReadIceberg
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DeletionVectorDescriptor, DomainMetadata, Metadata}
@@ -243,6 +246,51 @@ class UniFormConverterSuite extends
       verifyReadByPath(metadataPath,
         snapshot.schema, fields = "id", orderBy = "id", Seq(Row(1), Row(2), Row(3))
       )
+    }
+  }
+
+  test("min/max and null count stats of long columns are converted") {
+    val tableName = "test_iceberg_converter_long_stats"
+    withTable(tableName) {
+      spark.sql(
+        s"""CREATE TABLE $tableName (id INT, big BIGINT) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+      // A value outside the int range makes sure the bounds are written as Iceberg longs.
+      spark.sql(s"INSERT INTO $tableName VALUES (1, -5L), (2, ${Long.MaxValue}L), (3, NULL)")
+
+      val icebergTable = latestIcebergTable(tableName)
+      val schema = DeltaLog.forTable(spark, TableIdentifier(tableName)).update().schema
+      val idFieldId = DeltaColumnMapping.getColumnId(schema("id"))
+      val bigFieldId = DeltaColumnMapping.getColumnId(schema("big"))
+      val dataFiles = icebergTable.newScan().planFiles().asScala.map(_.file()).toSeq
+      assert(dataFiles.nonEmpty)
+
+      dataFiles.foreach { file =>
+        assert(file.lowerBounds().containsKey(bigFieldId), s"No lower bound for long column: $file")
+        assert(file.upperBounds().containsKey(bigFieldId), s"No upper bound for long column: $file")
+      }
+      val lowerBounds = dataFiles.map { file =>
+        Conversions.fromByteBuffer[java.lang.Long](
+          Types.LongType.get(), file.lowerBounds().get(bigFieldId)).longValue()
+      }
+      val upperBounds = dataFiles.map { file =>
+        Conversions.fromByteBuffer[java.lang.Long](
+          Types.LongType.get(), file.upperBounds().get(bigFieldId)).longValue()
+      }
+      assert(lowerBounds.min === -5L)
+      assert(upperBounds.max === Long.MaxValue)
+      assert(dataFiles.map(_.nullValueCounts().get(bigFieldId).longValue()).sum === 1L)
+
+      // The stats of the other columns are unaffected.
+      val intLowerBounds = dataFiles.map { file =>
+        Conversions.fromByteBuffer[java.lang.Integer](
+          Types.IntegerType.get(), file.lowerBounds().get(idFieldId)).intValue()
+      }
+      assert(intLowerBounds.min === 1)
     }
   }
 
