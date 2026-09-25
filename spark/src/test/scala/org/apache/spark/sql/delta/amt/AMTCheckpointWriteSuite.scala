@@ -375,10 +375,14 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       val (leafLoc, leafSize) = writeManifest(
         "leaf with space.parquet",
         Seq(AMTSingleAction.fromAddFile(dataAdd, addedTracking, dataPath)))
+      val parentTracking = addedTracking.copy(
+        sequence_number = Some(base.version),
+        file_sequence_number = Some(base.version),
+        first_row_id = Some(0L))
       val leafPointer = DataManifestEntry(
         location = leafLoc,
         file_format = AMTSingleAction.FileFormatParquet,
-        tracking = addedTracking,
+        tracking = parentTracking,
         record_count = 1L,
         file_size_in_bytes = leafSize,
         manifest_info = emptyManifestInfo.copy(added_files_count = 1))

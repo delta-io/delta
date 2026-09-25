@@ -27,7 +27,7 @@ import scala.sys.process.Process
 // scalastyle:off import.ordering.noEmptyLine
 // scalastyle:off line.size.limit
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
@@ -38,6 +38,7 @@ import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, Inva
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
@@ -2949,12 +2950,37 @@ trait DeltaErrorsSuiteBase
         "current transaction read the table."))
     }
     {
+      // No conflicting commit: The plain DELTA_PROTOCOL_CHANGED superclass should be used.
       val e = intercept[io.delta.exceptions.ProtocolChangedException] {
         throw org.apache.spark.sql.delta.DeltaErrors.protocolChangedException(None)
       }
-      checkError(e, "DELTA_PROTOCOL_CHANGED", "2D521", Map.empty[String, String])
-      assert(e.getMessage.contains("The protocol version of the Delta table has been changed " +
-        "by a concurrent update."))
+      checkError(e, "DELTA_PROTOCOL_CHANGED", "2D521",
+        Map("docLink" -> generateDocsLink("/concurrency-control.html")))
+    }
+    {
+      // A conflicting commit at version 0 indicates that a concurrent writer created the table while this
+      // transaction wrote to an empty directory.
+      val conflictingCommit = CommitInfo.empty(version = Some(0))
+        .copy(timestamp = new Timestamp(0), operationParameters = Map.empty)
+      val e = intercept[io.delta.exceptions.ProtocolChangedException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .protocolChangedException(Some(conflictingCommit))
+      }
+      checkError(e, "DELTA_PROTOCOL_CHANGED.WRITE_TO_EMPTY_DIRECTORY", "2D521",
+        Map("docLink" -> generateDocsLink("/concurrency-control.html")))
+    }
+    {
+      // A conflicting commit at a >0 version should be reported via the CONFLICTING_COMMIT subclass.
+      val conflictingCommit = CommitInfo.empty(version = Some(1))
+        .copy(timestamp = new Timestamp(0), operationParameters = Map.empty)
+      val e = intercept[io.delta.exceptions.ProtocolChangedException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .protocolChangedException(Some(conflictingCommit))
+      }
+      checkError(e, "DELTA_PROTOCOL_CHANGED.CONFLICTING_COMMIT", "2D521",
+        Map(
+          "docLink" -> generateDocsLink("/concurrency-control.html"),
+          "conflictingCommit" -> JsonUtils.toJson(conflictingCommit)))
     }
     {
       val e = intercept[io.delta.exceptions.MetadataChangedException] {
