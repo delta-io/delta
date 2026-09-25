@@ -5,7 +5,7 @@ This protocol change adds support for the `file` data type.
 The `file` data type stores a reference to a range of bytes, stored either inline in the value or in an external file.
 It is intended for use cases such as file inventories, manifests, and unstructured-data references (for example, images or audio stored in object storage), which are increasingly common with AI/ML workloads.
 
-The `file` data type is the Delta mapping of the Parquet [`FILE` logical type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file). Delta follows that specification for the physical representation and field set, with one Delta-specific restriction defined below — a `uri` must be absolute. The sections below define how the type is represented in the Delta schema and how it interacts with Delta features.
+The `file` data type is the Delta mapping of the Parquet [`FILE` logical type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file). Delta follows that specification for the physical representation and field set, and additionally defines how a `uri` is resolved — a `uri` may be absolute or relative to the table root, as defined in [URI Resolution](#uri-resolution). The sections below define how the type is represented in the Delta schema and how it interacts with Delta features.
 
 --------
 
@@ -16,7 +16,7 @@ The `file` data type is the Delta mapping of the Parquet [`FILE` logical type](h
 This feature enables support for the `file` data type, which stores a reference to a range of bytes.
 A `file` value resolves to bytes that are located in one of two ways:
 - **inline** — the bytes are stored directly in the value (the `inline` field), or
-- **external** — the bytes are stored in a separate file at an absolute `uri` (optionally a byte range within it, via `offset`/`size`).
+- **external** — the bytes are stored in a separate file at a `uri` — absolute, or relative to the table root (optionally a byte range within it, via `offset`/`size`). See [URI Resolution](#uri-resolution).
 
 These are the only two forms the Parquet `FILE` type provides: `offset`/`size` designate a byte range **within the file referenced by `uri`**, and there is no form that addresses a byte range in the data file that physically contains the value.
 
@@ -53,17 +53,35 @@ To support this feature:
 
 ## File data in Parquet
 
-Delta follows the Parquet `FILE` logical type. A `file` column is stored in Parquet as a group annotated with the `FILE` logical type; its physical field set, the byte-resolution rules, the `checksum` encoding, and validation are exactly as defined in the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file). Those rules are not restated here; Delta adds a single restriction, defined below: a `uri` must be absolute.
+Delta follows the Parquet `FILE` logical type. A `file` column is stored in Parquet as a group annotated with the `FILE` logical type; its physical field set, the byte-resolution rules, the `checksum` encoding, and validation are exactly as defined in the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file). Those rules are not restated here; Delta additionally defines how a `uri` is resolved (absolute, or relative to the table root), in [URI Resolution](#uri-resolution).
 
-For reference, the `FILE` group may contain the following optional fields: `uri`, `offset`, `size`, `content_type`, `checksum`, and `inline`. In a Delta table a value resolves to bytes either **inline** (the `inline` field) or from an **external** file at an absolute `uri` (optionally a byte range via `offset`/`size`); `content_type` and `checksum` are metadata describing the resolved bytes. If both `inline` and a `uri` are set, then per the Parquet specification a reader may resolve the value from either (producers are expected to write the same bytes in both); reading `inline` avoids external access. See the Parquet specification for the exact field semantics.
+For reference, the `FILE` group may contain the following optional fields: `uri`, `offset`, `size`, `content_type`, `checksum`, and `inline`. In a Delta table a value resolves to bytes either **inline** (the `inline` field) or from an **external** file at a `uri` — absolute, or relative to the table root (optionally a byte range via `offset`/`size`); `content_type` and `checksum` are metadata describing the resolved bytes. If both `inline` and a `uri` are set, then per the Parquet specification a reader may resolve the value from either (producers are expected to write the same bytes in both); reading `inline` avoids external access. See the Parquet specification for the exact field semantics.
+
+## URI Resolution
+
+A `uri` set on a `file` value (an external reference, or a locator carried alongside an `inline` value) is one of:
+
+- **Absolute** — a fully-qualified URI ([RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986)), resolved as-is.
+- **Relative** — resolved against the **table root** (the table's base location): the resolved location is the concatenation of the table root and the relative `uri`. This is a plain concatenation; Delta does **not** normalize the result or otherwise validate it, so a relative `uri` that concatenates to an invalid or non-existent location simply fails to resolve when the bytes are accessed (see [Reader Requirements](#reader-requirements-for-file-data-type)). Producing a relative `uri` that concatenates to the intended, accessible bytes is the responsibility of the writer (or the system that owns the referenced bytes); Delta resolves and reads the reference but does not validate the `uri` or guarantee that the referenced bytes exist. Resolving relative references against the table root mirrors the Iceberg `FILE` specification, so relative references are interpreted consistently when the same table is read as Iceberg.
+
+Whether a `uri` is absolute or relative is determined per [RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986) (a relative reference has no scheme).
+
+### The `__files` subdirectory
+
+Referenced bytes for relative references are expected to reside under the reserved **`__files`** subdirectory of the table root (that is, at a `uri` of the form `__files/...`). This subdirectory is **excluded from Delta management**:
+
+- `VACUUM` must **not** delete files under `<table root>/__files`, even though they are not tracked in the transaction log. (Elsewhere under the table root, `VACUUM` continues to delete untracked files, so referenced payload placed outside `__files` is not protected.)
+- `CLONE` (shallow or deep) does not copy files under `__files`; the referenced bytes are not part of the table's managed data (see [Non-Goals](#non-goals)).
+
+Delta does not otherwise manage the contents of `__files`: creating, retaining, and reclaiming those bytes is the responsibility of the writer or an external system. (A higher layer may add managed semantics — for example lifecycle/garbage collection or access brokering — on top of this reserved location, but that is out of scope for this protocol.)
 
 ## Writer Requirements for File Data Type
 
 When File type is supported (`writerFeatures` field of a table's `protocol` action contains `fileType`), writers:
 - must write a column of type `file` to Parquet as a group annotated with the Parquet `FILE` logical type, conforming to the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) (field names and types, `checksum` encoding, and validation), subject to the Delta restrictions below.
-- must write an **absolute** `uri` ([RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986)) wherever a `uri` is set — whether it is an external reference or a locator carried alongside an `inline` value — because a reader may resolve the value from that `uri`. Relative URIs are not permitted in Delta tables, because a relative reference has no defined resolution base: `SHALLOW CLONE` leaves data files under the source table's directory, and `OPTIMIZE`/compaction and `DEEP CLONE` move rows into files under a different directory, so a relative `uri` would resolve differently after ordinary operations.
+- must write each `uri` — wherever one is set, whether an external reference or a locator carried alongside an `inline` value — as either an **absolute** URI ([RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986)) or a **relative** reference resolved against the table root, per [URI Resolution](#uri-resolution). A writer that uses relative references should place the referenced bytes under the reserved `__files` subdirectory of the table root, so they are excluded from `VACUUM`.
 - must produce values that **resolve** as either **inline** (`inline` set) or **external** (`uri` set), per the Parquet `FILE` resolution rules. For resolution, `offset`/`size` apply only together with a `uri` (designating a byte range within the referenced file); the Parquet type provides no form that resolves to a byte range in the containing data file, so no such value can be written. (An *inline* value may also carry a locator, from which a reader may alternatively resolve — see the next point.)
-- may write inline values (`inline` set); doing so is optional. An inline value may additionally carry `uri`/`offset`/`size` locator fields that record where the bytes came from; per the Parquet specification a reader may resolve the value from `inline` or from the locator, whichever suits it (producers are expected to write the same bytes in both). Because that locator may be used for resolution, the absolute-`uri` requirement above applies to its `uri` as well.
+- may write inline values (`inline` set); doing so is optional. An inline value may additionally carry `uri`/`offset`/`size` locator fields that record where the bytes came from; per the Parquet specification a reader may resolve the value from `inline` or from the locator, whichever suits it (producers are expected to write the same bytes in both). Because that locator may be used for resolution, the [URI Resolution](#uri-resolution) rules above apply to its `uri` as well.
 - must represent a value that does not resolve to any referent as a column null.
 - must store additional metadata about a file (for example, a modification timestamp) adjacent to the `file` column, not inside the `FILE`-annotated group.
 
@@ -71,8 +89,8 @@ When File type is supported (`writerFeatures` field of a table's `protocol` acti
 
 When File type is supported (`readerFeatures` field of a table's `protocol` action contains `fileType`), readers:
 - must recognize and tolerate a `file` data type in a Delta schema.
-- must read the `file` column from its Parquet `FILE`-annotated group and resolve each value to bytes per the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file), supporting both **inline** values (the `inline` field) and **external** references (including a byte range when `offset`/`size` are set). Note that although writers are not required to produce inline values, readers must support reading them.
-- must, for a row whose value does not resolve to any referent (an invalid value per the Parquet resolution rules — for example neither `inline` nor `uri` set, or `offset` set without `uri`) or that sets a **relative** `uri` (which Delta does not permit — see [Writer Requirements for File Data Type](#writer-requirements-for-file-data-type)), **fail the read**. A reader must **not** attempt to resolve a relative `uri` by choosing a base (such as the table root or the data file's directory), because Delta defines no such base, nor silently return `null` in place of a malformed reference. A conforming writer never produces either case, so this only arises from a non-conforming writer or corrupt data.
+- must read the `file` column from its Parquet `FILE`-annotated group and resolve each value to bytes per the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file), supporting both **inline** values (the `inline` field) and **external** references (including a byte range when `offset`/`size` are set). A `uri` is resolved per [URI Resolution](#uri-resolution): an absolute `uri` as-is, and a relative `uri` against the table root. Note that although writers are not required to produce inline values, readers must support reading them.
+- must, for a row whose value does not resolve to any referent (an invalid value per the Parquet resolution rules — for example neither `inline` nor `uri` set, or `offset` set without `uri`), **fail the read** rather than silently returning `null` in place of a malformed reference. A conforming writer never produces such a value, so this only arises from a non-conforming writer or corrupt data. A **relative** `uri` is a valid reference (resolved against the table root per [URI Resolution](#uri-resolution)), not a malformed one; if its resolved location does not yield accessible bytes, that failure surfaces when the bytes are accessed, like any other unresolvable external reference.
 - must make the column available to the engine:
     - [Recommended] Expose and interpret the group as a single `file` value, resolving inline and external bytes on access.
     - [Alternate] Expose the raw physical group as a struct-shaped value carrying its present FILE fields (`uri`, `offset`, `size`, `content_type`, `checksum`, `inline`), leaving byte resolution to the caller — for example if the engine does not natively support the `file` type.
@@ -150,20 +168,20 @@ A `file` value is a reference, and it is stored in the table's data files like a
 
 For **inline** values, the bytes are stored within the value itself, so they are versioned and time-travel with the table like any other column data.
 
-For **external** references (a `uri` is set), Delta makes **no guarantee about the referenced bytes**, because the referenced files live outside the Delta table (they are not tracked by its transaction log):
+For **external** references (a `uri` is set), Delta makes **no guarantee about the referenced bytes**, because the referenced files are not tracked by the table's transaction log — whether they live outside the table or under the reserved `__files` subdirectory, which Delta does not manage (see [The `__files` subdirectory](#the-__files-subdirectory)):
 
 - The bytes may be overwritten or deleted independently of the table, so dereferencing a reference read from a historical version (via time travel or Change Data Feed) may fail or may return different bytes than when the reference was written. The `checksum` field, when present, allows a reader to detect that the bytes have changed, but does not allow it to recover the original bytes.
 - Availability of the externally-referenced bytes is orthogonal to which table version is queried: time travel of the reference does not imply time travel of the external bytes.
 
 ## Non-Goals
 
-A `file` value is a reference, and the referenced bytes are **external to the table and not under its management.** In particular, `VACUUM` does not treat referenced files as table data (and may delete files that happen to reside under the table's directory but are not tracked in the transaction log), and `CLONE` (shallow or deep) does not copy referenced files.
+A `file` value is a reference, and the referenced bytes are **external to the table and not under its management.** In particular, `VACUUM` does not treat referenced files as table data: it may delete files that reside under the table's directory but are not tracked in the transaction log, **except** under the reserved `__files` subdirectory, which it must not delete (see [The `__files` subdirectory](#the-__files-subdirectory)). `CLONE` (shallow or deep) does not copy referenced files.
 
 The following are additionally out of scope:
 
 - **Lifecycle and garbage collection of referenced bytes.** The `file` type is a reference only; the protocol does not specify how, or whether, the referenced bytes are created, retained, or reclaimed. Referenced bytes are handled out-of-band by the writer or an external system.
 - **Access brokering and governance** of the referenced bytes (for example, catalog-vended credentials or signed URLs).
-- **Resolution of a `uri` to a physical location.** A `uri` is an absolute, resolvable reference; how it maps to a physical location (for example, environment- or catalog-level path mapping or mounts) is owned by the engine or catalog, not defined here.
+- **Resolution of a `uri` to a physical location.** A `uri` is a resolvable reference — absolute, or relative to the table root (see [URI Resolution](#uri-resolution)); how it (or the resolved path) maps to a physical location (for example, environment- or catalog-level path mapping or mounts) is owned by the engine or catalog, not defined here.
 
 --------
 
