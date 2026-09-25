@@ -153,8 +153,7 @@ public class FlinkUnityCatalogTable implements CatalogTable {
                     String.format(
                         "{\"type\":%s, \"nullable\": \"%s\"}", elementTypeString, elementNullable));
             return new CollectionDataType(
-                new ArrayType(
-                    elementType.getLogicalType().isNullable(), elementType.getLogicalType()),
+                new ArrayType(nullable, elementType.getLogicalType()),
                 elementType);
           case "map":
             DataType keyType =
@@ -168,7 +167,7 @@ public class FlinkUnityCatalogTable implements CatalogTable {
                         rootType.get("valueType"), rootType.get("valueContainsNull").asBoolean()));
             return new KeyValueDataType(
                 new MapType(
-                    valueType.getLogicalType().isNullable(),
+                    nullable,
                     keyType.getLogicalType(),
                     valueType.getLogicalType()),
                 keyType,
