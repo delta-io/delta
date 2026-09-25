@@ -71,13 +71,28 @@ This design enables:
 
 <ins>The `_last_checkpoint` file remains a non-authoritative hint, as defined in the existing protocol. Readers discover whether a table supports `adaptiveMetadata` from the `protocol` action in the log or checkpoint, not from `_last_checkpoint`.</ins>
 
-<ins>When the `adaptiveMetadata` table feature is enabled and a manifest commit has been written, the `_last_checkpoint` file may embed the [`checkpoint` action](#checkpoint-action) for the latest checkpoint version:</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled and a manifest commit has been written, the `_last_checkpoint` file may carry these additional fields:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>checkpoint</ins> | <ins>Struct</ins> | <ins>The `checkpoint` action for the latest manifest commit. Schema defined in [Checkpoint Action](#checkpoint-action).</ins> |
+| <ins>checkpointType</ins> | <ins>String</ins> | <ins>Optional. `AdaptiveMetadataTree` if the latest checkpoint is a [`checkpoint` action](#checkpoint-action); absent for classic/multi-part/V2 checkpoints. Unrecognized values are ignored (reader falls back to log replay).</ins> |
+| <ins>amtCheckpoint</ins> | <ins>Struct</ins> | <ins>Present iff `checkpointType` is `AdaptiveMetadataTree`. Describes the latest [`checkpoint` action](#checkpoint-action); fields below.</ins> |
 
-<ins>When the embedded `checkpoint` action is present, readers can use `contentRoot.path` to begin prefetching the root manifest immediately, and the action provides the complete table state at `checkpointMetadata.version`. If the hint is absent, stale, or does not contain a `checkpoint` action, readers fall back to log replay to locate the latest `checkpoint` action.</ins>
+<ins>The `amtCheckpoint` struct has these fields:</ins>
+
+| Field Name | Data Type | Description |
+| - | - | - |
+| <ins>manifestCommitVersion</ins> | <ins>Long</ins> | <ins>The version of the commit that emitted the latest [`checkpoint` action](#checkpoint-action). Distinct from the checkpoint's `contentRoot.version`.</ins> |
+| <ins>checkpoint</ins> | <ins>Struct</ins> | <ins>Optional. The embedded [`checkpoint` action](#checkpoint-action) for that manifest commit, for prefetch. May be omitted (see below).</ins> |
+| <ins>leaves</ins> | <ins>Array</ins> | <ins>Optional. The checkpoint's embedded [content entries](#content-entry-schema), prefetched alongside `checkpoint`.</ins> |
+
+<ins>An `adaptiveMetadata` checkpoint writes the existing required fields in `_last_checkpoint` file such that `version` holds `contentRoot.version`, `size` holds `-1`, and `parts` holds the `<number of leaves> + 1`, respectively.</ins>
+
+<ins>`amtCheckpoint` and `v2Checkpoint` are mutually exclusive, as are the `adaptiveMetadata` and `v2Checkpoint` features.</ins>
+
+<ins>The embedded optional fields `checkpoint` and `leaves` are a prefetch optimization only; readers must not require them. When absent, the reader reads the `checkpoint` action from the commit file at `manifestCommitVersion`, and derives the `leaves` from the `checkpoint` action.</ins>
+
+<ins>If the size of `amtCheckpoint` is very large, writing it to `_last_checkpoint` file could take a long time in some object stores, resulting in concurrent readers seeing an empty `_last_checkpoint` file. Thus, writers should bound the size of `amtCheckpoint` by omitting `checkpoint` and `leaves` when their sizes exceed some threshold. `checkpointType` and `manifestCommitVersion` should still be written.</ins>
 
 ### Checkpoints
 
