@@ -2497,6 +2497,8 @@ When `delta.identity.allowExplicitInsert` is false, writers should meet the foll
 When this feature is supported, partition columns are physically written to Parquet files alongside the data columns. To support this feature:
  - The table must be on Writer Version 7, and a feature name `materializePartitionColumns` must exist in the table `protocol`'s `writerFeatures`.
 
+Unlike most writer features, `materializePartitionColumns` has no associated `delta.enable*` table property and defines no additional metadata requirements. It is therefore [active](#active-features) whenever it is [supported](#supported-features): its presence in the `protocol`'s `writerFeatures` alone forces the writer requirements below. Hence, for this feature, the terms *supported*, *enabled*, and *active* (including in the decision matrix below) all refer to the same state.
+
 When supported:
  - When the writer feature `materializePartitionColumns` is set in the protocol, writers must materialize partition columns into any newly created data file. This mimics the same partition column materialization requirement from [IcebergCompatV1](#iceberg-compatibility-v1) and [IcebergCompatV2](#iceberg-compatibility-v2). As such, the `materializePartitionColumns` feature can be seen as a subset of the requirements imposed by those features, providing the partition column materialization guarantee independently without requiring full Iceberg compatibility.
  - When the writer feature `materializePartitionColumns` is not set in the table protocol, writers are not required to write partition columns to data files. Note that other features might still require materialization of partition values, such as [IcebergCompatV1](#iceberg-compatibility-v1).
