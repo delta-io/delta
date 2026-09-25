@@ -44,8 +44,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
     managerFactory: DeltaV2TableManagerCache.CacheKey => DeltaV2TableManager =
       key => new DeltaV2TableManagerImpl(
         key.path.getParent,
-        key.sessionInvariantFsOptions
-        )
+        key.sessionInvariantFsOptions)
 ) extends DeltaV2Logging {
   import DeltaV2TableManagerCache.CacheKey
 
@@ -222,8 +221,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
       if (!isEnabled(sqlConf)) {
         return new DeltaV2TableManagerImpl(
           key.path.getParent,
-          key.sessionInvariantFsOptions
-          )
+          key.sessionInvariantFsOptions)
       }
       getOrCreateInstance(sqlConf).getOrCreate(key)
     }
@@ -240,8 +238,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
       if (!isEnabled(sqlConf)) {
         return new DeltaV2TableManagerImpl(
           key.path.getParent,
-          key.sessionInvariantFsOptions
-          )
+          key.sessionInvariantFsOptions)
       }
       getOrCreateInstance(sqlConf).getOrCreate(key)
     }

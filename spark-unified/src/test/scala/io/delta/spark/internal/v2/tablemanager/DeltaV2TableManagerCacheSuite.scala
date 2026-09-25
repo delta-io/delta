@@ -423,7 +423,10 @@ private[tablemanager] class StubTableManager(val id: String) extends DeltaV2Tabl
     throw new UnsupportedOperationException("stub")
   override private[v2] def logStore: LogStore =
     throw new UnsupportedOperationException("stub")
-  override private[v2] def snapshotManager: DeltaV2SnapshotManager =
+  override private[v2] def snapshotManager(
+      catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager =
+    throw new UnsupportedOperationException("stub")
+  override private[v2] def queryContextSnapshotManager: DeltaV2SnapshotManager =
     throw new UnsupportedOperationException("stub")
   override def retire(): Unit = { retired = true }
 }

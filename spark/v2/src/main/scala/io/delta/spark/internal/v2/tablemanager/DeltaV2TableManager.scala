@@ -19,6 +19,8 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
 
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+
 /**
  * Contract for a Delta table manager used by the DSv2 connector.
  */
@@ -31,10 +33,15 @@ private[v2] trait DeltaV2TableManager {
   private[v2] def logStore: LogStore
 
   /**
-   * Returns the table-scoped snapshot manager. Each operation supplies the caller's current query
-   * context, including catalog metadata used to select the authoritative snapshot route.
+   * Returns a snapshot manager using the caller's current catalog metadata.
+   *
+   * This compatibility seam remains uncached until all snapshot consumers carry a query context.
+   * The process-cached manager can then expose one operation-context-aware snapshot manager.
    */
-  private[v2] def snapshotManager: DeltaV2SnapshotManager
+  private[v2] def snapshotManager(catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager
+
+  /** Returns the cached manager for callers that carry request-scoped query context. */
+  private[v2] def queryContextSnapshotManager: DeltaV2SnapshotManager
 
   /** Retires this manager and releases any resources it owns. */
   def retire(): Unit = {}

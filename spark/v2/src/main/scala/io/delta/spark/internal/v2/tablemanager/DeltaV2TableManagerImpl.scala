@@ -15,12 +15,16 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
+import scala.jdk.OptionConverters._
+
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
+import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Process-cached [[DeltaV2TableManager]] implementation.
@@ -33,10 +37,9 @@ import org.apache.spark.sql.SparkSession
  */
 private[tablemanager] class DeltaV2TableManagerImpl(
     val qualifiedTableDataPath: Path,
-    val sessionInvariantFsOptions: Map[String, String]
-    ) extends DeltaV2TableManager
-    with LogStoreProvider
-{
+    val sessionInvariantFsOptions: Map[String, String])
+    extends DeltaV2TableManager
+    with LogStoreProvider {
 
   /** The table's data directory, fully qualified. */
   def tablePath: Path = qualifiedTableDataPath
@@ -48,7 +51,19 @@ private[tablemanager] class DeltaV2TableManagerImpl(
 
   private val cachedSnapshotManager = new CachedSnapshotManager(tablePath, kernelContext)
 
-  override private[v2] def snapshotManager: DeltaV2SnapshotManager = cachedSnapshotManager
+  override private[v2] def snapshotManager(
+      catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager = {
+    // Until the remaining consumers supply query context, preserve the pre-cache behavior and
+    // construct one uncached manager from this request's catalog metadata. The shared cached
+    // manager is activated only after every snapshot consumer carries its query context.
+    SnapshotManagerFactory.create(
+      tablePath.toString,
+      kernelContext.getDefaultEngine(),
+      catalogTableOpt.toJava)
+  }
+
+  override private[v2] def queryContextSnapshotManager: DeltaV2SnapshotManager =
+    cachedSnapshotManager
 
   override def retire(): Unit = cachedSnapshotManager.retire()
 }

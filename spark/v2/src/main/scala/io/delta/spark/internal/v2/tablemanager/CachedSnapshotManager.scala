@@ -247,7 +247,7 @@ private[tablemanager] class CachedSnapshotManager(
       val requestedAuthority = requestAuthority(queryContext)
       val refreshed = CachedSnapshot(
         withUncachedSnapshotManager(queryContext)(
-          _.loadLatestSnapshot(Optional.of(queryContext))),
+            _.loadLatestSnapshot(queryContext)),
         validationStartedAt,
         requestedAuthority,
         advanceCatalogAuthorityHighWatermark(existing, requestedAuthority))
@@ -298,7 +298,7 @@ private[tablemanager] class CachedSnapshotManager(
     if (queryContext.catalogTableOpt.nonEmpty) {
       return withSnapshotLockInterruptibly {
         withUncachedSnapshotManager(queryContext)(
-          _.loadSnapshotAt(version, Optional.of(queryContext)))
+          _.loadSnapshotAt(version, queryContext))
       }
     }
     val existing = currentSnapshot
@@ -332,7 +332,7 @@ private[tablemanager] class CachedSnapshotManager(
         val requestedAuthority = requestAuthority(queryContext)
         val loaded = CachedSnapshot(
           withUncachedSnapshotManager(queryContext)(
-            _.loadSnapshotAt(version, Optional.of(queryContext))),
+            _.loadSnapshotAt(version, queryContext)),
           validatedAtMs = -1L,
           requestAuthority = requestedAuthority,
           catalogAuthorityHighWatermark = advanceCatalogAuthorityHighWatermark(
@@ -362,7 +362,7 @@ private[tablemanager] class CachedSnapshotManager(
     }
     // Historical snapshots are returned to the caller but never replace the cached latest snapshot.
     val historicalSnapshot = withUncachedSnapshotManager(queryContext)(
-      _.loadSnapshotAt(version, Optional.of(queryContext)))
+      _.loadSnapshotAt(version, queryContext))
     historicalSnapshot
   }
 
