@@ -61,10 +61,10 @@ case class IcebergStatsConverter(statsRow: InternalRow, statsSchema: StructType)
   }
 
   val lowerBoundsStat: Option[Map[Integer, ByteBuffer]] =
-    getByteBufferBackedColStats(DeltaStatistics.MIN)
+    getByteBufferBackedColStats(DeltaStatistics.MIN, isUpperBound = false)
 
   val upperBoundsStat: Option[Map[Integer, ByteBuffer]] =
-    getByteBufferBackedColStats(DeltaStatistics.MAX)
+    getByteBufferBackedColStats(DeltaStatistics.MAX, isUpperBound = true)
 
   val nullValueCountsStat: Option[Map[Integer, JLong]] =
     statsSchema.getFieldIndex(DeltaStatistics.NULL_COUNT) match {
@@ -89,11 +89,14 @@ case class IcebergStatsConverter(statsRow: InternalRow, statsSchema: StructType)
    * @param stats An internal row holding the `ByteBuffer`-based Delta column stats
    *              (i.e. lower bound).
    * @param statsSchema The schema of the `stats` internal row.
+   * @param isUpperBound Whether `stats` holds MAX statistics, which need adjusting for
+   *                     timestamp columns (see the timestamp case below).
    * @return Iceberg's ByteBuffer-backed metric representation.
    */
   private def generateIcebergByteBufferMetricMap(
       stats: InternalRow,
-      statsSchema: StructType): Map[Integer, ByteBuffer] = {
+      statsSchema: StructType,
+      isUpperBound: Boolean): Map[Integer, ByteBuffer] = {
     // If the entire Delta stats struct is missing (for example, min or max values are missing for
     // all columns), then the stats row may be null.
     if (stats == null) return Map.empty
@@ -114,11 +117,23 @@ case class IcebergStatsConverter(statsRow: InternalRow, statsSchema: StructType)
           Map[Integer, ByteBuffer](Integer.valueOf(DeltaColumnMapping.getColumnId(field)) ->
             variantBytes)
         case st: StructType =>
-          generateIcebergByteBufferMetricMap(stats.getStruct(idx, st.fields.length), st)
+          generateIcebergByteBufferMetricMap(stats.getStruct(idx, st.fields.length), st,
+            isUpperBound)
         // Ignore the Delta statistic if the conversion doesn't support the given data type or the
         // column ID for this field is missing.
         case dt if !DeltaColumnMapping.hasColumnId(field) ||
             !IcebergStatsConverter.isMinMaxStatTypeSupported(dt) => Map[Integer, ByteBuffer]().empty
+        // Delta's JSON stats serialization truncates timestamps down to millisecond precision
+        // (see PROTOCOL.md, "Per-file Statistics"). Delta readers compensate by adding 1ms when
+        // reading MAX stats (DataSkippingReader.getAdjustedTimestamp), but Iceberg upper bounds
+        // are required to be inclusive, so the truncation must be undone here instead: advance
+        // the value to the last microsecond of its millisecond, so the bound stays >= every
+        // value in the file. Lower bounds need no adjustment (truncating down keeps them valid).
+        case ts @ (_: TimestampType | _: TimestampNTZType) if isUpperBound =>
+          val micros = stats.getLong(idx)
+          val adjusted = if (micros > Long.MaxValue - 999L) Long.MaxValue else micros + 999L
+          Map[Integer, ByteBuffer](Integer.valueOf(DeltaColumnMapping.getColumnId(field)) ->
+            Conversions.toByteBuffer(IcebergSchemaUtils.convertAtomic(ts), JLong.valueOf(adjusted)))
         case b: ByteType =>
           // Iceberg stores bytes using integers.
           val statVal = stats.getByte(idx).toInt
@@ -185,16 +200,20 @@ case class IcebergStatsConverter(statsRow: InternalRow, statsSchema: StructType)
   /**
    * @param statName The name of the Delta stat that is being converted. Must be one of the field
    *                 names in the `DeltaStatistics` object.
+   * @param isUpperBound Whether `statName` refers to MAX statistics.
    * @return An option holding Iceberg's statistic representation. Returns `None` if the output
    *         would otherwise be empty.
    */
-  private def getByteBufferBackedColStats(statName: String): Option[Map[Integer, ByteBuffer]] = {
+  private def getByteBufferBackedColStats(
+      statName: String,
+      isUpperBound: Boolean): Option[Map[Integer, ByteBuffer]] = {
     statsSchema.getFieldIndex(statName) match {
       case Some(statFieldIdx) =>
         val colStatSchema = statsSchema.fields(statFieldIdx).dataType.asInstanceOf[StructType]
         val icebergMetricsMap = generateIcebergByteBufferMetricMap(
           statsRow.getStruct(statFieldIdx, colStatSchema.fields.length),
-          colStatSchema
+          colStatSchema,
+          isUpperBound
         )
         if (icebergMetricsMap.nonEmpty) {
           Some(icebergMetricsMap)
