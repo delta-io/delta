@@ -19,7 +19,6 @@ import static io.delta.kernel.internal.DeltaErrors.dataSchemaMismatch;
 import static io.delta.kernel.internal.DeltaErrors.partitionColumnMissingInData;
 import static io.delta.kernel.internal.TransactionImpl.getStatisticsColumns;
 import static io.delta.kernel.internal.data.TransactionStateRow.*;
-import static io.delta.kernel.internal.util.ColumnMapping.blockIfColumnMappingEnabled;
 import static io.delta.kernel.internal.util.PartitionUtils.getTargetDirectory;
 import static io.delta.kernel.internal.util.PartitionUtils.validateAndSanitizePartitionValues;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -183,6 +182,16 @@ public interface Transaction {
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
     validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
 
+    ColumnMapping.ColumnMappingMode columnMappingMode = getColumnMappingMode(transactionState);
+    boolean columnMappingEnabled = ColumnMapping.isColumnMappingModeEnabled(columnMappingMode);
+    StructType physicalTableSchema =
+        columnMappingEnabled ? getPhysicalSchema(transactionState) : tableSchema;
+    List<String> physicalPartitionColNames =
+        columnMappingEnabled
+            ? PartitionUtils.toPhysicalPartitionColNames(
+                tableSchema, partitionColNames, columnMappingMode)
+            : partitionColNames;
+
     // TODO: add support for:
     // - enforcing the constraints
     // - generating the default value columns
@@ -193,13 +202,11 @@ public interface Transaction {
     Protocol protocol = getProtocol(transactionState);
     boolean materializePartitionColumnsEnabled =
         protocol.supportsFeature(TableFeatures.MATERIALIZE_PARTITION_COLUMNS_W_FEATURE);
-    blockIfColumnMappingEnabled(transactionState);
     blockIfVariantDataTypeIsDefined(tableSchema);
     // We recognize the AllowColumnDefaults feature for Iceberg v3
     // but do not support writing with it yet
     ColumnDefaults.blockWriteIfEnabled(transactionState);
 
-    // TODO: set the correct schema once writing into column mapping enabled table is supported.
     String tablePath = getTablePath(transactionState);
     return dataIter.map(
         filteredBatch -> {
@@ -208,10 +215,14 @@ public interface Transaction {
             throw dataSchemaMismatch(tablePath, tableSchema, data.getSchema());
           }
 
+          if (columnMappingEnabled) {
+            data = data.withNewSchema(physicalTableSchema);
+          }
+
           if (isIcebergCompatEnabled || materializePartitionColumnsEnabled) {
             // Move partition columns to the end of the schema for iceberg compat enabled tables
             // or when materialize partition columns feature is enabled.
-            for (String partitionColName : partitionColNames) {
+            for (String partitionColName : physicalPartitionColNames) {
               int partitionColIndex = findColIndex(data.getSchema(), partitionColName);
               if (partitionColIndex < 0) {
                 throw partitionColumnMissingInData(tablePath, partitionColName);
@@ -227,7 +238,7 @@ public interface Transaction {
           } else {
             // Remove partition columns entirely for non-materialized partitions, and non-iceberg
             // compat tables.
-            for (String partitionColName : partitionColNames) {
+            for (String partitionColName : physicalPartitionColNames) {
               int partitionColIndex = findColIndex(data.getSchema(), partitionColName);
               if (partitionColIndex < 0) {
                 throw partitionColumnMissingInData(tablePath, partitionColName);
