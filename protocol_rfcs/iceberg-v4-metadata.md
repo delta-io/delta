@@ -302,7 +302,7 @@ The root manifest contains entries of the following types:
 | 140 | `sort_order_id` | Int | Optional | DATA | Sort order ID for this file |
 | 148 | `deletion_vector` | Struct ([Deletion Vector](#deletion-vector)) | Optional | DATA | Deletion vector for the data file |
 | 150 | `manifest_info` | Struct ([Manifest Info](#manifest-info)) | Optional | DATA_MANIFEST | Manifest-level summary and MDV |
-| 132 | `split_offsets` | Array\<Long\> (element ID 133) | Optional | DATA | Row group split offsets |
+| 132 | `split_offsets` | Array\<Long\> (element ID 133) | Optional | DATA | Row group split offsets. Must be sorted ascending. |
 
 ### Tracking
 
