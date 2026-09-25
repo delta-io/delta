@@ -119,6 +119,37 @@ This design enables:
 
 <ins>Files not in the reachable set may be deleted once past the retention period. Reachability is derived from the live tree, not from `remove` tombstones, so no tombstone tracking is required (see [Remove File](#remove-file)).</ins>
 
+### Commit Provenance Information
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#commit-provenance-information)***
+
+<ins>When the `adaptiveMetadata` table feature is enabled, writers must include a `commitInfo` action in every commit. The action carries a `lastManifestCommit` field pointing at the most recent [manifest commit](#manifest-commit) as of that version:</ins>
+
+| Field Name | Data Type | Description |
+| - | - | - |
+| <ins>lastManifestCommit</ins> | <ins>Struct</ins> | <ins>Required from the table's first manifest commit onward; absent beforehand. Identifies the latest manifest commit up to this version. Fields below.</ins> |
+
+<ins>The `lastManifestCommit` struct has these fields:</ins>
+
+| Field Name | Data Type | Description |
+| - | - | - |
+| <ins>version</ins> | <ins>Long</ins> | <ins>The version of the manifest commit that emitted the latest [`checkpoint` action](#checkpoint-action).</ins> |
+| <ins>contentRootVersion</ins> | <ins>Long</ins> | <ins>The `contentRoot.version` of that `checkpoint` action. Not newer than `version`.</ins> |
+
+<ins>Each log commit must carry `lastManifestCommit` forward from the prior commit, including its absence before the first manifest commit. A manifest commit must set `version` to its own commit version and `contentRootVersion` to the `contentRoot.version` of its emitted `checkpoint` action.</ins>
+
+### Version Checksum File
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#version-checksum-file-schema)***
+
+<ins>When the `adaptiveMetadata` table feature is enabled, the Version Checksum (CRC) file also records `lastManifestCommit` as a top-level field:</ins>
+
+| Field Name | Data Type | Description | Optional/Required |
+| - | - | - | - |
+| <ins>lastManifestCommit</ins> | <ins>Struct</ins> | <ins>The latest manifest commit up to this version. Uses the same schema as `commitInfo.lastManifestCommit` and must match its value at the CRC's version.</ins> | <ins>Required from the first manifest commit onward; absent otherwise.</ins> |
+
+<ins>CRC files remain optional. Readers may obtain `lastManifestCommit` from the CRC at the target snapshot version. If that CRC is unavailable, readers must read `commitInfo` from the original JSON commit file at that version. If that CRC is available, its `lastManifestCommit` must be identical to the counterpart from the `commitInfo` of the corresponding version.</ins>
+
 --------
 
 > ***Add a new section at the [Table Features](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#table-features) section***
