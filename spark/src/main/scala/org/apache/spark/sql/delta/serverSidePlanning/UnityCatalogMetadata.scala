@@ -31,7 +31,9 @@ case class UnityCatalogMetadata(
     catalogName: String,
     ucUri: String,
     override val tokenSupplier: Option[() => String],
-    tableProps: Map[String, String]) extends ServerSidePlanningMetadata {
+    tableProps: Map[String, String],
+    override val planningProperties: Map[String, String] = Map.empty)
+    extends ServerSidePlanningMetadata {
 
   override def planningEndpointUri: String = {
     val base = if (ucUri.endsWith("/")) ucUri.dropRight(1) else ucUri
@@ -58,6 +60,7 @@ object UnityCatalogMetadata {
     // Read UC configuration from Spark conf
     val ucUri = spark.conf.get(s"spark.sql.catalog.$catalogName.uri", "")
     val authConfig = extractAuthConfig(spark, catalogName)
+    val planningProperties = extractPlanningProperties(spark, catalogName)
 
     val supplier: Option[() => String] = if (authConfig.nonEmpty) {
       val tp = TokenProvider.create(authConfig.asJava)
@@ -67,7 +70,24 @@ object UnityCatalogMetadata {
     }
 
     val tableProps = Map.empty[String, String]
-    UnityCatalogMetadata(catalogName, ucUri, supplier, tableProps)
+    UnityCatalogMetadata(catalogName, ucUri, supplier, tableProps, planningProperties)
+  }
+
+  /**
+   * Extract Iceberg REST scan-planning poll properties from the Spark catalog configuration.
+   *
+   * For example, `spark.sql.catalog.my_catalog.rest-scan-planning.poll-timeout-ms=600000`
+   * becomes `rest-scan-planning.poll-timeout-ms -> 600000`.
+   */
+  private[serverSidePlanning] def extractPlanningProperties(
+      spark: SparkSession,
+      catalogName: String): Map[String, String] = {
+    val catalogPrefix = s"spark.sql.catalog.$catalogName."
+    val pollPrefix = s"${catalogPrefix}rest-scan-planning.poll-"
+    spark.conf.getAll
+      .filterKeys(_.startsWith(pollPrefix))
+      .map { case (key, value) => key.stripPrefix(catalogPrefix) -> value }
+      .toMap
   }
 
   /**
