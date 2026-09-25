@@ -296,8 +296,6 @@ class CachedSnapshotManagerSuite
     }
   }
 
-
-
   // === Staleness triggers full reload ==========================
 
   test("stale rebuild after append advances version via full reload") {
