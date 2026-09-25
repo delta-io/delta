@@ -639,7 +639,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   private static void assertLatestSnapshot(
       DeltaV2Table table, SparkSession activeSession, long expectedVersion, long expectedFiles) {
     Snapshot snapshot =
-        table.getSnapshotManager().loadLatestSnapshot(Optional.of(table.getQueryContext()));
+        table.getSnapshotManager().loadLatestSnapshot(table.getQueryContext());
     Dataset<?> allFiles = snapshot.allFiles();
     assertEquals(expectedVersion, snapshot.version());
     assertSame(activeSession, allFiles.sparkSession());

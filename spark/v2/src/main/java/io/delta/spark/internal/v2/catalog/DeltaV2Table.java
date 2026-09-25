@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.catalog;
 
 import static io.delta.spark.internal.v2.utils.ScalaUtils.toJavaOptional;
 import static io.delta.spark.internal.v2.utils.ScalaUtils.toScalaMap;
+import static io.delta.spark.internal.v2.utils.ScalaUtils.toScalaOption;
 import static io.delta.spark.internal.v2.utils.StatsUtils.toV2Statistics;
 import static java.util.Objects.requireNonNull;
 
@@ -235,8 +236,8 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.catalogTable = catalogTable;
-    this.queryContext = DeltaV2QueryContext$.MODULE$.fromJava(catalogTable);
-    Option<CatalogTable> catalogTableOpt = queryContext.catalogTableOpt();
+    this.queryContext = DeltaV2QueryContext$.MODULE$.apply(catalogTable);
+    Option<CatalogTable> catalogTableOpt = toScalaOption(catalogTable);
     // Merge options: file system options from catalog + user options (user takes precedence)
     // This follows the same pattern as DeltaTableV2 in delta-spark
     Map<String, String> merged =
@@ -263,7 +264,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         this.initialSnapshot =
             recordFrameProfileValue(
                 "snapshot.loadLatest",
-                () -> snapshotManager.loadLatestSnapshot(Optional.of(queryContext)));
+                () -> snapshotManager.loadLatestSnapshot(queryContext));
       }
     } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
       // Rethrow as the Delta-module wrapper so catalog/interop layer never names a Kernel type.
@@ -418,8 +419,8 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
             /* canReturnLastCommit = */ true,
             /* mustBeRecreatable = */ true,
             /* canReturnEarliestCommit = */ true,
-            Optional.of(queryContext));
-    long latestVersion = manager.loadLatestSnapshot(Optional.of(queryContext)).version();
+            queryContext);
+    long latestVersion = manager.loadLatestSnapshot(queryContext).version();
     if (commit.getTimestamp() > timeMillis) {
       // The earliest available commit is younger than the requested time.
       throw new TimestampOutOfRangeException(timeMillis, commit.getTimestamp(), false);
@@ -575,9 +576,9 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         version,
         /* mustBeRecreatable = */ true,
         /* allowOutOfRange = */ false,
-        Optional.of(queryContext));
+        queryContext);
     final Supplier<Snapshot> loadSnapshot =
-        () -> manager.loadSnapshotAt(version, Optional.of(queryContext));
+        () -> manager.loadSnapshotAt(version, queryContext);
     return recordFrameProfileValue("snapshot.loadAtVersion", loadSnapshot);
   }
 
