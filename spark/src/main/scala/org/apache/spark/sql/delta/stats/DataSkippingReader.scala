@@ -99,7 +99,8 @@ object StatsColumn {
  */
 private [sql] case class DataSkippingPredicate(
     expr: Column,
-    referencedStats: Set[StatsColumn]
+    referencedStats: Set[StatsColumn],
+    andChildren: Option[(DataSkippingPredicate, DataSkippingPredicate)] = None
 )
 
 /**
@@ -117,6 +118,15 @@ private [sql] case class DataSkippingPredicate(
 private [sql] object DataSkippingPredicate {
   def apply(filters: Column, referencedStats: StatsColumn*): DataSkippingPredicate = {
     DataSkippingPredicate(filters, referencedStats.toSet)
+  }
+
+  def and(
+      left: DataSkippingPredicate,
+      right: DataSkippingPredicate): DataSkippingPredicate = {
+    DataSkippingPredicate(
+      left.expr && right.expr,
+      left.referencedStats ++ right.referencedStats,
+      Some(left -> right))
   }
 }
 
@@ -475,6 +485,16 @@ trait DataSkippingReaderBase
     }
   }
 
+  protected def getStatsSafeDataSkippingFilter(
+      dataFilter: DataSkippingPredicate): Column = {
+    dataFilter.andChildren match {
+      case Some((left, right)) =>
+        getStatsSafeDataSkippingFilter(left) && getStatsSafeDataSkippingFilter(right)
+      case None =>
+        dataFilter.expr || !verifyStatsForFilter(dataFilter.referencedStats)
+    }
+  }
+
   private def buildSizeCollectorFilter(): (ArrayAccumulator, Column => Column) = {
     val bytesCompressed = col("size")
     val rows = getStatsColumnOrNullLiteral(NUM_RECORDS)
@@ -619,13 +639,13 @@ trait DataSkippingReaderBase
     val (partitionSize, partitionFilter) = buildSizeCollectorFilter()
     val (scanSize, scanFilter) = buildSizeCollectorFilter()
 
-    // NOTE: If any stats are missing, the value of `dataFilters` is untrustworthy -- it could be
-    // NULL or even just plain incorrect. We rely on `verifyStatsForFilter` to be FALSE in that
-    // case, forcing the overall OR to evaluate as TRUE no matter what value `dataFilters` takes.
+    // Guard each data skipping predicate with verification that its required stats are present.
+    // AND predicates preserve their branches so that missing stats for one branch do not prevent
+    // another branch from safely skipping the file.
     val filteredFiles = withStats.where(
         totalFilter(trueLiteral) &&
           partitionFilter(partitionFilters) &&
-          scanFilter(dataFilters.expr || !verifyStatsForFilter(dataFilters.referencedStats))
+          scanFilter(getStatsSafeDataSkippingFilter(dataFilters))
       )
 
     val statsColumn = if (keepNumRecords) {
@@ -801,9 +821,7 @@ trait DataSkippingReaderBase
 
       val finalSkippingFilters = skippingFilters
         .map(_._2.get)
-        .reduceOption((skip1, skip2) => DataSkippingPredicate(
-          // Fold the filters into a conjunction, while unioning their referencedStats.
-          skip1.expr && skip2.expr, skip1.referencedStats ++ skip2.referencedStats))
+        .reduceOption((skip1, skip2) => DataSkippingPredicate.and(skip1, skip2))
         .getOrElse(DataSkippingPredicate(trueLiteral))
 
       val (files, sizes) = {
