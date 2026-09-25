@@ -1347,11 +1347,87 @@ trait DeltaErrorsBase
       messageParameters = Array(file))
   }
 
-  def illegalDeltaOptionException(name: String, input: String, explain: String): Throwable = {
+  private def illegalDeltaOption(
+      subClass: String,
+      name: String,
+      input: String,
+      subclassParameters: Map[String, String] = Map.empty,
+      cause: Throwable = null): Throwable = {
+    val errorClass = s"DELTA_ILLEGAL_OPTION.$subClass"
+    val allParameters = Map("input" -> input, "name" -> name) ++ subclassParameters
+    // Order the parameter values to match the parameter names in the (combined main and
+    // subclass) message template, so callers pass parameters by name rather than by position.
+    val orderedParameters =
+      DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null).map(allParameters)
     new DeltaIllegalArgumentException(
-      errorClass = "DELTA_ILLEGAL_OPTION",
-      messageParameters = Array(input, name, explain))
+      errorClass = errorClass,
+      messageParameters = orderedParameters,
+      cause = cause)
   }
+
+  def illegalDeltaOptionMustBeOneOf(
+      name: String, input: String, validValues: Seq[String]): Throwable =
+    illegalDeltaOption(
+      "MUST_BE_ONE_OF", name, input, Map("validValues" -> validValues.mkString(", ")))
+
+  def illegalDeltaOptionMustBeBoolean(name: String, input: String): Throwable =
+    illegalDeltaOptionMustBeOneOf(name, input, Seq("'true'", "'false'"))
+
+  def illegalDeltaOptionMustBeInteger(name: String, input: String): Throwable =
+    illegalDeltaOption("MUST_BE_INTEGER", name, input)
+
+  def illegalDeltaOptionMustBeNonNegativeNumber(name: String, input: String): Throwable =
+    illegalDeltaOption("MUST_BE_NON_NEGATIVE_NUMBER", name, input)
+
+  def illegalDeltaOptionMustBePositiveNumber(name: String, input: String): Throwable =
+    illegalDeltaOption("MUST_BE_POSITIVE_NUMBER", name, input)
+
+  def illegalDeltaOptionNoEmptyColumnNames(name: String, input: String): Throwable =
+    illegalDeltaOption("NO_EMPTY_COLUMN_NAMES", name, input)
+
+  def illegalDeltaOptionMustBeSizeConfiguration(name: String, input: String): Throwable =
+    illegalDeltaOption("MUST_BE_SIZE_CONFIGURATION", name, input)
+
+  def illegalDeltaOptionDynamicPartitionOverwriteOnly(name: String, input: String): Throwable =
+    illegalDeltaOption("DYNAMIC_PARTITION_OVERWRITE_ONLY", name, input)
+
+  def illegalDeltaOptionSchemaModeWithTimeTravel(name: String, input: String): Throwable =
+    illegalDeltaOption("SCHEMA_MODE_WITH_TIME_TRAVEL", name, input)
+
+  def illegalDeltaOptionInvalidReorgParquetFormatVersion(
+      name: String, input: String, cause: Throwable): Throwable =
+    illegalDeltaOption("INVALID_REORG_PARQUET_FORMAT_VERSION", name, input, cause = cause)
+
+  def illegalDeltaOptionInvalidParquetFormatVersion(
+      name: String, input: String, cause: Throwable): Throwable =
+    illegalDeltaOption(
+      "INVALID_PARQUET_FORMAT_VERSION", name, input,
+      subclassParameters = Map("causeExceptionMessage" -> cause.getMessage), cause = cause)
+
+  def illegalDeltaOptionUnrecognizedNamedArgument(
+      name: String, input: String, functionName: String, validArguments: String): Throwable =
+    illegalDeltaOption(
+      "UNRECOGNIZED_NAMED_ARGUMENT", name, input,
+      Map("functionName" -> functionName, "validArguments" -> validArguments))
+
+  def illegalDeltaOptionParquetCompressionCodecConflict(
+      name: String, input: String, property: String, propertyValue: String): Throwable =
+    illegalDeltaOption(
+      "PARQUET_COMPRESSION_CODEC_CONFLICT", name, input,
+      Map("property" -> property, "propertyValue" -> propertyValue))
+
+  def illegalDeltaOptionParquetWriterVersionConflict(
+      name: String,
+      input: String,
+      property: String,
+      propertyValue: String,
+      resolvedVersion: String): Throwable =
+    illegalDeltaOption(
+      "PARQUET_WRITER_VERSION_CONFLICT", name, input,
+      Map(
+        "property" -> property,
+        "propertyValue" -> propertyValue,
+        "resolvedVersion" -> resolvedVersion))
 
   def invalidIdempotentWritesMissingWriteOptionsException(): Throwable = {
     new DeltaIllegalArgumentException(

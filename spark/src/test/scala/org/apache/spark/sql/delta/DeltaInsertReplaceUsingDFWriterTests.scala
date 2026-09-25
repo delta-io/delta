@@ -1308,12 +1308,11 @@ trait DeltaInsertReplaceUsingDFWriterTests
             target = path,
             replaceUsingCols = "")
         },
-        condition = "DELTA_ILLEGAL_OPTION",
+        condition = "DELTA_ILLEGAL_OPTION.NO_EMPTY_COLUMN_NAMES",
         sqlState = Some("42616"),
         parameters = Map(
           "name" -> "replaceUsing",
-          "input" -> "",
-          "explain" -> "must not contain empty column names")
+          "input" -> "")
       )
     }
   }
@@ -1334,12 +1333,11 @@ trait DeltaInsertReplaceUsingDFWriterTests
               target = path,
               replaceUsingCols = optionValue)
           },
-          condition = "DELTA_ILLEGAL_OPTION",
+          condition = "DELTA_ILLEGAL_OPTION.NO_EMPTY_COLUMN_NAMES",
           sqlState = Some("42616"),
           parameters = Map(
             "name" -> "replaceUsing",
-            "input" -> optionValue,
-            "explain" -> "must not contain empty column names")
+            "input" -> optionValue)
         )
       }
     }

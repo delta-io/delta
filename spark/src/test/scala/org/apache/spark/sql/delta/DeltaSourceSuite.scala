@@ -455,10 +455,17 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             .start()
             .processAllAvailable()
         }
-        assert(e.getCause.isInstanceOf[IllegalArgumentException])
-        for (msg <- Seq("Invalid", DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "positive")) {
-          assert(e.getCause.getMessage.contains(msg))
+        val cause = e.getCause.asInstanceOf[DeltaIllegalArgumentException]
+        val condition = invalidMaxFilesPerTrigger match {
+          case _: Int => "DELTA_ILLEGAL_OPTION.MUST_BE_POSITIVE_NUMBER"
+          case _ => "DELTA_ILLEGAL_OPTION.MUST_BE_INTEGER"
         }
+        checkError(
+          cause,
+          condition,
+          parameters = Map(
+            "input" -> invalidMaxFilesPerTrigger.toString,
+            "name" -> DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION))
       }
     }
   }
