@@ -291,7 +291,7 @@ The root manifest contains entries of the following types:
 |----------|------------|------------|----------|---------------|-------------|
 | 147 | `tracking` | Struct ([Tracking](#tracking)) | Required | All | Tracking information for this entry |
 | 134 | `content_type` | Int | Required | All | 0=DATA, 3=DATA_MANIFEST |
-| 157 | `format_version` | Int | Required | All | Iceberg writer format version; 4 for V4. |
+| 157 | `format_version` | Int | Required | All | Iceberg writer format version; 0: for ≤v3, 4 for V4. |
 | 100 | `location` | String | Required | All | Path relative to table root (e.g., `metadata/leaf-m1.parquet` or `data/part-00001.parquet`). May be absolute URI. |
 | 101 | `file_format` | String | Required | All | File format name. Delta only supports `parquet`. |
 | 102 | `partition` | Struct | Optional | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). |
@@ -299,7 +299,7 @@ The root manifest contains entries of the following types:
 | 104 | `file_size_in_bytes` | Long | Required | All | Total file size in bytes |
 | 141 | `spec_id` | Int | Optional | All | Partition spec ID used for this entry |
 | 146 | `content_stats` | Struct ([Content Stats](#content-stats)) | Optional | All | Per-column statistics |
-| 140 | `sort_order_id` | Int | Optional | DATA | Sort order ID for this file |
+| 140 | `sort_order_id` | Int | Optional | DATA | Sort order ID for this file. If missing or unknown, the order is assumed to be unsorted. |
 | 148 | `deletion_vector` | Struct ([Deletion Vector](#deletion-vector)) | Optional | DATA | Deletion vector for the data file |
 | 150 | `manifest_info` | Struct ([Manifest Info](#manifest-info)) | Optional | DATA_MANIFEST | Manifest-level summary and MDV |
 | 132 | `split_offsets` | Array\<Long\> (element ID 133) | Optional | DATA | Row group split offsets |
@@ -308,11 +308,11 @@ The root manifest contains entries of the following types:
 
 | Field ID | Field Name | Delta Type | Required | Description |
 |----------|------------|------------|----------|-------------|
-| 0 | `status` | Int | Required | 0=EXISTING, 1=ADDED, 2=DELETED, 3=REPLACED |
+| 0 | `status` | Int | Required | 0=EXISTING, 1=ADDED, 2=DELETED, 3=REPLACED, 4=MODIFIED |
 | 1 | `snapshot_id` | Long | Optional | Snapshot ID where entry was added or deleted. Inherited when null. |
 | 3 | `sequence_number` | Long | Optional | Data sequence number. Inherited when null and status=ADDED. |
 | 4 | `file_sequence_number` | Long | Optional | File sequence number (when file was physically added). Inherited when null and status=ADDED. |
-| 5 | `dv_snapshot_id` | Long | Optional | Snapshot ID where DV was added. Null when no DV. |
+| 5 | `dv_snapshot_id` | Long | Optional | Snapshot ID where DV was added or updated. Null when no DV. |
 | 142 | `first_row_id` | Long | Optional | Starting row ID for this file (DATA) or manifest (DATA_MANIFEST) |
 | 6 | `deleted_positions` | Binary | Optional | Bitmap of positions deleted in this commit (DATA_MANIFEST only, for CDF) |
 | 7 | `replaced_positions` | Binary | Optional | Bitmap of positions replaced in this commit (DATA_MANIFEST only, for CDF) |
@@ -326,6 +326,7 @@ Only `EXISTING` and `ADDED` entries are live (visible to scans). `DELETED` and `
 - `DELETED` (2): Removed in this commit. Not live.
 - `REPLACED` (3): Superseded (e.g., DV added/changed). Not live. A
   new DATA entry with updated metadata exists elsewhere in the tree as the live entry for this file path.
+- `MODIFIED` (4): When a data file's deletion vector is updated.
 
 Non-live entries are transient: they are dropped in the next manifest commit that rewrites the affected manifest (root or leaf).
 
@@ -373,10 +374,12 @@ Summary information for `content_type` = DATA_MANIFEST entries. Includes file/ro
 | 505 | `existing_files_count` | Int | Required | Number of existing files |
 | 506 | `deleted_files_count` | Int | Required | Number of deleted files |
 | 520 | `replaced_files_count` | Int | Required | Number of replaced files |
+| 524 | `modified_files_count` | Int | Required | Number of modified files |
 | 512 | `added_rows_count` | Long | Required | Number of rows in added files |
 | 513 | `existing_rows_count` | Long | Required | Number of rows in existing files |
 | 514 | `deleted_rows_count` | Long | Required | Number of rows in deleted files |
 | 521 | `replaced_rows_count` | Long | Required | Number of rows in replaced files |
+| 525 | `modified_rows_count` | Long | Required | Number of rows in modified files |
 | 516 | `min_sequence_number` | Long | Required | Minimum sequence number of files in this manifest |
 | 522 | `dv` | Binary | Optional | MDV bitmap marking deleted positions in leaf manifest. Must be non-null if and only if `dv_cardinality` is non-null. |
 | 523 | `dv_cardinality` | Long | Optional | Number of entries marked as deleted in the MDV. Must be non-null if and only if `dv` is non-null. |
