@@ -311,9 +311,123 @@ public class DataSkippingUtils {
         }
         break;
 
+      case "IN":
+        // For predicate: column IN (v1, v2, ..., vn)
+        // Data skipping rule:
+        //   file_max >= min(values) AND file_min <= max(values)
+        //
+        // This is an imprecise range test that checks if the file's value range overlaps
+        // with the range spanned by the IN-list values.
+        List<Expression> inChildren = dataFilters.getChildren();
+        if (inChildren.size() < 2) {
+          // Need at least column + one value
+          return Optional.empty();
+        }
+
+        Expression inColumn = inChildren.get(0);
+        Optional<CollationIdentifier> inCollation = dataFilters.getCollationIdentifier();
+
+        if (inCollation
+            .filter(ci -> !ci.isSparkUTF8BinaryCollation() && ci.getVersion().isEmpty())
+            .isPresent()) {
+          return Optional.empty();
+        }
+
+        if (!(inColumn instanceof Column)) {
+          return Optional.empty();
+        }
+
+        Column inCol = (Column) inColumn;
+        if (!schemaHelper.isSkippingEligibleMinMaxColumn(inCol)) {
+          return Optional.empty();
+        }
+
+        // Collect non-null literal values
+        List<Literal> inLiterals = new ArrayList<>();
+        for (int i = 1; i < inChildren.size(); i++) {
+          Expression inValue = inChildren.get(i);
+          if (inValue instanceof Literal) {
+            Literal lit = (Literal) inValue;
+            if (lit.getValue() != null && schemaHelper.isSkippingEligibleLiteral(lit)) {
+              inLiterals.add(lit);
+            }
+          } else {
+            // Non-literal value, can't apply data skipping
+            return Optional.empty();
+          }
+        }
+
+        if (inLiterals.isEmpty()) {
+          // All values are NULL or list is empty - no rows can match
+          return Optional.of(
+              new DataSkippingPredicate(
+                  "ALWAYS_FALSE", Collections.emptyList(), Collections.emptySet()));
+        }
+
+        // Find min and max literals using Comparable
+        Literal minLit = inLiterals.get(0);
+        Literal maxLit = inLiterals.get(0);
+        for (int i = 1; i < inLiterals.size(); i++) {
+          Literal lit = inLiterals.get(i);
+          if (compareLiterals(lit, minLit) < 0) {
+            minLit = lit;
+          }
+          if (compareLiterals(lit, maxLit) > 0) {
+            maxLit = lit;
+          }
+        }
+
+        // Build: file_max >= min_lit AND file_min <= max_lit
+        Column fileMinCol = schemaHelper.getMinColumn(inCol, inCollation)._1;
+        Column fileMaxCol = schemaHelper.getMaxColumn(inCol, inCollation)._1;
+
+        DataSkippingPredicate minPredicate;
+        DataSkippingPredicate maxPredicate;
+
+        if (inCollation.isPresent()) {
+          // file_min <= max_lit
+          minPredicate =
+              new DataSkippingPredicate(
+                  "<=",
+                  Arrays.asList(fileMinCol, maxLit),
+                  inCollation.get(),
+                  Collections.singleton(fileMinCol));
+          // file_max >= min_lit
+          maxPredicate =
+              new DataSkippingPredicate(
+                  ">=",
+                  Arrays.asList(fileMaxCol, minLit),
+                  inCollation.get(),
+                  Collections.singleton(fileMaxCol));
+        } else {
+          minPredicate =
+              new DataSkippingPredicate(
+                  "<=", Arrays.asList(fileMinCol, maxLit), Collections.singleton(fileMinCol));
+          maxPredicate =
+              new DataSkippingPredicate(
+                  ">=", Arrays.asList(fileMaxCol, minLit), Collections.singleton(fileMaxCol));
+        }
+
+        return Optional.of(new DataSkippingPredicate("AND", minPredicate, maxPredicate));
+
         // TODO more expressions
     }
     return Optional.empty();
+  }
+
+  /**
+   * Compares two literals using their natural ordering. Both literals must have the same data type
+   * and non-null values.
+   */
+  @SuppressWarnings("unchecked")
+  private static int compareLiterals(Literal a, Literal b) {
+    Object aVal = a.getValue();
+    Object bVal = b.getValue();
+    if (aVal instanceof Comparable && bVal instanceof Comparable) {
+      return ((Comparable<Object>) aVal).compareTo(bVal);
+    }
+    throw new IllegalArgumentException(
+        "Cannot compare literals of type " + a.getDataType() + " - values are not Comparable");
   }
 
   /** Construct the skipping predicate for a given comparator */
