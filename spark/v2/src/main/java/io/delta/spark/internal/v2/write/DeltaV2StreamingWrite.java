@@ -27,7 +27,6 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
-import java.util.Optional;
 import java.util.function.Function;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
@@ -142,7 +141,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     // One reload, so the skip check, guards, and the transaction below all judge the same snapshot.
     SnapshotImpl latestSnapshot =
         DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-            snapshotManager.loadLatestSnapshot(Optional.of(queryContext)));
+            snapshotManager.loadLatestSnapshot(queryContext));
 
     // Skip an already-committed epoch before any guard runs. StreamingWrite.commit may be called
     // more than once for one epoch and must be idempotent, so a repeated commit of a committed
