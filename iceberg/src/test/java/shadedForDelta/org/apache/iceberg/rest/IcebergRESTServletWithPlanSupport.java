@@ -19,9 +19,11 @@ package shadedForDelta.org.apache.iceberg.rest;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import jakarta.servlet.http.HttpServletRequest;
@@ -63,6 +65,9 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
     if (path != null && (path.equals("/v1/config") || path.endsWith("/v1/config"))) {
       LOG.debug("Custom servlet handling /v1/config request");
       handleConfigRequest(req, resp);
+    } else if (isFetchPlanningResultPath(path)) {
+      LOG.debug("Custom servlet handling plan result request for path: {}", path);
+      handlePlanRequest(req, resp);
     } else {
       // For all other GET requests, use standard handling
       super.doGet(req, resp);
@@ -85,6 +90,18 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
     }
   }
 
+  @Override
+  protected void doDelete(HttpServletRequest req, HttpServletResponse resp)
+      throws IOException {
+    String path = req.getPathInfo();
+    if (isFetchPlanningResultPath(path)) {
+      IcebergRESTCatalogAdapterWithPlanSupport.recordPlanCancellation();
+      resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
+    } else {
+      super.doDelete(req, resp);
+    }
+  }
+
   /**
    * Test helper for Iceberg REST /v1/config endpoint that returns optional catalog
    * prefix, following the Iceberg REST catalog spec pattern.
@@ -99,10 +116,37 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
       if (adapter instanceof IcebergRESTCatalogAdapterWithPlanSupport) {
         IcebergRESTCatalogAdapterWithPlanSupport customAdapter =
             (IcebergRESTCatalogAdapterWithPlanSupport) adapter;
+        builder.withDefaults(customAdapter.getCatalogDefaults());
         String prefix = customAdapter.getCatalogPrefix();
         if (prefix != null && !prefix.isEmpty()) {
           LOG.info("Adding prefix to /v1/config response: {}", prefix);
           builder.withOverride("prefix", prefix);
+        }
+
+        if (customAdapter.getAdvertiseEndpoints()) {
+          List<Endpoint> endpoints = new ArrayList<>();
+          endpoints.add(Endpoint.V1_LIST_NAMESPACES);
+          endpoints.add(Endpoint.V1_LOAD_NAMESPACE);
+          endpoints.add(Endpoint.V1_CREATE_NAMESPACE);
+          endpoints.add(Endpoint.V1_UPDATE_NAMESPACE);
+          endpoints.add(Endpoint.V1_DELETE_NAMESPACE);
+          endpoints.add(Endpoint.V1_LIST_TABLES);
+          endpoints.add(Endpoint.V1_LOAD_TABLE);
+          endpoints.add(Endpoint.V1_CREATE_TABLE);
+          endpoints.add(Endpoint.V1_UPDATE_TABLE);
+          endpoints.add(Endpoint.V1_DELETE_TABLE);
+          endpoints.add(Endpoint.V1_RENAME_TABLE);
+          endpoints.add(Endpoint.V1_REGISTER_TABLE);
+          endpoints.add(Endpoint.V1_REPORT_METRICS);
+          endpoints.add(Endpoint.V1_COMMIT_TRANSACTION);
+          endpoints.add(Endpoint.V1_SUBMIT_TABLE_SCAN_PLAN);
+          if (customAdapter.getAdvertiseFetchPlanningResult()) {
+            endpoints.add(Endpoint.V1_FETCH_TABLE_SCAN_PLAN);
+          }
+          if (customAdapter.getAdvertiseCancelPlanning()) {
+            endpoints.add(Endpoint.V1_CANCEL_TABLE_SCAN_PLAN);
+          }
+          builder.withEndpoints(endpoints);
         }
       }
 
@@ -121,21 +165,40 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
 
   private void handlePlanRequest(HttpServletRequest req, HttpServletResponse resp)
       throws IOException {
-    // Track plan request count for testing retry behavior
-    IcebergRESTCatalogAdapterWithPlanSupport.incrementPlanRequestCount();
-
-    // Check if we should inject a failure for testing HTTP retry logic
-    int remainingFailures = IcebergRESTCatalogAdapterWithPlanSupport.getAndDecrementFailCount();
-    if (remainingFailures > 0) {
-      int failStatusCode = IcebergRESTCatalogAdapterWithPlanSupport.getPlanRequestFailStatusCode();
-      LOG.info("Injecting test failure: returning HTTP {} ({} failures remaining)",
-          failStatusCode, remainingFailures - 1);
-      resp.setStatus(failStatusCode);
-      resp.setContentType("application/json");
-      resp.getWriter().write(
-          "{\"error\": {\"message\": \"Injected test failure\", \"type\": \"TestError\", \"code\": "
-          + failStatusCode + "}}");
-      return;
+    boolean isPost = "POST".equals(req.getMethod());
+    if (isPost) {
+      // Track POST /plan requests and inject failures for HTTP retry tests.
+      IcebergRESTCatalogAdapterWithPlanSupport.incrementPlanRequestCount();
+      int remainingFailures = IcebergRESTCatalogAdapterWithPlanSupport.getAndDecrementFailCount();
+      if (remainingFailures > 0) {
+        int failStatusCode =
+            IcebergRESTCatalogAdapterWithPlanSupport.getPlanRequestFailStatusCode();
+        LOG.info("Injecting test failure: returning HTTP {} ({} failures remaining)",
+            failStatusCode, remainingFailures - 1);
+        resp.setStatus(failStatusCode);
+        resp.setContentType("application/json");
+        resp.getWriter().write(
+            "{\"error\": {\"message\": \"Injected test failure\", "
+                + "\"type\": \"TestError\", \"code\": " + failStatusCode + "}}");
+        return;
+      }
+    } else {
+      // GET poll path: inject failures for the fetch-planning-result (poll) retry tests.
+      int remainingFetchFailures =
+          IcebergRESTCatalogAdapterWithPlanSupport.getAndDecrementFetchFailCount();
+      if (remainingFetchFailures > 0) {
+        int failStatusCode = IcebergRESTCatalogAdapterWithPlanSupport.getFetchFailStatusCode();
+        LOG.info("Injecting poll failure: returning HTTP {} ({} failures remaining)",
+            failStatusCode, remainingFetchFailures - 1);
+        // Count the poll attempt even though we short-circuit before the adapter executes.
+        IcebergRESTCatalogAdapterWithPlanSupport.incrementPlanPollRequestCount();
+        resp.setStatus(failStatusCode);
+        resp.setContentType("application/json");
+        resp.getWriter().write(
+            "{\"error\": {\"message\": \"Injected test failure\", "
+                + "\"type\": \"TestError\", \"code\": " + failStatusCode + "}}");
+        return;
+      }
     }
 
     try {
@@ -154,7 +217,7 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
 
       // Build HTTPRequest - body should be kept as string, not parsed
       HTTPRequest httpRequest = adapter.buildRequest(
-          HTTPRequest.HTTPMethod.POST,
+          isPost ? HTTPRequest.HTTPMethod.POST : HTTPRequest.HTTPMethod.GET,
           path,
           queryParams,
           headers,
@@ -204,6 +267,10 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
           .build();
       mapper.writeValue(resp.getWriter(), error);
     }
+  }
+
+  private boolean isFetchPlanningResultPath(String path) {
+    return path != null && path.matches(".*/plan/[^/]+$");
   }
 
   private void handleError(HttpServletResponse resp, ErrorResponse error) {
