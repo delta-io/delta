@@ -665,6 +665,23 @@ trait AMTCheckpointTestBase
   protected def actionsAt(deltaLog: DeltaLog, version: Long): Seq[Action] =
     deltaLog.getChanges(version).find(_._1 == version).map(_._2).getOrElse(Seq.empty)
 
+  /**
+   * The live `AddFile` set reconstructed from the commit-log deltas alone (not the AMT tree). An
+   * AMT-backed table reconstructs its on-disk DVs as relative `r` descriptors through `allFiles`,
+   * so a test that needs the DV descriptors a commit actually recorded reads them from the log.
+   */
+  protected def liveAddFilesFromLog(deltaLog: DeltaLog): Seq[AddFile] = {
+    val live = scala.collection.mutable.LinkedHashMap.empty[String, AddFile]
+    deltaLog.getChanges(0).foreach { case (_, actions) =>
+      actions.foreach {
+        case a: AddFile => live(a.path) = a
+        case r: RemoveFile => live.remove(r.path)
+        case _ =>
+      }
+    }
+    live.values.toSeq
+  }
+
   /** The [[Checkpoint]] committed at exactly `version`, if any. */
   protected def checkpointAt(deltaLog: DeltaLog, version: Long): Option[Checkpoint] = {
     val checkpoints = actionsAt(deltaLog, version).collect { case c: Checkpoint => c }

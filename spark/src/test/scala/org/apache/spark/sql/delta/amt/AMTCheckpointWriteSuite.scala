@@ -501,6 +501,59 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     }
   }
 
+  /** Classic V1/V2 checkpoint parquet files under the table's `_delta_log`. */
+  private def classicCheckpointFiles(tableName: String): Seq[File] = {
+    val logDir = new File(tablePath(tableName), "_delta_log")
+    if (!logDir.exists()) Seq.empty
+    else Option(logDir.listFiles()).toSeq.flatten
+      .filter(f => f.getName.contains(".checkpoint") && f.getName.endsWith(".parquet"))
+  }
+
+  test("deltaLog.checkpoint emits an AMT instead of writing classic checkpoint files") {
+    withTable("amt_checkpoint_api") {
+      val name = "amt_checkpoint_api"
+      // Interval far away so no automatic emission fires; the explicit checkpoint() call below is
+      // the only thing that can emit.
+      createAMTTable(name, checkpointInterval = 100)
+      sql(s"INSERT INTO $name VALUES (1)") // v1.
+      sql(s"INSERT INTO $name VALUES (2)") // v2.
+
+      val deltaLog = deltaLogForName(name)
+      assert(amtProvider(deltaLog.update()).isEmpty, "No AMT should exist before checkpoint().")
+
+      // On an AMT table, DeltaLog.checkpoint rewrites the manifest tree via a follow-up OPTIMIZE
+      // CHECKPOINT commit rather than writing classic checkpoint files.
+      deltaLog.checkpoint(deltaLog.update())
+
+      val snapshot = deltaLog.update()
+      assert(snapshot.version == 3, "checkpoint() must emit a follow-up commit at v3.")
+      val v3Checkpoint = checkpointAt(deltaLog, 3).getOrElse(fail("Expected a Checkpoint at v3."))
+      assert(v3Checkpoint.version == 2,
+        s"The Checkpoint must describe state as of v2; got ${v3Checkpoint.version}.")
+      assert(amtProvider(snapshot).isDefined, "The snapshot must be AMT-backed after checkpoint().")
+      assert(classicCheckpointFiles(name).isEmpty,
+        "checkpoint() must not write classic checkpoint files on an AMT table.")
+    }
+  }
+
+  test("an AMT table gets no classic checkpoint across commits and commitLarge") {
+    withTable("amt_no_classic") {
+      val name = "amt_no_classic"
+      // Interval 2 so ordinary commits repeatedly cross the boundary and emit AMTs.
+      createAMTTable(name, checkpointInterval = 2)
+      // v1-v4, emitting an AMT at each interval boundary along the way.
+      (1 to 4).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+      sql(s"RESTORE TABLE $name TO VERSION AS OF 1") // commitLarge; emits its own full AMT.
+
+      // The point of this test is the absence of classic checkpoint files: the AMT manifests are on
+      // disk and no classic checkpoint is ever written.
+      assert((rootFiles(tablePath(name)) ++ leafFiles(tablePath(name))).nonEmpty,
+        "AMT manifests must be written.")
+      assert(classicCheckpointFiles(name).isEmpty,
+        "An AMT table must never accumulate a classic checkpoint file.")
+    }
+  }
+
   test("no emission on a non-interval commit") {
     withTable("amt_non_interval") {
       val name = "amt_non_interval"

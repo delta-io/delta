@@ -463,6 +463,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(1000000)
 
+  val DELTA_CONVERT_REBALANCE_FILE_LISTING =
+    buildConf("convert.rebalanceFileListing")
+      .internal()
+      .doc("When true, CONVERT TO DELTA rebalances the recursively-listed files " +
+        "across tasks (by file count) before reading Parquet footers for schema inference. " +
+        "Files are processed in path order for deterministic schema merging. " +
+        "recursiveListDirs otherwise parcels files by top-level directory, so a single large " +
+        "partition directory becomes one skewed task that reads all its footers alone.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CONVERT_METADATA_CHECK_ENABLED =
     buildConf("convert.metadataCheck.enabled")
       .doc(
@@ -2534,6 +2545,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |This is a safety switch - we should only set this to false if the fix introduces some
           |regression.
           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_DROP_STATS_COLUMNS_ESCAPE_NAMES =
+    buildConf("stats.dropStatsColumns.escapeNames")
+      .internal()
+      .doc("Whether to properly escape surviving data skipping stats column names after dropping " +
+        "a column.")
       .booleanConf
       .createWithDefault(true)
 

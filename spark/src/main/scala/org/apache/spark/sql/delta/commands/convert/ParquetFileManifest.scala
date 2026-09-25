@@ -26,6 +26,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
@@ -45,12 +46,32 @@ class ManualListingFileManifest(
       .where("!isDir")
   }
 
+  // Set when rebalancing caches the raw listing (see allFiles); released in close().
+  private var listingToUnpersist: Option[Dataset[SerializableFileStatus]] = None
+
   override lazy val allFiles: Dataset[ConvertTargetFile] = {
     import org.apache.spark.sql.delta.implicits._
 
     val conf = spark.sparkContext.broadcast(serializableConf)
     val fetchConfig = parquetSchemaFetchConfig
-    val files = doList().mapPartitions { iter =>
+    // recursiveListDirs parcels files by top-level directory, so a large partition dir becomes a
+    // single skewed task reading all its footers. Range-partition by path before reading footers:
+    // this spreads the footer reads across tasks (by file count) and processes them in path order,
+    // so schema merging (first-appearance column order) is deterministic.
+    val listed = doList()
+    val balanced =
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_REBALANCE_FILE_LISTING)) {
+        // Cache the listing so repartitionByRange's range-bound sampling does not re-run the
+        // (potentially expensive) recursive directory listing.
+        val cachedListing = listed.cache()
+        listingToUnpersist = Some(cachedListing)
+        cachedListing
+          .repartitionByRange(spark.sparkContext.defaultParallelism, col("path"))
+          .sortWithinPartitions(col("path"))
+      } else {
+        listed
+      }
+    val files = balanced.mapPartitions { iter =>
       val fileStatuses = iter.toSeq
       val pathToStatusMapping = fileStatuses.map { fileStatus =>
         fileStatus.path -> fileStatus
@@ -70,11 +91,16 @@ class ManualListingFileManifest(
 
   override lazy val parquetSchema: Option[StructType] = {
     recordDeltaOperationForTablePath(basePath, "delta.convert.schemaInference") {
+      // When rebalancing is on, allFiles is already path-ordered (range-partitioned + sorted by
+      // path), so schema merging is deterministic without a separate sort here.
       Some(ConvertUtils.mergeSchemasInParallel(spark, partitionSchema, allFiles))
     }
   }
 
-  override def close(): Unit = allFiles.unpersist()
+  override def close(): Unit = {
+    allFiles.unpersist()
+    listingToUnpersist.foreach(_.unpersist())
+  }
 }
 
 /** A file manifest generated through listing partition paths from Metastore catalog. */
