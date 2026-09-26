@@ -156,28 +156,30 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             Configuration hadoopConf) throws IOException {
         final FileSystem fs = path.getFileSystem(hadoopConf);
         final Path resolvedPath = resolvePath(fs, path);
+        // Acquire the lock outside the try/finally: a thread interrupted while waiting never held
+        // the lock, so it must not release it (that would drop another writer's lock).
         try {
             pathLock.acquire(resolvedPath);
-            try {
-                if (fs.exists(resolvedPath) && !overwrite) {
-                    throw new java.nio.file.FileAlreadyExistsException(
-                        resolvedPath.toUri().toString()
-                    );
-                }
-
-                final CountingOutputStream stream =
-                    new CountingOutputStream(fs.create(resolvedPath, overwrite));
-
-                while (actions.hasNext()) {
-                    stream.write((actions.next() + "\n").getBytes(StandardCharsets.UTF_8));
-                }
-                stream.close();
-            } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
-                // Convert Hadoop's FileAlreadyExistsException to Java's FileAlreadyExistsException
-                throw new java.nio.file.FileAlreadyExistsException(e.getMessage());
-            }
         } catch (java.lang.InterruptedException e) {
             throw new InterruptedIOException(e.getMessage());
+        }
+        try {
+            if (fs.exists(resolvedPath) && !overwrite) {
+                throw new java.nio.file.FileAlreadyExistsException(
+                    resolvedPath.toUri().toString()
+                );
+            }
+
+            final CountingOutputStream stream =
+                new CountingOutputStream(fs.create(resolvedPath, overwrite));
+
+            while (actions.hasNext()) {
+                stream.write((actions.next() + "\n").getBytes(StandardCharsets.UTF_8));
+            }
+            stream.close();
+        } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
+            // Convert Hadoop's FileAlreadyExistsException to Java's FileAlreadyExistsException
+            throw new java.nio.file.FileAlreadyExistsException(e.getMessage());
         } finally {
             pathLock.release(resolvedPath);
         }
