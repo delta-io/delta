@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.deletionvectors
 
-import org.apache.spark.sql.delta.RowIndexFilter
+import org.apache.spark.sql.delta.{RowIndexFilter, RowIndexFilterProvider}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor._
@@ -33,6 +33,22 @@ import org.apache.spark.sql.types.ByteType
 import org.apache.spark.util.Utils
 
 class RowIndexMarkingFiltersSuite extends QueryTest with SharedSparkSession {
+
+  for (positions <- Seq(Seq.empty[Int], Seq(0, 3, 9))) {
+    test(s"manifest provider survives serialization with positions $positions") {
+      val bitmap = ManifestBitmap.fromPositions(positions)
+      val provider = bitmap.toRowIndexFilterProvider(new Path("/unused"))
+      val restored = Utils.deserialize[RowIndexFilterProvider](Utils.serialize(provider))
+      assert(getMarked(restored.retrieve(newHadoopConf), start = 0, end = 12) === positions)
+    }
+  }
+
+  test("manifest provider captures the bitmap before later mutations") {
+    val bitmap = ManifestBitmap.fromPositions(Seq(1, 3))
+    val provider = bitmap.toRowIndexFilterProvider(new Path("/unused"))
+    bitmap.add(5)
+    assert(getMarked(provider.retrieve(newHadoopConf), start = 0, end = 8) === Seq(1, 3))
+  }
 
   test("empty deletion vector (drop filter)") {
     val rowIndexFilter = DropMarkedRowsFilter.createInstance(

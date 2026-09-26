@@ -16,21 +16,27 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.{RowIndexFilter, RowIndexFilterProvider, RowIndexFilterType}
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.deletionvectors.{DropAllRowsFilter, DropMarkedRowsFilter, RoaringBitmapArray}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.parquet.format.converter.ParquetMetadataConverter
 import org.apache.parquet.hadoop.ParquetFileReader
 
-import org.apache.spark.sql.{DataFrame, Dataset, QueryTest}
+import org.apache.spark.sql.{DataFrame, Dataset, QueryTest, Row}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{LongType, StructType}
 
 trait DeltaParquetFileFormatSuiteBase
     extends QueryTest
@@ -220,6 +226,135 @@ class DeltaParquetFileFormatSuite extends DeltaParquetFileFormatSuiteBase {
         }
       }
     }
+  }
+}
+
+/** Exercises the portable provider marker path even when native filtering is also available. */
+class DeltaParquetFileFormatProviderSuite extends QueryTest with SharedSparkSession {
+  import DeltaParquetFileFormat._
+  import DeltaParquetFileFormatProviderSuite.{DropAllProvider, MarkedRowsProvider, PortableFileFormat}
+
+
+  private def withParquetFiles(f: (Path, Array[FileStatus]) => Unit): Unit = {
+    withTempDir { dir =>
+      val root = new Path(dir.toString)
+      val files = (0 until 2).map { file =>
+        val path = new Path(root, s"leaf $file")
+        spark.range(file * 8L, (file + 1) * 8L).coalesce(1).write.parquet(path.toString)
+        path.getFileSystem(spark.sessionState.newHadoopConf()).listStatus(path)
+          .find(_.getPath.getName.endsWith(".parquet")).get
+      }.toArray
+      f(root, files)
+    }
+  }
+
+  private def readMarkers(
+      root: Path,
+      files: Array[FileStatus],
+      metadata: Map[String, Map[String, Any]],
+      useMetadataRowIndex: Boolean): DataFrame = {
+    val format = new PortableFileFormat(root, useMetadataRowIndex)
+    // Attach only portable metadata, so this exercises the same reader wrapper in both engines.
+    val index = new DeltaLogFileIndex(format, files, perFileMetadata = metadata)
+    val schema = new StructType().add("id", LongType).add(IS_ROW_DELETED_STRUCT_FIELD)
+    val readSchema = if (useMetadataRowIndex) schema else schema.add(ROW_INDEX_STRUCT_FIELD)
+    val relation = HadoopFsRelation(
+      index, index.partitionSchema, readSchema, None, format, Map.empty)(spark)
+    val plan = LogicalRelation(relation)
+    val withMetadata = plan.copy(output = plan.output :+ format.createFileMetadataCol())
+    val rowIndex = if (useMetadataRowIndex) "_metadata.row_index" else ROW_INDEX_COLUMN_NAME
+    DataFrameUtils.ofRows(spark, withMetadata)
+      .select(col("id"), col(IS_ROW_DELETED_COLUMN_NAME), col(rowIndex))
+  }
+
+  for {
+    useMetadataRowIndex <- BOOLEAN_DOMAIN
+    (vectorized, codegenFields) <- Seq((true, 100), (true, 0), (false, 0))
+  } {
+    test(s"provider markers preserve all rows: metadataIndex=$useMetadataRowIndex, " +
+        s"vectorized=$vectorized, codegenFields=$codegenFields") {
+      withSQLConf(
+        SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> vectorized.toString,
+        SQLConf.PARQUET_VECTORIZED_READER_BATCH_SIZE.key -> "2",
+        SQLConf.WHOLESTAGE_MAX_NUM_FIELDS.key -> codegenFields.toString) {
+        withParquetFiles { (root, files) =>
+          val metadata = Map(files.head.getPath.toString ->
+            Map[String, Any](FILE_ROW_INDEX_FILTER_PROVIDER -> MarkedRowsProvider))
+          val rows = readMarkers(root, files, metadata, useMetadataRowIndex)
+          checkAnswer(rows, (0L until 16L).map { id =>
+            val marker = if (id == 1 || id == 5) RowIndexFilter.DROP_ROW_VALUE
+              else RowIndexFilter.KEEP_ROW_VALUE
+            Row(id, marker, id % 8)
+          })
+        }
+      }
+    }
+  }
+
+  test("a descriptor-free provider is loaded on the executor") {
+    withParquetFiles { (root, files) =>
+      val metadata = Map(files.head.getPath.toString ->
+        Map[String, Any](FILE_ROW_INDEX_FILTER_PROVIDER -> DropAllProvider))
+      checkAnswer(readMarkers(root, files, metadata, useMetadataRowIndex = false),
+        (0L until 16L).map { id =>
+          Row(id, if (id < 8) RowIndexFilter.DROP_ROW_VALUE else RowIndexFilter.KEEP_ROW_VALUE,
+            id % 8)
+        })
+    }
+  }
+
+  test("a provider cannot be combined with encoded deletion vector metadata") {
+    withParquetFiles { (root, files) =>
+      for (extra <- Seq(
+        Map[String, Any](FILE_ROW_INDEX_FILTER_ID_ENCODED -> "unused"),
+        Map[String, Any](FILE_ROW_INDEX_FILTER_TYPE -> RowIndexFilterType.IF_CONTAINED))) {
+        val metadata = Map(files.head.getPath.toString ->
+          (extra + (FILE_ROW_INDEX_FILTER_PROVIDER -> DropAllProvider)))
+        val error = intercept[Exception] {
+          readMarkers(root, files, metadata, useMetadataRowIndex = false).collect()
+        }
+        val causes = Iterator.iterate[Throwable](error)(_.getCause).takeWhile(_ != null)
+        assert(causes.exists(e => Option(e.getMessage).exists(
+          _.contains("A row index filter provider cannot be combined"))))
+      }
+    }
+  }
+
+  test("a log file index rejects simultaneous provider and metadata maps") {
+    val error = intercept[IllegalArgumentException] {
+      new DeltaLogFileIndex(
+        DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET,
+        Array.empty[FileStatus],
+        perFileRowIndexFilters = Map("leaf" -> DropAllProvider),
+        perFileMetadata = Map("leaf" -> Map(FILE_ROW_INDEX_FILTER_TYPE ->
+          RowIndexFilterType.IF_CONTAINED)))
+    }
+    assert(error.getMessage.contains("perFileRowIndexFilters and perFileMetadata"))
+  }
+}
+
+object DeltaParquetFileFormatProviderSuite {
+  /** Uses the shared portable reader without the native V1 reader wrapper. */
+  class PortableFileFormat(root: Path, useMetadataRowIndex: Boolean)
+    extends DeltaParquetFileFormatBase(
+      ProtocolMetadataAdapterV1(
+        Protocol().withFeatures(Set(DeletionVectorsTableFeature)), Metadata()),
+      optimizationsEnabled = false,
+      tablePath = Some(root.toString),
+      useMetadataRowIndexOpt = Some(useMetadataRowIndex))
+
+  /** Only the portable retrieval contract may be used by this reader path. */
+  abstract class PortableProvider extends RowIndexFilterProvider {
+  }
+
+  case object MarkedRowsProvider extends PortableProvider {
+    override def retrieve(conf: Configuration): RowIndexFilter =
+      new DropMarkedRowsFilter(RoaringBitmapArray(1, 5))
+  }
+
+  /** No bitmap or descriptor is needed to implement this provider. */
+  case object DropAllProvider extends PortableProvider {
+    override def retrieve(conf: Configuration): RowIndexFilter = DropAllRowsFilter
   }
 }
 

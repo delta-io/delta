@@ -16,11 +16,10 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{RowIndexFilter, RowIndexFilterType}
+import org.apache.spark.sql.delta.{RowIndexFilter, RowIndexFilterProvider}
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeletionVectorsTableFeature, DeltaLog, DeltaLogFileIndex, DeltaParquetFileFormat, Snapshot}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, FileAction, Metadata, Protocol, RemoveFile, SingleAction}
-import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
 import org.apache.spark.sql.delta.util.DeltaEncoder
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -202,14 +201,22 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
         .where(col("entry.tracking.status").isin(Tracking.Status.liveEntryStatuses.toSeq: _*))
         .withColumn(PRECEDING_RECORDS_COLUMN, lit(0L)))
 
-  /**
-   * Builds a leaf index that materializes each manifest DV as
-   * [[DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME]].
-   */
+  /** Builds a leaf index with bitmap-format-independent manifest filter providers. */
   protected def rowIdInheritanceFileIndex(
       files: Array[FileStatus],
       dvLeaves: Seq[DataManifestEntry]): DeltaLogFileIndex = {
-    val format = DeltaParquetFileFormat(
+    val perFileRowIndexFilters: Map[String, RowIndexFilterProvider] = dvLeaves.flatMap { leaf =>
+      leaf.manifestDV.map { case (dvBytes, _) =>
+        leaf.getAbsolutePath(tableRoot).toString ->
+          AMTUtils.deserializeMdv(dvBytes).toRowIndexFilterProvider(tableRoot)
+      }
+    }.toMap
+    DeltaLogFileIndex(rowIdInheritanceFileFormat, files, perFileRowIndexFilters)
+  }
+
+  /** Materializes the keep/drop marker without filtering entries before row-ID inheritance. */
+  protected def rowIdInheritanceFileFormat: DeltaParquetFileFormat =
+    DeltaParquetFileFormat(
       // Use neutral table metadata so manifest columns are not remapped as user-table columns.
       // Advertise DV readability so `_metadata.row_index` remains available to the reader.
       protocol = Protocol().withFeatures(Set(DeletionVectorsTableFeature)),
@@ -217,17 +224,6 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       // Keep each leaf unsplit and disable pushed filters so the prefix sees every physical entry.
       optimizationsEnabled = false,
       tablePath = Some(tableRoot.toString))
-    val perFileMetadata: Map[String, Map[String, Any]] = dvLeaves.flatMap { leaf =>
-      leaf.manifestDV.map { case (dvBytes, cardinality) =>
-        val encoded =
-          DeletionVectorDescriptor.inlineInLog(dvBytes, cardinality).serializeToBase64()
-        leaf.getAbsolutePath(tableRoot).toString -> Map[String, Any](
-          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED -> encoded,
-          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE -> RowIndexFilterType.IF_CONTAINED)
-      }
-    }.toMap
-    new DeltaLogFileIndex(format, files, perFileMetadata = perFileMetadata)
-  }
 
   /** Extends the Parquet read schema with the keep/drop marker. */
   protected def rowIndexFilterReadSchema(persistedSchema: StructType): StructType =

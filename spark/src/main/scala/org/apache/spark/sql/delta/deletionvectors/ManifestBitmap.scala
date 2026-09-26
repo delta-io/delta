@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.delta.deletionvectors
 
+import org.apache.spark.sql.delta.RowIndexFilterProvider
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.util.Utils
 
 /**
@@ -47,6 +50,8 @@ trait ManifestBitmap {
 
   protected def toArrayForTestingImpl: Array[Long]
 
+  /** Builds a [[RowIndexFilterProvider]] representing this bitmap. */
+  def toRowIndexFilterProvider(tableRoot: Path): RowIndexFilterProvider
 }
 
 object ManifestBitmap {
@@ -97,6 +102,11 @@ final class RoaringManifestBitmap private (
       case _ => roaringBitmapArray.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
     }
 
+  override def toRowIndexFilterProvider(tableRoot: Path): RowIndexFilterProvider = {
+    // Capture the serialized snapshot, not this mutable bitmap, in the scan task.
+    val bytes = serializeAsByteArray()
+    _ => new DropMarkedRowsFilter(RoaringBitmapArray.readFrom(bytes))
+  }
 }
 
 object RoaringManifestBitmap {

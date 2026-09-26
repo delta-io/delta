@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.RowIndexFilterType
+import org.apache.spark.sql.delta.{RowIndexFilterProvider, RowIndexFilterType}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
@@ -338,12 +338,18 @@ abstract class DeltaParquetFileFormatBase(
       "useMetadataRowIndex is enabled but rowIndexColumn is not defined.")
 
     val rowIndexFilterOpt = isRowDeletedColumnOpt.map { col =>
-      // Fetch the DV descriptor from the broadcast map and create a row index filter
+      // Manifest filters need not have a DeletionVectorDescriptor (or use a roaring bitmap).
+      val providerOpt = partitionedFile.otherConstantMetadataColumnValues
+        .get(FILE_ROW_INDEX_FILTER_PROVIDER)
       val dvDescriptorOpt = partitionedFile.otherConstantMetadataColumnValues
         .get(FILE_ROW_INDEX_FILTER_ID_ENCODED)
       val filterTypeOpt = partitionedFile.otherConstantMetadataColumnValues
         .get(FILE_ROW_INDEX_FILTER_TYPE)
-      if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
+      if (providerOpt.isDefined) {
+        require(dvDescriptorOpt.isEmpty && filterTypeOpt.isEmpty,
+          "A row index filter provider cannot be combined with deletion vector metadata")
+        providerOpt.get.asInstanceOf[RowIndexFilterProvider].retrieve(serializableHadoopConf.value)
+      } else if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
         val rowIndexFilter = filterTypeOpt.get match {
           case RowIndexFilterType.IF_CONTAINED => DropMarkedRowsFilter
           case RowIndexFilterType.IF_NOT_CONTAINED => KeepMarkedRowsFilter
@@ -602,6 +608,9 @@ object DeltaParquetFileFormat {
   /** The key to the row index filter type value of the
    * [[PartitionedFile]]'s otherConstantMetadataColumnValues map. */
   val FILE_ROW_INDEX_FILTER_TYPE = "row_index_filter_type"
+
+  /** The key to a provider loaded on the executor to populate the keep/drop marker. */
+  val FILE_ROW_INDEX_FILTER_PROVIDER = "row_index_filter_provider"
 
   /** Utility method to create a new writable vector */
   private[delta] def newVector(
