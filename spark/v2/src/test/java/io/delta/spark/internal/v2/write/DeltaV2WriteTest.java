@@ -118,11 +118,11 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             path,
             DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
             mgr,
-            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
             dataSchema,
             partitionSchema,
             WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()),
-            /* variantShreddingEnabled */ false);
+            /* variantShreddingEnabled */ false,
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
 
     assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
     SortOrder[] ordering = write.requiredOrdering();
@@ -166,11 +166,11 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             path,
             DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
             mgr,
-            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
             dataSchema,
             partitionSchema,
             WriteTestUtils.logicalWriteInfo(fullSchema, CaseInsensitiveStringMap.empty()),
-            /* variantShreddingEnabled */ false);
+            /* variantShreddingEnabled */ false,
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
 
     assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
     SortOrder[] ordering = write.requiredOrdering();
@@ -201,10 +201,10 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
         path,
         snapshot,
         snapshotManager,
-        DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
         TABLE_SCHEMA,
         new StructType(),
         info,
-        /* variantShreddingEnabled */ false);
+        /* variantShreddingEnabled */ false,
+        DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
   }
 }

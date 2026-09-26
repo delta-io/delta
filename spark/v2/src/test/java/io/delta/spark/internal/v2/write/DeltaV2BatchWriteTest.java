@@ -413,11 +413,11 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                     path,
                     DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
                     mgr,
-                    DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
                     data,
                     part,
                     WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
-                    /* variantShreddingEnabled */ false)
+                    /* variantShreddingEnabled */ false,
+                    DeltaV2QueryContext$.MODULE$.apply(Optional.empty()))
                 .toBatch();
 
     DataWriter<InternalRow> writer =
@@ -508,11 +508,11 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 path,
                 DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
                 mgr,
-                DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
                 data,
                 part,
                 WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
-                /* variantShreddingEnabled */ false)
+                /* variantShreddingEnabled */ false,
+                DeltaV2QueryContext$.MODULE$.apply(Optional.empty()))
             .toBatch();
   }
 
@@ -552,11 +552,11 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 path,
                 DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
                 mgr,
-                DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
                 data,
                 part,
                 WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
-                /* variantShreddingEnabled */ false)
+                /* variantShreddingEnabled */ false,
+                DeltaV2QueryContext$.MODULE$.apply(Optional.empty()))
             .toBatch();
   }
 
@@ -584,11 +584,11 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             snapshotManager,
-            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
             PARTITIONED_DATA_SCHEMA,
             PARTITIONED_PART_SCHEMA,
             info,
-            /* variantShreddingEnabled */ false);
+            /* variantShreddingEnabled */ false,
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
     return (DeltaV2BatchWrite) write.toBatch();
   }
 

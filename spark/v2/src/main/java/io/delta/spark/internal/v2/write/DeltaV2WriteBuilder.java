@@ -63,11 +63,11 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
    * @param initialSnapshot Kernel snapshot loaded at table construction time
    * @param snapshotManager reloads the latest snapshot; used by the streaming write to build each
    *     epoch's commit against the current table state (see {@link DeltaV2StreamingWrite})
-   * @param queryContext request-scoped catalog inputs used when reloading streaming snapshots
    * @param dataSchema the table's data (non-partition) schema, from DeltaV2Table's SchemaProvider
    * @param partitionSchema the table's partition columns in partition order (empty if
    *     unpartitioned), from DeltaV2Table's SchemaProvider
    * @param writeInfo Spark's logical write info (schema, queryId, options)
+   * @param queryContext request-scoped catalog inputs used when reloading streaming snapshots
    */
   public DeltaV2WriteBuilder(
       Engine engine,
@@ -75,10 +75,10 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       Configuration hadoopConf,
       Snapshot initialSnapshot,
       DeltaV2SnapshotManager snapshotManager,
-      DeltaV2QueryContext queryContext,
       StructType dataSchema,
       StructType partitionSchema,
-      LogicalWriteInfo writeInfo) {
+      LogicalWriteInfo writeInfo,
+      DeltaV2QueryContext queryContext) {
     this.engine = requireNonNull(engine, "engine is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
@@ -129,11 +129,11 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         tablePath,
         DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
         snapshotManager,
-        queryContext,
         dataSchema,
         partitionSchema,
         writeInfo,
-        variantShreddingEnabled);
+        variantShreddingEnabled,
+        queryContext);
   }
 
   /**
