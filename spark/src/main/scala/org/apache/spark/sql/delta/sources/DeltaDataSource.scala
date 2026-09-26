@@ -32,6 +32,8 @@ import org.apache.spark.sql.delta.commands.{
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.util.{PartitionUtils, Utils}
 import org.apache.hadoop.fs.Path
 import org.json4s.{Formats, NoTypeHints}
@@ -44,6 +46,7 @@ import org.apache.spark.sql.catalyst.expressions.{EqualTo, Expression, Literal}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{SupportsV1OverwriteWithSaveAsTable, Table, TableProvider}
 import org.apache.spark.sql.connector.expressions.Transform
+import org.apache.spark.sql.execution.datasources.DataSourceUtils
 import org.apache.spark.sql.execution.streaming.{Sink, Source}
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.streaming.OutputMode
@@ -252,6 +255,21 @@ class DeltaDataSource
       .map(DeltaDataSource.decodePartitioningColumns)
       .getOrElse(Nil)
 
+    // `df.write.format("delta").clusterBy(...).save(path)` encodes clustering columns into
+    // options under DataSourceUtils.CLUSTERING_COLUMNS_KEY. Decode them here so the
+    // resulting Delta table records the clustering columns (create) and so that appending
+    // to an existing clustered table with mismatching clusterBy fails fast.
+    val clusterBySpec = parameters.get(DataSourceUtils.CLUSTERING_COLUMNS_KEY)
+      .map(DataSourceUtils.decodePartitioningColumns)
+      .filter(_.nonEmpty)
+      .map(ClusterBySpec.fromColumnNames)
+    // When a new clustered table is created via `df.write.format("delta").clusterBy(...).save`,
+    // we must enable the clustering table feature in the protocol; otherwise commit fails with
+    // DELTA_DOMAIN_METADATA_NOT_SUPPORTED.
+    val clusteringFeatureProps = clusterBySpec
+      .map(_ => ClusteredTableUtils.getTableFeatureProperties(Map.empty))
+      .getOrElse(Map.empty[String, String])
+
     val deltaLog = Utils.getDeltaLogFromTableOrPath(
       sqlContext.sparkSession, catalogTableOpt, new Path(path), parameters)
     val deltaOptions = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
@@ -271,11 +289,12 @@ class DeltaDataSource
       options = deltaOptions,
       partitionColumns = partitionColumns,
       configuration = DeltaConfigs.validateConfigurations(
-        parameters.filterKeys(_.startsWith("delta.")).toMap),
+        parameters.filterKeys(_.startsWith("delta.")).toMap) ++ clusteringFeatureProps,
       data = data,
       // empty catalogTable is acceptable as the code path is only for path based writes
       // (df.write.save("path")) which does not need to use/update catalog
-      catalogTableOpt = None)
+      catalogTableOpt = None,
+      clusterBySpec = clusterBySpec)
     val finalWriteCmd = if (deltaOptions.isReplaceOnOrUsingDefined) {
       DeltaInsertReplaceOnOrUsingCommand.createCmdForSaveAndSaveAsTable(
         deltaTable = DeltaTableV2(

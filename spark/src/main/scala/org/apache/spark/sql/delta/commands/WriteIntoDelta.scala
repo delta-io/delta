@@ -87,7 +87,8 @@ case class WriteIntoDelta(
     override val data: DataFrame,
     val catalogTableOpt: Option[CatalogTable] = None,
     schemaInCatalog: Option[StructType] = None,
-    isInsertReplaceUsingByName: Boolean = false
+    isInsertReplaceUsingByName: Boolean = false,
+    clusterBySpec: Option[ClusterBySpec] = None
     )
   extends LeafRunnableCommand
   with ImplicitMetadataOperation
@@ -109,7 +110,7 @@ case class WriteIntoDelta(
       }
 
       val taggedCommitData = writeAndReturnCommitData(
-        txn, sparkSession
+        txn, sparkSession, clusterBySpec
       )
       val operation = DeltaOperations.Write(
         mode = mode,
