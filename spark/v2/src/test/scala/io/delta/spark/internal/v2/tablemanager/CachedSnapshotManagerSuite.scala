@@ -34,6 +34,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 // scalastyle:off import.ordering.wrongOrderInGroup
 import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2SnapshotManager}
 import io.delta.spark.internal.v2.kernel.{KernelContext, KernelEngineFactory}
 import io.delta.kernel.exceptions.KernelException
 
@@ -49,8 +50,10 @@ import org.apache.hadoop.fs.{FileStatus, FSDataInputStream, Path, RawLocalFileSy
 import org.apache.spark.SparkConf
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{QueryTest, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.test.SharedSparkSession
 // scalastyle:on import.ordering.noEmptyLine
 // scalastyle:on import.ordering.wrongOrderInGroup
@@ -119,6 +122,65 @@ class CachedSnapshotManagerSuite
     assert(
       System.currentTimeMillis() > timestampMs,
       s"Wall clock did not advance beyond $timestampMs")
+  }
+
+  test("contextual APIs use query catalog metadata while legacy APIs use the latest metadata") {
+    withTempDir { dir =>
+      val legacyCatalogTable = CatalogTable(
+        identifier = TableIdentifier("legacy_table"),
+        tableType = CatalogTableType.EXTERNAL,
+        storage = CatalogStorageFormat.empty,
+        schema = new StructType())
+      val queryCatalogTable = CatalogTable(
+        identifier = TableIdentifier("query_table"),
+        tableType = CatalogTableType.EXTERNAL,
+        storage = CatalogStorageFormat.empty,
+        schema = new StructType())
+      val observedCatalogTables = new ConcurrentLinkedQueue[Option[CatalogTable]]()
+      val kernelContext = KernelContext(Map.empty, LogStore.createLogStore(spark))
+      val manager = new CachedSnapshotManager(
+        new Path(dir.getCanonicalPath),
+        kernelContext,
+        new AtomicReference[CatalogTable](legacyCatalogTable)) {
+        override private[tablemanager] def createUncachedSnapshotManager(
+            catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager = {
+          observedCatalogTables.add(catalogTableOpt)
+          throw new IllegalStateException("recorded catalog metadata")
+        }
+      }
+      val queryContext = DeltaV2QueryContext(Some(queryCatalogTable))
+      val kernelEngine = kernelContext.getDefaultEngine()
+
+      def assertRoutesWith(
+          expectedCatalogTableOpt: Option[CatalogTable])(
+          operation: => Any): Unit = {
+        val error = intercept[IllegalStateException](operation)
+        assert(error.getMessage === "recorded catalog metadata")
+        assert(observedCatalogTables.poll() === expectedCatalogTableOpt)
+      }
+
+      val legacyOperations = Seq[() => Any](
+        () => manager.loadLatestSnapshot(),
+        () => manager.loadSnapshotAt(0L),
+        () => manager.getActiveCommitAtTime(0L, false, false, false),
+        () => manager.checkVersionExists(0L, false, false),
+        () => manager.getTableChanges(kernelEngine, 0L, Optional.empty()))
+      legacyOperations.foreach(operation =>
+        assertRoutesWith(Some(legacyCatalogTable))(operation()))
+
+      def contextualOperations(context: DeltaV2QueryContext): Seq[() => Any] = Seq(
+        () => manager.loadLatestSnapshot(context),
+        () => manager.loadSnapshotAt(0L, context),
+        () => manager.getActiveCommitAtTime(0L, false, false, false, context),
+        () => manager.checkVersionExists(0L, false, false, context),
+        () => manager.getTableChanges(kernelEngine, 0L, Optional.empty(), context))
+
+      contextualOperations(queryContext).foreach(operation =>
+        assertRoutesWith(Some(queryCatalogTable))(operation()))
+      contextualOperations(DeltaV2QueryContext.empty).foreach(operation =>
+        assertRoutesWith(None)(operation()))
+      assert(observedCatalogTables.isEmpty)
+    }
   }
 
   private def assertWaitsForSnapshotLock(thread: Thread): Unit = {
