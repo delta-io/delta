@@ -26,66 +26,117 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
 /**
- * An analyzer resolution rule that handles implicit casting for all V2WriteCommands targeting
- * Delta tables via DataFrame by-name writes. This rule runs BEFORE [[DeltaAnalysis]].
+ * Handles INSERT schema alignment before [[DeltaAnalysis]] for DataFrame by-name writes and,
+ * when the resolution fix is enabled, positional writes.
+ * Disabled paths remain handled by [[DeltaAnalysis]].
  */
 case class DeltaImplicitCast(session: SparkSession)
     extends Rule[LogicalPlan] with DeltaInsertCastSupport {
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
-    if (!session.conf.get(DeltaSQLConf.DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS)) return plan
+    val dataFrameImplicitCastsEnabled =
+      session.conf.get(DeltaSQLConf.DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS)
+    val resolutionFixEnabled =
+      session.conf.get(DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED)
     plan.resolveOperatorsDown {
+      // Handle writes routed through the DataFrame by-name cast path.
       case w @ DeltaV2WriteCommand(r, d, writeOptions)
-          if shouldApplyImplicitCast(w, r, d, writeOptions) =>
-        val projection = resolveQueryColumnsByName(
-          query = w.query,
-          targetAttrs = r.output,
-          deltaTable = d,
-          writeOptions = writeOptions,
-          allowSchemaEvolution = true,
-          isDfByNameInsert = true)
-        val newPlan = if (projection != w.query) {
-          w match {
-            case o: OverwriteByExpression =>
-              val aliases = AttributeMap(o.query.output.zip(projection.output).collect {
-                case (l: AttributeReference, r: AttributeReference) if !l.sameRef(r) => (l, r)
-              })
-              val newDeleteExpr = o.deleteExpr.transformUp {
-                case a: AttributeReference => aliases.getOrElse(a, a)
-              }
-              o.copy(deleteExpr = newDeleteExpr, query = projection)
-            case _ => w.withNewQuery(projection)
-          }
-        } else {
-          w
-        }
-        newPlan match {
-          case o: OverwritePartitionsDynamic =>
-            DeltaDynamicPartitionOverwriteCommand(r, d, o.query, o.writeOptions, o.isByName)
-          case other => other
-        }
+          if dataFrameImplicitCastsEnabled &&
+          usesDataFrameByNameCastPath(w) &&
+          shouldApplyByNameCast(w, r, d, writeOptions, isSqlInsert = false) =>
+        rewriteByNameV2WriteCommand(w, r, d, writeOptions, isSqlInsert = false)
+
+      // Handle remaining SQL by-name inserts.
+      case w @ DeltaV2WriteCommand(r, d, writeOptions)
+          if resolutionFixEnabled &&
+          w.isByName &&
+          !usesDataFrameByNameCastPath(w) &&
+          shouldApplyByNameCast(w, r, d, writeOptions, isSqlInsert = true) =>
+        rewriteByNameV2WriteCommand(w, r, d, writeOptions, isSqlInsert = true)
+
+      // Handle positional inserts, including DataFrameWriter.insertInto.
+      case w @ DeltaV2WriteCommand(r, d, writeOptions)
+          if resolutionFixEnabled &&
+          !w.isByName &&
+          !hasReplaceOnOrUsingOption(writeOptions) &&
+          needsSchemaAdjustmentByOrdinal(
+            d,
+            w.query,
+            r.schema,
+            writeOptions,
+            checkNestedFieldsByOrdinal = true) =>
+        val projection = resolveQueryColumnsByOrdinal(w.query, r.output, d, writeOptions)
+        rewriteV2WriteCommand(w, r, d, projection)
     }
   }
 
-  /**
-   * Returns true if this write command is a DataFrame by-name insert that needs implicit casting.
-   * SQL inserts with requireImplicitCasting=true are handled in [[DeltaAnalysis]] instead.
-   */
-  private def shouldApplyImplicitCast(
+  private def rewriteByNameV2WriteCommand(
       w: V2WriteCommand,
       r: DataSourceV2Relation,
       d: DeltaTableV2,
-      writeOptions: Map[String, String]): Boolean = {
-    w.isByName &&
-    w.origin.sqlText.isEmpty &&
-    !writeOptions.get(DeltaOptions.OVERWRITE_SCHEMA_OPTION).exists(_.toBoolean) &&
+      writeOptions: Map[String, String],
+      isSqlInsert: Boolean): LogicalPlan = {
+    val projection = resolveQueryColumnsByName(
+      query = w.query,
+      targetAttrs = r.output,
+      deltaTable = d,
+      writeOptions = writeOptions,
+      allowSchemaEvolution = true,
+      byName = true,
+      isSqlInsert = isSqlInsert)
+    rewriteV2WriteCommand(w, r, d, projection)
+  }
+
+  /**
+   * Builds the rewritten V2WriteCommand from the projected query.
+   */
+  private def rewriteV2WriteCommand(
+      w: V2WriteCommand,
+      r: DataSourceV2Relation,
+      d: DeltaTableV2,
+      projection: LogicalPlan): LogicalPlan = {
+    val newPlan = if (projection != w.query) {
+      w match {
+        case o: OverwriteByExpression =>
+          val aliases = AttributeMap(o.query.output.zip(projection.output).collect {
+            case (l: AttributeReference, r: AttributeReference) if !l.sameRef(r) => (l, r)
+          })
+          val newDeleteExpr = o.deleteExpr.transformUp {
+            case a: AttributeReference => aliases.getOrElse(a, a)
+          }
+          o.copy(deleteExpr = newDeleteExpr, query = projection)
+        case _ => w.withNewQuery(projection)
+      }
+    } else {
+      w
+    }
+    newPlan match {
+      case o: OverwritePartitionsDynamic =>
+        DeltaDynamicPartitionOverwriteCommand(r, d, o.query, o.writeOptions, o.isByName)
+      case other => other
+    }
+  }
+
+  private def shouldApplyByNameCast(
+      w: V2WriteCommand,
+      r: DataSourceV2Relation,
+      d: DeltaTableV2,
+      writeOptions: Map[String, String],
+      isSqlInsert: Boolean): Boolean = {
+    val isDfByNameInsert = w.isByName && !isSqlInsert
+    !(isDfByNameInsert &&
+      writeOptions.get(DeltaOptions.OVERWRITE_SCHEMA_OPTION).exists(_.toBoolean)) &&
     needsSchemaAdjustmentByName(
       query = w.query,
       targetAttrs = r.output,
       deltaTable = d,
       writeOptions = writeOptions,
-      isDfByNameInsert = true)
+      isDfByNameInsert = isDfByNameInsert)
   }
+
+  private def usesDataFrameByNameCastPath(w: V2WriteCommand): Boolean =
+    w.isByName &&
+      w.origin.sqlText.isEmpty
 }
 
 /**

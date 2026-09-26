@@ -3784,6 +3784,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED =
+    buildConf("dml.insert.implicitCastResolutionFixEnabled")
+      .internal()
+      .doc(
+        """Whether INSERT implicit casting uses corrected nested-field resolution. When true,
+          |DeltaImplicitCast takes precedence over DeltaAnalysis for V2 write schema alignment:
+          |SQL BY NAME resolves nested fields by name, while positional writes resolve them by
+          |position. Column-list writes also resolve by position when Spark's corresponding fix
+          |is enabled."""
+          .stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
     buildConf("streaming.initialSnapshotMaxFiles")
       .internal()
