@@ -16,10 +16,8 @@
 
 package org.apache.spark.sql.delta.test.shims
 
-import io.delta.sql.parser.DeltaSqlParser
-
 import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.catalyst.parser.{NamedParameterContext, PositionalParameterContext}
+import org.apache.spark.sql.catalyst.parser.{NamedParameterContext, ParserInterface, PositionalParameterContext}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
 /**
@@ -34,7 +32,7 @@ object ParameterizedQueryShim {
 
   /** Parses `sqlText` after substituting the given named parameter values. */
   def parsePlanWithNamedParameters(
-      parser: DeltaSqlParser,
+      parser: ParserInterface,
       sqlText: String,
       params: Map[String, Any]): LogicalPlan = {
     val context = NamedParameterContext(params.map { case (name, value) => name -> Literal(value) })
@@ -43,7 +41,7 @@ object ParameterizedQueryShim {
 
   /** Parses `sqlText` after substituting the given positional parameter values. */
   def parsePlanWithPositionalParameters(
-      parser: DeltaSqlParser,
+      parser: ParserInterface,
       sqlText: String,
       params: Seq[Any]): LogicalPlan = {
     val context = PositionalParameterContext(params.map(Literal(_)))
@@ -52,7 +50,7 @@ object ParameterizedQueryShim {
 
   /** Parses `sqlText` with an empty parameter context, as `SparkSession.sql(text)` does. */
   def parsePlanWithEmptyParameters(
-      parser: DeltaSqlParser,
+      parser: ParserInterface,
       sqlText: String): LogicalPlan = {
     parser.parsePlanWithParameters(sqlText, NamedParameterContext(Map.empty))
   }

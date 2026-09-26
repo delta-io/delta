@@ -148,7 +148,132 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     val e = intercept[AnalysisException] {
       ParameterizedQueryShim.parsePlanWithEmptyParameters(parser, "SELECT :x AS v")
     }
-    assert(e.getErrorClass === "UNBOUND_SQL_PARAMETER")
+    checkError(
+      e,
+      "UNBOUND_SQL_PARAMETER",
+      parameters = Map("name" -> "x"),
+      context = ExpectedContext(fragment = ":x", start = 7, stop = 8))
+  }
+
+  test("CLUSTER BY delegation substitutes parameters before and after the clustering clause") {
+    assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
+    val parser = new DeltaSqlParser(new SparkSqlParser())
+
+    Seq("CREATE", "REPLACE").foreach { clause =>
+      val prefix = s"$clause TABLE tbl USING DELTA "
+      val sqlText = prefix + "COMMENT :comment CLUSTER BY (a) AS SELECT :value AS a"
+      val actual = ParameterizedQueryShim.parsePlanWithNamedParameters(
+        parser, sqlText, Map("comment" -> "longer than the marker", "value" -> 123))
+      val expected = parser.parsePlan(
+        prefix + "COMMENT 'longer than the marker' CLUSTER BY (a) AS SELECT 123 AS a")
+      assert(actual.sameResult(expected))
+      validateClusterByTransform(clause, asSelect = true, actual, Seq(Seq("a")))
+
+      val positional = ParameterizedQueryShim.parsePlanWithPositionalParameters(
+        parser,
+        prefix + "COMMENT ? CLUSTER BY (a) AS SELECT ? AS a",
+        Seq("longer than the marker", 123))
+      assert(positional.sameResult(expected))
+    }
+  }
+
+  test("CLUSTER BY delegation handles variables and literal parameter values") {
+    assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
+    val parser = new DeltaSqlParser(new SparkSqlParser())
+
+    withSQLConf("parser.table" -> "tbl", "parser.column" -> "a",
+        "parser.literal" -> "EXPANDED") {
+      val sqlText = "CREATE TABLE ${parser.table} USING DELTA " +
+        "CLUSTER BY (${parser.column}) AS SELECT :value AS a"
+      val actual = ParameterizedQueryShim.parsePlanWithNamedParameters(
+        parser, sqlText, Map("value" -> "${parser.literal}"))
+      validateClusterByTransform("CREATE", asSelect = true, actual, Seq(Seq("a")))
+      val query = actual.asInstanceOf[CreateTableAsSelect].query
+      val value = query.collectFirst {
+        case Project(Seq(Alias(l: Literal, _)), _) => l.value.toString
+      }
+      assert(value === Some("${parser.literal}"))
+      assert(actual.asInstanceOf[CreateTableAsSelect].name ===
+        parser.parsePlan("CREATE TABLE tbl USING DELTA CLUSTER BY (a) AS SELECT 1 AS a")
+          .asInstanceOf[CreateTableAsSelect].name)
+    }
+  }
+
+  test("CLUSTER BY delegation handles variable substitution through parsePlan") {
+    val parser = new DeltaSqlParser(new SparkSqlParser())
+    withSQLConf("parser.table" -> "tbl") {
+      val actual = parser.parsePlan(
+        "CREATE TABLE ${parser.table} (a INT) USING DELTA CLUSTER BY (a)")
+      val expected = parser.parsePlan("CREATE TABLE tbl (a INT) USING DELTA CLUSTER BY (a)")
+      assert(actual === expected)
+    }
+  }
+
+  test("CLUSTER BY delegate errors retain their query context") {
+    assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
+    val delegate = new SparkSqlParser()
+    val parser = new DeltaSqlParser(delegate)
+    val sqlText = "CREATE TABLE tbl USING DELTA CLUSTER BY (a) " +
+      "AS SELECT :value AS a, :missing"
+    val params = Map("value" -> 123)
+    val actual = intercept[AnalysisException] {
+      ParameterizedQueryShim.parsePlanWithNamedParameters(parser, sqlText, params)
+    }
+    // Preserve Spark's error context for the original SQL, including positions after CLUSTER BY.
+    val expected = intercept[AnalysisException] {
+      ParameterizedQueryShim.parsePlanWithNamedParameters(
+        delegate, sqlText, params)
+    }
+    assert(actual.getErrorClass === expected.getErrorClass)
+    assert(actual.getMessageParameters === expected.getMessageParameters)
+    assert(actual.getQueryContext.map(c => (c.fragment(), c.startIndex(), c.stopIndex())).toSeq ===
+      expected.getQueryContext.map(c => (c.fragment(), c.startIndex(), c.stopIndex())).toSeq)
+  }
+
+  test("CLUSTER BY expands SQL variables only once") {
+    val parser = new DeltaSqlParser(new SparkSqlParser())
+    val parseMethods = Seq[String => LogicalPlan](parser.parsePlan) ++
+      (if (ParameterizedQueryShim.supportsParserParameterSubstitution) {
+        Seq[String => LogicalPlan](
+          sql => ParameterizedQueryShim.parsePlanWithEmptyParameters(parser, sql))
+      } else {
+        Seq.empty
+      })
+    withSQLConf("parser.dollar" -> "$", "parser.name" -> "EXPANDED",
+        "parser.table" -> "tbl") {
+      // The first expansion joins '$' with '{parser.name}'. The resulting reference is literal.
+      val literal = "'${parser.dollar}{parser.name}'"
+      for (parse <- parseMethods; clause <- Seq("CREATE", "REPLACE")) {
+        val plan = parse(s"$clause TABLE " + "${parser.table} USING DELTA " +
+          s"CLUSTER BY (a) AS SELECT $literal AS a")
+        val value = plan.collectFirst {
+          case Project(Seq(Alias(l: Literal, _)), _) => l.value.toString
+        }
+        assert(value === Some("${parser.name}"))
+        validateClusterByTransform(clause, asSelect = true, plan, Seq(Seq("a")))
+      }
+      val table = parser.parsePlan("CREATE TABLE tbl (a INT) USING DELTA " +
+        s"CLUSTER BY (a) COMMENT $literal").asInstanceOf[CreateTable]
+      assert(table.tableSpec.comment === Some("${parser.name}"))
+    }
+  }
+
+  test("query CLUSTER BY preserves table partitioning") {
+    val delegate = new SparkSqlParser()
+    val parser = new DeltaSqlParser(delegate)
+    for {
+      clause <- Seq("CREATE", "REPLACE")
+      partitioning <- Seq("", "PARTITIONED BY (b)", "CLUSTERED BY (b) INTO 2 BUCKETS")
+    } {
+      val sqlText = s"$clause TABLE tbl USING DELTA $partitioning " +
+        "AS SELECT 1 AS a, 2 AS b CLUSTER BY (a)"
+      val expected = delegate.parsePlan(sqlText)
+      assert(parser.parsePlan(sqlText).sameResult(expected), sqlText)
+      if (ParameterizedQueryShim.supportsParserParameterSubstitution) {
+        val actual = ParameterizedQueryShim.parsePlanWithEmptyParameters(parser, sqlText)
+        assert(actual.sameResult(expected), sqlText)
+      }
+    }
   }
 
   test("legacy parameter substitution mode leaves markers for the analyzer") {

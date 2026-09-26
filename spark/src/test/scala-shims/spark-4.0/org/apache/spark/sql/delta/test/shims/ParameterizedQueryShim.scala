@@ -16,8 +16,7 @@
 
 package org.apache.spark.sql.delta.test.shims
 
-import io.delta.sql.parser.DeltaSqlParser
-
+import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
 /**
@@ -32,7 +31,7 @@ object ParameterizedQueryShim {
 
   /** Not supported on Spark 4.0; tests must check [[supportsParserParameterSubstitution]] first. */
   def parsePlanWithNamedParameters(
-      parser: DeltaSqlParser,
+      parser: ParserInterface,
       sqlText: String,
       params: Map[String, Any]): LogicalPlan = {
     throw new UnsupportedOperationException(
@@ -41,7 +40,7 @@ object ParameterizedQueryShim {
 
   /** Not supported on Spark 4.0; tests must check [[supportsParserParameterSubstitution]] first. */
   def parsePlanWithPositionalParameters(
-      parser: DeltaSqlParser,
+      parser: ParserInterface,
       sqlText: String,
       params: Seq[Any]): LogicalPlan = {
     throw new UnsupportedOperationException(
@@ -50,7 +49,7 @@ object ParameterizedQueryShim {
 
   /** Not supported on Spark 4.0; tests must check [[supportsParserParameterSubstitution]] first. */
   def parsePlanWithEmptyParameters(
-      parser: DeltaSqlParser,
+      parser: ParserInterface,
       sqlText: String): LogicalPlan = {
     throw new UnsupportedOperationException(
       "Spark 4.0 substitutes SQL parameters during analysis, not in the parser")

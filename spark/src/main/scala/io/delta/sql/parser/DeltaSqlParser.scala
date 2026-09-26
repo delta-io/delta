@@ -490,24 +490,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   override def visitClusterBy(ctx: ClusterByContext): LogicalPlan = withOrigin(ctx) {
     val clusterBySpecCtx = ctx.clusterBySpec.asScala.head
     checkDuplicateClauses(ctx.clusterBySpec, "CLUSTER BY", clusterBySpecCtx)
-    val columnNames =
-      clusterBySpecCtx.interleave.asScala
-        .map(_.identifier.asScala.map(_.getText).toSeq)
-        .map(_.asInstanceOf[Seq[String]]).toSeq
-    // get CLUSTER BY clause positions.
-    val startIndex = clusterBySpecCtx.getStart.getStartIndex
-    val stopIndex = clusterBySpecCtx.getStop.getStopIndex
-
-    // get CLUSTER BY parenthesis positions.
-    val parenStartIndex = clusterBySpecCtx.LEFT_PAREN().getSymbol.getStartIndex
-    val parenStopIndex = clusterBySpecCtx.RIGHT_PAREN().getSymbol.getStopIndex
-    ClusterByPlan(
-      ClusterBySpec(columnNames),
-      startIndex,
-      stopIndex,
-      parenStartIndex,
-      parenStopIndex,
-      clusterBySpecCtx)
+    ClusterByPlan(clusterBySpecCtx)
   }
 
   /**

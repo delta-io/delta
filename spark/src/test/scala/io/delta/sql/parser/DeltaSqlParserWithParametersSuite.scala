@@ -31,6 +31,28 @@ class DeltaSqlParserWithParametersSuite extends DeltaSQLCommandTest {
     assert(spark.sql("SELECT :x AS v", Map("x" -> 1)).collect().toSeq === Seq(Row(1)))
   }
 
+  test("spark.sql with positional parameters works with the Delta extension") {
+    assert(spark.sql("SELECT ? AS v, ? AS w", Array[Any](1, "hello")).collect().toSeq ===
+      Seq(Row(1, "hello")))
+  }
+
+  test("spark.sql creates a clustered table with variables and parameters") {
+    assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
+    withTable("parser_clustered_table") {
+      withConf("parser.table" -> "parser_clustered_table", "parser.column" -> "a",
+          "parser.literal" -> "EXPANDED") {
+        spark.sql(
+          "CREATE TABLE ${parser.table} USING DELTA COMMENT :comment " +
+            "CLUSTER BY (${parser.column}) AS SELECT :value AS a",
+          Map("comment" -> "parameterized table", "value" -> "${parser.literal}"))
+        assert(spark.table("parser_clustered_table").collect().toSeq ===
+          Seq(Row("${parser.literal}")))
+        assert(spark.sql("DESCRIBE DETAIL parser_clustered_table")
+          .select("clusteringColumns").collect().toSeq === Seq(Row(Seq("a"))))
+      }
+    }
+  }
+
   test("named parameter in an IDENTIFIER clause creates a database") {
     assume(ParameterizedQueryShim.supportsParserParameterSubstitution)
     try {
@@ -38,6 +60,17 @@ class DeltaSqlParserWithParametersSuite extends DeltaSQLCommandTest {
       assert(spark.catalog.databaseExists("parser_test_db"))
     } finally {
       spark.sql("DROP DATABASE IF EXISTS parser_test_db")
+    }
+  }
+
+  test("clustered CTAS expands SQL variables only once") {
+    withTable("parser_variable_table") {
+      withConf("parser.dollar" -> "$", "parser.name" -> "EXPANDED") {
+        spark.sql("CREATE TABLE parser_variable_table USING DELTA CLUSTER BY (a) " +
+          "AS SELECT '${parser.dollar}{parser.name}' AS a")
+        assert(spark.table("parser_variable_table").collect().toSeq ===
+          Seq(Row("${parser.name}")))
+      }
     }
   }
 

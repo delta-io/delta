@@ -33,6 +33,6 @@ trait DeltaParserWithParametersShim { self: DeltaSqlParser =>
       parameterContext: ParameterContext): LogicalPlan = {
     parsePlanWithFallback(
       sqlText,
-      substitutedSql => delegate.parsePlanWithParameters(substitutedSql, parameterContext))
+      sql => delegate.parsePlanWithParameters(sql, parameterContext))
   }
 }
