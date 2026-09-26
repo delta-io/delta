@@ -30,17 +30,25 @@ import org.apache.spark.SparkFunSuite
 
 class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
 
-  test("query-context methods forward to context-free implementations by default") {
+  test("deprecated context-free methods forward an empty query context") {
     var forwardedCalls = 0
 
     val manager = new DeltaV2SnapshotManager {
-      override def loadLatestSnapshot(): Snapshot = {
+      private def assertEmptyQueryContext(queryContext: DeltaV2QueryContext): Unit = {
+        assert(queryContext.catalogTableOpt.isEmpty)
+      }
+
+      override def loadLatestSnapshot(queryContext: DeltaV2QueryContext): Snapshot = {
+        assertEmptyQueryContext(queryContext)
         forwardedCalls += 1
         null
       }
 
-      override def loadSnapshotAt(version: Long): Snapshot = {
+      override def loadSnapshotAt(
+          version: Long,
+          queryContext: DeltaV2QueryContext): Snapshot = {
         assert(version == 17)
+        assertEmptyQueryContext(queryContext)
         forwardedCalls += 1
         null
       }
@@ -49,11 +57,13 @@ class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
           timestampMillis: Long,
           canReturnLastCommit: Boolean,
           mustBeRecreatable: Boolean,
-          canReturnEarliestCommit: Boolean): KernelDeltaHistoryManager.Commit = {
+          canReturnEarliestCommit: Boolean,
+          queryContext: DeltaV2QueryContext): KernelDeltaHistoryManager.Commit = {
         assert(timestampMillis == 23)
         assert(canReturnLastCommit)
         assert(mustBeRecreatable)
         assert(!canReturnEarliestCommit)
+        assertEmptyQueryContext(queryContext)
         forwardedCalls += 1
         null
       }
@@ -61,58 +71,46 @@ class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
       override def checkVersionExists(
           version: Long,
           mustBeRecreatable: Boolean,
-          allowOutOfRange: Boolean): Unit = {
+          allowOutOfRange: Boolean,
+          queryContext: DeltaV2QueryContext): Unit = {
         assert(version == 29)
         assert(mustBeRecreatable)
         assert(!allowOutOfRange)
+        assertEmptyQueryContext(queryContext)
         forwardedCalls += 1
       }
 
       override def getTableChanges(
           kernelEngine: KernelEngine,
           startVersion: Long,
-          endVersion: Optional[JLong]): KernelCommitRange = {
+          endVersion: Optional[JLong],
+          queryContext: DeltaV2QueryContext): KernelCommitRange = {
         assert(kernelEngine == null)
         assert(startVersion == 31)
         assert(endVersion == Optional.of[JLong](37L))
+        assertEmptyQueryContext(queryContext)
         forwardedCalls += 1
         null
       }
     }
 
-    val queryContextOpt = Option.empty[DeltaV2QueryContext]
-
-    assert(manager.loadLatestSnapshot(queryContextOpt) == null)
-    assert(manager.loadSnapshotAt(17, queryContextOpt) == null)
+    assert(manager.loadLatestSnapshot() == null)
+    assert(manager.loadSnapshotAt(17) == null)
     assert(
       manager.getActiveCommitAtTime(
         23,
         canReturnLastCommit = true,
         mustBeRecreatable = true,
-        canReturnEarliestCommit = false,
-        queryContextOpt = queryContextOpt) == null)
+        canReturnEarliestCommit = false) == null)
     manager.checkVersionExists(
       29,
       mustBeRecreatable = true,
-      allowOutOfRange = false,
-      queryContextOpt = queryContextOpt)
+      allowOutOfRange = false)
     assert(
       manager.getTableChanges(
         null,
         31,
-        Optional.of[JLong](37L),
-        queryContextOpt) == null)
-
-    def assertNullQueryContext(body: => Any): Unit = {
-      val error = intercept[NullPointerException](body)
-      assert(error.getMessage == "queryContextOpt is null")
-    }
-
-    assertNullQueryContext(manager.loadLatestSnapshot(null))
-    assertNullQueryContext(manager.loadSnapshotAt(41, null))
-    assertNullQueryContext(manager.getActiveCommitAtTime(43, true, false, true, null))
-    assertNullQueryContext(manager.checkVersionExists(47, false, true, null))
-    assertNullQueryContext(manager.getTableChanges(null, 53, Optional.empty(), null))
+        Optional.of[JLong](37L)) == null)
     assert(forwardedCalls == 5)
   }
 }

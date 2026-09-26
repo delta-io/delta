@@ -15,7 +15,7 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
-import java.util.Optional
+import java.util.{Objects, Optional}
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 
@@ -24,6 +24,7 @@ import scala.jdk.OptionConverters._
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.spark.internal.v2.DeltaV2Logging
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
@@ -60,13 +61,17 @@ private[tablemanager] class CachedSnapshotManager(
 
   // === DeltaV2SnapshotManager implementation ================================
 
-  override def loadLatestSnapshot(): Snapshot = {
+  override def loadLatestSnapshot(queryContext: DeltaV2QueryContext): Snapshot = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     recordFrameProfile("cachedSnapshotManager.loadLatestSnapshot") {
       loadLatestSnapshotInternal()
     }
   }
 
-  override def loadSnapshotAt(version: Long): Snapshot = {
+  override def loadSnapshotAt(
+      version: Long,
+      queryContext: DeltaV2QueryContext): Snapshot = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     recordFrameProfile("cachedSnapshotManager.loadSnapshotAt") {
       loadSnapshotAtInternal(version)
     }
@@ -76,27 +81,36 @@ private[tablemanager] class CachedSnapshotManager(
       timestampMillis: Long,
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
-      canReturnEarliestCommit: Boolean): KernelDeltaHistoryManager.Commit =
+      canReturnEarliestCommit: Boolean,
+      queryContext: DeltaV2QueryContext): KernelDeltaHistoryManager.Commit = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     withUncachedSnapshotManager(latestCatalogTable.get())(
       _.getActiveCommitAtTime(
         timestampMillis,
         canReturnLastCommit,
         mustBeRecreatable,
         canReturnEarliestCommit))
+  }
 
   override def checkVersionExists(
       version: Long,
       mustBeRecreatable: Boolean,
-      allowOutOfRange: Boolean): Unit =
+      allowOutOfRange: Boolean,
+      queryContext: DeltaV2QueryContext): Unit = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     withUncachedSnapshotManager(latestCatalogTable.get())(
       _.checkVersionExists(version, mustBeRecreatable, allowOutOfRange))
+  }
 
   override def getTableChanges(
       kernelEngine: KernelEngine,
       startVersion: Long,
-      endVersion: Optional[java.lang.Long]): KernelCommitRange =
+      endVersion: Optional[java.lang.Long],
+      queryContext: DeltaV2QueryContext): KernelCommitRange = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     withUncachedSnapshotManager(latestCatalogTable.get())(
       _.getTableChanges(kernelEngine, startVersion, endVersion))
+  }
 
   // === Snapshot lifecycle ===================================================
 
