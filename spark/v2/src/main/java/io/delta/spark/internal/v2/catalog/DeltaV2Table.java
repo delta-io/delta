@@ -254,7 +254,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         DeltaV2TableManagerCache$.MODULE$.forTable(
             activeSession, tablePath, options, catalogTableOpt);
     this.kernelEngine = tableManager.kernelContext().getDefaultEngine();
-    this.snapshotManager = tableManager.snapshotManager(catalogTableOpt);
+    this.snapshotManager = tableManager.queryContextSnapshotManager();
     try {
       if (timeTravelVersion.isPresent()) {
         this.initialSnapshot =
@@ -591,10 +591,10 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         hadoopConf,
         initialSnapshot,
         snapshotManager,
-        queryContext,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
-        info);
+        info,
+        queryContext);
   }
 
   /**

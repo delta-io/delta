@@ -134,10 +134,10 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
                     path,
                     snapshot,
                     snapshotManager,
-                    queryContext,
                     TABLE_SCHEMA,
                     new StructType(),
-                    info)
+                    info,
+                    queryContext)
                 .toStreaming();
 
     write.commit(0L, new WriterCommitMessage[] {writeEpoch(write, 0L, 1, "Alice")});
@@ -460,10 +460,10 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             snapshotManager,
-            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
             TABLE_SCHEMA,
             new StructType(),
-            info);
+            info,
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
     return (DeltaV2StreamingWrite) write.toStreaming();
   }
 
@@ -491,10 +491,10 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             snapshotManager,
-            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
             PARTITIONED_DATA_SCHEMA,
             PARTITIONED_PART_SCHEMA,
-            info);
+            info,
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
     return (DeltaV2StreamingWrite) write.toStreaming();
   }
 

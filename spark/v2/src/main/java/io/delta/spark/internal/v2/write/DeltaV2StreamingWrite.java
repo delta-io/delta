@@ -75,18 +75,18 @@ class DeltaV2StreamingWrite implements StreamingWrite {
    * @param engine Kernel engine (driver-only)
    * @param initialSnapshot the batch's planned snapshot; write-state source and guard baseline
    * @param snapshotManager reloads the latest snapshot per epoch (see {@link #commit})
-   * @param queryContext request-scoped catalog inputs used when reloading each epoch's snapshot
    * @param queryId streaming query id; the transaction application id for cross-restart idempotency
    * @param dataWriterFactoryBuilder builds the executor write state; supplied by {@link
    *     DeltaV2Write} to share construction with the batch path
+   * @param queryContext request-scoped catalog inputs used when reloading each epoch's snapshot
    */
   DeltaV2StreamingWrite(
       Engine engine,
       Snapshot initialSnapshot,
       DeltaV2SnapshotManager snapshotManager,
-      DeltaV2QueryContext queryContext,
       String queryId,
-      Function<Transaction, DeltaV2DataWriterFactory> dataWriterFactoryBuilder) {
+      Function<Transaction, DeltaV2DataWriterFactory> dataWriterFactoryBuilder,
+      DeltaV2QueryContext queryContext) {
     this.engine = requireNonNull(engine, "engine is null");
     requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");

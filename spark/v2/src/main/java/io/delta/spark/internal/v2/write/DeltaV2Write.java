@@ -93,9 +93,9 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
    *     streaming guard's schema/protocol baseline)
    * @param snapshotManager reloads the latest snapshot per epoch on the streaming path; unused by
    *     the batch path (a single commit off {@code initialSnapshot})
-   * @param queryContext request-scoped catalog inputs used when reloading streaming snapshots
    * @param dataSchema the non-partition columns (the Parquet file body)
    * @param partitionSchema the partition columns in partition order (empty when unpartitioned)
+   * @param queryContext request-scoped catalog inputs used when reloading streaming snapshots
    */
   DeltaV2Write(
       Engine engine,
@@ -103,10 +103,10 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
       String tablePath,
       Snapshot initialSnapshot,
       DeltaV2SnapshotManager snapshotManager,
-      DeltaV2QueryContext queryContext,
       StructType dataSchema,
       StructType partitionSchema,
-      LogicalWriteInfo writeInfo) {
+      LogicalWriteInfo writeInfo,
+      DeltaV2QueryContext queryContext) {
     this.engine = requireNonNull(engine, "engine is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
@@ -148,9 +148,9 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
         engine,
         initialSnapshot,
         snapshotManager,
-        queryContext,
         queryId,
-        context::buildDataWriterFactory);
+        context::buildDataWriterFactory,
+        queryContext);
   }
 
   /**
