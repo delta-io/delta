@@ -375,8 +375,7 @@ public class MetadataEvolutionHandler {
     } else {
       SnapshotImpl snapshot =
           DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-              snapshotManager.loadSnapshotAt(
-                  batchStartVersion, originalQueryContext));
+              snapshotManager.loadSnapshotAt(batchStartVersion, originalQueryContext));
       version = snapshot.getVersion();
       metadata = snapshot.getMetadata();
       protocol = snapshot.getProtocol();
@@ -819,10 +818,7 @@ public class MetadataEvolutionHandler {
     CommitRangeImpl commitRange =
         (CommitRangeImpl)
             snapshotManager.getTableChanges(
-                engine,
-                currentMetadataVersion,
-                Optional.empty(),
-                originalQueryContext);
+                engine, currentMetadataVersion, Optional.empty(), originalQueryContext);
 
     try (CloseableIterator<CommitActions> commitsIter =
         // Always include CDC: the merger must stop on any file action

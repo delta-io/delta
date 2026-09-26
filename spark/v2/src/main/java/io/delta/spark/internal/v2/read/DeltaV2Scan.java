@@ -131,7 +131,6 @@ class DeltaV2Scan extends DeltaV2JavaLogging
       OptionalInt pushedLimit) {
     this(
         snapshotManager,
-        DeltaV2QueryContext$.MODULE$.apply(Optional.empty()),
         initialSnapshot,
         tableSchema,
         dataSchema,
@@ -142,12 +141,12 @@ class DeltaV2Scan extends DeltaV2JavaLogging
         partitionFilters,
         catalogStats,
         options,
-        pushedLimit);
+        pushedLimit,
+        DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
   }
 
   public DeltaV2Scan(
       DeltaV2SnapshotManager snapshotManager,
-      DeltaV2QueryContext originalQueryContext,
       io.delta.kernel.Snapshot initialSnapshot,
       StructType tableSchema,
       StructType dataSchema,
@@ -158,7 +157,8 @@ class DeltaV2Scan extends DeltaV2JavaLogging
       Expression[] partitionFilters,
       Optional<Statistics> catalogStats,
       CaseInsensitiveStringMap options,
-      OptionalInt pushedLimit) {
+      OptionalInt pushedLimit,
+      DeltaV2QueryContext originalQueryContext) {
 
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
     this.originalQueryContext =
@@ -290,8 +290,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     // checks. DeltaV2Scan's initialSnapshot is from analysis time and may be stale by stream
     // start/restart.
     // Matches V1's DeltaDataSource.createSource() behavior.
-    Snapshot latestSnapshot =
-        snapshotManager.loadLatestSnapshot(originalQueryContext);
+    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot(originalQueryContext);
     SparkSession spark = SparkSession.active();
 
     // Create metadata tracking log for non-additive schema evolution support.

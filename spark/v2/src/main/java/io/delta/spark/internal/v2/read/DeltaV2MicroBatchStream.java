@@ -863,8 +863,7 @@ class DeltaV2MicroBatchStream
     if (options.startingVersion().isDefined()) {
       DeltaStartingVersion startingVersion = options.startingVersion().get();
       if (startingVersion instanceof StartingVersionLatest$) {
-        Snapshot latestSnapshot =
-            snapshotManager.loadLatestSnapshot(originalQueryContext);
+        Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot(originalQueryContext);
         // "latest": start reading from the next commit
         cachedStartingVersion = Optional.of(latestSnapshot.version() + 1);
         return cachedStartingVersion;
@@ -877,10 +876,7 @@ class DeltaV2MicroBatchStream
           // check is skipped, so this is technically not safe, but we keep it this way for
           // historical reasons.
           snapshotManager.checkVersionExists(
-              version,
-              /* mustBeRecreatable= */ false,
-              allowOutOfRange,
-              originalQueryContext);
+              version, /* mustBeRecreatable= */ false, allowOutOfRange, originalQueryContext);
         }
         cachedStartingVersion = Optional.of(version);
         return cachedStartingVersion;
@@ -927,8 +923,7 @@ class DeltaV2MicroBatchStream
             /* mustBeRecreatable= */ false,
             /* canReturnEarliestCommit= */ true,
             originalQueryContext);
-    long latestVersion =
-        snapshotManager.loadLatestSnapshot(originalQueryContext).version();
+    long latestVersion = snapshotManager.loadLatestSnapshot(originalQueryContext).version();
     long startingVersion =
         DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp(
             /* timeZone= */ spark.sessionState().conf().sessionLocalTimeZone(),
@@ -1260,8 +1255,7 @@ class DeltaV2MicroBatchStream
         // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
         // TODO(#5318): kernel should ideally relax this constraint.
         endVersionOpt =
-            Optional.of(
-                snapshotManager.loadLatestSnapshot(originalQueryContext).version());
+            Optional.of(snapshotManager.loadLatestSnapshot(originalQueryContext).version());
       }
 
       // After capping, check if startVersion is beyond the endVersion.
@@ -1771,8 +1765,7 @@ class DeltaV2MicroBatchStream
     try {
       startVersionSnapshot =
           DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-              snapshotManager.loadSnapshotAt(
-                  batchStartVersion, originalQueryContext));
+              snapshotManager.loadSnapshotAt(batchStartVersion, originalQueryContext));
     } catch (Exception e) {
       err = e;
     }

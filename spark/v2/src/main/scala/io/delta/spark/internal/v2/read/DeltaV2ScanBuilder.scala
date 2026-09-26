@@ -206,7 +206,6 @@ private[read] class DeltaV2ScanBuilder(
         DeltaV2Snapshot.getKernelSnapshot(initialSnapshot)
       val scan = new DeltaV2Scan(
         snapshotManager,
-        originalQueryContext,
         kernelSnapshot,
         tableSchema,
         dataSchema,
@@ -217,7 +216,8 @@ private[read] class DeltaV2ScanBuilder(
         partitionCatalystFilters,
         catalogStats,
         options,
-        effectiveLimit)
+        effectiveLimit,
+        originalQueryContext)
       scan
     }
 
