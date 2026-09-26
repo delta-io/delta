@@ -27,7 +27,7 @@ import org.antlr.v4.runtime.ParserRuleContext
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.parser.{ParseException, ParserInterface, ParserUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, CreateTableAsSelect, LeafNode, LogicalPlan, ReplaceTable, ReplaceTableAsSelect}
-import org.apache.spark.sql.connector.expressions.{BucketTransform, FieldReference, NamedReference, Transform}
+import org.apache.spark.sql.connector.expressions.{ClusterByTransform => SparkClusterByTransform, FieldReference, NamedReference, Transform}
 
 /**
  * A container for clustering information. Copied from OSS Spark.
@@ -89,27 +89,15 @@ object ClusterBySpec {
  * This class will be removed when we integrate with OSS Spark's CLUSTER BY implementation.
  * @see https://github.com/apache/spark/pull/42577
  *
- * @param clusterBySpec: clusterBySpec which contains the clustering columns.
- * @param startIndex: start index of CLUSTER BY clause.
- * @param stopIndex: stop index of CLUSTER BY clause.
- * @param parenStartIndex: start index of the left parenthesis in CLUSTER BY clause.
- * @param parenStopIndex: stop index of the right parenthesis in CLUSTER BY clause.
  * @param ctx: parser rule context of the CLUSTER BY clause.
  */
-case class ClusterByPlan(
-    clusterBySpec: ClusterBySpec,
-    startIndex: Int,
-    stopIndex: Int,
-    parenStartIndex: Int,
-    parenStopIndex: Int,
-    ctx: ParserRuleContext)
-    extends LeafNode {
+case class ClusterByPlan(ctx: ParserRuleContext) extends LeafNode {
   override def withNewChildrenInternal(newChildren: IndexedSeq[LogicalPlan]): LogicalPlan = this
   override def output: Seq[Attribute] = Seq.empty
 }
 
 /**
- * Parser utils for parsing a [[ClusterByPlan]] and converts it to table properties.
+ * Adapts Spark's parsed table plans to Delta's clustering transform.
  *
  * This class will be removed when we integrate with OSS Spark's CLUSTER BY implementation.
  * @see https://github.com/apache/spark/pull/42577
@@ -118,57 +106,51 @@ case class ClusterByPlan(
  * @param delegate: delegate parser.
  */
 case class ClusterByParserUtils(clusterByPlan: ClusterByPlan, delegate: ParserInterface) {
-  // Update partitioning to include clustering columns as transforms.
-  private def updatePartitioning(partitioning: Seq[Transform]): Seq[Transform] = {
-    // Validate no bucketing is specified.
-    if (partitioning.exists(t => t.isInstanceOf[BucketTransform])) {
-      ParserUtils.operationNotAllowed(
-        "Clustering and bucketing cannot both be specified. " +
-          "Please remove CLUSTERED BY INTO BUCKETS if you " +
-          "want to create a Delta table with clustering",
-        clusterByPlan.ctx)
+  private def convertClusteringTransforms(partitioning: Seq[Transform]): Seq[Transform] = {
+    partitioning.map {
+      case clustering: SparkClusterByTransform => ClusterByTransform(clustering.columnNames)
+      case transform => transform
     }
-    Seq(ClusterByTransform(clusterByPlan.clusterBySpec.columnNames))
   }
 
   /**
-   * Parse the [[ClusterByPlan]] by replacing CLUSTER BY with PARTITIONED BY and
-   * leverage Spark SQL parser to perform the validation. After parsing, store the
-   * clustering columns in the logical plan's partitioning transforms.
+   * All supported Spark versions parse CLUSTER BY natively. Delegate the original SQL so Spark
+   * applies variable and parameter substitution once and retains the original error positions.
+   * After parsing, replace Spark's clustering transform with Delta's transform.
    *
-   * @param sqlText: original SQL text.
+   * @param sqlText: original SQL text, before variable or parameter substitution.
+   * @param delegateParse: delegate entry point, including the parameter context when present.
    * @return the logical plan after parsing.
    */
-  def parsePlan(sqlText: String): LogicalPlan = {
-    val colText =
-      sqlText.substring(clusterByPlan.parenStartIndex, clusterByPlan.parenStopIndex + 1)
-    // Replace CLUSTER BY with PARTITIONED BY to let SparkSqlParser do the validation for us.
-    // This serves as a short-term workaround until Spark incorporates CREATE TABLE ... CLUSTER BY
-    // syntax.
-    val partitionedByText = "PARTITIONED BY " + colText
-    val newSqlText =
-      sqlText.substring(0, clusterByPlan.startIndex) +
-        partitionedByText +
-        sqlText.substring(clusterByPlan.stopIndex + 1)
+  def parsePlan(
+      sqlText: String,
+      delegateParse: String => LogicalPlan = delegate.parsePlan): LogicalPlan = {
     try {
-      delegate.parsePlan(newSqlText) match {
+      delegateParse(sqlText) match {
         case create: CreateTable =>
-          create.copy(partitioning = updatePartitioning(create.partitioning))
+          create.copy(partitioning = convertClusteringTransforms(create.partitioning))
         case ctas: CreateTableAsSelect =>
-          ctas.copy(partitioning = updatePartitioning(ctas.partitioning))
+          ctas.copy(partitioning = convertClusteringTransforms(ctas.partitioning))
         case replace: ReplaceTable =>
-          replace.copy(partitioning = updatePartitioning(replace.partitioning))
+          replace.copy(partitioning = convertClusteringTransforms(replace.partitioning))
         case rtas: ReplaceTableAsSelect =>
-          rtas.copy(partitioning = updatePartitioning(rtas.partitioning))
+          rtas.copy(partitioning = convertClusteringTransforms(rtas.partitioning))
         case plan => plan
       }
     } catch {
-      case e: ParseException if (e.errorClass.contains("DUPLICATE_CLAUSES")) =>
-        // Since we replace CLUSTER BY with PARTITIONED BY, duplicated clauses means we
-        // encountered CLUSTER BY with PARTITIONED BY.
+      // Preserve Delta's existing diagnostics for incompatible table layouts.
+      case e: ParseException
+          if e.errorClass.contains("SPECIFY_CLUSTER_BY_WITH_PARTITIONED_BY_IS_NOT_ALLOWED") =>
         ParserUtils.operationNotAllowed(
           "Clustering and partitioning cannot both be specified. " +
             "Please remove PARTITIONED BY if you want to create a Delta table with clustering",
+          clusterByPlan.ctx)
+      case e: ParseException
+          if e.errorClass.contains("SPECIFY_CLUSTER_BY_WITH_BUCKETING_IS_NOT_ALLOWED") =>
+        ParserUtils.operationNotAllowed(
+          "Clustering and bucketing cannot both be specified. " +
+            "Please remove CLUSTERED BY INTO BUCKETS if you " +
+            "want to create a Delta table with clustering",
           clusterByPlan.ctx)
     }
   }
