@@ -19,11 +19,14 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.TableConfig;
+import io.delta.spark.internal.v2.utils.ScalaUtils;
+import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
+import org.apache.spark.sql.delta.DeltaConfigs;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
@@ -108,6 +111,10 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       }
     }
 
+    // Resolved here rather than inside the write context: this snapshot facade exposes Delta
+    // metadata, so the property resolves through the same V1 accessor (alternate keys and default
+    // included), while the context downstream holds only the Kernel snapshot.
+    boolean variantShreddingEnabled = isVariantShreddingEnabled(initialSnapshot);
     // Returns a mode-dispatching Write: toBatch() -> DeltaV2BatchWrite (batch commit off
     // initialSnapshot), toStreaming() -> DeltaV2StreamingWrite (per-epoch commit off the latest
     // snapshot via snapshotManager). Both modes share the executor-side write-state construction.
@@ -119,7 +126,33 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         snapshotManager,
         dataSchema,
         partitionSchema,
-        writeInfo);
+        writeInfo,
+        variantShreddingEnabled);
+  }
+
+  /**
+   * Whether {@code snapshot} opted into shredded variant writes.
+   *
+   * <p>Read through the V1 {@link DeltaConfigs} accessor so alternate property keys and the
+   * property default are handled exactly as the V1 write path handles them. Package-visible because
+   * the streaming commit re-reads it off a reloaded snapshot to detect a mid-query change.
+   */
+  static boolean isVariantShreddingEnabled(Snapshot snapshot) {
+    return (Boolean) DeltaConfigs.ENABLE_VARIANT_SHREDDING().fromMetaData(snapshot.metadata());
+  }
+
+  /**
+   * The same property, resolved from a Kernel table configuration map rather than the snapshot
+   * facade. {@code DeltaConfig#fromMetaData} is defined as {@code fromMap(metadata.configuration)},
+   * so this is the identical lookup -- alternate keys and default included -- reached from the
+   * other snapshot representation. The streaming guard needs it because it holds the reloaded
+   * Kernel snapshot; going through the facade there would mean either naming that type in a file
+   * whose {@code Snapshot} is Kernel's, or reloading the table a second time and judging the guard
+   * against a different version than the commit.
+   */
+  static boolean isVariantShreddingEnabled(Map<String, String> tableConfiguration) {
+    return (Boolean)
+        DeltaConfigs.ENABLE_VARIANT_SHREDDING().fromMap(ScalaUtils.toScalaMap(tableConfiguration));
   }
 
   static void validateDataSchema(Snapshot initialSnapshot, StructType dataSchema) {

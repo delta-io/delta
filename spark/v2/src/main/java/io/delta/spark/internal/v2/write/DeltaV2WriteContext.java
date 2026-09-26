@@ -34,7 +34,9 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.delta.shims.VariantShreddingShims;
 import org.apache.spark.sql.execution.datasources.OutputWriterFactory;
+import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.SerializableConfiguration;
@@ -76,6 +78,14 @@ class DeltaV2WriteContext {
   private final OutputWriterFactory outputWriterFactory;
   private final SerializableConfiguration serializableHadoopConf;
   private final String sessionTimeZone;
+  /**
+   * Whether the variant shredding layout of this write actually tracks {@code
+   * delta.enableVariantShredding}. It does only when this Spark version can shred, the write
+   * shredding kill switch is on, and the data schema contains a variant column; otherwise the
+   * property cannot change the files, so the streaming guard must not act on a change to it. Frozen
+   * here because the writer factory froze the same inputs.
+   */
+  private final boolean variantLayoutFollowsProperty;
 
   static DeltaV2WriteContext create(
       Engine engine,
@@ -84,9 +94,17 @@ class DeltaV2WriteContext {
       Snapshot initialSnapshot,
       StructType dataSchema,
       StructType partitionSchema,
-      LogicalWriteInfo writeInfo) {
+      LogicalWriteInfo writeInfo,
+      boolean variantShreddingEnabled) {
     return new DeltaV2WriteContext(
-        engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
+        engine,
+        hadoopConf,
+        tablePath,
+        initialSnapshot,
+        dataSchema,
+        partitionSchema,
+        writeInfo,
+        variantShreddingEnabled);
   }
 
   private static void verifySchemaForWrite(DeltaParquetFileFormatV2 format, StructType dataSchema) {
@@ -140,7 +158,8 @@ class DeltaV2WriteContext {
       Snapshot initialSnapshot,
       StructType dataSchema,
       StructType partitionSchema,
-      LogicalWriteInfo writeInfo) {
+      LogicalWriteInfo writeInfo,
+      boolean variantShreddingEnabled) {
     this.engine = engine;
     this.kernelTableSchema = initialSnapshot.getSchema();
 
@@ -173,11 +192,89 @@ class DeltaV2WriteContext {
     verifySchemaForWrite(format, this.dataSchema);
     org.apache.spark.sql.execution.datasources.DataSourceUtils.checkFieldNames(
         format, this.dataSchema);
-    Map<String, String> options = writeInfo.options().asCaseSensitiveMap();
+    Map<String, String> parquetOptions =
+        mergeVariantShreddingOptions(
+            writeInfo.options().asCaseSensitiveMap(), variantShreddingEnabled);
     scala.collection.immutable.Map<String, String> scalaOpts =
-        ScalaUtils.toScalaMap(options != null ? options : Collections.emptyMap());
+        ScalaUtils.toScalaMap(parquetOptions);
     this.outputWriterFactory = format.prepareWrite(session, job, scalaOpts, this.dataSchema);
     this.serializableHadoopConf = new SerializableConfiguration(job.getConfiguration());
+    this.variantLayoutFollowsProperty =
+        computeVariantLayoutFollowsProperty(session, this.dataSchema);
+  }
+
+  /**
+   * Returns {@code callerOptions} with the table-derived variant shredding options applied, so the
+   * Parquet writer shreds exactly when the table opted in.
+   *
+   * <p>The option comes from {@link VariantShreddingShims} because the underlying conf exists only
+   * in newer Spark versions while this class compiles against every supported one. The shim yields
+   * no entry where the conf is absent, leaving the writer on its default behavior there.
+   *
+   * <p>Any caller spelling that differs from a shim key only in case is dropped first. {@code
+   * ParquetOptions} reads these through a case-insensitive map, which collapses such keys in map
+   * iteration order, so leaving both in place would make the effective value depend on iteration
+   * order rather than on the table property.
+   *
+   * <p>Package-visible so the merge can be asserted directly: the resulting file layout cannot
+   * distinguish which of two colliding spellings won.
+   */
+  static Map<String, String> mergeVariantShreddingOptions(
+      Map<String, String> callerOptions, boolean variantShreddingEnabled) {
+    Map<String, String> merged =
+        new HashMap<>(callerOptions != null ? callerOptions : Collections.emptyMap());
+    Map<String, String> shreddingOptions =
+        ScalaUtils.toJavaMap(
+            VariantShreddingShims.getVariantInferShreddingSchemaOptions(variantShreddingEnabled));
+    merged
+        .keySet()
+        .removeIf(key -> shreddingOptions.keySet().stream().anyMatch(key::equalsIgnoreCase));
+    merged.putAll(shreddingOptions);
+    return merged;
+  }
+
+  /**
+   * Whether a later change to {@code delta.enableVariantShredding} could change this write's file
+   * layout. Mirrors the three conditions Parquet actually gates the shredded writer on ({@code
+   * ParquetOptions#inferShreddingForVariant} and {@code ParquetUtils#needShreddingInference}): the
+   * version shim must supply the inference option (absent on Spark 4.0, where the map is empty),
+   * the {@code spark.sql.variant.writeShredding.enabled} kill switch must be on, and the data
+   * schema must have a shreddable variant column. When any is false the property cannot flip the
+   * layout, so the streaming guard must ignore a change to it rather than fail an epoch that could
+   * not have shredded anyway.
+   */
+  private static boolean computeVariantLayoutFollowsProperty(
+      SparkSession session, StructType dataSchema) {
+    boolean shreddingSupported =
+        !VariantShreddingShims.getVariantInferShreddingSchemaOptions(true).isEmpty();
+    boolean killSwitchOn =
+        (boolean) session.sessionState().conf().getConf(SQLConf.VARIANT_WRITE_SHREDDING_ENABLED());
+    return shreddingSupported && killSwitchOn && hasShreddableVariant(dataSchema);
+  }
+
+  /**
+   * Whether {@code schema} has a variant column the shredding writer would actually shred. Matches
+   * {@code InferVariantShreddingSchema.getPathsToVariant}: a variant at the top level or nested
+   * only through structs. Variants reached through an array or map element are not shredded, so a
+   * shredding-property change leaves their files unchanged and must not be treated as layout-
+   * sensitive.
+   */
+  private static boolean hasShreddableVariant(StructType schema) {
+    for (StructField field : schema.fields()) {
+      if (field.dataType() instanceof org.apache.spark.sql.types.VariantType) {
+        return true;
+      }
+      if (field.dataType() instanceof StructType
+          && hasShreddableVariant((StructType) field.dataType())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** See {@link #variantLayoutFollowsProperty}. */
+  boolean variantLayoutFollowsProperty() {
+    return variantLayoutFollowsProperty;
   }
 
   /**
