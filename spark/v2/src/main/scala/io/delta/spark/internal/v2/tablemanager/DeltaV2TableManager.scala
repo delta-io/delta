@@ -32,8 +32,16 @@ private[v2] trait DeltaV2TableManager {
   /** Returns the table-scoped log store. */
   private[v2] def logStore: LogStore
 
-  /** Returns a snapshot manager using the caller's current catalog metadata. */
+  /**
+   * Returns a snapshot manager using the caller's current catalog metadata.
+   *
+   * This compatibility seam remains uncached until all snapshot consumers carry a query context.
+   * The process-cached manager can then expose one operation-context-aware snapshot manager.
+   */
   private[v2] def snapshotManager(catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager
+
+  /** Returns the cached manager for callers that carry request-scoped query context. */
+  private[v2] def queryContextSnapshotManager: DeltaV2SnapshotManager
 
   /** Retires this manager and releases any resources it owns. */
   def retire(): Unit = {}

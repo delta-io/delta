@@ -1,14 +1,13 @@
 package io.delta.spark.internal.v2.read.changelog;
 
-import org.apache.spark.sql.delta.Snapshot;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import io.delta.spark.internal.v2.shims.CatalogV2UtilShims;
-import io.delta.spark.internal.v2.utils.SchemaUtils;
 import org.apache.spark.sql.connector.catalog.Changelog;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -17,18 +16,18 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  * V2 Changelog implementation for Delta tables.
  *
  * <p>Wraps the {@link DeltaV2Table} resolved by {@code TableCatalog.loadTable(ident)}. The
- * connector-level work (snapshot loads, row tracking validation, metadata-action inspection
- * across the range) is deferred to the read path inside {@link DeltaV2ChangelogBatch}. The schema
- * exposed by {@link #columns()} is the end-version schema. It matches the {@code dataSchema} the
- * scan builds against, so analysis-time column resolution agrees with the per-commit Metadata
- * validation performed at scan planning.
+ * connector-level work (snapshot loads, row tracking validation, metadata-action inspection across
+ * the range) is deferred to the read path inside {@link DeltaV2ChangelogBatch}. The schema exposed
+ * by {@link #columns()} is the end-version schema. It matches the {@code dataSchema} the scan
+ * builds against, so analysis-time column resolution agrees with the per-commit Metadata validation
+ * performed at scan planning.
  *
  * <p>Row tracking is required at the table protocol. Without it the SPIP analyzer rule cannot
  * partition by {@code rowId / rowVersion}. Validation is performed by the read path, not here.
  *
- * <p>This class remains public because catalog integration in a sibling package constructs it.
- * The scan builder, scan, and batch implementations stay package-private so callers cannot couple
- * to Delta's internal V2 read path.
+ * <p>This class remains public because catalog integration in a sibling package constructs it. The
+ * scan builder, scan, and batch implementations stay package-private so callers cannot couple to
+ * Delta's internal V2 read path.
  */
 public class DeltaV2Changelog implements Changelog {
 
@@ -62,7 +61,10 @@ public class DeltaV2Changelog implements Changelog {
   public Column[] columns() {
     // Resolve lazily so catalog construction stays side-effect free. The scan path validates
     // each per-commit Metadata against this same end-version schema.
-    Snapshot endSnapshot = deltaV2Table.getSnapshotManager().loadSnapshotAt(endVersion);
+    Snapshot endSnapshot =
+        deltaV2Table
+            .getSnapshotManager()
+            .loadSnapshotAt(endVersion, deltaV2Table.getQueryContext());
     StructType endSchema = endSnapshot.schema();
     StructType cdcSchema =
         endSchema

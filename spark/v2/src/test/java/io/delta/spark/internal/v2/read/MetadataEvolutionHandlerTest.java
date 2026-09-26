@@ -49,6 +49,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -115,30 +116,38 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
   private static final DeltaV2SnapshotManager THROWING_SNAPSHOT_MANAGER =
       new DeltaV2SnapshotManager() {
         @Override
-        public Snapshot loadLatestSnapshot() {
+        public Snapshot loadLatestSnapshot(DeltaV2QueryContext queryContext) {
           throw new UnsupportedOperationException("not expected in this test");
         }
 
         @Override
-        public Snapshot loadSnapshotAt(long version) {
+        public Snapshot loadSnapshotAt(long version, DeltaV2QueryContext queryContext) {
           throw new UnsupportedOperationException("not expected in this test");
         }
 
         @Override
         public DeltaHistoryManager.Commit getActiveCommitAtTime(
-            long ts, boolean last, boolean recreatable, boolean earliest) {
+            long ts,
+            boolean last,
+            boolean recreatable,
+            boolean earliest,
+            DeltaV2QueryContext queryContext) {
           throw new UnsupportedOperationException("not expected in this test");
         }
 
         @Override
-        public void checkVersionExists(long version, boolean recreatable, boolean allowOOR)
+        public void checkVersionExists(
+            long version, boolean recreatable, boolean allowOOR, DeltaV2QueryContext queryContext)
             throws VersionNotFoundException {
           throw new UnsupportedOperationException("not expected in this test");
         }
 
         @Override
         public CommitRange getTableChanges(
-            Engine engine, long startVersion, Optional<Long> endVersion) {
+            Engine engine,
+            long startVersion,
+            Optional<Long> endVersion,
+            DeltaV2QueryContext queryContext) {
           throw new UnsupportedOperationException("not expected in this test");
         }
       };

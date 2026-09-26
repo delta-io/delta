@@ -30,6 +30,7 @@ import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager$;
 
@@ -57,7 +58,8 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
    * @return the newly loaded snapshot
    */
   @Override
-  public Snapshot loadLatestSnapshot() {
+  public Snapshot loadLatestSnapshot(DeltaV2QueryContext queryContext) {
+    requireNonNull(queryContext, "queryContext is null");
     return DeltaV2SnapshotManager$.MODULE$.wrapKernelSnapshot(
         loadLatestKernelSnapshot(), tablePath);
   }
@@ -69,7 +71,8 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
    * @return the snapshot at the specified version
    */
   @Override
-  public Snapshot loadSnapshotAt(long version) {
+  public Snapshot loadSnapshotAt(long version, DeltaV2QueryContext queryContext) {
+    requireNonNull(queryContext, "queryContext is null");
     return DeltaV2SnapshotManager$.MODULE$.wrapKernelSnapshot(
         loadKernelSnapshotAt(version), tablePath);
   }
@@ -103,7 +106,9 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
       long timestampMillis,
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
-      boolean canReturnEarliestCommit) {
+      boolean canReturnEarliestCommit,
+      DeltaV2QueryContext queryContext) {
+    requireNonNull(queryContext, "queryContext is null");
     SnapshotImpl snapshot = loadLatestKernelSnapshot();
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
         kernelEngine,
@@ -127,8 +132,13 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
    * @throws VersionNotFoundException if the version is not available
    */
   @Override
-  public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
+  public void checkVersionExists(
+      long version,
+      boolean mustBeRecreatable,
+      boolean allowOutOfRange,
+      DeltaV2QueryContext queryContext)
       throws VersionNotFoundException {
+    requireNonNull(queryContext, "queryContext is null");
     SnapshotImpl snapshot = loadLatestKernelSnapshot();
     long earliest =
         mustBeRecreatable
@@ -148,7 +158,12 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
   }
 
   @Override
-  public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
+  public CommitRange getTableChanges(
+      Engine engine,
+      long startVersion,
+      Optional<Long> endVersion,
+      DeltaV2QueryContext queryContext) {
+    requireNonNull(queryContext, "queryContext is null");
     CommitRangeBuilder builder =
         TableManager.loadCommitRange(
             tablePath, CommitRangeBuilder.CommitBoundary.atVersion(startVersion));

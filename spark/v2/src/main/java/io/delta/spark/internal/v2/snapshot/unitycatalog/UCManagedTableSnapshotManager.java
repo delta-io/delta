@@ -28,6 +28,7 @@ import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import java.util.List;
 import java.util.Optional;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager$;
 
@@ -69,13 +70,15 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
    * @return the latest snapshot of the table
    */
   @Override
-  public Snapshot loadLatestSnapshot() {
+  public Snapshot loadLatestSnapshot(DeltaV2QueryContext queryContext) {
+    requireNonNull(queryContext, "queryContext is null");
     return DeltaV2SnapshotManager$.MODULE$.wrapKernelSnapshot(
         loadKernelSnapshot(Optional.empty()), tablePath);
   }
 
   @Override
-  public Snapshot loadSnapshotAt(long version) {
+  public Snapshot loadSnapshotAt(long version, DeltaV2QueryContext queryContext) {
+    requireNonNull(queryContext, "queryContext is null");
     return DeltaV2SnapshotManager$.MODULE$.wrapKernelSnapshot(
         loadKernelSnapshot(Optional.of(version)), tablePath);
   }
@@ -111,7 +114,9 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
       long timestampMillis,
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
-      boolean canReturnEarliestCommit) {
+      boolean canReturnEarliestCommit,
+      DeltaV2QueryContext queryContext) {
+    requireNonNull(queryContext, "queryContext is null");
     SnapshotImpl snapshot = loadKernelSnapshot(Optional.empty());
     List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
@@ -139,8 +144,13 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
    *     criteria
    */
   @Override
-  public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
+  public void checkVersionExists(
+      long version,
+      boolean mustBeRecreatable,
+      boolean allowOutOfRange,
+      DeltaV2QueryContext queryContext)
       throws VersionNotFoundException {
+    requireNonNull(queryContext, "queryContext is null");
     // Load latest to get the current version bounds
     SnapshotImpl snapshot = loadKernelSnapshot(Optional.empty());
     // Latest version visible in this UC-managed snapshot.
@@ -178,7 +188,12 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
    * @return a CommitRange representing the specified range of commits
    */
   @Override
-  public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
+  public CommitRange getTableChanges(
+      Engine engine,
+      long startVersion,
+      Optional<Long> endVersion,
+      DeltaV2QueryContext queryContext) {
+    requireNonNull(queryContext, "queryContext is null");
     return ucCatalogManagedClient.loadCommitRange(
         engine,
         tableId,

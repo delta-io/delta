@@ -78,27 +78,24 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
-  test("per-instance: cache hit preserves initialCatalogTableOpt from first load") {
-    val cache = new DeltaV2TableManagerCache(maxSize = 1000, ttlMinutes = 60)
-    withTempDir { dir =>
-      val key = makeKey(dir.getCanonicalPath)
-      val catalogA = CatalogTable(
-        identifier = TableIdentifier("tableA"),
-        tableType = CatalogTableType.EXTERNAL,
-        storage = CatalogStorageFormat.empty,
-        schema = new StructType())
-      val catalogB = CatalogTable(
-        identifier = TableIdentifier("tableB"),
-        tableType = CatalogTableType.EXTERNAL,
-        storage = CatalogStorageFormat.empty,
-        schema = new StructType())
+  test("forTable shares one manager across different catalog tables") {
+    withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
+      withTempDir { dir =>
+        val catalogA = CatalogTable(
+          identifier = TableIdentifier("tableA"),
+          tableType = CatalogTableType.EXTERNAL,
+          storage = CatalogStorageFormat.empty,
+          schema = new StructType())
+        val catalogB = catalogA.copy(identifier = TableIdentifier("tableB"))
 
-      val first = cache.getOrCreate(key, Some(catalogA))
-      val second = cache.getOrCreate(key, Some(catalogB))
-      assert(first eq second)
-      val impl = first.asInstanceOf[DeltaV2TableManagerImpl]
-      assert(impl.initialCatalogTableOpt === Some(catalogA),
-        "initial catalog should be from first load")
+        val first = DeltaV2TableManagerCache.forTable(
+          spark, dir.getCanonicalPath, Collections.emptyMap(), Some(catalogA))
+        val second = DeltaV2TableManagerCache.forTable(
+          spark, dir.getCanonicalPath, Collections.emptyMap(), Some(catalogB))
+        assert(first eq second,
+          "catalog tables contribute only to cache-key construction; " +
+            "cached managers remain catalog-agnostic")
+      }
     }
   }
 
@@ -106,7 +103,7 @@ class DeltaV2TableManagerCacheSuite
     val stub = new StubTableManager("a")
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1000, ttlMinutes = 60,
-      managerFactory = (_, _) => stub)
+      managerFactory = _ => stub)
     withTempDir { dir =>
       val key = makeKey(dir.getCanonicalPath)
       cache.getOrCreate(key)
@@ -122,7 +119,7 @@ class DeltaV2TableManagerCacheSuite
     val stubs = Iterator(stubA, stubB)
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1, ttlMinutes = 60,
-      managerFactory = (_, _) => stubs.next())
+      managerFactory = _ => stubs.next())
     withTempDir { dirA =>
       withTempDir { dirB =>
         val keyA = makeKey(dirA.getCanonicalPath)
@@ -145,7 +142,7 @@ class DeltaV2TableManagerCacheSuite
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1000, ttlMinutes = ttlMinutes,
       ticker = ticker,
-      managerFactory = (_, _) => stub)
+      managerFactory = _ => stub)
     withTempDir { dir =>
       val key = makeKey(dir.getCanonicalPath)
       cache.getOrCreate(key)
@@ -165,7 +162,7 @@ class DeltaV2TableManagerCacheSuite
     val cause = new java.io.IOException("checked-cause")
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1000, ttlMinutes = 60,
-      managerFactory = (_, _) => throw cause)
+      managerFactory = _ => throw cause)
     withTempDir { dir =>
       val key = makeKey(dir.getCanonicalPath)
       val caught = intercept[java.io.IOException] {
@@ -179,7 +176,7 @@ class DeltaV2TableManagerCacheSuite
     val cause = new IllegalStateException("runtime-cause")
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1000, ttlMinutes = 60,
-      managerFactory = (_, _) => throw cause)
+      managerFactory = _ => throw cause)
     withTempDir { dir =>
       val key = makeKey(dir.getCanonicalPath)
       val caught = intercept[IllegalStateException] {
@@ -193,7 +190,7 @@ class DeltaV2TableManagerCacheSuite
     val cause = new StackOverflowError("error-cause")
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1000, ttlMinutes = 60,
-      managerFactory = (_, _) => throw cause)
+      managerFactory = _ => throw cause)
     withTempDir { dir =>
       val key = makeKey(dir.getCanonicalPath)
       val caught = intercept[StackOverflowError] {
@@ -240,7 +237,7 @@ class DeltaV2TableManagerCacheSuite
       val keyB = CacheKey(sharedLogPath, Map("fs.s3a.access.key" -> "BBB"))
       val cache = new DeltaV2TableManagerCache(
         maxSize = 1000, ttlMinutes = 60,
-        managerFactory = (_, _) => stubs.next())
+        managerFactory = _ => stubs.next())
       cache.getOrCreate(keyA)
       cache.getOrCreate(keyB)
       assert(cache.size() == 2)
@@ -332,7 +329,7 @@ class DeltaV2TableManagerCacheSuite
 
     val cache = new DeltaV2TableManagerCache(
       maxSize = 1000, ttlMinutes = 60,
-      managerFactory = (_, _) => {
+      managerFactory = _ => {
         invocations.incrementAndGet()
         loaderEntered.countDown()
         loaderRelease.await()
@@ -400,7 +397,6 @@ class DeltaV2TableManagerCacheSuite
       assert(impl.qualifiedTableDataPath.isAbsolute)
       assert(impl.qualifiedTableDataPath.toUri.getPath.contains(dir.getName))
       assert(impl.sessionInvariantFsOptions.isEmpty)
-      assert(impl.initialCatalogTableOpt.isEmpty)
       val tableStore = impl.logStore
       val tableKernelContext = impl.kernelContext
       assert(tableKernelContext.logStore eq tableStore)
@@ -429,6 +425,8 @@ private[tablemanager] class StubTableManager(val id: String) extends DeltaV2Tabl
     throw new UnsupportedOperationException("stub")
   override private[v2] def snapshotManager(
       catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager =
+    throw new UnsupportedOperationException("stub")
+  override private[v2] def queryContextSnapshotManager: DeltaV2SnapshotManager =
     throw new UnsupportedOperationException("stub")
   override def retire(): Unit = { retired = true }
 }
