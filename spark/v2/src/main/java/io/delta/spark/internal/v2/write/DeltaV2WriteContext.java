@@ -199,7 +199,8 @@ class DeltaV2WriteContext {
         ScalaUtils.toScalaMap(parquetOptions);
     this.outputWriterFactory = format.prepareWrite(session, job, scalaOpts, this.dataSchema);
     this.serializableHadoopConf = new SerializableConfiguration(job.getConfiguration());
-    this.variantLayoutFollowsProperty = computeVariantLayoutFollowsProperty(session);
+    this.variantLayoutFollowsProperty =
+        computeVariantLayoutFollowsProperty(session, this.dataSchema);
   }
 
   /**
@@ -242,7 +243,8 @@ class DeltaV2WriteContext {
    * layout, so the streaming guard must ignore a change to it rather than fail an epoch that could
    * not have shredded anyway.
    */
-  private boolean computeVariantLayoutFollowsProperty(SparkSession session) {
+  private static boolean computeVariantLayoutFollowsProperty(
+      SparkSession session, StructType dataSchema) {
     boolean shreddingSupported =
         !VariantShreddingShims.getVariantInferShreddingSchemaOptions(true).isEmpty();
     boolean killSwitchOn =

@@ -27,6 +27,9 @@ import io.delta.spark.internal.v2.InternalRowTestUtils;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.util.List;
+import org.apache.hadoop.fs.Path;
+import org.apache.parquet.format.converter.ParquetMetadataConverter;
+import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.write.DataWriter;
@@ -277,6 +280,44 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
         versionsBeforeReplay,
         spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count(),
         "replaying a committed epoch must not create a new table version");
+  }
+
+  /**
+   * A streaming write to a shredding-enabled table must actually shred the variant column: the
+   * property-derived inference option has to reach the executor-side Parquet writer, not just the
+   * driver guard. Verified by reading the committed file's Parquet footer for a {@code typed_value}
+   * child on the variant column.
+   */
+  @Test
+  public void testCommit_streamingWriteShredsWhenPropertyEnabled(@TempDir File tempDir)
+      throws Exception {
+    assumeTrue(shreddedWritesSupported(), SHREDDING_UNSUPPORTED);
+    String path = createVariantTable(tempDir, "streaming_shreds_enabled", true);
+    DeltaV2StreamingWrite write = newVariantWrite(path, /* variantShreddingEnabled */ true);
+
+    write.commit(0L, new WriterCommitMessage[] {variantEpoch(write, 0L)});
+
+    assertTrue(
+        snapshotHasShreddedVariant(path),
+        "a streaming write to a shredding-enabled table must produce a shredded file");
+  }
+
+  /**
+   * The converse: a streaming write to a table that has not enabled shredding must leave the
+   * variant unshredded, matching V1. Holds on every Spark version (nothing shreds), so it is not
+   * gated on shredding support.
+   */
+  @Test
+  public void testCommit_streamingWriteDoesNotShredWhenPropertyDisabled(@TempDir File tempDir)
+      throws Exception {
+    String path = createVariantTable(tempDir, "streaming_no_shred_disabled", false);
+    DeltaV2StreamingWrite write = newVariantWrite(path, /* variantShreddingEnabled */ false);
+
+    write.commit(0L, new WriterCommitMessage[] {variantEpoch(write, 0L)});
+
+    assertFalse(
+        snapshotHasShreddedVariant(path),
+        "a streaming write to a table without shredding enabled must not shred");
   }
 
   /**
@@ -544,6 +585,32 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
   /** Whether writes can shred variant columns on this Spark version (empty shim map means no). */
   private static boolean shreddedWritesSupported() {
     return !VariantShreddingShims.getVariantInferShreddingSchemaOptions(true).isEmpty();
+  }
+
+  /** Whether any data file in the table at {@code path}'s current snapshot stores v shredded. */
+  private boolean snapshotHasShreddedVariant(String path) throws Exception {
+    List<Row> files =
+        spark
+            .sql("SELECT DISTINCT input_file_name() AS f FROM delta.`" + path + "`")
+            .collectAsList();
+    assertFalse(files.isEmpty(), "Expected at least one data file at " + path);
+    for (Row file : files) {
+      org.apache.parquet.schema.Type variant =
+          ParquetFileReader.readFooter(
+                  spark.sessionState().newHadoopConf(),
+                  new Path(file.getString(0)),
+                  ParquetMetadataConverter.NO_FILTER)
+              .getFileMetaData()
+              .getSchema()
+              .getType("v");
+      assertTrue(
+          variant instanceof org.apache.parquet.schema.GroupType,
+          "Expected the variant column to be a Parquet group, got: " + variant);
+      if (((org.apache.parquet.schema.GroupType) variant).containsField("typed_value")) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private String createVariantTable(File tempDir, String tableName, boolean shreddingEnabled) {

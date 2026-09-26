@@ -111,13 +111,13 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       }
     }
 
-    // Returns a mode-dispatching Write: toBatch() -> DeltaV2BatchWrite (batch commit off
-    // initialSnapshot), toStreaming() -> DeltaV2StreamingWrite (per-epoch commit off the latest
-    // snapshot via snapshotManager). Both modes share the executor-side write-state construction.
     // Resolved here rather than inside the write context: this snapshot facade exposes Delta
     // metadata, so the property resolves through the same V1 accessor (alternate keys and default
     // included), while the context downstream holds only the Kernel snapshot.
     boolean variantShreddingEnabled = isVariantShreddingEnabled(initialSnapshot);
+    // Returns a mode-dispatching Write: toBatch() -> DeltaV2BatchWrite (batch commit off
+    // initialSnapshot), toStreaming() -> DeltaV2StreamingWrite (per-epoch commit off the latest
+    // snapshot via snapshotManager). Both modes share the executor-side write-state construction.
     return new DeltaV2Write(
         engine,
         hadoopConf,

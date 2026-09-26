@@ -149,15 +149,11 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
   @Override
   public StreamingWrite toStreaming() {
     rejectUnsupportedStreamingOptions();
-    // Build the operation-independent write context once; the streaming write drives its own
-    // per-epoch transactions (Operation.STREAMING_UPDATE) and reuses buildDataWriterFactory to
-    // produce the executor write state -- the same setup the batch path uses, no duplication.
-    // Every layout decision the context derives from initialSnapshot -- schema, column mapping,
-    // and whether variant columns are shredded -- is fixed here. V2Writes rebuilds this Write per
-    // micro-batch, but MicroBatchExecution captures the sink relation once for a non-transactional
-    // catalog, so initialSnapshot does not advance while the query runs. The streaming commit
-    // therefore re-reads the shredding property off the reloaded snapshot and fails the epoch when
-    // it diverges, the same way it already guards schema and protocol.
+    // Build the write context once and reuse buildDataWriterFactory for each epoch. That freezes
+    // the layout it derives from initialSnapshot -- including variant shredding -- which does not
+    // advance while the query runs, so the streaming commit re-reads the shredding property off
+    // the reloaded snapshot and fails the epoch on divergence, as it already does for schema and
+    // protocol.
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
             engine,
