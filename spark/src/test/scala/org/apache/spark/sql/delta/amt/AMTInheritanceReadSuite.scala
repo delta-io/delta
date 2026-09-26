@@ -269,6 +269,25 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
     }
   }
 
+  test("manifest filters stay local to their leaf while masked entries advance inheritance") {
+    withSyntheticTree("amt_inherit_mdv_two_leaves") { tree =>
+      val first = tree.writeLeaf(Seq(
+        dataEntry("data/a.parquet", recordCount = 10L),
+        dataEntry("data/b.parquet", recordCount = 20L)))
+      val second = tree.writeLeaf(Seq(
+        dataEntry("data/c.parquet", recordCount = 5L),
+        dataEntry("data/d.parquet", recordCount = 7L)))
+      val files = tree.reconstruct(Seq(
+        leafPointer(first, mdvPositions = Seq(0L)).wrap,
+        leafPointer(second, pointerTracking(firstRowId = Some(9000L))).wrap))
+
+      assert(files.keySet == Set("data/b.parquet", "data/c.parquet", "data/d.parquet"))
+      assert(files("data/b.parquet").baseRowId.contains(1010L))
+      assert(files("data/c.parquet").baseRowId.contains(9000L))
+      assert(files("data/d.parquet").baseRowId.contains(9005L))
+    }
+  }
+
   test("each leaf inherits from its own root pointer") {
     withSyntheticTree("amt_inherit_two_leaves") { tree =>
       val first = tree.writeLeaf(Seq(

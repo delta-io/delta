@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.RowIndexFilterProvider
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs._
@@ -44,11 +45,14 @@ import org.apache.spark.sql.types.{LongType, StructField, StructType}
 class DeltaLogFileIndex private[delta] (
     val format: FileFormat,
     val files: Array[FileStatus],
+    val perFileRowIndexFilters: Map[String, RowIndexFilterProvider] = Map.empty,
     val perFileMetadata: Map[String, Map[String, Any]] = Map.empty)
   extends FileIndex
   with Logging {
 
   import DeltaLogFileIndex._
+  require(perFileRowIndexFilters.isEmpty || perFileMetadata.isEmpty,
+    "perFileRowIndexFilters and perFileMetadata cannot both be defined")
   override lazy val rootPaths: Seq[Path] = files.map(_.getPath).toSeq
 
   def listAllFiles(): Seq[PartitionDirectory] = {
@@ -63,11 +67,13 @@ class DeltaLogFileIndex private[delta] (
   private def fileStatusToPartitionDirectory(
       version: Long,
       versionFiles: Seq[FileStatus]): PartitionDirectory = {
-    if (perFileMetadata.nonEmpty) {
+    if (perFileRowIndexFilters.nonEmpty || perFileMetadata.nonEmpty) {
       val statuses = versionFiles.map { file =>
-        FileStatusWithMetadata(
-          file,
-          perFileMetadata.getOrElse(file.getPath.toString, Map.empty))
+        val path = file.getPath.toString
+        val metadata = perFileRowIndexFilters.get(path).map { provider =>
+          Map[String, Any](DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_PROVIDER -> provider)
+        }.getOrElse(perFileMetadata.getOrElse(path, Map.empty))
+        FileStatusWithMetadata(file, metadata)
       }.toIndexedSeq
       PartitionDirectory(InternalRow(version), statuses)
     } else {
@@ -131,4 +137,13 @@ object DeltaLogFileIndex {
     filesOpt.flatMap(DeltaLogFileIndex(format, _))
   }
 
+  /**
+   * Builds an index that carries per-file row-index filters.
+   */
+  def apply(
+      format: FileFormat,
+      files: Array[FileStatus],
+      perFileRowIndexFilters: Map[String, RowIndexFilterProvider]): DeltaLogFileIndex = {
+    new DeltaLogFileIndex(format, files, perFileRowIndexFilters = perFileRowIndexFilters)
+  }
 }
