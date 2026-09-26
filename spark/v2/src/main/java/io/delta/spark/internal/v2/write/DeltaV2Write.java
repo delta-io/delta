@@ -35,6 +35,7 @@ import org.apache.spark.sql.connector.write.RequiresDistributionAndOrdering;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.streaming.StreamingWrite;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -81,6 +82,7 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
   private final String tablePath;
   private final Snapshot initialSnapshot;
   private final DeltaV2SnapshotManager snapshotManager;
+  private final DeltaV2QueryContext queryContext;
   private final StructType dataSchema;
   private final StructType partitionSchema;
   private final String queryId;
@@ -93,6 +95,7 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
    *     the batch path (a single commit off {@code initialSnapshot})
    * @param dataSchema the non-partition columns (the Parquet file body)
    * @param partitionSchema the partition columns in partition order (empty when unpartitioned)
+   * @param queryContext request-scoped catalog inputs used when reloading streaming snapshots
    */
   DeltaV2Write(
       Engine engine,
@@ -102,12 +105,14 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
       DeltaV2SnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
-      LogicalWriteInfo writeInfo) {
+      LogicalWriteInfo writeInfo,
+      DeltaV2QueryContext queryContext) {
     this.engine = requireNonNull(engine, "engine is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
+    this.queryContext = requireNonNull(queryContext, "queryContext is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
     this.writeInfo = requireNonNull(writeInfo, "writeInfo is null");
@@ -140,7 +145,12 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
         DeltaV2WriteContext.create(
             engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
     return new DeltaV2StreamingWrite(
-        engine, initialSnapshot, snapshotManager, queryId, context::buildDataWriterFactory);
+        engine,
+        initialSnapshot,
+        snapshotManager,
+        queryId,
+        context::buildDataWriterFactory,
+        queryContext);
   }
 
   /**

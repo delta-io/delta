@@ -26,10 +26,12 @@ import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.spark.sql.connector.distributions.UnspecifiedDistribution;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.SortOrder;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
@@ -118,7 +120,8 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             mgr,
             dataSchema,
             partitionSchema,
-            WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()));
+            WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()),
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
 
     assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
     SortOrder[] ordering = write.requiredOrdering();
@@ -164,7 +167,8 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             mgr,
             dataSchema,
             partitionSchema,
-            WriteTestUtils.logicalWriteInfo(fullSchema, CaseInsensitiveStringMap.empty()));
+            WriteTestUtils.logicalWriteInfo(fullSchema, CaseInsensitiveStringMap.empty()),
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
 
     assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
     SortOrder[] ordering = write.requiredOrdering();
@@ -197,6 +201,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
         snapshotManager,
         TABLE_SCHEMA,
         new StructType(),
-        info);
+        info,
+        DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
   }
 }

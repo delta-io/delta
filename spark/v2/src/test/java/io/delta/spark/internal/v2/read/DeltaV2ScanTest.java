@@ -2,8 +2,11 @@ package io.delta.spark.internal.v2.read;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.kernel.CommitRange;
+import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
+import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
 import java.lang.reflect.Field;
@@ -14,6 +17,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 import org.apache.hadoop.conf.Configuration;
@@ -31,7 +35,10 @@ import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
+import org.apache.spark.sql.connector.read.streaming.Offset;
+import org.apache.spark.sql.connector.read.streaming.ReadLimit;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -940,6 +947,105 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     // Different options should not be equal and hashCodes should differ
     assertNotEquals(scan1, scan2);
     assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsWithDifferentOriginalQueryContext() throws Exception {
+    DeltaV2Scan scan1 = (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+    DeltaV2Scan scan2 = (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+    assertEquals(scan1, scan2);
+
+    CatalogTable catalogTable =
+        spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tableName));
+    Field queryContextField = DeltaV2Scan.class.getDeclaredField("originalQueryContext");
+    queryContextField.setAccessible(true);
+    queryContextField.set(scan2, new DeltaV2QueryContext(scala.Option.apply(catalogTable)));
+
+    assertNotEquals(scan1, scan2);
+    assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testToMicroBatchStreamPassesOriginalQueryContext() throws Exception {
+    Map<String, String> streamingOptionsMap = new HashMap<>();
+    streamingOptionsMap.put("startingVersion", "0");
+    CaseInsensitiveStringMap streamingOptions = new CaseInsensitiveStringMap(streamingOptionsMap);
+
+    // A path-backed scan carries a present query context with no catalog metadata.
+    DeltaV2Scan pathScan =
+        (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(streamingOptions)).build();
+    assertStreamUsesOriginalQueryContext(pathScan, tablePath + "/path-checkpoint", false);
+
+    // A catalog-backed scan must retain its request authority through the same execution seam.
+    CatalogTable catalogTable =
+        spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tableName));
+    DeltaV2Table catalogBackedTable =
+        new DeltaV2Table(
+            Identifier.of(new String[] {"spark_catalog", "default"}, tableName),
+            catalogTable,
+            Collections.emptyMap());
+    DeltaV2Scan catalogScan =
+        (DeltaV2Scan)
+            ((DeltaV2ScanBuilder) catalogBackedTable.newScanBuilder(streamingOptions)).build();
+    assertStreamUsesOriginalQueryContext(catalogScan, tablePath + "/catalog-checkpoint", true);
+  }
+
+  private static void assertStreamUsesOriginalQueryContext(
+      DeltaV2Scan scan, String checkpointLocation, boolean expectCatalogTable) throws Exception {
+    Field queryContextField = DeltaV2Scan.class.getDeclaredField("originalQueryContext");
+    queryContextField.setAccessible(true);
+    DeltaV2QueryContext expectedContext = (DeltaV2QueryContext) queryContextField.get(scan);
+    assertEquals(expectCatalogTable, expectedContext.catalogTableOpt().isDefined());
+
+    RecordingPathBasedSnapshotManager manager =
+        new RecordingPathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+    setSnapshotManager(scan, manager);
+    DeltaV2MicroBatchStream stream =
+        (DeltaV2MicroBatchStream) scan.toMicroBatchStream(checkpointLocation);
+    try {
+      // Discard the scan's pre-construction snapshot load, then exercise snapshot-manager calls
+      // from the constructed stream. This fails if the constructor receives a different context.
+      manager.latestQueryContext = null;
+      manager.tableChangesQueryContext = null;
+      Offset initialOffset = stream.initialOffset();
+      stream.latestOffset(initialOffset, ReadLimit.allAvailable());
+      assertSame(expectedContext, manager.latestQueryContext);
+      assertSame(expectedContext, manager.tableChangesQueryContext);
+    } finally {
+      stream.stop();
+    }
+  }
+
+  private static void setSnapshotManager(DeltaV2Scan scan, PathBasedSnapshotManager snapshotManager)
+      throws Exception {
+    Field snapshotManagerField = DeltaV2Scan.class.getDeclaredField("snapshotManager");
+    snapshotManagerField.setAccessible(true);
+    snapshotManagerField.set(scan, snapshotManager);
+  }
+
+  private static final class RecordingPathBasedSnapshotManager extends PathBasedSnapshotManager {
+    private DeltaV2QueryContext latestQueryContext;
+    private DeltaV2QueryContext tableChangesQueryContext;
+
+    private RecordingPathBasedSnapshotManager(String tablePath, Configuration hadoopConf) {
+      super(tablePath, hadoopConf);
+    }
+
+    @Override
+    public Snapshot loadLatestSnapshot(DeltaV2QueryContext queryContext) {
+      latestQueryContext = queryContext;
+      return super.loadLatestSnapshot(queryContext);
+    }
+
+    @Override
+    public CommitRange getTableChanges(
+        Engine engine,
+        long startVersion,
+        Optional<Long> endVersion,
+        DeltaV2QueryContext queryContext) {
+      tableChangesQueryContext = queryContext;
+      return super.getTableChanges(engine, startVersion, endVersion, queryContext);
+    }
   }
 
   @Test

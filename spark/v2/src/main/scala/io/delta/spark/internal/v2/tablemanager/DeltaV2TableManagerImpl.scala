@@ -15,11 +15,12 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
-import java.util.concurrent.atomic.AtomicReference
+import scala.jdk.OptionConverters._
 
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
+import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
@@ -33,16 +34,12 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  * @param qualifiedTableDataPath the fully-qualified table data directory (parent of `_delta_log`).
  * @param sessionInvariantFsOptions filesystem-prefixed credential options (`fs.*`, `dfs.*`) that
  *   were used to resolve the table path. Retained for downstream engine construction.
- * @param initialCatalogTableOpt the catalog table supplied by the first caller that loaded this
- *   entry, if any.
  */
 private[tablemanager] class DeltaV2TableManagerImpl(
     val qualifiedTableDataPath: Path,
-    val sessionInvariantFsOptions: Map[String, String],
-    val initialCatalogTableOpt: Option[CatalogTable])
+    val sessionInvariantFsOptions: Map[String, String])
     extends DeltaV2TableManager
-    with LogStoreProvider
-{
+    with LogStoreProvider {
 
   /** The table's data directory, fully qualified. */
   def tablePath: Path = qualifiedTableDataPath
@@ -52,18 +49,21 @@ private[tablemanager] class DeltaV2TableManagerImpl(
 
   override private[v2] val kernelContext = KernelContext(sessionInvariantFsOptions, logStore)
 
-  private val latestCatalogTable =
-    new AtomicReference[CatalogTable](initialCatalogTableOpt.orNull)
-  private val cachedSnapshotManager =
-    new CachedSnapshotManager(tablePath, kernelContext, latestCatalogTable)
+  private val cachedSnapshotManager = new CachedSnapshotManager(tablePath, kernelContext)
 
   override private[v2] def snapshotManager(
       catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager = {
-    // Catalog metadata is latest-wins best-effort state. A refresh captures one atomic value and
-    // uses it consistently while selecting its path-based or catalog-managed uncached delegate.
-    latestCatalogTable.set(catalogTableOpt.orNull)
-    cachedSnapshotManager
+    // Until the remaining consumers supply query context, preserve the pre-cache behavior and
+    // construct one uncached manager from this request's catalog metadata. The shared cached
+    // manager is activated only after every snapshot consumer carries its query context.
+    SnapshotManagerFactory.create(
+      tablePath.toString,
+      kernelContext.getDefaultEngine(),
+      catalogTableOpt.toJava)
   }
+
+  override private[v2] def queryContextSnapshotManager: DeltaV2SnapshotManager =
+    cachedSnapshotManager
 
   override def retire(): Unit = cachedSnapshotManager.retire()
 }
