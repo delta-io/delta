@@ -62,8 +62,7 @@ only if its schema metadata contains `delta.identity.concurrent.sequenceId`.
 To support this feature:
 - Since this table feature depends on [Catalog-Managed Tables](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/catalog-managed.md),
   the table must be on Reader Version 3 and the feature `catalogManaged` must exist in the
-  `protocol`'s `readerFeatures` and `writerFeatures`. The catalog owns and allocates the sequence, so
-  the feature is undefined without one.
+  `protocol`'s `readerFeatures` and `writerFeatures`.
 - The table must be on Writer Version 7.
 - The feature `concurrentIdentityColumns` must exist in the table `protocol`'s `writerFeatures`.
 - The feature `identityColumns` must exist in the table `protocol`'s `writerFeatures`. A
