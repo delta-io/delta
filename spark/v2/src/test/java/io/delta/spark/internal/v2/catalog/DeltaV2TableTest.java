@@ -124,12 +124,6 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
         throw new IllegalArgumentException("Unknown construction method: " + method);
     }
 
-    if (method == ConstructionMethod.FROM_PATH) {
-      assertTrue(kernelTable.getQueryContext().catalogTableOpt().isEmpty());
-    } else {
-      assertSame(catalogTable, kernelTable.getQueryContext().catalogTableOpt().get());
-    }
-
     // ===== Test table name =====
     String expectedName;
     switch (method) {
@@ -703,7 +697,9 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
 
   private static void assertLatestSnapshot(
       DeltaV2Table table, SparkSession activeSession, long expectedVersion, long expectedFiles) {
-    Snapshot snapshot = table.getSnapshotManager().loadLatestSnapshot(table.getQueryContext());
+    DeltaV2QueryContext queryContext =
+        DeltaV2QueryContext$.MODULE$.apply(table.getCatalogTable());
+    Snapshot snapshot = table.getSnapshotManager().loadLatestSnapshot(queryContext);
     Dataset<?> allFiles = snapshot.allFiles();
     assertEquals(expectedVersion, snapshot.version());
     assertSame(activeSession, allFiles.sparkSession());
@@ -1132,13 +1128,11 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
         spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_with_version"));
     DeltaV2Table latest = new DeltaV2Table(identifier, catalogTable, Collections.emptyMap());
     assertEquals(2, latest.schema().fields().length);
-    assertSame(catalogTable, latest.getQueryContext().catalogTableOpt().get());
 
     // withVersion(0) pins to the historical snapshot.
     DeltaV2Table pinned = latest.withVersion(0L);
     assertEquals(1, pinned.schema().fields().length, "pinned table should see the v0 schema");
     assertEquals("id", pinned.schema().fields()[0].name());
-    assertSame(catalogTable, pinned.getQueryContext().catalogTableOpt().get());
 
     // The original table is unaffected.
     assertEquals(2, latest.schema().fields().length);
@@ -1198,7 +1192,6 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
         spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_with_timestamp"));
     DeltaV2Table latest = new DeltaV2Table(identifier, catalogTable, Collections.emptyMap());
     assertEquals(2, latest.schema().fields().length);
-    assertSame(catalogTable, latest.getQueryContext().catalogTableOpt().get());
 
     // The timestamp of the v0 commit resolves back to v0.
     long v0Micros =
@@ -1214,7 +1207,6 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     DeltaV2Table pinned = latest.withTimestamp(v0Micros);
     assertEquals(1, pinned.schema().fields().length, "pinned table should see the v0 schema");
     assertEquals("id", pinned.schema().fields()[0].name());
-    assertSame(catalogTable, pinned.getQueryContext().catalogTableOpt().get());
 
     // The original table is unaffected.
     assertEquals(2, latest.schema().fields().length);

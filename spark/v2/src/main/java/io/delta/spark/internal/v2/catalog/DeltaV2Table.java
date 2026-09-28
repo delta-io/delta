@@ -361,11 +361,6 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
     return snapshotManager;
   }
 
-  /** Returns the immutable request context that resolved this table. */
-  public DeltaV2QueryContext getQueryContext() {
-    return queryContext;
-  }
-
   /** The table protocol from the initial snapshot. */
   protected AbstractProtocol protocol() {
     return initialSnapshot.protocol();
