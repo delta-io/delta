@@ -35,6 +35,30 @@ class AMTSnapshotDiscoverySuite
   protected def writeChecksumEnabled: Boolean =
     spark.conf.get(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)
 
+  test("[snapshot init] rejects an AMT checkpoint without deltaAtCheckpointVersionOpt") {
+    val name = "amt_missing_delta_at_checkpoint"
+    withTable(name) {
+      createAMTTable(name, checkpointInterval = 2)
+      (1 to 2).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+      val snapshot = deltaLogForName(name).update()
+      assert(amtProvider(snapshot).isDefined)
+      assert(snapshot.logSegment.deltaAtCheckpointVersionOpt.isDefined)
+      // Reuse the real checkpoint and remove only the required commit-file reference.
+      val incompleteSegment = snapshot.logSegment.copy(deltaAtCheckpointVersionOpt = None)
+      val error = intercept[IllegalStateException] {
+        new Snapshot(
+          path = snapshot.path,
+          version = snapshot.version,
+          logSegment = incompleteSegment,
+          deltaLog = snapshot.deltaLog,
+          checksumOpt = snapshot.checksumOpt
+        )
+      }
+      assert(error.getMessage.startsWith(
+        "An AMT-enabled snapshot must define deltaAtCheckpointVersionOpt, got None."))
+    }
+  }
+
   ////////////////////////////
   // Cold snapshot discovery
   ////////////////////////////
@@ -704,7 +728,8 @@ class AMTSnapshotDiscoverySuite
       minorCompactDeltaLog(
         tablePath = latestDeltaLogAtV8.dataPath.toString,
         startVersion = start,
-        endVersion = end)
+        endVersion = end,
+        tableName = Some(name))
     }
     overwriteLastCheckpoint(name, staleHintAtV2)
 
@@ -732,6 +757,9 @@ class AMTSnapshotDiscoverySuite
     val actualNonCompactedDeltas = snapshot.logSegment.nonCompactedDeltasOpt
       .map(n => n.map(FileNames.deltaVersion))
     assert(actualNonCompactedDeltas.contains(expectedNonCompactedDeltas))
+    val actualDeltaAtCheckpointVersion = snapshot.logSegment.deltaAtCheckpointVersionOpt
+      .map(FileNames.deltaVersion)
+    assert(actualDeltaAtCheckpointVersion.contains(expectedAMTContentRootVersion))
     val reconstructedData = snapshot.deltaLog
       .createDataFrame(snapshot, snapshot.allFilesViaStateReconstruction.collect().toSeq)
       .collect().map(_.getInt(0)).toSet
@@ -833,8 +861,8 @@ class AMTSnapshotDiscoveryWithoutCRCSuite extends AMTSnapshotDiscoverySuite {
 
       // Strip the reference from the recording commit's CommitInfo. With no CRC and no CommitInfo
       // reference, nothing corroborates the installed AMT provider, so the cold read is refused.
-      val deltaLog = deltaLogForName(name)
-      val commitPath = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(3)
+      val (deltaLog, snapshot) = coldLoad(name)
+      val commitPath = DeltaCommitFileProvider(snapshot).deltaFile(3)
       val hadoopConf = deltaLog.newDeltaHadoopConf()
       val stripped = deltaLog.store.readAsIterator(commitPath, hadoopConf).toList
         .map(Action.fromJson)
@@ -882,4 +910,20 @@ class AMTSnapshotDiscoveryWithoutCRCSuite extends AMTSnapshotDiscoverySuite {
       }
     }
   }
+}
+
+/**
+ * With batch size 1, all commits are backfilled to a standard NNN.json immediately.
+ */
+class AMTSnapshotDiscoveryBackfillBatch1Suite extends AMTSnapshotDiscoverySuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+/**
+ * With a large backfill batch size, no commits are automatically backfilled. Only before an AMT
+ * checkpoint lands in a manifest commit, the previous commits are backfilled. This suite exercises
+ * that code path and ensures AMT snapshot discovery works correctly.
+ */
+class AMTSnapshotDiscoveryBackfillBatch100Suite extends AMTSnapshotDiscoverySuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

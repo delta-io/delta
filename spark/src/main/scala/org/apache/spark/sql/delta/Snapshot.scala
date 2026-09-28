@@ -315,11 +315,12 @@ class Snapshot(
    * been backfilled.
    */
   private[delta] def allCommitsBackfilled: Boolean = {
-    lastKnownBackfilledVersion >= FileNames.getFileVersion(logSegment.deltas.last) &&
-      // This should always be true because we synchronously backfill during checkpoint
-      // creation and always create a new snapshot after that, which will force the
-      // latest LogSegment to be used.
-      lastKnownBackfilledVersion >= logSegment.checkpointProvider.version
+    // This should never happen, but we check anyway to be defensive.
+    if (lastKnownBackfilledVersion > this.version) {
+      throw new IllegalStateException("`lastKnownBackfilledVersion` should never be greater " +
+        "than the snapshot's version.")
+    }
+    lastKnownBackfilledVersion == this.version
   }
 
   /**
@@ -513,6 +514,12 @@ class Snapshot(
     if (logSegment.nonCompactedDeltasOpt.isEmpty) {
       throw new IllegalStateException(
         s"An AMT-enabled snapshot must define nonCompactedDeltasOpt, got None.\n" +
+          s"${logSegment.toPrettyString}")
+    }
+
+    if (amtCheckpointProviderOpt.isDefined && logSegment.deltaAtCheckpointVersionOpt.isEmpty) {
+      throw new IllegalStateException(
+        s"An AMT-enabled snapshot must define deltaAtCheckpointVersionOpt, got None.\n" +
           s"${logSegment.toPrettyString}")
     }
 
@@ -845,16 +852,7 @@ class Snapshot(
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
-  /**
-   * Ensures that commit files are backfilled up to the current version in the snapshot.
-   *
-   * This method checks if there are any un-backfilled versions up to the current version and
-   * triggers the backfilling process using the commit-coordinator. It verifies that the delta file
-   * for the current version exists after the backfilling process.
-   *
-   * @throws IllegalStateException
-   *   if the delta file for the current version is not found after backfilling.
-   */
+  /** Ensures that commit files are backfilled up to the current version in the snapshot. */
   def ensureCommitFilesBackfilled(catalogTableOpt: Option[CatalogTable]): Unit = {
     val tableCommitCoordinatorClientOpt = if (isCatalogOwned) {
       CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(spark, catalogTableOpt, this)
@@ -864,20 +862,12 @@ class Snapshot(
     val tableCommitCoordinatorClient = tableCommitCoordinatorClientOpt.getOrElse {
       return
     }
-    val minUnbackfilledVersion = DeltaCommitFileProvider(this).minUnbackfilledVersion
-    if (minUnbackfilledVersion <= version) {
-      val hadoopConf = deltaLog.newDeltaHadoopConf()
-      tableCommitCoordinatorClient.backfillToVersion(
-        catalogTableOpt.map(_.identifier),
-        version,
-        lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
-      val fs = deltaLog.logPath.getFileSystem(hadoopConf)
-      val expectedBackfilledDeltaFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
-      if (!fs.exists(expectedBackfilledDeltaFile)) {
-        throw new IllegalStateException("Backfilling of commit files failed. " +
-          s"Expected delta file $expectedBackfilledDeltaFile not found.")
-      }
-    }
+    CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
+      version,
+      deltaLog,
+      tableCommitCoordinatorClient,
+      DeltaCommitFileProvider(this),
+      catalogTableOpt)
   }
 
 

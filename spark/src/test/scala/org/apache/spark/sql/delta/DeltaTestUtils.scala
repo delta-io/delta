@@ -31,6 +31,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -511,7 +512,8 @@ trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
   protected def minorCompactDeltaLog(
       tablePath: String,
       startVersion: Long,
-      endVersion: Long): Unit = {
+      endVersion: Long,
+      tableName: Option[String] = None): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     val snapshotForReplay = deltaLog.update()
     val logReplay = new InMemoryLogReplay(
@@ -521,6 +523,18 @@ trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
       useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
         snapshotForReplay.metadata, snapshotForReplay.protocol, spark))
     val hadoopConf = deltaLog.newDeltaHadoopConf()
+    val catalogTable = tableName
+      .map(name => spark.sessionState.catalog.getTableMetadata(new TableIdentifier(name)))
+    CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        spark, catalogTable, snapshotForReplay).foreach {
+      tableCommitCoordinatorClient =>
+        CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
+          version = endVersion,
+          deltaLog = deltaLog,
+          tableCommitCoordinatorClient = tableCommitCoordinatorClient,
+          deltaCommitFileProvider = DeltaCommitFileProvider(snapshotForReplay),
+          catalogTableOpt = catalogTable)
+    }
 
     (startVersion to endVersion).foreach { versionToRead =>
       val file = FileNames.unsafeDeltaFile(deltaLog.logPath, versionToRead)
