@@ -26,6 +26,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
+import io.delta.kernel.exceptions.VersionToLoadAfterLatestCommitException;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
@@ -1037,10 +1038,13 @@ class DeltaV2MicroBatchStream
         startSnapshot =
             DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
                 snapshotManager.loadSnapshotAt(startVersion));
-      } catch (io.delta.kernel.exceptions.KernelException e) {
+      } catch (VersionToLoadAfterLatestCommitException e) {
         // startVersion may not yet exist (e.g. startingVersion=latest resolves to latest+1).
-        // TODO(#6745): narrow this catch once kernel exposes a specific exception subclass
-        // for "version not yet materialized".
+        // Catalog-managed tables report this with VersionToLoadAfterLatestCommitException.
+        return;
+      } catch (io.delta.kernel.exceptions.KernelException e) {
+        // Path-based tables still report the same case with a plain KernelException.
+        // TODO(#6745): remove once path-based tables throw VersionToLoadAfterLatestCommitException.
         return;
       }
     }
