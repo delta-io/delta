@@ -134,7 +134,7 @@ private[tablemanager] class CachedSnapshotManager(
         validationStartedAt)
       val sameTable =
         existing != null && existing.snapshot.metadata.id == refreshed.snapshot.metadata.id
-      if (sameTable && existing.snapshot.version >= refreshed.snapshot.version) {
+      if (sameTable && existing.snapshot.version == refreshed.snapshot.version) {
         val validatedAt = math.max(validationStartedAt, existing.validatedAtMs)
         currentSnapshot = CachedSnapshot(existing.snapshot, validatedAt)
         retireSnapshotInternal(refreshed)
