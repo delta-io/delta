@@ -474,6 +474,34 @@ class DeltaTableFeatureSuite
     }
   }
 
+  test("fileType-preview is a registered, removable, and addable feature") {
+    // Registered and recognized by name.
+    val feature = TableFeature.featureNameToFeature(FileTypePreviewTableFeature.name)
+    assert(feature.contains(FileTypePreviewTableFeature))
+    // Removable, so it can be dropped once a table no longer contains `file` columns.
+    assert(feature.exists(_.isInstanceOf[RemovableFeature]))
+    // There is no `file` type in the schema yet, so no action references the feature.
+    assert(!FileTypePreviewTableFeature.actionUsesFeature(Metadata()))
+
+    // The feature can be added to a table and then shows up in the protocol.
+    val table = "tbl"
+    withTable(table) {
+      spark.range(0).write.format("delta").saveAsTable(table)
+      val log = DeltaLog.forTable(spark, TableIdentifier(table))
+      assert(!log.update().protocol.readerAndWriterFeatureNames.contains(
+        FileTypePreviewTableFeature.name))
+
+      sql(buildTablePropertyModifyingCommand(
+        "ALTER",
+        targetTableName = table,
+        sourceTableName = table,
+        Seq(s"'$FEATURE_PROP_PREFIX${FileTypePreviewTableFeature.name}' = 'supported', " +
+          s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION")))
+      assert(log.update().protocol.readerAndWriterFeatureNames.contains(
+        FileTypePreviewTableFeature.name))
+    }
+  }
+
   test("drop table feature works with coordinated commits") {
     val table = "tbl"
     withTable(table) {

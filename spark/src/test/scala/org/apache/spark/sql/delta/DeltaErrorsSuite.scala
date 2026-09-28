@@ -27,7 +27,7 @@ import scala.sys.process.Process
 // scalastyle:off import.ordering.noEmptyLine
 // scalastyle:off line.size.limit
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
@@ -38,16 +38,18 @@ import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, Inva
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
+import org.mockito.Mockito.{mock, when}
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.{ErrorClassesJsonReader, SparkContext, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable}
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, Length, LessThanOrEqual, Literal, SparkVersion}
 import org.apache.spark.sql.catalyst.expressions.Uuid
@@ -1051,7 +1053,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.failRelativizePath("somePath")
       }
-      checkError(e, "DELTA_FAIL_RELATIVIZE_PATH", "XXKDS", Map(
+      checkError(e, "DELTA_FAIL_RELATIVIZE_PATH", "22KD1", Map(
         "path" -> "somePath",
         "config" -> DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR.key
       ))
@@ -2948,12 +2950,37 @@ trait DeltaErrorsSuiteBase
         "current transaction read the table."))
     }
     {
+      // No conflicting commit: The plain DELTA_PROTOCOL_CHANGED superclass should be used.
       val e = intercept[io.delta.exceptions.ProtocolChangedException] {
         throw org.apache.spark.sql.delta.DeltaErrors.protocolChangedException(None)
       }
-      checkError(e, "DELTA_PROTOCOL_CHANGED", "2D521", Map.empty[String, String])
-      assert(e.getMessage.contains("The protocol version of the Delta table has been changed " +
-        "by a concurrent update."))
+      checkError(e, "DELTA_PROTOCOL_CHANGED", "2D521",
+        Map("docLink" -> generateDocsLink("/concurrency-control.html")))
+    }
+    {
+      // A conflicting commit at version 0 indicates that a concurrent writer created the table while this
+      // transaction wrote to an empty directory.
+      val conflictingCommit = CommitInfo.empty(version = Some(0))
+        .copy(timestamp = new Timestamp(0), operationParameters = Map.empty)
+      val e = intercept[io.delta.exceptions.ProtocolChangedException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .protocolChangedException(Some(conflictingCommit))
+      }
+      checkError(e, "DELTA_PROTOCOL_CHANGED.WRITE_TO_EMPTY_DIRECTORY", "2D521",
+        Map("docLink" -> generateDocsLink("/concurrency-control.html")))
+    }
+    {
+      // A conflicting commit at a >0 version should be reported via the CONFLICTING_COMMIT subclass.
+      val conflictingCommit = CommitInfo.empty(version = Some(1))
+        .copy(timestamp = new Timestamp(0), operationParameters = Map.empty)
+      val e = intercept[io.delta.exceptions.ProtocolChangedException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .protocolChangedException(Some(conflictingCommit))
+      }
+      checkError(e, "DELTA_PROTOCOL_CHANGED.CONFLICTING_COMMIT", "2D521",
+        Map(
+          "docLink" -> generateDocsLink("/concurrency-control.html"),
+          "conflictingCommit" -> JsonUtils.toJson(conflictingCommit)))
     }
     {
       val e = intercept[io.delta.exceptions.MetadataChangedException] {
@@ -3139,6 +3166,37 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.columnRenameNotSupported
       },
       "DELTA_UNSUPPORTED_RENAME_COLUMN.ENABLE_COLUMN_MAPPING", "0AKDC", versionParams)
+  }
+
+  test("catalog-managed maintenance operation uses the catalog allowlist") {
+    val managedSnapshot = mock(classOf[SnapshotDescriptor])
+    when(managedSnapshot.isCatalogOwned).thenReturn(true)
+    val property = CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY
+
+    def tableWithOperations(value: String): CatalogTable = CatalogTable(
+      identifier = TableIdentifier("table"),
+      tableType = CatalogTableType.MANAGED,
+      storage = CatalogStorageFormat.empty.copy(
+        properties = Map(property -> value)),
+      schema = new StructType())
+
+    DeltaErrors.checkCatalogManagedTableOperationAllowed(
+      CatalogManagedTableMaintenanceOperation.DATA_CLEANUP,
+      managedSnapshot,
+      Some(tableWithOperations("DATA_CLEANUP,METADATA_CLEANUP")))
+
+    intercept[DeltaUnsupportedOperationException] {
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_REORGANIZATION,
+        managedSnapshot,
+        Some(tableWithOperations("DATA_CLEANUP,METADATA_CLEANUP")))
+    }
+    intercept[DeltaUnsupportedOperationException] {
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_CLEANUP,
+        managedSnapshot,
+        None)
+    }
   }
 
   private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {

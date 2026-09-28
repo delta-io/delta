@@ -1311,7 +1311,7 @@
       "Using this SQL configuration could lead to accidental data loss, therefore we do",
       "not recommend the use of this flag unless this is for testing purposes."
     ],
-    "sqlState" : "XXKDS"
+    "sqlState" : "22KD1"
   },
   "DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH" : {
     "message" : [
@@ -2609,8 +2609,21 @@
   },
   "DELTA_PROTOCOL_CHANGED" : {
     "message" : [
-      "ProtocolChangedException: The protocol version of the Delta table has been changed by a concurrent update. <additionalInfo><conflictingCommit>\nRefer to <docLink> for more details."
+      "ProtocolChangedException: The protocol version of the Delta table has been changed by a concurrent update. Refer to <docLink> for more details."
     ],
+    "subClass" : {
+      "CONFLICTING_COMMIT" : {
+        "message" : [
+          "Conflicting commit: <conflictingCommit>",
+          ""
+        ]
+      },
+      "WRITE_TO_EMPTY_DIRECTORY" : {
+        "message" : [
+          "This happens when multiple writers are writing to an empty directory. Creating the table ahead of time will avoid this conflict."
+        ]
+      }
+    },
     "sqlState" : "2D521"
   },
   "DELTA_PROTOCOL_PROPERTY_NOT_INT" : {

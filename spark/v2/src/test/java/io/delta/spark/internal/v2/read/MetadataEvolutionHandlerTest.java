@@ -1412,6 +1412,23 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             1L));
   }
 
+  @Test
+  public void testSchemaJsonMetadataKeyOrderDoesNotAffectParsedSchema() {
+    String idBeforePhysicalName =
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"id\",\"type\":\"integer\","
+            + "\"nullable\":true,\"metadata\":{\"delta.columnMapping.id\":1,"
+            + "\"delta.columnMapping.physicalName\":\"col-id\"}}]}";
+    String physicalNameBeforeId =
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"id\",\"type\":\"integer\","
+            + "\"nullable\":true,\"metadata\":{\"delta.columnMapping.physicalName\":\"col-id\","
+            + "\"delta.columnMapping.id\":1}}]}";
+
+    assertNotEquals(idBeforePhysicalName, physicalNameBeforeId);
+    assertEquals(
+        org.apache.spark.sql.types.DataType.fromJson(idBeforePhysicalName),
+        org.apache.spark.sql.types.DataType.fromJson(physicalNameBeforeId));
+  }
+
   @ParameterizedTest(name = "{0}")
   @MethodSource("mergerTestCases")
   public void testGetMergedConsecutive(
@@ -1441,7 +1458,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     // Verify the merger's result against the table's actual schema and protocol at the merged
     // version. We build the "expected" PersistedMetadata directly from the snapshot at that
-    // version — if the merger captured the right metadata/protocol actions, the JSONs will match.
+    // version. Compare parsed schemas because JSON object key ordering is not significant.
     assertTrue(result.isDefined());
     SnapshotImpl mergedSnapshot =
         DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
@@ -1454,8 +1471,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             new KernelProtocolAdapter(mergedSnapshot.getProtocol()),
             tablePath + "/_delta_log/_streaming_metadata");
 
-    assertEquals(expected.dataSchemaJson(), result.get().dataSchemaJson());
-    assertEquals(expected.partitionSchemaJson(), result.get().partitionSchemaJson());
+    assertEquals(expected.dataSchema(), result.get().dataSchema());
+    assertEquals(expected.partitionSchema(), result.get().partitionSchema());
     assertEquals(expected.protocolJson(), result.get().protocolJson());
   }
 
@@ -1506,6 +1523,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     SnapshotImpl v3Snapshot =
         DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(3L));
-    assertEquals(v3Snapshot.getMetadata().getSchemaString(), result.get().dataSchemaJson());
+    assertEquals(
+        new KernelMetadataAdapter(v3Snapshot.getMetadata()).schema(), result.get().dataSchema());
   }
 }

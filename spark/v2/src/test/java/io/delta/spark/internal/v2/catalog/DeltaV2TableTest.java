@@ -35,6 +35,7 @@ import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.CachedSnapshotManager;
 import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManager;
 import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache$;
 import java.io.File;
@@ -595,8 +596,8 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
           DeltaV2TableManagerCache$.MODULE$.forTable(
               sessionB, path, tableOptions, catalogTableOptB);
 
-      assertTrue(tableA.getSnapshotManager() instanceof PathBasedSnapshotManager);
-      assertTrue(tableB.getSnapshotManager() instanceof PathBasedSnapshotManager);
+      assertTrue(tableA.getSnapshotManager() instanceof CachedSnapshotManager);
+      assertTrue(tableB.getSnapshotManager() instanceof CachedSnapshotManager);
       assertSame(managerA, managerB);
       assertSame(managerA.kernelContext(), managerB.kernelContext());
       assertSame(managerA.kernelContext().getDefaultEngine(), tableA.kernelEngine());
