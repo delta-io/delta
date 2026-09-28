@@ -41,11 +41,12 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, the `add` action supports a `backReference` field:</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, the `add` action supports the `backReference` and `amtPassthrough` fields:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the leaf-manifest entry this add supersedes in place, without a paired `remove` (e.g., a stats backfill). Null otherwise, including a DV update, where the backreference is on the paired `remove`. Contains `manifest` (String) and `pos` (Int). See [Backreferences](#backreferences).</ins> |
+| <ins>amtPassthrough</ins> | <ins>Struct</ins> | <ins>Content-entry fields that have no native `add` field. See [Passthrough Fields](#passthrough-fields).</ins> |
 
 ### Remove File
 
@@ -59,6 +60,7 @@ This design enables:
 | <ins>extendedFileMetadata</ins> | <ins>Boolean</ins> | <ins>Must be true. `partitionValues` and `size` are always present on the `remove`.</ins> |
 | <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the file's entry in a leaf manifest. Null when the file has no leaf-manifest entry — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Int). See [Backreferences](#backreferences).</ins> |
 | <ins>stats</ins> | <ins>String</ins> | <ins>Must be present. Statistics of the removed file, with `numRecords` required at minimum; column statistics are included when recorded for the file. Copied from the matching `add.stats`, or converted from the file's tree entry (`record_count`, `content_stats`).</ins> |
+| <ins>amtPassthrough</ins> | <ins>Struct</ins> | <ins>Copied from the removed file's `add`, except `snapshot_id`, which is the removing commit's snapshot ID. See [Passthrough Fields](#passthrough-fields).</ins> |
 
 <ins>`remove` actions are transient. During log replay a `remove` cancels the matching `add` (or, via its `backReference`, marks the corresponding tree entry deleted) and is then discarded. Removes are **not** retained as tombstones in checkpoints or in the reconstructed table state. There is no timestamp-based tombstone expiration; physical file cleanup is driven by tree reachability (see [Metadata Cleanup](#metadata-cleanup)).</ins>
 
@@ -302,6 +304,7 @@ The root manifest contains entries of the following types:
 | 140 | `sort_order_id` | Int | Optional | DATA | Sort order ID for this file |
 | 148 | `deletion_vector` | Struct ([Deletion Vector](#deletion-vector)) | Optional | DATA | Deletion vector for the data file |
 | 150 | `manifest_info` | Struct ([Manifest Info](#manifest-info)) | Optional | DATA_MANIFEST | Manifest-level summary and MDV |
+| 131 | `key_metadata` | Binary | Optional | All | Implementation-specific key metadata for encryption |
 | 132 | `split_offsets` | Array\<Long\> (element ID 133) | Optional | DATA | Row group split offsets |
 
 ### Tracking
@@ -451,6 +454,30 @@ When folding a log `add` into a manifest, writers convert `add.stats` to `conten
 
 `value_count` and `nan_value_count` have no Delta source and are left unpopulated (readers treat them as unknown). `tightBounds` carries Delta's wide-bounds-under-deletion-vectors semantics to `tight_bounds`, consistent with manifest-level stats being `tight_bounds = false` when an MDV is present.
 
+## Passthrough Fields
+
+The `amtPassthrough` struct on `add` and `remove` actions holds the content entry fields that have no native `add` field:
+
+| Field Name | Data Type | Mapped Content Entry Field | Description |
+|------------|-----------|---------------------|-------------|
+| `spec_id` | Int | 141 `spec_id` | Partition spec ID of the file |
+| `sort_order_id` | Int | 140 `sort_order_id` | Sort order ID of the file |
+| `key_metadata` | Binary | 131 `key_metadata` | Encryption key metadata of the file |
+| `split_offsets` | Array\<Long\> | 132 `split_offsets` | Split offsets of the file, sorted ascending |
+| `snapshot_id` | Long | 147 `tracking` → 1 `snapshot_id` | On an `add`, the file's current value if the file is live before the commit, otherwise the commit's snapshot ID. On a `remove`, the commit's snapshot ID. |
+| `dv_snapshot_id` | Long | 147 `tracking` → 5 `dv_snapshot_id` | Null when the action has no deletion vector. On an `add`, the file's current value if the file is live before the commit with the same deletion vector, otherwise the commit's snapshot ID. On a `remove`, the removed file's current value. |
+| `file_sequence_number` | Long | 147 `tracking` → 4 `file_sequence_number` | Version of the commit that physically added the file. On an `add`, copied from the file's earlier `add` if the file was in the table before, including a re-add after removal; otherwise the commit's version. On a `remove`, the removed file's value. May be omitted when equal to `defaultRowCommitVersion`, which is its value when absent. |
+
+All fields are optional. Writers should omit the struct when every field is null. In JSON, `key_metadata` is a base64-encoded string. A log commit that writes `add` or `remove` actions must generate a snapshot ID (see [Snapshot ID Generation](#snapshot-id-generation)).
+
+### Converting Between Actions and Content Entries
+
+When converting an `add` or `remove` to a content entry, writers copy each non-null passthrough field into its entry field. When producing an `add` from a content entry, readers and writers copy each entry field into the passthrough after resolving inheritance: a null `snapshot_id` or `file_sequence_number` on a leaf `ADDED` entry takes the value of the `DATA_MANIFEST` entry that references the leaf (see [Tracking](#tracking)). `dv_snapshot_id` is not inherited.
+
+### File Metadata Fields
+
+`spec_id`, `sort_order_id`, `key_metadata` and `split_offsets` describe the physical file itself. Delta does not interpret them. A writer that commits an `add` or `remove` for a file that is live in the table must copy these fields unchanged from the file's current `add` or content entry. An `add` for a newly written file must not copy them from another file.
+
 ## Snapshot ID Generation
 
 The `snapshot_id` field in tracking identifies when content was added or modified. Writers must generate a unique long value for each manifest commit.
@@ -462,12 +489,13 @@ Delta's row tracking fields map to Iceberg V4 tracking as follows:
 | Delta Field | Iceberg Tracking Field | Field ID |
 |-------------|-------------------|----------|
 | `baseRowId` | `first_row_id` | 142 |
-| `defaultRowCommitVersion` | `sequence_number`, `file_sequence_number` | 3, 4 |
+| `defaultRowCommitVersion` | `sequence_number` | 3 |
+| `amtPassthrough.file_sequence_number` | `file_sequence_number` | 4 |
 | `rowIdHighWaterMark` | `next-row-id` | - |
 
 The `rowIdHighWaterMark` in the `delta.rowTracking` domain metadata remains the authoritative row ID allocator. It is the highest assigned row ID, while Iceberg's `next-row-id` table metadata field is the next unassigned one, so `next-row-id` resolves to `rowIdHighWaterMark + 1`.
 
-When `adaptiveMetadata` is enabled, Iceberg's `sequence_number` (data sequence number) and `file_sequence_number` are both set to the Delta commit version of the `add` action that introduced the file, and always resolve to the same value. In Iceberg these can diverge: the data sequence number records the relative age of a file's content and is used to decide which delete files apply to a data file, so a rewritten file (e.g., compaction) can keep an older data sequence number than the commit that physically wrote it. Delta has no such notion because it binds deletion vectors directly to their data file rather than resolving delete application by sequence number, so there is never a reason for the two to differ. `file_sequence_number` is required by Iceberg's inheritance model but Delta does not read it back.
+When `adaptiveMetadata` is enabled, Iceberg's `sequence_number` (data sequence number) and `file_sequence_number` are both set to the Delta commit version of the `add` action that introduced the file. In Iceberg these can diverge: the data sequence number records the relative age of a file's content and is used to decide which delete files apply to a data file, so a rewritten file (e.g., compaction) can keep an older data sequence number than the commit that physically wrote it. Delta has no such notion because it binds deletion vectors directly to their data file rather than resolving delete application by sequence number.
 
 For ADDED entries in leaf manifests, both are null and inherited from the `DATA_MANIFEST` entry in the root (see [Inheritance](#inheritance)). For EXISTING entries (e.g., after compaction), both are materialized.
 
@@ -569,6 +597,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Maintain a two-level tree (root -> leaves) and not create nested manifest references.
 - Record a `backReference` for every file read from the tree, and use the accumulated backreferences to build MDVs and re-add entries when producing a manifest commit (see [Backreferences](#backreferences) and [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
 - Populate manifest entries with partition values, content stats, deletion vectors, and tracking and sequence numbers (see [Content Entry Schema](#content-entry-schema) and [Row Tracking Compatibility](#row-tracking-compatibility)).
+- Carry `amtPassthrough` on `add` and `remove` actions, preserving and assigning its fields as described in [Passthrough Fields](#passthrough-fields).
 - Materialize row-tracking and partition columns in data files, tagged with their Iceberg `field_id`s (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns) and [Partition Values](#partition-values)).
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
