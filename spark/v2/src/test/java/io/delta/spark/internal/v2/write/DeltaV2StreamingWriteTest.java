@@ -220,6 +220,40 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
   }
 
   /**
+   * The opposite direction: opting in mid-stream must also fail the epoch, because the executor
+   * writer was built not to shred. The table starts with the {@code variantShredding} feature
+   * already supported, so enabling the property leaves the protocol unchanged; otherwise enabling
+   * it would add the feature and the protocol guard would fire first, never reaching this branch.
+   */
+  @Test
+  public void testCommit_failsWhenShreddingPropertyEnabledMidStream(@TempDir File tempDir)
+      throws Exception {
+    assumeTrue(shreddedWritesSupported(), SHREDDING_UNSUPPORTED);
+    String shreddingKey = DeltaConfigs.ENABLE_VARIANT_SHREDDING().key();
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE streaming_shredding_enabled_mid_stream (id INT, v VARIANT) USING delta "
+                + "LOCATION '%s' TBLPROPERTIES ('delta.feature.variantShredding' = 'supported', "
+                + "'%s' = 'false')",
+            path, shreddingKey));
+    DeltaV2StreamingWrite write = newVariantWrite(path, /* variantShreddingEnabled */ false);
+
+    spark.sql(
+        String.format(
+            "ALTER TABLE delta.`%s` SET TBLPROPERTIES ('%s' = 'true')", path, shreddingKey));
+
+    IllegalStateException e =
+        assertThrows(
+            IllegalStateException.class,
+            () -> write.commit(0L, new WriterCommitMessage[] {variantEpoch(write, 0L)}));
+    assertTrue(
+        e.getMessage().contains(shreddingKey),
+        "guard should name the changed property: " + e.getMessage());
+    assertEquals(0L, spark.read().format("delta").load(path).count());
+  }
+
+  /**
    * A shredding-property change that cannot alter the layout must be ignored, not fail the epoch.
    * On a table with no variant column the property governs nothing, so the write still commits.
    * (Spark 4.0 and a disabled kill switch are the other two cases the same guard condition covers.)
