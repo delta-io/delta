@@ -439,8 +439,13 @@ For example, a base file added in version 10 and updated through a column file i
 `file_sequence_number = 10` and `sequence_number = 20`. DV-only updates and metadata-only rewrites
 must preserve all three tracking fields.
 
-AMT manifest commits are required to produce more fields for column files than Delta keeps within
-`add` actions -- all extra fields are wired through `amtPassthrough`.
+Iceberg requires more fields for column files than Delta keeps within `add` actions -- all extra
+fields are wired through `amtPassthrough`:
+
+- `format_version` -- Delta doesn't need to keep track of this version;
+- `file_format` -- Delta only supports Parquet;
+- `key_metadata` -- Delta doesn't support encryption;
+- `split_offsets` -- this is only for planning.
 
 ## Valid Feature Names in Table Features
 
