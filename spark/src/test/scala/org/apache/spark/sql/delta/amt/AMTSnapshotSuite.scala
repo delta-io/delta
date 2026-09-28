@@ -52,7 +52,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     checkAnswer(spark.read.table(context.tableName), Seq(Row(2), Row(3)))
     // The manifest tree captures exactly the post-DELETE live files (computePostCommitState applied
     // the RemoveFile), i.e. it matches snapshot.allFiles.
-    assertReconstructsLiveFileSet(context)
+    assertLiveAddFilesRoundTrip(context)
   }
 
   testAcrossAMTCheckpointScenarios(
@@ -85,7 +85,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     assert(context.postCheckpointSnapshot.allFiles.count() == 1,
       "Only the surviving overwrite file should be live.")
     // The tree must capture exactly the surviving live files after overwrite + delete.
-    assertReconstructsLiveFileSet(context)
+    assertLiveAddFilesRoundTrip(context)
   }
 
   // AMT inline or not should be irrelevant to test result.
@@ -1014,7 +1014,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
 
     // Every leaf entry must surface exactly once across the leaves, plus the inline protocol and
     // metadata actions.
-    assertReconstructsLiveFileSet(context)
+    assertLiveAddFilesRoundTrip(context)
     assert(df.where("protocol.minReaderVersion is not null").count() == 1,
       "Reconstruction must carry the inline protocol action.")
     assert(df.where("metaData.id is not null").count() == 1,

@@ -489,6 +489,30 @@ trait DeltaInsertIntoTest
     def toDF: DataFrame = readFromJSON(data, schema)
   }
 
+  protected def checkExpectedRows(
+      actual: => DataFrame,
+      insert: Insert,
+      initialData: TestData,
+      insertData: TestData): Unit = {
+    checkAnswer(actual, insert.expectedResult(initialData.toDF, insertData.toDF))
+  }
+
+  protected def checkExpectedRows(actual: => DataFrame, expectedData: TestData): Unit = {
+    checkAnswer(actual, expectedData.toDF)
+  }
+
+  protected def createTableFromTestData(
+      tableName: String,
+      data: TestData,
+      partitionBy: Seq[String] = Seq.empty): Unit = {
+    val writer = data.toDF.write.format(writeFormat)
+    if (partitionBy.nonEmpty) {
+      writer.partitionBy(partitionBy: _*)
+    }
+    writer.saveAsTable(tableName)
+  }
+
+
   /**
    * Test runner to cover INSERT operations defined above.
    * @param name                Test name
@@ -524,14 +548,10 @@ trait DeltaInsertIntoTest
     for (insert <- inserts) {
       test(s"${insert.name} - $name") {
         withTable("source", "target") {
-          val writer = initialData.toDF.write.format(writeFormat)
-          if (partitionBy.nonEmpty) {
-            writer.partitionBy(partitionBy: _*)
-          }
-          writer.saveAsTable("target")
+          createTableFromTestData("target", initialData, partitionBy)
           // Write the data to insert to a table so that we can use it in both SQL and dataframe
           // writer inserts.
-          insertData.toDF.write.format(writeFormat).saveAsTable("source")
+          createTableFromTestData("source", insertData)
 
           def runInsert(): Unit =
             insert.runInsert(
@@ -547,12 +567,12 @@ trait DeltaInsertIntoTest
                 runInsert()
                 val target = spark.read.table("target")
                 assert(target.schema === expectedSchema)
-                checkAnswer(target, insert.expectedResult(initialData.toDF, insertData.toDF))
+                checkExpectedRows(target, insert, initialData, insertData)
               case ExpectedResult.Success(expectedData: TestData) =>
                 runInsert()
                 val target = spark.read.table("target")
                 assert(target.schema === expectedData.schema)
-                checkAnswer(spark.read.table("target"), expectedData.toDF)
+                checkExpectedRows(target, expectedData)
               case ExpectedResult.Failure(checkError) =>
                 val ex = if (insert == StreamingInsert) {
                   intercept[StreamingQueryException] {

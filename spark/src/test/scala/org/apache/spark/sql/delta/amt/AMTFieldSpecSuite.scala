@@ -155,7 +155,7 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
   }
 
   test("persistedSchema stamps an id on every mapped field of AMTSingleAction") {
-    withAllTypesTable("amt_fieldid_schema", numFiles = 0) { deltaLog =>
+    withAllTypesTable("amt_fieldid_schema") { deltaLog =>
       val snapshot = deltaLog.update()
       val metadata = snapshot.metadata
       val protocol = snapshot.protocol
