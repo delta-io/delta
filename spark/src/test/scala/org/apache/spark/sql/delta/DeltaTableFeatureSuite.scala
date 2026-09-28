@@ -543,7 +543,7 @@ class DeltaTableFeatureSuite
         val e = intercept[DeltaTableFeatureException] {
           sql(s"ALTER TABLE $table DROP FEATURE $featureName")
         }
-        assert(e.getMessage.contains("DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST"), e)
+        assert(e.getCondition == "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST", e)
 
         // Add in a checkpoint and cleanUp up older logs containing feature traces
         log.startTransaction().commitManually()
