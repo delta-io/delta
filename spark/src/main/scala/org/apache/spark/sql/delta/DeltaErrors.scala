@@ -2755,7 +2755,7 @@ trait DeltaErrorsBase
     conflictingCommit match {
       case Some(ci) if ci.version.getOrElse(-1L) == 0 =>
         io.delta.exceptions.ProtocolChangedException(
-          "WRITE_TO_EMPTY_DIRECTORY", Array(docLink))
+          "WRITE_TO_EMPTY_DIRECTORY", Array(docLink, JsonUtils.toJson(ci)))
       case Some(ci) =>
         io.delta.exceptions.ProtocolChangedException(
           "CONFLICTING_COMMIT", Array(docLink, JsonUtils.toJson(ci)))
