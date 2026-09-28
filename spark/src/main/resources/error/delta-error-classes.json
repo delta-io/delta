@@ -2620,7 +2620,9 @@
       },
       "WRITE_TO_EMPTY_DIRECTORY" : {
         "message" : [
-          "This happens when multiple writers are writing to an empty directory. Creating the table ahead of time will avoid this conflict."
+          "This happens when multiple writers are writing to an empty directory. Creating the table ahead of time will avoid this conflict.",
+          "Conflicting commit: <conflictingCommit>",
+          ""
         ]
       }
     },

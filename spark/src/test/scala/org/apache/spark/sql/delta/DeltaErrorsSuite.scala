@@ -2967,7 +2967,9 @@ trait DeltaErrorsSuiteBase
           .protocolChangedException(Some(conflictingCommit))
       }
       checkError(e, "DELTA_PROTOCOL_CHANGED.WRITE_TO_EMPTY_DIRECTORY", "2D521",
-        Map("docLink" -> generateDocsLink("/concurrency-control.html")))
+        Map(
+          "docLink" -> generateDocsLink("/concurrency-control.html"),
+          "conflictingCommit" -> JsonUtils.toJson(conflictingCommit)))
     }
     {
       // A conflicting commit at a >0 version should be reported via the CONFLICTING_COMMIT subclass.
