@@ -1065,13 +1065,111 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_ILLEGAL_FILE_FOUND", "XXKDS", Map("file" -> "someFile"))
     }
     {
-      val name = "name"
-      val input = "input"
-      val explain = "explain"
-      val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.illegalDeltaOptionException(name, input, explain)
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionMustBeInteger("name", "input")
       }
-      checkError(e, "DELTA_ILLEGAL_OPTION", "42616", Map("name" -> name, "input" -> input, "explain" -> explain))
+      checkError(err, "DELTA_ILLEGAL_OPTION.MUST_BE_INTEGER", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionMustBeNonNegativeNumber("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.MUST_BE_NON_NEGATIVE_NUMBER", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionMustBePositiveNumber("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.MUST_BE_POSITIVE_NUMBER", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionNoEmptyColumnNames("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.NO_EMPTY_COLUMN_NAMES", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionMustBeSizeConfiguration("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.MUST_BE_SIZE_CONFIGURATION", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionDynamicPartitionOverwriteOnly("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.DYNAMIC_PARTITION_OVERWRITE_ONLY", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionSchemaModeWithTimeTravel("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.SCHEMA_MODE_WITH_TIME_TRAVEL", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionInvalidReorgParquetFormatVersion(
+          "name", "input", new IllegalArgumentException("bad version"))
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.INVALID_REORG_PARQUET_FORMAT_VERSION", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionMustBeOneOf("name", "input", Seq("a", "b"))
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.MUST_BE_ONE_OF", "42616",
+        Map("input" -> "input", "name" -> "name", "validValues" -> "a, b"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionMustBeBoolean("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.MUST_BE_ONE_OF", "42616",
+        Map("input" -> "input", "name" -> "name", "validValues" -> "'true', 'false'"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionInvalidParquetFormatVersion(
+          "name", "input", new IllegalArgumentException("bad version"))
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.INVALID_PARQUET_FORMAT_VERSION", "42616",
+        Map("input" -> "input", "name" -> "name", "causeExceptionMessage" -> "bad version"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionUnrecognizedNamedArgument(
+          "name", "input", "read_files", "a, b")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.UNRECOGNIZED_NAMED_ARGUMENT", "42616",
+        Map("input" -> "input", "name" -> "name", "functionName" -> "read_files",
+          "validArguments" -> "a, b"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionParquetCompressionCodecConflict(
+          "name", "input", "delta.parquet.compression.codec", "gzip")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.PARQUET_COMPRESSION_CODEC_CONFLICT", "42616",
+        Map("input" -> "input", "name" -> "name",
+          "property" -> "delta.parquet.compression.codec", "propertyValue" -> "gzip"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionParquetWriterVersionConflict(
+          "name", "input", "delta.parquet.format.version", "v3", "V2")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.PARQUET_WRITER_VERSION_CONFLICT", "42616",
+        Map("input" -> "input", "name" -> "name",
+          "property" -> "delta.parquet.format.version", "propertyValue" -> "v3",
+          "resolvedVersion" -> "V2"))
     }
     {
       val version = "version"
