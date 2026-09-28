@@ -235,6 +235,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ >= 0, "must be non-negative")
       .createWithDefault(500000L)
 
+  val DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT =
+    buildConf("logSegment.deltasToStringLimit")
+      .internal()
+      .doc("Maximum number of delta files rendered when a LogSegment is turned into a string " +
+        "for logging or error messages. A LogSegment can hold a very large number of delta " +
+        "files, and rendering all of them can materialize a huge string and OOM the driver, so " +
+        "the remainder is elided once this limit is exceeded. Set to -1 to disable truncation.")
+      .longConf
+      .checkValue(_ >= -1, "must be -1 (truncation disabled) or non-negative")
+      .createWithDefault(5000L)
+
   val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
     buildConf("partitionColumnValidity.enabled")
       .internal()

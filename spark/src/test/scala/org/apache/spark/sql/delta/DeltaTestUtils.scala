@@ -66,6 +66,33 @@ object DeltaTestUtilsBase {
    * Used to gate NullType tests so they run on Spark 4.1+ and are skipped on Spark 4.0.
    */
   def nullTypeColumnsSupported: Boolean = !org.apache.spark.SPARK_VERSION.startsWith("4.0")
+
+  /**
+   * Collects `t` and every throwable in its cause chain (cycle-guarded) and asserts that at
+   * least one of them satisfies `f`.
+   */
+  def assertThrowableInCauseChain(t: Throwable)(f: Throwable => Boolean): Unit = {
+    val throwables = scala.collection.mutable.ArrayBuffer.empty[Throwable]
+    var current: Throwable = t
+    while (current != null && !throwables.contains(current)) {
+      throwables += current
+      current = current.getCause
+    }
+    assert(throwables.exists(f),
+      s"No throwable in the cause chain matched the predicate. Chain: " +
+        throwables.map(_.getClass.getName).mkString("[", ", ", "]"))
+  }
+
+  /**
+   * Asserts that at least one throwable in `t`'s cause chain is a `SparkThrowable` whose error
+   * condition equals `condition`.
+   */
+  def assertThrowableWithConditionInCauseChain(t: Throwable, condition: String): Unit = {
+    assertThrowableInCauseChain(t) {
+      case st: org.apache.spark.SparkThrowable => st.getCondition == condition
+      case _ => false
+    }
+  }
 }
 
 trait CDCTestMixin {
