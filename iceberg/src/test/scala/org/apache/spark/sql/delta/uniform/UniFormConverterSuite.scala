@@ -266,7 +266,9 @@ class UniFormConverterSuite extends
       val schema = DeltaLog.forTable(spark, TableIdentifier(tableName)).update().schema
       val idFieldId = DeltaColumnMapping.getColumnId(schema("id"))
       val bigFieldId = DeltaColumnMapping.getColumnId(schema("big"))
-      val dataFiles = icebergTable.newScan().planFiles().asScala.map(_.file()).toSeq
+      // Column stats are only loaded when the scan asks for them.
+      val dataFiles =
+        icebergTable.newScan().includeColumnStats().planFiles().asScala.map(_.file()).toSeq
       assert(dataFiles.nonEmpty)
 
       dataFiles.foreach { file =>
