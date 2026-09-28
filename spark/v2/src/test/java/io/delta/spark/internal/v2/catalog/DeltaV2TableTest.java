@@ -26,6 +26,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.mockConstruction;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
@@ -54,6 +60,8 @@ import java.util.function.BiFunction;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
@@ -70,6 +78,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
@@ -82,6 +91,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
+import org.mockito.MockedConstruction;
 import scala.Option;
 
 public class DeltaV2TableTest extends DeltaV2TestBase {
@@ -626,6 +637,59 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
             assertLatestSnapshot(tableB, sessionB, 2L, 2L);
             return null;
           });
+    } finally {
+      DeltaV2TableManagerCache$.MODULE$.clearCache();
+      spark.sql(String.format("DROP TABLE IF EXISTS %s", tableName));
+    }
+  }
+
+  @Test
+  public void testNamedTableQueryLoadsSnapshotWithItsQueryContext(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "test_query_context_snapshot_load";
+    spark.sql(String.format("CREATE TABLE %s (id INT) USING delta LOCATION '%s'", tableName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1), (2)", tableName));
+    CatalogTable catalogTable =
+        spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tableName));
+    TableIdentifier expectedIdentifier = catalogTable.identifier();
+
+    Snapshot realSnapshot =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf())
+            .loadLatestSnapshot();
+    AssertionError legacyApiError =
+        new AssertionError("DeltaV2Table query used the legacy snapshot API");
+    DeltaV2TableManagerCache$.MODULE$.clearCache();
+    try (MockedConstruction<CachedSnapshotManager> mockedManagers =
+        mockConstruction(
+            CachedSnapshotManager.class,
+            (mock, context) -> {
+              when(mock.loadLatestSnapshot(any(DeltaV2QueryContext.class)))
+                  .thenReturn(realSnapshot);
+              when(mock.loadLatestSnapshot()).thenThrow(legacyApiError);
+            })) {
+      ThrowingRunnable checkQuery =
+          () ->
+              withSQLConf(
+                  DeltaSQLConf.V2_ENABLE_MODE().key(),
+                  "STRICT",
+                  () -> {
+                    String query = String.format("SELECT id FROM %s ORDER BY id", tableName);
+                    List<Row> rows = spark.sql(query).collectAsList();
+                    assertEquals(Arrays.asList(RowFactory.create(1), RowFactory.create(2)), rows);
+                  });
+      checkQuery.run();
+
+      assertEquals(1, mockedManagers.constructed().size());
+      CachedSnapshotManager manager = mockedManagers.constructed().get(0);
+      ArgumentCaptor<DeltaV2QueryContext> queryContextCaptor =
+          ArgumentCaptor.forClass(DeltaV2QueryContext.class);
+      verify(manager, atLeastOnce()).loadLatestSnapshot(queryContextCaptor.capture());
+      verify(manager, never()).loadLatestSnapshot();
+      DeltaV2QueryContext queryContext = queryContextCaptor.getValue();
+      assertTrue(queryContext.catalogTableOpt().isDefined());
+      TableIdentifier capturedIdentifier = queryContext.catalogTableOpt().get().identifier();
+      assertEquals(expectedIdentifier, capturedIdentifier);
     } finally {
       DeltaV2TableManagerCache$.MODULE$.clearCache();
       spark.sql(String.format("DROP TABLE IF EXISTS %s", tableName));
