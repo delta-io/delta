@@ -468,9 +468,11 @@ object AMTWriteHelper extends DeltaLogging {
       mdvPositions: Seq[Int],
       deletedPositions: Seq[Int],
       replacedPositions: Seq[Int]): (Tracking, ManifestInfo) = {
-    val cumulativeMdv = oldEntry.manifest_info.dv
+    val mutableMdv = oldEntry.manifest_info.dv
       .map(AMTUtils.deserializeMdv).getOrElse(ManifestBitmap.fromPositions(Seq.empty))
-    mdvPositions.foreach(cumulativeMdv.add)
+      .toMutable
+    mdvPositions.foreach(mutableMdv.add)
+    val cumulativeMdv = mutableMdv.toManifestBitmap
     def bitmapOf(positions: Seq[Int]): Option[Array[Byte]] = {
       if (positions.isEmpty) None
       else Some(AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions)))

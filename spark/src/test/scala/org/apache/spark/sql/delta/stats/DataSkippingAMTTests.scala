@@ -58,16 +58,12 @@ trait DataSkippingAMTBase extends DataSkippingDeltaTestsBase
     "data skipping with column mapping and upper case column names - +columnMapping = name",
     "Data skipping with delta statistic column drop column",
     "Data skipping with delta statistic column rename column",
+    "data skipping flags",
     // Row tracking is always enabled on AMT, but these tests disable it explicitly and hit
     // DELTA_ADAPTIVE_METADATA_REQUIRES_DEPENDENT_FEATURE_ENABLED at create.
     "base_row_id filter throws FIELD_NOT_FOUND when row tracking is disabled",
-    "default_row_commit_version filter throws FIELD_NOT_FOUND when row tracking is disabled",
-    "data skipping flags",
-    // TIME type is not supported in AMT yet.
-    "time - comparisons",
-    "time - edge cases",
-    "time - equality",
-    "time - microsecond precision")
+    "default_row_commit_version filter throws FIELD_NOT_FOUND when row tracking is disabled"
+  )
 
   // Substring match; ignoring the base test name here also prevents the corpus from registering
   // its DataFrame-schema twin.

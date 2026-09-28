@@ -242,14 +242,23 @@ trait AMTCheckpointTestBase
     allTypeColumns.values.map(_.valueExpr).toSeq
 
   /**
+   * The value expressions, in column order, for a row of a [[withAllTypesTable]] table: the
+   * `d_`-prefixed all-type data columns followed by the `p_`-prefixed partition columns. Pass to
+   * [[appendRowsAsSeparateFiles]] to populate such a table with the default one-distinct-value-per-
+   * row layout.
+   */
+  protected def allTypesTableColumnExprs: Seq[String] =
+    (allTypeColumns.values.toSeq ++ partitionableTestColumns).map(_.valueExpr)
+
+  /**
    * Creates an AMT table exercising every partition type (the `p_`-prefixed
    * [[partitionableTestColumns]]) alongside the `d_`-prefixed data columns that content stats are
-   * collected on. Appends `numFiles` single-row files (one distinct value per row per column), and
-   * runs `body` with the table's [[DeltaLog]].
+   * collected on, and runs `body` with the table's [[DeltaLog]]. Populating the table is the
+   * caller's responsibility -- use [[appendRowsAsSeparateFiles]] with [[allTypesTableColumnExprs]]
+   * (or bespoke expressions), so each caller controls its own row count, packing, and null layout.
    */
   protected def withAllTypesTable(
       tableName: String,
-      numFiles: Int,
       maxEntriesPerLeaf: Int = entriesPerLeaf)(body: DeltaLog => Unit): Unit = {
     // Every type, so the content-stats goldens cover the full set of data columns.
     val dataColumns: Seq[TestColumn] = allTypeColumns.values.toSeq
@@ -262,12 +271,6 @@ trait AMTCheckpointTestBase
             (dataColumns.map(_.columnDef("d_")) ++ partitionableTestColumns.map(_.columnDef("p_")))
               .mkString(", "),
           partitionColumns = partitionableTestColumns.map("p_" + _.name))
-        if (numFiles > 0) {
-          appendRowsAsSeparateFiles(
-            tableName,
-            numFiles = numFiles,
-            columnExprs = (dataColumns ++ partitionableTestColumns).map(_.valueExpr))
-        }
         body(deltaLogForName(tableName))
       }
     }
@@ -343,10 +346,12 @@ trait AMTCheckpointTestBase
    * @param scenario the placement and materialization strategy used by the test
    * @param tableName the catalog-managed table created by the harness
    * @param postSetupSnapshot the snapshot after `setup`
-   * @param preCheckpointSnapshot the snapshot immediately before the checkpoint is constructed: for
-   *                              deferred scenarios, after the trigger's data commit but before the
-   *                              checkpoint commit; for inline scenarios, the same as
-   *                              `postSetupSnapshot`.
+   * @param preCheckpointSnapshot the snapshot just before the checkpoint is materialized: for
+   *                              deferred scenarios, taken after the trigger's data commit but
+   *                              before the OPTIMIZE-CHECKPOINT commit; for inline scenarios, the
+   *                              checkpoint rides in the trigger commit, so there is no distinct
+   *                              pre-checkpoint version and this is the same as the pre-trigger
+   *                              snapshot.
    * @param manifestCommitVersion the commit carrying `checkpoint`; this equals
    *                              `checkpoint.version` for inline checkpoints and
    *                              `checkpoint.version + 1` for deferred checkpoints
@@ -446,11 +451,12 @@ trait AMTCheckpointTestBase
       }
     }
 
-    // The snapshot immediately before the checkpoint is constructed. For deferred scenarios this is
-    // taken after the trigger's data commit but before the checkpoint commit, so it can be compared
-    // against the post-checkpoint snapshot. Inline scenarios write the checkpoint in the same
-    // commit that adds data, so there is no distinct pre-construction state; it stays the
-    // pre-trigger snapshot (and callers skip the before/after comparison for inline).
+    // Run the business trigger and materialize the checkpoint, capturing the snapshot just before
+    // the checkpoint is written. Inline scenarios write the checkpoint in the same commit that adds
+    // data, so there is no distinct pre-checkpoint version and this stays the pre-trigger snapshot.
+    // Deferred scenarios write it in a separate follow-up OPTIMIZE CHECKPOINT commit, so the
+    // snapshot taken after the trigger but before that commit is the table's state reconstructed
+    // independently of the AMT under test.
     val preCheckpointSnapshot: Snapshot = scenario match {
       case InlineIncremental =>
         withSQLConf(
@@ -461,9 +467,9 @@ trait AMTCheckpointTestBase
         postSetupSnapshot
       case _ =>
         runCheckpointTrigger()
-        val beforeConstruction = deltaLog.update()
+        val beforeCheckpoint = deltaLog.update()
         commitCheckpoint(deltaLog, incremental = scenario.isIncremental)
-        beforeConstruction
+        beforeCheckpoint
     }
 
     val checkpointedVersion = postSetupSnapshot.version +
@@ -592,30 +598,63 @@ trait AMTCheckpointTestBase
   }
 
   /**
-   * Asserts the manifest tree round-trips the live file set exactly: reconstructing from the
-   * checkpoint (root + leaves, minus MDV-masked entries and root tombstones) must yield precisely
-   * `snapshot.allFiles`, with no entry dropped or duplicated.
-   *
-   * Call this from tests that are about the tree capturing table state. It is deliberately NOT run
-   * for every scenario: it costs a full reconstruction scan per call, which is wasted on tests that
-   * assert something else (field ids, log-segment trimming, back references).
+   * A comparison key for an [[AddFile]] that ignores the fields which legitimately differ between a
+   * freshly committed AddFile and one an AMT reconstructs (via `DataEntry.toAddFile`), so two
+   * descriptions of the same live file compare equal:
+   *  - `modificationTime` (not round-tripped by the AMT yet) is zeroed;
+   *  - `backReference` and `amtPassthrough` are AMT's own auxiliary fields, not part of the
+   *    AddFile's content, so they are zeroed rather than compared;
+   *  - `stats` is a JSON string, compared as a parsed tree (field order is not significant);
+   *  - the deletion vector is compared by the physical file it resolves to plus its offset/size/
+   *    cardinality: a committed DV is stored `storageType="r"` (the relative path) while the AMT
+   *    re-encodes the same vector as `"u"` (the base85 UUID), and both resolve to the same file.
    */
-  protected def assertReconstructsLiveFileSet(context: AMTCheckpointScenarioContext): Unit = {
+  private def canonicalAddFile(tableLocation: Path)(add: AddFile) =
+    add.copy(
+      modificationTime = 0L,
+      stats = null,
+      deletionVector = null,
+      backReference = None,
+      amtPassthrough = None) -> (
+        Option(add.stats).map(JsonUtils.mapper.readTree),
+        Option(add.deletionVector).map { dv =>
+          val physical =
+            if (dv.storageType == "i") dv.uniqueFileId
+            else dv.absolutePath(tableLocation).toString
+          (physical, dv.offset, dv.sizeInBytes, dv.cardinality, dv.maxRowIndex)
+        })
+
+  /**
+   * Asserts the live file set survives AMT checkpoint construction, comparing the state before the
+   * checkpoint against the state after.
+   */
+  protected def assertLiveAddFilesRoundTrip(context: AMTCheckpointScenarioContext): Unit = {
     val snapshot = context.postCheckpointSnapshot
-    val committed = snapshot.allFiles.collect().map(_.path).toSet
-      val reconstructed = context.provider
-        .loadActionsForStateReconstruction(spark, snapshot.deltaLog)
+    val deltaLog = snapshot.deltaLog
+    allowReadWithinDeltaLog {
+      val reconstructedPaths = context.provider
+        .loadActionsForStateReconstruction(spark, deltaLog)
         .getOrElse(fail(s"${context.scenario.name}: provider must contribute file actions."))
         .where(col("add").isNotNull)
         .select("add.path")
         .collect()
         .map(_.getString(0))
-      assert(reconstructed.length == reconstructed.toSet.size,
+      assert(reconstructedPaths.length == reconstructedPaths.toSet.size,
         s"${context.scenario.name}: reconstruction must not duplicate entries; got " +
-          s"${reconstructed.toSeq.diff(reconstructed.distinct.toSeq)}")
-      assert(reconstructed.toSet == committed,
-        s"${context.scenario.name}: file set changed: committed=$committed " +
-          s"reconstructed=${reconstructed.toSet}")
+          s"${reconstructedPaths.toSeq.diff(reconstructedPaths.distinct.toSeq)}")
+    }
+
+    // Inline checkpoints ride in the trigger commit, so there is no distinct pre-checkpoint
+    // snapshot to compare against; the before/after round-trip covers only the deferred scenarios,
+    // whose checkpoint is a separate no-data commit after the trigger.
+    if (!context.scenario.isInline) {
+      val canonical = canonicalAddFile(deltaLog.dataPath) _
+      val expected = context.preCheckpointSnapshot.allFiles.collect().map(canonical).toSet
+      val reconstructed = snapshot.allFiles.collect().map(canonical).toSet
+      assert(reconstructed == expected,
+        s"${context.scenario.name}: live AddFiles changed across AMT checkpoint construction\n" +
+          s"  before=$expected\n  after=$reconstructed")
+    }
   }
 
   /** Forces every write to inline its AMT incrementally (a low action-count threshold). */
@@ -696,7 +735,7 @@ trait AMTCheckpointTestBase
    * does it count live files stored directly in the root. On an incremental tree a deleted file's
    * entry stays physically present in its carried-forward leaf (tombstoned via the leaf MDV), so
    * this can exceed the live file count. To assert the tree captures exactly the live file set,
-   * call [[assertReconstructsLiveFileSet]] instead.
+   * call [[assertLiveAddFilesRoundTrip]] instead.
    */
   protected def leafLiveDataEntryCount(snapshot: Snapshot): Long =
     leafLiveDataEntryCount(amtProvider(snapshot)
@@ -720,7 +759,7 @@ trait AMTCheckpointTestBase
    * and incremental trees. Unlike [[leafLiveDataEntryCount]], it counts live files stored directly
    * in the root too (as an incremental commit does below the spill threshold).
    *
-   * Prefer [[assertReconstructsLiveFileSet]] when the test runs through
+   * Prefer [[assertLiveAddFilesRoundTrip]] when the test runs through
    * [[testAcrossAMTCheckpointScenarios]]; this count is for scenario-specific tests that drive the
    * checkpoint themselves and so have no [[AMTCheckpointScenarioContext]].
    */
