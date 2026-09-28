@@ -43,8 +43,8 @@ trait DeltaV2SnapshotManager {
   def loadLatestSnapshot(): Snapshot
 
   /** Loads the latest snapshot using inputs scoped to the current query. */
-  def loadLatestSnapshot(queryContextOpt: Option[DeltaV2QueryContext]): Snapshot = {
-    Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
+  def loadLatestSnapshot(queryContext: DeltaV2QueryContext): Snapshot = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     loadLatestSnapshot()
   }
 
@@ -59,8 +59,8 @@ trait DeltaV2SnapshotManager {
   /** Loads a versioned snapshot using inputs scoped to the current query. */
   def loadSnapshotAt(
       version: Long,
-      queryContextOpt: Option[DeltaV2QueryContext]): Snapshot = {
-    Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
+      queryContext: DeltaV2QueryContext): Snapshot = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     loadSnapshotAt(version)
   }
 
@@ -88,8 +88,8 @@ trait DeltaV2SnapshotManager {
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
       canReturnEarliestCommit: Boolean,
-      queryContextOpt: Option[DeltaV2QueryContext]): DeltaHistoryManager.Commit = {
-    Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
+      queryContext: DeltaV2QueryContext): DeltaHistoryManager.Commit = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     getActiveCommitAtTime(
       timestampMillis,
       canReturnLastCommit,
@@ -120,8 +120,8 @@ trait DeltaV2SnapshotManager {
       version: Long,
       mustBeRecreatable: Boolean,
       allowOutOfRange: Boolean,
-      queryContextOpt: Option[DeltaV2QueryContext]): Unit = {
-    Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
+      queryContext: DeltaV2QueryContext): Unit = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     checkVersionExists(version, mustBeRecreatable, allowOutOfRange)
   }
 
@@ -143,8 +143,8 @@ trait DeltaV2SnapshotManager {
       kernelEngine: Engine,
       startVersion: Long,
       endVersion: Optional[java.lang.Long],
-      queryContextOpt: Option[DeltaV2QueryContext]): CommitRange = {
-    Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
+      queryContext: DeltaV2QueryContext): CommitRange = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     getTableChanges(kernelEngine, startVersion, endVersion)
   }
 }
