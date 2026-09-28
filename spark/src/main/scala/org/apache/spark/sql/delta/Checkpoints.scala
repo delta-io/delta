@@ -483,6 +483,33 @@ trait Checkpoints extends DeltaLogging {
     }
 
     (initSegment.checkpointProvider, lastManifestCommitOpt) match {
+      case (amtCheckpointProvider: AMTCheckpointProvider, lastManifestCommitOpt) if
+          amtCheckpointProvider.manifestCommitVersion > initSegment.version =>
+        // Exemption: the initial AMT checkpoint provider is introduced by a later manifest commit,
+        // undiscoverable at the target version.
+        //
+        // This could happen during `deltaLog.createSnapshotAtInit()` when we haven't initialized
+        // the table's commit-coordinator before we come up with an initial snapshot. In this case,
+        // if a manifest commit at version M describing content root version R is unbackfilled, it
+        // won't show up in the initial listing, so the initial log segment version will be M - 1
+        // (we explicitly backfill all previous files before writing any manifest commit). But if
+        // _last_checkpoint has already been updated with this AMT at version R, the initial log
+        // segment creation will still adopt this hint as the listing floor. We will end up with an
+        // initial AMT describing version R, whose publishing manifest commit is not reflected in
+        // the initial snapshot’s lastManifestCommit.
+        //
+        // AMT guarantees that content root versions are non-decreasing across manifest commits.
+        // Since manifest commit M describes version R, no earlier manifest commit can describe a
+        // content root greater than R. Inline manifest commits describe their own versions, so none
+        // of them could exist in (R, X], where X is the snapshot version and R <= X < M. Therefore,
+        // keeping the initial AMT will not miss any file actions.
+        assert(amtCheckpointProvider.version <= initSegment.version)
+        lastManifestCommitOpt.foreach { lastManifestCommit =>
+          // This AMT checkpoint provider is introduced by a later manifest commit, so it must be
+          // no less than the content root version described by the current lastManifestCommit.
+          assert(amtCheckpointProvider.version >= lastManifestCommit.contentRootVersion)
+        }
+
       case (amtCheckpointProvider: AMTCheckpointProvider, Some(lastManifestCommit)) =>
         if (amtCheckpointProvider.version == lastManifestCommit.contentRootVersion) {
           // Happy-path: the versions match. Safe to use the initial AMT checkpoint provider.
@@ -571,6 +598,13 @@ trait Checkpoints extends DeltaLogging {
   private[delta] def trimLogSegmentToAMTCheckpoint(
       logSegment: LogSegment,
       newCheckpointProvider: AMTCheckpointProvider): LogSegment = {
+    require(newCheckpointProvider.version >= logSegment.checkpointProvider.version)
+    if (newCheckpointProvider.version == logSegment.checkpointProvider.version) {
+      // An inline AMT and an immediate rewrite can describe the same version with different trees.
+      // Use the new checkpoint provider with the latest tree. Other fields don't need trimming.
+      return logSegment.copy(checkpointProvider = newCheckpointProvider)
+    }
+
     val nonCompactedDeltas = logSegment.nonCompactedDeltasOpt.getOrElse {
       throw new IllegalStateException(
         s"The AMT log segment at version ${logSegment.version} has no non-compacted deltas.")
@@ -584,9 +618,17 @@ trait Checkpoints extends DeltaLogging {
       deltasAfterCheckpoint = deltasAfterCheckpoint,
       latestCommitVersion = logSegment.version,
       checkpointVersionToUse = newCheckpointProvider.version)
+    val deltaAtCheckpointVersionOpt = nonCompactedDeltas
+      .find(deltaVersion(_) == newCheckpointProvider.version)
+    if (deltaAtCheckpointVersionOpt.isEmpty) {
+      throw new IllegalStateException(
+        s"The trimmed AMT log segment has no delta at the new checkpoint version " +
+          s"${newCheckpointProvider.version}.\nOld log segment: ${logSegment}")
+    }
     logSegment.copy(
       deltas = trimmedDeltasAndCompactedDeltas,
       nonCompactedDeltasOpt = Some(deltasAfterCheckpoint),
+      deltaAtCheckpointVersionOpt = deltaAtCheckpointVersionOpt,
       checkpointProvider = newCheckpointProvider)
   }
 
