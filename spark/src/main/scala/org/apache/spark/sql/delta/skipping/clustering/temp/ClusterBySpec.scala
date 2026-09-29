@@ -25,7 +25,7 @@ import com.fasterxml.jackson.module.scala.{ClassTagExtensions, DefaultScalaModul
 import org.antlr.v4.runtime.ParserRuleContext
 
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.parser.{ParseException, ParserInterface, ParserUtils}
+import org.apache.spark.sql.catalyst.parser.{ParseException, ParserUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, CreateTableAsSelect, LeafNode, LogicalPlan, ReplaceTable, ReplaceTableAsSelect}
 import org.apache.spark.sql.connector.expressions.{ClusterByTransform => SparkClusterByTransform, FieldReference, NamedReference, Transform}
 
@@ -103,10 +103,11 @@ case class ClusterByPlan(ctx: ParserRuleContext) extends LeafNode {
  * @see https://github.com/apache/spark/pull/42577
  *
  * @param clusterByPlan: the ClusterByPlan to parse.
- * @param delegate: delegate parser.
  */
-case class ClusterByParserUtils(clusterByPlan: ClusterByPlan, delegate: ParserInterface) {
+case class ClusterByParserUtils(clusterByPlan: ClusterByPlan) {
   private def convertClusteringTransforms(partitioning: Seq[Transform]): Seq[Transform] = {
+    // A query-level CLUSTER BY also reaches this adapter. Only convert table clustering;
+    // preserve any partitioning or bucketing on the target table.
     partitioning.map {
       case clustering: SparkClusterByTransform => ClusterByTransform(clustering.columnNames)
       case transform => transform
@@ -124,7 +125,7 @@ case class ClusterByParserUtils(clusterByPlan: ClusterByPlan, delegate: ParserIn
    */
   def parsePlan(
       sqlText: String,
-      delegateParse: String => LogicalPlan = delegate.parsePlan): LogicalPlan = {
+      delegateParse: String => LogicalPlan): LogicalPlan = {
     try {
       delegateParse(sqlText) match {
         case create: CreateTable =>
@@ -135,6 +136,7 @@ case class ClusterByParserUtils(clusterByPlan: ClusterByPlan, delegate: ParserIn
           replace.copy(partitioning = convertClusteringTransforms(replace.partitioning))
         case rtas: ReplaceTableAsSelect =>
           rtas.copy(partitioning = convertClusteringTransforms(rtas.partitioning))
+        // Deferred table plans, such as PlanWithUnresolvedIdentifier, are not adapted here.
         case plan => plan
       }
     } catch {

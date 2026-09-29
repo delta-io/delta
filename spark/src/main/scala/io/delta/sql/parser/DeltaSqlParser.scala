@@ -84,6 +84,9 @@ class DeltaSqlParser(val delegate: ParserInterface)
    * Parses `sqlText` with Delta's grammar and falls back to `delegateParse` for statements that
    * are not Delta-specific.
    *
+   * On Spark 4.1+, SparkSession.sql uses the parameter-aware entry point even with an empty
+   * parameter context, so both entry points must retain this dispatch for Delta-specific syntax.
+   *
    * The fallback is invoked outside of `parse`'s exception handling so that errors raised by the
    * delegate (e.g. `UNBOUND_SQL_PARAMETER`) propagate unchanged instead of being wrapped in
    * `DELTA_PARSING_ANALYSIS_ERROR`.
@@ -92,9 +95,11 @@ class DeltaSqlParser(val delegate: ParserInterface)
       sqlText: String,
       delegateParse: String => LogicalPlan): LogicalPlan = {
     val visited = parse(sqlText) { parser => builder.visit(parser.singleStatement()) }
+    // Delta's parse expands variables for dispatch. Delegates must receive the original text
+    // so Spark retains its substitution order and does not expand that result a second time.
     visited match {
       case clusterByPlan: ClusterByPlan =>
-        ClusterByParserUtils(clusterByPlan, delegate).parsePlan(sqlText, delegateParse)
+        ClusterByParserUtils(clusterByPlan).parsePlan(sqlText, delegateParse)
       case plan: LogicalPlan => plan
       case _ => delegateParse(sqlText)
     }

@@ -29,11 +29,11 @@ import org.apache.spark.sql.delta.test.shims.ParameterizedQueryShim
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
-import org.apache.spark.sql.catalyst.analysis.{NamedParameter, UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.{NamedParameter, PlanWithUnresolvedIdentifier, UnresolvedAttribute, UnresolvedNamespace, UnresolvedRelation, UnresolvedTable}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Literal}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTableDropFeature, CloneTableStatement, CreateTable, CreateTableAsSelect, LogicalPlan, Project, ReplaceTable, ReplaceTableAsSelect, RestoreTableStatement}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableDropFeature, CloneTableStatement, CreateNamespace, CreateTable, CreateTableAsSelect, LogicalPlan, Project, ReplaceTable, ReplaceTableAsSelect, RestoreTableStatement}
 import org.apache.spark.sql.execution.SparkSqlParser
 
 class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
@@ -84,11 +84,15 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
     val plan = ParameterizedQueryShim.parsePlanWithNamedParameters(
       parser, "CREATE DATABASE IF NOT EXISTS IDENTIFIER(:name)", Map("name" -> "my_db"))
-    // Spark 4.1 keeps `IDENTIFIER(...)` unresolved through `PlanWithUnresolvedIdentifier`, whose
-    // plan builder is a lambda without structural equality, so compare the identifier text
-    // instead of comparing plans.
-    assert(plan.toString.contains("my_db"), plan.toString)
-    assert(!plan.toString.contains("namedparameter"), plan.toString)
+    // Spark 4.1 leaves the namespace child as an identifier expression; 4.2 resolves its name.
+    // Inspect these fields directly because the 4.1 plan builder has no structural equality.
+    plan match {
+      case CreateNamespace(unresolved: PlanWithUnresolvedIdentifier, _, _) =>
+        assert(unresolved.identifierExpr === Literal("my_db"))
+      case CreateNamespace(namespace: UnresolvedNamespace, _, _) =>
+        assert(namespace.multipartIdentifier === Seq("my_db"))
+      case other => fail(s"Unexpected plan: $other")
+    }
   }
 
   test("parsePlanWithParameters substitutes positional parameters") {
