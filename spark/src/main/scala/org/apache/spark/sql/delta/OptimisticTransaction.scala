@@ -3404,7 +3404,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
           catalogTable.map(_.identifier),
           new CatalogTrackedInfo(
             currentTransactionInfo.convertedIcebergMetadata.toJava,
-            currentTransactionInfo.domainMetadata.map(dm => dm: AbstractDomainMetadata).asJava)
+            // Preparation and conflict resolution can add or replace domain metadata.
+            currentTransactionInfo.actions.collect {
+              case dm: DomainMetadata => dm: AbstractDomainMetadata
+            }.asJava)
         ),
         currentTransactionInfo
       )
