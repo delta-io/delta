@@ -648,4 +648,46 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
         .findFirst()
         .orElse(null);
   }
+
+  @Test
+  public void testReplaceManagedTableResetsIdentityHighWaterMark() throws Exception {
+    // RTAS cannot declare identity columns because Spark disallows an explicit schema with
+    // AS SELECT. Exercise the two schema-bearing replacement operations.
+    for (ReplaceOperation operation :
+        List.of(ReplaceOperation.REPLACE, ReplaceOperation.CREATE_OR_REPLACE)) {
+      String tableName = uniqueTableName("identity_hwm_reset", operation);
+      String fullTableName = fullTableName(tableName);
+      try {
+        sql(
+            "CREATE TABLE %s ("
+                + "id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 100 INCREMENT BY 1),"
+                + "val STRING) USING delta"
+                + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+            fullTableName);
+        sql("INSERT INTO %s (val) VALUES ('a'), ('b'), ('c')", fullTableName);
+        assertThat(sql("SELECT id FROM %s ORDER BY id", fullTableName))
+            .containsExactly(row("100"), row("101"), row("102"));
+
+        String ucTableIdBefore = currentUcTableId(fullTableName);
+        sql(
+            "%s %s ("
+                + "id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 50000 INCREMENT BY 1),"
+                + "val STRING) USING delta"
+                + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+            operation.sqlPrefix, fullTableName);
+        assertThat(currentUcTableId(fullTableName))
+            .as("UC table id preserved across %s", operation)
+            .isEqualTo(ucTableIdBefore);
+
+        sql("INSERT INTO %s (val) VALUES ('after_replace')", fullTableName);
+        assertThat(sql("SELECT id FROM %s ORDER BY id", fullTableName))
+            .as(
+                "first identity value after %s must equal the new START WITH (HWM was reset)",
+                operation)
+            .containsExactly(row("50000"));
+      } finally {
+        sql("DROP TABLE IF EXISTS %s", fullTableName);
+      }
+    }
+  }
 }

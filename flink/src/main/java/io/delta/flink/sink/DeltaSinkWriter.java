@@ -23,6 +23,7 @@ import io.delta.kernel.types.StructType;
 import java.io.IOException;
 import java.util.*;
 import org.apache.flink.api.common.eventtime.Watermark;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.connector.sink2.CommittingSinkWriter;
 import org.apache.flink.metrics.groups.SinkWriterMetricGroup;
 import org.apache.flink.streaming.api.connector.sink2.SupportsPreWriteTopology;
@@ -65,6 +66,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
 
   private final DeltaTable deltaTable;
   private final DeltaSinkConf conf;
+  private final TypeSerializer<RowData> inputSerializer;
 
   private final SinkWriterMetricGroup metricGroup;
   private volatile long lastSendTimeMs;
@@ -81,6 +83,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
       int attemptNumber,
       DeltaTable deltaTable,
       DeltaSinkConf conf,
+      TypeSerializer<RowData> inputSerializer,
       SinkWriterMetricGroup metricGroup) {
     this.jobId = jobId;
     this.subtaskId = subtaskId;
@@ -88,6 +91,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
 
     this.deltaTable = deltaTable;
     this.conf = conf;
+    this.inputSerializer = inputSerializer;
 
     this.metricGroup = metricGroup;
     metricGroup.setCurrentSendTimeGauge(() -> lastSendTimeMs);
@@ -129,10 +133,13 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
     //     without appending a row.
     switch (element.getRowKind()) {
       case INSERT:
-        mergeStrategy.insert(extractPrimaryKey(element), partitionValues, element, context);
+        // Writer tasks buffer rows, so take ownership before Flink can reuse the input object.
+        mergeStrategy.insert(
+            extractPrimaryKey(element), partitionValues, inputSerializer.copy(element), context);
         break;
       case UPDATE_AFTER:
-        mergeStrategy.upsert(extractPrimaryKey(element), partitionValues, element, context);
+        mergeStrategy.upsert(
+            extractPrimaryKey(element), partitionValues, inputSerializer.copy(element), context);
         break;
       case UPDATE_BEFORE:
         // Dropped — see policy comment above.
@@ -238,6 +245,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
 
     private DeltaTable deltaTable;
     private DeltaSinkConf conf;
+    private TypeSerializer<RowData> inputSerializer;
 
     private SinkWriterMetricGroup metricGroup;
 
@@ -268,6 +276,11 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
       return this;
     }
 
+    public Builder withInputSerializer(TypeSerializer<RowData> inputSerializer) {
+      this.inputSerializer = inputSerializer;
+      return this;
+    }
+
     public Builder withMetricGroup(SinkWriterMetricGroup metricGroup) {
       this.metricGroup = metricGroup;
       return this;
@@ -279,8 +292,10 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
       Objects.requireNonNull(deltaTable, "deltaTable must not be null");
       Objects.requireNonNull(metricGroup, "metricGroup must not be null");
       Objects.requireNonNull(conf, "conf must not be null");
+      Objects.requireNonNull(inputSerializer, "inputSerializer must not be null");
 
-      return new DeltaSinkWriter(jobId, subtaskId, attemptNumber, deltaTable, conf, metricGroup);
+      return new DeltaSinkWriter(
+          jobId, subtaskId, attemptNumber, deltaTable, conf, inputSerializer, metricGroup);
     }
   }
 }

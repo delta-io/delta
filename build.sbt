@@ -64,8 +64,15 @@ val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
-val flinkVersion = "2.0.1"
+val flinkVersion = CrossFlinkVersions.getFlinkArtifactVersion()
 val gcsConnectorVersion = "4.0.4"
+val junit5Version = "5.14.0"
+val junit5TestDependencies = Seq(
+  "org.junit.jupiter" % "junit-jupiter-api" % junit5Version % "test",
+  "org.junit.jupiter" % "junit-jupiter-engine" % junit5Version % "test",
+  "org.junit.jupiter" % "junit-jupiter-params" % junit5Version % "test",
+  "com.github.sbt.junit" % "jupiter-interface" % "0.16.0" % "test"
+)
 
 // Optional kernel version override. See `project/KernelVersion.scala` for the
 // resolution rule and `-DkernelVersion=<v>` semantics.
@@ -513,16 +520,11 @@ lazy val sparkV2 = {
       exportJars := true,  // Export as JAR to avoid classpath conflicts
 
       Test / javaOptions ++= Seq("-ea"),
-      libraryDependencies ++= Seq(
+      libraryDependencies ++= junit5TestDependencies ++ Seq(
         "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
         "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "provided",
         "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",
 
-        // Test dependencies
-        "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
-        "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
-        "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
-        "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
         // Spark test classes for Scala/Java test utilities
         "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "test" classifier "tests",
         "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "test" classifier "tests",
@@ -674,7 +676,7 @@ lazy val spark = (project in file("spark-unified"))
       projectDependencies.value.filterNot(dep => internalModules.contains(dep.name))
     },
 
-    libraryDependencies ++= Seq(
+    libraryDependencies ++= junit5TestDependencies ++ Seq(
       "org.apache.spark" %% "spark-hive" % sparkArtifactVersion.value % "provided",
       "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
       "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "provided",
@@ -685,10 +687,6 @@ lazy val spark = (project in file("spark-unified"))
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
-      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
       "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "test" classifier "tests",
@@ -945,13 +943,8 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % sparkUnityCatalogJacksonVersion
     ),
 
-    libraryDependencies ++= Seq(
+    libraryDependencies ++= junit5TestDependencies ++ Seq(
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
-      // JUnit 5 test dependencies
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
-      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
       // Lombok for generating boilerplate code
       "org.projectlombok" % "lombok" % "1.18.34" % "test",
 
@@ -1053,7 +1046,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     // can depend on test utilities via a published artifact instead of depending on raw class directories.
     Test / publishArtifact := true,
     Test / packageBin / artifactClassifier := Some("tests"),
-    libraryDependencies ++= Seq(
+    libraryDependencies ++= junit5TestDependencies ++ Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
 
@@ -1066,8 +1059,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "com.google.code.findbugs" % "jsr305" % "3.0.2",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.13.2" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.25.3" % "test",
       "org.apache.logging.log4j" % "log4j-core" % "2.25.3" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
@@ -1636,9 +1627,14 @@ lazy val flink = (project in file("flink"))
   .dependsOn(kernelUnityCatalog)
   .settings(
     name := "delta-flink",
+    // Publish one artifact per compatible Flink minor line, for example delta-flink_2.0.
+    moduleName := s"delta-flink_${CrossFlinkVersions.getFlinkVersionSpec().shortVersion}",
     commonSettings,
     releaseSettings,
     javafmtCheckSettings(),
+    // The base release publishes non-Flink modules. Flink versions are published separately by
+    // CrossFlinkVersions.crossFlinkReleaseSteps.
+    publish / skip := sys.props.getOrElse("skipFlinkPublish", "false").toBoolean,
     publishArtifact := scalaBinaryVersion.value == "2.13", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
     assembly / assemblyJarName := s"delta-flink-$flinkVersion-${version.value}.jar",
@@ -1674,7 +1670,7 @@ lazy val flink = (project in file("flink"))
     // Publish the pinned UC jars before sbt tries to resolve them.
     update := update.dependsOn(ensurePinnedUnityCatalog).value,
 
-    libraryDependencies ++= Seq(
+    libraryDependencies ++= junit5TestDependencies ++ Seq(
       "org.apache.flink" % "flink-core" % flinkVersion % "provided",
       "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
       "org.apache.flink" % "flink-streaming-java" % flinkVersion % "provided",
@@ -1691,11 +1687,6 @@ lazy val flink = (project in file("flink"))
       // io.delta.flink.kernel.dv compiles against the same library on the classpath.
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
 
-      // Test dependencies
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
-      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
       "org.apache.flink" % "flink-test-utils" % flinkVersion % "test",
       "org.apache.flink" % "flink-clients" % flinkVersion % "test",
       "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % Test,
@@ -1854,6 +1845,13 @@ lazy val releaseSettings = Seq(
   releasePublishArtifactsAction := PgpKeys.publishSigned.value,
   releaseCrossBuild := true,
   pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toArray),
+  // Allow local Maven overwrites for release versions. The cross-Spark publish workflow
+  // publishes modules like delta-contribs (no Spark suffix) in both the backward-compat
+  // step and the per-version steps, producing identical artifacts. SBT 1.9+ blocks
+  // overwriting release artifacts by default; this restores the prior behavior for local
+  // publishing only (remote publish via publishSigned is unaffected).
+  publishLocalConfiguration := publishLocalConfiguration.value.withOverwrite(true),
+  publishM2Configuration := publishM2Configuration.value.withOverwrite(true),
 
   // TODO: This isn't working yet ...
   sonatypeProfileName := "io.delta", // sonatype account domain name prefix / group ID
@@ -1946,7 +1944,8 @@ releaseProcess := Seq[ReleaseStep](
   setReleaseVersion,
   commitReleaseVersion,
   tagRelease
-) ++ CrossSparkVersions.crossSparkReleaseSteps("publishSigned") ++ Seq[ReleaseStep](
+) ++ CrossSparkVersions.crossSparkReleaseSteps("publishSigned") ++
+  CrossFlinkVersions.crossFlinkReleaseSteps("publishSigned") ++ Seq[ReleaseStep](
 
   // Do NOT use `sonatypeBundleRelease` - it will actually release to Maven! We want to do that
   // manually.

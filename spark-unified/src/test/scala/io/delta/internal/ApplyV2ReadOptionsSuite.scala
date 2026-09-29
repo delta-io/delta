@@ -21,14 +21,9 @@ import java.util.{HashMap => JHashMap}
 
 import scala.jdk.CollectionConverters._
 
-import io.delta.kernel.internal.SnapshotImpl
-import io.delta.spark.internal.v2.catalog.DeltaV2Table
-import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager
-import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTableType}
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
@@ -37,10 +32,14 @@ import org.apache.spark.sql.delta.test.shims.StreamingRelationV2Shim
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.{DeltaSourceMetadataTrackingLog, DeltaSourceUtils, DeltaSQLConf, PersistedMetadata}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.execution.datasources.DataSource
-import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import io.delta.spark.internal.v2.catalog.DeltaV2Table
+import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+
+import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.execution.datasources.DataSource
+import org.apache.spark.sql.types.{StringType, StructType}
 
 class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
 
@@ -272,8 +271,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     val snapshotManager =
       new PathBasedSnapshotManager(tablePath, deltaLog.newDeltaHadoopConf())
-    val tableId =
-      snapshotManager.loadLatestSnapshot.asInstanceOf[SnapshotImpl].getMetadata.getId
+    val tableId = snapshotManager.loadLatestSnapshot.metadata.getId
     val trackingLog = DeltaSourceMetadataTrackingLog.create(
       spark, schemaLogPath, tableId, tablePath, parameters = Map.empty[String, String])
     val customSchemaJson =

@@ -19,17 +19,21 @@ import java.util.{Collections, Optional}
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.{Operation, TableManager}
+import io.delta.kernel.commit.{CatalogCommitter, CommitFailedException, CommitMetadata, CommitResponse, Committer, PublishMetadata}
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.{TestUtilsWithTableManagerAPIs, WriteUtils}
+import io.delta.kernel.defaults.utils.{TestCommitterUtils, TestUtilsWithTableManagerAPIs, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.ConcurrentWriteException
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.actions.{AddFile, DeletionVectorDescriptor, RemoveFile, SingleAction}
 import io.delta.kernel.internal.data.GenericRow
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.PartitionUtils
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+import io.delta.kernel.utils.CloseableIterator
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -45,7 +49,8 @@ import org.scalatest.funsuite.AnyFunSuite
 class ConflictResolutionSuite
     extends AnyFunSuite
     with WriteUtils
-    with TestUtilsWithTableManagerAPIs {
+    with TestUtilsWithTableManagerAPIs
+    with TestCommitterUtils {
 
   private def iterableOf(rows: Row*): CloseableIterable[Row] =
     inMemoryIterable(toCloseableIterator(rows.toSeq.asJava.iterator()))
@@ -203,6 +208,72 @@ class ConflictResolutionSuite
 
       // The losing txn removes nothing, so the delete-vs-delete check must not fire.
       commitTransaction(losingTxn, engine, iterableOf(createAddFileRow("file3.parquet")))
+    }
+  }
+
+  test("conflict resolution - unavailable catalog-managed winning commits ask caller to retry") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val catalogManagedProperties = Map(
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported")
+      TableManager
+        .buildCreateTableTransaction(tablePath, testSchema, "test-engine")
+        .withTableProperties(catalogManagedProperties.asJava)
+        .withCommitter(customCatalogCommitter)
+        .build(engine)
+        .commit(engine, emptyIterable())
+
+      val conflictingCommitter = new CatalogCommitter {
+        override def commit(
+            engine: Engine,
+            finalizedActions: CloseableIterator[Row],
+            commitMetadata: CommitMetadata): CommitResponse = {
+          throw new CommitFailedException(
+            true, // retryable
+            true, // conflict
+            "Winning commit has not been published")
+        }
+
+        override def getRequiredTableProperties: java.util.Map[String, String] =
+          customCatalogCommitter.getRequiredTableProperties
+
+        override def publish(engine: Engine, publishMetadata: PublishMetadata): Unit = {}
+      }
+      val transaction = TableManager.loadSnapshot(tablePath)
+        .withCommitter(conflictingCommitter)
+        .withMaxCatalogVersionIfApplicable(true, 0)
+        .build(engine)
+        .buildUpdateTableTransaction("test-engine", Operation.WRITE)
+        .build(engine)
+
+      val exception = intercept[ConcurrentWriteException] {
+        commitTransaction(transaction, engine, emptyIterable())
+      }
+      assert(exception.getMessage.contains("re-executed using the latest version"))
+    }
+  }
+
+  test("conflict resolution - unavailable filesystem winning commits remain an invariant error") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      commitTransaction(getCreateTxn(engine, tablePath, testSchema), engine, emptyIterable())
+
+      val conflictingCommitter = new Committer {
+        override def commit(
+            engine: Engine,
+            finalizedActions: CloseableIterator[Row],
+            commitMetadata: CommitMetadata): CommitResponse = {
+          throw new CommitFailedException(true, true, "Winning commit is missing")
+        }
+      }
+      val transaction = TableManager.loadSnapshot(tablePath)
+        .withCommitter(conflictingCommitter)
+        .build(engine)
+        .buildUpdateTableTransaction("test-engine", Operation.WRITE)
+        .build(engine)
+
+      val exception = intercept[IllegalStateException] {
+        commitTransaction(transaction, engine, emptyIterable())
+      }
+      assert(exception.getMessage.contains("No winning commits found"))
     }
   }
 }

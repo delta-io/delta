@@ -18,7 +18,6 @@ package io.delta.spark.internal.v2.read;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.CommitRange;
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.engine.Engine;
@@ -38,18 +37,20 @@ import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.util.*;
 import java.util.stream.Stream;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaRuntimeException;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -111,8 +112,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
    * A no-op snapshot manager that throws on any call. Used for tests that only exercise handler
    * logic (tracking state, offset arithmetic, iterator manipulation) without hitting the delta log.
    */
-  private static final DeltaSnapshotManager THROWING_SNAPSHOT_MANAGER =
-      new DeltaSnapshotManager() {
+  private static final DeltaV2SnapshotManager THROWING_SNAPSHOT_MANAGER =
+      new DeltaV2SnapshotManager() {
         @Override
         public Snapshot loadLatestSnapshot() {
           throw new UnsupportedOperationException("not expected in this test");
@@ -197,7 +198,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
       String tablePath, long initVersion, boolean seedLogWithInitEntry) {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
-    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(initVersion);
+    SnapshotImpl snapshot =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(initVersion));
     Metadata tableMetadata = snapshot.getMetadata();
     Protocol tableProtocol = snapshot.getProtocol();
     KernelMetadataAdapter adapter = new KernelMetadataAdapter(tableMetadata);
@@ -996,7 +998,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     createEmptyTestTable(tablePath, tableName);
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
-    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
         spark,
         snapshot,
@@ -1136,7 +1138,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     createEmptyTestTable(tablePath, tableName);
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
-    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
         spark, snapshot, options, snapshotManager, defaultEngine);
   }
@@ -1158,7 +1160,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     createEmptyTestTable(tablePath, tableName);
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
-    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    Snapshot dsv1Snapshot = snapshotManager.loadLatestSnapshot();
+    SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(dsv1Snapshot);
 
     String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
     Map<String, String> options = new HashMap<>();
@@ -1175,7 +1178,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
           DeltaSourceMetadataTrackingLog trackingLog =
               MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
                       spark,
-                      snapshot,
+                      dsv1Snapshot,
                       options,
                       snapshotManager,
                       defaultEngine,
@@ -1195,7 +1198,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
           Optional<PersistedMetadata> result =
               MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-                  spark, snapshot, options, snapshotManager, defaultEngine);
+                  spark, dsv1Snapshot, options, snapshotManager, defaultEngine);
           assertTrue(result.isPresent());
           assertEquals(seededVersion, result.get().deltaCommitVersion());
         });
@@ -1212,7 +1215,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     createEmptyTestTable(tablePath, tableName);
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
-    return (SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    return DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
   }
 
   /** Persisted metadata with schema, protocol, and configuration distinct from the source. */
@@ -1348,7 +1351,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
   /** Builds a {@link PersistedMetadata} snapshot of the table state at v0. */
   private PersistedMetadata buildCurrentMetadataAtV0(
       String tablePath, PathBasedSnapshotManager snapshotManager) {
-    SnapshotImpl v0 = (SnapshotImpl) snapshotManager.loadSnapshotAt(0L);
+    SnapshotImpl v0 =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(0L));
     return PersistedMetadata.apply(
         "test-table-id",
         0L,
@@ -1408,6 +1412,23 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             1L));
   }
 
+  @Test
+  public void testSchemaJsonMetadataKeyOrderDoesNotAffectParsedSchema() {
+    String idBeforePhysicalName =
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"id\",\"type\":\"integer\","
+            + "\"nullable\":true,\"metadata\":{\"delta.columnMapping.id\":1,"
+            + "\"delta.columnMapping.physicalName\":\"col-id\"}}]}";
+    String physicalNameBeforeId =
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"id\",\"type\":\"integer\","
+            + "\"nullable\":true,\"metadata\":{\"delta.columnMapping.physicalName\":\"col-id\","
+            + "\"delta.columnMapping.id\":1}}]}";
+
+    assertNotEquals(idBeforePhysicalName, physicalNameBeforeId);
+    assertEquals(
+        org.apache.spark.sql.types.DataType.fromJson(idBeforePhysicalName),
+        org.apache.spark.sql.types.DataType.fromJson(physicalNameBeforeId));
+  }
+
   @ParameterizedTest(name = "{0}")
   @MethodSource("mergerTestCases")
   public void testGetMergedConsecutive(
@@ -1437,10 +1458,11 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     // Verify the merger's result against the table's actual schema and protocol at the merged
     // version. We build the "expected" PersistedMetadata directly from the snapshot at that
-    // version — if the merger captured the right metadata/protocol actions, the JSONs will match.
+    // version. Compare parsed schemas because JSON object key ordering is not significant.
     assertTrue(result.isDefined());
     SnapshotImpl mergedSnapshot =
-        (SnapshotImpl) snapshotManager.loadSnapshotAt(expectedMergedVersion);
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
+            snapshotManager.loadSnapshotAt(expectedMergedVersion));
     PersistedMetadata expected =
         PersistedMetadata.apply(
             "test-table-id",
@@ -1449,8 +1471,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             new KernelProtocolAdapter(mergedSnapshot.getProtocol()),
             tablePath + "/_delta_log/_streaming_metadata");
 
-    assertEquals(expected.dataSchemaJson(), result.get().dataSchemaJson());
-    assertEquals(expected.partitionSchemaJson(), result.get().partitionSchemaJson());
+    assertEquals(expected.dataSchema(), result.get().dataSchema());
+    assertEquals(expected.partitionSchema(), result.get().partitionSchema());
     assertEquals(expected.protocolJson(), result.get().protocolJson());
   }
 
@@ -1481,7 +1503,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
 
     // current = v2 (the ALTER ADD COLUMN). Merger walks forward from here.
-    SnapshotImpl v2Snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(2L);
+    SnapshotImpl v2Snapshot =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(2L));
     PersistedMetadata current =
         PersistedMetadata.apply(
             "test-table-id",
@@ -1498,7 +1521,9 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     assertTrue(result.isDefined());
     assertEquals(3L, result.get().deltaCommitVersion());
 
-    SnapshotImpl v3Snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(3L);
-    assertEquals(v3Snapshot.getMetadata().getSchemaString(), result.get().dataSchemaJson());
+    SnapshotImpl v3Snapshot =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(3L));
+    assertEquals(
+        new KernelMetadataAdapter(v3Snapshot.getMetadata()).schema(), result.get().dataSchema());
   }
 }

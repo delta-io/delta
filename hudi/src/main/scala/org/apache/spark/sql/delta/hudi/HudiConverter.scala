@@ -273,7 +273,7 @@ class HudiConverter
         )
 
         val actionIterators =
-          DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(spark, log, commits)
+          DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(spark, commits)
         actionIterators.foreach { actionsIter =>
           try {
             actionsIter.grouped(actionBatchSize).foreach { actions =>

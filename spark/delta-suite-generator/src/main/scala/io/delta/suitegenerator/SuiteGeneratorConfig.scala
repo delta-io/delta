@@ -139,6 +139,7 @@ object SuiteGeneratorConfig {
     val ROW_TRACKING_ON = ROW_TRACKING.withValueAsDimension(_.last)
     val MERGE_PERSISTENT_DV_OFF = DimensionMixin("MergePersistentDV", suffix = "Disabled")
     val MERGE_ROW_TRACKING_DV = DimensionMixin("RowTrackingMergeDV")
+    val MERGE_AMT = DimensionMixin("MergeIntoAMT", alias = Some("AMT"))
     val COLUMN_MAPPING = DimensionWithMultipleValues(
       "DeltaColumnMappingEnable", List("IdMode", "NameMode"), alias = Some("ColMap"))
     val UPDATE_SCALA = DimensionMixin("UpdateScala", alias = Some("Scala"))
@@ -155,6 +156,7 @@ object SuiteGeneratorConfig {
       "DataSkippingCheckpointV2", List("Json", "Parquet"), alias = Some("CheckpointV2"))
     val CATALOG_OWNED_BATCH = DimensionWithMultipleValues(
       "WithCatalogOwnedBatch", List("1", "2", "100"))
+    val CHANGELOG_V2_CDC = DimensionMixin("ChangelogV2CDCUtil")
   }
 
   private object Tests {
@@ -237,6 +239,14 @@ object SuiteGeneratorConfig {
             Dims.DATA_SKIP_CHECKPOINT_V2.alone,
             Dims.COLUMN_MAPPING.withValueAsDimension(_.last).alone
           )
+        ),
+        // AMT forces id column mapping and uses its own manifest checkpoint, so COLUMN_MAPPING and
+        // DATA_SKIP_CHECKPOINT_V2 are not used here.
+        TestConfig(
+          "DataSkippingDeltaV1AMTTests" :: Nil,
+          List(
+            Dims.NONE
+          )
         )
       )
     ),
@@ -314,6 +324,33 @@ object SuiteGeneratorConfig {
               Dims.MERGE_SQL, Dims.NAME_BASED
             )
           )
+        )
+      )
+    ),
+    TestGroup(
+      packageName = "mergeamt",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.amt._",
+        importer"org.apache.spark.sql.delta.rowid._"
+      ),
+      testConfigs = List(
+        // The not-matched-by-source CDC suites enable change data feed on the table. Under AMT's
+        // mandatory column mapping, creating a CDF-enabled table with data is rejected by
+        // performCdcColumnMappingCheck (DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION), so they are
+        // not part of the AMT variants here.
+        TestConfig(
+          (Tests.MERGE_SQL ::: Tests.MERGE_BASE).filterNot(Set(
+            "MergeIntoNotMatchedBySourceCDCPart1Tests",
+            "MergeIntoNotMatchedBySourceCDCPart2Tests"
+          )) ::: List(
+            "MergeIntoNullTypeTests"
+          ),
+          List(List(Dims.MERGE_SQL, Dims.NAME_BASED, Dims.MERGE_AMT))
+        ),
+        TestConfig(
+          List("RowTrackingMergeCommonTests"),
+          List(List(Dims.NAME_BASED, Dims.MERGE_AMT, Dims.MERGE_ROW_TRACKING_DV.asOptional))
         )
       )
     ),
@@ -412,6 +449,27 @@ object SuiteGeneratorConfig {
           )
         )
       )
+    ),
+    TestGroup(
+      packageName = "readcdcv2",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.cdc._",
+        importer"org.apache.spark.sql.delta.rowid._",
+        importer"org.apache.spark.sql.delta.rowtracking._"
+      ),
+      testConfigs = List(
+        TestConfig(
+          List(
+            "MergeCDCTests",
+            "DeleteCDCTests",
+            "UpdateCDCTests"
+          ),
+          List(
+            List(Dims.PATH_BASED, Dims.ROW_TRACKING_ON, Dims.PERSISTENT_DV, Dims.CHANGELOG_V2_CDC)
+          )
+        )
+      )
     )
     // scalastyle:on line.size.limit
   )
@@ -431,7 +489,8 @@ object SuiteGeneratorConfig {
       case "DeleteTempViewTests" => mixins.contains(Dims.DELETE_SCALA.traitName)
       // The following tests only make sense if the dimension is present
       case "MergeCDCTests" | "UpdateCDCTests" | "DeleteCDCTests" =>
-        !mixins.contains(Dims.CDC.traitName)
+        !mixins.contains(Dims.CDC.traitName) &&
+        !mixins.contains(Dims.CHANGELOG_V2_CDC.traitName)
       case "MergeIntoDVsTests" => !mixins.contains(Dims.MERGE_DVS.traitName)
       case "UpdateSQLWithDeletionVectorsTests" =>
         !mixins.contains(Dims.UPDATE_DVS.traitName)
@@ -480,7 +539,7 @@ object SuiteGeneratorConfig {
 
     // Column-mapping expansion for the V1 data-skipping suites. The referenced mixins live in
     // DataSkippingDeltaTests.scala.
-    if (base == "DataSkippingDeltaV1Tests") {
+    if (base.contains("DataSkippingDeltaV1Tests")) {
       if (mixins.contains(Dims.COLUMN_MAPPING.traitNames.head)) {
         finalMixins += "DataSkippingDeltaTestV1ColumnMappingMode"
       }

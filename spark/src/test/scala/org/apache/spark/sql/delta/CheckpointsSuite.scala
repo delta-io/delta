@@ -26,7 +26,8 @@ import scala.concurrent.duration._
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.amt.AMTPassthrough
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
@@ -723,7 +724,7 @@ class CheckpointsSuite
     }
   }
 
-  test("non-AMT tables do not persist backReference in checkpoint or commit JSON") {
+  test("non-AMT tables do not persist backReference or amtPassthrough in checkpoint or commit") {
     withClassicCheckpointPolicyForCatalogOwned {
       withTempDir { tempDir =>
         val tablePath = tempDir.getAbsolutePath
@@ -734,7 +735,7 @@ class CheckpointsSuite
         deltaLog.checkpoint()
         val version = deltaLog.snapshot.version
 
-        // 1. The classic checkpoint parquet must not carry backReference on add or remove.
+        // 1. The classic checkpoint parquet must carry neither backReference nor amtPassthrough.
         val checkpointFile =
           FileNames.checkpointFileSingular(deltaLog.logPath, version).toString
         val checkpointSchema = spark.read.format("parquet").load(checkpointFile).schema
@@ -746,8 +747,10 @@ class CheckpointsSuite
           s"checkpoint add struct must not contain backReference, got: $addFields")
         assert(!removeFields.contains("backReference"),
           s"checkpoint remove struct must not contain backReference, got: $removeFields")
+        assert(!addFields.contains("amtPassthrough"),
+          s"checkpoint add struct must not contain amtPassthrough, got: $addFields")
 
-        // 2. No commit JSON should mention backReference (null fields are omitted from JSON).
+        // 2. No commit JSON should mention backReference or amtPassthrough.
         val commitProvider = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot)
         val hadoopConf = deltaLog.newDeltaHadoopConf()
         (0L to version).foreach { v =>
@@ -755,6 +758,9 @@ class CheckpointsSuite
           val content = deltaLog.store.read(deltaFile, hadoopConf)
           assert(!content.exists(_.contains("backReference")),
             s"commit JSON for version $v must not contain backReference: ${content.mkString("\n")}")
+          assert(!content.exists(_.contains("amtPassthrough")),
+            s"commit JSON for version $v must not contain amtPassthrough: " +
+              s"${content.mkString("\n")}")
         }
       }
     }
@@ -1086,10 +1092,12 @@ class CheckpointsSuite
 
     val actionsToWrite = Checkpoints
       .buildCheckpoint(actionsDS, snapshot)
-      // buildCheckpoint drops backReference from the on-disk add/remove shape so we need to
-      // re-materialize it as a null column before .as[SingleAction].
+      // buildCheckpoint drops backReference (add/remove) and amtPassthrough (add only) from the
+      // on-disk shape, so we re-materialize them as null columns before .as[SingleAction].
       .withColumn("add", when(col("add.path").isNotNull,
-        col("add").withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))))
+        col("add")
+          .withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))
+          .withField("amtPassthrough", lit(null).cast(AMTPassthrough.STRUCT_TYPE))))
       .withColumn("remove", when(col("remove.path").isNotNull,
         col("remove").withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))))
       .as[SingleAction]
@@ -1199,7 +1207,9 @@ class CheckpointsSuite
     }
   }
 
-  test("validate metadata cleanup is not called with createCheckpointAtVersion API") {
+  test(
+      "validate metadata cleanup is not called with createCheckpointAtVersion API",
+      CatalogManagedMaintenanceIncompatible) {
     withTempDir { dir =>
       val usageRecords1 = Log4jUsageLogger.track {
         spark.range(10).write.format("delta").save(dir.getAbsolutePath)

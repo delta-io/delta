@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta.actions
 
-import java.net.URI
+import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
+import org.apache.hadoop.fs.Path
 
 
 /**
@@ -27,7 +28,7 @@ import java.net.URI
  *    tombstone until `minFileRetentionTimestamp` has passed. If `minFileRetentionTimestamp` is
  *    None, all [[RemoveFile]] actions are retained.
  *    A [[RemoveFile]] "corresponds" to the [[AddFile]] that matches both the parquet file URI
- *    *and* the deletion vector's URI (if any).
+ *    *and* the deletion vector id (if any).
  *  - The most recent version for any `appId` in a [[SetTransaction]] wins.
  *  - The most recent [[Metadata]] wins.
  *  - The most recent [[Protocol]] version wins.
@@ -38,9 +39,9 @@ import java.net.URI
  */
 class InMemoryLogReplay(
     minFileRetentionTimestamp: Option[Long],
-    minSetTransactionRetentionTimestamp: Option[Long]) extends LogReplay {
-
-  import InMemoryLogReplay._
+    minSetTransactionRetentionTimestamp: Option[Long],
+    tableRoot: Path,
+    useDeletionVectorObjectIdentity: Boolean) extends LogReplay {
 
   private var currentProtocolVersion: Protocol = null
   private var currentVersion: Long = -1
@@ -72,14 +73,15 @@ class InMemoryLogReplay(
       case a: Protocol =>
         currentProtocolVersion = a
       case add: AddFile =>
-        val uniquePath = UniqueFileActionTuple(add.pathAsUri, add.getDeletionVectorUniqueId)
+        val uniquePath = add.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity)
         activeFiles(uniquePath) = add.copy(dataChange = false)
         // Remove the tombstone to make sure we only output one `FileAction`.
         cancelledRemoveFiles.remove(uniquePath)
         // Remove from activeRemoveFiles to handle commits that add a previously-removed file
         activeRemoveFiles.remove(uniquePath)
       case remove: RemoveFile =>
-        val uniquePath = UniqueFileActionTuple(remove.pathAsUri, remove.getDeletionVectorUniqueId)
+        val uniquePath =
+          remove.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity)
         activeFiles.remove(uniquePath) match {
           case Some(_) => cancelledRemoveFiles(uniquePath) = remove
           case None => activeRemoveFiles(uniquePath) = remove
@@ -110,6 +112,17 @@ class InMemoryLogReplay(
 
   private[delta] def getDomainMetadatas: Iterable[DomainMetadata] = domainMetadatas.values
 
+  /**
+   * Returns the most recent [[Protocol]] seen during replay, or None if no Protocol action was
+   * seen during the replay.
+   */
+  private[delta] def getProtocol: Option[Protocol] = Option(currentProtocolVersion)
+  /**
+   * Returns the most recent [[Metadata]] seen during replay, or None if no Metadata action was
+   * seen during the replay.
+   */
+  private[delta] def getMetadata: Option[Metadata] = Option(currentMetaData)
+
   /** Returns the current state of the Table as an iterator of actions. */
   override def checkpoint: Iterator[Action] = {
     val fileActions = (activeFiles.values ++ getTombstones).toSeq.sortBy(_.path)
@@ -123,9 +136,4 @@ class InMemoryLogReplay(
 
   /** Returns all [[AddFile]] actions after the Log Replay */
   private[delta] def allFiles: Seq[AddFile] = activeFiles.values.toSeq
-}
-
-object InMemoryLogReplay{
-  /** The unit of path uniqueness in delta log actions is the tuple `(parquet file, dv)`. */
-  final case class UniqueFileActionTuple(fileURI: URI, deletionVectorURI: Option[String])
 }

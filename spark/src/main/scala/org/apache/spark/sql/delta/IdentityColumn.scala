@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceUtils._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DeltaFileStatistics, DeltaJobStatisticsTracker}
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.JsonUtils.toJsonColumn
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -33,7 +34,7 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan}
 import org.apache.spark.sql.execution.datasources.WriteTaskStats
-import org.apache.spark.sql.functions.{array, max, min, to_json}
+import org.apache.spark.sql.functions.{array, max, min}
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
 /**
@@ -138,7 +139,7 @@ object IdentityColumn extends DeltaLogging {
         val col = Column(UnresolvedAttribute.quoted(name))
         if (positiveStep) max(col) else min(col)
     }
-    val unresolvedExpr = to_json(array(aggregates: _*))
+    val unresolvedExpr = toJsonColumn(array(aggregates: _*))
 
     // Resolve the collection expression by constructing a query to select the expression from a
     // table with the statsSchema and get the analyzed expression.

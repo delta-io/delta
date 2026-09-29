@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.streaming.StreamTest
 
 /**
@@ -30,10 +31,11 @@ import org.apache.spark.sql.streaming.StreamTest
  * on the tracking client will not be deterministic.
  */
 trait CatalogManagedStreamingSuiteBase
-  extends StreamTest
-  with DeltaSQLTestUtils
+  extends QueryTest
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite {
+  with DeltaSQLTestUtils
+  with CatalogOwnedTestBaseSuite
+  with StreamTest {
 
 
   import testImplicits._
@@ -64,37 +66,53 @@ trait CatalogManagedStreamingSuiteBase
     getTrackingClient.foreach(_.reset())
   }
 
+
+  /** Runs test-data setup through V1 when a subclass forces Delta V2. */
+  protected def withV1Mode(f: => Unit): Unit = f
+
+  /**
+   * Provides a checkpoint location for streaming tests. Defaults to a local temp dir; subclasses
+   * can override it to run the same test bodies against a different storage backend.
+   */
+  protected def withCheckpointDir(f: String => Unit): Unit =
+    withTempDir(dir => f(dir.getAbsolutePath))
+
   protected override def beforeEach(): Unit = {
     super.beforeEach()
     resetTrackingClient()
   }
 
   test("stream from delta source") {
-    withTempTable(createTable = false) { sourceTableName =>
-      sql(s"CREATE TABLE $sourceTableName (value INT) USING delta")
+    withCheckpointDir { checkpointPath =>
+      withTempTable(createTable = false) { sourceTableName =>
+        sql(s"CREATE TABLE $sourceTableName (value INT) USING delta")
 
-      val df = spark.readStream
-        .format("delta")
-        .table(sourceTableName)
+        val df = spark.readStream
+          .format("delta")
+          .table(sourceTableName)
 
-      resetTrackingClient()
+        resetTrackingClient()
 
-      testStream(df)(
-        Execute{ _ =>
-          Seq(1, 2).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
-        },
-        ProcessAllAvailable(),
-        CheckAnswer(1, 2),
-        Execute { _ => assertNumCommitsCalled(1) },
-        // At least one read from the commit and one from checking the result
-        Execute { _ => assertNumGetCommitsCalled(2) }
-      )
+        testStream(df)(
+          StartStream(checkpointLocation = checkpointPath),
+          Execute{ _ =>
+            withV1Mode {
+              Seq(1, 2).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
+            }
+          },
+          ProcessAllAvailable(),
+          CheckAnswer(1, 2),
+          Execute { _ => assertNumCommitsCalled(1) },
+          // At least one read from the commit and one from checking the result
+          Execute { _ => assertNumGetCommitsCalled(2) }
+        )
+      }
     }
   }
 
   test("stream to delta sink") {
     // The dir is only used as the checkpoint location and doesn't imply a path-based access.
-    withTempDir { tempDir =>
+    withCheckpointDir { checkpointPath =>
       withTempTable(createTable = false) { sinkTableName =>
         var expectedNumCommits = 0
         var expectedNumGetCommits = 0
@@ -104,7 +122,7 @@ trait CatalogManagedStreamingSuiteBase
           .toDF()
           .writeStream
           .format("delta")
-          .option("checkpointLocation", tempDir.getAbsolutePath)
+          .option("checkpointLocation", checkpointPath)
           .toTable(sinkTableName)
         query.processAllAvailable()
 
@@ -138,7 +156,7 @@ trait CatalogManagedStreamingSuiteBase
   }
 
   test("stream from delta source to delta sink with shared commit coordinator") {
-    withTempDir { tempDir =>
+    withCheckpointDir { checkpointPath =>
       withTempTable(createTable = false) { sourceTableName =>
         withTempTable(createTable = false) { sinkTableName =>
           var expectedNumCommits = 0
@@ -154,7 +172,7 @@ trait CatalogManagedStreamingSuiteBase
             .toDF()
             .writeStream
             .format("delta")
-            .option("checkpointLocation", tempDir.getAbsolutePath)
+            .option("checkpointLocation", checkpointPath)
             .toTable(sinkTableName)
           query.processAllAvailable()
           expectedNumCommits += 1
@@ -163,7 +181,9 @@ trait CatalogManagedStreamingSuiteBase
           assertNumGetCommitsCalled(expectedNumGetCommits)
 
           try {
-            Seq(1).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
+            withV1Mode {
+              Seq(1).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
+            }
             query.processAllAvailable()
             // One commit to the source table and one commit to the sink table
             expectedNumCommits += 2
@@ -176,7 +196,9 @@ trait CatalogManagedStreamingSuiteBase
             assertNumCommitsCalled(expectedNumCommits)
             assertNumGetCommitsCalled(expectedNumGetCommits)
 
-            Seq(2).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
+            withV1Mode {
+              Seq(2).toDF().write.format("delta").mode("append").saveAsTable(sourceTableName)
+            }
             query.processAllAvailable()
             // One commit to the source table and one commit to the sink table
             expectedNumCommits += 2

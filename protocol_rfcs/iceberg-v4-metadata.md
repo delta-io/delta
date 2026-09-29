@@ -45,7 +45,7 @@ This design enables:
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the existing leaf-manifest entry that this add supersedes (e.g., stats backfill, DV update). Null when the file has no leaf-manifest entry to supersede — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
+| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the leaf-manifest entry this add supersedes in place, without a paired `remove` (e.g., a stats backfill). Null otherwise, including a DV update, where the backreference is on the paired `remove`. Contains `manifest` (String) and `pos` (Int). See [Backreferences](#backreferences).</ins> |
 
 ### Remove File
 
@@ -56,8 +56,8 @@ This design enables:
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>deletionTimestamp</ins> | <ins>Long</ins> | <ins>Must be null. Metadata cleanup uses tree reachability instead of timestamp-based expiration.</ins> |
-| <ins>extendedFileMetadata</ins> | <ins>Boolean</ins> | <ins>Must be true. `partitionValues`, `size`, and `tags` are always present on the `remove`.</ins> |
-| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the file's entry in a leaf manifest. Null when the file has no leaf-manifest entry — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
+| <ins>extendedFileMetadata</ins> | <ins>Boolean</ins> | <ins>Must be true. `partitionValues` and `size` are always present on the `remove`.</ins> |
+| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the file's entry in a leaf manifest. Null when the file has no leaf-manifest entry — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Int). See [Backreferences](#backreferences).</ins> |
 | <ins>stats</ins> | <ins>String</ins> | <ins>Must be present. Statistics of the removed file, with `numRecords` required at minimum; column statistics are included when recorded for the file. Copied from the matching `add.stats`, or converted from the file's tree entry (`record_count`, `content_stats`).</ins> |
 
 <ins>`remove` actions are transient. During log replay a `remove` cancels the matching `add` (or, via its `backReference`, marks the corresponding tree entry deleted) and is then discarded. Removes are **not** retained as tombstones in checkpoints or in the reconstructed table state. There is no timestamp-based tombstone expiration; physical file cleanup is driven by tree reachability (see [Metadata Cleanup](#metadata-cleanup)).</ins>
@@ -119,6 +119,18 @@ This design enables:
 
 <ins>Files not in the reachable set may be deleted once past the retention period. Reachability is derived from the live tree, not from `remove` tombstones, so no tombstone tracking is required (see [Remove File](#remove-file)).</ins>
 
+### Commit Provenance Information
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#commit-provenance-information)***
+
+<ins>The `commitInfo` action supports a `dataChange` field that summarizes, at the commit level, whether the commit changed the data of the table:</ins>
+
+| Field Name | Data Type | Description |
+| - | - | - |
+| <ins>dataChange</ins> | <ins>Boolean</ins> | <ins>Whether the commit changes the logical records of the table. This must be `false` when the commit only rearranges existing data or adds new statistics without changing the table's logical records; it must be `true` otherwise. **Required when the `adaptiveMetadata` table feature is enabled**; optional otherwise, in which case readers fall back to the `dataChange` flags of the individual [file actions](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file) when it is absent.</ins> |
+
+<ins>When the `adaptiveMetadata` table feature is enabled, writers must include the `dataChange` field in the `commitInfo` action of every commit, and readers must treat it as the source of truth for whether the commit changed data.</ins>
+
 --------
 
 > ***Add a new section at the [Table Features](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#table-features) section***
@@ -175,7 +187,7 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
 {
   "checkpoint": [
     { "checkpointMetadata": { "version": 42 } },
-    { "contentRoot": { "path": "metadata/a3d1f7e2-v42.parquet", "sizeInBytes": 1024, "version": 42 } },
+    { "contentRoot": { "path": "metadata/a3d1f7e2-v42.parquet", "sizeInBytes": 1024, "version": 42, "tags": {} } },
     { "protocol": { "minReaderVersion": 3, "minWriterVersion": 7, "readerFeatures": ["columnMapping", "deletionVectors", "adaptiveMetadata"], "writerFeatures": ["columnMapping", "deletionVectors", "domainMetadata", "rowTracking", "adaptiveMetadata"] } },
     { "metaData": { "id": "af23c9d7-fff1-4a5a-a2c8-55c59bd782aa", "name": "my_table", "schemaString": "{...}", "partitionColumns": [], "configuration": {}, "createdTime": 1234567890000 } },
     { "domainMetadata": { "domain": "delta.rowTracking", "configuration": "{\"rowIdHighWaterMark\": 1000000}", "removed": false } },
@@ -194,7 +206,7 @@ The `checkpoint` action is an array of action entries. Each entry is one of:
 | Action | Description |
 |--------|-------------|
 | `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log. |
-| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, and `version` — the table version the root reflects. `version` must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). |
+| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). `tags` allow writers to record additional optional metadata about the manifest tree. |
 | `protocol` | The Protocol action at this checkpoint version. |
 | `metaData` | The Metadata action at this checkpoint version. |
 | `domainMetadata` | A DomainMetadata action. System domains (keys prefixed with `delta.`) must appear here; user domains may appear here or in a sidecar. |
@@ -210,6 +222,14 @@ For both user domain metadata and `txns`, inline and sidecar storage may coexist
 When `adaptiveMetadata` is enabled, `remove` and `add` actions carry a `backReference` field that identifies where the file's existing entry is located in the metadata tree. Backreferences are only needed to locate entries in **leaf** manifests: leaf manifests are not read exhaustively on every commit, so a writer needs the (manifest, position) pair to find and supersede a leaf entry without scanning the leaves. Entries inline in the root manifest never carry a backreference.
 
 A backreference is therefore non-null only when the file has a live entry in a leaf manifest. It is null when the file has no manifest entry (it exists only in the Delta log) or when its entry is inline in the root manifest.
+
+The action that invalidates the existing tree entry carries the backreference:
+
+- **Pure delete**: the `remove` carries it; the old entry becomes `DELETED`.
+- **DV update**: expressed as a `remove` of the file with its old DV plus an `add` of the same file with the new DV. The `remove` carries the backreference (old entry becomes `REPLACED`); the new `add` carries none.
+- **Re-add** (e.g., a stats backfill): there is no paired `remove`, so the `add` re-adds the file in place and carries the backreference (old entry becomes `REPLACED`).
+
+An `add` thus carries a backreference only when it re-adds a file with no paired `remove`.
 
 A backreference is meaningful only relative to the tree it was computed from, identified by that tree's `contentRoot.version`. A commit's backreferences are valid only if they target the current `contentRoot.version`; if a concurrent manifest commit has advanced the tree (e.g., compaction moved entries between manifests), they are stale and must be recomputed against the new tree before the commit can proceed (see [Conflict Resolution](#conflict-resolution)).
 
@@ -239,7 +259,7 @@ Backreferences enable efficient [Manifest Deletion Vector (MDV)](#manifest-delet
 
 ### Add with Backreference (Re-add)
 
-When an `add` supersedes an existing manifest entry (e.g., `OPTIMIZE` backfilling stats on a file), the backreference points to the old entry:
+When an `add` re-adds a file in place with no paired `remove` (e.g., `OPTIMIZE` backfilling stats on a file), the backreference points to the old entry. (A DV update instead carries the backreference on its `remove`.)
 
 ```json
 {
@@ -260,7 +280,7 @@ When an `add` supersedes an existing manifest entry (e.g., `OPTIMIZE` backfillin
 | Field | Type | Description |
 |-------|------|-------------|
 | `manifest` | String | Path to the leaf manifest containing this file, relative to the table root (e.g., `metadata/leaf-m1.parquet`) |
-| `pos` | Long | Row position (0-indexed) of the file entry within the manifest |
+| `pos` | Int | Row position (0-indexed) of the file entry within the manifest |
 
 ## Content Entry Schema
 
@@ -513,8 +533,8 @@ Manifest commits have the following characteristics:
 1. **File actions may be logged**: A manifest commit may also
    write `add` and `remove` actions to the Delta log, in addition to updating the metadata tree. The `checkpointMetadata.version` may be less than the commit version (the tree covers up to `checkpointMetadata.version`; remaining changes are in the log). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log.
 
-2. **Non-file actions must be logged**: A manifest commit must always
-   write non-file actions (`metadata`, `protocol`, `txn`, `domainMetadata`, `commitInfo`) to the Delta log. These actions are not stored in the metadata tree.
+2. **Non-file actions**: Non-file actions (`metaData`, `protocol`, `txn`, `domainMetadata`, `commitInfo`) are
+   never stored in the metadata tree. A manifest commit's `checkpoint` action already carries the current `protocol`, `metaData`, `domainMetadata`, and `txn`s (see [Checkpoint Action](#checkpoint-action)), so a checkpoint-based reader needs nothing else to reconstruct the table state up to `checkpointMetadata.version`. When one of these values changes, the commit that changes it must write a *separate* top-level non-file action, following standard Delta commit semantics.
 
 3. **Incorporates preceding commits**: Manifest commits must
    incorporate all preceding log commits (since the last checkpoint) into the new metadata tree.
@@ -562,7 +582,10 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Record a `backReference` for every file read from the tree, and use the accumulated backreferences to build MDVs and re-add entries when producing a manifest commit (see [Backreferences](#backreferences) and [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
 - Populate manifest entries with partition values, content stats, deletion vectors, and tracking and sequence numbers (see [Content Entry Schema](#content-entry-schema) and [Row Tracking Compatibility](#row-tracking-compatibility)).
 - Materialize row-tracking and partition columns in data files, tagged with their Iceberg `field_id`s (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns) and [Partition Values](#partition-values)).
+- Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
+- Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
+- Include the `dataChange` field in the `commitInfo` action of every commit (see [Commit Provenance Information](#commit-provenance-information)).
 
 ### Manifest Commit Procedure
 
@@ -571,13 +594,15 @@ When `adaptiveMetadata` is supported and active, writers must:
 2. Collect all log commits since previous checkpointMetadata.version
 3. For removes and re-adds with backreferences:
    - Group by manifest path
-   - Add positions to manifest_info.dv bitmap (accumulates all
-     deletions/replacements)
-   - For removes: add position to tracking.deleted_positions
-     bitmap (this commit only)
-   - For re-adds: add position to tracking.replaced_positions
-     bitmap (this commit only)
-   - Add new DATA entries with updated info for re-added files
+   - Add each superseded position to the manifest_info.dv bitmap
+     (cumulative; readers use it to skip invalidated entries)
+   - Set a per-commit CDF tracking bitmap only for data changes:
+     tracking.deleted_positions for a pure delete (remove with no
+     paired add), tracking.replaced_positions for a DV update (remove
+     + add). A stats backfill (add with no paired remove) is not a
+     data change and sets neither.
+   - For re-adds (DV update, or stats backfill), add the new DATA
+     entry with the updated info
 4. For adds from preceding log commits (versions <=
    checkpointMetadata.version): set status=EXISTING with explicit
    snapshot_id and sequence numbers. These files are already
