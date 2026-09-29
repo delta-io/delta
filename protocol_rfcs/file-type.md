@@ -66,20 +66,24 @@ A `uri` set on a `file` value (an external reference, or a locator carried along
 
 Whether a `uri` is absolute or relative is determined per [RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986) (a relative reference has no scheme).
 
-### The `__files` subdirectory
+### The `_files` subdirectory
 
-Referenced bytes for relative references are expected to reside under the reserved **`__files`** subdirectory of the table root (that is, at a `uri` of the form `__files/...`). This subdirectory is **excluded from Delta management**:
+A writer that uses relative references should place the referenced bytes under a **hidden** subdirectory of the table root — by convention **`_files`** (a `uri` of the form `_files/...`). A hidden directory is one whose name begins with `_` or `.`.
 
-- `VACUUM` must **not** delete files under `<table root>/__files`, even though they are not tracked in the transaction log. (Elsewhere under the table root, `VACUUM` continues to delete untracked files, so referenced payload placed outside `__files` is not protected.)
-- `CLONE` (shallow or deep) does not copy files under `__files`; the referenced bytes are not part of the table's managed data (see [Non-Goals](#non-goals)).
+Placing referenced bytes under a hidden directory means Delta does not treat them as table data:
 
-Delta does not otherwise manage the contents of `__files`: creating, retaining, and reclaiming those bytes is the responsibility of the writer or an external system. (A higher layer may add managed semantics — for example lifecycle/garbage collection or access brokering — on top of this reserved location, but that is out of scope for this protocol.)
+- **`VACUUM` does not delete them, and this is not a `file`-specific rule.** `VACUUM` already skips hidden directories — those whose name begins with `_` or `.`, other than the reserved `_delta_index`/`_change_data` prefixes and partition directories of the form `col=value` — the same convention that protects `_delta_log`. Referenced bytes under `_files` are preserved by that existing behavior; no special-casing of `_files` is required. Referenced payload placed in a **non-hidden** location under the table root is **not** protected and may be deleted by `VACUUM` as untracked data.
+- **`CLONE` does not carry relative references to the clone.** `CLONE` references the source table's tracked data files and does not copy untracked files, so `_files` payload is not brought to the clone; moreover, a relative `uri` read from the clone resolves against the **clone's** table root (per [URI Resolution](#uri-resolution)), where that payload does not exist. Relative references therefore do not survive `CLONE`. A writer that needs references to survive `CLONE` should use **absolute** URIs, which resolve identically regardless of which table reads them.
+
+Delta does not otherwise manage the contents of `_files`: creating, retaining, and reclaiming those bytes is the responsibility of the writer or an external system. (A higher layer may add managed semantics — for example lifecycle/garbage collection or access brokering — on top of this location, but that is out of scope for this protocol.)
+
+*Open item (not yet settled): the rules above govern path-based `VACUUM`. How referenced bytes under `_files` interact with reachability-based cleanup — for example the [Iceberg V4 metadata](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md) feature, which decides retention by reachability rather than by directory layout — is under discussion.*
 
 ## Writer Requirements for File Data Type
 
 When File type is supported (`writerFeatures` field of a table's `protocol` action contains `fileType`), writers:
 - must write a column of type `file` to Parquet as a group annotated with the Parquet `FILE` logical type, conforming to the [Parquet `FILE` specification](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) (field names and types, `checksum` encoding, and validation), subject to the Delta restrictions below.
-- must write each `uri` — wherever one is set, whether an external reference or a locator carried alongside an `inline` value — as either an **absolute** URI ([RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986)) or a **relative** reference resolved against the table root, per [URI Resolution](#uri-resolution). A writer that uses relative references should place the referenced bytes under the reserved `__files` subdirectory of the table root, so they are excluded from `VACUUM`.
+- must write each `uri` — wherever one is set, whether an external reference or a locator carried alongside an `inline` value — as either an **absolute** URI ([RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986)) or a **relative** reference resolved against the table root, per [URI Resolution](#uri-resolution). A writer that uses relative references should place the referenced bytes under a hidden subdirectory of the table root (by convention `_files`), so that `VACUUM` preserves them under the standard hidden-directory convention (see [The `_files` subdirectory](#the-_files-subdirectory)).
 - must produce values that **resolve** as either **inline** (`inline` set) or **external** (`uri` set), per the Parquet `FILE` resolution rules. For resolution, `offset`/`size` apply only together with a `uri` (designating a byte range within the referenced file); the Parquet type provides no form that resolves to a byte range in the containing data file, so no such value can be written. (An *inline* value may also carry a locator, from which a reader may alternatively resolve — see the next point.)
 - may write inline values (`inline` set); doing so is optional. An inline value may additionally carry `uri`/`offset`/`size` locator fields that record where the bytes came from; per the Parquet specification a reader may resolve the value from `inline` or from the locator, whichever suits it (producers are expected to write the same bytes in both). Because that locator may be used for resolution, the [URI Resolution](#uri-resolution) rules above apply to its `uri` as well.
 - must represent a value that does not resolve to any referent as a column null.
@@ -168,14 +172,14 @@ A `file` value is a reference, and it is stored in the table's data files like a
 
 For **inline** values, the bytes are stored within the value itself, so they are versioned and time-travel with the table like any other column data.
 
-For **external** references (a `uri` is set), Delta makes **no guarantee about the referenced bytes**, because the referenced files are not tracked by the table's transaction log — whether they live outside the table or under the reserved `__files` subdirectory, which Delta does not manage (see [The `__files` subdirectory](#the-__files-subdirectory)):
+For **external** references (a `uri` is set), Delta makes **no guarantee about the referenced bytes**, because the referenced files are not tracked by the table's transaction log — whether they live outside the table or under the `_files` subdirectory, which Delta does not manage (see [The `_files` subdirectory](#the-_files-subdirectory)):
 
 - The bytes may be overwritten or deleted independently of the table, so dereferencing a reference read from a historical version (via time travel or Change Data Feed) may fail or may return different bytes than when the reference was written. The `checksum` field, when present, allows a reader to detect that the bytes have changed, but does not allow it to recover the original bytes.
 - Availability of the externally-referenced bytes is orthogonal to which table version is queried: time travel of the reference does not imply time travel of the external bytes.
 
 ## Non-Goals
 
-A `file` value is a reference, and the referenced bytes are **external to the table and not under its management.** In particular, `VACUUM` does not treat referenced files as table data: it may delete files that reside under the table's directory but are not tracked in the transaction log, **except** under the reserved `__files` subdirectory, which it must not delete (see [The `__files` subdirectory](#the-__files-subdirectory)). `CLONE` (shallow or deep) does not copy referenced files.
+A `file` value is a reference, and the referenced bytes are **external to the table and not under its management.** In particular, `VACUUM` does not treat referenced files as table data: it may delete untracked files that reside under the table's directory, except within hidden directories (names beginning with `_` or `.`, such as the `_files` convention), which it skips (see [The `_files` subdirectory](#the-_files-subdirectory)). `CLONE` does not copy referenced files, and relative references do not survive `CLONE` (see [The `_files` subdirectory](#the-_files-subdirectory)).
 
 The following are additionally out of scope:
 
