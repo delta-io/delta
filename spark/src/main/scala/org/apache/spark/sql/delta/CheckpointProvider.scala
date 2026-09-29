@@ -31,14 +31,13 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames._
-import org.apache.spark.sql.delta.util.JsonUtils.toJsonColumn
 import org.apache.spark.sql.delta.util.threads.NonFateSharingFuture
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{Column, DataFrame, Dataset}
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.functions.{col, lit, to_json}
 import org.apache.spark.sql.types.{StructField, StructType}
 
 /**
@@ -162,7 +161,7 @@ trait FileBasedCheckpointProvider
               }
             (
               checkpointSchemaToUse,
-              toJsonColumn(encodedStatsCol)
+              to_json(encodedStatsCol)
             )
           } else {
             // Normal (JSON-like) schema suffices
