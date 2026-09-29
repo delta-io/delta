@@ -304,4 +304,40 @@ object DeltaStreamUtils {
       }
     }
   }
+
+  /**
+   * Resolves the version from which the first batch should scan when no start offset is available.
+   *
+   * A configured starting version (including one resolved from `startingTimestamp`) takes
+   * precedence. Without one, an initial-snapshot end offset uses its snapshot version. An
+   * incremental end offset uses the immediately preceding version as an updated initial snapshot,
+   * allowing the commit-local index in the end offset to remain valid.
+   *
+   * @param endOffset inclusive end offset of the first planned batch
+   * @param startingVersion starting version resolved from the source options, if configured
+   * @return version from which the first batch should scan
+   */
+  def resolveFirstBatchStartVersion(
+      endOffset: DeltaSourceOffset,
+      startingVersion: Option[Long]): Long = {
+    startingVersion match {
+      case Some(v) =>
+        v
+
+      case None =>
+        if (endOffset.isInitialSnapshot) {
+          endOffset.reservoirVersion
+        } else {
+          assert(
+            endOffset.reservoirVersion > 0,
+            s"invalid reservoirVersion in endOffset: $endOffset")
+          // Load from snapshot `endOffset.reservoirVersion - 1L` so that `index` in `endOffset`
+          // is still valid.
+          // It's OK to use the previous version as the updated initial snapshot, even if the
+          // initial snapshot might have been different from the last time when this starting
+          // offset was computed.
+          endOffset.reservoirVersion - 1L
+        }
+    }
+  }
 }

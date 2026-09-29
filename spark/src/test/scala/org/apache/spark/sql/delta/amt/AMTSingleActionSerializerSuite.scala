@@ -444,6 +444,27 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(restored.format_version == AMTSingleAction.FormatVersionV4)
   }
 
+  test("fromAddFile maps defaultRowCommitVersion to both sequence numbers") {
+    val entry = DataEntry.fromAddFile(
+      sampleAddFile.copy(defaultRowCommitVersion = Some(10L)),
+      addedTracking,
+      tableRoot)
+    assert(entry.tracking.sequence_number.contains(10L))
+    assert(entry.tracking.file_sequence_number.contains(10L))
+  }
+
+  test("toAddFile maps file_sequence_number to defaultRowCommitVersion") {
+    val add = DataEntry(
+      location = "f.parquet",
+      file_format = AMTSingleAction.FileFormatParquet,
+      tracking = addedTracking.copy(
+        sequence_number = Some(20L),
+        file_sequence_number = Some(10L)),
+      record_count = 10L,
+      file_size_in_bytes = 100L).toAddFile(tableRoot)
+    assert(add.defaultRowCommitVersion.contains(10L))
+  }
+
   private val sampleTags: Map[String, String] =
     Map(AddFile.Tags.INSERTION_TIME.name -> "123", "custom" -> "value")
 

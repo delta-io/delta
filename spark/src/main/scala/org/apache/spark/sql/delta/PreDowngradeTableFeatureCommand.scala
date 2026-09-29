@@ -343,6 +343,15 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
   }
 }
 
+case class AdaptiveMetadataPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    throw new UnsupportedOperationException(
+      s"Dropping the ${AdaptiveMetadataTableFeature.name} table feature is not yet supported.")
+  }
+}
+
 case class V2CheckpointPreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
   with DeltaLogging {
@@ -613,6 +622,19 @@ case class GeospatialPreDowngradeCommand(table: DeltaTableV2)
     // can be dropped.
     throw DeltaErrors.cannotDropGeospatialFeature(geospatialCols)
   }
+}
+
+case class FileTypePreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * There is no `file` type in the schema yet, so a table can never contain `file` columns and
+   * there are never any traces of the feature to remove. Once `file` column support lands, this
+   * must remove or reject remaining `file` usages before the feature can be dropped (mirroring
+   * [[GeospatialPreDowngradeCommand]]).
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus =
+    PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
 }
 
 case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)

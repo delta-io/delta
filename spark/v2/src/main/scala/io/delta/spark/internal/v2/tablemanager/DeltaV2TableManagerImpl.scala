@@ -15,6 +15,8 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
+import java.util.concurrent.atomic.AtomicReference
+
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
@@ -24,10 +26,9 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
- * Process-cached [[DeltaV2TableManager]] composite.
+ * Process-cached [[DeltaV2TableManager]] implementation.
  *
- * Placeholder: inherits default trait stubs. The real implementation (snapshot lifecycle and
- * freshness control) is added in a follow-up layer.
+ * Reuses a table-scoped snapshot manager backed by the table's [[KernelContext]].
  *
  * @param qualifiedTableDataPath the fully-qualified table data directory (parent of `_delta_log`).
  * @param sessionInvariantFsOptions filesystem-prefixed credential options (`fs.*`, `dfs.*`) that
@@ -47,11 +48,22 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   def tablePath: Path = qualifiedTableDataPath
 
   /** Used to read and write physical log files and checkpoints. */
-  private[tablemanager] lazy val logStore = createLogStore(SparkSession.active)
+  override private[v2] val logStore = createLogStore(SparkSession.active)
 
-  private[tablemanager] lazy val kernelContext = KernelContext(sessionInvariantFsOptions, logStore)
+  override private[v2] val kernelContext = KernelContext(sessionInvariantFsOptions, logStore)
 
-  // Placeholder until snapshot lifecycle is implemented.
-  override def snapshotManager(): DeltaV2SnapshotManager =
-    throw new UnsupportedOperationException("snapshotManager not yet implemented")
+  private val latestCatalogTable =
+    new AtomicReference[CatalogTable](initialCatalogTableOpt.orNull)
+  private val cachedSnapshotManager =
+    new CachedSnapshotManager(tablePath, kernelContext, latestCatalogTable)
+
+  override private[v2] def snapshotManager(
+      catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager = {
+    // Catalog metadata is latest-wins best-effort state. A refresh captures one atomic value and
+    // uses it consistently while selecting its path-based or catalog-managed uncached delegate.
+    latestCatalogTable.set(catalogTableOpt.orNull)
+    cachedSnapshotManager
+  }
+
+  override def retire(): Unit = cachedSnapshotManager.retire()
 }

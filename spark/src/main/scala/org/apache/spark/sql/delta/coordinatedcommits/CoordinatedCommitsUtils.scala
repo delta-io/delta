@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
@@ -68,11 +68,11 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       txn.updateProtocol(protocol = p)
       // Force a metadata update to trigger ICT (In-Commit Timestamp) enablement.
       // CatalogOwnedTableFeature requires ICT to be enabled in the metadata, but
-      // updateMetadataAndProtocolWithRequiredFeatures in prepareCommit only runs
+      // updateMetadataAndProtocolWithRequiredFeatures in prepareInitialActions only runs
       // when there's an explicit metadata change (metadataChanges.headOption is non-empty).
       // Since we're only updating the protocol here without changing metadata content,
       // we need to explicitly call updateMetadata to ensure metadataChanges is non-empty
-      // during prepareCommit, which will then enable ICT in the metadata.
+      // during prepareInitialActions, which will then enable ICT in the metadata.
       // Without this, generateInCommitTimestampForFirstCommitAttempt would return None,
       // causing UCCommitCoordinatorClient to fail with DELTA_MISSING_COMMIT_TIMESTAMP.
       txn.updateMetadata(proposedNewMetadata = txn.metadata)
@@ -541,6 +541,38 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   }
 
   /**
+   * Ensures that commit files are backfilled up to the current version in the snapshot.
+   *
+   * This method checks if there are any un-backfilled versions up to the current version and
+   * triggers the backfilling process using the commit-coordinator. It verifies that the delta file
+   * for the current version exists after the backfilling process.
+   *
+   * @throws IllegalStateException
+   *   if the delta file for the current version is not found after backfilling.
+   */
+  def ensureCommitFilesBackfilled(
+      version: Long,
+      deltaLog: DeltaLog,
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient,
+      deltaCommitFileProvider: DeltaCommitFileProvider,
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    val minUnbackfilledVersion = deltaCommitFileProvider.minUnbackfilledVersion
+    if (minUnbackfilledVersion <= version) {
+      val hadoopConf = deltaLog.newDeltaHadoopConf()
+      tableCommitCoordinatorClient.backfillToVersion(
+        catalogTableOpt.map(_.identifier),
+        version,
+        lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
+      val fs = deltaLog.logPath.getFileSystem(hadoopConf)
+      val expectedBackfilledDeltaFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+      if (!fs.exists(expectedBackfilledDeltaFile)) {
+        throw new IllegalStateException("Backfilling of commit files failed. " +
+          s"Expected delta file $expectedBackfilledDeltaFile not found.")
+      }
+    }
+  }
+
+  /**
    * Returns an iterator of commit files starting from startVersion.
    * If the iterator is consumed beyond what the file system listing shows, this method do a
    * deltaLog.update() to find the latest version and returns listing results upto that version.
@@ -738,10 +770,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    * Returns true if the snapshot is backed by unbackfilled commits.
    */
   def unbackfilledCommitsPresent(snapshot: Snapshot): Boolean = {
-    snapshot.logSegment.deltas.exists {
-      case FileNames.UnbackfilledDeltaFile(_, _, _) => true
-      case _ => false
-    } && !snapshot.allCommitsBackfilled
+    // The unbackfilled commits from the segment might be stale, so we consult the snapshot as well.
+    snapshot.logSegment.unbackfilledDeltas.nonEmpty && !snapshot.allCommitsBackfilled
   }
 
   /**
@@ -758,9 +788,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       // as backfills are managed by commit-coordinators.
       return
     }
-    val unbackfilledFilesAndVersions = snapshot.logSegment.deltas.collect {
-      case UnbackfilledDeltaFile(unbackfilledDeltaFile, version, _) =>
-        (unbackfilledDeltaFile, version)
+    val unbackfilledFilesAndVersions = snapshot.logSegment.unbackfilledDeltas.map {
+      case (file, version, _) => (file, version)
     }
     if (unbackfilledFilesAndVersions.isEmpty) return
     // Coordinated commits are disabled on the table but the table still has un-backfilled files.
