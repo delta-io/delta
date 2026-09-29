@@ -70,23 +70,27 @@ To support this feature:
   and must satisfy the identity-column requirements (`start`, `step`, `allowExplicitInsert`); only
   value generation and the highest-value bookkeeping are delegated to the sequence.
 
-`concurrentIdentityColumns` is a table-level mode for identity generation, not a per-column opt-in. On
-a table that supports the feature, **every** identity column must be concurrent. Uniformity keeps
-the write path unambiguous, no writer has to reconcile two generation models. Consequently:
+A valid table that supports `concurrentIdentityColumns` must satisfy the following invariant:
+every identity column carries `delta.identity.concurrent.sequenceId`, and no identity column carries
+`delta.identity.highWaterMark`. The feature's presence in `writerFeatures` is what turns on concurrent
+generation for the table. `delta.identity.concurrent.sequenceId` contains the information a writer
+needs to address the column's counter in the sequence service, which is why it is stored per column
+and replaced whenever the column is re-bound. Consequently:
 - A writer that adds the feature to a table must bind every existing identity column to a sequence in
   the same operation.
-- A writer creating or altering an identity column on a feature-supporting table must make it
-  concurrent.
-- A writer must reject a table state in which the feature is supported but some identity column lacks
-  a `sequenceId`, or in which a column carries both `sequenceId` and `delta.identity.highWaterMark`,
-  rather than fall back to high-water-mark generation for that column.
+- A writer creating or altering an identity column on a feature-supporting table must bind it to a
+  sequence.
+- A writer must not fall back to high-water-mark generation for an identity column that lacks a
+  `sequenceId`. Such a table is invalid.
 
 ### The sequence
 
-A sequence is a catalog-hosted counter identified by `delta.identity.concurrent.sequenceId` and scoped
-by `(table, sequenceId)`. The contract is that a persisted `sequenceId` resolves, via the table's
-catalog, to the sequence the column's values are drawn from. Each identity column is bound to its own
-sequence, so a table with several identity columns has several independent counters.
+A sequence is a catalog-hosted counter identified by `delta.identity.concurrent.sequenceId` and
+addressed by `(table, sequenceId)`, so a sequence belongs to exactly one table. The same `sequenceId`
+stamped on another table addresses a different counter, and two tables cannot draw from one sequence.
+The contract is that a persisted `sequenceId` resolves, via the table's catalog, to the sequence the
+column's values are drawn from. Each identity column is bound to its own sequence, mirroring the
+per-column `delta.identity.highWaterMark` it replaces.
 
 The sequence service hands out values `start + k * step` for strictly increasing, non-negative integers `k`
 (`start` and `step` are the column's `delta.identity.start` and `delta.identity.step`). It tracks the
@@ -101,7 +105,8 @@ fail rather than wrap.
 **Gaps are acceptable.** The sequence guarantees only that a generated value is never reused, not that
 generated values are contiguous. A range a writer reserves but does not fully use (it crashes, aborts,
 or under-fills) leaves those values permanently unallocated, so a concurrent identity column's values may
-contain holes. Writers must not return or replay an unused range to close the hole.
+contain holes. Writers can use the range, even persist it, as long as they can guarantee that each
+id is used only once.
 
 ### Writer Requirements for Concurrent Identity Columns
 
@@ -183,7 +188,7 @@ Default Column Values | **Unsupported:** a column must not be both an identity c
 Type Widening | **Unsupported:** `ALTER TABLE ALTER COLUMN` is not supported on identity columns, so the type of a concurrent identity column cannot be changed. Widening other columns of the table is unaffected. The column type must be `BIGINT`.
 Deletion Vectors, Row Tracking, Change Data Feed, Time Travel | **Supported, with no interaction.** Identity values are materialized into the data files by the writer, so deleting, tracking, or replaying rows reads the values that were written, with no dependency on the current state of the sequence.
 Per-file Statistics | **Supported.** Statistics for a concurrent identity column are computed from the materialized values exactly as for any other `BIGINT` column.
-Iceberg Compatibility | **Supported.** A concurrent identity column is a plain `BIGINT` column in the data files, and `delta.identity.concurrent.sequenceId` is Delta metadata that these features do not read.
+Iceberg Compatibility | **Read compatibility.** A concurrent identity column is a plain `BIGINT` column in the data files, and `delta.identity.concurrent.sequenceId` is Delta metadata that these features do not read.
 
 ## Valid Feature Names in Table Features
 
@@ -200,9 +205,11 @@ Feature | Name | Readers or Writers?
   standardizes only what is persisted in the Delta log and the resulting value guarantees.
 - **Lifecycle and garbage collection of sequences.** A sequence left unreferenced by a dropped column,
   table, or feature downgrade may be retired by the catalog; this RFC does not mandate a reclamation
-  protocol. A `sequenceId` that no longer resolves simply means no further values can be generated for
-  that column until it is repaired.
-- **Cross-table or shared sequences.** A sequence is scoped to the table it is stamped on.
+  protocol. A `sequenceId` that no longer resolves means no further values can be generated for that
+  column: inserts fail until the column is re-bound by a repair, while reads, deletes and updates
+  continue to work.
+- **Cross-table or shared sequences.** A sequence is addressed relative to the table it is stamped on.
+  A later revision may lift this restriction.
 - **Support on path-based / non-catalog-managed tables.**
 
 ## Appendix: The Sequence Service (non-normative)
