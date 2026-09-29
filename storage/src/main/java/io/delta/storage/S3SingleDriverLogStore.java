@@ -81,11 +81,11 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         super(hadoopConf);
     }
 
-    private Path resolvePath(FileSystem fs, Path path) {
+    static Path resolvePathWithoutUserInfo(FileSystem fs, Path path) {
         return stripUserInfo(fs.makeQualified(path));
     }
 
-    private Path stripUserInfo(Path path) {
+    private static Path stripUserInfo(Path path) {
         final URI uri = path.toUri();
 
         try {
@@ -155,7 +155,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             Boolean overwrite,
             Configuration hadoopConf) throws IOException {
         final FileSystem fs = path.getFileSystem(hadoopConf);
-        final Path resolvedPath = resolvePath(fs, path);
+        final Path resolvedPath = resolvePathWithoutUserInfo(fs, path);
         try {
             pathLock.acquire(resolvedPath);
             try {
@@ -186,7 +186,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
     @Override
     public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
         final FileSystem fs = path.getFileSystem(hadoopConf);
-        final Path resolvedPath = resolvePath(fs, path);
+        final Path resolvedPath = resolvePathWithoutUserInfo(fs, path);
         return listFromInternal(fs, resolvedPath);
     }
 
