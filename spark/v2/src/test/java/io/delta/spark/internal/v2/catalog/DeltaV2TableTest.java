@@ -697,8 +697,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
 
   private static void assertLatestSnapshot(
       DeltaV2Table table, SparkSession activeSession, long expectedVersion, long expectedFiles) {
-    DeltaV2QueryContext queryContext =
-        DeltaV2QueryContext$.MODULE$.apply(table.getCatalogTable());
+    DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.apply(table.getCatalogTable());
     Snapshot snapshot = table.getSnapshotManager().loadLatestSnapshot(queryContext);
     Dataset<?> allFiles = snapshot.allFiles();
     assertEquals(expectedVersion, snapshot.version());
