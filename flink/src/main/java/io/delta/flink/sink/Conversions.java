@@ -139,6 +139,8 @@ public class Conversions {
       }
       if (dataType.equivalent(io.delta.kernel.types.BooleanType.BOOLEAN)) {
         return Literal.ofBoolean(rowData.getBoolean(colIdx));
+      } else if (dataType.equivalent(io.delta.kernel.types.BinaryType.BINARY)) {
+        return Literal.ofBinary(rowData.getBinary(colIdx));
       } else if (dataType.equivalent(io.delta.kernel.types.ByteType.BYTE)) {
         return Literal.ofByte(rowData.getByte(colIdx));
       } else if (dataType.equivalent(io.delta.kernel.types.ShortType.SHORT)) {
