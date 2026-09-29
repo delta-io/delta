@@ -134,6 +134,12 @@ private[tablemanager] class CachedSnapshotManager(
         validationStartedAt)
       val sameTable =
         existing != null && existing.snapshot.metadata.id == refreshed.snapshot.metadata.id
+      // Reusing existing.snapshot at the same table ID and version preserves its materialized
+      // statistics and other cached state. Always installing refreshed would discard that work
+      // even when the table has not changed.
+      // Loading and installation both hold snapshotLock, so another refresh cannot install a
+      // newer snapshot while this load runs. External deletion of tail commits can still make
+      // refreshed older than existing; install refreshed in that case, matching DeltaLog.
       if (sameTable && existing.snapshot.version == refreshed.snapshot.version) {
         val validatedAt = math.max(validationStartedAt, existing.validatedAtMs)
         currentSnapshot = CachedSnapshot(existing.snapshot, validatedAt)
