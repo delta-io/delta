@@ -665,10 +665,12 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
       ThrowingRunnable checkQuery =
           () ->
               withSQLConf(
-                  DeltaSQLConf.V2_ENABLE_MODE().key(),
-                  "STRICT",
+                  "spark.sql.catalog.query_context_test",
+                  QueryContextTestCatalog.class.getName(),
                   () -> {
-                    String query = String.format("SELECT id FROM %s ORDER BY id", tableName);
+                    String query =
+                        String.format(
+                            "SELECT id FROM query_context_test.default.%s ORDER BY id", tableName);
                     List<Row> rows = spark.sql(query).collectAsList();
                     assertEquals(Arrays.asList(RowFactory.create(1), RowFactory.create(2)), rows);
                   });
@@ -687,6 +689,22 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     } finally {
       DeltaV2TableManagerCache$.MODULE$.clearCache();
       spark.sql(String.format("DROP TABLE IF EXISTS %s", tableName));
+    }
+  }
+
+  /** Loads session-catalog metadata through V2 for query-context propagation tests. */
+  public static class QueryContextTestCatalog extends TestCatalog {
+    @Override
+    public DeltaV2Table loadTable(Identifier identifier) {
+      TableIdentifier tableIdentifier =
+          new TableIdentifier(identifier.name(), Option.apply(identifier.namespace()[0]));
+      try {
+        CatalogTable catalogTable =
+            SparkSession.active().sessionState().catalog().getTableMetadata(tableIdentifier);
+        return new DeltaV2Table(identifier, catalogTable, Collections.emptyMap());
+      } catch (Exception e) {
+        throw new RuntimeException("Failed to load table: " + identifier, e);
+      }
     }
   }
 
