@@ -19,10 +19,11 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.stats.{DeltaStatistics, SkippingEligibleDataType, StatisticsCollection, StatsCollectionUtils}
+import org.apache.spark.sql.delta.util.JsonUtils.toJsonColumn
 
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
-import org.apache.spark.sql.functions.{coalesce, col, from_json, lit, struct, to_json, when}
+import org.apache.spark.sql.functions.{coalesce, col, from_json, lit, struct, when}
 import org.apache.spark.sql.types.{BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MetadataBuilder, ShortType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
 
 /**
@@ -339,7 +340,7 @@ private[amt] object AMTContentStats {
         } ++ leaves.headOption.toSeq.map { _ =>
           nestByPath(leaves, statOf(typedStats, _, NULL_VALUE_COUNT)).as(DeltaStatistics.NULL_COUNT)
         } :+ recoveredTightBounds.as(DeltaStatistics.TIGHT_BOUNDS)
-      val statsJson = to_json(struct(numRecords +: statsFields: _*))
+      val statsJson = toJsonColumn(struct(numRecords +: statsFields: _*))
       when(typedStats.isNull, lit(null).cast(StringType)).otherwise(statsJson)
     }
     if (df.columns.contains(CONTENT_STATS_FIELD)) {

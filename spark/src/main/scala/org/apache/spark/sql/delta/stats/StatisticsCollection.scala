@@ -42,6 +42,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.stats.StatisticsCollection.getIndexedColumns
 import org.apache.spark.sql.delta.util.DeltaSqlParserUtils
+import org.apache.spark.sql.delta.util.JsonUtils.toJsonColumn
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
@@ -259,7 +260,7 @@ trait StatisticsCollection extends DeltaLogging {
     }
 
     withStats
-      .withColumn("stats", when(col(statsColName).isNotNull, to_json(encodedStatsStruct)))
+      .withColumn("stats", when(col(statsColName).isNotNull, toJsonColumn(encodedStatsStruct)))
       .drop(col(Checkpoints.STRUCT_STATS_COL_NAME)) // Note: does not always exist.
   }
 
@@ -841,7 +842,7 @@ object StatisticsCollection extends DeltaCommand {
     val fileDataFrame = deltaLog
       .createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
       .withColumn("path", col("_metadata.file_path"))
-    val newStats = fileDataFrame.groupBy(col("path")).agg(to_json(txn.statsCollector))
+    val newStats = fileDataFrame.groupBy(col("path")).agg(toJsonColumn(txn.statsCollector))
     newStats.collect().map { r =>
       val add = getTouchedFile(dataPath, r.getString(0), pathToAddFileMap)
       add.copy(dataChange = false, stats = r.getString(1))
