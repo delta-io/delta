@@ -40,8 +40,7 @@ Field Name | Data Type | Description | optional/required
 # Invisible Columns
 
 Invisible Columns allow data columns to be present in data files while remaining absent from the
-visible schema. They should be excluded from default reader output. Invisible columns cannot be
-partition columns.
+visible schema. They should be excluded from default reader output.
 
 ## Enablement
 
@@ -71,30 +70,43 @@ An absent `invisibleSchemaString`, or a string encoding an empty struct, means t
 snapshot has no invisible columns.
 `null` is not a valid value for `invisibleSchemaString`.
 
-For example, the schema encoded by `invisibleSchemaString` for an invisible `long` column named
-`source_sequence_number` is:
+For an invisible `long` column named `source_sequence_number`, the `metaData` action contains the
+following field. These examples expand the JSON string in `invisibleSchemaString` for readability
+and omit the other metadata fields.
 
 ```json
 {
-  "type": "struct",
-  "fields": [
-    {
-      "name": "source_sequence_number",
-      "type": "long",
-      "nullable": true,
-      "metadata": {}
-    }
-  ]
+  "metaData": {
+    ...,
+    "invisibleSchemaString": {
+      "type": "struct",
+      "fields": [
+        {
+          "name": "source_sequence_number",
+          "type": "long",
+          "nullable": true,
+          "metadata": {}
+        }
+      ]
+    },
+    ...
+  }
 }
 ```
 
-Encoding the following empty schema in `invisibleSchemaString` is equivalent to omitting the
-field:
+An empty invisible schema is shown below and is equivalent to omitting the
+`invisibleSchemaString` field:
 
 ```json
 {
-  "type": "struct",
-  "fields": []
+  "metaData": {
+    ...,
+    "invisibleSchemaString": {
+      "type": "struct",
+      "fields": []
+    },
+    ...
+  }
 }
 ```
 
@@ -106,15 +118,11 @@ For a snapshot with active Invisible Columns:
 - The **invisible schema** is the struct in `metaData.invisibleSchemaString`.
 - The **complete data schema** combines the visible and invisible schemas.
 
-An invisible column is a data column. Except for the visibility behavior defined in this section,
-it has the same Delta Protocol semantics and guarantees as a visible column. Writers that support
-Invisible Columns, and readers that expose them, must apply every requirement that inspects,
-validates, reads, or writes a data column to an invisible column in the same way as to a visible
-column. For example, CHECK constraints involving invisible columns have the same support,
-validation, and enforcement requirements as those involving visible columns.
-
-When [Column Mapping](#column-mapping) is enabled, invisible columns are assigned physical names
-and column IDs under the same requirements as visible columns.
+An invisible column is a data column. Except for the visibility behavior and the
+[constraints below](#constraints-and-interactions-with-other-features), it has the same Delta
+Protocol semantics and guarantees as a visible column. Writers that support Invisible Columns,
+and readers that expose them, must apply every requirement that inspects, validates, reads, or
+writes a data column to an invisible column in the same way as to a visible column.
 
 ## Reader Requirements
 
@@ -151,6 +159,21 @@ When Column Mapping is enabled, the column's physical name and ID must be preser
 
 When rewriting an existing row, a writer MUST preserve its invisible-column values unless the
 write explicitly changes them.
+
+## Constraints and interactions with other features
+
+- **Column mapping.** When [Column Mapping](#column-mapping) is enabled, invisible columns are
+  assigned physical names and column IDs under the same requirements as visible columns.
+- **CHECK constraints.** CHECK constraints involving invisible columns have the same support,
+  validation, and enforcement requirements as those involving visible columns.
+- **Partitioning.** An invisible column MUST NOT be a partition column.
+- **Identity columns.** An invisible column MUST NOT be an identity column.
+- **Generated columns and column defaults.** An invisible column MUST NOT be a generated column,
+  and MUST NOT carry a column default.
+- **Type widening.** Invisible columns support [Type Widening](#type-widening) under the same
+  protocol requirements as visible columns.
+- **IcebergCompat.** When any of `icebergCompatV1`, `icebergCompatV2`, or `icebergCompatV3` is
+  enabled, a writer MUST reject a schema containing invisible columns.
 
 ## Feature Removal
 
