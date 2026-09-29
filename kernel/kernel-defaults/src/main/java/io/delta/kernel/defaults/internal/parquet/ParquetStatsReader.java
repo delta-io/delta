@@ -160,11 +160,11 @@ public class ParquetStatsReader {
       double x = decodeMin ? bbox.getXMin() : bbox.getXMax();
       double y = decodeMin ? bbox.getYMin() : bbox.getYMax();
       OptionalDouble z =
-          bbox.isZValid()
+          bbox.isZValid() && !bbox.isZEmpty()
               ? OptionalDouble.of(decodeMin ? bbox.getZMin() : bbox.getZMax())
               : OptionalDouble.empty();
       OptionalDouble m =
-          bbox.isMValid()
+          bbox.isMValid() && !bbox.isMEmpty()
               ? OptionalDouble.of(decodeMin ? bbox.getMMin() : bbox.getMMax())
               : OptionalDouble.empty();
       return Literal.ofGeospatialWKT(GeometryUtils.formatPointWKT(x, y, z, m), dataType);
@@ -297,8 +297,26 @@ public class ParquetStatsReader {
               // Columns with NaN values are marked by `hasNonNullValue` = false by the Parquet
               // reader
               // See issue: https://issues.apache.org/jira/browse/PARQUET-1246
-              return !stats.hasNonNullValue() && stats.getNumNulls() != metadata.getValueCount();
+              if (!stats.hasNonNullValue()) {
+                return stats.getNumNulls() != metadata.getValueCount();
+              }
+
+              // When statistics are taken directly from the in-memory footer, they don't
+              // go through the NaN reconciliation of the Parquet reader.  So, we must
+              // check explicitly for if NaNs are present
+              return hasNaNMinOrMax(stats);
             });
+  }
+
+  private static boolean hasNaNMinOrMax(Statistics<?> stats) {
+    if (stats instanceof FloatStatistics) {
+      FloatStatistics floatStats = (FloatStatistics) stats;
+      return Float.isNaN(floatStats.getMin()) || Float.isNaN(floatStats.getMax());
+    } else if (stats instanceof DoubleStatistics) {
+      DoubleStatistics doubleStats = (DoubleStatistics) stats;
+      return Double.isNaN(doubleStats.getMin()) || Double.isNaN(doubleStats.getMax());
+    }
+    return false;
   }
 
   private static boolean isStatsSupportedDataType(DataType dataType) {

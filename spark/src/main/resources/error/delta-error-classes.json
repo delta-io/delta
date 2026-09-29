@@ -733,6 +733,12 @@
     ],
     "sqlState" : "42P01"
   },
+  "DELTA_COMMIT_UNEXPECTED_DATA_CHANGE" : {
+    "message" : [
+      "Operation <operation> committed a <actionType> with dataChange = <actualDataChange>, but expected <expectedDataChange>."
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE" : {
     "message" : [
       " Found nested NullType in column <columName> which is of <dataType>. Delta doesn't support writing NullType in complex types."
@@ -1701,8 +1707,76 @@
   },
   "DELTA_ILLEGAL_OPTION" : {
     "message" : [
-      "Invalid value '<input>' for option '<name>', <explain>"
+      "Invalid value '<input>' for option '<name>'."
     ],
+    "subClass" : {
+      "DYNAMIC_PARTITION_OVERWRITE_ONLY" : {
+        "message" : [
+          "This option can be specified only in dynamic partition overwrite mode."
+        ]
+      },
+      "INVALID_PARQUET_FORMAT_VERSION" : {
+        "message" : [
+          "<causeExceptionMessage>",
+          ""
+        ]
+      },
+      "INVALID_REORG_PARQUET_FORMAT_VERSION" : {
+        "message" : [
+          "This is not a valid target Parquet format version for a REORG command."
+        ]
+      },
+      "MUST_BE_INTEGER" : {
+        "message" : [
+          "Must be an integer."
+        ]
+      },
+      "MUST_BE_NON_NEGATIVE_NUMBER" : {
+        "message" : [
+          "Must be a non-negative number."
+        ]
+      },
+      "MUST_BE_ONE_OF" : {
+        "message" : [
+          "Must be one of the following: <validValues>."
+        ]
+      },
+      "MUST_BE_POSITIVE_NUMBER" : {
+        "message" : [
+          "Must be a positive number."
+        ]
+      },
+      "MUST_BE_SIZE_CONFIGURATION" : {
+        "message" : [
+          "Must be a size configuration such as '10g'."
+        ]
+      },
+      "NO_EMPTY_COLUMN_NAMES" : {
+        "message" : [
+          "Must not contain empty column names."
+        ]
+      },
+      "PARQUET_COMPRESSION_CODEC_CONFLICT" : {
+        "message" : [
+          "Conflicts with the table property '<property>' set to '<propertyValue>'."
+        ]
+      },
+      "PARQUET_WRITER_VERSION_CONFLICT" : {
+        "message" : [
+          "Conflicts with the table property '<property>' set to '<propertyValue>', which resolves to writer version '<resolvedVersion>'."
+        ]
+      },
+      "SCHEMA_MODE_WITH_TIME_TRAVEL" : {
+        "message" : [
+          "This schema mode cannot be used with time travel options."
+        ]
+      },
+      "UNRECOGNIZED_NAMED_ARGUMENT" : {
+        "message" : [
+          "Unrecognized named argument for function '<functionName>'. Valid named arguments: <validArguments>."
+        ]
+      }
+    },
     "sqlState" : "42616"
   },
   "DELTA_ILLEGAL_USAGE" : {
@@ -2609,8 +2683,23 @@
   },
   "DELTA_PROTOCOL_CHANGED" : {
     "message" : [
-      "ProtocolChangedException: The protocol version of the Delta table has been changed by a concurrent update. <additionalInfo><conflictingCommit>\nRefer to <docLink> for more details."
+      "ProtocolChangedException: The protocol version of the Delta table has been changed by a concurrent update. Refer to <docLink> for more details."
     ],
+    "subClass" : {
+      "CONFLICTING_COMMIT" : {
+        "message" : [
+          "Conflicting commit: <conflictingCommit>",
+          ""
+        ]
+      },
+      "WRITE_TO_EMPTY_DIRECTORY" : {
+        "message" : [
+          "This happens when multiple writers are writing to an empty directory. Creating the table ahead of time will avoid this conflict.",
+          "Conflicting commit: <conflictingCommit>",
+          ""
+        ]
+      }
+    },
     "sqlState" : "2D521"
   },
   "DELTA_PROTOCOL_PROPERTY_NOT_INT" : {

@@ -239,6 +239,14 @@ object SuiteGeneratorConfig {
             Dims.DATA_SKIP_CHECKPOINT_V2.alone,
             Dims.COLUMN_MAPPING.withValueAsDimension(_.last).alone
           )
+        ),
+        // AMT forces id column mapping and uses its own manifest checkpoint, so COLUMN_MAPPING and
+        // DATA_SKIP_CHECKPOINT_V2 are not used here.
+        TestConfig(
+          "DataSkippingDeltaV1AMTTests" :: Nil,
+          List(
+            Dims.NONE
+          )
         )
       )
     ),
