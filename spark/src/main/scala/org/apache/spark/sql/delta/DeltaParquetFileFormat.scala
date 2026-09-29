@@ -63,9 +63,9 @@ import org.apache.spark.util.SerializableConfiguration
  * @param optimizationsEnabled Whether to enable optimizations (file splitting, predicate pushdown)
  * @param tablePath Table path for deletion vector support; None disables DV processing
  * @param isCDCRead Whether this is a CDC (Change Data Capture) read
- * @param useMetadataRowIndexOpt Controls row index source for DV filtering. When provided,
- *                               must match optimizationsEnabled (true enables _metadata.row_index
- *                               and file splitting; false uses internal counter, no splitting).
+ * @param useMetadataRowIndexOpt Controls row index source for DV filtering. When false,
+ *                               optimizationsEnabled must also be false because the internal
+ *                               counter does not support file splitting or predicate pushdown.
  *                               When None, reads from session config.
  */
 abstract class DeltaParquetFileFormatBase(
@@ -78,11 +78,11 @@ abstract class DeltaParquetFileFormatBase(
     protected val useMetadataRowIndexOpt: Option[Boolean] = None)
   extends ParquetFileFormat with Logging {
 
-  // Validate either we have all arguments for DV enabled read or none of them.
+  // An internal row-index counter requires unsplit files and no predicate pushdown.
   if (hasTablePath) {
     useMetadataRowIndexOpt.foreach { useMetadataRowIndex =>
-      require(useMetadataRowIndex == optimizationsEnabled,
-        "Wrong arguments for Delta table scan with deletion vectors")
+      require(useMetadataRowIndex || !optimizationsEnabled,
+        "Cannot use internal row index with file splitting or predicate pushdown")
     }
   }
 
@@ -552,7 +552,7 @@ case class DeltaParquetFileFormat(
     optimizationsEnabled = optimizationsEnabled,
     tablePath = tablePath,
     isCDCRead = isCDCRead,
-    // V1: capture config at construction, used in buildReaderWithPartitionValues
+    // V1: capture config at construction, used in buildReaderWithPartitionValues.
     useMetadataRowIndexOpt = SparkSession.getActiveSession.map(
       _.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX))) {
 

@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 
 /** Invariant enforcement: rejecting commits that break a write- or commit-shape invariant. */
@@ -94,11 +95,15 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
         // (dataChange = false); a data-changing re-add is rejected by the incremental writer.
         val liveLeafFile = leafToAddFileMapping.toSeq.sortBy(_._1).head._2.head
         assert(liveLeafFile.backReference.isDefined, "The re-added file must be leaf-resident.")
-        val ex = intercept[IllegalStateException] {
-          withInline {
-            amtDeltaLog.startTransaction().commit(
-              Seq(liveLeafFile.copy(dataChange = true)),
-              DeltaOperations.ComputeStats(predicate = Nil))
+        val ex = withSQLConf(
+          DeltaSQLConf.DELTA_COMMIT_VALIDATE_EXPECTED_DATA_CHANGE_MODE.key ->
+            DeltaSQLConf.DataChangeValidationMode.OFF.toString) {
+          intercept[IllegalStateException] {
+            withInline {
+              amtDeltaLog.startTransaction().commit(
+                Seq(liveLeafFile.copy(dataChange = true)),
+                DeltaOperations.ComputeStats(predicate = Nil))
+            }
           }
         }
         assert(ex.getMessage.contains("dataChange=true is not allowed"),

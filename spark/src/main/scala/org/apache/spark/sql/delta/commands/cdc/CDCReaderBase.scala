@@ -277,11 +277,9 @@ trait CDCReaderBase extends DeltaLogging {
     // Non-legacy schema mode options cannot be used with time-travel because the schema to use
     // will be confusing.
     if (isTimeTravelQuery && schemaMode != BatchCDFSchemaLegacy) {
-      throw DeltaErrors.illegalDeltaOptionException(
+      throw DeltaErrors.illegalDeltaOptionSchemaModeWithTimeTravel(
         DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key,
-        schemaMode.name,
-        s"${DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key} " +
-          s"cannot be used with time travel options.")
+        schemaMode.name)
     }
 
     getConstructedCDCRelation(

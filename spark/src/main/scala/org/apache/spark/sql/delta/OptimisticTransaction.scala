@@ -1611,9 +1611,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
   }
 
-  /** Ensure that actions do not contain duplicates for the same path. */
+  /**
+   * Ensure that actions do not contain duplicates for the same path.
+   * This check is performed using AMT-aware object identity mode.
+   */
   protected def checkNoDuplicateActions(actions: Seq[Action]): Unit = {
-    ConflictChecker.checkNoDuplicateActions(spark, actions.iterator).foreach(_ => ())
+    val useDVObjectIdentity =
+      FileAction.useDeletionVectorObjectIdentity(metadata, protocol, spark)
+    ConflictChecker.checkNoDuplicateActions(
+      spark, actions.iterator, dataPath, useDVObjectIdentity)
+      .foreach(_ => ())
   }
 
   /**
@@ -1898,9 +1905,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
       validateActionsAddFileInvariants(preparedActions, metadata)
 
       checkNoDuplicateActions(preparedActions)
-      ConflictChecker.trackConsistentDataChange(
-        spark, preparedActions.iterator, deltaLog, op, callerContext = "commit")
-        .foreach(_ => ())
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -2195,8 +2199,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
         }
         action
       }
-      allActions = ConflictChecker.trackConsistentDataChange(
-        spark, allActions, deltaLog, op, callerContext = "commitLarge")
       val (allActions2, acStatsCollector) = collectAutoOptimizeStats(allActions)
       allActions = allActions2
 
@@ -2227,6 +2229,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       val commitStatsComputer = new CommitStatsComputer()
       allActions = commitStatsComputer.addToCommitStats(allActions)
+      allActions = ConflictChecker.trackDataChange(
+        spark, allActions, deltaLog, op, callerContext = "commitLarge")
       executionObserver.beginDoCommit()
       if (readVersion < 0) {
         deltaLog.createLogDirectoriesIfNotExists()
@@ -3007,6 +3011,14 @@ trait OptimisticTransactionImpl extends TransactionHelper
         updatedInfo
       }.getOrElse(currentTransactionInfo)
     val baseActions = updatedCurrentTransactionInfo.finalActionsToCommit
+    // Validate the complete post-conflict-resolution action set before AMT can replace file actions
+    // in the commit JSON with a checkpoint representation.
+    ConflictChecker.trackDataChange(
+      spark,
+      baseActions.iterator,
+      deltaLog,
+      updatedCurrentTransactionInfo.op,
+      callerContext = "doCommit").foreach(_ => ())
     val amtWriteResultOpt = amtWriterManager.writeAMT(
       nextAttemptVersion = attemptVersion,
       currentTransactionInfo = updatedCurrentTransactionInfo,
@@ -3025,6 +3037,24 @@ trait OptimisticTransactionImpl extends TransactionHelper
             version = attemptVersion,
             contentRootVersion = result.contentRootVersion)
         )
+        // CatalogOwned tables assume that before a checkpoint is written, all the commits till the
+        // checkpoint version (inclusive) have been backfilled (in [[Checkpoints.writeCheckpoint]]).
+        // For AMT though, since the checkpoint itself is a (manifest) commit, we lose the inclusive
+        // guarantee: the manifest commit itself cannot be backfilled as it hasn't been written yet.
+        // We still backfill up to the previous version (attemptVersion - 1), and we store the
+        // unbackfilled manifest commit file status in an extra field in LogSegment.
+        // We assume the readSnapshot's commit-coordinator is unchanged, otherwise the conflict
+        // checker would have detected a conflict earlier.
+        CatalogOwnedTableUtils
+          .populateTableCommitCoordinatorFromCatalog(spark, targetCatalogTable, snapshot)
+          .foreach { readSnapshotTableCommitCoordinatorClient =>
+            CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
+              version = attemptVersion - 1,
+              deltaLog = deltaLog,
+              tableCommitCoordinatorClient = readSnapshotTableCommitCoordinatorClient,
+              deltaCommitFileProvider = DeltaCommitFileProvider(logPath, preCommitLogSegment),
+              catalogTableOpt = targetCatalogTable)
+          }
         // Recompute the actions from the patched txn info so the committed CommitInfo carries the
         // reference, then append the inline checkpoint action.
         updatedCurrentTransactionInfo.finalActionsToCommit :+ result.checkpoint

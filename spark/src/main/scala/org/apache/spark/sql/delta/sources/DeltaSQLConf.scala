@@ -235,6 +235,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ >= 0, "must be non-negative")
       .createWithDefault(500000L)
 
+  val DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT =
+    buildConf("logSegment.deltasToStringLimit")
+      .internal()
+      .doc("Maximum number of delta files rendered when a LogSegment is turned into a string " +
+        "for logging or error messages. A LogSegment can hold a very large number of delta " +
+        "files, and rendering all of them can materialize a huge string and OOM the driver, so " +
+        "the remainder is elided once this limit is exceeded. Set to -1 to disable truncation.")
+      .longConf
+      .checkValue(_ >= -1, "must be -1 (truncation disabled) or non-negative")
+      .createWithDefault(5000L)
+
   val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
     buildConf("partitionColumnValidity.enabled")
       .internal()
@@ -2254,23 +2265,26 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(GeneratedColumnValidateOnWriteMode.values.map(_.toString))
       .createWithDefault(GeneratedColumnValidateOnWriteMode.LOG_ONLY.toString)
 
-  sealed abstract class ConsistentDataChangeValidationMode(val name: String) {
+  sealed abstract class DataChangeValidationMode(val name: String) {
     override def toString: String = name
   }
-  object ConsistentDataChangeValidationMode {
+  object DataChangeValidationMode {
     /** Skip the validation entirely. */
-    case object OFF extends ConsistentDataChangeValidationMode("off")
+    case object OFF extends DataChangeValidationMode("off")
     /** Record a Delta event on violation but do not throw. */
-    case object LOG extends ConsistentDataChangeValidationMode("log")
+    case object LOG extends DataChangeValidationMode("log")
     /** Throw an exception on violation. */
-    case object FATAL extends ConsistentDataChangeValidationMode("fatal")
+    case object FATAL extends DataChangeValidationMode("fatal")
 
-    val values: Seq[ConsistentDataChangeValidationMode] = Seq(OFF, LOG, FATAL)
-    private val byName: Map[String, ConsistentDataChangeValidationMode] =
+    val values: Seq[DataChangeValidationMode] = Seq(OFF, LOG, FATAL)
+    private val byName: Map[String, DataChangeValidationMode] =
       values.map(m => m.name -> m).toMap
 
-    def fromConf(conf: SQLConf): ConsistentDataChangeValidationMode =
+    def consistentDataChangeMode(conf: SQLConf): DataChangeValidationMode =
       byName(conf.getConf(DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE))
+
+    def expectedDataChangeMode(conf: SQLConf): DataChangeValidationMode =
+      byName(conf.getConf(DELTA_COMMIT_VALIDATE_EXPECTED_DATA_CHANGE_MODE))
   }
 
   val DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE =
@@ -2285,8 +2299,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
              |""".stripMargin)
       .stringConf
       .transform(_.toLowerCase(Locale.ROOT))
-      .checkValues(ConsistentDataChangeValidationMode.values.map(_.name).toSet)
-      .createWithDefault(ConsistentDataChangeValidationMode.LOG.name)
+      .checkValues(DataChangeValidationMode.values.map(_.name).toSet)
+      .createWithDefault(DataChangeValidationMode.LOG.name)
+
+  val DELTA_COMMIT_VALIDATE_EXPECTED_DATA_CHANGE_MODE =
+    buildConf("commitValidation.expectedDataChange.mode")
+      .internal()
+      .doc("""
+             |Controls validation that every FileAction an operation commits carries the dataChange
+             |value the operation declares via DeltaOperations.Operation.expectedFileDataChange
+             |(operations that leave it unset are not validated).
+             | - off:   Skip the validation entirely.
+             | - log:   Record a Delta event on violation but do not throw.
+             | - fatal: Throw an exception on violation.
+             |""".stripMargin)
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(DataChangeValidationMode.values.map(_.name).toSet)
+      .createWithDefault(DataChangeValidationMode.LOG.name)
 
   val DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED =
     buildConf("commitInfo.dataChange.read.enabled")
