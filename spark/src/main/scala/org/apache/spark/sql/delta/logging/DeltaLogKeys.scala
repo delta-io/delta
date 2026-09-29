@@ -106,6 +106,7 @@ trait DeltaLogKeysBase {
   case object NUM_RECORDS extends DeltaLogKey
   case object NUM_RECORDS2 extends DeltaLogKey
   case object NUM_SKIPPED extends DeltaLogKey
+  case object NUM_THREADS extends DeltaLogKey
   case object OFFSET extends DeltaLogKey
   case object OPERATION extends DeltaLogKey
   case object OP_NAME extends DeltaLogKey

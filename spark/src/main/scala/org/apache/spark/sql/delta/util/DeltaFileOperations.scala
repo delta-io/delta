@@ -390,6 +390,10 @@ object DeltaFileOperations extends DeltaLogging {
     }
   }
 
+  /** Historical default footer-read concurrency, kept as the default so non-REORG callers are
+   * unchanged. REORG / PURGE override it via DELTA_REORG_FOOTER_SCAN_PARALLELISM. */
+  val DEFAULT_PARQUET_FOOTER_READ_PARALLELISM = 8
+
   /**
    * Reads Parquet footers in multi-threaded manner.
    * If the config "spark.sql.files.ignoreCorruptFiles" is set to true, we will ignore the corrupted
@@ -399,7 +403,19 @@ object DeltaFileOperations extends DeltaLogging {
       conf: Configuration,
       partFiles: Seq[FileStatus],
       ignoreCorruptFiles: Boolean): Seq[Footer] = {
-    ThreadUtils.parmap(partFiles, "readingParquetFooters", 8) { currentFile =>
+    readParquetFootersInParallel(
+      conf, partFiles, ignoreCorruptFiles, DEFAULT_PARQUET_FOOTER_READ_PARALLELISM)
+  }
+
+  /** Reads Parquet footers with the requested concurrency. */
+  def readParquetFootersInParallel(
+      conf: Configuration,
+      partFiles: Seq[FileStatus],
+      ignoreCorruptFiles: Boolean,
+      parallelism: Int): Seq[Footer] = {
+    logInfo(log"Reading ${MDC(DeltaLogKeys.NUM_FILES, partFiles.size.toLong)} Parquet footers " +
+      log"with parallelism ${MDC(DeltaLogKeys.NUM_THREADS, parallelism.toLong)}")
+    ThreadUtils.parmap(partFiles, "readingParquetFooters", parallelism) { currentFile =>
       try {
         // Skips row group information since we only need the schema.
         // ParquetFileReader.readFooter throws RuntimeException, instead of IOException,
