@@ -389,7 +389,7 @@ Summary information for `content_type` = DATA_MANIFEST entries. Includes file/ro
 | 513 | `existing_rows_count` | Long | Required | Number of rows in existing files |
 | 514 | `deleted_rows_count` | Long | Required | Number of rows in deleted files |
 | 521 | `replaced_rows_count` | Long | Required | Number of rows in replaced files |
-| 516 | `min_sequence_number` | Long | Required | Minimum sequence number of files in this manifest |
+| 516 | `min_sequence_number` | Long | Required | Minimum data sequence number of all live entries in the manifest. |
 | 522 | `dv` | Binary | Optional | MDV bitmap marking deleted positions in leaf manifest. Must be non-null if and only if `dv_cardinality` is non-null. |
 | 523 | `dv_cardinality` | Long | Optional | Number of entries marked as deleted in the MDV. Must be non-null if and only if `dv` is non-null. |
 
