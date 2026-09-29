@@ -134,7 +134,6 @@ To support this feature:
   `writerFeatures`.
 - The feature `catalogManaged` must exist in the table protocol's `readerFeatures` and
   `writerFeatures`.
-- The feature `changeDataFeed` must not exist in the table protocol's `writerFeatures`.
 
 Column Updates store values in [Column Files](#column-file-format) that are tracked in metadata
 using [Column File Descriptors](#column-file-descriptor-struct).
@@ -446,6 +445,10 @@ fields are wired through `amtPassthrough`:
 - `file_format` -- Delta only supports Parquet;
 - `key_metadata` -- Delta doesn't support encryption;
 - `split_offsets` -- this is only for planning.
+
+Marking referenced files as `REPLACED`/`MODIFIED` in presence of Column Updates is handled the same
+way as for DVs -- a change in column files results in the old manifest entry becoming `REPLACED`,
+and the new entry being kept as `MODIFIED`.
 
 ## Valid Feature Names in Table Features
 
