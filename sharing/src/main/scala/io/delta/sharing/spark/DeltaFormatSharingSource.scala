@@ -17,7 +17,7 @@
 package io.delta.sharing.spark
 
 import java.lang.ref.WeakReference
-import java.util.UUID
+import java.util.{Locale, UUID}
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.{
@@ -134,7 +134,7 @@ case class DeltaFormatSharingSource(
       spark = spark,
       deltaLog = localDeltaLog,
       catalogTableOpt = None,
-      options = new DeltaOptions(parameters, sqlConf),
+      options = new DeltaOptions(parametersForDeltaSource, sqlConf),
       snapshotAtSourceInit = snapshotDescriptor,
       metadataPath = metadataPath,
       metadataTrackingLog = schemaTrackingLogOpt
@@ -1085,6 +1085,38 @@ case class DeltaFormatSharingSource(
       Some(client.getTableVersion(table, options.startingTimestamp))
     } else {
       None
+    }
+  }
+
+  /**
+   * The parameters for the wrapped DeltaSource, with startingTimestamp replaced by the version
+   * [[getStartingVersion]] resolved it to. Otherwise the wrapped DeltaSource resolves it again on
+   * the local delta log, where commits with no file actions have a modificationTime of 0 and an
+   * empty version range fails with DELTA_TIMESTAMP_GREATER_THAN_COMMIT. Replaced rather than
+   * dropped, since without a starting option it would read a snapshot of the latest version.
+   */
+  private def parametersForDeltaSource: Map[String, String] = {
+    val convertStartingTimestamp = sqlConf.getConf(
+      DeltaSQLConf.DELTA_SHARING_STREAMING_CONVERT_STARTING_TIMESTAMP_TO_VERSION)
+    if (!convertStartingTimestamp || options.startingTimestamp.isEmpty) {
+      return parameters
+    }
+    getStartingVersion match {
+      case Some(version) =>
+        logInfo(s"Replacing startingTimestamp with the resolved startingVersion($version) for " +
+          "the wrapped DeltaSource," + getTableInfoForLogging)
+        // `parameters` keeps the user's casing, so drop the key case-insensitively.
+        val startingTimestampKey =
+          DeltaOptions.STARTING_TIMESTAMP_OPTION.toLowerCase(Locale.ROOT)
+        parameters.filterNot {
+          case (key, _) => key.toLowerCase(Locale.ROOT) == startingTimestampKey
+        } + (DeltaOptions.STARTING_VERSION_OPTION -> version.toString)
+      case None =>
+        // Unreachable unless code changes: getStartingVersion always resolves a defined
+        // startingTimestamp to Some. Log and fall back to the original parameters.
+        logWarning("getStartingVersion returned None despite startingTimestamp being defined," +
+          getTableInfoForLogging)
+        parameters
     }
   }
 

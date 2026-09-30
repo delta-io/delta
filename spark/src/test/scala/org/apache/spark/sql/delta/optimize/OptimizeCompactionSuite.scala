@@ -642,13 +642,20 @@ trait OptimizeCompactionSuiteBase extends QueryTest
 
   test("optimize on a catalog managed table should fail") {
     withCatalogManagedTable() { tableName =>
+      spark.sql(s"INSERT INTO $tableName VALUES (1)")
+      val snapshotBefore = getSnapshot(tableName)
+
       checkError(
         intercept[DeltaUnsupportedOperationException] {
           spark.sql(s"OPTIMIZE $tableName")
         },
         "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
-        parameters = Map("operation" -> "OPTIMIZE")
+        parameters = Map("operation" -> "DATA_REORGANIZATION")
       )
+
+      val snapshotAfter = getSnapshot(tableName)
+      assert(snapshotAfter.version === snapshotBefore.version)
+      assert(snapshotAfter.allFiles.collect().toSet === snapshotBefore.allFiles.collect().toSet)
     }
   }
 

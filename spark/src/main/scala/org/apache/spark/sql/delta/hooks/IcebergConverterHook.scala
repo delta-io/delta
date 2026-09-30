@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.hooks
 import org.apache.spark.sql.delta.{CommittedTransaction, DeltaErrors, UniversalFormat, UniversalFormatConverter}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED
-import org.apache.commons.lang3.exception.ExceptionUtils
 
 import org.apache.spark.sql.SparkSession
 
@@ -48,7 +47,7 @@ trait IcebergConverterHook extends PostCommitHook with DeltaLogging {
   override def handleError(spark: SparkSession, error: Throwable, version: Long): Unit = {
     logError(error.getMessage, error)
     throw DeltaErrors.universalFormatConversionFailedException(
-      version, "iceberg", ExceptionUtils.getMessage(error))
+      version, "iceberg", error)
   }
 
   def triggerIcebergConversion(

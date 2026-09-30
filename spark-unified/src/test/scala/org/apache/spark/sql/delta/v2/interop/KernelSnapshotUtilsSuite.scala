@@ -16,23 +16,42 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
+import java.io.File
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.Files
+
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import io.delta.spark.internal.v2.kernel.KernelEngineFactory
 import io.delta.kernel.TableManager
-import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.SnapshotImpl
 
 class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
 
   // scalastyle:off deltahadoopconfiguration
-  private def engine: Engine = DefaultEngine.create(spark.sessionState.newHadoopConf())
+  private def engine: Engine =
+    KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
   // scalastyle:on deltahadoopconfiguration
 
   private def kernelSnapshotFor(path: String, engine: Engine): SnapshotImpl =
     TableManager.loadSnapshot(path).build(engine).asInstanceOf[SnapshotImpl]
+
+  private def appendTaggedAddFile(path: File, tags: Map[String, String]): String = {
+    val dataPath = "tagged.parquet"
+    val taggedAddFile = AddFile(
+      path = dataPath,
+      partitionValues = Map.empty,
+      size = 1L,
+      modificationTime = 2L,
+      dataChange = true,
+      tags = tags)
+    val commitFile = new File(path, "_delta_log/00000000000000000001.json")
+    Files.writeString(commitFile.toPath, taggedAddFile.json, UTF_8)
+    dataPath
+  }
 
   private def allFilesFor(path: String): (Array[AddFile], Array[AddFile]) = {
     val kernelEngine = engine
@@ -62,6 +81,7 @@ class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
         assert(kernelFile.modificationTime === v1File.modificationTime)
         assert(kernelFile.dataChange === v1File.dataChange)
         assert(kernelFile.stats === v1File.stats)
+        assert(kernelFile.tags === v1File.tags)
         assert(kernelFile.deletionVector === v1File.deletionVector)
         assert(kernelFile.baseRowId === v1File.baseRowId)
         assert(kernelFile.defaultRowCommitVersion === v1File.defaultRowCommitVersion)
@@ -135,6 +155,25 @@ class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
         assert(v1Files.exists(_.defaultRowCommitVersion.nonEmpty))
         assertSameAddFilesAsV1(kernelFiles, v1Files)
       }
+    }
+  }
+
+  test("buildAllFiles and filesForScan preserve AddFile tags from commit JSON") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      spark.range(1).coalesce(1).write.format("delta").save(path)
+      val expectedTags = Map(AddFile.Tags.ZCUBE_ID.name -> "cube-id")
+      val taggedPath = appendTaggedAddFile(dir, expectedTags)
+
+      val kernelEngine = engine
+      val kernelSnapshot = kernelSnapshotFor(path, kernelEngine)
+      val kernelFiles =
+        KernelSnapshotUtils.buildAllFiles(kernelSnapshot, spark, kernelEngine).collect()
+      assert(kernelFiles.find(_.path == taggedPath).map(_.tags).contains(expectedTags))
+
+      val snapshot = new DeltaV2Snapshot(kernelSnapshot)
+      val selectedFiles = snapshot.filesForScan(Nil).files
+      assert(selectedFiles.find(_.path == taggedPath).map(_.tags).contains(expectedTags))
     }
   }
 }

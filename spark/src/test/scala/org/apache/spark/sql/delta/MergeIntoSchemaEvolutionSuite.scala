@@ -33,7 +33,7 @@ import org.apache.spark.util.Utils
  * Trait collecting schema evolution test runner methods and other helpers.
  */
 trait MergeIntoSchemaEvolutionMixin extends QueryTest {
-  self: SharedSparkSession with MergeIntoTestUtils =>
+  self: MergeIntoTestUtils =>
 
   protected implicit def strToJsonSeq(str: String): Seq[String] = {
     str.split("\n").filter(_.trim.length > 0)

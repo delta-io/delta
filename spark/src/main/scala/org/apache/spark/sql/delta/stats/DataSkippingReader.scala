@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.stats
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.Closeable
+import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -33,6 +34,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
+import org.apache.spark.sql.delta.util.JsonUtils.toJsonColumn
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
@@ -523,7 +525,7 @@ trait DataSkippingReaderBase
     val ds = if (keepNumRecords) {
       withStats // use withStats instead of allFiles so the `stats` column is already parsed
         // keep only the numRecords field as a Json string in the stats field
-        .withColumn("stats", to_json(struct(col("stats.numRecords") as "numRecords")))
+        .withColumn("stats", toJsonColumn(struct(col("stats.numRecords") as "numRecords")))
     } else {
       allFiles.withColumn("stats", nullStringLiteral)
     }
@@ -562,7 +564,7 @@ trait DataSkippingReaderBase
         DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
       filteredFiles
         // keep only the numRecords field as a Json string in the stats field
-        .withColumn("stats", to_json(struct(col("stats.numRecords") as "numRecords")))
+        .withColumn("stats", toJsonColumn(struct(col("stats.numRecords") as "numRecords")))
     } else {
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, allFiles.toDF(), partitionFilters)
@@ -629,7 +631,7 @@ trait DataSkippingReaderBase
 
     val statsColumn = if (keepNumRecords) {
       // keep only the numRecords field as a Json string in the stats field
-      to_json(struct(col("stats.numRecords") as "numRecords"))
+      toJsonColumn(struct(col("stats.numRecords") as "numRecords"))
     } else nullStringLiteral
 
     val files =
@@ -654,7 +656,7 @@ trait DataSkippingReaderBase
    * of the statistics need to be consistent across all files.
    */
   override def filesForScan(filters: Seq[Expression], keepNumRecords: Boolean): DeltaScan = {
-    val startTime = System.currentTimeMillis()
+    val startTimeNs = System.nanoTime()
     if (filters == Seq(TrueLiteral) || filters.isEmpty || schema.isEmpty) {
       recordDeltaOperation(snapshotToScan, "delta.skipping.none") {
         // When there are no filters we can just return allFiles with no extra processing
@@ -673,6 +675,7 @@ trait DataSkippingReaderBase
           rows = rowCount,
           files = numOfFilesIfKnown,
           logicalRows = logicalRowCount)
+        val durationNs = System.nanoTime() - startTimeNs
         return DeltaScan(
           version = version,
           files = files,
@@ -685,7 +688,8 @@ trait DataSkippingReaderBase
           partitionLikeDataFilters = ExpressionSet(Nil),
           rewrittenPartitionLikeDataFilters = Set.empty,
           unusedFilters = ExpressionSet(Nil),
-          scanDurationMs = System.currentTimeMillis() - startTime,
+          scanDurationMs = NANOSECONDS.toMillis(durationNs),
+          scanDurationNs = Some(durationNs),
           dataSkippingType = getCorrectDataSkippingType(DeltaDataSkippingType.noSkippingV1)
         )
       }
@@ -713,6 +717,7 @@ trait DataSkippingReaderBase
       // When there are only partition filters we can scan allFiles
       // rather than withStats and thus we skip data skipping information.
       val (files, scanSize) = filterOnPartitions(partitionFilters, keepNumRecords)
+      val durationNs = System.nanoTime() - startTimeNs
       DeltaScan(
         version = version,
         files = files,
@@ -725,7 +730,8 @@ trait DataSkippingReaderBase
         partitionLikeDataFilters = ExpressionSet(Nil),
         rewrittenPartitionLikeDataFilters = Set.empty,
         unusedFilters = ExpressionSet(ineligibleFilters),
-        scanDurationMs = System.currentTimeMillis() - startTime,
+        scanDurationMs = NANOSECONDS.toMillis(durationNs),
+        scanDurationNs = Some(durationNs),
         dataSkippingType =
           getCorrectDataSkippingType(DeltaDataSkippingType.partitionFilteringOnlyV1)
       )
@@ -805,6 +811,7 @@ trait DataSkippingReaderBase
         getDataSkippedFiles(finalPartitionFilters, finalSkippingFilters, keepNumRecords)
       }
 
+      val durationNs = System.nanoTime() - startTimeNs
       DeltaScan(
         version = version,
         files = files,
@@ -817,7 +824,8 @@ trait DataSkippingReaderBase
         partitionLikeDataFilters = ExpressionSet(partitionLikeFilters.map(_._1)),
         rewrittenPartitionLikeDataFilters = partitionLikeFilters.map(_._2.expr.expr).toSet,
         unusedFilters = ExpressionSet(unusedFilters.map(_._1) ++ ineligibleFilters),
-        scanDurationMs = System.currentTimeMillis() - startTime,
+        scanDurationMs = NANOSECONDS.toMillis(durationNs),
+        scanDurationNs = Some(durationNs),
         dataSkippingType = getCorrectDataSkippingType(dataSkippingType)
       )
     }
@@ -830,7 +838,7 @@ trait DataSkippingReaderBase
    */
   override def filesForScan(limit: Long, partitionFilters: Seq[Expression]): DeltaScan =
     recordDeltaOperation(snapshotToScan, "delta.skipping.filteredLimit") {
-      val startTime = System.currentTimeMillis()
+      val startTimeNs = System.nanoTime()
       val finalPartitionFilters = constructPartitionFilters(partitionFilters)
 
       val scan = {
@@ -851,6 +859,7 @@ trait DataSkippingReaderBase
         scan.numLogicalRecords
       )
 
+      val durationNs = System.nanoTime() - startTimeNs
       DeltaScan(
         version = version,
         files = scan.files,
@@ -863,7 +872,8 @@ trait DataSkippingReaderBase
         partitionLikeDataFilters = ExpressionSet(Nil),
         rewrittenPartitionLikeDataFilters = Set.empty,
         unusedFilters = ExpressionSet(Nil),
-        scanDurationMs = System.currentTimeMillis() - startTime,
+        scanDurationMs = NANOSECONDS.toMillis(durationNs),
+        scanDurationNs = Some(durationNs),
         dataSkippingType = DeltaDataSkippingType.filteredLimit
       )
     }

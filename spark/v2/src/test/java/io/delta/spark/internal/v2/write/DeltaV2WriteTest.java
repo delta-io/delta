@@ -30,6 +30,7 @@ import org.apache.spark.sql.connector.distributions.UnspecifiedDistribution;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.SortOrder;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -113,11 +114,12 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             defaultEngine,
             spark.sessionState().newHadoopConf(),
             path,
-            mgr.loadLatestSnapshot(),
+            DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
             mgr,
             dataSchema,
             partitionSchema,
-            WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()));
+            WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()),
+            /* variantShreddingEnabled */ false);
 
     assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
     SortOrder[] ordering = write.requiredOrdering();
@@ -159,11 +161,12 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             defaultEngine,
             spark.sessionState().newHadoopConf(),
             path,
-            mgr.loadLatestSnapshot(),
+            DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
             mgr,
             dataSchema,
             partitionSchema,
-            WriteTestUtils.logicalWriteInfo(fullSchema, CaseInsensitiveStringMap.empty()));
+            WriteTestUtils.logicalWriteInfo(fullSchema, CaseInsensitiveStringMap.empty()),
+            /* variantShreddingEnabled */ false);
 
     assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
     SortOrder[] ordering = write.requiredOrdering();
@@ -185,7 +188,8 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
   private DeltaV2Write newWrite(String path, CaseInsensitiveStringMap options) {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
-    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    Snapshot snapshot =
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
     LogicalWriteInfo info = WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, options);
     return new DeltaV2Write(
         defaultEngine,
@@ -195,6 +199,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
         snapshotManager,
         TABLE_SCHEMA,
         new StructType(),
-        info);
+        info,
+        /* variantShreddingEnabled */ false);
   }
 }

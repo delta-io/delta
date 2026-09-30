@@ -64,10 +64,18 @@ class DeltaV2BatchWrite implements Write, BatchWrite {
       Snapshot initialSnapshot,
       StructType dataSchema,
       StructType partitionSchema,
-      LogicalWriteInfo writeInfo) {
+      LogicalWriteInfo writeInfo,
+      boolean variantShreddingEnabled) {
     this.context =
         DeltaV2BatchWriteContext.create(
-            engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
+            engine,
+            hadoopConf,
+            tablePath,
+            initialSnapshot,
+            dataSchema,
+            partitionSchema,
+            writeInfo,
+            variantShreddingEnabled);
   }
 
   @Override

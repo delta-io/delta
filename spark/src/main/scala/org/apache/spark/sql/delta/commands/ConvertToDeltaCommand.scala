@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util._
+import org.apache.spark.sql.delta.util.JsonUtils.toJsonColumn
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkContext
@@ -399,19 +400,24 @@ abstract class ConvertToDeltaCommandBase(
       checkConversionIsAllowed(txn, targetTable)
 
       val numFiles = targetTable.numFiles
-      val addFilesIter = createDeltaActions(spark, manifest, partitionFields, txn, fs)
+      val addFilesIter = createDeltaActions(spark, manifest, partitionFields, txn, fs).buffered
       val transactionMetrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
       )
       metrics("numConvertedFiles") += numFiles
       sendDriverMetrics(spark, metrics)
+      val convertsAnyFile = addFilesIter.hasNext
+      if (convertsAnyFile) {
+        assert(addFilesIter.head.dataChange, "CONVERT must emit AddFiles with dataChange = true")
+      }
       txn.commitLarge(
         spark,
         addFilesIter,
         Some(txn.protocol),
         getOperation(numFiles, convertProperties, targetTable.format),
         getContext,
-        transactionMetrics)
+        transactionMetrics,
+        dataChange = Some(convertsAnyFile))
     } finally {
       manifest.close()
     }
@@ -492,7 +498,7 @@ object ConvertToDeltaCommand extends DeltaLogging {
       addFiles: Seq[AddFile]): Iterator[AddFile] = {
     import org.apache.spark.sql.functions._
     val filesWithStats = deltaLog.createDataFrame(snapshot, addFiles)
-      .groupBy(input_file_name()).agg(to_json(snapshot.statsCollector))
+      .groupBy(input_file_name()).agg(toJsonColumn(snapshot.statsCollector))
 
     val pathToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, addFiles)
     filesWithStats.collect().iterator.map { row =>

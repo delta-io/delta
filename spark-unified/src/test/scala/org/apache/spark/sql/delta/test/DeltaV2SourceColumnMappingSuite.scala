@@ -16,10 +16,12 @@
 
 package org.apache.spark.sql.delta.test
 
-import org.apache.spark.sql.delta.ColumnMappingStreamingBlockedWorkflowSuiteBase
-import org.apache.spark.sql.delta.DeltaSourceIdColumnMappingSuite
-import org.apache.spark.sql.delta.DeltaSourceNameColumnMappingSuite
-import org.apache.spark.sql.delta.DeltaSourceSuite
+import org.apache.spark.sql.delta.{
+  ColumnMappingStreamingBlockedWorkflowSuiteBase,
+  DeltaSourceIdColumnMappingSuite,
+  DeltaSourceNameColumnMappingSuite,
+  DeltaSourceSuite
+}
 
 /**
  * Test suite that runs DeltaSourceColumnMappingSuite using the V2 connector

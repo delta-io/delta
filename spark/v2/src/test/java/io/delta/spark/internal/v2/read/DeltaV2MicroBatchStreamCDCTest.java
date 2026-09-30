@@ -46,6 +46,7 @@ import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -111,7 +112,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
-    long initVersion = snapshotManager.loadLatestSnapshot().getVersion();
+    long initVersion = snapshotManager.loadLatestSnapshot().version();
     assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(initVersion));
   }
 
@@ -152,7 +153,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
-    long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+    long latestVersion = snapshotManager.loadLatestSnapshot().version();
 
     // startingVersion=latest resolves to latest+1, which is not materialized. The KernelException
     // is swallowed and the validator returns without throwing.
@@ -1035,10 +1036,9 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         ScalaUtils.toScalaMap(javaOptions);
     DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, spark.sessionState().conf());
 
-    io.delta.kernel.internal.SnapshotImpl latestSnapshot =
-        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
     io.delta.kernel.internal.SnapshotImpl seededSnapshot =
-        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadSnapshotAt(seededVersion);
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(seededVersion));
 
     org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog trackingLog =
         MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
@@ -1182,10 +1182,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
   private DeltaV2MicroBatchStream createTestStreamWithDefaults(
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
-    io.delta.kernel.Snapshot snapshot = snapshotManager.loadLatestSnapshot();
-    StructType tableSchema =
-        io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-            snapshot.getSchema());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    StructType tableSchema = snapshot.schema();
     return new DeltaV2MicroBatchStream(
         snapshotManager,
         snapshot,
