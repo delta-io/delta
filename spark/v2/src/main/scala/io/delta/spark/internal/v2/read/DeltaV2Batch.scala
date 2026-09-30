@@ -16,8 +16,10 @@
 
 package io.delta.spark.internal.v2.read
 
-import java.util.{List => JList, Objects}
+import java.time.ZoneId
+import java.util.Objects
 
+import org.apache.spark.sql.delta.stats.DeltaScan
 import io.delta.spark.internal.v2.DeltaV2Logging
 import io.delta.spark.internal.v2.utils.PartitionUtils
 import org.apache.hadoop.conf.Configuration
@@ -26,7 +28,6 @@ import io.delta.kernel.expressions.{Predicate => KernelPredicate}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.read.{Batch, InputPartition, PartitionReaderFactory}
-import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
@@ -46,7 +47,9 @@ private[read] final class DeltaV2Batch(
     private val partitionSchema: StructType,
     private val readDataSchema: StructType,
     private[this] val ddlOrderedReadOutputSchema: StructType,
-    private val partitionedFiles: JList[PartitionedFile],
+    private val deltaScan: DeltaScan,
+    private[this] val tablePath: String,
+    private[this] val zoneId: ZoneId,
     kernelPushedFilters: Array[KernelPredicate],
     // Data-column filters only: the sole filters passed to the Parquet reader factory. Partition
     // columns are not stored in Parquet; their values come from PartitionedFile.partitionValues.
@@ -54,7 +57,6 @@ private[read] final class DeltaV2Batch(
     // Full filter set (partition + data). Used only to build the equals/hashCode identity set so
     // batches selecting different file sets stay distinct; never passed to the reader factory.
     allFilters: Array[Filter],
-    private[this] val totalBytes: Long,
     private[this] val readerOptions: Map[String, String],
     private[this] val hadoopConf: Configuration)
     extends Batch
@@ -67,7 +69,9 @@ private[read] final class DeltaV2Batch(
   Objects.requireNonNull(partitionSchema, "partitionSchema is null")
   Objects.requireNonNull(readDataSchema, "readDataSchema is null")
   Objects.requireNonNull(ddlOrderedReadOutputSchema, "ddlOrderedReadOutputSchema is null")
-  Objects.requireNonNull(partitionedFiles, "partitionedFiles is null")
+  Objects.requireNonNull(deltaScan, "deltaScan is null")
+  Objects.requireNonNull(tablePath, "tablePath is null")
+  Objects.requireNonNull(zoneId, "zoneId is null")
   Objects.requireNonNull(kernelPushedFilters, "kernelPushedFilters is null")
   Objects.requireNonNull(dataFilters, "dataFilters is null")
   Objects.requireNonNull(allFilters, "allFilters is null")
@@ -83,8 +87,10 @@ private[read] final class DeltaV2Batch(
     recordFrameProfile("batchScan.planInputPartitions") {
       PartitionUtils.planInputPartitions(
         SparkSession.active,
-        partitionedFiles,
-        totalBytes,
+        deltaScan,
+        partitionSchema,
+        tablePath,
+        zoneId,
         hadoopConf,
         sqlConf)
     }
@@ -116,7 +122,7 @@ private[read] final class DeltaV2Batch(
         partitionSchema == that.partitionSchema &&
         kernelPushedFilterSet == that.kernelPushedFilterSet &&
         filterSet == that.filterSet &&
-        partitionedFiles.size() == that.partitionedFiles.size()
+        deltaScan.files.size == that.deltaScan.files.size
       )
     case _ => false
   }
@@ -129,5 +135,5 @@ private[read] final class DeltaV2Batch(
       partitionSchema,
       kernelPushedFilterSet,
       filterSet,
-      partitionedFiles.size()).hashCode()
+      deltaScan.files.size).hashCode()
 }
