@@ -21,10 +21,6 @@ import com.fasterxml.jackson.core.StreamReadConstraints
 import com.fasterxml.jackson.databind.{DeserializationFeature, ObjectMapper}
 import com.fasterxml.jackson.module.scala.{DefaultScalaModule, ScalaObjectMapper}
 
-import org.apache.spark.sql.Column
-import org.apache.spark.sql.catalyst.expressions.StructsToJson
-import org.apache.spark.sql.classic.ExpressionUtils.{column, expression}
-
 /** Useful json functions used around the Delta codebase. */
 object JsonUtils {
   /** Used to convert between classes and JSON. */
@@ -56,11 +52,4 @@ object JsonUtils {
   def fromJson[T: Manifest](json: String): T = {
     mapper.readValue[T](json)
   }
-
-  /**
-   * Builds a JSON column using the builtin expression, bypassing function-name resolution.
-   * Use this for internal serialization that must not resolve to a session UDF.
-   */
-  def toJsonColumn(value: Column, options: Map[String, String] = Map.empty): Column =
-    column(StructsToJson(options, expression(value)))
 }

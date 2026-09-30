@@ -34,7 +34,6 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
-import org.apache.spark.sql.delta.util.JsonUtils.toJsonColumn
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
@@ -525,7 +524,7 @@ trait DataSkippingReaderBase
     val ds = if (keepNumRecords) {
       withStats // use withStats instead of allFiles so the `stats` column is already parsed
         // keep only the numRecords field as a Json string in the stats field
-        .withColumn("stats", toJsonColumn(struct(col("stats.numRecords") as "numRecords")))
+        .withColumn("stats", to_json(struct(col("stats.numRecords") as "numRecords")))
     } else {
       allFiles.withColumn("stats", nullStringLiteral)
     }
@@ -564,7 +563,7 @@ trait DataSkippingReaderBase
         DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
       filteredFiles
         // keep only the numRecords field as a Json string in the stats field
-        .withColumn("stats", toJsonColumn(struct(col("stats.numRecords") as "numRecords")))
+        .withColumn("stats", to_json(struct(col("stats.numRecords") as "numRecords")))
     } else {
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, allFiles.toDF(), partitionFilters)
@@ -631,7 +630,7 @@ trait DataSkippingReaderBase
 
     val statsColumn = if (keepNumRecords) {
       // keep only the numRecords field as a Json string in the stats field
-      toJsonColumn(struct(col("stats.numRecords") as "numRecords"))
+      to_json(struct(col("stats.numRecords") as "numRecords"))
     } else nullStringLiteral
 
     val files =
