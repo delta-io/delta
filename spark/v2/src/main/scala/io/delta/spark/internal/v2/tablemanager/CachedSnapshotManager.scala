@@ -24,7 +24,10 @@ import scala.jdk.OptionConverters._
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.spark.internal.v2.DeltaV2Logging
-import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2SnapshotManager}
+import org.apache.spark.sql.delta.v2.interop.{
+  DeltaV2QueryContext,
+  DeltaV2SnapshotManager
+}
 import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 import org.apache.hadoop.fs.Path
@@ -254,15 +257,10 @@ private[tablemanager] class CachedSnapshotManager(
   private def withUncachedSnapshotManager[T](
       catalogTableOpt: Option[CatalogTable])(
       f: DeltaV2SnapshotManager => T): T = {
-    f(createUncachedSnapshotManager(catalogTableOpt))
-  }
-
-  private[tablemanager] def createUncachedSnapshotManager(
-      catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager = {
-    SnapshotManagerFactory.create(
+    f(SnapshotManagerFactory.create(
       tablePath.toString,
       kernelContext.getDefaultEngine(),
-      catalogTableOpt.toJava)
+      catalogTableOpt.toJava))
   }
 
   private def latestSnapshotFreshnessThreshold(): Long = {
