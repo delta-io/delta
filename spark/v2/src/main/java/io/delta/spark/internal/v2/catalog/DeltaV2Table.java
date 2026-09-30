@@ -254,7 +254,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         DeltaV2TableManagerCache$.MODULE$.forTable(
             activeSession, tablePath, options, catalogTableOpt);
     this.kernelEngine = tableManager.kernelContext().getDefaultEngine();
-    this.snapshotManager = tableManager.queryContextSnapshotManager();
+    this.snapshotManager = tableManager.snapshotManager(catalogTableOpt);
     try {
       if (timeTravelVersion.isPresent()) {
         this.initialSnapshot =
