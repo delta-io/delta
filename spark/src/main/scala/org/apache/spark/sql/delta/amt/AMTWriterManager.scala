@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.actions.{Action, Checkpoint, FileAction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.DeltaTestBarrier
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.internal.MDC
@@ -737,9 +738,9 @@ class AMTWriterManager(
         actions
     }
     lastRebasedAMTVersion = foldedAMTVersion
+    DeltaTestBarrier.waitIfEnabled(AMTWriterManager.REBASE_BACK_REFERENCES_TEST_BARRIER)
     currentTransactionInfo.copy(actions = restampedActions)
   }
-
   // **************** AMT Metric related helpers ****************
 
   private def initializeAMTMetricsDuringRebase(
@@ -824,6 +825,22 @@ class AMTWriterManager(
 
 }
 object AMTWriterManager extends DeltaLogging {
+  /**
+   * Test barrier label. When a suite arms this barrier, [[AMTWriterManager.rebaseBackReferences]]
+   * pauses right after a rebase that installed a new tree, letting the suite commit another
+   * concurrent winner and drive a second conflict round.
+   */
+  private[delta] val REBASE_BACK_REFERENCES_TEST_BARRIER =
+    "AMTWriterManager.rebaseBackReferences"
+
+  /**
+   * Test barrier label. When a suite arms this barrier, [[emitAMTCheckpoint]] pauses on each
+   * full-AMT regenerate retry (after refreshing its snapshot), letting the suite land another
+   * conflicting winner and drive the retry loop to its configured bound.
+   */
+  private[delta] val FULL_AMT_REGENERATE_RETRY_TEST_BARRIER =
+    "AMTWriterManager.fullAMTRegenerateRetry"
+
 
   /**
    * Emits the AMT for `snapshot` by committing a follow-up OPTIMIZE CHECKPOINT that
@@ -880,6 +897,8 @@ object AMTWriterManager extends DeltaLogging {
             log"version ${MDC(DeltaLogKeys.VERSION, e.conflictingCommitVersion)}; regenerating " +
             log"against the refreshed snapshot.")
           readSnapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
+          // Lets a test land another conflicting winner between retries to exercise the bound.
+          DeltaTestBarrier.waitIfEnabled(FULL_AMT_REGENERATE_RETRY_TEST_BARRIER)
       }
     }
   }
