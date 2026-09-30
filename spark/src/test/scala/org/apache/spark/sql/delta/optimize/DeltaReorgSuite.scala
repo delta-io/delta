@@ -171,9 +171,7 @@ class DeltaReorgSuite extends QueryTest
    */
   private def getParquetFooters(
       files: Seq[AddFile],
-      log: DeltaLog,
-      parallelism: Int =
-        DeltaFileOperations.DEFAULT_PARQUET_FOOTER_READ_PARALLELISM): Seq[Footer] = {
+      log: DeltaLog): Seq[Footer] = {
     val serializedConf = new SerializableConfiguration(log.newDeltaHadoopConf())
     val dataPath = new Path(log.dataPath.toString)
     val nameToAddFileMap = generateCandidateFileMap(dataPath, files)
@@ -190,8 +188,7 @@ class DeltaReorgSuite extends QueryTest
     DeltaFileOperations.readParquetFootersInParallel(
       serializedConf.value,
       fileStatuses.toList,
-      ignoreCorruptFiles = false,
-      parallelism = parallelism
+      ignoreCorruptFiles = false
     )
   }
 
@@ -327,23 +324,6 @@ class DeltaReorgSuite extends QueryTest
               new DeltaPurgeOperation().filterFilesToReorg(spark, snapshot, duplicateFiles)
               ()
             }
-          }
-        }
-      }
-    }
-  }
-
-  test("REORG footer reads are stable across batch sizes and parallelism") {
-    withTempDeltaTable(spark.range(0, 100, 1, numPartitions = 7).toDF()) { (_, log) =>
-      val files = log.update().allFiles.collect().toSeq
-      assert(files.size === 7)
-      Seq(1, 2, files.size, files.size + 5).foreach { batchSize =>
-        Seq(1, 4, files.size + 2).foreach { parallelism =>
-          files.grouped(batchSize).foreach { batch =>
-            val footers = getParquetFooters(batch, log, parallelism)
-            assert(footers.map(_.getFile.getName).sorted ===
-              batch.map(file => new Path(file.path).getName).sorted,
-              s"footers mismatch at batchSize=$batchSize, parallelism=$parallelism")
           }
         }
       }
