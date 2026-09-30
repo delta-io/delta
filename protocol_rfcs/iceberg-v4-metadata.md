@@ -123,6 +123,8 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#commit-provenance-information)***
 
+<ins>When the `adaptiveMetadata` table feature is enabled, writers must include a `commitInfo` action in every commit.</ins>
+
 <ins>The `commitInfo` action supports a `dataChange` field that summarizes, at the commit level, whether the commit changed the data of the table:</ins>
 
 | Field Name | Data Type | Description |
@@ -131,7 +133,7 @@ This design enables:
 
 <ins>When the `adaptiveMetadata` table feature is enabled, writers must include the `dataChange` field in the `commitInfo` action of every commit, and readers must treat it as the source of truth for whether the commit changed data.</ins>
 
-<ins>When the `adaptiveMetadata` table feature is enabled, writers must include a `commitInfo` action in every commit. The action carries a `lastManifestCommit` field pointing at the most recent [manifest commit](#manifest-commit) as of that version:</ins>
+<ins>The `commitInfo` action also carries a `lastManifestCommit` field pointing at the most recent [manifest commit](#manifest-commit) as of that version:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
