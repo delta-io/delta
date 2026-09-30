@@ -146,7 +146,7 @@ This design enables:
 | <ins>version</ins> | <ins>Long</ins> | <ins>The version of the manifest commit that emitted the latest [`checkpoint` action](#checkpoint-action).</ins> |
 | <ins>contentRootVersion</ins> | <ins>Long</ins> | <ins>The `contentRoot.version` of that `checkpoint` action. Not newer than `version`.</ins> |
 
-<ins>Each log commit must carry `lastManifestCommit` forward from the prior commit, including its absence before the first manifest commit. A manifest commit must set `version` to its own commit version and `contentRootVersion` to the `contentRoot.version` of its emitted `checkpoint` action.</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, each log commit must carry `lastManifestCommit` forward from the prior commit, including its absence before the first manifest commit. A manifest commit must set `version` to its own commit version and `contentRootVersion` to the `contentRoot.version` of its emitted `checkpoint` action.</ins>
 
 ### Version Checksum File
 
