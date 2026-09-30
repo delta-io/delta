@@ -39,9 +39,10 @@ import io.delta.kernel.exceptions.KernelException
 
 import io.delta.sql.{DeltaSparkSessionExtensionV1 => DeltaSparkSessionExtension}
 
-import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.catalog.{DeltaCatalogV1 => DeltaCatalog}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FSDataInputStream, Path, RawLocalFileSystem}
@@ -517,6 +518,47 @@ class CachedSnapshotManagerSuite
           assert(mgr.loadLatestSnapshot() eq replacement)
         } finally {
           mgr.retire()
+        }
+      }
+    }
+  }
+
+  Seq(false, true).foreach { enableICT =>
+    test(s"missing current commit installs previous version, matching DeltaLog: ICT=$enableICT") {
+      withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0") {
+        withTempDir { dir =>
+          spark.range(10).write.format("delta")
+            .option(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, enableICT.toString)
+            .save(dir.getCanonicalPath)
+          val deltaLog = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath))
+          val original = deltaLog.update()
+          val originalFiles = original.allFiles.collect().map(_.path).toSet
+          appendToDeltaTable(dir)
+          val manager = createManager(dir)
+          try {
+            val cached = manager.loadLatestSnapshot()
+            assert(cached.version == 1L)
+            assert(cached.allFiles.collect().map(_.path).toSet.size > originalFiles.size)
+            val hadoopConf = deltaLog.newDeltaHadoopConf()
+            val fs = deltaLog.logPath.getFileSystem(hadoopConf)
+            assert(fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, version = 1L), false))
+            fs.delete(new Path(deltaLog.logPath, f"${1L}%020d.crc"), false)
+            val expected = deltaLog.update()
+            assert(expected.version == 0L)
+            assert(expected.allFiles.collect().map(_.path).toSet == originalFiles)
+
+            val refreshed = manager.loadLatestSnapshot()
+            assert(refreshed.version == expected.version)
+            assert(refreshed.metadata.id == expected.metadata.id)
+            assert(refreshed.allFiles.collect().map(_.path).toSet == originalFiles)
+            assert(refreshed ne cached)
+            assert(manager.loadSnapshotAt(0L) eq refreshed)
+
+            awaitClockAfter(System.currentTimeMillis())
+            assert(manager.loadLatestSnapshot() eq refreshed)
+          } finally {
+            manager.retire()
+          }
         }
       }
     }
