@@ -19,10 +19,11 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.stats.{DeltaStatistics, SkippingEligibleDataType, StatisticsCollection, StatsCollectionUtils}
+import org.apache.spark.sql.delta.util.JsonUtils.toJsonColumn
 
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
-import org.apache.spark.sql.functions.{coalesce, col, from_json, lit, struct, to_json, when}
+import org.apache.spark.sql.functions.{coalesce, col, from_json, lit, struct, when}
 import org.apache.spark.sql.types.{BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MetadataBuilder, ShortType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
 
 /**
@@ -163,7 +164,7 @@ private[amt] object AMTContentStats {
         field.dataType match {
           case nested: StructType => collect(nested, path, namePath)
           case dt =>
-            val boundType = if (isBoundTypeSupported(dt)) Some(dt) else None
+            val boundType = if (isSupportedBoundType(dt)) Some(dt) else None
             Some(StatsLeaf(
               fieldId = DeltaColumnMapping.getColumnId(field).toLong,
               name = namePath.mkString("_"),
@@ -183,7 +184,7 @@ private[amt] object AMTContentStats {
    * package can depend on. Types outside this set are left out of `content_stats`, matching that
    * converter's behavior of ignoring unsupported stats.
    */
-  private def isBoundTypeSupported(dataType: DataType): Boolean =
+  private def isSupportedBoundType(dataType: DataType): Boolean =
     SkippingEligibleDataType(dataType) && (dataType match {
       case _: StringType | _: IntegerType | _: FloatType | _: DoubleType | _: DecimalType |
           _: BooleanType | _: DateType | _: TimestampType | _: TimestampNTZType | _: LongType |
@@ -339,7 +340,7 @@ private[amt] object AMTContentStats {
         } ++ leaves.headOption.toSeq.map { _ =>
           nestByPath(leaves, statOf(typedStats, _, NULL_VALUE_COUNT)).as(DeltaStatistics.NULL_COUNT)
         } :+ recoveredTightBounds.as(DeltaStatistics.TIGHT_BOUNDS)
-      val statsJson = to_json(struct(numRecords +: statsFields: _*))
+      val statsJson = toJsonColumn(struct(numRecords +: statsFields: _*))
       when(typedStats.isNull, lit(null).cast(StringType)).otherwise(statsJson)
     }
     if (df.columns.contains(CONTENT_STATS_FIELD)) {

@@ -20,17 +20,22 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.delta.spark.internal.v2.V2TestBase;
 import java.io.File;
 import java.util.List;
+import java.util.Map;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.format.converter.ParquetMetadataConverter;
 import org.apache.parquet.hadoop.ParquetFileReader;
+import org.apache.spark.sql.delta.DeltaConfigs;
+import org.apache.spark.sql.delta.shims.VariantShreddingShims;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import scala.Option;
 
 /** E2E DSv2 batch-write tests for column-mapped tables. */
 public class V2WriteTest extends V2TestBase {
@@ -326,5 +331,201 @@ public class V2WriteTest extends V2TestBase {
         expectedDataColumns,
         parquetFieldNames.size(),
         "Expected only the data columns in the Parquet body, got: " + parquetFieldNames);
+  }
+
+  @ParameterizedTest(name = "enableVariantShredding={0}")
+  @ValueSource(booleans = {false, true})
+  public void variantWriteFollowsTableShreddingProperty(
+      boolean shreddingEnabled, @TempDir File deltaTablePath) throws Exception {
+    // The opt-in arm asserts that shredding happens, which needs a Spark version that can infer a
+    // shredding schema. The opt-out arm asserts it does not, which holds on every version.
+    assumeTrue(!shreddingEnabled || shreddedWritesSupported(), SHREDDING_UNSUPPORTED);
+    String v2Path = new File(deltaTablePath, "v2").getAbsolutePath();
+    String v1Path = new File(deltaTablePath, "v1").getAbsolutePath();
+    withShreddedWritesAllowed(
+        () -> {
+          for (String path : List.of(v1Path, v2Path)) {
+            spark.sql(
+                str(
+                    "CREATE TABLE delta.`%s` (id INT, v VARIANT) USING delta "
+                        + "TBLPROPERTIES ('%s' = '%s')",
+                    path, DeltaConfigs.ENABLE_VARIANT_SHREDDING().key(), shreddingEnabled));
+          }
+          spark.sql(str("INSERT INTO delta.`%s` %s", v1Path, VARIANT_ROW));
+          spark.sql(str("INSERT INTO dsv2.delta.`%s` %s", v2Path, VARIANT_ROW));
+
+          assertEquals(
+              shreddingEnabled,
+              snapshotHasShreddedVariant(str("delta.`%s`", v1Path)),
+              "V1 shredding state must follow the table property");
+          assertEquals(
+              shreddingEnabled,
+              snapshotHasShreddedVariant(str("delta.`%s`", v2Path)),
+              "V2 shredding state must follow the table property, like V1");
+
+          List<List<Object>> expected = List.of(row(1, 1, "xy"));
+          check(str("%s FROM dsv2.delta.`%s`", VARIANT_PROJECTION, v2Path), expected);
+          check(str("%s FROM delta.`%s`", VARIANT_PROJECTION, v2Path), expected);
+        });
+  }
+
+  /**
+   * The distinguishing state: the {@code variantShredding} feature is in the protocol while the
+   * table property does not enable shredding. Shredding must follow the property, not the protocol
+   * feature, so neither connector may shred here. On DBR this state also arises after {@code REORG
+   * ... APPLY (UNSHRED VARIANT)}, but that syntax is not in the OSS SQL parser, so the state is
+   * built directly at creation via {@code delta.feature.variantShredding = supported} with the
+   * property explicitly disabled.
+   */
+  @Test
+  public void variantWriteFollowsPropertyWhenFeaturePresentButDisabled(
+      @TempDir File deltaTablePath) {
+    // Adding the feature and asserting the no-shred outcome both need shredding support.
+    assumeTrue(shreddedWritesSupported(), SHREDDING_UNSUPPORTED);
+    String enableKey = DeltaConfigs.ENABLE_VARIANT_SHREDDING().key();
+    String tablePath = new File(deltaTablePath, "featureNoProp").getAbsolutePath();
+    String tbl = "variant_feature_disabled_tbl";
+    withShreddedWritesAllowed(
+        () -> {
+          try {
+            spark.sql(str("DROP TABLE IF EXISTS %s", tbl));
+            spark.sql(
+                str(
+                    "CREATE TABLE %s (id INT, v VARIANT) USING delta LOCATION '%s' "
+                        + "TBLPROPERTIES ('delta.feature.variantShredding' = 'supported', "
+                        + "'%s' = 'false')",
+                    tbl, tablePath, enableKey));
+            assertTrue(
+                tableFeatures(tbl).contains("variantShredding"),
+                "Premise: the protocol carries the shredding feature");
+            assertFalse(
+                "true".equalsIgnoreCase(tableProperties(tbl).getOrDefault(enableKey, "false")),
+                "Premise: the property does not enable shredding, so the two cannot be conflated");
+
+            // Neither connector may shred while the property does not enable it.
+            spark.sql(str("INSERT INTO dsv2.delta.`%s` %s", tablePath, VARIANT_ROW));
+            assertFalse(
+                snapshotHasShreddedVariant(tbl),
+                "A DSv2 write must not shred a table whose property does not enable shredding");
+            spark.sql(str("INSERT INTO %s %s", tbl, VARIANT_ROW));
+            assertFalse(snapshotHasShreddedVariant(tbl), "A V1 write must not shred it either");
+          } finally {
+            spark.sql(str("DROP TABLE IF EXISTS %s", tbl));
+          }
+        });
+  }
+
+  /**
+   * The table-derived option must win over a caller-supplied spelling of the same option that
+   * differs only in case: Parquet reads write options through a case-insensitive map, so leaving
+   * both spellings in place would make the effective value depend on map iteration order.
+   *
+   * <p>This covers the end-to-end outcome only: which of two colliding spellings survives the
+   * collapse is decided by map iteration order, which a test cannot steer from out here, so this
+   * passes with or without the normalization. {@code
+   * DeltaV2WriteContextTest#mergeVariantShreddingOptionsOverridesCallerSpellings} asserts on the
+   * merge itself and does fail without it. What this one still catches is writer options being
+   * allowed to override the table-derived value outright.
+   */
+  @Test
+  public void variantWriteIgnoresMixedCaseInferShreddingOption(@TempDir File deltaTablePath) {
+    String tablePath = new File(deltaTablePath, "mixedcase").getAbsolutePath();
+    withShreddedWritesAllowed(
+        () -> {
+          spark.sql(
+              str(
+                  "CREATE TABLE delta.`%s` (id INT, v VARIANT) USING delta "
+                      + "TBLPROPERTIES ('%s' = 'false')",
+                  tablePath, DeltaConfigs.ENABLE_VARIANT_SHREDDING().key()));
+          spark
+              .sql(VARIANT_ROW)
+              .writeTo(str("dsv2.delta.`%s`", tablePath))
+              .option("SPARK.SQL.Variant.InferShreddingSchema", "true")
+              .append();
+          assertFalse(
+              snapshotHasShreddedVariant(str("delta.`%s`", tablePath)),
+              "A mixed-case write option must not override the table property");
+        });
+  }
+
+  private static final String SHREDDING_UNSUPPORTED =
+      "This Spark version cannot infer a variant shredding schema, so nothing shreds on write";
+
+  /**
+   * Whether writes can shred variant columns on this Spark version. Asked of the production shim
+   * rather than of a version string: the shim yields no inference option where the underlying conf
+   * does not exist, and without that option the writer is never asked to shred.
+   */
+  private static boolean shreddedWritesSupported() {
+    return !VariantShreddingShims.getVariantInferShreddingSchemaOptions(true).isEmpty();
+  }
+
+  private static final String VARIANT_ROW =
+      "SELECT 1 AS id, parse_json('{\"a\":1,\"b\":\"xy\"}') AS v";
+
+  private static final String VARIANT_PROJECTION =
+      "SELECT id, variant_get(v, '$.a', 'int'), variant_get(v, '$.b', 'string')";
+
+  /** Runs {@code body} with shredded Parquet writes allowed, restoring the previous setting. */
+  private void withShreddedWritesAllowed(ThrowingRunnable body) {
+    String key = "spark.sql.variant.writeShredding.enabled";
+    Option<String> previous = spark.conf().getOption(key);
+    spark.conf().set(key, "true");
+    try {
+      body.run();
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    } finally {
+      if (previous.isDefined()) {
+        spark.conf().set(key, previous.get());
+      } else {
+        spark.conf().unset(key);
+      }
+    }
+  }
+
+  private interface ThrowingRunnable {
+    void run() throws Exception;
+  }
+
+  /** Whether any data file in {@code table}'s current snapshot stores the variant shredded. */
+  private boolean snapshotHasShreddedVariant(String table) throws Exception {
+    List<org.apache.spark.sql.Row> files =
+        spark.sql(str("SELECT DISTINCT input_file_name() AS f FROM %s", table)).collectAsList();
+    assertFalse(files.isEmpty(), "Expected at least one data file in " + table);
+    for (org.apache.spark.sql.Row file : files) {
+      org.apache.parquet.schema.Type variant =
+          ParquetFileReader.readFooter(
+                  spark.sessionState().newHadoopConf(),
+                  new Path(file.getString(0)),
+                  ParquetMetadataConverter.NO_FILTER)
+              .getFileMetaData()
+              .getSchema()
+              .getType("v");
+      assertTrue(
+          variant instanceof org.apache.parquet.schema.GroupType,
+          "Expected the variant column to be a Parquet group, got: " + variant);
+      if (((org.apache.parquet.schema.GroupType) variant).containsField("typed_value")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private String tableFeatures(String tbl) {
+    return spark
+        .sql(str("DESCRIBE DETAIL %s", tbl))
+        .selectExpr("tableFeatures")
+        .collectAsList()
+        .toString();
+  }
+
+  private Map<String, String> tableProperties(String tbl) {
+    Map<String, String> properties = new java.util.HashMap<>();
+    spark
+        .sql(str("SHOW TBLPROPERTIES %s", tbl))
+        .collectAsList()
+        .forEach(r -> properties.put(r.getString(0), r.getString(1)));
+    return properties;
   }
 }

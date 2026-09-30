@@ -76,7 +76,9 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
   }
 
   test("forWrite persists content_stats as the typed struct the delta log's stats fill") {
-    withAllTypesTable("amt_content_stats_write", numFiles = 1) { deltaLog =>
+    withAllTypesTable("amt_content_stats_write") { deltaLog =>
+      appendRowsAsSeparateFiles(
+        "amt_content_stats_write", numFiles = 1, columnExprs = allTypesTableColumnExprs)
       val snapshot = deltaLog.update()
       val metadata = snapshot.metadata
       val protocol = snapshot.protocol
@@ -118,7 +120,10 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
   }
 
   test("forRead reconstructs the stats JSON the delta log holds, for every type") {
-    withAllTypesTable("amt_content_stats_roundtrip", numFiles = leafPackedFiles) { deltaLog =>
+    withAllTypesTable("amt_content_stats_roundtrip") { deltaLog =>
+      appendRowsAsSeparateFiles(
+        "amt_content_stats_roundtrip", numFiles = leafPackedFiles,
+        columnExprs = allTypesTableColumnExprs)
       commitCheckpoint(deltaLog, incremental = false)
       val snapshot = deltaLog.update()
       val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
@@ -259,7 +264,7 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
 
   test("variant columns persist a null count but no bounds") {
     // Delta collects min/max for VARIANT, but AMTContentStats has no Iceberg V4 bound
-    // representation for it yet, so `isBoundTypeSupported` rejects it. It is still counted for
+    // representation for it yet, so `isSupportedBoundType` rejects it. It is still counted for
     // nulls, so it surfaces with a `null_value_count` only -- like a plain array column.
     val metadata = metadataWithColumnIds(
       new StructType()
@@ -343,6 +348,32 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
     assert(
       minValues.has(physical("a")) && minValues.has(physical("b")) && !minValues.has(physical("c")),
       s"reading back with 2 indexed columns keeps only a and b, dropping c; got $minValues")
+  }
+
+  test("the dataSkippingStatsColumns allowlist selects which columns get content_stats") {
+    // The `delta.dataSkippingStatsColumns` table property is an explicit allowlist that overrides
+    // the first-N-columns default (`dataSkippingNumIndexedCols`). Allowlisting `b,c` (skipping the
+    // leading `a`) proves the selection follows the property, not a column prefix.
+    val metadata = metadataWithColumnIds(
+      schema = new StructType().add("a", LongType).add("b", LongType).add("c", LongType),
+      configuration = Map(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key -> "b,c"))
+    val protocol = amtProtocol
+    val persisted =
+      writeStats(getSampleStatsJson(metadata, tightBounds = true), metadata, protocol)
+
+    assert(contentStatsLogicalNames(persisted) == Seq("b", "c"),
+      s"only the allowlisted columns get content_stats; got " +
+        s"${contentStatsLogicalNames(persisted)}")
+    assertStatFields(persisted, "b", Map(
+      "lower_bound" -> (LongType, "1"),
+      "upper_bound" -> (LongType, "9"),
+      "tight_bounds" -> (BooleanType, "true"),
+      "null_value_count" -> (LongType, "0")))
+    assertStatFields(persisted, "c", Map(
+      "lower_bound" -> (LongType, "1"),
+      "upper_bound" -> (LongType, "9"),
+      "tight_bounds" -> (BooleanType, "true"),
+      "null_value_count" -> (LongType, "0")))
   }
 
   test("content stats round-trip a schema whose flattened leaf names collide") {

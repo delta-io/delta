@@ -521,6 +521,7 @@ lazy val sparkV2 = {
 
       Test / javaOptions ++= Seq("-ea"),
       libraryDependencies ++= junit5TestDependencies ++ Seq(
+        "org.mockito" % "mockito-inline" % "4.11.0" % "test",
         "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
         "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "provided",
         "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",

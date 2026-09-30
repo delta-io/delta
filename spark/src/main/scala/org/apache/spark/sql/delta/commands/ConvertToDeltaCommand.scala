@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util._
+import org.apache.spark.sql.delta.util.JsonUtils.toJsonColumn
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkContext
@@ -497,7 +498,7 @@ object ConvertToDeltaCommand extends DeltaLogging {
       addFiles: Seq[AddFile]): Iterator[AddFile] = {
     import org.apache.spark.sql.functions._
     val filesWithStats = deltaLog.createDataFrame(snapshot, addFiles)
-      .groupBy(input_file_name()).agg(to_json(snapshot.statsCollector))
+      .groupBy(input_file_name()).agg(toJsonColumn(snapshot.statsCollector))
 
     val pathToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, addFiles)
     filesWithStats.collect().iterator.map { row =>

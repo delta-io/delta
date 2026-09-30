@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{Checkpoint, ContentRoot}
+import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.implicits.amtSingleActionEncoder
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
@@ -140,10 +141,14 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
    * Tracking for a root `DATA_MANIFEST` pointer, which is written at commit time and so carries
    * the explicit values its leaf's entries inherit.
    */
-  private def pointerTracking(fileSequenceNumber: Option[Long]): Tracking =
+  private def pointerTracking(
+      sequenceNumber: Option[Long] = Some(inheritedFileSequenceNumber),
+      fileSequenceNumber: Option[Long] = Some(inheritedFileSequenceNumber),
+      firstRowId: Option[Long] = Some(1000L)): Tracking =
     unassignedTracking().copy(
+      sequence_number = sequenceNumber,
       file_sequence_number = fileSequenceNumber,
-      first_row_id = Some(1000L))
+      first_row_id = firstRowId)
 
   /** A leaf DATA entry for a data file of `recordCount` physical rows. */
   private def dataEntry(
@@ -156,8 +161,12 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
     record_count = recordCount,
     file_size_in_bytes = 128L)
 
-  /** A root pointer to `leaf`. */
-  private def leafPointer(leaf: WrittenLeaf, tracking: Tracking): DataManifestEntry =
+  /** A root pointer to `leaf`, optionally masking some of its positions with an MDV. */
+  private def leafPointer(
+      leaf: WrittenLeaf,
+      tracking: Tracking = pointerTracking(),
+      mdvPositions: Seq[Long] = Seq.empty): DataManifestEntry = {
+    val mdv = Some(mdvPositions).filter(_.nonEmpty)
     DataManifestEntry(
       location = leaf.location,
       file_format = AMTSingleAction.FileFormatParquet,
@@ -176,8 +185,10 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
         replaced_rows_count = 0L,
         modified_rows_count = 0L,
         min_sequence_number = 0L,
-        dv = None,
-        dv_cardinality = None))
+        dv = mdv.map(positions =>
+          AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions.map(_.toInt)))),
+        dv_cardinality = mdv.map(_.size.toLong)))
+  }
 
   /** The messages of `error` and of every exception it wraps. */
   private def causeMessages(error: Throwable): String =
@@ -187,20 +198,74 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       .map(e => String.valueOf(e.getMessage))
       .mkString("\n")
 
-  test("leaf entries inherit the file sequence number of their root pointer") {
+  test("leaf entries inherit the file sequence number and row ids of their root pointer") {
     withSyntheticTree("amt_inherit_all") { tree =>
       val leaf = tree.writeLeaf(Seq(
         dataEntry("data/a.parquet", recordCount = 10L),
         dataEntry("data/b.parquet", recordCount = 20L),
         dataEntry("data/c.parquet", recordCount = 30L)))
-      val files = tree.reconstruct(Seq(
-        leafPointer(leaf, pointerTracking(Some(inheritedFileSequenceNumber))).wrap))
+      val files = tree.reconstruct(Seq(leafPointer(leaf).wrap))
 
       assert(files.keySet == Set("data/a.parquet", "data/b.parquet", "data/c.parquet"))
       assert(files.values.forall(_.defaultRowCommitVersion.contains(inheritedFileSequenceNumber)),
         s"every entry must inherit the pointer's file sequence number; got ${files.values}")
-      assert(files.values.forall(_.baseRowId.isEmpty),
-        s"first_row_id is not inherited yet; got ${files.values}")
+      // Row ids run from the pointer's first_row_id in the leaf's physical order, each file
+      // starting where the previous one's records ended.
+      assert(files("data/a.parquet").baseRowId.contains(1000L))
+      assert(files("data/b.parquet").baseRowId.contains(1010L))
+      assert(files("data/c.parquet").baseRowId.contains(1030L))
+    }
+  }
+
+  test("a materialized first_row_id is kept and does not advance the ones after it") {
+    withSyntheticTree("amt_inherit_mixed") { tree =>
+      val materialized = unassignedTracking().copy(first_row_id = Some(5000L))
+      val leaf = tree.writeLeaf(Seq(
+        dataEntry("data/a.parquet", recordCount = 10L),
+        dataEntry("data/b.parquet", recordCount = 20L, tracking = materialized),
+        dataEntry("data/c.parquet", recordCount = 30L)))
+      val files = tree.reconstruct(Seq(leafPointer(leaf).wrap))
+
+      assert(files("data/a.parquet").baseRowId.contains(1000L))
+      assert(files("data/b.parquet").baseRowId.contains(5000L))
+      // Only the entries that inherit a row id contribute to the running offset, so `c` follows
+      // `a` rather than `b`.
+      assert(files("data/c.parquet").baseRowId.contains(1010L))
+    }
+  }
+
+  test("an MDV-masked entry is skipped but still advances the row ids after it") {
+    withSyntheticTree("amt_inherit_mdv") { tree =>
+      val leaf = tree.writeLeaf(Seq(
+        dataEntry("data/a.parquet", recordCount = 10L),
+        dataEntry("data/b.parquet", recordCount = 20L),
+        dataEntry("data/c.parquet", recordCount = 30L)))
+      val files = tree.reconstruct(Seq(leafPointer(leaf, mdvPositions = Seq(1L)).wrap))
+
+      assert(files.keySet == Set("data/a.parquet", "data/c.parquet"),
+        "the MDV-masked entry must not appear in the reconstructed live set")
+      assert(files("data/a.parquet").baseRowId.contains(1000L))
+      // Masking `b` must not pull `c`'s row id down to 1010.
+      assert(files("data/c.parquet").baseRowId.contains(1030L))
+    }
+  }
+
+  test("a non-live entry with a materialized row id does not consume the inherited range") {
+    withSyntheticTree("amt_inherit_dead_entry") { tree =>
+      val deletedTracking = unassignedTracking(Tracking.Status.Deleted).copy(
+        sequence_number = Some(9L),
+        file_sequence_number = Some(9L),
+        first_row_id = Some(5000L))
+      val leaf = tree.writeLeaf(Seq(
+        dataEntry("data/a.parquet", recordCount = 10L),
+        dataEntry("data/b.parquet", recordCount = 20L,
+          tracking = deletedTracking),
+        dataEntry("data/c.parquet", recordCount = 30L)))
+      val files = tree.reconstruct(Seq(leafPointer(leaf).wrap))
+
+      assert(files.keySet == Set("data/a.parquet", "data/c.parquet"))
+      assert(files("data/a.parquet").baseRowId.contains(1000L))
+      assert(files("data/c.parquet").baseRowId.contains(1010L))
     }
   }
 
@@ -213,26 +278,41 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
         dataEntry("data/c.parquet", recordCount = 5L),
         dataEntry("data/d.parquet", recordCount = 7L)))
       val files = tree.reconstruct(Seq(
-        leafPointer(first, pointerTracking(Some(inheritedFileSequenceNumber))).wrap,
-        leafPointer(second, pointerTracking(Some(99L))).wrap))
+        leafPointer(first).wrap,
+        leafPointer(second, pointerTracking(
+          sequenceNumber = Some(99L),
+          fileSequenceNumber = Some(99L), firstRowId = Some(9000L))).wrap))
 
       assert(files("data/b.parquet").defaultRowCommitVersion.contains(inheritedFileSequenceNumber))
       assert(files("data/d.parquet").defaultRowCommitVersion.contains(99L))
+      assert(files("data/a.parquet").baseRowId.contains(1000L))
+      assert(files("data/b.parquet").baseRowId.contains(1010L))
+      assert(files("data/c.parquet").baseRowId.contains(9000L))
+      assert(files("data/d.parquet").baseRowId.contains(9005L))
     }
   }
 
-  test("a root pointer that declares no tracking leaves its leaf entries unresolved") {
-    withSyntheticTree("amt_inherit_nothing") { tree =>
-      // What today's AMT writer emits: no leaf entry inherits, and the tree reads back verbatim.
+  test("a root pointer that assigns a file sequence number but no first_row_id is rejected") {
+    withSyntheticTree("amt_inherit_no_row_ids") { tree =>
       val leaf = tree.writeLeaf(Seq(
         dataEntry("data/a.parquet", recordCount = 10L),
         dataEntry("data/b.parquet", recordCount = 20L)))
-      val files = tree.reconstruct(Seq(leafPointer(leaf, unassignedTracking()).wrap))
+      val error = intercept[Exception] {
+        tree.reconstruct(Seq(leafPointer(leaf, pointerTracking(firstRowId = None)).wrap))
+      }
+      assert(causeMessages(error).contains("tracking.first_row_id must not be null"))
+    }
+  }
 
-      assert(files.keySet == Set("data/a.parquet", "data/b.parquet"))
-      assert(files.values.forall(_.baseRowId.isEmpty),
-        s"nothing may be inherited from an unassigned pointer; got ${files.values}")
-      assert(files.values.forall(_.defaultRowCommitVersion.isEmpty))
+  test("a root pointer that declares no inheritable tracking is rejected") {
+    withSyntheticTree("amt_inherit_nothing") { tree =>
+      val leaf = tree.writeLeaf(Seq(
+        dataEntry("data/a.parquet", recordCount = 10L),
+        dataEntry("data/b.parquet", recordCount = 20L)))
+      val error = intercept[Exception] {
+        tree.reconstruct(Seq(leafPointer(leaf, unassignedTracking()).wrap))
+      }
+      assert(causeMessages(error).contains("tracking.sequence_number must not be null"))
     }
   }
 
@@ -243,11 +323,13 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       // while a sibling pointer hands values down to its leaf.
       val files = tree.reconstruct(Seq(
         dataEntry("data/inline.parquet", recordCount = 4L).wrap,
-        leafPointer(leaf, pointerTracking(Some(inheritedFileSequenceNumber))).wrap))
+        leafPointer(leaf).wrap))
 
       assert(files("data/inline.parquet").defaultRowCommitVersion.isEmpty)
+      assert(files("data/inline.parquet").baseRowId.isEmpty)
       assert(files("data/leaf.parquet").defaultRowCommitVersion
         .contains(inheritedFileSequenceNumber))
+      assert(files("data/leaf.parquet").baseRowId.contains(1000L))
     }
   }
 
@@ -257,13 +339,31 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       // predates the tree, so there is no value it could correctly inherit.
       val leaf = tree.writeLeaf(Seq(
         dataEntry("data/a.parquet", recordCount = 10L,
-          tracking = unassignedTracking(Tracking.Status.Existing))))
+          tracking = unassignedTracking(Tracking.Status.Existing).copy(
+            sequence_number = Some(7L),
+            first_row_id = Some(9L)))))
       val error = intercept[Exception] {
-        tree.reconstruct(Seq(
-          leafPointer(leaf, pointerTracking(Some(inheritedFileSequenceNumber))).wrap))
+        tree.reconstruct(Seq(leafPointer(leaf).wrap))
       }
       val messages = causeMessages(error)
       assert(messages.contains("tracking.file_sequence_number is null"), messages)
+      assert(messages.contains("EXISTING"), messages)
+    }
+  }
+
+  test("a live entry that is not ADDED and has no first_row_id is rejected") {
+    withSyntheticTree("amt_inherit_malformed_row_id") { tree =>
+      val leaf = tree.writeLeaf(Seq(
+        dataEntry("data/a.parquet", recordCount = 10L,
+          tracking = unassignedTracking(Tracking.Status.Existing)
+            .copy(
+              sequence_number = Some(7L),
+              file_sequence_number = Some(8L)))))
+      val error = intercept[Exception] {
+        tree.reconstruct(Seq(leafPointer(leaf).wrap))
+      }
+      val messages = causeMessages(error)
+      assert(messages.contains("tracking.first_row_id is null"), messages)
       assert(messages.contains("EXISTING"), messages)
     }
   }
@@ -272,11 +372,18 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
     Tracking.Status.liveEntryStatuses.foreach { status =>
       withSyntheticTree(s"amt_materialized_leaf_${Tracking.Status.nameOf(status)}") { tree =>
         val materialized = 77L
+        val materializedFirstRowId =
+          if (status == Tracking.Status.Added) None else Some(1000L)
+        val materializedSequenceNumber =
+          if (status == Tracking.Status.Added) None else Some(76L)
         val leaf = tree.writeLeaf(Seq(
           dataEntry("data/a.parquet", recordCount = 10L,
-            tracking = unassignedTracking(status).copy(file_sequence_number = Some(materialized)))))
+            tracking = unassignedTracking(status).copy(
+              sequence_number = materializedSequenceNumber,
+              file_sequence_number = Some(materialized),
+              first_row_id = materializedFirstRowId))))
         val files = tree.reconstruct(Seq(
-          leafPointer(leaf, pointerTracking(Some(inheritedFileSequenceNumber))).wrap))
+          leafPointer(leaf).wrap))
         assert(files("data/a.parquet").defaultRowCommitVersion.contains(materialized),
           s"${Tracking.Status.nameOf(status)} must keep its materialized value")
       }

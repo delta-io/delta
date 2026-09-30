@@ -200,8 +200,7 @@ case class DeletionVectorDescriptor(
 
   /**
    * Like [[normalizedTableRelativeObjectId]] but identifies the physical DV file rather than the
-   * individual DV within it and returns the normalized (storageType, path) with no offset. Today
-   * this is only used for table clone.
+   * individual DV within it and returns the normalized (storageType, path) with no offset.
    */
   private[delta] def normalizedTableRelativeObjectFile(tableRoot: Path): (String, String) = {
     storageType match {
@@ -438,6 +437,13 @@ object DeletionVectorDescriptor {
   /**
    * Utility method to create a [[DeletionVectorDescriptor]] for an unencoded path relative to the
    * table root. Callers are responsible for relativizing the path before invoking this method.
+   *
+   * @param relativePath Relative path to the table root. Must be unencoded.
+   * @param sizeInBytes Size of the serialized DV in bytes (raw data size, before encoding).
+   * @param cardinality Number of rows the DV logically removes from the file.
+   * @param offset Start of the data for this DV.
+   * @param maxRowIndex Transient property that is used to validate DV correctness. It is not
+   *                    stored in the log.
    */
   def createRelativePathDVDescriptor(
       relativePath: String,
