@@ -40,7 +40,7 @@ import org.apache.spark.{SparkEnv, SparkException, TaskContext}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
+import org.apache.spark.util.{SerializableConfiguration, SparkFatalException, ThreadUtils}
 
 /**
  * Some utility methods on files, directories, and paths.
@@ -423,14 +423,19 @@ object DeltaFileOperations extends DeltaLogging {
         Some(new Footer(currentFile.getPath(),
           ParquetFileReader.readFooter(
             conf, currentFile, SKIP_ROW_GROUPS)))
-      } catch { case e: RuntimeException =>
-        if (ignoreCorruptFiles) {
-          logWarning(log"Skipped the footer in the corrupted file: " +
-            log"${MDC(DeltaLogKeys.FILE_STATUS, currentFile)}", e)
-          None
-        } else {
-          throw DeltaErrors.failedReadFileFooter(currentFile.toString, e)
-        }
+      } catch {
+        case e: RuntimeException =>
+          if (ignoreCorruptFiles) {
+            logWarning(log"Skipped the footer in the corrupted file: " +
+              log"${MDC(DeltaLogKeys.FILE_STATUS, currentFile)}", e)
+            None
+          } else {
+            throw DeltaErrors.failedReadFileFooter(currentFile.toString, e)
+          }
+        // Scala Future does not complete its Promise for fatal throwables. Wrap them in a
+        // non-fatal exception so ThreadUtils.awaitResult can rethrow the original throwable.
+        case fatal: Throwable if !NonFatal(fatal) =>
+          throw new SparkFatalException(fatal)
       }
     }.flatten
   }

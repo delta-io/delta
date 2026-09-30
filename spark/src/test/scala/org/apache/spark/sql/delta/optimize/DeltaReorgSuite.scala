@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.optimize
 
+import java.util.concurrent.{Callable, Executors, TimeUnit}
+
 import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMapping, DeltaLog, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.DeltaPurgeOperation
@@ -24,6 +26,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import io.delta.tables.DeltaTable
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.logging.log4j.Level
 import org.apache.parquet.hadoop.Footer
@@ -256,7 +259,8 @@ class DeltaReorgSuite extends QueryTest
       def select(batchSize: Int, parallelism: Int): Set[String] = {
         withSQLConf(
             DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_BATCH_SIZE.key -> batchSize.toString,
-            DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_PARALLELISM.key -> parallelism.toString) {
+            DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_PARALLELISM.key -> parallelism.toString,
+            "spark.sql.leafNodeDefaultParallelism" -> "1") {
           purge.filterFilesToReorg(spark, snapshot, files).map(_.path).toSet
         }
       }
@@ -278,12 +282,45 @@ class DeltaReorgSuite extends QueryTest
           footerLogs,
           loggerNames = Seq(footerLogger),
           level = Some(Level.INFO)) {
-        select(batchSize = 1, parallelism = 3)
+        select(batchSize = 3, parallelism = 3)
       }
       val messages = footerLogs.loggingEvents.map(_.getMessage.getFormattedMessage)
       val details = messages.mkString(" | ")
-      assert(messages.exists(_.contains("with parallelism 3")),
-        s"footer reader did not observe parallelism=3 in $details")
+      val readLog = """Reading (\d+) Parquet footers with parallelism (\d+)""".r
+      val observedBatchSizes = messages.collect {
+        case readLog(size, "3") => size.toInt
+      }.sorted
+      val expectedBatchSizes = files.grouped(3).map(_.size).toSeq.sorted
+      assert(observedBatchSizes === expectedBatchSizes,
+        s"footer reader observed batches $observedBatchSizes instead of $expectedBatchSizes " +
+          s"at parallelism=3 in $details")
+    }
+  }
+
+  test("footer scan propagates fatal errors") {
+    val fatal = new OutOfMemoryError("test fatal error")
+    val status = new FileStatus() {
+      override def getPath: Path = throw fatal
+    }
+    // scalastyle:off sparkThreadPools
+    val executor = Executors.newSingleThreadExecutor()
+    // scalastyle:on sparkThreadPools
+    val result = executor.submit(new Callable[Throwable] {
+      override def call(): Throwable = {
+        try {
+          DeltaFileOperations.readParquetFootersInParallel(
+            new Configuration(false), Seq(status), ignoreCorruptFiles = false, parallelism = 1)
+          null
+        } catch {
+          case t: Throwable => t
+        }
+      }
+    })
+    try {
+      assert(result.get(10, TimeUnit.SECONDS) eq fatal)
+    } finally {
+      result.cancel(true)
+      executor.shutdownNow()
     }
   }
 
