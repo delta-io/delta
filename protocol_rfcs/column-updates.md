@@ -96,12 +96,12 @@ defaultRowCommitVersion | Long | First commit version in which an `add` action w
 - A collection of `add` actions with unique `path` keys, corresponding to the newest `(path,
   deletionVector.uniqueId, columnFileSetId)` tuple encountered for each path.
 - A collection of `remove` actions with unique `(path, deletionVector.uniqueId, columnFileSetId)`
-  keys. The intersection of the primary keys in the `add` collection and `remove` collection must be
-  empty. That means a logical file cannot exist in both the `remove` and `add` collections at the
-  same time; however, the same *data file* can exist with *different* DVs in the `remove`
-  collection, as logically they represent different content. The `remove` actions act as
-  _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only return
-  `add` actions on the read path.
+  keys. The intersection of the primary keys in the `add` collection and `remove` collection must
+  be empty. That means a logical file cannot exist in both the `remove` and `add` collections at
+  the same time; however, the same *data file* can exist with *different* DVs and/or column files
+  in the `remove` collection, as logically they represent different content. The `remove` actions
+  act as _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only
+  return `add` actions on the read path.
 
 > ***In the reconciliation rules in the same section, replace the bullet starting with "Logical
 > files in a table" with the following bullet.***
@@ -109,6 +109,19 @@ defaultRowCommitVersion | Long | First commit version in which an `add` action w
 - Logical files in a table are identified by their `(path, deletionVector.uniqueId,
   columnFileSetId)` primary key. File actions (`add` or `remove`) reference logical files, and a log
   can contain any number of references to a single file.
+
+## Checkpoint Schema
+
+> ***In the appendix section for `Checkpoint Schema` add the following fields after
+> `defaultRowCommitVersion` inside all references to the `add` struct.
+
+```
+|    |-- fileCommitVersion: long
+|    |-- columnFiles: array[struct]
+|    |    |-- fieldIds: array[integer]
+|    |    |-- path: string
+|    |    |-- sizeInBytes: long
+```
 
 --------
 
@@ -130,9 +143,11 @@ To support this feature:
 - The feature `columnMapping` must exist in the table protocol's `readerFeatures` and
   `writerFeatures`.
 - The table property `delta.columnMapping.mode` must be set to `name` or `id`.
-- The feature `rowTracking` must exist in the table protocol's `readerFeatures` and
-  `writerFeatures`.
+- The feature `rowTracking` must exist in the table protocol's `writerFeatures`.
 - The feature `catalogManaged` must exist in the table protocol's `readerFeatures` and
+  `writerFeatures`.
+- The feature `changeDataFeed` must not exist in the table protocol's `writerFeatures`.
+- The features `icebergCompatV1` and `icebergCompatV2` must both not exists in the table protocol's
   `writerFeatures`.
 
 Column Updates store values in [Column Files](#column-file-format) that are tracked in metadata
@@ -152,7 +167,9 @@ A column file has one row for each physical row in the base file, and these rows
 order.
 
 The row commit version column contains either the commit version of the update that last changed
-this row, or `NULL` to indicate that the most recent update changed this row.
+this row, or `NULL` to indicate that the most recent update changed this row. This column can be
+referenced in two ways: using the name (`delta.rowTracking.materializedRowCommitVersionColumnName`)
+from Delta, and using the field id (2147483539) from Iceberg.
 
 The rest are value columns that represent the current values for the associated base file columns.
 Values associated with base file rows that are already deleted by a DV might contain either stale
@@ -168,10 +185,10 @@ The `ColumnFileDescriptor` struct has the following schema:
 Field Name | Data Type | Description | optional/required
 -|-|-|-
 fieldIds | Array[Integer] | The Column Mapping IDs of the table fields supplied by this column file. | required
-path | String | A relative path to a column file from the root of the table, or an absolute path to the column file. The path uses the same URI encoding as `add.path`. | required
+path | String | A relative path to a column file from the root of the table. The path uses the same URI encoding as `add.path`. | required
 sizeInBytes | Long | The size of the column file in bytes. | required
 
-`fieldIds` must not be empty and must not contain duplicates. A field ID must occur in at most one
+`fieldIds` must be non-empty and duplicate-free. A field ID must occur in at most one
 `ColumnFileDescriptor` within a single `add`. At the moment, only top-level fields are supported for
 Column Updates.
 
@@ -183,8 +200,8 @@ field id.
 
 ## Column File Set Identity
 
-The identity of a column file set is the relative path to the latest column file within a single
-`add` action.
+The identity of a column file set (`columnFileSetId`) is the relative path to the latest column
+file within a single `add` action.
 
 Keeping only the latest file path, and not including the entirety of the column file set is a
 deliberate choice to keep the identity for a single action small and independent of amount of
@@ -203,19 +220,25 @@ During a read, if a field is present in `columnFiles[].fieldIds`, the reader mus
 corresponding values for that column in the base file as invalid and read them from the column file
 instead.
 
-The row-group boundaries of a column file and its base data file may differ. A reader must align
-column file rows with base data file rows by position -- column files are required to contain the
-same number of physical rows as base files.
+The column file contains data for the same logical rows in the same order as the base file. Readers
+must align them positionally, ignoring row group boundaires.
 
 ## Writer Requirements for Column Updates
 
-During a write that uses the Column Updates feature, the writer is free to choose for each file
-whether to write out a column file, a DV, or any other way of updating data.
+For each file the writer is free to choose one of the following ways to write an update:
 
-If the writer chooses to not write a column file, the only requirement is not dropping any
-`ColumnFileDescriptor`s if keeping the same base file.
+1. rewrite the base file entirely (purging both DVs and column files);
+2. replace/attach a DV (keeping all existing column files);
+3. replace/attach a column file (keeping the existing DV);
+4. replace/attach a DV and replace/attach a column file.
 
-If the writer chooses to write a column file, the writer must:
+(3) and (4) -- the new ways added with Column Updates -- are forbidden if any of the following are
+true:
+
+- the write includes any partition column;
+- the write includes a `cdc` action.
+
+The procedure for writing a column file (i.e. options (3) and (4) from the above list):
 
 1. copy over all previous `ColumnFileDescriptor`s;
 2. for each field that contains changes in the current write, remove its field id from all
@@ -225,6 +248,16 @@ If the writer chooses to write a column file, the writer must:
    field ids that contain changes in the current write and the commit version field id;
 5. remove all `ColumnFileDescriptor`s that contain no associated field ids as a result of step (2);
 6. update the `defaultRowCommitVersion` to the commit version of the current operation.
+
+## Statistics
+
+`add.stats` continues to contain correct stats.
+
+Readers continue to use `add.stats` to do file skipping. There is no notion of column file skipping
+at this point.
+
+Writers recompute `add.stats` when doing new writes, including column files. Using base file
+values to calculate stats for columns that are shadowed by a column file is invalid.
 
 ## `defaultRowCommitVersion` vs `fileCommitVersion`
 
@@ -449,6 +482,53 @@ fields are wired through `amtPassthrough`:
 Marking referenced files as `REPLACED`/`MODIFIED` in presence of Column Updates is handled the same
 way as for DVs -- a change in column files results in the old manifest entry becoming `REPLACED`,
 and the new entry being kept as `MODIFIED`.
+
+#### Content Entry Schema
+
+AMT's [Content Entry Schema](./iceberg-v4-metadata.md#content-entry-schema) gains the following
+field:
+
+Field ID | Field Name | Delta Type | Required | Applicable To | Description
+-|-|-|-|-|-
+158 | `column_files` | Array\<Struct([ColumnFileDescriptor](#column-file-descriptor))\> | Optional | DATA | Column files for the data file.
+
+##### Column File Descriptor
+
+AMT's [Content Entry Schema](./iceberg-v4-metadata.md#content-entry-schema) gains the following
+struct:
+
+Field ID | Field Name | Delta Type | Required | Description
+-|-|-|-|-
+161 | `format_version` | Integer | Required | Iceberg writer format version; 4 for V4.
+162 | `field_ids` | Array\<Integer\> | Required | The field ids that this column file contains.
+164 | `location` | String | Required | Column file path relative to table root.
+165 | `file_format` | String | Required | File format name. Delta only supports `parquet`.
+166 | `file_size_in_bytes` | Long | Required | Total column file size in bytes.
+168 | `split_offsets` | Array\<Long\> | Optional | Row group split offsets.
+
+#### Metadata Cleanup
+
+The reachable set computation with `adaptiveMetadata` gains a new entry: any column files
+referenced by a reachable manifest entry, or by an `add` action in a retained log commit, is
+reachable.
+
+### Row Tracking
+
+Column Updates introduce a new field, `fileCommitVersion` to fulfill a similar role to
+`defaultRowCommitVersion`.
+
+`fileCommitVersion` is the version that first introduced the base file, referenced by `path` in the
+`add` and `remove` actions. This is exactly what `defaultRowCommitVersion` was previously doing.
+
+`defaultRowCommitVersion` becomes the version that first introduced a particular combination of the
+base file with column files (identified by `columnFileSetId`).
+
+This is necessary to keep the logical meaning of `defaultRowCommitVersion` consistent -- it was
+used to fill row commit versions for any rows that don't have an explicit version. This was
+happening for rows that were updated in the latest update.
+
+Column Updates now store row commit versions separately in column files, thus any write that writes
+column files also needs to update `defaultRowCommitVersion`.
 
 ## Valid Feature Names in Table Features
 
