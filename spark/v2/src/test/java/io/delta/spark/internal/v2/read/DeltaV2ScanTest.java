@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogColumnStat;
@@ -32,6 +33,7 @@ import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -534,11 +536,85 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     assertEquals(afterDppTotalBytes, afterDppEstimatedSize);
   }
 
-  private static List<PartitionedFile> getPartitionedFiles(DeltaV2Scan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
+  private static List<PartitionedFile> getPartitionedFiles(DeltaV2Scan scan) {
+    return Arrays.stream(scan.toBatch().planInputPartitions())
+        .flatMap(partition -> Arrays.stream(((FilePartition) partition).files()))
+        .collect(Collectors.toList());
+  }
+
+  @SuppressWarnings("unchecked")
+  private static List<PartitionedFile> getCachedPartitionedFiles(DeltaV2Scan scan)
+      throws Exception {
     Field field = DeltaV2Scan.class.getDeclaredField("partitionedFiles");
     field.setAccessible(true);
     return (List<PartitionedFile>) field.get(scan);
+  }
+
+  @Test
+  public void testMetadataPlanningDoesNotMaterializeBatchFiles() throws Exception {
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+
+    Statistics statistics = scan.estimateStatistics();
+    List<DeltaScanFile> selectedFiles = scan.getSelectedFiles();
+    assertEquals(5, selectedFiles.size());
+    long selectedBytes = selectedFiles.stream().mapToLong(DeltaScanFile::getSize).sum();
+    assertTrue(selectedBytes > 0);
+    assertEquals(selectedBytes, statistics.sizeInBytes().getAsLong());
+    assertEquals(selectedBytes, scan.estimateSizeInBytes().getAsLong());
+    assertSame(scan.plannedSnapshot(), scan.plannedSnapshot());
+    assertTrue(
+        getCachedPartitionedFiles(scan).isEmpty(),
+        "Metadata planning must not create batch files before the batch read requests them");
+
+    List<PartitionedFile> batchFiles = getPartitionedFiles(scan);
+    assertEquals(5, batchFiles.size());
+    assertEquals(selectedBytes, batchFiles.stream().mapToLong(PartitionedFile::fileSize).sum());
+    assertEquals(selectedFiles, scan.getSelectedFiles());
+    assertEquals(selectedBytes, scan.estimateStatistics().sizeInBytes().getAsLong());
+  }
+
+  @Test
+  public void testRuntimeFilteringBeforeAndAfterBatchMaterialization() throws Exception {
+    withSQLConf(
+        "spark.sql.cbo.planStats.enabled",
+        "true",
+        () -> {
+          for (boolean materializeFirst : new boolean[] {false, true}) {
+            DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+            DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+            assertEquals(5, scan.getSelectedFiles().size());
+            assertTrue(isRowCountKnown(scan));
+            assertEquals(5L, getTotalRows(scan));
+            assertTrue(getCachedPartitionedFiles(scan).isEmpty());
+            if (materializeFirst) {
+              assertEquals(5, getPartitionedFiles(scan).size());
+            }
+
+            scan.filter(new Predicate[] {cityPredicate});
+            List<PartitionedFile> filteredFiles = getPartitionedFiles(scan);
+            assertEquals(2, filteredFiles.size());
+            assertTrue(
+                filteredFiles.stream()
+                    .allMatch(file -> file.filePath().toString().contains("city=hz")));
+            assertEquals(2, scan.getSelectedFiles().size());
+            assertTrue(isRowCountKnown(scan));
+            assertEquals(2L, getTotalRows(scan));
+            assertEquals(
+                filteredFiles.stream().mapToLong(PartitionedFile::fileSize).sum(),
+                scan.estimateSizeInBytes().getAsLong());
+
+            scan.filter(new Predicate[] {negativeCityPredicate});
+            assertTrue(scan.getSelectedFiles().isEmpty());
+            assertTrue(getPartitionedFiles(scan).isEmpty());
+            assertTrue(
+                getPartitionedFiles(scan).isEmpty(),
+                "Repeated batch planning must not restore files after filtering to empty");
+            assertEquals(0L, scan.estimateSizeInBytes().getAsLong());
+            assertTrue(isRowCountKnown(scan));
+            assertEquals(0L, getTotalRows(scan));
+          }
+        });
   }
 
   @Test

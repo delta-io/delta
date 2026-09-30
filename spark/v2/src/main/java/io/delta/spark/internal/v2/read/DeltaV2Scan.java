@@ -94,9 +94,9 @@ class DeltaV2Scan extends DeltaV2JavaLogging
   private final DeltaOptions deltaOptions;
   private final ZoneId zoneId;
 
-  // Planned input files and the corresponding selected AddFile actions.
+  // Execution files, materialized only when batch planning or runtime filtering needs them.
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
-  // Per-file row counts, parallel to partitionedFiles. Populated only while rowCountKnown is
+  // Per-file row counts, parallel to selectedFiles. Populated only while rowCountKnown is
   // true; cleared if any AddFile lacks numRecords. Retained so totalRows can be recomputed
   // after runtime partition filtering prunes files, instead of invalidating the count.
   private List<Long> perFileRowCounts = new ArrayList<>();
@@ -220,8 +220,8 @@ class DeltaV2Scan extends DeltaV2JavaLogging
           "Batch reads with CDC (readChangeFeed / readChangeData) are not supported in the V2 "
               + "connector. Either remove the CDC read option or use a streaming read.");
     }
-    ensurePlanned();
-    // File selection is done by V1 data skipping (partitionedFiles), so no kernel predicates are
+    ensurePartitionedFilesMaterialized();
+    // File selection is done by V1 data skipping (selectedFiles), so no kernel predicates are
     // pushed to the batch. Keep two distinct filter sets: partition + data filters distinguish
     // batches that select different files under otherwise-equal state, while only data filters may
     // reach the Parquet reader. Partition columns are materialized from the file path rather than
@@ -406,8 +406,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
   }
 
   /**
-   * Plan the files to scan by materializing {@link PartitionedFile}s and aggregating size stats.
-   * Ensures all iterators are closed to avoid resource leaks.
+   * Plan the files to scan by retaining lightweight descriptors and aggregating size stats.
    *
    * <p>When a limit is pushed (via {@link SupportsPushDownLimit}), per-file {@code numRecords}
    * (minus deletion-vector cardinality) are used to stop adding files once enough logical rows have
@@ -415,12 +414,11 @@ class DeltaV2Scan extends DeltaV2JavaLogging
    * toward the limit.
    */
   private void planScanFiles() {
-    final String tablePath = getTablePath();
     // Select files lazily via V1 data skipping over the Kernel-backed snapshot, which
     // DataSkippingDeltaV2SnapshotSuite validates against the V1 oracle. Keeping this work behind
     // batch planning avoids running an unused batch scan for MicroBatchStream. When a limit is
     // pushed the supplier routes selection through V1's limit-aware filesForScan. Here we
-    // materialize the selected V1 AddFiles into PartitionedFiles and aggregate stats.
+    // retain descriptors for the selected V1 AddFiles and aggregate stats.
     //
     // Two mutually exclusive row-count sources, mirroring which one V1 populates:
     //   - No limit: the builder passes keepNumRecords (the same plan-stats condition as
@@ -433,7 +431,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     final Supplier<DeltaScan> selectFiles =
         () -> Objects.requireNonNull(deltaScanSupplier.get(), "deltaScanSupplier returned null");
     final DeltaScan deltaScan = recordFrameProfileValue("scan.awaitFileSelection", selectFiles);
-    final Runnable materializeFiles = () -> materializeSelectedFiles(deltaScan, tablePath);
+    final Runnable materializeFiles = () -> materializeSelectedFiles(deltaScan);
     recordFrameProfileAction("scan.materializeSelectedFiles", materializeFiles);
   }
 
@@ -441,7 +439,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
    * Converts the files selected by {@code deltaScan} to connector scan objects and aggregates scan
    * size statistics.
    */
-  private void materializeSelectedFiles(DeltaScan deltaScan, String tablePath) {
+  private void materializeSelectedFiles(DeltaScan deltaScan) {
     plannedSnapshot =
         Objects.requireNonNull(
             deltaScan.scannedSnapshot(), "deltaScan.scannedSnapshot returned null");
@@ -450,10 +448,6 @@ class DeltaV2Scan extends DeltaV2JavaLogging
         scala.jdk.javaapi.CollectionConverters.asJava(deltaScan.files());
 
     for (org.apache.spark.sql.delta.actions.AddFile addFile : scanFiles) {
-      partitionedFiles.add(
-          PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId));
-      // Track the selected file descriptor in parallel with partitionedFiles for the row-level
-      // ReplaceData write path (getSelectedFiles) and runtime-filter bookkeeping below.
       selectedFiles.add(DeltaScanFile.fromV1AddFile(addFile));
       totalBytes += addFile.size();
 
@@ -487,6 +481,20 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     }
   }
 
+  /** Materialize execution files only when a consumer needs typed partition values or paths. */
+  private synchronized void ensurePartitionedFilesMaterialized() {
+    ensurePlanned();
+    if (!partitionedFiles.isEmpty() || selectedFiles.isEmpty()) {
+      return;
+    }
+    final String tablePath = getTablePath();
+    final List<PartitionedFile> files = new ArrayList<>(selectedFiles.size());
+    for (DeltaScanFile file : selectedFiles) {
+      files.add(PartitionUtils.buildPartitionedFile(file, partitionSchema, tablePath, zoneId));
+    }
+    partitionedFiles = files;
+  }
+
   /**
    * Ensure the scan is planned exactly once in a thread-safe manner, optionally applying runtime
    * filters.
@@ -500,6 +508,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
 
     // Then apply runtime predicates if provided
     if (runtimePredicates != null && !runtimePredicates.isEmpty()) {
+      ensurePartitionedFilesMaterialized();
       // Record the applied predicates for equals/hashCode comparison
       for (RuntimePredicate filter : runtimePredicates) {
         appliedRuntimePredicates.add(filter.predicate);
@@ -573,8 +582,8 @@ class DeltaV2Scan extends DeltaV2JavaLogging
   /**
    * Returns the Delta files selected by this scan after pushdown and runtime filtering.
    *
-   * <p>The returned descriptors preserve only the metadata needed by row-level ReplaceData commits
-   * to construct matching RemoveFile actions.
+   * <p>The returned descriptors preserve the metadata needed for execution and for row-level
+   * ReplaceData commits to construct matching RemoveFile actions.
    *
    * @apiNote Internal API for the DSv2 DML write path (see {@code DeltaReplaceDataBatchWrite}).
    */

@@ -27,6 +27,7 @@ import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.types.DataType;
 import io.delta.spark.internal.v2.read.ColumnReorderReadFunction;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
+import io.delta.spark.internal.v2.read.DeltaScanFile;
 import io.delta.spark.internal.v2.read.DeltaV2ScanUtils;
 import io.delta.spark.internal.v2.read.cdc.CDCReadFunction;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
@@ -58,6 +59,7 @@ import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.delta.RowIndexFilterType;
+import org.apache.spark.sql.delta.v2.interop.KernelSnapshotUtils$;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.FilePartition$;
@@ -204,7 +206,13 @@ public class PartitionUtils {
             "Partition values size from add file %d != partition columns size %d",
             partitionValues.size(),
             numPartCols);
+    return buildPartitionRow(partitionValues, partitionSchema, zoneId);
+  }
 
+  /** Cast partition values, treating omitted keys as null as V1 AddFiles do. */
+  private static InternalRow buildPartitionRow(
+      Map<String, String> partitionValues, StructType partitionSchema, ZoneId zoneId) {
+    final int numPartCols = partitionSchema.fields().length;
     final Object[] values = new Object[numPartCols];
     for (int index = 0; index < numPartCols; index++) {
       final StructField field = partitionSchema.fields()[index];
@@ -363,10 +371,35 @@ public class PartitionUtils {
         addFile.getPath(),
         addFile.getSize(),
         addFile.getModificationTime(),
-        addFile.getDeletionVector(),
+        buildDvMetadataScala(addFile.getDeletionVector()),
         addFile.getBaseRowId(),
         addFile.getDefaultRowCommitVersion(),
         getPartitionRow(addFile.getPartitionValues(), partitionSchema, zoneId),
+        tablePath);
+  }
+
+  /** Build an execution file from a selected descriptor, preserving V1 metadata semantics. */
+  public static PartitionedFile buildPartitionedFile(
+      DeltaScanFile file, StructType partitionSchema, String tablePath, ZoneId zoneId) {
+    // V1 also supports on-disk DVs without an offset, which Kernel's serializer rejects.
+    final scala.collection.immutable.Map<String, Object> dvMetadata =
+        file.getDeletionVector()
+            .map(
+                dv ->
+                    buildDvMetadata(
+                        KernelSnapshotUtils$.MODULE$
+                            .toV1DeletionVectorDescriptor(dv)
+                            .serializeToBase64(),
+                        RowIndexFilterType.IF_CONTAINED))
+            .orElseGet(PartitionUtils::emptyScalaMap);
+    return buildPartitionedFile(
+        file.getPath(),
+        file.getSize(),
+        file.getModificationTime(),
+        dvMetadata,
+        file.getBaseRowId(),
+        file.getDefaultRowCommitVersion(),
+        buildPartitionRow(file.getPartitionValuesMap(), partitionSchema, zoneId),
         tablePath);
   }
 
@@ -374,15 +407,13 @@ public class PartitionUtils {
       String path,
       long size,
       long modificationTime,
-      Optional<DeletionVectorDescriptor> deletionVector,
+      scala.collection.immutable.Map<String, Object> dvMetadata,
       Optional<Long> baseRowId,
       Optional<Long> defaultRowCommitVersion,
       InternalRow partitionRow,
       String tablePath) {
     scala.collection.immutable.Map<String, Object> metadata =
-        mergeIntoScalaMap(
-            buildDvMetadataScala(deletionVector),
-            buildRowTrackingMetadata(baseRowId, defaultRowCommitVersion));
+        mergeIntoScalaMap(dvMetadata, buildRowTrackingMetadata(baseRowId, defaultRowCommitVersion));
     return makePartitionedFile(
         new Path(tablePath, path).toString(), size, modificationTime, partitionRow, metadata);
   }
@@ -442,22 +473,7 @@ public class PartitionUtils {
       scala.collection.immutable.Map<String, String> partitionValues,
       StructType partitionSchema,
       ZoneId zoneId) {
-    final int numPartCols = partitionSchema.fields().length;
-    final Object[] values = new Object[numPartCols];
-    final Map<String, String> javaPartitionValues = CollectionConverters.asJava(partitionValues);
-    for (int i = 0; i < numPartCols; i++) {
-      final StructField field = partitionSchema.fields()[i];
-      final String physicalName = DeltaColumnMapping.getPhysicalName(field);
-      final String strVal = javaPartitionValues.get(physicalName);
-      if (strVal == null) {
-        values[i] = null;
-      } else if (field.dataType() instanceof StringType) {
-        values[i] = UTF8String.fromString(strVal);
-      } else {
-        values[i] = PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
-      }
-    }
-    return new GenericInternalRow(values);
+    return buildPartitionRow(CollectionConverters.asJava(partitionValues), partitionSchema, zoneId);
   }
 
   /**
