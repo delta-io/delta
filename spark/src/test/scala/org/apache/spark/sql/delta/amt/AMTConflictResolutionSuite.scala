@@ -610,7 +610,7 @@ class AMTConflictResolutionSuite
         rounds,
         expectedLosingCommitType = FULL_CHECKPOINT,
         expectedLosingTreeType = Some(FULL_TREE),
-        expectedTreeOutcome = REGENERATE_VIA_TXN_RETRY,
+        expectedTreeOutcome = RETRY_VIA_NEW_TXN,
         expectedWinnerTreeSatisfiesRequirement = Some(false),
         expectedException = Some(classOf[FullAMTWriteFailedWithConflict]),
         numIncrementalCheckpointWinners = 1)
@@ -723,7 +723,7 @@ class AMTConflictResolutionSuite
         rounds,
         expectedLosingCommitType = FULL_CHECKPOINT,
         expectedLosingTreeType = Some(FULL_TREE),
-        expectedTreeOutcome = REGENERATE_VIA_TXN_RETRY,
+        expectedTreeOutcome = RETRY_VIA_NEW_TXN,
         expectedWinnerTreeSatisfiesRequirement = None,
         expectedException = Some(classOf[FullAMTWriteFailedWithConflict]),
         numLogOnlyWinners = 1,
