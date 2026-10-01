@@ -15,7 +15,6 @@
  */
 package io.delta.spark.internal.v2.write;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -34,6 +33,8 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.execution.datasources.OutputWriterFactory;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -72,7 +73,6 @@ class DeltaV2WriteContext {
   // The full incoming write-row schema (data + partition columns), used to compute the ordinals of
   // the data / partition columns within each row for the executor writer.
   private final StructType writeSchema;
-  private final io.delta.kernel.types.StructType kernelTableSchema;
   private final OutputWriterFactory outputWriterFactory;
   private final SerializableConfiguration serializableHadoopConf;
   private final String sessionTimeZone;
@@ -142,7 +142,6 @@ class DeltaV2WriteContext {
       StructType partitionSchema,
       LogicalWriteInfo writeInfo) {
     this.engine = engine;
-    this.kernelTableSchema = initialSnapshot.getSchema();
 
     SparkSession session =
         SparkSession.getActiveSession()
@@ -161,7 +160,7 @@ class DeltaV2WriteContext {
     }
     DeltaParquetFileFormatV2 format =
         PartitionUtils.createDeltaParquetFileFormat(
-            initialSnapshot,
+            DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
             tablePath,
             /* optimizationsEnabled */ true,
             /* useMetadataRowIndex */ Option.empty(),
@@ -244,10 +243,6 @@ class DeltaV2WriteContext {
 
   StructType getPartitionSchema() {
     return partitionSchema;
-  }
-
-  io.delta.kernel.types.StructType getKernelTableSchema() {
-    return kernelTableSchema;
   }
 
   OutputWriterFactory getOutputWriterFactory() {
