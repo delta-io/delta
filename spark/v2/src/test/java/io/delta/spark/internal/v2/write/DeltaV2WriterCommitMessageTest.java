@@ -132,8 +132,7 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
             snapshot,
             TABLE_SCHEMA,
             new StructType(),
-            WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()),
-            /* variantShreddingEnabled */ false);
+            WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()));
     return (DeltaV2DataWriterFactory)
         write.createBatchWriterFactory(WriteTestUtils.physicalWriteInfo(1));
   }

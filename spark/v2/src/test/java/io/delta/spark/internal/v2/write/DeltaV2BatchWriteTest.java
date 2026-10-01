@@ -413,8 +413,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                     mgr,
                     data,
                     part,
-                    WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
-                    /* variantShreddingEnabled */ false)
+                    WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()))
                 .toBatch();
 
     DataWriter<InternalRow> writer =
@@ -507,8 +506,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 mgr,
                 data,
                 part,
-                WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
-                /* variantShreddingEnabled */ false)
+                WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()))
             .toBatch();
   }
 
@@ -550,8 +548,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 mgr,
                 data,
                 part,
-                WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
-                /* variantShreddingEnabled */ false)
+                WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()))
             .toBatch();
   }
 
@@ -581,8 +578,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
             snapshotManager,
             PARTITIONED_DATA_SCHEMA,
             PARTITIONED_PART_SCHEMA,
-            info,
-            /* variantShreddingEnabled */ false);
+            info);
     return (DeltaV2BatchWrite) write.toBatch();
   }
 
@@ -681,7 +677,6 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
         snapshot,
         TABLE_SCHEMA,
         new StructType(),
-        info,
-        /* variantShreddingEnabled */ false);
+        info);
   }
 }
