@@ -192,7 +192,11 @@ object DeltaInvariantCheckerExec extends DeltaLogging {
       }
       case ArrayForAll(argument, function: LambdaFunction) =>
         resolveNullCheck(argument, output, currentLambdaVar) match {
-          case l @ Literal(null, _) => l
+          // A missing array/map argument can make ArrayForAll resolve to a NullType literal.
+          // Schema traversal separately handles collection nullability (or guards nullable
+          // parents), so use false here to keep this predicate Boolean. Leaving it as NullType
+          // makes CheckDeltaInvariant's generated Boolean comparison fail.
+          case l @ Literal(null, _) => Literal(false)
           case e =>
             val elementType = e.dataType.asInstanceOf[ArrayType].elementType
             val lambdaVar = NamedLambdaVariable(function.arguments.head.name, elementType, true)

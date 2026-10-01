@@ -157,6 +157,18 @@ class InvariantEnforcementSuite extends QueryTest
     )
   }
 
+  test("reject missing non-nullable array column") {
+    val schema = new StructType()
+      .add("top", ArrayType(IntegerType, containsNull = false), nullable = false)
+      .add("value", IntegerType)
+    testBatchWriteRejection(
+      NotNull(Seq("top")),
+      schema,
+      Seq[Int](1, 2).toDF("value"),
+      "top"
+    )
+  }
+
   testQuietly("write empty DataFrame - zero rows") {
     val schema = new StructType()
       .add("key", StringType, nullable = false)
