@@ -281,7 +281,12 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
 
     Optional<PersistedMetadata> persistedMetadata =
         MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-            SparkSession.active(), initialSnapshot, options, snapshotManager, kernelEngine);
+            SparkSession.active(),
+            initialSnapshot,
+            options,
+            snapshotManager,
+            kernelEngine,
+            queryContext);
 
     StructType rawSchema;
     List<String> partitionColumnNames;
@@ -359,6 +364,11 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
    */
   public DeltaV2SnapshotManager getSnapshotManager() {
     return snapshotManager;
+  }
+
+  /** Returns the immutable request context that resolved this table. */
+  public DeltaV2QueryContext getQueryContext() {
+    return queryContext;
   }
 
   /** The table protocol from the initial snapshot. */
@@ -582,7 +592,8 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         snapshotManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
-        info);
+        info,
+        queryContext);
   }
 
   /**
