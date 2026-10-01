@@ -25,7 +25,7 @@ import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.stats.DeltaScan
 import io.delta.spark.internal.v2.DeltaV2Logging
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
+import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2Snapshot}
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
@@ -201,6 +201,7 @@ private[read] class DeltaV2ScanBuilder(
         }
       }
 
+      val originalQueryContext = DeltaV2QueryContext(catalogTable)
       val kernelSnapshot =
         DeltaV2Snapshot.getKernelSnapshot(initialSnapshot)
       val scan = new DeltaV2Scan(
@@ -215,7 +216,8 @@ private[read] class DeltaV2ScanBuilder(
         partitionCatalystFilters,
         catalogStats,
         options,
-        effectiveLimit)
+        effectiveLimit,
+        originalQueryContext)
       scan
     }
 
