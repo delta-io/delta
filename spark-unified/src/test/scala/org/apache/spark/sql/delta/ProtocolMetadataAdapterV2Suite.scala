@@ -41,8 +41,6 @@ class ProtocolMetadataAdapterV2Suite extends ProtocolMetadataAdapterSuiteBase {
    * These tests can be ignored because V2 has different behavior or limitations.
    */
   protected def ignoredTests: Set[String] = Set(
-    // TODO(delta-io/delta#5649): add type widening validation
-    "assertTableReadable with table with unsupported type widening",
     // V1 IcebergCompat is not supported in Kernel (only V2/V3)
     "isIcebergCompatAnyEnabled when v1 enabled",
     "isIcebergCompatGeqEnabled when v1 enabled"
