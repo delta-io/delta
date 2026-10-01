@@ -21,7 +21,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Collections;
 import java.util.Map;
+import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
+import scala.Option;
 
 class ScalaUtilsTest {
 
@@ -48,5 +50,14 @@ class ScalaUtilsTest {
     Map<String, String> javaMap = ScalaUtils.toJavaMap(scalaMap);
 
     assertEquals(Map.of("foo", "bar"), javaMap, "Scala map entries should be preserved");
+  }
+
+  @Test
+  void testToJavaOptionalLong() {
+    long value = 1234567890123L;
+
+    assertEquals(
+        OptionalLong.of(value), ScalaUtils.toJavaOptionalLong(Option.apply((Object) value)));
+    assertEquals(OptionalLong.empty(), ScalaUtils.toJavaOptionalLong(Option.empty()));
   }
 }
