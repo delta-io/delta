@@ -334,13 +334,28 @@ class DeltaV2Scan extends DeltaV2JavaLogging
         estimateSelectedFileSizeInBytes(), OptionalLong.empty(), Collections.emptyMap());
   }
 
+  /**
+   * Sum of the selected files' on-disk sizes. Used as the scanned-bytes fallback when the DeltaScan
+   * carries no {@code scanned.bytesCompressed} aggregate (for example, a table without file
+   * statistics). {@code AddFile.size()} is always populated, so this reads only lightweight file
+   * metadata and never constructs physical input files.
+   */
+  private static long selectedFileSizeInBytes(DeltaScan deltaScan) {
+    long totalBytes = 0L;
+    for (AddFile addFile : scala.jdk.javaapi.CollectionConverters.asJava(deltaScan.files())) {
+      totalBytes += addFile.size();
+    }
+    return totalBytes;
+  }
+
   private OptionalLong estimateSelectedFileSizeInBytes() {
     // Like PreparedDeltaFileIndex.sizeInBytes, this is the selected scan's size, not the
     // full-snapshot checksum size. Reading it may trigger file selection, but not input-file
     // construction.
+    final DeltaScan deltaScan = preparedScan();
     final long totalBytes =
-        toOptionalLong(preparedScan().scanned().bytesCompressed())
-            .orElse(sqlConf.defaultSizeInBytes());
+        toOptionalLong(deltaScan.scanned().bytesCompressed())
+            .orElseGet(() -> selectedFileSizeInBytes(deltaScan));
     // Do not scale the selected-file bytes by readSchema. Delta returns false from
     // reflectsFullyPushedDownFilters(), so Spark re-adds fully pushed filters when adjusting
     // statistics. Delta's scan builder retains filter-only columns in readSchema; when that makes

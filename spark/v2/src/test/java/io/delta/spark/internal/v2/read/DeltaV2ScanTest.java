@@ -589,9 +589,18 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
   private static long getTotalBytes(DeltaV2Scan scan) throws Exception {
     scan.estimateStatistics(); // May select files unless catalog statistics are available.
-    return getPlanned(scan)
-        ? ((Number) scan.preparedScan().scanned().bytesCompressed().get()).longValue()
-        : 0L;
+    if (!getPlanned(scan)) {
+      return 0L;
+    }
+    scala.Option<Object> bytesCompressed = scan.preparedScan().scanned().bytesCompressed();
+    if (bytesCompressed.isDefined()) {
+      return ((Number) bytesCompressed.get()).longValue();
+    }
+    // No scanned-bytes aggregate (e.g. a table without file statistics): fall back to the
+    // selected-file byte sum, matching estimateSizeInBytes().
+    return scala.jdk.javaapi.CollectionConverters.asJava(scan.preparedScan().files()).stream()
+        .mapToLong(AddFile::size)
+        .sum();
   }
 
   private static long getEstimatedSizeInBytes(DeltaV2Scan scan) throws Exception {
