@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaOptions.{OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
+import org.apache.spark.sql.delta.DeltaOptions.{OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION, USE_NULL_INTOLERANT_EQUALITY_WITH_DPO}
 import org.apache.spark.sql.delta.actions.{Action, FileAction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -254,7 +254,7 @@ class DeltaOptionSuite extends QueryTest
       s"partitionOverwriteMode is set to invalid value in options invalidMode=$invalidMode") {
       withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
         withTempDir { tempDir =>
-          val e = intercept[IllegalArgumentException] {
+          val e = intercept[DeltaIllegalArgumentException] {
             Seq(1, 2, 3).toDF
               .withColumn("part", $"value" % 2)
               .write
@@ -263,11 +263,14 @@ class DeltaOptionSuite extends QueryTest
               .option("partitionOverwriteMode", invalidMode)
               .save(tempDir.getAbsolutePath)
           }
-          assert(e.getMessage ===
-            DeltaErrors.illegalDeltaOptionException(
-              PARTITION_OVERWRITE_MODE_OPTION, invalidMode, "must be 'STATIC' or 'DYNAMIC'"
-            ).getMessage
-          )
+          checkError(
+            e,
+            "DELTA_ILLEGAL_OPTION.MUST_BE_ONE_OF",
+            parameters = Map(
+              "input" -> invalidMode,
+              "name" -> PARTITION_OVERWRITE_MODE_OPTION,
+              "validValues" ->
+                DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.map("'" + _ + "'").mkString(", ")))
         }
       }
     }
@@ -309,6 +312,29 @@ class DeltaOptionSuite extends QueryTest
         }
       }
       assert(e.getErrorClass == "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE")
+    }
+  }
+
+  test("useNullIntolerantEqualityWithDPO should never be specified when " +
+      "Dynamic Partition Overwrite is not enabled") {
+    withTable("temp") {
+      checkError(
+        exception = intercept[DeltaIllegalArgumentException] {
+          Seq(1, 2, 3).toDF
+            .withColumn("part", $"value" % 2)
+            .write
+            .mode("overwrite")
+            .format("delta")
+            .partitionBy("part")
+            .option(USE_NULL_INTOLERANT_EQUALITY_WITH_DPO, "true")
+            .saveAsTable("temp")
+        },
+        condition = "DELTA_ILLEGAL_OPTION.DYNAMIC_PARTITION_OVERWRITE_ONLY",
+        sqlState = Some("42616"),
+        parameters = Map(
+          "name" -> USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
+          "input" -> "true")
+      )
     }
   }
 

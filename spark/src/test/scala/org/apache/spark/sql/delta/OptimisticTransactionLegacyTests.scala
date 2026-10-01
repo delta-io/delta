@@ -369,6 +369,59 @@ trait OptimisticTransactionLegacyTests
     }
   }
 
+  // A RemoveFile with partitionValues = Map() (empty, non-null, as opposed to null) on a
+  // partitioned table previously caused NoSuchElementException in getPrettyPartitionMessage
+  // instead of the expected ConcurrentDeleteDeleteException.
+  test("block delete-delete conflict when winning RemoveFile has empty partitionValues") {
+    withLog(addB_1_2_nested :: Nil, partitionCols = "a" :: "b" :: Nil) { log =>
+      val tx1 = log.startTransaction()
+      tx1.filterFiles(('a === 2).expr :: Nil)
+
+      val tx2 = log.startTransaction()
+      tx2.filterFiles()
+      // RemoveFile with extended metadata but empty partitionValues (non-null Map()).
+      // scalastyle:off
+      val removeWithEmptyPV = RemoveFile(
+        path = addB_1_2_nested.path,
+        deletionTimestamp = Some(System.currentTimeMillis()),
+        dataChange = true,
+        extendedFileMetadata = Some(true),
+        partitionValues = Map.empty)
+      // scalastyle:on
+      tx2.commit(removeWithEmptyPV :: Nil, ManualUpdate)
+
+      intercept[ConcurrentDeleteDeleteException] {
+        tx1.commit(addB_1_2_nested.remove :: Nil, ManualUpdate)
+      }
+    }
+  }
+
+  // A RemoveFile with partitionValues = Map() (empty, non-null, as opposed to null) on a
+  // partitioned table previously caused NoSuchElementException in getPrettyPartitionMessage
+  // instead of the expected ConcurrentDeleteReadException.
+  test("block delete-read conflict when winning RemoveFile has empty partitionValues") {
+    withLog(addB_1_2_nested :: Nil, partitionCols = "a" :: "b" :: Nil) { log =>
+      val tx1 = log.startTransaction()
+      tx1.filterFiles()
+
+      val tx2 = log.startTransaction()
+      tx2.filterFiles()
+      // scalastyle:off
+      val removeWithEmptyPV = RemoveFile(
+        path = addB_1_2_nested.path,
+        deletionTimestamp = Some(System.currentTimeMillis()),
+        dataChange = true,
+        extendedFileMetadata = Some(true),
+        partitionValues = Map.empty)
+      // scalastyle:on
+      tx2.commit(removeWithEmptyPV :: Nil, ManualUpdate)
+
+      intercept[ConcurrentDeleteReadException] {
+        tx1.commit(addA_1_1_nested :: Nil, ManualUpdate)
+      }
+    }
+  }
+
   test("block commit when full table read conflicts with add in any partition") {
     withLog(addA_P1 :: addC_P2 :: Nil) { log =>
       val tx1 = log.startTransaction()

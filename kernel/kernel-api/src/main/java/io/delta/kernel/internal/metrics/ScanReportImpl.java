@@ -17,6 +17,7 @@ package io.delta.kernel.internal.metrics;
 
 import static java.util.Objects.requireNonNull;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.metrics.ScanMetricsResult;
 import io.delta.kernel.metrics.ScanReport;
@@ -104,5 +105,10 @@ public class ScanReportImpl extends DeltaOperationReportImpl implements ScanRepo
   @Override
   public ScanMetricsResult getScanMetrics() {
     return scanMetricsResult;
+  }
+
+  @Override
+  public String toJson() throws JsonProcessingException {
+    return MetricsReportSerializer.OBJECT_MAPPER.writeValueAsString(this);
   }
 }

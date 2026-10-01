@@ -73,6 +73,8 @@ class RowTrackingBackfillBackfillConflictsSuite extends RowTrackingBackfillConfl
           firstBackfillFuture.get()
         }
         assertAbortedBecauseOfMetadataChange(e)
+        // We need to remove that expected error or we'll fail below when checking the sink.
+        BackgroundErrorSink.clear()
         assert(!RowId.isEnabled(latestSnapshot.protocol, latestSnapshot.metadata))
 
         // Launch a second backfill to finish the aborted backfill.

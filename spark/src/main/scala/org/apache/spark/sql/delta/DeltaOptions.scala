@@ -23,7 +23,8 @@ import java.util.regex.PatternSyntaxException
 import scala.util.Try
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
+import org.apache.spark.sql.connector.catalog.SupportsV1OverwriteWithSaveAsTable
+import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -38,7 +39,7 @@ trait DeltaOptionParser {
 
   def toBoolean(input: String, name: String): Boolean = {
     Try(input.toBoolean).toOption.getOrElse {
-      throw DeltaErrors.illegalDeltaOptionException(name, input, "must be 'true' or 'false'")
+      throw DeltaErrors.illegalDeltaOptionMustBeBoolean(name, input)
     }
   }
 }
@@ -49,8 +50,44 @@ trait DeltaWriteOptions
 
   import DeltaOptions._
 
+  def isInsertAtomicReplaceOp: Boolean = isReplaceOnOrUsingDefined || replaceWhere.isDefined
+
+  def isInsertPartialOverwriteOp: Boolean =
+    isInsertAtomicReplaceOp || isDynamicPartitionOverwriteMode
+
+  val replaceOn: Option[String] = options.get(REPLACE_ON_OPTION)
+
+  val replaceUsing: Option[String] = options.get(REPLACE_USING_OPTION)
+
+  /** Parses the replaceUsing option into a list of distinct column names. */
+  def parsedReplaceUsingColsList: Option[Seq[String]] = {
+    replaceUsing.map { cols =>
+      // limit = -1 preserves trailing empty strings so we can detect trailing commas.
+      // scalastyle:off
+      val parsed =
+        cols.split(/* separator = */ ",", /* limit = */ -1).map(_.trim).toSeq.distinct
+      // scalastyle:on
+      if (parsed.exists(_.isEmpty)) {
+        throw DeltaErrors.illegalDeltaOptionNoEmptyColumnNames(
+          name = REPLACE_USING_OPTION,
+          input = cols)
+      }
+      parsed
+    }
+  }
+
+  def isReplaceOnOrUsingDefined: Boolean =
+    replaceOn.isDefined || replaceUsing.isDefined
+
+  val targetAlias: Option[String] = options.get(TARGET_ALIAS_OPTION)
+
   val replaceWhere: Option[String] = options.get(REPLACE_WHERE_OPTION)
   val userMetadata: Option[String] = options.get(USER_METADATA_OPTION)
+
+  val useNullIntolerantEqualityWithDPO: Option[Boolean] =
+    options
+      .get(USE_NULL_INTOLERANT_EQUALITY_WITH_DPO)
+      .map(toBoolean(_, USE_NULL_INTOLERANT_EQUALITY_WITH_DPO))
 
   /**
    * Whether to add an adaptive shuffle before writing out the files to break skew, and coalesce
@@ -85,6 +122,14 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   }
 
   /**
+   * Whether this write is coming from DataFrameWriter V1 saveAsTable.
+   */
+  def isDataFrameWriterV1SaveAsTableOverwrite: Boolean = {
+    options.get(IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE)
+      .exists(toBoolean(_, IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE))
+  }
+
+  /**
    * Whether to write new data to the table or just rearrange data that is already
    * part of the table. This option declares that the data being written by this job
    * does not change any data in the table and merely rearranges existing data.
@@ -95,10 +140,13 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   }
 
   val txnVersion = options.get(TXN_VERSION).map { str =>
-    Try(str.toLong).toOption.filter(_ >= 0).getOrElse {
-      throw DeltaErrors.illegalDeltaOptionException(
-        TXN_VERSION, str, "must be a non-negative integer")
+    val version = Try(str.toLong).toOption.getOrElse {
+      throw DeltaErrors.illegalDeltaOptionMustBeInteger(TXN_VERSION, str)
     }
+    if (version < 0) {
+      throw DeltaErrors.illegalDeltaOptionMustBeNonNegativeNumber(TXN_VERSION, str)
+    }
+    version
   }
 
   val txnAppId = options.get(TXN_APP_ID)
@@ -108,8 +156,7 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
     // neither must be given. In all other cases, throw an exception.
     val numOptions = txnVersion.size + txnAppId.size
     if (numOptions != 0 && numOptions != 2) {
-      throw DeltaErrors.invalidIdempotentWritesOptionsException("Both txnVersion and txnAppId " +
-      "must be specified for idempotent data frame writes")
+      throw DeltaErrors.invalidIdempotentWritesMissingWriteOptionsException()
     }
   }
 
@@ -122,7 +169,7 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   /** Whether to only overwrite partitions that have data written into it at runtime. */
   def isDynamicPartitionOverwriteMode: Boolean = {
     val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
-      .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
+      .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE).toString)
     val modeIsDynamic = mode != null && mode.equalsIgnoreCase(PARTITION_OVERWRITE_MODE_DYNAMIC)
     if (!sqlConf.getConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED)) {
       // Raise an exception when DYNAMIC_PARTITION_OVERWRITE_ENABLED=false
@@ -135,11 +182,9 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
     } else {
       if (mode == null ||
         !DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.exists(mode.equalsIgnoreCase(_))) {
-        val acceptableStr =
-          DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.map("'" + _ + "'").mkString(" or ")
-        throw DeltaErrors.illegalDeltaOptionException(
-          PARTITION_OVERWRITE_MODE_OPTION, mode, s"must be ${acceptableStr}"
-        )
+        throw DeltaErrors.illegalDeltaOptionMustBeOneOf(
+          PARTITION_OVERWRITE_MODE_OPTION, mode,
+          DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.map("'" + _ + "'").toSeq)
       }
       modeIsDynamic
     }
@@ -150,16 +195,19 @@ trait DeltaReadOptions extends DeltaOptionParser {
   import DeltaOptions._
 
   val maxFilesPerTrigger = options.get(MAX_FILES_PER_TRIGGER_OPTION).map { str =>
-    Try(str.toInt).toOption.filter(_ > 0).getOrElse {
-      throw DeltaErrors.illegalDeltaOptionException(
-        MAX_FILES_PER_TRIGGER_OPTION, str, "must be a positive integer")
+    val maxFiles = Try(str.toInt).toOption.getOrElse {
+      throw DeltaErrors.illegalDeltaOptionMustBeInteger(MAX_FILES_PER_TRIGGER_OPTION, str)
     }
+    if (maxFiles <= 0) {
+      throw DeltaErrors.illegalDeltaOptionMustBePositiveNumber(MAX_FILES_PER_TRIGGER_OPTION, str)
+    }
+    maxFiles
   }
 
   val maxBytesPerTrigger = options.get(MAX_BYTES_PER_TRIGGER_OPTION).map { str =>
     Try(JavaUtils.byteStringAs(str, ByteUnit.BYTE)).toOption.filter(_ > 0).getOrElse {
-      throw DeltaErrors.illegalDeltaOptionException(
-        MAX_BYTES_PER_TRIGGER_OPTION, str, "must be a size configuration such as '10g'")
+      throw DeltaErrors.illegalDeltaOptionMustBeSizeConfiguration(
+        MAX_BYTES_PER_TRIGGER_OPTION, str)
     }
   }
 
@@ -188,10 +236,13 @@ trait DeltaReadOptions extends DeltaOptionParser {
   val startingVersion: Option[DeltaStartingVersion] = options.get(STARTING_VERSION_OPTION).map {
     case "latest" => StartingVersionLatest
     case str =>
-      Try(str.toLong).toOption.filter(_ >= 0).map(StartingVersion).getOrElse{
-        throw DeltaErrors.illegalDeltaOptionException(
-          STARTING_VERSION_OPTION, str, "must be greater than or equal to zero")
+      val version = Try(str.toLong).toOption.getOrElse {
+        throw DeltaErrors.illegalDeltaOptionMustBeInteger(STARTING_VERSION_OPTION, str)
       }
+      if (version < 0) {
+        throw DeltaErrors.illegalDeltaOptionMustBeNonNegativeNumber(STARTING_VERSION_OPTION, str)
+      }
+      StartingVersion(version)
   }
 
   val startingTimestamp = options.get(STARTING_TIMESTAMP_OPTION)
@@ -237,6 +288,34 @@ class DeltaOptions(
 
 object DeltaOptions extends DeltaLogging {
 
+  /** Internal option to indicate write originated from DataFrameWriter V1 saveAsTable. */
+  val IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE =
+    SupportsV1OverwriteWithSaveAsTable.OPTION_NAME
+
+  /**
+   * An option, which contains a matching condition, between the table and the inserting data,
+   * to determine which table rows are to be replaced by the inserting data.
+   */
+  val REPLACE_ON_OPTION = "replaceOn"
+
+  /**
+   * An option, which contains a list of columns, between the table and the inserting data,
+   * to determine which table rows are to be replaced by the inserting data,
+   * by comparing equality for the list of columns, where each column must exist in both the
+   * table and the query.
+   */
+  val REPLACE_USING_OPTION = "replaceUsing"
+
+  /**
+   * An option to alias the target table in replaceOn/replaceWhere conditions.
+   * Allows users to reference target table columns using the alias in conditions,
+   * e.g., .option("targetAlias", "t").option("replaceOn", "t.id = s.id").
+   */
+  val TARGET_ALIAS_OPTION = "targetAlias"
+
+  /** Internal alias used by replaceUsing for column resolution. Not for external use. */
+  private[delta] val REPLACE_USING_INTERNAL_TABLE_ALIAS = "__replace_using_table_alias__"
+
   /** An option to overwrite only the data that matches predicates over partition columns. */
   val REPLACE_WHERE_OPTION = "replaceWhere"
   /** An option to allow automatic schema merging during a write operation. */
@@ -245,6 +324,12 @@ object DeltaOptions extends DeltaLogging {
   val OVERWRITE_SCHEMA_OPTION = "overwriteSchema"
   /** An option to specify user-defined metadata in commitInfo */
   val USER_METADATA_OPTION = "userMetadata"
+
+  /**
+   * An option to ignore overwriting partitions that contain NULL in
+   * Dynamic Partition Overwrite, used by INSERT INTO ... REPLACE USING (...).
+   */
+  val USE_NULL_INTOLERANT_EQUALITY_WITH_DPO = "useNullIntolerantEqualityWithDPO"
 
   val PARTITION_OVERWRITE_MODE_OPTION = "partitionOverwriteMode"
   val PARTITION_OVERWRITE_MODE_DYNAMIC = "DYNAMIC"
@@ -276,6 +361,7 @@ object DeltaOptions extends DeltaLogging {
   val TIMESTAMP_AS_OF = "timestampAsOf"
 
   val COMPRESSION = "compression"
+  val PARQUET_VERSION = "parquet.writer.version"
   val MAX_RECORDS_PER_FILE = "maxRecordsPerFile"
   val TXN_APP_ID = "txnAppId"
   val TXN_VERSION = "txnVersion"
@@ -304,18 +390,26 @@ object DeltaOptions extends DeltaLogging {
    * An option to control if delta will write partition columns to data files
    */
   val WRITE_PARTITION_COLUMNS = "writePartitionColumns"
+  val PARQUET_OUTPUT_TIMESTAMP_TYPE = SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key
 
   val validOptionKeys : Set[String] = Set(
+    IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE,
+    REPLACE_ON_OPTION,
+    REPLACE_USING_OPTION,
+    TARGET_ALIAS_OPTION,
     REPLACE_WHERE_OPTION,
     MERGE_SCHEMA_OPTION,
     EXCLUDE_REGEX_OPTION,
     OVERWRITE_SCHEMA_OPTION,
     USER_METADATA_OPTION,
+    USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
     PARTITION_OVERWRITE_MODE_OPTION,
     MAX_FILES_PER_TRIGGER_OPTION,
+    MAX_BYTES_PER_TRIGGER_OPTION,
     IGNORE_FILE_DELETION_OPTION,
     IGNORE_CHANGES_OPTION,
     IGNORE_DELETES_OPTION,
+    SKIP_CHANGE_COMMITS_OPTION,
     FAIL_ON_DATA_LOSS_OPTION,
     OPTIMIZE_WRITE_OPTION,
     DATA_CHANGE_OPTION,
@@ -329,11 +423,16 @@ object DeltaOptions extends DeltaLogging {
     CDC_END_VERSION,
     COMPRESSION,
     MAX_RECORDS_PER_FILE,
+    PARQUET_VERSION,
+    PARQUET_OUTPUT_TIMESTAMP_TYPE,
     TXN_APP_ID,
     TXN_VERSION,
     SCHEMA_TRACKING_LOCATION,
     SCHEMA_TRACKING_LOCATION_ALIAS,
     STREAMING_SOURCE_TRACKING_ID,
+    ALLOW_SOURCE_COLUMN_RENAME,
+    ALLOW_SOURCE_COLUMN_DROP,
+    ALLOW_SOURCE_COLUMN_TYPE_CHANGE,
     "queryName",
     "checkpointLocation",
     "path",

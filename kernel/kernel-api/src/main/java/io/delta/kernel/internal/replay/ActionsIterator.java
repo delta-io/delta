@@ -36,6 +36,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -228,6 +229,13 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   public ActionWrapper next() {
     if (closed) {
       throw new IllegalStateException("Can't call `next` on a closed iterator.");
+    }
+    if (Thread.currentThread().isInterrupted()) {
+      // Throw a typed InterruptedIOException (wrapped, since next() does not declare checked
+      // exceptions) so engines whose interrupt-handling recognizes standard JDK interrupt types
+      // (e.g. Spark's StreamExecution.isInterruptionException) treat this as a clean shutdown
+      // rather than a real error.
+      throw new UncheckedIOException(new InterruptedIOException("Thread was interrupted"));
     }
 
     if (!hasNext()) {
@@ -479,7 +487,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     deltaReadSchema,
                     checkpointPredicate);
 
-            long version = checkpointVersion(nextFilePath);
+            long version = nextLogFile.getVersion();
             return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
           }
         default:
@@ -497,22 +505,30 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // version with actions read from the JSON file for further optimizations later
     // on (faster metadata & protocol loading in subsequent runs by remembering
     // the version of the last version where the metadata and protocol are found).
-    final CloseableIterator<FileReadResult> dataIter =
-        wrapEngineExceptionThrowsIO(
-            () ->
-                engine
-                    .getJsonHandler()
-                    .readJsonFiles(
-                        singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty())
-                    .map(batch -> new FileReadResult(batch, nextFile.getPath())),
-            "Reading JSON log file `%s` with readSchema=%s",
-            nextFile,
-            deltaReadSchema);
-    return combine(
-        dataIter,
-        false /* isFromCheckpoint */,
-        fileVersion,
-        Optional.of(nextFile.getModificationTime()) /* timestamp */);
+    CloseableIterator<FileReadResult> dataIter = null;
+    try {
+      dataIter =
+          wrapEngineExceptionThrowsIO(
+              () ->
+                  engine
+                      .getJsonHandler()
+                      .readJsonFiles(
+                          singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty())
+                      .map(batch -> new FileReadResult(batch, nextFile.getPath())),
+              "Reading JSON log file `%s` with readSchema=%s",
+              nextFile,
+              deltaReadSchema);
+      return combine(
+          dataIter,
+          false /* isFromCheckpoint */,
+          fileVersion,
+          Optional.of(nextFile.getModificationTime()) /* timestamp */);
+    } catch (Exception e) {
+      if (dataIter != null) {
+        Utils.closeCloseablesSilently(dataIter); // close it avoid leaking resources
+      }
+      throw e;
+    }
   }
 
   /**

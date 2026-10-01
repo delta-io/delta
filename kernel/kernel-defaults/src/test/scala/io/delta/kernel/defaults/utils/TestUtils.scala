@@ -17,7 +17,8 @@ package io.delta.kernel.defaults.utils
 
 import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
-import java.nio.file.Files
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.{Files, Paths}
 import java.util.{Optional, TimeZone, UUID}
 
 import scala.collection.JavaConverters._
@@ -46,6 +47,9 @@ import io.delta.kernel.test.TestFixtures
 import io.delta.kernel.types._
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
+import org.apache.spark.sql.delta.{sources, OptimisticTransaction}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.hadoop.conf.Configuration
@@ -118,7 +122,7 @@ trait AbstractTestUtils
         while (iter.hasNext) {
           result.append(iter.next())
         }
-        result
+        result.toSeq
       } finally {
         iter.close()
       }
@@ -166,6 +170,36 @@ trait AbstractTestUtils
 
   implicit class JavaOptionalOps[T](optional: Optional[T]) {
     def toScala: Option[T] = if (optional.isPresent) Some(optional.get()) else None
+  }
+
+  /**
+   * Provides test-only apis to internal Delta Spark APIs.
+   */
+  implicit class OptimisticTxnTestHelper(txn: OptimisticTransaction) {
+
+    /**
+     * Test only method to commit arbitrary actions to delta table.
+     */
+    def commitManuallyWithValidation(actions: Action*): Unit = {
+      txn.commit(actions.toSeq, ManualUpdate)
+    }
+
+    /**
+     * Test only method to unsafe commit - writes actions directly to transaction log.
+     * Note: This bypasses Delta Spark transaction logic.
+     *
+     * @param tablePath The path to the Delta table
+     * @param version The commit version number
+     * @param actions Sequence of Action objects to write
+     */
+    def commitUnsafe(tablePath: String, version: Long, actions: Action*): Unit = {
+      val logPath = new org.apache.hadoop.fs.Path(tablePath, "_delta_log")
+      val commitFile = org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile(logPath, version)
+      val commitContent = actions.map(_.json + "\n").mkString.getBytes(UTF_8)
+      Files.write(Paths.get(commitFile.toString), commitContent)
+      // Generate crc file for this commit version.
+      Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, version)
+    }
   }
 
   implicit object ResourceLoader {
@@ -222,7 +256,7 @@ trait AbstractTestUtils
         // for all primitive types
         Seq(new Column((basePath :+ field.getName).asJava.toArray(new Array[String](0))));
       case _ => Seq.empty
-    }
+    }.toSeq
   }
 
   def collectScanFileRows(scan: Scan, engine: Engine = defaultEngine): Seq[Row] = {
@@ -300,7 +334,7 @@ trait AbstractTestUtils
         }
       }
     }
-    result
+    result.toSeq
   }
 
   def readTableUsingKernel(
@@ -593,6 +627,25 @@ trait AbstractTestUtils
   }
 
   /**
+   * Builds an ArrayType ColumnVector from a sequence of per-row element sequences.
+   */
+  def buildArrayVector(
+      valuesPerRow: Seq[Seq[AnyRef]],
+      elementType: DataType,
+      containsNull: Boolean): ColumnVector = {
+    val arrayType = new ArrayType(elementType, containsNull)
+    val arrayValues: Array[ArrayValue] = valuesPerRow.map { elems =>
+      if (elems == null) null
+      else new ArrayValue {
+        override def getSize: Int = elems.size
+        override def getElements: ColumnVector =
+          DefaultGenericVector.fromArray(elementType, elems.toArray)
+      }
+    }.toArray
+    DefaultGenericVector.fromArray(arrayType, arrayValues.asInstanceOf[Array[AnyRef]])
+  }
+
+  /**
    * Utility method to generate a [[dataType]] column vector of given size.
    * The nullability of rows is determined by the [[testIsNullValue(dataType, rowId)]].
    * The row values are determined by [[testColumnValue(dataType, rowId)]].
@@ -665,7 +718,7 @@ trait AbstractTestUtils
       case LongType.LONG => rowId % 25 == 0
       case FloatType.FLOAT => rowId % 5 == 0
       case DoubleType.DOUBLE => rowId % 10 == 0
-      case StringType.STRING => rowId % 2 == 0
+      case _: StringType => rowId % 2 == 0
       case BinaryType.BINARY => rowId % 3 == 0
       case DateType.DATE => rowId % 5 == 0
       case TimestampType.TIMESTAMP => rowId % 3 == 0
@@ -686,7 +739,7 @@ trait AbstractTestUtils
       case LongType.LONG => rowId * 287623L / 91
       case FloatType.FLOAT => rowId * 7651.2323f / 91
       case DoubleType.DOUBLE => rowId * 23423.23d / 17
-      case StringType.STRING => (rowId % 19).toString
+      case _: StringType => (rowId % 19).toString
       case BinaryType.BINARY => Array[Byte]((rowId % 21).toByte, (rowId % 7 - 1).toByte)
       case DateType.DATE => (rowId * 28234) % 2876
       case TimestampType.TIMESTAMP => (rowId * 2342342L) % 23
@@ -767,7 +820,7 @@ trait AbstractTestUtils
       case LongType.LONG => sparktypes.DataTypes.LongType
       case FloatType.FLOAT => sparktypes.DataTypes.FloatType
       case DoubleType.DOUBLE => sparktypes.DataTypes.DoubleType
-      case StringType.STRING => sparktypes.DataTypes.StringType
+      case _: StringType => sparktypes.DataTypes.StringType
       case BinaryType.BINARY => sparktypes.DataTypes.BinaryType
       case DateType.DATE => sparktypes.DataTypes.DateType
       case TimestampType.TIMESTAMP => sparktypes.DataTypes.TimestampType
@@ -787,7 +840,7 @@ trait AbstractTestUtils
             field.getName,
             toSparkType(field.getDataType),
             field.isNullable)
-        })
+        }.toSeq)
     }
   }
 
@@ -847,11 +900,48 @@ trait AbstractTestUtils
         crcInfo.getFileSizeHistogram))
   }
 
+  /**
+   * Rewrites the checksum file at `version` so it omits the deletion-vector metrics.
+   * Used to simulate a base CRC written before DV metrics were captured (or by an
+   * engine that never captured them) on a DV-enabled table.
+   */
+  def rewriteChecksumFileToExcludeDvMetrics(
+      engine: Engine,
+      tablePath: String,
+      version: Long): Unit = {
+    val logPath = new Path(s"$tablePath/_delta_log");
+    val crcInfo = ChecksumReader.tryReadChecksumFile(
+      engine,
+      FileStatus.of(checksumFile(
+        logPath,
+        version).toString)).get()
+    // Delete it in hdfs.
+    engine.getFileSystemClient.delete(FileNames.checksumFile(
+      new Path(s"$tablePath/_delta_log"),
+      version).toString)
+    val crcWriter = new ChecksumWriter(logPath)
+    crcWriter.writeCheckSum(
+      engine,
+      new CRCInfo(
+        crcInfo.getVersion,
+        crcInfo.getMetadata,
+        crcInfo.getProtocol,
+        crcInfo.getTableSizeBytes,
+        crcInfo.getNumFiles,
+        crcInfo.getTxnId,
+        crcInfo.getDomainMetadata,
+        crcInfo.getFileSizeHistogram))
+  }
+
   def executeCrcSimple(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
-    result.getPostCommitHooks
-      .stream()
-      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
-      .forEach(hook => hook.threadSafeInvoke(engine))
+    val crcSimpleHook = result
+      .getPostCommitHooks
+      .asScala
+      .find(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
+      .getOrElse(throw new IllegalStateException("CRC simple hook not found"))
+
+    crcSimpleHook.threadSafeInvoke(engine)
+
     result
   }
 

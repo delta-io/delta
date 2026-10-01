@@ -23,11 +23,11 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
-import org.apache.iceberg.{PartitionData, PartitionField, PartitionSpec, Schema, StructLike, Table}
-import org.apache.iceberg.transforms.IcebergPartitionUtil
-import org.apache.iceberg.types.{Conversions, Type => IcebergType}
-import org.apache.iceberg.types.Type.{PrimitiveType => IcebergPrimitiveType, TypeID}
-import org.apache.iceberg.types.Types.{
+import shadedForDelta.org.apache.iceberg.{PartitionData, PartitionField, PartitionSpec, Schema, StructLike, Table}
+import shadedForDelta.org.apache.iceberg.transforms.IcebergPartitionUtil
+import shadedForDelta.org.apache.iceberg.types.{Conversions, Type => IcebergType}
+import shadedForDelta.org.apache.iceberg.types.Type.{PrimitiveType => IcebergPrimitiveType, TypeID}
+import shadedForDelta.org.apache.iceberg.types.Types.{
   ListType => IcebergListType,
   MapType => IcebergMapType,
   NestedField,

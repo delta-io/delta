@@ -19,10 +19,10 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.createPredicate
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestUtils}
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.expressions._
+import io.delta.kernel.internal.util.ExpressionUtils.createPredicate
 import io.delta.kernel.types._
 
 trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {

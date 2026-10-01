@@ -81,7 +81,7 @@ case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     }
 
     if (DeltaUtils.isTesting) {
-      recordDeltaEvent(table.deltaLog, "delta.test.TestWriterFeaturePreDowngradeCommand")
+      recordDeltaEvent(table, "delta.test.TestWriterFeaturePreDowngradeCommand")
     }
 
     val properties = Seq(TestRemovableWriterFeature.TABLE_PROP_KEY)
@@ -132,7 +132,7 @@ case class TestReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     }
 
     if (DeltaUtils.isTesting) {
-      recordDeltaEvent(table.deltaLog, "delta.test.TestReaderWriterFeaturePreDowngradeCommand")
+      recordDeltaEvent(table, "delta.test.TestReaderWriterFeaturePreDowngradeCommand")
     }
 
     val properties = Seq(TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
@@ -271,7 +271,11 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
         op = DeltaOperations.AddDeletionVectorsTombstones,
         newProtocolOpt = None,
         context = Map.empty,
-        metrics = Map("dvTombstonesWithinRetentionPeriod" -> tombstonesToAddCount.toString))
+        metrics = Map("dvTombstonesWithinRetentionPeriod" -> tombstonesToAddCount.toString),
+        // The commit is only DV tombstones: RemoveFiles whose path is a deletion vector file
+        // rather than a data file, written so that VACUUM can delete those DVs. They drop no
+        // rows so dataChange is false.
+        dataChange = Some(false))
     } else {
       table.startTransaction(Some(snapshotToUse))
         .commit(actionsToCommit.toList, DeltaOperations.AddDeletionVectorsTombstones)
@@ -332,10 +336,19 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
       TimeUnit.NANOSECONDS.toMillis(table.deltaLog.clock.nanoTime() - startTimeNs)
 
     recordDeltaEvent(
-      table.deltaLog,
+      table,
       opType = "delta.deletionVectorsFeatureRemovalMetrics",
       data = metrics)
     PreDowngradeStatus(performedChanges = tracesFound)
+  }
+}
+
+case class AdaptiveMetadataPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    throw new UnsupportedOperationException(
+      s"Dropping the ${AdaptiveMetadataTableFeature.name} table feature is not yet supported.")
   }
 }
 
@@ -360,7 +373,7 @@ case class V2CheckpointPreDowngradeCommand(table: DeltaTableV2)
     AlterTableSetPropertiesDeltaCommand(table, properties).run(spark)
 
     recordDeltaEvent(
-      table.deltaLog,
+      table,
       opType = "delta.v2CheckpointFeatureRemovalMetrics",
       data =
         Map(("downgradeTimeMs", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)))
@@ -414,7 +427,7 @@ case class InCommitTimestampsPreDowngradeCommand(table: DeltaTableV2)
       prop -> currentTableProperties.contains(prop).toString
     }
     recordDeltaEvent(
-      table.deltaLog,
+      table,
       opType = "delta.inCommitTimestampFeatureRemovalMetrics",
       data = Map(
           "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
@@ -492,7 +505,7 @@ case class CoordinatedCommitsPreDowngradeCommand(table: DeltaTableV2)
       }
     }
     recordDeltaEvent(
-      table.deltaLog,
+      table,
       opType = "delta.coordinatedCommitsFeatureRemovalMetrics",
       data = Map(
           "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
@@ -534,7 +547,7 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
     val metadataRemoved = removeMetadataIfNeeded()
 
     recordDeltaEvent(
-      table.deltaLog,
+      table,
       opType = "delta.typeWidening.featureRemoval",
       data = Map(
         "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
@@ -590,6 +603,40 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
     true
   }
 }
+
+case class GeospatialPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * Throws an exception if the table has geospatial types, and returns false otherwise.
+   * We currently do not remove the geospatial statistics in the current table version so no
+   * action is required.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    if (GeoSpatialPreviewTableFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
+    val geospatialCols = table.initialSnapshot.schema.fields
+      .filter(field => DeltaGeoSpatial.containsGeoColumns(field.dataType))
+    // We ask the user to explicitly drop the geospatial columns before the table feature
+    // can be dropped.
+    throw DeltaErrors.cannotDropGeospatialFeature(geospatialCols)
+  }
+}
+
+case class FileTypePreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * There is no `file` type in the schema yet, so a table can never contain `file` columns and
+   * there are never any traces of the feature to remove. Once `file` column support lands, this
+   * must remove or reject remaining `file` usages before the feature can be dropped (mirroring
+   * [[GeospatialPreDowngradeCommand]]).
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus =
+    PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+}
+
 case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
     with DeltaLogging {
@@ -612,7 +659,7 @@ case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
     }
 
     recordDeltaOperation(
-      table.deltaLog,
+      table,
       opType = "delta.columnMappingFeatureRemoval") {
       RemoveColumnMappingCommand(table.deltaLog, table.catalogTable)
         .run(spark, removeColumnMappingTableProperty = true)
@@ -802,5 +849,21 @@ case class DomainMetadataPreDowngradeCommand(table: DeltaTableV2)
       .startTransaction()
       .commit(actionsToCommit, DeltaOperations.DomainMetadataCleanup(actionsToCommit.length))
     PreDowngradeStatus.PERFORMED_CHANGES
+  }
+}
+
+/**
+ * PreDowngrade command for MaterializePartitionColumns feature.
+ * This feature doesn't require any special cleanup actions when being dropped.
+ */
+case class MaterializePartitionColumnsPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * No cleanup actions are needed. The table property is automatically removed by the DROP FEATURE
+   * via tablePropertiesToRemoveAtDowngradeCommit.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
   }
 }

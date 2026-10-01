@@ -255,13 +255,19 @@ class RowTrackingRemovalSuite extends RowTrackingRemovalSuiteBase {
            |${DeltaConfigs.ROW_TRACKING_ENABLED.key} = 'true'
            |)""".stripMargin)
 
-      assertThrows[IllegalStateException] {
+      val suspensionError = intercept[DeltaIllegalStateException] {
         sql(
           s"""ALTER TABLE delta.`${dir.getAbsolutePath}`
              |SET TBLPROPERTIES(
              |${DeltaConfigs.ROW_TRACKING_SUSPENDED.key} = 'true'
              |)""".stripMargin)
       }
+      checkError(
+        suspensionError,
+        "DELTA_ROW_TRACKING_ILLEGAL_PROPERTY_COMBINATION",
+        parameters = Map(
+          "property1" -> DeltaConfigs.ROW_TRACKING_ENABLED.key,
+          "property2" -> DeltaConfigs.ROW_TRACKING_SUSPENDED.key))
 
       sql(
         s"""ALTER TABLE delta.`${dir.getAbsolutePath}`
@@ -271,13 +277,19 @@ class RowTrackingRemovalSuite extends RowTrackingRemovalSuiteBase {
            |)""".stripMargin)
 
 
-      assertThrows[IllegalStateException] {
+      val reenableError = intercept[DeltaIllegalStateException] {
         sql(
           s"""ALTER TABLE delta.`${dir.getAbsolutePath}`
              |SET TBLPROPERTIES(
              |${DeltaConfigs.ROW_TRACKING_ENABLED.key} = 'true'
              |)""".stripMargin)
       }
+      checkError(
+        reenableError,
+        "DELTA_ROW_TRACKING_ILLEGAL_PROPERTY_COMBINATION",
+        parameters = Map(
+          "property1" -> DeltaConfigs.ROW_TRACKING_ENABLED.key,
+          "property2" -> DeltaConfigs.ROW_TRACKING_SUSPENDED.key))
     }
   }
 

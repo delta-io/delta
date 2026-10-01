@@ -103,6 +103,15 @@ public class SnapshotQueryContext {
     return providedTimestamp;
   }
 
+  /**
+   * Returns true if this snapshot was requested as the latest snapshot (i.e., no time-travel
+   * parameters were provided). Note that this is intent-based - it indicates what the user
+   * requested, not whether the snapshot is actually the latest version.
+   */
+  public boolean isLatestQuery() {
+    return !providedVersion.isPresent() && !providedTimestamp.isPresent();
+  }
+
   public SnapshotMetrics getSnapshotMetrics() {
     return snapshotMetrics;
   }

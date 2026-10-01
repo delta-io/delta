@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults.engine
 
+import java.io.IOException
 import java.nio.file.FileAlreadyExistsException
 
 import scala.collection.JavaConverters._
@@ -63,11 +64,12 @@ class DefaultParquetHandlerSuite extends AnyFunSuite with ParquetSuiteBase {
       writeAndVerify()
 
       // Try to write as same file and expect an error
-      intercept[FileAlreadyExistsException] {
+      val e = intercept[IOException] {
         parquetHandler.writeParquetFileAtomically(
           filePath,
           toCloseableIterator(dataToWrite.asJava.iterator()))
       }
+      assert(e.getCause.isInstanceOf[FileAlreadyExistsException])
     }
   }
 }

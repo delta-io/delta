@@ -16,6 +16,7 @@
 
 package io.delta.kernel.internal.table;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.Snapshot;
@@ -37,6 +38,7 @@ import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.replay.ProtocolMetadataLogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.utils.FileStatus;
 import java.util.List;
 import java.util.Optional;
@@ -181,8 +183,9 @@ public class SnapshotFactory {
   }
 
   private SnapshotImpl createSnapshot(Engine engine, SnapshotQueryContext snapshotCtx) {
-    final Optional<Long> versionToLoad = getTargetVersionToLoad(engine, snapshotCtx);
-    final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx, versionToLoad);
+    final Optional<Long> timeTravelVersion = getTargetTimeTravelVersion(engine, snapshotCtx);
+    final Lazy<LogSegment> lazyLogSegment =
+        getLazyLogSegment(engine, snapshotCtx, timeTravelVersion);
     final Lazy<Optional<CRCInfo>> lazyCrcInfo =
         createLazyChecksumFileLoaderWithMetrics(
             engine, lazyLogSegment, snapshotCtx.getSnapshotMetrics());
@@ -205,12 +208,16 @@ public class SnapshotFactory {
       metadata = result.metadata;
     }
 
+    // We require maxCatalogVersion to be provided for catalogManaged tables. We cannot validate
+    // this earlier since we need to first load the protocol.
+    validateMaxCatalogVersionPresence(protocol);
+
     // TODO: When LogReplay becomes static utilities, we can create it inside of SnapshotImpl
     final LogReplay logReplay = new LogReplay(engine, tablePath, lazyLogSegment, lazyCrcInfo);
 
     return new SnapshotImpl(
         tablePath,
-        versionToLoad.orElseGet(() -> lazyLogSegment.get().getVersion()),
+        timeTravelVersion.orElseGet(() -> lazyLogSegment.get().getVersion()),
         lazyLogSegment,
         logReplay,
         protocol,
@@ -232,7 +239,7 @@ public class SnapshotFactory {
   }
 
   private Lazy<LogSegment> getLazyLogSegment(
-      Engine engine, SnapshotQueryContext snapshotCtx, Optional<Long> versionToLoad) {
+      Engine engine, SnapshotQueryContext snapshotCtx, Optional<Long> timeTravelVersion) {
     return new Lazy<>(
         () -> {
           final LogSegment logSegment =
@@ -242,7 +249,8 @@ public class SnapshotFactory {
                   .time(
                       () ->
                           new SnapshotManager(tablePath)
-                              .getLogSegmentForVersion(engine, versionToLoad, ctx.logDatas));
+                              .getLogSegmentForVersion(
+                                  engine, timeTravelVersion, ctx.logDatas, ctx.maxCatalogVersion));
 
           snapshotCtx.setResolvedVersion(logSegment.getVersion());
           snapshotCtx.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
@@ -251,7 +259,8 @@ public class SnapshotFactory {
         });
   }
 
-  private Optional<Long> getTargetVersionToLoad(Engine engine, SnapshotQueryContext snapshotCtx) {
+  private Optional<Long> getTargetTimeTravelVersion(
+      Engine engine, SnapshotQueryContext snapshotCtx) {
     if (ctx.timestampQueryContextOpt.isPresent()) {
       return Optional.of(
           resolveTimestampToSnapshotVersion(
@@ -264,5 +273,18 @@ public class SnapshotFactory {
       return ctx.versionOpt;
     }
     return Optional.empty();
+  }
+
+  private void validateMaxCatalogVersionPresence(Protocol protocol) {
+    boolean isCatalogManaged = TableFeatures.isCatalogManagedSupported(protocol);
+    if (isCatalogManaged) {
+      checkArgument(
+          ctx.maxCatalogVersion.isPresent(),
+          "Must provide maxCatalogVersion for catalogManaged tables");
+    } else {
+      checkArgument(
+          !ctx.maxCatalogVersion.isPresent(),
+          "Should not provide maxCatalogVersion for file-system managed tables");
+    }
   }
 }

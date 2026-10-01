@@ -27,7 +27,7 @@ import org.apache.spark.sql.catalyst.analysis.{Analyzer, ResolveSessionCatalog}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaMergeInto, LogicalPlan}
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
@@ -235,7 +235,7 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
           val df = sql(merge)
 
           val readSchema: Seq[StructType] = df.queryExecution.executedPlan.collect {
-            case f: FileSourceScanExec => f.requiredSchema
+            case f: FileSourceScanLike => f.requiredSchema
           }
           assert(readSchema.flatten.isEmpty, "column pruning does not work")
         }
@@ -284,7 +284,13 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
             src = s"$sourceName s",
             cond = s"s.key = t.key AND $nonDeterministicCondition",
             update(condition = "s.key < 2", set = "key = s.key, value = s.value")))
-        assert(e.getMessage.contains("DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED"))
+        checkError(
+          e,
+          "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED",
+          matchPVals = true,
+          parameters = Map(
+            "operation" -> "search condition of MERGE operation",
+            "expression" -> "\\(condition = .*\\)\\."))
     }
   }
 
@@ -303,7 +309,13 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
             update(
               condition = nonDeterministicCondition,
               set = "key = s.key, value = s.value")))
-        assert(e.getMessage.contains("DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED"))
+        checkError(
+          e,
+          "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED",
+          matchPVals = true,
+          parameters = Map(
+            "operation" -> "UPDATE condition of MERGE operation",
+            "expression" -> "\\(condition = .*\\)\\."))
     }
   }
 
@@ -320,7 +332,13 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
             src = s"$sourceName s",
             cond = s"s.key = t.key",
             delete(condition = nonDeterministicCondition)))
-        assert(e.getMessage.contains("DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED"))
+        checkError(
+          e,
+          "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED",
+          matchPVals = true,
+          parameters = Map(
+            "operation" -> "DELETE condition of MERGE operation",
+            "expression" -> "\\(condition = .*\\)\\."))
     }
   }
 
@@ -339,7 +357,13 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
             insert(
               condition = nonDeterministicCondition,
               values = "(key, value) VALUES (s.key, s.value)")))
-        assert(e.getMessage.contains("DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED"))
+        checkError(
+          e,
+          "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED",
+          matchPVals = true,
+          parameters = Map(
+            "operation" -> "INSERT condition of MERGE operation",
+            "expression" -> "\\(condition = .*\\)\\."))
     }
   }
 
@@ -358,7 +382,13 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
             updateNotMatched(
               condition = nonDeterministicCondition,
               set = "key = t.key, value = t.value + 1")))
-        assert(e.getMessage.contains("DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED"))
+        checkError(
+          e,
+          "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED",
+          matchPVals = true,
+          parameters = Map(
+            "operation" -> "UPDATE condition of MERGE operation",
+            "expression" -> "\\(condition = .*\\)\\."))
     }
   }
 
@@ -375,7 +405,13 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
             src = s"$sourceName s",
             cond = s"s.key = t.key",
             deleteNotMatched(condition = nonDeterministicCondition)))
-        assert(e.getMessage.contains("DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED"))
+        checkError(
+          e,
+          "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED",
+          matchPVals = true,
+          parameters = Map(
+            "operation" -> "DELETE condition of MERGE operation",
+            "expression" -> "\\(condition = .*\\)\\."))
     }
   }
 

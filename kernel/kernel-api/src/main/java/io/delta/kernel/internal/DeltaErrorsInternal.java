@@ -85,4 +85,13 @@ public class DeltaErrorsInternal {
         tablePath,
         String.format("Missing delta files: versions are not contiguous: (%s)", foundVersions));
   }
+
+  public static IllegalArgumentException invalidLatestSnapshotForMaxCatalogVersion(
+      long latestSnapshotVersion, long maxCatalogVersion) {
+    return new IllegalArgumentException(
+        String.format(
+            "When using timestamp boundaries with maxCatalogVersion, the provided "
+                + "snapshot version (%d) must equal maxCatalogVersion (%d)",
+            latestSnapshotVersion, maxCatalogVersion));
+  }
 }

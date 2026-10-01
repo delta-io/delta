@@ -59,4 +59,11 @@ public class CommitFailedException extends Exception {
   public boolean isConflict() {
     return conflict;
   }
+
+  @Override
+  public String toString() {
+    return String.format(
+        "%s: retryable=%s, conflict=%s, msg=%s",
+        getClass().getName(), retryable, conflict, getMessage());
+  }
 }

@@ -229,9 +229,15 @@ case class ConstructedDeltaLogMetadata(
     minVersion: Long,
     maxVersion: Long)
 
+/** Public constants for DeltaSharingLogFileSystem accessible visible outside the package */
+object DeltaSharingLogFileSystemConstants {
+  /** The URI scheme used for delta-sharing fake delta-logs. */
+  final val SCHEME = "delta-sharing-log"
+}
+
 private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
-  val SCHEME = "delta-sharing-log"
+  val SCHEME = DeltaSharingLogFileSystemConstants.SCHEME
 
   // The constant added as prefix to all delta sharing block ids.
   private val BLOCK_ID_TEST_PREFIX = "test_"
@@ -565,6 +571,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     val versionToDeltaSharingFileActions =
       scala.collection.mutable.Map[Long, ArrayBuffer[model.DeltaSharingFileAction]]()
     val versionToMetadata = scala.collection.mutable.Map[Long, model.DeltaSharingMetadata]()
+    val versionToProtocol = scala.collection.mutable.Map[Long, model.DeltaSharingProtocol]()
     val versionToJsonLogBuilderMap = scala.collection.mutable.Map[Long, ArrayBuffer[String]]()
     val versionToJsonLogSize = scala.collection.mutable.Map[Long, Long]().withDefaultValue(0L)
     var numFileActionsInMinVersion = 0
@@ -597,7 +604,23 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
             startingMetadataLineOpt = Some(metadata.deltaMetadata.json + "\n")
           }
         case protocol: model.DeltaSharingProtocol =>
-          startingProtocolLineOpt = Some(protocol.deltaProtocol.json + "\n")
+          if (protocol.version != null) {
+            // This is to handle the cdf and streaming query result when the client opts in to
+            // historical protocols: the server streams a Protocol for each protocol change inside
+            // the version range, each carrying the version it was committed at. Mirror the
+            // versioned metadata handling above: the head protocol (at minVersion) seeds
+            // minVersion.json, and later protocol changes are written to their own version.json.
+            minVersion = minVersion.min(protocol.version)
+            maxVersion = maxVersion.max(protocol.version)
+            versionToProtocol(protocol.version) = protocol
+            if (protocol.version == minVersion) {
+              startingProtocolLineOpt = Some(protocol.deltaProtocol.json + "\n")
+            }
+          } else {
+            // This is to handle the snapshot query result, or the response of a server that
+            // doesn't emit historical protocols: a single head protocol with no version.
+            startingProtocolLineOpt = Some(protocol.deltaProtocol.json + "\n")
+          }
         case _ => // do nothing, ignore the line.
       }
     }
@@ -636,6 +659,20 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
             ArrayBuffer[String]()
           ) += metadataStr
           versionToJsonLogSize(version) += metadataStr.getBytes(StandardCharsets.UTF_8).length
+        }
+    }
+    // Write historical protocols to the delta log json file. The head protocol at minVersion is
+    // already seeded into minVersion.json above (via startingProtocolLineOpt), so only later
+    // protocol changes are written here, mirroring the historical metadata handling.
+    versionToProtocol.foreach {
+      case (version, protocol) =>
+        if (version != minVersion) {
+          val protocolStr = protocol.deltaProtocol.json + "\n"
+          versionToJsonLogBuilderMap.getOrElseUpdate(
+            version,
+            ArrayBuffer[String]()
+          ) += protocolStr
+          versionToJsonLogSize(version) += protocolStr.getBytes(StandardCharsets.UTF_8).length
         }
     }
     // Write file actions to the delta log json file.

@@ -25,14 +25,17 @@ import org.apache.spark.sql.types._
 
 class TypeWideningInsertSchemaEvolutionExtendedSuite
   extends QueryTest
-  with DeltaDMLTestUtils
   with TypeWideningTestMixin
-  with TypeWideningInsertSchemaEvolutionExtendedTests {
+  with DeltaDMLTestUtilsNameBased
+  with TypeWideningInsertSchemaEvolutionExtendedTests
 
-  protected override def sparkConf: SparkConf = {
-    super.sparkConf
-      .set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
-  }
+/** Runs the extended type widening INSERT schema evolution tests against DSv2. */
+class TypeWideningInsertSchemaEvolutionExtendedDSv2Suite
+  extends QueryTest
+  with TypeWideningDSv2TestMixin
+  with TypeWideningInsertSchemaEvolutionExtendedTests {
+  // Schema evolution isn't supported yet for streaming writes in DSv2.
+  protected override def allInsertTypes: Set[Insert] = super.allInsertTypes - StreamingInsert
 }
 
 trait TypeWideningInsertSchemaEvolutionExtendedTests
@@ -47,7 +50,8 @@ trait TypeWideningInsertSchemaEvolutionExtendedTests
     insertData = TestData("a int, b int", Seq("""{ "a": 1, "b": 4 }""")),
     expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
-      .add("b", IntegerType))
+      .add("b", IntegerType)),
+    withSchemaEvolution = true
   )
 
   testInserts("top-level type evolution with column upcast")(
@@ -58,7 +62,8 @@ trait TypeWideningInsertSchemaEvolutionExtendedTests
     expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
       .add("b", IntegerType)
-      .add("c", IntegerType))
+      .add("c", IntegerType)),
+    withSchemaEvolution = true
   )
 
   testInserts("top-level type evolution with schema evolution")(
@@ -71,7 +76,8 @@ trait TypeWideningInsertSchemaEvolutionExtendedTests
       .add("b", IntegerType)
       .add("c", IntegerType)),
     // SQL INSERT by name doesn't support schema evolution.
-    excludeInserts = insertsSQL.intersect(insertsByName)
+    excludeInserts = insertsSQL.intersect(insertsByName),
+    withSchemaEvolution = true
   )
 
 
@@ -90,7 +96,8 @@ trait TypeWideningInsertSchemaEvolutionExtendedTests
         .add("x", ShortType)
         .add("y", IntegerType))
       .add("m", MapType(StringType, IntegerType))
-      .add("a", ArrayType(IntegerType)))
+      .add("a", ArrayType(IntegerType))),
+    withSchemaEvolution = true
   )
 
 
@@ -110,7 +117,8 @@ trait TypeWideningInsertSchemaEvolutionExtendedTests
         .add("y", IntegerType)
         .add("z", IntegerType))
       .add("m", MapType(StringType, IntegerType))
-      .add("a", ArrayType(IntegerType)))
+      .add("a", ArrayType(IntegerType))),
+    withSchemaEvolution = true
   )
 
 
@@ -127,7 +135,8 @@ trait TypeWideningInsertSchemaEvolutionExtendedTests
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", IntegerType)
-        .add("y", IntegerType)))
+        .add("y", IntegerType))),
+    withSchemaEvolution = true
   )
 
   // Interestingly, we introduced a special case to handle schema evolution / casting for structs
@@ -146,7 +155,8 @@ trait TypeWideningInsertSchemaEvolutionExtendedTests
       .add("key", IntegerType)
       .add("a", ArrayType(new StructType()
         .add("x", IntegerType)
-        .add("y", IntegerType))))
+        .add("y", IntegerType)))),
+    withSchemaEvolution = true
   )
 
   // maps now allow type evolution for INSERT by position and name in SQL and dataframe.
@@ -164,6 +174,7 @@ trait TypeWideningInsertSchemaEvolutionExtendedTests
       // Type evolution was applied in the map.
       .add("m", MapType(StringType, new StructType()
         .add("x", IntegerType)
-        .add("y", IntegerType))))
+        .add("y", IntegerType)))),
+    withSchemaEvolution = true
   )
 }

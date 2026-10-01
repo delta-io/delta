@@ -17,9 +17,15 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.clustering.ClusteringColumnInfo;
+import io.delta.kernel.commit.PublishFailedException;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.KernelException;
+import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -49,6 +55,24 @@ import java.util.Optional;
  */
 @Evolving
 public interface Snapshot {
+
+  /**
+   * Indicates how a checksum file should be written for this Snapshot. Use with {@link
+   * #writeChecksum(Engine, ChecksumWriteMode)}.
+   */
+  enum ChecksumWriteMode {
+    /**
+     * Checksum info is already loaded in this Snapshot and can be written cheaply. This mode uses
+     * pre-computed CRC information already in memory.
+     */
+    SIMPLE,
+
+    /**
+     * Checksum info is not loaded in this Snapshot and requires replaying the delta log since the
+     * latest checksum (if present) to compute. This mode performs full computation and writing.
+     */
+    FULL
+  }
 
   /** @return the file system path to this table */
   String getPath();
@@ -93,6 +117,40 @@ public interface Snapshot {
    */
   Map<String, String> getTableProperties();
 
+  /** @return statistics about this snapshot */
+  SnapshotStatistics getStatistics();
+
+  /**
+   * Get per-clustering-column descriptors with the physical column reference (as stored in the
+   * {@code delta.clustering} domain), the logical column reference (resolved against {@link
+   * #getSchema()}), and the column's data type. Returned in the order the columns appear in the
+   * domain.
+   *
+   * <ul>
+   *   <li>{@code Optional.empty()} -- snapshot has no {@code delta.clustering} domain
+   *   <li>{@code Optional.of(List.of())} -- clustered with no columns
+   *   <li>{@code Optional.of([info1, info2])} -- clustered with the listed columns
+   * </ul>
+   *
+   * <p>Implementations must override this method; the default body throws {@link
+   * UnsupportedOperationException}. A turnkey implementation can compose {@link
+   * #getDomainMetadata(String)} (with {@link ClusteringColumnInfo#CLUSTERING_DOMAIN_NAME}) and
+   * {@link ClusteringColumnInfo#resolveAllFromDomainJson(StructType, String)}; overrides are
+   * encouraged to cache the result so repeated callers (e.g. plan rules invoking it per file group)
+   * don't re-deserialize the JSON and re-walk the schema.
+   *
+   * @throws UnsupportedOperationException if the {@link Snapshot} implementation does not override
+   *     this method.
+   * @throws KernelException if the {@code delta.clustering} domain JSON is not a valid clustering
+   *     domain configuration, or if a physical clustering column cannot be resolved against the
+   *     snapshot's schema.
+   * @since 4.3.0
+   */
+  default Optional<List<ClusteringColumnInfo>> getClusteringColumnInfos() {
+    throw new UnsupportedOperationException(
+        "getClusteringColumnInfos() is not implemented for this Snapshot");
+  }
+
   /** @return a scan builder to construct a {@link Scan} to read data from this snapshot */
   ScanBuilder getScanBuilder();
 
@@ -101,4 +159,63 @@ public interface Snapshot {
    * @since 3.4.0
    */
   UpdateTableTransactionBuilder buildUpdateTableTransaction(String engineInfo, Operation operation);
+
+  /**
+   * Publishes all catalog commits at this table version. Applicable only to catalog-managed tables.
+   * This method is a no-op for filesystem-managed tables, if the committer doesn't support
+   * publishing, or if there's no catalog commits to publish.
+   *
+   * <p>Publishing copies ratified catalog commits to the Delta log as published Delta files,
+   * reducing catalog storage requirements and enabling some table maintenance operations, like
+   * checkpointing.
+   *
+   * @param engine the engine to use for publishing commits
+   * @see io.delta.kernel.commit.CatalogCommitter#publish
+   * @throws PublishFailedException if the publish operation fails
+   * @return a new Snapshot reflecting the published state
+   */
+  Snapshot publish(Engine engine) throws PublishFailedException;
+
+  /**
+   * Writes a checksum file for this snapshot using the specified mode:
+   *
+   * <ul>
+   *   <li>SIMPLE: Uses pre-computed CRC information already loaded in memory. This is the fastest
+   *       approach but requires CRC info to be available. Throws {@link IllegalStateException} if
+   *       CRC information is not available.
+   *   <li>FULL: Computes the necessary CRC information by replaying the delta log since the latest
+   *       checksum (if present). This may be expensive for large tables when CRC information is not
+   *       available.
+   * </ul>
+   *
+   * <p>Use {@link SnapshotStatistics#getChecksumWriteMode()} to check if writing is needed and to
+   * determine the appropriate mode.
+   *
+   * <p>This method should only be called if a checksum file does not already exist at this version.
+   * If it already does, this method is a no-op.
+   *
+   * <p>If a concurrent writer creates the checksum file for this version between when this snapshot
+   * was loaded and when this method is called, the method will detect the existing checksum and
+   * return successfully without error. This ensures safe concurrent checksum writing.
+   *
+   * @param engine the engine to use for writing the checksum file and potentially reading the log
+   * @param mode the mode specifying how to write the checksum (SIMPLE or FULL)
+   * @throws IOException if an I/O error occurs during checksum computation or writing
+   * @throws IllegalStateException if mode is SIMPLE but CRC information is not available
+   * @see SnapshotStatistics#getChecksumWriteMode()
+   */
+  void writeChecksum(Engine engine, ChecksumWriteMode mode) throws IOException;
+
+  /**
+   * Writes a checkpoint for the current snapshot.
+   *
+   * @param engine The execution engine used to write the checkpoint and, if necessary, read log
+   *     entries required to compute it.
+   * @throws IOException If an I/O error occurs while computing or writing the checkpoint.
+   * @throws IllegalStateException If attempting to create a checkpoint on an unpublished catalog
+   *     managed commit.
+   * @throws CheckpointAlreadyExistsException If a checkpoint already exists for the target snapshot
+   *     version.
+   */
+  void writeCheckpoint(Engine engine) throws IOException, CheckpointAlreadyExistsException;
 }

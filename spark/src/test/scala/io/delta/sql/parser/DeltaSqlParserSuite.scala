@@ -28,7 +28,6 @@ import org.apache.spark.sql.delta.commands.{DeltaOptimizeContext, DescribeDeltaD
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
@@ -544,5 +543,48 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
         }, "_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
       }
     }
+  }
+
+  test("string coalescing") {
+    val parser = new DeltaSqlParser(new SparkSqlParser())
+
+    val pathToTable = "/path/to/table"
+    val partedPathes = Seq(
+      "'/path/to/table'",
+      "'/path/to' '/table'",
+      "'/path' '/to' '/table'"
+    )
+
+    partedPathes.foreach { path =>
+      // CLONE LOCATION
+      val cloneCmd = parser.parsePlan(
+        s"CREATE TABLE t1 SHALLOW CLONE source LOCATION $path")
+      assert(cloneCmd.asInstanceOf[CloneTableStatement].targetLocation === Some(pathToTable))
+
+      // OPTIMIZE
+      val optimizeCmd = parser.parsePlan(s"OPTIMIZE $path")
+      assert(optimizeCmd ===
+        OptimizeTableCommand(Some(pathToTable), None, Nil)(Nil))
+
+      // DESCRIBE HISTORY
+      var describeHistoryCmd = parser.parsePlan(s"DESCRIBE HISTORY $path")
+      assert(describeHistoryCmd.asInstanceOf[DescribeDeltaHistory].child ===
+        UnresolvedPathBasedDeltaTable(pathToTable, Map.empty, DescribeDeltaHistory.COMMAND_NAME))
+
+      // DESCRIBE DETAIL
+      val describeDetailCmd = parser.parsePlan(s"DESCRIBE DETAIL $path")
+      assert(describeDetailCmd ===
+        DescribeDeltaDetailCommand(
+          UnresolvedPathBasedTable(pathToTable, Map.empty, DescribeDeltaDetailCommand.CMD_NAME),
+          Map.empty))
+
+      // VACUUM
+      val vacuumCmd = parser.parsePlan(s"VACUUM $path")
+      assert(vacuumCmd ===
+        VacuumTableCommand(
+          UnresolvedPathBasedDeltaTable(pathToTable, Map.empty, "VACUUM"),
+          None, None, None, false, None))
+      }
+
   }
 }

@@ -21,16 +21,17 @@ import java.nio.ByteBuffer
 import java.util.{Map => JMap}
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.JsonUtils
-import org.apache.iceberg.{DataFile, PartitionData, PartitionField, Schema, StructLike, Table}
-import org.apache.iceberg.types.{Conversions, Type => IcebergType}
-import org.apache.iceberg.types.Type.{PrimitiveType => IcebergPrimitiveType, TypeID}
-import org.apache.iceberg.types.Types.{
+import shadedForDelta.org.apache.iceberg.{DataFile, PartitionData, PartitionField, Schema, StructLike, Table}
+import shadedForDelta.org.apache.iceberg.types.{Conversions, Type => IcebergType}
+import shadedForDelta.org.apache.iceberg.types.Type.{PrimitiveType => IcebergPrimitiveType, TypeID}
+import shadedForDelta.org.apache.iceberg.types.Types.{
   DateType => IcebergDateType,
   ListType => IcebergListType,
   MapType => IcebergMapType,
@@ -39,7 +40,7 @@ import org.apache.iceberg.types.Types.{
   StructType => IcebergStructType,
   TimestampType => IcebergTimestampType
 }
-import org.apache.iceberg.util.DateTimeUtil
+import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
 
 import org.apache.spark.sql.SparkSession
 
@@ -228,24 +229,35 @@ object IcebergStatsUtils extends DeltaLogging {
         fields: java.util.List[NestedField],
         valueMap: Map[JInt, Any],
         deserializer: (IcebergType, Any) => Any,
-        statsAllowTypes: Set[TypeID]): Map[String, Any] = {
-      fields.asScala.flatMap { field =>
+        statsAllowTypes: Set[TypeID]): mutable.Map[String, Any] = {
+      // Accumulate into a mutable map and iterate the Java field list directly (no
+      // JavaConverters wrapping). This avoids the immutable HAMT node reallocation
+      // (BitmapIndexedMapNode) that a per-column insert into a Scala immutable Map incurs,
+      // and the per-call JListWrapper allocation from fields.asScala.
+      val stats = mutable.LinkedHashMap.empty[String, Any]
+      val it = fields.iterator()
+      while (it.hasNext) {
+        val field = it.next()
         field.`type`() match {
           case st: IcebergStructType =>
-            Some(field.name ->
-              collectStats(st.fields, valueMap, deserializer, statsAllowTypes))
+            stats += field.name ->
+              collectStats(st.fields, valueMap, deserializer, statsAllowTypes)
           case pt: IcebergPrimitiveType
             if valueMap.contains(field.fieldId) && statsAllowTypes.contains(pt.typeId) =>
-            Option(deserializer(pt, valueMap(field.fieldId))).map(field.name -> _)
+            val value = deserializer(pt, valueMap(field.fieldId))
+            if (value != null) stats += field.name -> value
           case pt: IcebergListType
             if valueMap.contains(field.fieldId) && statsAllowTypes.contains(pt.typeId) =>
-            Option(deserializer(pt, valueMap(field.fieldId))).map(field.name -> _)
+            val value = deserializer(pt, valueMap(field.fieldId))
+            if (value != null) stats += field.name -> value
           case pt: IcebergMapType
             if valueMap.contains(field.fieldId) && statsAllowTypes.contains(pt.typeId) =>
-            Option(deserializer(pt, valueMap(field.fieldId))).map(field.name -> _)
-          case _ => None
+            val value = deserializer(pt, valueMap(field.fieldId))
+            if (value != null) stats += field.name -> value
+          case _ => // Not a stats-bearing field: skip.
         }
-      }.toMap
+      }
+      stats
     }
 
     JsonUtils.toJson(

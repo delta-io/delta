@@ -22,8 +22,10 @@ import io.delta.kernel.{Operation, Table, TableManager}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{KernelException, UnsupportedTableFeatureException}
 import io.delta.kernel.internal.TableConfig
+import io.delta.kernel.internal.actions.{Metadata, Protocol}
+import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode
@@ -53,7 +55,7 @@ class CatalogManagedWithIcebergWriterCompatV1Suite
         .withCommitter(committerUsingPutIfAbsent)
         .withTableProperties(
           Map(
-            "delta.feature.catalogOwned-preview" -> "supported",
+            TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported",
             TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true").asJava)
         .build(engine)
 
@@ -61,9 +63,14 @@ class CatalogManagedWithIcebergWriterCompatV1Suite
       createTxn.commit(engine, emptyIterable[Row])
 
       // ===== THEN =====
-      verifyIcebergWriterCompatV1Enabled(tablePath, engine)
-      val protocol = getProtocol(engine, tablePath)
-      assert(protocol.supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW))
+      val snapshotImpl = TableManager
+        .loadSnapshot(tablePath)
+        .asInstanceOf[SnapshotBuilderImpl]
+        .withMaxCatalogVersion(0)
+        .build(engine)
+      verifyIcebergWriterCompatV1Enabled(snapshotImpl.getProtocol, snapshotImpl.getMetadata)
+      assert(
+        snapshotImpl.getProtocol.supportsFeature(TableFeatures.CATALOG_MANAGED_RW_FEATURE))
     }
   }
 
@@ -73,7 +80,10 @@ trait IcebergWriterCompatV1TestUtils { self: AbstractWriteUtils =>
   def verifyIcebergWriterCompatV1Enabled(tablePath: String, engine: Engine): Unit = {
     val protocol = getProtocol(engine, tablePath)
     val metadata = getMetadata(engine, tablePath)
+    verifyIcebergWriterCompatV1Enabled(protocol, metadata)
+  }
 
+  def verifyIcebergWriterCompatV1Enabled(protocol: Protocol, metadata: Metadata): Unit = {
     // Check expected protocol features are enabled
     assert(protocol.supportsFeature(TableFeatures.ICEBERG_COMPAT_V2_W_FEATURE))
     assert(protocol.supportsFeature(TableFeatures.COLUMN_MAPPING_RW_FEATURE))
@@ -460,7 +470,9 @@ trait IcebergWriterCompatV1SuiteBase
 
   testIncompatibleUnsupportedTableFeature(
     "changeDataFeed",
-    tablePropertiesToEnable = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true"))
+    tablePropertiesToEnable = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true"),
+    expectedErrorMessage =
+      "Table features [changeDataFeed] are incompatible with icebergWriterCompatV1")
 
   testIncompatibleUnsupportedTableFeature(
     "invariants",
@@ -553,12 +565,6 @@ trait IcebergWriterCompatV1SuiteBase
   testIncompatibleUnsupportedTableFeature(
     "defaultColumns inactive",
     tablePropertiesToEnable = Map("delta.feature.defaultColumns" -> "supported"),
-    expectedErrorMessage = "Unsupported Delta table feature")
-
-  // collations is not added to Kernel yet --> throws an error on feature lookup
-  testIncompatibleUnsupportedTableFeature(
-    "collations inactive",
-    tablePropertiesToEnable = Map("delta.feature.collations" -> "supported"),
     expectedErrorMessage = "Unsupported Delta table feature")
 
   /* ----- Legacy incompatible features allowed if they are inactive  ----- */

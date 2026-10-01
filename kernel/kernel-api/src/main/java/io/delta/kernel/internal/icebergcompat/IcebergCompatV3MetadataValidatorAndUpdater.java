@@ -22,6 +22,7 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.columndefaults.ColumnDefaults;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.utils.DataFileStatus;
 import java.util.List;
@@ -63,10 +64,17 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
    *     requirements
    */
   public static Optional<Metadata> validateAndUpdateIcebergCompatV3Metadata(
-      boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
+      boolean isCreatingNewTable,
+      Metadata newMetadata,
+      Protocol newProtocol,
+      Optional<Protocol> prevProtocol) {
     return INSTANCE.validateAndUpdateMetadata(
         new IcebergCompatInputContext(
-            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
+            INSTANCE.compatFeatureName(),
+            isCreatingNewTable,
+            newMetadata,
+            newProtocol,
+            prevProtocol));
   }
 
   /**
@@ -114,7 +122,13 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
             CHECK_ONLY_ICEBERG_COMPAT_V3_ENABLED,
             CHECK_HAS_ALLOWED_PARTITION_TYPES,
             CHECK_HAS_NO_PARTITION_EVOLUTION,
-            CHECK_HAS_SUPPORTED_TYPE_WIDENING)
+            CHECK_HAS_SUPPORTED_TYPE_WIDENING,
+            CHECK_LITERAL_DEFAULT_VALUE)
         .collect(toList());
   }
+
+  protected static IcebergCompatCheck CHECK_LITERAL_DEFAULT_VALUE =
+      (inputContext) ->
+          ColumnDefaults.validateSchemaForIcebergCompat(
+              inputContext.newMetadata.getSchema(), ICEBERG_COMPAT_V3_W_FEATURE.featureName());
 }

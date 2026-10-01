@@ -306,8 +306,8 @@ public final class GenerateIcebergCompatActionUtils {
             fileStatus,
             partitionValues,
             dataChange,
-            Optional.empty() /* baseRowId */,
-            Optional.empty() /* defaultRowCommitVersion */,
+            baseRowId,
+            defaultRowCommitVersion,
             deletionVectorDescriptor);
     return SingleAction.createRemoveFileSingleAction(removeFileRow);
   }

@@ -1,0 +1,597 @@
+/*
+ * Copyright (2025) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.sparkuctest;
+
+import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
+
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils;
+import io.unitycatalog.client.api.TablesApi;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import org.apache.hadoop.fs.Path;
+import org.apache.log4j.Logger;
+import org.apache.spark.SparkConf;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DynamicContainer;
+import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.TestFactory;
+import org.opentest4j.TestAbortedException;
+
+/**
+ * Abstract base class for Unity Catalog + Delta Table integration tests.
+ *
+ * <p>This class provides a pluggable SQL execution framework via the SQLExecutor interface,
+ * allowing tests to be written once and executed via different execution engines (e.g., Spark SQL,
+ * JDBC, REST API, etc.).
+ *
+ * <p>Subclasses must provide an executor by implementing the getSqlExecutor method.
+ */
+public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
+  public static final List<TableType> ALL_TABLE_TYPES =
+      List.of(TableType.EXTERNAL, TableType.MANAGED);
+
+  protected static String sparkVersion() {
+    return org.apache.spark.package$.MODULE$.SPARK_VERSION();
+  }
+
+  protected static boolean isSparkMasterSnapshot() {
+    return sparkVersion().contains("SNAPSHOT");
+  }
+
+  protected static void assumeUcSparkMasterCompatible(String suiteName) {
+    Assumptions.assumeFalse(
+        isSparkMasterSnapshot(),
+        suiteName
+            + " are temporarily skipped on Spark master because the current Unity Catalog "
+            + "Spark connector does not yet support the current Spark master "
+            + "CatalogStorageFormat ABI.");
+  }
+
+  /**
+   * Tests with this annotation will test against ALL_TABLE_TYPES. Example:
+   *
+   * <pre>{@code
+   * @TestAllTableTypes
+   * public void testAdvancedInsertOperations(TableType tableType)
+   * }</pre>
+   */
+  @Target(ElementType.METHOD)
+  @Retention(RetentionPolicy.RUNTIME)
+  public @interface TestAllTableTypes {}
+
+  /** Generate dynamic tests for all methods with @TestAllTableTypes to run with ALL_TABLE_TYPES. */
+  @TestFactory
+  Stream<DynamicContainer> allTableTypesTestsFactory() {
+    List<Method> methods =
+        Stream.of(this.getClass().getDeclaredMethods())
+            .filter(m -> m.isAnnotationPresent(TestAllTableTypes.class))
+            .collect(Collectors.toList());
+    List<DynamicContainer> containers = new ArrayList<>();
+    for (Method method : methods) {
+      List<DynamicTest> tests = new ArrayList<>();
+      for (TableType tableType : ALL_TABLE_TYPES) {
+        String testName = String.format("%s(%s)", method.getName(), tableType);
+        tests.add(
+            DynamicTest.dynamicTest(
+                testName,
+                () -> {
+                  try {
+                    method.invoke(this, tableType);
+                  } catch (InvocationTargetException e) {
+                    // Unwrap so JUnit sees the original exception type. Without this,
+                    // TestAbortedException (thrown by Assumptions) gets wrapped and JUnit
+                    // treats the test as failed instead of skipped. Also unwrap
+                    // RuntimeException/Error so assertThrows() in individual tests still
+                    // matches the expected exception class rather than InvocationTargetException.
+                    Throwable cause = e.getCause();
+                    if (cause instanceof TestAbortedException) throw (TestAbortedException) cause;
+                    if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+                    if (cause instanceof Error) throw (Error) cause;
+                    throw e;
+                  }
+                }));
+      }
+      containers.add(DynamicContainer.dynamicContainer(method.getName(), tests));
+    }
+    return containers.stream();
+  }
+
+  private SparkSession sparkSession;
+
+  /** Create the SparkSession before all tests. */
+  @BeforeAll
+  public void setUpSpark() {
+    assumeUcSparkMasterCompatible("Unity Catalog integration tests");
+
+    // UC server is started by UnityCatalogSupport.setupServer()
+    // And the BeforeAll of parent class UnityCatalogSupport will be called before this method.
+
+    SparkConf conf =
+        new SparkConf()
+            .setAppName("UnityCatalog Integration Tests")
+            .setMaster("local[2]")
+            .set("spark.ui.enabled", "false")
+            // Delta Lake required configurations
+            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .set(
+                "spark.sql.catalog.spark_catalog",
+                "org.apache.spark.sql.delta.catalog.DeltaCatalog");
+
+    // Configure with Unity Catalog
+    conf = configureSparkWithUnityCatalog(conf);
+
+    sparkSession = SparkSession.builder().config(conf).getOrCreate();
+  }
+
+  private SparkConf configureSparkWithUnityCatalog(SparkConf conf) {
+    // Use fake S3 filesystem for local testing; real S3A for remote UC.
+    if (isUCRemoteConfigured()) {
+      conf.set("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+    } else {
+      conf.set("spark.hadoop.fs.s3.impl", S3CredentialFileSystem.class.getName());
+    }
+
+    // Set the catalog specific configs.
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String catalogName = uc.catalogName();
+    String catalogPrefix = "spark.sql.catalog." + catalogName;
+    conf =
+        conf.set(catalogPrefix, "io.unitycatalog.spark.UCSingleCatalog")
+            .set(catalogPrefix + ".uri", uc.serverUri());
+    if (uc.oauthTokenUri() != null) {
+      // OAuth client-credentials: the connector fetches a token from the OAuth token endpoint
+      // (uc.oauthTokenUri(): the local broker, or a real IdP for remote runs) and sends it as a
+      // Bearer. No static `.token` is set.
+      conf =
+          conf.set(catalogPrefix + ".auth.type", "oauth")
+              .set(catalogPrefix + ".auth.oauth.uri", uc.oauthTokenUri())
+              .set(catalogPrefix + ".auth.oauth.clientId", uc.oauthClientId())
+              .set(catalogPrefix + ".auth.oauth.clientSecret", uc.oauthClientSecret());
+    } else {
+      conf = conf.set(catalogPrefix + ".token", uc.serverToken());
+    }
+    if (!useDeltaRestApiForTests()) {
+      // Default is true. Tests can opt out.
+      conf =
+          conf.set(
+              "spark.sql.catalog." + catalogName + "." + UCConfigUtils.DELTA_REST_API_ENABLED_KEY,
+              "false");
+    }
+    return conf;
+  }
+
+  /**
+   * Whether the class-level @AfterAll should assert that the UC Delta API actually served at least
+   * one load. Override to false in classes that intentionally exercise only the fallback path
+   * (which does NOT bump the successfulDeltaRestApiLoads counter), so the class-level check doesn't
+   * false-positive when test sharding distributes methods across CI shards.
+   */
+  protected boolean expectDeltaRestApiSuccessAtClassLevel() {
+    return true;
+  }
+
+  private static final Logger LOG = Logger.getLogger(UCDeltaTableIntegrationBaseTest.class);
+
+  private long deltaRestApiLoadsAtClassStart;
+  private long loadTableInvocationsAtClassStart;
+
+  @BeforeAll
+  public void captureDeltaRestApiBaseline() {
+    deltaRestApiLoadsAtClassStart =
+        UCDeltaCatalogClientImpl.successfulDeltaRestApiLoadsForTesting();
+    loadTableInvocationsAtClassStart = UCDeltaCatalogClientImpl.loadTableInvocationsForTesting();
+  }
+
+  @AfterAll
+  public void verifyDeltaRestApiExercisedAtClassLevel() {
+    if (!useDeltaRestApiForTests() || !expectDeltaRestApiSuccessAtClassLevel()) {
+      return;
+    }
+    long loadInvocationsAfter = UCDeltaCatalogClientImpl.loadTableInvocationsForTesting();
+    if (loadInvocationsAfter <= loadTableInvocationsAtClassStart) {
+      // Every test in the suite was aborted (e.g. via Assumption.assumeTrue) before any
+      // loadTable call ran, so there is nothing to assert about the UC Delta API path.
+      return;
+    }
+    long after = UCDeltaCatalogClientImpl.successfulDeltaRestApiLoadsForTesting();
+    if (after <= deltaRestApiLoadsAtClassStart) {
+      throw new AssertionError(
+          "Suite finished but no UCDeltaCatalogClientImpl.loadTable call actually returned a "
+              + "Delta table via the UC Delta API. deltaRestApi.enabled is on but every "
+              + "load either fell back to the legacy delegate or threw. baseline="
+              + deltaRestApiLoadsAtClassStart
+              + ", after="
+              + after);
+    }
+    LOG.info(
+        "[delta-api] "
+            + getClass().getSimpleName()
+            + " successful UC Delta API loads: "
+            + (after - deltaRestApiLoadsAtClassStart));
+  }
+
+  /** Stop the SparkSession after all tests. */
+  @AfterAll
+  public void tearDownSpark() {
+    if (sparkSession != null) {
+      sparkSession.stop();
+      sparkSession = null;
+    }
+    // UC server is stopped by UnityCatalogSupport.tearDownServer()
+  }
+
+  /** Get the SparkSession for direct access (e.g., for streaming operations). */
+  protected SparkSession spark() {
+    return sparkSession;
+  }
+
+  /** Get the SQL executor. Private to force subclasses to use sql() and check() methods. */
+  private SQLExecutor getSqlExecutor() {
+    return new SparkSQLExecutor(sparkSession);
+  }
+
+  /**
+   * Execute SQL through the SQL executor and return results.
+   *
+   * <p>When called with arguments, formats the SQL query using String.format:
+   *
+   * <pre>
+   * sql("INSERT INTO %s VALUES (%d, '%s')", tableName, 1, "value")
+   * </pre>
+   *
+   * <p>When called without arguments, executes the SQL as-is:
+   *
+   * <pre>
+   * sql("CREATE TABLE test (id INT)")
+   * </pre>
+   *
+   * @param sqlQuery SQL query with optional format specifiers (e.g., "SELECT * FROM %s WHERE id =
+   *     %d")
+   * @param args Arguments to be formatted into the SQL query
+   * @return List of result rows, each row is a list of string values
+   */
+  protected List<List<String>> sql(String sqlQuery, Object... args) {
+    String formattedQuery = args.length > 0 ? String.format(sqlQuery, args) : sqlQuery;
+    return getSqlExecutor().runSQL(formattedQuery);
+  }
+
+  /**
+   * Verify table contents by selecting all rows ordered by the first column.
+   *
+   * @param tableName The fully qualified table name
+   * @param expected The expected results as a list of rows
+   */
+  protected void check(String tableName, List<List<String>> expected) {
+    getSqlExecutor().checkWithSQL("SELECT * FROM " + tableName + " ORDER BY 1", expected);
+  }
+
+  /**
+   * Verify that {@code actual} equals {@code expected}, with an error message that includes both.
+   * Use this overload when the caller has already run the query and just needs to compare the row
+   * list (e.g. queries that aren't a plain {@code SELECT *}).
+   */
+  protected void check(List<List<String>> actual, List<List<String>> expected) {
+    if (!actual.equals(expected)) {
+      throw new AssertionError(
+          String.format("Query results do not match.\nExpected: %s\nActual: %s", expected, actual));
+    }
+  }
+
+  /** Helper method to run code with a temporary directory that gets cleaned up. */
+  protected void withTempDir(TempDirCode code) throws Exception {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    Path tempDir = new Path(uc.baseTableLocation(), "temp-" + UUID.randomUUID());
+    code.run(tempDir);
+  }
+
+  /** Table types for parameterized testing. */
+  public enum TableType {
+    EXTERNAL, // Requires LOCATION clause
+    MANAGED // No LOCATION clause (Spark manages the data)
+  }
+
+  /**
+   * Helper method to create a new Delta table, run test code, and clean up.
+   *
+   * @param tableName The simple table name (without catalog/schema prefix)
+   * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param partitionFields The partition fields (e.g., "id, name")
+   * @param tableType The type of table (EXTERNAL or MANAGED)
+   * @param tableProperties Additional table properties (e.g., "delta.enableChangeDataFeed"="true")
+   * @param testCode The test function that receives the full table name
+   */
+  protected void withNewTable(
+      String tableName,
+      String tableSchema,
+      String partitionFields,
+      TableType tableType,
+      String tableProperties,
+      TestCode testCode)
+      throws Exception {
+    String fullTableName = fullTableName(tableName);
+
+    // Create th partition cause.
+    StringBuilder partitionCause = new StringBuilder();
+    if (partitionFields != null && !partitionFields.trim().isEmpty()) {
+      partitionCause.append(String.format("PARTITIONED BY (%s)", partitionFields));
+    }
+
+    // Build table properties clause
+    StringBuilder tblPropertiesClause = new StringBuilder();
+    if (tableType == TableType.MANAGED) {
+      tblPropertiesClause.append("'delta.feature.catalogManaged'='supported'");
+    }
+    if (tableProperties != null && !tableProperties.trim().isEmpty()) {
+      if (tblPropertiesClause.length() > 0) {
+        tblPropertiesClause.append(", ");
+      }
+      tblPropertiesClause.append(tableProperties);
+    }
+
+    final String tblPropertiesSql;
+    if (tblPropertiesClause.length() > 0) {
+      tblPropertiesSql = "TBLPROPERTIES (" + tblPropertiesClause + ")";
+    } else {
+      tblPropertiesSql = "";
+    }
+
+    if (tableType == TableType.EXTERNAL) {
+      // External table requires a location
+      withTempDir(
+          (Path dir) -> {
+            Path tablePath = new Path(dir, tableName);
+            sql("DROP TABLE IF EXISTS %s", fullTableName);
+            sql(
+                "CREATE TABLE %s (%s) USING DELTA %s %s LOCATION '%s'",
+                fullTableName,
+                tableSchema,
+                partitionCause.toString(),
+                tblPropertiesSql,
+                tablePath.toString());
+
+            try {
+              testCode.run(fullTableName);
+            } finally {
+              sql("DROP TABLE IF EXISTS %s", fullTableName);
+            }
+          });
+    } else {
+      // Managed table - Spark manages the location
+      // Unity Catalog requires 'delta.feature.catalogManaged'='supported' for managed tables
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+      sql(
+          "CREATE TABLE %s (%s) USING DELTA %s %s",
+          fullTableName, tableSchema, partitionCause.toString(), tblPropertiesSql);
+
+      try {
+        testCode.run(fullTableName);
+      } finally {
+        sql("DROP TABLE IF EXISTS %s", fullTableName);
+      }
+    }
+  }
+
+  /**
+   * Helper method to create a new Delta table, run test code, and clean up.
+   *
+   * @param tableName The simple table name (without catalog/schema prefix)
+   * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param partitionFields The partition fields (e.g., "id, name")
+   * @param tableType The type of table (EXTERNAL or MANAGED)
+   * @param testCode The test function that receives the full table name
+   */
+  protected void withNewTable(
+      String tableName,
+      String tableSchema,
+      String partitionFields,
+      TableType tableType,
+      TestCode testCode)
+      throws Exception {
+    withNewTable(tableName, tableSchema, partitionFields, tableType, null, testCode);
+  }
+
+  /**
+   * Helper method to create a new Delta table, run test code, and clean up.
+   *
+   * @param tableName The simple table name (without catalog/schema prefix)
+   * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param tableType The type of table (EXTERNAL or MANAGED)
+   * @param testCode The test function that receives the full table name
+   */
+  protected void withNewTable(
+      String tableName, String tableSchema, TableType tableType, TestCode testCode)
+      throws Exception {
+    withNewTable(tableName, tableSchema, null, tableType, testCode);
+  }
+
+  /** Returns the fully qualified table name for a given simple table name. */
+  protected String fullTableName(String simpleName) {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    return uc.catalogName() + "." + uc.schemaName() + "." + simpleName;
+  }
+
+  /** Returns the UC table ID for the given table. */
+  protected String currentUcTableId(String fullTableName) throws Exception {
+    TablesApi tablesApi = new TablesApi(unityCatalogInfo().createApiClient());
+    return tablesApi.getTable(fullTableName, false, false).getTableId();
+  }
+
+  /** Returns the current (latest) version of the table. */
+  protected long currentVersion(String tableName) {
+    return Long.parseLong(sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(0));
+  }
+
+  /** Returns the timestamp of the current (latest) version. */
+  protected String currentTimestamp(String tableName) {
+    return sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(1);
+  }
+
+  /**
+   * Asserts that the given operation throws an exception whose cause chain contains {@code
+   * expectedMessage}.
+   */
+  protected void assertThrowsWithCauseContaining(
+      String expectedMessage, ThrowingCallable operation) {
+    assertThatThrownBy(operation)
+        .satisfies(
+            e -> {
+              Throwable t = e;
+              while (t != null) {
+                if (t.getMessage() != null && t.getMessage().contains(expectedMessage)) {
+                  return;
+                }
+                t = t.getCause();
+              }
+              throw new AssertionError(
+                  "Expected exception containing '"
+                      + expectedMessage
+                      + "' in cause chain, but none found. Top-level: "
+                      + e,
+                  e);
+            });
+  }
+
+  /**
+   * Asserts that the given operation throws an exception whose cause chain contains at least one of
+   * the provided messages.
+   */
+  protected void assertThrowsWithCauseContainingAny(
+      List<String> expectedMessages, ThrowingCallable operation) {
+    assertThatThrownBy(operation)
+        .satisfies(
+            e -> {
+              Throwable t = e;
+              while (t != null) {
+                String message = t.getMessage();
+                if (message != null
+                    && expectedMessages.stream().anyMatch(expected -> message.contains(expected))) {
+                  return;
+                }
+                t = t.getCause();
+              }
+              throw new AssertionError(
+                  "Expected exception containing one of "
+                      + expectedMessages
+                      + " in cause chain, but none found. Top-level: "
+                      + e,
+                  e);
+            });
+  }
+
+  /** Helper to build an expected row as a list of string values. */
+  protected static List<String> row(String... values) {
+    return List.of(values);
+  }
+
+  /** Functional interface for test code that takes a temporary directory. */
+  @FunctionalInterface
+  protected interface TempDirCode {
+
+    void run(Path dir) throws Exception;
+  }
+
+  /** Functional interface for test code that takes a table name parameter. */
+  @FunctionalInterface
+  protected interface TestCode {
+
+    void run(String tableName) throws Exception;
+  }
+
+  /**
+   * Interface defining the interface for executing SQL and verifying results.
+   *
+   * <p>This abstraction allows tests to be independent of the execution engine, making it easy to
+   * test the same logic via different interfaces (Spark SQL, JDBC, etc.).
+   */
+  public interface SQLExecutor {
+
+    /**
+     * Execute a SQL statement and return the results.
+     *
+     * @param sql The SQL statement to execute
+     * @return The query results as a list of rows, where each row is a list of strings
+     */
+    List<List<String>> runSQL(String sql);
+
+    /**
+     * Execute a SQL query and verify the results match the expected output.
+     *
+     * @param sql The SQL query to execute
+     * @param expected The expected results as a list of rows
+     */
+    void checkWithSQL(String sql, List<List<String>> expected);
+  }
+
+  /**
+   * Default SQL executor implementation using SparkSession.
+   *
+   * <p>This executor runs all SQL queries through Spark SQL and converts results to string lists
+   * for easy comparison.
+   */
+  public static class SparkSQLExecutor implements SQLExecutor {
+
+    private final SparkSession spark;
+
+    public SparkSQLExecutor(SparkSession spark) {
+      this.spark = spark;
+    }
+
+    @Override
+    public List<List<String>> runSQL(String sql) {
+      Dataset<Row> df = spark.sql(sql);
+      Row[] rows = (Row[]) df.collect();
+      return Arrays.stream(rows)
+          .map(
+              row -> {
+                List<String> cells = new java.util.ArrayList<>();
+                for (int i = 0; i < row.length(); i++) {
+                  cells.add(row.isNullAt(i) ? "null" : row.get(i).toString());
+                }
+                return cells;
+              })
+          .collect(Collectors.toList());
+    }
+
+    @Override
+    public void checkWithSQL(String sql, List<List<String>> expected) {
+      List<List<String>> actual = runSQL(sql);
+      if (!actual.equals(expected)) {
+        throw new AssertionError(
+            String.format(
+                "Query results do not match.\nSQL: %s\n Expected: %s\nActual: %s",
+                sql, expected, actual));
+      }
+    }
+  }
+}

@@ -25,6 +25,7 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
+import io.delta.kernel.internal.util.GeometryUtils;
 import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.types.*;
 import java.io.IOException;
@@ -380,7 +381,8 @@ public class DataFileStatistics {
     // Variant stats in JSON are Z85 encoded strings, all other stats should match the field type
     DataType expectedLiteralType =
         field.getDataType() instanceof VariantType ? StringType.STRING : field.getDataType();
-    if (literal.getDataType() == null || !literal.getDataType().equals(expectedLiteralType)) {
+    if (literal.getDataType() == null
+        || !expectedLiteralType.isWriteCompatible(literal.getDataType())) {
       throw DeltaErrors.statsTypeMismatch(
           field.getName(), expectedLiteralType, literal.getDataType());
     }
@@ -436,6 +438,12 @@ public class DataFileStatistics {
       LocalDateTime localDateTime = ChronoUnit.MICROS.addTo(EPOCH, epochMicros).toLocalDateTime();
       LocalDateTime truncated = localDateTime.truncatedTo(ChronoUnit.MILLIS);
       generator.writeString(truncated.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+    } else if (type instanceof GeometryType) {
+      GeometryUtils.validatePointWKT((String) value);
+      generator.writeString((String) value);
+    } else if (type instanceof GeographyType) {
+      GeometryUtils.validateGeographyPointWKT((String) value);
+      generator.writeString((String) value);
     } else {
       throw unsupportedStatsDataType(type);
     }

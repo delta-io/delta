@@ -22,20 +22,27 @@ import io.delta.kernel.exceptions.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TypeChange;
 import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Contains methods to create user-facing Delta exceptions. */
 public final class DeltaErrors {
+  private static final Logger logger = LoggerFactory.getLogger(DeltaErrors.class);
+
   private DeltaErrors() {}
 
   public static KernelException missingCheckpoint(String tablePath, long checkpointVersion) {
@@ -100,29 +107,15 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException noCommitFilesFoundForVersionRange(
+  public static CommitRangeNotFoundException noCommitFilesFoundForVersionRange(
       String tablePath, long startVersion, Optional<Long> endVersionOpt) {
-    String message =
-        String.format(
-            "%s: Requested table changes between [%s, %s] but no log files found in the requested"
-                + " version range.",
-            tablePath, startVersion, endVersionOpt);
-    return new KernelException(message);
+    return new CommitRangeNotFoundException(tablePath, startVersion, endVersionOpt);
   }
 
-  public static KernelException startVersionNotFound(
+  public static StartVersionNotFoundException startVersionNotFound(
       String tablePath, long startVersionRequested, Optional<Long> earliestAvailableVersion) {
-    String message =
-        String.format(
-            "%s: Requested table changes beginning with startVersion=%s but no log file found for "
-                + "version %s.",
-            tablePath, startVersionRequested, startVersionRequested);
-    if (earliestAvailableVersion.isPresent()) {
-      message =
-          message
-              + String.format(" Earliest available version is %s", earliestAvailableVersion.get());
-    }
-    return new KernelException(message);
+    return new StartVersionNotFoundException(
+        tablePath, startVersionRequested, earliestAvailableVersion);
   }
 
   public static KernelException endVersionNotFound(
@@ -144,60 +137,89 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static KernelException invalidResolvedVersionRange(
+      String tablePath, long startVersion, long endVersion) {
+    String message =
+        String.format(
+            "%s: Invalid resolved version range: after timestamp resolution, "
+                + "startVersion=%d > endVersion=%d. "
+                + "Please adjust the provided timestamp boundaries.",
+            tablePath, startVersion, endVersion);
+    return new KernelException(message);
+  }
+
+  public static KernelException resolvedEndVersionAfterMaxCatalogVersion(
+      String tablePath, long resolvedEndVersion, long maxCatalogVersion) {
+    String message =
+        String.format(
+            "%s: Resolved end version to %s which is after max catalog version %s",
+            tablePath, resolvedEndVersion, maxCatalogVersion);
+    return new KernelException(message);
+  }
+
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
-  public static KernelException unsupportedReaderProtocol(
-      String tablePath, int tableReaderVersion) {
-    String message =
-        String.format(
-            "Unsupported Delta protocol reader version: table `%s` requires reader version %s "
-                + "which is unsupported by this version of Delta Kernel.",
-            tablePath, tableReaderVersion);
-    return new KernelException(message);
+  public static UnsupportedProtocolVersionException unsupportedReaderProtocol(
+      String tablePath, int minReaderVersion, int minWriterVersion) {
+    return new UnsupportedProtocolVersionException(
+        tablePath,
+        minReaderVersion,
+        minWriterVersion,
+        UnsupportedProtocolVersionException.ProtocolVersionType.READER);
   }
 
-  public static KernelException unsupportedWriterProtocol(
-      String tablePath, int tableWriterVersion) {
-    String message =
-        String.format(
-            "Unsupported Delta protocol writer version: table `%s` requires writer version %s "
-                + "which is unsupported by this version of Delta Kernel.",
-            tablePath, tableWriterVersion);
-    return new KernelException(message);
+  public static UnsupportedProtocolVersionException unsupportedWriterProtocol(
+      String tablePath, int minReaderVersion, int minWriterVersion) {
+    return new UnsupportedProtocolVersionException(
+        tablePath,
+        minReaderVersion,
+        minWriterVersion,
+        UnsupportedProtocolVersionException.ProtocolVersionType.WRITER);
   }
 
-  public static KernelException unsupportedTableFeature(String feature) {
+  public static UnsupportedTableFeatureException unsupportedTableFeature(String feature) {
     String message =
         String.format(
             "Unsupported Delta table feature: table requires feature \"%s\" "
                 + "which is unsupported by this version of Delta Kernel.",
             feature);
-    return new KernelException(message);
+    return new UnsupportedTableFeatureException(null, feature, message);
   }
 
-  public static KernelException unsupportedReaderFeatures(
+  public static UnsupportedTableFeatureException unsupportedReaderFeatures(
       String tablePath, Set<String> readerFeatures) {
     String message =
         String.format(
             "Unsupported Delta reader features: table `%s` requires reader table features [%s] "
                 + "which is unsupported by this version of Delta Kernel.",
             tablePath, String.join(", ", readerFeatures));
-    return new KernelException(message);
+    return new UnsupportedTableFeatureException(tablePath, readerFeatures, message);
   }
 
-  public static KernelException unsupportedWriterFeatures(
+  public static UnsupportedTableFeatureException unsupportedWriterFeatures(
       String tablePath, Set<String> writerFeatures) {
     String message =
         String.format(
-            "Unsupported Delta writer feature: table `%s` requires writer table feature \"%s\" "
+            "Unsupported Delta writer features: table `%s` requires writer table features [%s] "
                 + "which is unsupported by this version of Delta Kernel.",
-            tablePath, writerFeatures);
-    return new KernelException(message);
+            tablePath, String.join(", ", writerFeatures));
+    return new UnsupportedTableFeatureException(tablePath, writerFeatures, message);
   }
 
   public static KernelException columnInvariantsNotSupported() {
     String message =
         "This version of Delta Kernel does not support writing to tables with "
             + "column invariants present.";
+    return new KernelException(message);
+  }
+
+  public static KernelException checkpointOnUnpublishedCommits(
+      String tablePath, long version, long maxPublishedVersion) {
+    String message =
+        String.format(
+            "Unable to create checkpoint: Snapshot at at path"
+                + " `%s` with version %d has unpublished commits. "
+                + "Max known published version is %d",
+            tablePath, version, maxPublishedVersion);
     return new KernelException(message);
   }
 
@@ -314,6 +336,15 @@ public final class DeltaErrors {
             compatVersion, dataType));
   }
 
+  public static KernelException icebergCompatRequiresLiteralDefaultValue(
+      String compatVersion, DataType dataType, String value) {
+    throw new KernelException(
+        format(
+            "%s requires the default value to be literal with correct data types for "
+                + "a column. '%s: %s' is invalid.",
+            compatVersion, dataType, value));
+  }
+
   public static KernelException icebergCompatIncompatibleTableFeatures(
       String compatVersion, Set<TableFeature> incompatibleFeatures) {
     throw new KernelException(
@@ -353,6 +384,39 @@ public final class DeltaErrors {
   }
 
   // End: icebergCompat exceptions
+
+  // Start: Column Defaults Exceptions
+
+  // TODO migrate this to InvalidTableException when table info is available at the call site
+  public static KernelException defaultValueRequiresTableFeature() {
+    return new KernelException(
+        "Found column defaults in the schema but the table does not support the "
+            + "columnDefaults table feature.");
+  }
+
+  public static KernelException defaultValueRequireIcebergV3() {
+    return new KernelException(
+        "In Delta Kernel, default values table feature requires "
+            + "IcebergCompatV3 to be enabled.");
+  }
+
+  public static KernelException unsupportedDataTypeForDefaultValue(
+      String fieldName, String fieldType) {
+    return new KernelException(
+        String.format(
+            "Kernel does not support default value for " + "data type %s: %s",
+            fieldType, fieldName));
+  }
+
+  public static KernelException nonLiteralDefaultValue(String value) {
+    return new KernelException(
+        String.format(
+            "currently only literal values are supported for default values in Kernel."
+                + " %s is an invalid default value",
+            value));
+  }
+
+  // End: Column Defaults Exceptions
 
   public static KernelException partitionColumnMissingInData(
       String tablePath, String partitionColumn) {
@@ -429,6 +493,18 @@ public final class DeltaErrors {
     return new ConcurrentWriteException(message);
   }
 
+  public static ConcurrentWriteException concurrentDeleteDeleteException(
+      String filePath, long attemptVersion) {
+    String message =
+        String.format(
+            "A concurrent transaction removed (or updated the deletion vector of) file %s that "
+                + "this transaction (attempting version %d) also removes. Letting both commits "
+                + "through would leave two active entries for the same data file. Retry the "
+                + "operation against the latest table state.",
+            filePath, attemptVersion);
+    return new ConcurrentWriteException(message);
+  }
+
   public static KernelException missingNumRecordsStatsForRowTracking() {
     return new KernelException(
         "Cannot write to a rowTracking-supported table without 'numRecords' statistics. "
@@ -469,6 +545,17 @@ public final class DeltaErrors {
             tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
   }
 
+  public static KernelException cdfMixedAddRemoveNotSupported(String tablePath) {
+    return new KernelException(
+        String.format(
+            "Cannot add and remove data in the same transaction when Change Data Feed is enabled "
+                + "on table %s. This would require writing CDC files for DML operations, which is "
+                + "not yet supported by Delta Kernel. You can perform add-only operations (like "
+                + "INSERT or CREATE TABLE), remove-only operations (like DELETE), or mixed "
+                + "operations with dataChange=false (like OPTIMIZE).",
+            tablePath));
+  }
+
   public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {
     return new KernelException(
         String.format("Required metadata key %s is not present in scan file %s.", entry, filePath));
@@ -494,7 +581,55 @@ public final class DeltaErrors {
             version));
   }
 
+  public static KernelException metadataMissingRequiredCatalogTableProperty(
+      String committerClassName,
+      Map<String, String> missingOrViolatingProperties,
+      Map<String, String> requiredCatalogTableProperties) {
+    final String details =
+        missingOrViolatingProperties.entrySet().stream()
+            .map(
+                entry ->
+                    String.format(
+                        "%s (current: '%s', required: '%s')",
+                        entry.getKey(),
+                        entry.getValue(),
+                        requiredCatalogTableProperties.get(entry.getKey())))
+            .collect(Collectors.joining(", "));
+    return new KernelException(
+        String.format(
+            "[%s] Metadata is missing or has incorrect values for required catalog properties: %s.",
+            committerClassName, details));
+  }
+
+  public static KernelException invalidFieldMove(
+      int columnId,
+      Optional<SchemaIterable.ParentStructFieldInfo> currentParent,
+      Optional<SchemaIterable.ParentStructFieldInfo> newParent) {
+    return new KernelException(
+        String.format(
+            "Cannot move fields between different levels of nesting: "
+                + "field with fieldId=%s is nested under %s in the current schema and under %s in "
+                + "the new schema",
+            columnId, formatParentField(currentParent), formatParentField(newParent)));
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
+
+  private static String formatParentField(Optional<SchemaIterable.ParentStructFieldInfo> parent) {
+    if (!parent.isPresent()) {
+      return "ROOT";
+    }
+    StructField parentField = parent.get().getParentField();
+    String pathToParentField = parent.get().getPathFromParent();
+    if (pathToParentField.isEmpty()) {
+      // Example: "StructField(name=c1, ...)"
+      return parentField.toString();
+    } else {
+      // Example: "StructField(name=c1, ...) at path=key.element"
+      return parentField.toString() + " at path=" + pathToParentField;
+    }
+  }
+
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();
   }
@@ -507,6 +642,16 @@ public final class DeltaErrors {
       // Let any KernelExceptions fall through (even though these generally shouldn't
       // originate from the engine implementation there are some edge cases such as
       // deserializeStructType)
+      throw e;
+    } catch (KernelEngineException e) {
+      // Don't double-wrap: KernelEngineException is a sibling of KernelException (both extend
+      // RuntimeException), so it doesn't match the catch above. Without this, an already-wrapped
+      // engine exception gets re-wrapped by an outer wrapEngineException call, which hides the
+      // original cause one extra level deep and breaks direct-cause checks at consumers.
+      logger.debug(
+          "Rethrowing already-wrapped KernelEngineException while handling engine operation: {}",
+          String.format(msgString, args),
+          e);
       throw e;
     } catch (RuntimeException e) {
       throw new KernelEngineException(String.format(msgString, args), e);
@@ -526,6 +671,14 @@ public final class DeltaErrors {
       // Let any KernelExceptions fall through (even though these generally shouldn't
       // originate from the engine implementation there are some edge cases such as
       // deserializeStructType)
+      throw e;
+    } catch (KernelEngineException e) {
+      // See note in wrapEngineException: avoid double-wrapping an already-wrapped engine
+      // exception.
+      logger.debug(
+          "Rethrowing already-wrapped KernelEngineException while handling engine operation: {}",
+          String.format(msgString, args),
+          e);
       throw e;
     } catch (RuntimeException e) {
       throw new KernelEngineException(String.format(msgString, args), e);

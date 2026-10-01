@@ -136,7 +136,7 @@ public class TableImpl implements Table {
   public void checksum(Engine engine, long version) throws TableNotFoundException, IOException {
     final LogSegment logSegmentAtVersion =
         snapshotManager.getLogSegmentForVersion(engine, Optional.of(version));
-    ChecksumUtils.computeStateAndWriteChecksum(engine, logSegmentAtVersion);
+    ChecksumUtils.computeStateAndWriteChecksum(engine, logSegmentAtVersion, clock);
   }
 
   @Override
@@ -193,8 +193,13 @@ public class TableImpl implements Table {
         DeltaLogActionUtils.getCommitFilesForVersionRange(
             engine, new Path(tablePath), startVersion, Optional.of(endVersion));
 
-    return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
-        engine, tablePath, commitFiles, actionSet);
+    // Get CommitActions for each file
+    CloseableIterator<io.delta.kernel.CommitActions> commits =
+        DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
+            engine, tablePath, commitFiles, actionSet);
+
+    // Flatten and add version/timestamp columns
+    return TableChangesUtils.flattenCommitsAndAddMetadata(engine, commits);
   }
 
   protected Path getDataPath() {

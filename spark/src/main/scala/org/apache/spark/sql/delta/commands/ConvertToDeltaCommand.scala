@@ -22,6 +22,7 @@ import java.lang.reflect.InvocationTargetException
 import java.util.Locale
 
 import scala.collection.JavaConverters._
+import scala.util.{Failure, Success, Try}
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
@@ -111,7 +112,16 @@ abstract class ConvertToDeltaCommandBase(
       return Seq.empty[Row]
     }
 
+    validateConvert(targetTable)
     performConvert(spark, txn, convertProperties, targetTable)
+  }
+
+  private def validateConvert(table: ConvertTargetTable): Unit = {
+    Try(table.tableSchema) match {
+      case Success(schema) =>
+        DeltaGeoSpatial.failIfSchemaHasGeoColumn(schema, "CONVERT TO DELTA")
+      case Failure(_) =>
+    }
   }
 
   /** Given the table identifier, figure out what our conversion target is. */
@@ -389,19 +399,24 @@ abstract class ConvertToDeltaCommandBase(
       checkConversionIsAllowed(txn, targetTable)
 
       val numFiles = targetTable.numFiles
-      val addFilesIter = createDeltaActions(spark, manifest, partitionFields, txn, fs)
+      val addFilesIter = createDeltaActions(spark, manifest, partitionFields, txn, fs).buffered
       val transactionMetrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
       )
       metrics("numConvertedFiles") += numFiles
       sendDriverMetrics(spark, metrics)
+      val convertsAnyFile = addFilesIter.hasNext
+      if (convertsAnyFile) {
+        assert(addFilesIter.head.dataChange, "CONVERT must emit AddFiles with dataChange = true")
+      }
       txn.commitLarge(
         spark,
         addFilesIter,
         Some(txn.protocol),
         getOperation(numFiles, convertProperties, targetTable.format),
         getContext,
-        transactionMetrics)
+        transactionMetrics,
+        dataChange = Some(convertsAnyFile))
     } finally {
       manifest.close()
     }

@@ -228,6 +228,34 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
   }
 
   /**
+   * Container for parent StructField information returned by {@link
+   * SchemaElement#getParentStructFieldAndPath()}.
+   */
+  public static class ParentStructFieldInfo {
+    private final StructField parentField;
+    private final String pathFromParent;
+
+    public ParentStructFieldInfo(StructField parentField, String pathFromParent) {
+      this.parentField = parentField;
+      this.pathFromParent = pathFromParent;
+    }
+
+    /** Returns the nearest parent StructField. */
+    public StructField getParentField() {
+      return parentField;
+    }
+
+    /**
+     * Returns the path from the nearest parent StructField. If the nearest parent StructField is a
+     * direct ancestor, this is "". Otherwise, the path is of the format {@code
+     * ((key|value|element).)*(key|value|element)}
+     */
+    public String getPathFromParent() {
+      return pathFromParent;
+    }
+  }
+
+  /**
    * Interface for representing a schema element as part of a traversal.
    *
    * <p>This object should always be treated ephemeral and not be referenced once {@code next()} is
@@ -236,6 +264,16 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
   public interface SchemaElement {
     /** Get the current field. */
     StructField getField();
+
+    /**
+     * Returns the nearest parent StructField (is a member of a StructType) if it exists. For an
+     * element that is at the root-level of the schema, this returns Optional.empty().
+     *
+     * <p>Also returns the path from the nearest parent StructField. If the nearest parent
+     * StructField is a direct ancestor, this is "". Otherwise, the path is of the format {@code
+     * ((key|value|element).)*(key|value|element)}
+     */
+    Optional<ParentStructFieldInfo> getParentStructFieldAndPath();
 
     /** Returns the path to the node via user facing names. */
     String getNamePath();
@@ -397,6 +435,25 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
         return null;
       }
       return parents.get(parents.size() - 1);
+    }
+
+    @Override
+    public Optional<ParentStructFieldInfo> getParentStructFieldAndPath() {
+      if (parents.isEmpty()) {
+        return Optional.empty();
+      }
+      LinkedList<String> names = new LinkedList<>();
+      for (int i = parents.size() - 1; i >= 0; i--) {
+        SchemaZipper parent = parents.get(i);
+        if (parent.isStructField()) {
+          return Optional.of(
+              new ParentStructFieldInfo(parent.getField(), SchemaUtils.concatWithDot(names)));
+        }
+        // We are traversing parents in reverse so need to insert at the start
+        names.addFirst(parent.currentField().getName());
+      }
+      throw new IllegalStateException(
+          "At least one parent must be a struct field for a valid schema");
     }
 
     /**

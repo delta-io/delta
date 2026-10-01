@@ -708,6 +708,24 @@ trait TypeWideningMetadataEndToEndTests {
         "metadata": { }
       }
     ]}""".stripMargin)
+
+  testTypeWideningMetadata("void->any type change is not recorded")(
+    initialSchema = "a int, v void",
+    typeChanges = Seq("v" -> "int"),
+    expectedJsonSchema =
+      """{
+      "type": "struct",
+      "fields": [{
+        "name": "a",
+        "type": "integer",
+        "nullable": true,
+        "metadata": {}
+      }, {
+        "name": "v",
+        "type": "integer",
+        "nullable": true,
+        "metadata": {}
+      }]}""".stripMargin)
 }
 
 

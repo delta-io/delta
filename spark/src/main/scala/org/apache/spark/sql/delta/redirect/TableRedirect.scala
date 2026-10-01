@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.redirect
 
-import java.util.UUID
+import java.util.{Locale, UUID}
 
 import scala.reflect.ClassTag
 import scala.util.DynamicVariable
@@ -30,7 +30,8 @@ import org.apache.spark.sql.delta.{
   DeltaOperations,
   RedirectReaderWriterFeature,
   RedirectWriterOnlyFeature,
-  Snapshot
+  Snapshot,
+  SnapshotDescriptor
 }
 import org.apache.spark.sql.delta.DeltaLog.logPathFor
 import org.apache.spark.sql.delta.actions.Metadata
@@ -419,24 +420,24 @@ class TableRedirect(val config: DeltaConfig[Option[String]]) {
 
 object RedirectReaderWriter extends TableRedirect(config = DeltaConfigs.REDIRECT_READER_WRITER) {
   /** True if `snapshot` enables redirect-reader-writer feature. */
-  def isFeatureSupported(snapshot: Snapshot): Boolean = {
+  def isFeatureSupported(snapshot: SnapshotDescriptor): Boolean = {
     snapshot.protocol.isFeatureSupported(RedirectReaderWriterFeature)
   }
 
   /** True if the update property command tries to set/unset redirect-reader-writer feature. */
-  def isUpdateProperty(snapshot: Snapshot, propKeys: Seq[String]): Boolean = {
+  def isUpdateProperty(snapshot: SnapshotDescriptor, propKeys: Seq[String]): Boolean = {
     propKeys.contains(DeltaConfigs.REDIRECT_READER_WRITER.key) && isFeatureSupported(snapshot)
   }
 }
 
 object RedirectWriterOnly extends TableRedirect(config = DeltaConfigs.REDIRECT_WRITER_ONLY) {
   /** True if `snapshot` enables redirect-writer-only feature. */
-  def isFeatureSupported(snapshot: Snapshot): Boolean = {
+  def isFeatureSupported(snapshot: SnapshotDescriptor): Boolean = {
     snapshot.protocol.isFeatureSupported(RedirectWriterOnlyFeature)
   }
 
   /** True if the update property command tries to set/unset redirect-writer-only feature. */
-  def isUpdateProperty(snapshot: Snapshot, propKeys: Seq[String]): Boolean = {
+  def isUpdateProperty(snapshot: SnapshotDescriptor, propKeys: Seq[String]): Boolean = {
     propKeys.contains(DeltaConfigs.REDIRECT_WRITER_ONLY.key) && isFeatureSupported(snapshot)
   }
 }
@@ -445,7 +446,7 @@ object RedirectFeature {
   /**
    * Determine whether the redirect-reader-writer or the redirect-writer-only feature is supported.
    */
-  def isFeatureSupported(snapshot: Snapshot): Boolean = {
+  def isFeatureSupported(snapshot: SnapshotDescriptor): Boolean = {
     RedirectReaderWriter.isFeatureSupported(snapshot) ||
     RedirectWriterOnly.isFeatureSupported(snapshot)
   }
@@ -505,7 +506,7 @@ object RedirectFeature {
    * Determine whether the operation `op` updates the existing redirect-reader-writer or
    * redirect-writer-only table property of a table with `snapshot`.
    */
-  def isUpdateProperty(snapshot: Snapshot, op: DeltaOperations.Operation): Boolean = {
+  def isUpdateProperty(snapshot: SnapshotDescriptor, op: DeltaOperations.Operation): Boolean = {
     op match {
       case _ @ DeltaOperations.SetTableProperties(properties) =>
         val propertyKeys = properties.keySet.toSeq
@@ -519,10 +520,24 @@ object RedirectFeature {
   }
 
   /**
+   * Determine whether the operation `op` is dropping either the redirect-reader-writer or
+   * redirect-writer-only table feature.
+   */
+  def isDropFeature(op: DeltaOperations.Operation): Boolean = op match {
+    case DeltaOperations.DropTableFeature(featureName, _) => isRedirectFeature(featureName)
+    case _ => false
+  }
+
+  def isRedirectFeature(name: String): Boolean = {
+    name.toLowerCase(Locale.ROOT) == RedirectReaderWriterFeature.name.toLowerCase(Locale.ROOT) ||
+    name.toLowerCase(Locale.ROOT) == RedirectWriterOnlyFeature.name.toLowerCase(Locale.ROOT)
+  }
+
+  /**
    * Get the current `TableRedirectConfiguration` object from the snapshot.
    * Note that the redirect-reader-writer takes precedence over redirect-writer-only.
    */
-  def getRedirectConfiguration(snapshot: Snapshot): Option[TableRedirectConfiguration] = {
+  def getRedirectConfiguration(snapshot: SnapshotDescriptor): Option[TableRedirectConfiguration] = {
     getRedirectConfiguration(snapshot.metadata.configuration)
   }
 
@@ -584,13 +599,13 @@ object RedirectFeature {
   }
 
   def validateTableRedirect(
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       catalogTable: Option[CatalogTable],
       configs: Map[String, String]
   ): Unit = {
     val identifier = catalogTable
       .map(_.identifier.quotedString)
-      .getOrElse(s"delta.`${snapshot.deltaLog.logPath.toString}`")
+      .getOrElse(s"delta.`${snapshot.logPath.toString}`")
     if (configs.contains(DeltaConfigs.REDIRECT_READER_WRITER.key)) {
       if (RedirectWriterOnly.isFeatureSet(snapshot.metadata)) {
         throw DeltaErrors.invalidSetUnSetRedirectCommand(

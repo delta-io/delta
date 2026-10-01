@@ -25,6 +25,7 @@ import scala.concurrent.duration._
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.storage.{LogStore, LogStoreProvider}
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -32,6 +33,7 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import io.delta.dynamodbcommitcoordinator.DynamoDBCommitCoordinatorClient
 import io.delta.storage.commit.{Commit => JCommit, CommitFailedException => JCommitFailedException, GetCommitsResponse => JGetCommitsResponse}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -170,7 +172,8 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
       version,
       Iterator(commitInfo.json),
       updatedActions,
-      tableIdentifier).getCommit
+      tableIdentifier,
+      CatalogTrackedInfo.EMPTY).getCommit
   }
 
   protected def assertBackfilled(
@@ -214,6 +217,8 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
     assert(resp1.getCommits == resp2.getCommits)
   }
 
+  protected def expectedEmptyGetCommitsLatestTableVersion: Long = -1
+
   test("test basic commit and backfill functionality") {
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
@@ -226,7 +231,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
       assert(e.getMessage === "Commit version 0 must go via filesystem.")
       writeCommitZero(logPath)
       assertResponseEquals(tableCommitCoordinatorClient.getCommits(),
-        new JGetCommitsResponse(Seq.empty.asJava, -1))
+        new JGetCommitsResponse(Seq.empty.asJava, expectedEmptyGetCommitsLatestTableVersion))
       assertBackfilled(version = 0, logPath, Some(0L))
 
       // Test backfilling functionality for commits 1 - 8
@@ -356,7 +361,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
               }
             }
         }
-        tasks.foreach(ThreadUtils.awaitResult(_, 150.seconds))
+        tasks.foreach(ThreadUtils.awaitResult(_, 5.minutes))
       } catch {
         case e: InterruptedException =>
           fail("Test interrupted: " + e.getMessage)

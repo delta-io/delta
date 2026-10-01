@@ -17,10 +17,10 @@
 package org.apache.spark.sql.delta.typewidening
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.Relocated.StreamExecution
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.execution.streaming.StreamExecution
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types._
@@ -30,8 +30,7 @@ import org.apache.spark.sql.types._
  */
 class TypeWideningStreamingSinkSuite
   extends DeltaSinkImplicitCastSuiteBase
-  with TypeWideningTestMixin
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with TypeWideningTestMixin {
 
   import testImplicits._
 
@@ -39,14 +38,13 @@ class TypeWideningStreamingSinkSuite
     super.beforeAll()
     // Set by default confs to enable automatic type widening in all tests. Negative tests should
     // explicitly disable these.
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
     spark.conf.set(DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey, "true")
     spark.conf.set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
     // Ensure we don't silently cast test inputs to null on overflow.
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
-  testSparkMasterOnly("type is widened if automatic widening set to always") {
+  test("type is widened if automatic widening set to always") {
     withDeltaStream[Int] { stream =>
       stream.write(17)("CAST(value AS SHORT)")
       assert(stream.currentSchema("value").dataType === ShortType)
@@ -114,20 +112,6 @@ class TypeWideningStreamingSinkSuite
     }
   }
 
-  test("type can be widened even if type casting is disabled in the sink") {
-    withDeltaStream[Int] { stream =>
-      stream.write(17)("CAST(value AS SHORT)")
-      assert(stream.currentSchema("value").dataType === ShortType)
-      checkAnswer(stream.read(), Row(17))
-
-      withSQLConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "false") {
-        stream.write(Int.MaxValue)("CAST(value AS INT)")
-        assert(stream.currentSchema("value").dataType === IntegerType)
-        checkAnswer(stream.read(), Row(17) :: Row(Int.MaxValue) :: Nil)
-      }
-    }
-  }
-
   test("type isn't changed if it's not a wider type") {
     withDeltaStream[Int] { stream =>
       stream.write(Int.MaxValue)("CAST(value AS INT)")
@@ -141,26 +125,30 @@ class TypeWideningStreamingSinkSuite
   }
 
   test("type isn't changed if it's not eligible for automatic widening: int -> decimal") {
-    withDeltaStream[Int] { stream =>
-      stream.write(17)("CAST(value AS INT)")
-      assert(stream.currentSchema("value").dataType === IntegerType)
-      checkAnswer(stream.read(), Row(17))
+    withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "same_family_type") {
+      withDeltaStream[Int] { stream =>
+        stream.write(17)("CAST(value AS INT)")
+        assert(stream.currentSchema("value").dataType === IntegerType)
+        checkAnswer(stream.read(), Row(17))
 
-      stream.write(567)("CAST(value AS DECIMAL(20, 0))")
-      assert(stream.currentSchema("value").dataType === IntegerType)
-      checkAnswer(stream.read(), Row(17) :: Row(567) :: Nil)
+        stream.write(567)("CAST(value AS DECIMAL(20, 0))")
+        assert(stream.currentSchema("value").dataType === IntegerType)
+        checkAnswer(stream.read(), Row(17) :: Row(567) :: Nil)
+      }
     }
   }
 
   test("type isn't changed if it's not eligible for automatic widening: int -> double") {
-    withDeltaStream[Int] { stream =>
-      stream.write(17)("CAST(value AS INT)")
-      assert(stream.currentSchema("value").dataType === IntegerType)
-      checkAnswer(stream.read(), Row(17))
+    withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "same_family_type") {
+      withDeltaStream[Int] { stream =>
+        stream.write(17)("CAST(value AS INT)")
+        assert(stream.currentSchema("value").dataType === IntegerType)
+        checkAnswer(stream.read(), Row(17))
 
-      stream.write(567)("CAST(value AS DOUBLE)")
-      assert(stream.currentSchema("value").dataType === IntegerType)
-      checkAnswer(stream.read(), Row(17) :: Row(567) :: Nil)
+        stream.write(567)("CAST(value AS DOUBLE)")
+        assert(stream.currentSchema("value").dataType === IntegerType)
+        checkAnswer(stream.read(), Row(17) :: Row(567) :: Nil)
+      }
     }
   }
 

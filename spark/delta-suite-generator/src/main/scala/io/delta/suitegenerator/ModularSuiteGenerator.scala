@@ -41,7 +41,7 @@ object ModularSuiteGenerator {
   /**
    * Controls when to start truncating and hashing the suite names to prevent extremely long names.
    */
-  private val SUITE_NAME_CHAR_LIMIT = 255 - 136
+  private val SUITE_NAME_CHAR_LIMIT = 255 - 148
 
   private lazy val OPT_REPO_PATH = new Option(
     /* option = */ "p",
@@ -92,7 +92,7 @@ object ModularSuiteGenerator {
             } yield accValue :+ traitWithAlias)
         }
         .filterNot(dimTraits => SuiteGeneratorConfig.isExcluded(baseSuite, dimTraits.map(_._1)))
-        .map(dimTraits => generateCode(baseSuite, dimTraits))
+        .map(dimTraits => generateCode(testGroup, baseSuite, dimTraits))
 
       suitesWriter.writeGeneratedSuitesOfGroup(suites.flatten, testGroup)
     }
@@ -143,6 +143,7 @@ object ModularSuiteGenerator {
   private lazy val BASE32 = new Base32()
 
   private def generateCode(
+      testGroup: TestGroup,
       baseSuite: String,
       mixinsAndAliases: List[(String, String)]): TestSuite = {
     val allMixins = SuiteGeneratorConfig
@@ -158,7 +159,8 @@ object ModularSuiteGenerator {
     var suiteName = baseSuitePrefix + mixinSuffix
 
     // Truncate the name and replace with a consistent hash if line becomes longer than the limit
-    val maxSuiteNameLength = SUITE_NAME_CHAR_LIMIT - "Suite".length
+    val maxSuiteNameLength =
+      SUITE_NAME_CHAR_LIMIT - "Suite".length - s"${testGroup.packageName}.".length
     if (suiteName.length > maxSuiteNameLength) {
       // scalastyle:off println
       println(s"WARNING: Suite name is too long, truncating and hashing to fit within the limit. " +

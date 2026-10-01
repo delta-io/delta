@@ -23,7 +23,7 @@ def exists(spark, filepath):
     try:
         spark.read.load(path=filepath, format="delta")
     except AnalysisException as exception:
-        if "is not a Delta table" in exception.getMessage() or "Path does not exist" in exception.getMessage():
+        if "is not a Delta table" in str(exception) or "Path does not exist" in str(exception):
             return False
         raise exception
     return True

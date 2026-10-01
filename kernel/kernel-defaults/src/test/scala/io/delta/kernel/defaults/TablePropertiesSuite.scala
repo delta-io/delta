@@ -19,7 +19,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.{Table, TableManager}
 import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
-import io.delta.kernel.exceptions.{KernelException, UnknownConfigurationException}
+import io.delta.kernel.exceptions.{InvalidConfigurationValueException, KernelException, UnknownConfigurationException}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -332,5 +332,69 @@ trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
   def assertPropsDNE(tablePath: String, keys: Set[String]): Unit = {
     val metadata = getMetadata(defaultEngine, tablePath)
     assert(keys.forall(!metadata.getConfiguration.containsKey(_)))
+  }
+
+  test("create table with delta.parquet.compression.codec stores value") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+      createUpdateTableWithProps(
+        tablePath,
+        createTable = true,
+        propsAdded = Map("delta.parquet.compression.codec" -> "snappy"))
+      assertHasProp(tablePath, Map("delta.parquet.compression.codec" -> "snappy"))
+    }
+  }
+
+  test("update table with delta.parquet.compression.codec succeeds") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+      createUpdateTableWithProps(tablePath, createTable = true)
+      createUpdateTableWithProps(
+        tablePath,
+        propsAdded = Map("delta.parquet.compression.codec" -> "gzip"))
+      assertHasProp(tablePath, Map("delta.parquet.compression.codec" -> "gzip"))
+    }
+  }
+
+  test("create table with invalid delta.parquet.compression.codec throws") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+      val ex = intercept[InvalidConfigurationValueException] {
+        createUpdateTableWithProps(
+          tablePath,
+          createTable = true,
+          propsAdded = Map("delta.parquet.compression.codec" -> "invalid"))
+      }
+      assert(ex.getMessage.contains("delta.parquet.compression.codec"))
+    }
+  }
+
+  val recognizedButUnimplementedProps = Seq(
+    ("delta.dataSkippingStatsColumns", "col1,col2,nested.field"))
+
+  recognizedButUnimplementedProps.foreach { case (propKey, value) =>
+    test(s"$propKey is allowed (but not implemented) - create table") {
+      withTempDir { tempFile =>
+        val tablePath = tempFile.getAbsolutePath
+        createUpdateTableWithProps(
+          tablePath,
+          createTable = true,
+          propsAdded = Map(propKey -> value))
+        assertHasProp(tablePath, Map(propKey -> value))
+      }
+    }
+
+    test(s"$propKey is allowed (but not implemented) - update table") {
+      withTempDir { tempFile =>
+        val tablePath = tempFile.getAbsolutePath
+        createUpdateTableWithProps(tablePath, createTable = true)
+
+        val updatedValue = s"${value}_updated"
+        createUpdateTableWithProps(
+          tablePath,
+          propsAdded = Map(propKey -> updatedValue))
+        assertHasProp(tablePath, Map(propKey -> updatedValue))
+      }
+    }
   }
 }

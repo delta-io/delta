@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.util
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
@@ -28,10 +30,23 @@ class SchemaIterableSuite extends AnyFunSuite {
 
     val iterable = new SchemaIterable(schema)
 
+    def parentStructFieldAndPathToString(
+        parent: Optional[SchemaIterable.ParentStructFieldInfo]): String = {
+      if (parent.isPresent) {
+        val parentInfo = parent.get
+        val parentField = parentInfo.getParentField
+        val parentPath = parentInfo.getPathFromParent
+        s"Some(${parentField.getName}, $parentPath)"
+      } else {
+        "None"
+      }
+    }
+
     // Track the path stack during traversal
     val fieldInfo = iterable.asScala.map {
       element =>
         (
+          parentStructFieldAndPathToString(element.getParentStructFieldAndPath()),
           element.getNamePath(),
           element.getPathFromNearestStructFieldAncestor(
             element.getNearestStructFieldAncestor.getName),
@@ -43,76 +58,154 @@ class SchemaIterableSuite extends AnyFunSuite {
     // The expected traversal order with field types, showing the complete depth-first traversal
     val expectedOrder = List(
       // First branch: nested_array
-      ("nested_array.element.id", "id", "", "IntegerType"),
-      ("nested_array.element.tags.element", "tags.element", "element", "StringType"),
-      ("nested_array.element.tags", "tags", "", "ArrayType"),
-      ("nested_array.element", "nested_array.element", "element", "StructType"),
-      ("nested_array", "nested_array", "", "ArrayType"),
+      ("Some(nested_array, element)", "nested_array.element.id", "id", "", "IntegerType"),
+      (
+        "Some(tags, )",
+        "nested_array.element.tags.element",
+        "tags.element",
+        "element",
+        "StringType"),
+      ("Some(nested_array, element)", "nested_array.element.tags", "tags", "", "ArrayType"),
+      (
+        "Some(nested_array, )",
+        "nested_array.element",
+        "nested_array.element",
+        "element",
+        "StructType"),
+      ("None", "nested_array", "nested_array", "", "ArrayType"),
 
       // Second branch: nested_map
-      ("nested_map.key.element", "nested_map.key.element", "key.element", "StringType"),
-      ("nested_map.key", "nested_map.key", "key", "ArrayType"),
-      ("nested_map.value.points.element.x", "x", "", "DoubleType"),
-      ("nested_map.value.points.element.y", "y", "", "DoubleType"),
-      ("nested_map.value.points.element", "points.element", "element", "StructType"),
-      ("nested_map.value.points", "points", "", "ArrayType"),
-      ("nested_map.value.metadata.key", "metadata.key", "key", "StringType"),
-      ("nested_map.value.metadata.value", "metadata.value", "value", "IntegerType"),
-      ("nested_map.value.metadata", "metadata", "", "MapType"),
-      ("nested_map.value", "nested_map.value", "value", "StructType"),
-      ("nested_map", "nested_map", "", "MapType"),
+      (
+        "Some(nested_map, key)",
+        "nested_map.key.element",
+        "nested_map.key.element",
+        "key.element",
+        "StringType"),
+      ("Some(nested_map, )", "nested_map.key", "nested_map.key", "key", "ArrayType"),
+      (
+        "Some(points, element)",
+        "nested_map.value.points.element.x",
+        "x",
+        "",
+        "DoubleType"),
+      (
+        "Some(points, element)",
+        "nested_map.value.points.element.y",
+        "y",
+        "",
+        "DoubleType"),
+      (
+        "Some(points, )",
+        "nested_map.value.points.element",
+        "points.element",
+        "element",
+        "StructType"),
+      (
+        "Some(nested_map, value)",
+        "nested_map.value.points",
+        "points",
+        "",
+        "ArrayType"),
+      (
+        "Some(metadata, )",
+        "nested_map.value.metadata.key",
+        "metadata.key",
+        "key",
+        "StringType"),
+      (
+        "Some(metadata, )",
+        "nested_map.value.metadata.value",
+        "metadata.value",
+        "value",
+        "IntegerType"),
+      (
+        "Some(nested_map, value)",
+        "nested_map.value.metadata",
+        "metadata",
+        "",
+        "MapType"),
+      ("Some(nested_map, )", "nested_map.value", "nested_map.value", "value", "StructType"),
+      ("None", "nested_map", "nested_map", "", "MapType"),
       // Third branch
       (
+        "Some(double_nested, element.element.key.key)",
         "double_nested.element.element.key.key.element",
         "double_nested.element.element.key.key.element",
         "element.element.key.key.element",
         "IntegerType"),
       (
+        "Some(double_nested, element.element.key)",
         "double_nested.element.element.key.key",
         "double_nested.element.element.key.key",
         "element.element.key.key",
         "ArrayType"),
       (
+        "Some(double_nested, element.element.key)",
         "double_nested.element.element.key.value",
         "double_nested.element.element.key.value",
         "element.element.key.value",
         "StringType"),
       (
+        "Some(double_nested, element.element)",
         "double_nested.element.element.key",
         "double_nested.element.element.key",
         "element.element.key",
         "MapType"),
       (
+        "Some(double_nested, element.element.value)",
         "double_nested.element.element.value.key",
         "double_nested.element.element.value.key",
         "element.element.value.key",
         "StringType"),
       (
+        "Some(double_nested, element.element.value)",
         "double_nested.element.element.value.value",
         "double_nested.element.element.value.value",
         "element.element.value.value",
         "StringType"),
       (
+        "Some(double_nested, element.element)",
         "double_nested.element.element.value",
         "double_nested.element.element.value",
         "element.element.value",
         "MapType"),
       (
+        "Some(double_nested, element)",
         "double_nested.element.element",
         "double_nested.element.element",
         "element.element",
         "MapType"),
-      ("double_nested.element", "double_nested.element", "element", "ArrayType"),
-      ("double_nested", "double_nested", "", "ArrayType"),
+      (
+        "Some(double_nested, )",
+        "double_nested.element",
+        "double_nested.element",
+        "element",
+        "ArrayType"),
+      ("None", "double_nested", "double_nested", "", "ArrayType"),
       // fourth branch
-      ("empty_struct", "empty_struct", "", "StructType"),
+      ("None", "empty_struct", "empty_struct", "", "StructType"),
       // fifth branch
-      ("empty_struct_array.element", "empty_struct_array.element", "element", "StructType"),
-      ("empty_struct_array", "empty_struct_array", "", "ArrayType"),
+      (
+        "Some(empty_struct_array, )",
+        "empty_struct_array.element",
+        "empty_struct_array.element",
+        "element",
+        "StructType"),
+      ("None", "empty_struct_array", "empty_struct_array", "", "ArrayType"),
       // sixth branch
-      ("empty_map_struct.key", "empty_map_struct.key", "key", "StructType"),
-      ("empty_map_struct.value", "empty_map_struct.value", "value", "StructType"),
-      ("empty_map_struct", "empty_map_struct", "", "MapType"))
+      (
+        "Some(empty_map_struct, )",
+        "empty_map_struct.key",
+        "empty_map_struct.key",
+        "key",
+        "StructType"),
+      (
+        "Some(empty_map_struct, )",
+        "empty_map_struct.value",
+        "empty_map_struct.value",
+        "value",
+        "StructType"),
+      ("None", "empty_map_struct", "empty_map_struct", "", "MapType"))
 
     fieldInfo.zip(expectedOrder).foreach {
       case (actual, expected) => assert(actual == expected)

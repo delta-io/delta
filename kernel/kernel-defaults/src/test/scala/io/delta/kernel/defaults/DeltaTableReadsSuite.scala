@@ -20,12 +20,13 @@ import java.math.BigDecimal
 import java.sql.Date
 import java.time.Instant
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
-import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException, UnsupportedProtocolVersionException}
+import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
@@ -180,6 +181,112 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
       ISO8601PartitionColTableExpectedResult)
   }
 
+  test(s"end-to-end usage: table with partition column in ISO8601 timestamp format with " +
+    s"partition pruning") {
+    /*
+    str: string         | ts: timestamp (partition col)
+    ------------------------------------------------------------------------
+    2024-01-01 10:00:00 | 2024-01-01T10:00:00.000000Z
+    2024-01-02 12:30:00 | 2024-01-02T12:30:00.000000Z
+     */
+    def row00: TestRow = TestRow(
+      "2024-01-01 10:00:00",
+      1704103200000000L // 2024-01-01 10:00:00 UTC to micros since the epoch
+    )
+    val filter = new Predicate("=", new Column("ts"), Literal.ofTimestamp(1704103200000000L))
+    def ISO8601PartitionColTableExpectedResult: Seq[TestRow] =
+      Seq(row00)
+    checkTable(
+      goldenTablePath("kernel-timestamp-partition-col-ISO8601"),
+      ISO8601PartitionColTableExpectedResult,
+      filter = filter)
+  }
+
+  test(s"end-to-end usage: spark-created table with partition column in ISO8601 timestamp " +
+    s"format with microsecond precision and partition pruning") {
+    // Set timezone to UTC so timestamps are interpreted consistently
+    withTimeZone("UTC") {
+      withTempDir { tempDir =>
+        val tablePath = tempDir.getCanonicalPath
+
+        // Create table with Spark - timestamp partition with microsecond precision
+        // Using spark.databricks.delta.write.utcTimestampPartitionValues=true
+        /*
+        str: string         | ts: timestamp (partition col)
+        ------------------------------------------------------------------------
+        2024-01-01 10:00:00.123456 | 2024-01-01T10:00:00.123456Z
+        2024-01-02 12:30:00.654321 | 2024-01-02T12:30:00.654321Z
+         */
+        withSQLConf("spark.databricks.delta.write.utcTimestampPartitionValues" -> "true") {
+          spark.sql(s"""CREATE TABLE delta.`$tablePath` (
+              str string,
+              ts timestamp
+            ) USING delta PARTITIONED BY (ts)""")
+
+          // Insert data with microsecond precision
+          spark.sql(s"""INSERT INTO delta.`$tablePath` VALUES
+              ('2024-01-01 10:00:00.123456', TIMESTAMP '2024-01-01 10:00:00.123456'),
+              ('2024-01-02 12:30:00.654321', TIMESTAMP '2024-01-02 12:30:00.654321')""")
+        }
+
+        // Verify partition format is ISO8601 by checking the Delta log's partitionValues
+        // (not the physical directory names, which may use a different format)
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        val snapshot = deltaLog.update()
+        val addFiles = snapshot.allFiles.collect()
+
+        assert(addFiles.length == 2, s"Expected 2 AddFile entries, but found ${addFiles.length}")
+
+        // Check that partitionValues in the Delta log use ISO8601 format
+        val partitionValues = addFiles.map(_.partitionValues("ts")).toSeq
+        assert(
+          partitionValues.forall(_.contains("T")),
+          s"Expected ISO8601 format with 'T' separator in partitionValues, but found: " +
+            s"${partitionValues.mkString(", ")}")
+
+        // Now verify reading with Kernel
+        def row00: TestRow = TestRow(
+          "2024-01-01 10:00:00.123456",
+          1704103200123456L // 2024-01-01 10:00:00.123456 UTC to micros since the epoch
+        )
+
+        def row11: TestRow = TestRow(
+          "2024-01-02 12:30:00.654321",
+          1704198600654321L // 2024-01-02 12:30:00.654321 UTC to micros since the epoch
+        )
+
+        // Test reading all data
+        checkTable(tablePath, Seq(row00, row11))
+
+        // Test partition pruning
+        val filter = new Predicate(
+          "=",
+          new Column("ts"),
+          Literal.ofTimestamp(1704103200123456L)
+        ) // Only read row00
+        checkTable(
+          tablePath,
+          Seq(row00),
+          filter = filter)
+      }
+    }
+  }
+
+  test("read table with far-future timestamp in stats") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.sql(s"CREATE TABLE delta.`$path` (ts TIMESTAMP) USING DELTA")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (TIMESTAMP'2020-01-01 00:00:00')")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (TIMESTAMP'9999-12-31 23:59:59')")
+      val filter = new Predicate("<", new Column("ts"), Literal.ofTimestamp(253402300799000000L))
+      checkTable(
+        path,
+        Seq(TestRow(1577836800000000L)),
+        filter = filter,
+        expectedRemainingFilter = filter)
+    }
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Timestamp_NTZ tests
   //////////////////////////////////////////////////////////////////////////////////
@@ -322,6 +429,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
       .fields()
       .asScala
       .map(_.getName)
+      .toSeq
 
     val expectedAnswer = Seq(0, 1).map { i =>
       TestRow(
@@ -817,6 +925,38 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
       expectedAnswer = (0L until 100L).map(TestRow(_)))
   }
 
+  test("read table with stale _last_checkpoint after checkpoint cleanup") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      // Write 15 versions (v0 through v14), each appending 10 rows.
+      // With the default checkpoint interval of 10, a checkpoint is created at v10.
+      (0 to 14).foreach { i =>
+        spark.range(i * 10, i * 10 + 10).write
+          .format("delta")
+          .mode("append")
+          .save(path)
+      }
+
+      val checkpointFile = new File(
+        f"$path/_delta_log/00000000000000000010.checkpoint.parquet")
+      assert(checkpointFile.exists(), "Expected checkpoint at version 10")
+
+      val lastCheckpointFile = new File(path + "/_delta_log/_last_checkpoint")
+      assert(lastCheckpointFile.exists(), "Expected _last_checkpoint file to exist")
+
+      // Delete the checkpoint file, simulating cleanup by vacuum or log retention.
+      // _last_checkpoint still references v10, making it stale.
+      assert(checkpointFile.delete(), "Failed to delete checkpoint file")
+
+      // Kernel should detect the stale _last_checkpoint, fall back to searching for an
+      // earlier valid checkpoint, find none, and reconstruct from delta files at version 0.
+      checkTable(
+        path = path,
+        expectedAnswer = (0L until 150L).map(TestRow(_)),
+        expectedVersion = Some(14))
+    }
+  }
+
   test("error - version not contiguous") {
     val e = intercept[InvalidTableException] {
       latestSnapshot(goldenTablePath("versions-not-contiguous"))
@@ -825,7 +965,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
   }
 
   test("table protocol version greater than reader protocol version") {
-    val e = intercept[Exception] {
+    val e = intercept[UnsupportedProtocolVersionException] {
       latestSnapshot(goldenTablePath("deltalog-invalid-protocol-version"))
         .getScanBuilder()
         .build()
@@ -833,12 +973,16 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
-  test("table with void type - throws KernelException") {
+  test("table with void type - schema parsing is lazy") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       spark.sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}`(x INTEGER, y VOID) USING DELTA")
+      // Snapshot loading should succeed since schema parsing is now lazy
+      val snapshot = latestSnapshot(path)
+      assert(snapshot.getVersion >= 0)
+      // Accessing the schema should still throw KernelException due to VOID type
       val e = intercept[KernelException] {
-        latestSnapshot(path)
+        snapshot.getSchema
       }
       assert(e.getMessage.contains(
         "Failed to parse the schema. Encountered unsupported Delta data type: VOID"))

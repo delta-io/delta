@@ -22,6 +22,7 @@ import java.util.concurrent.ExecutionException
 import scala.util.{Failure, Success, Try}
 
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
+import org.apache.spark.sql.delta.Relocated.CheckpointFileManager
 import org.apache.spark.sql.delta.actions.{DomainMetadata, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -32,7 +33,6 @@ import org.junit.Assert._
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.execution.streaming.CheckpointFileManager
 import org.apache.spark.sql.test.SharedSparkSession
 
 class DomainMetadataSuite

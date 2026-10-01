@@ -145,9 +145,11 @@ class DeltaIncrementalSetTransactionsSuite
         withSQLConf(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "true") {
           DeltaLog.clearCache()
           commitSetTxn(deltaLog, "app-1", version = 2, lastUpdated = 2) // 2nd commit
-          // By default, commit doesn't trigger stateReconstruction and so the
-          // incremental CRC won't have setTransactions present until `setTransactions` API is
-          // explicitly invoked before the commit.
+          // Commit doesn't trigger stateReconstruction and so the incremental CRC won't have
+          // setTransactions present until `setTransactions` API is explicitly invoked before the
+          // commit. This also holds for CatalogOwned tables with Row Tracking enabled: the
+          // `domainMetadata` read done by RowId.assignFreshRowIds -> extractHighWatermark is
+          // served from the CRC, so it no longer forces a state reconstruction.
           assert(deltaLog.update().checksumOpt.get.setTransactions.isEmpty) // crc has no set-txn
           assertSetTransactions(deltaLog, expectedTxns = Map("app-1" -> 2), viaCRC = false)
           DeltaLog.clearCache()
@@ -223,14 +225,19 @@ class DeltaIncrementalSetTransactionsSuite
               // Calling `validateChecksum` will pre-load the computeState
               log.update().validateChecksum()
             }
+
+            commitSetTxn(log, "app-1", version = 100, lastUpdated = 1)
             // During 2nd commit, we have following 2 cases:
             // 1. If `computeStatePreloaded` is set, then the Snapshot has already calculated
-            //    computeState and so we have estimate of number of SetTransactions till this point.
-            //    So next commit will trigger incremental computation of [[SetTransaction]].
+            //    computeState, and so we have estimate of number of SetTransactions till this
+            //    point. So next commit will trigger incremental computation of [[SetTransaction]]
             // 2. If `computeStatePreloaded` is not set, then Snapshot doesn't have computeState
             //    pre-computed. So next commit will not trigger incremental computation of
             //    [[SetTransaction]].
-            commitSetTxn(log, "app-1", version = 100, lastUpdated = 1)
+            // Note that commits themselves never pre-compute the state, not even for CatalogOwned
+            // tables with Row Tracking enabled: the `domainMetadata` read performed by
+            // RowId.assignFreshRowIds is served from the CRC instead of forcing a state
+            // reconstruction.
             assert(log.update().checksumOpt.flatMap(_.setTransactions).nonEmpty ===
               computeStatePreloaded)
           }

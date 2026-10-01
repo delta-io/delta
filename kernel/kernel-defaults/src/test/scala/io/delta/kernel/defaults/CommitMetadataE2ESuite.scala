@@ -119,4 +119,48 @@ class CommitMetadataE2ESuite extends AnyFunSuite
     }
   }
 
+  test("maxKnownPublishedDeltaVersion is -1 for CREATE operation") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val capturingCommitter = new CapturingCommitter()
+
+      // Create the table
+      TableManager
+        .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
+        .withCommitter(capturingCommitter)
+        .build(engine)
+        .commit(engine, emptyIterable())
+
+      // Verify
+      val commitMetadata = capturingCommitter.latestCommitMetadata.get
+      assert(commitMetadata.getVersion === 0)
+      assert(commitMetadata.getMaxKnownPublishedDeltaVersion.get === -1L)
+    }
+  }
+
+  test("maxKnownPublishedDeltaVersion is correctly passed for UPDATE operation") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val capturingCommitter = new CapturingCommitter()
+
+      // Create the table
+      TableManager
+        .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
+        .build(engine)
+        .commit(engine, emptyIterable())
+
+      // Update the table
+      TableManager
+        .loadSnapshot(tablePath)
+        .withCommitter(capturingCommitter)
+        .build(engine)
+        .buildUpdateTableTransaction("engineInfo", Operation.WRITE)
+        .build(engine)
+        .commit(engine, emptyIterable())
+
+      // Verify
+      val commitMetadata = capturingCommitter.latestCommitMetadata.get
+      assert(commitMetadata.getVersion === 1)
+      assert(commitMetadata.getMaxKnownPublishedDeltaVersion.get === 0L)
+    }
+  }
+
 }

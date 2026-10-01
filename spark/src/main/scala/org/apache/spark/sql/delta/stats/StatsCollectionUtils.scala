@@ -23,8 +23,8 @@ import scala.language.existentials
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaErrors, DeltaLog, IdMapping, NameMapping, NoMapping, Snapshot}
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaLog, IdMapping, NameMapping, NoMapping, Snapshot}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
@@ -39,7 +39,7 @@ import org.apache.parquet.io.api.Binary
 import org.apache.parquet.schema.LogicalTypeAnnotation._
 import org.apache.parquet.schema.PrimitiveType
 
-import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.datasources.DataSourceUtils
@@ -49,7 +49,7 @@ import org.apache.spark.util.SerializableConfiguration
 
 
 object StatsCollectionUtils
-  extends LoggingShims
+  extends Logging
 {
 
   /**
@@ -76,6 +76,7 @@ object StatsCollectionUtils
       snapshot: Snapshot,
       addFiles: Dataset[AddFile],
       numFilesOpt: Option[Long],
+      stringTruncateLength: Int,
       ignoreMissingStats: Boolean = true,
       setBoundsToWide: Boolean = false): Dataset[AddFile] = {
 
@@ -88,10 +89,11 @@ object StatsCollectionUtils
     }
 
     val parquetRebaseMode =
-      spark.sessionState.conf.getConf(SQLConf.PARQUET_REBASE_MODE_IN_READ)
+      spark.sessionState.conf.getConf(SQLConf.PARQUET_REBASE_MODE_IN_READ).toString
 
-    val stringTruncateLength =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
+    val skipFloatingPointStats =
+      spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_COLLECT_STATS_SKIP_FLOATING_POINT_FROM_FOOTER)
 
     val statsCollector = StatsCollector(
       snapshot.columnMappingMode,
@@ -99,7 +101,8 @@ object StatsCollectionUtils
       snapshot.statsSchema,
       parquetRebaseMode,
       ignoreMissingStats,
-      Some(stringTruncateLength))
+      Some(stringTruncateLength),
+      skipFloatingPointStats)
 
     val serializableConf = new SerializableConfiguration(conf)
     val broadcastConf = spark.sparkContext.broadcast(serializableConf)
@@ -193,6 +196,17 @@ object StatsCollectionUtils
 
     addFile.copy(stats = JsonUtils.toJson(statsWithTightBoundsCol))
   }
+
+  /**
+   * Get the string prefix length used for data skipping based on the following precedence:
+   *   1. If the provided metadata is not null, and the delta table property is set inside, use it;
+   *   2. Otherwise, use the Spark configuration.
+   */
+  def getDataSkippingStringPrefixLength(spark: SparkSession, metadata: Metadata): Int = {
+    Option(metadata)
+      .flatMap(DeltaConfigs.DATA_SKIPPING_STRING_PREFIX_LENGTH.fromMetaData)
+      .getOrElse(spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH))
+  }
 }
 
 object ParallelFetchPool {
@@ -222,6 +236,8 @@ object ParallelFetchPool {
  * @param ignoreMissingStats Indicate whether to return partial result by ignoring missing stats
  *                           or throw an exception.
  * @param stringTruncateLength The optional max length of string stats to be truncated into.
+ * @param skipFloatingPointStats When true, drop float/double min/max for writers that may exclude
+ *                               NaN from footer stats (see writerIncludesNaNInFloatingPointStats).
  *
  * Scala Example:
  * {{{
@@ -250,7 +266,8 @@ abstract class StatsCollector(
     statsSchema: StructType,
     parquetRebaseMode: String,
     ignoreMissingStats: Boolean,
-    stringTruncateLength: Option[Int])
+    stringTruncateLength: Option[Int],
+    skipFloatingPointStats: Boolean)
   extends Serializable
 {
 
@@ -334,6 +351,10 @@ abstract class StatsCollector(
       parquetMetadata.getFileMetaData.getKeyValueMetaData.get, parquetRebaseMode)
     val dateRebaseFunc = DataSourceUtils.createDateRebaseFuncInRead(dateRebaseSpec.mode, "Parquet")
 
+    val dropFloatingPointStats = skipFloatingPointStats &&
+      !StatsCollector.writerIncludesNaNInFloatingPointStats(
+        parquetMetadata.getFileMetaData.getCreatedBy)
+
     val missingFieldCounts =
       mutable.Map(MAX -> 0L, MIN -> 0L, NULL_COUNT -> 0L, NUM_MISSING_TYPES -> 0L)
 
@@ -353,13 +374,13 @@ abstract class StatsCollector(
       case StructField(MIN, statsTypeSchema: StructType, _, _) =>
         val (minValues, numMissingFields) =
           collectStats(Seq.empty[String], statsTypeSchema, blocks, schemaPhysicalPathToParquetIndex,
-            ignoreMissingStats)(aggMaxOrMin(dateRebaseFunc, isMax = false))
+            ignoreMissingStats)(aggMaxOrMin(dateRebaseFunc, isMax = false, dropFloatingPointStats))
         missingFieldCounts(MIN) += numMissingFields
         MIN -> minValues
       case StructField(MAX, statsTypeSchema: StructType, _, _) =>
         val (maxValues, numMissingFields) =
           collectStats(Seq.empty[String], statsTypeSchema, blocks, schemaPhysicalPathToParquetIndex,
-            ignoreMissingStats)(aggMaxOrMin(dateRebaseFunc, isMax = true))
+            ignoreMissingStats)(aggMaxOrMin(dateRebaseFunc, isMax = true, dropFloatingPointStats))
         missingFieldCounts(MAX) += numMissingFields
         MAX -> maxValues
       case StructField(NULL_COUNT, statsTypeSchema: StructType, _, _) =>
@@ -469,11 +490,17 @@ abstract class StatsCollector(
    * dateRebaseFunc is used to adapt legacy date.
    */
   private def aggMaxOrMin(
-      dateRebaseFunc: Int => Int, isMax: Boolean)(
+      dateRebaseFunc: Int => Int, isMax: Boolean, dropFloatingPointStats: Boolean)(
       blocks: Seq[BlockMetaData], index: Int): Any = {
     val columnMetadata = blocks.head.getColumns.get(index)
     val primitiveType = columnMetadata.getPrimitiveType
     val logicalType = primitiveType.getLogicalTypeAnnotation
+    // None is recorded as null, which the read side treats as missing and keeps the file.
+    if (dropFloatingPointStats &&
+        (primitiveType.getPrimitiveTypeName == PrimitiveType.PrimitiveTypeName.FLOAT ||
+         primitiveType.getPrimitiveTypeName == PrimitiveType.PrimitiveTypeName.DOUBLE)) {
+      return None
+    }
     // Physical type of timestamp is INT96 in both Parquet and Delta.
     if (primitiveType.getPrimitiveTypeName == PrimitiveType.PrimitiveTypeName.INT96 ||
         logicalType.isInstanceOf[TimestampLogicalTypeAnnotation]) {
@@ -496,7 +523,6 @@ abstract class StatsCollector(
         if (aggregatedValue == None) {
           aggregatedValue = currentValue
         } else {
-          // TODO: check NaN value for floating point columns.
           val compareResult = currentValue.asInstanceOf[Comparable[Any]].compareTo(aggregatedValue)
           if ((isMax && compareResult > 0) || (!isMax && compareResult < 0)) {
             aggregatedValue = currentValue
@@ -573,20 +599,33 @@ abstract class StatsCollector(
 }
 
 object StatsCollector {
+  /**
+   * Whether a Parquet writer includes NaN in its row-group float/double min/max statistics.
+   * parquet-mr (and thus Spark) orders NaN as the greatest value, so a NaN-containing column
+   * records max = NaN; a finite max therefore proves the column has no NaN and the stat is
+   * trustworthy. Writers such as parquet-cpp / Arrow / pyarrow exclude NaN, so their finite max
+   * may hide NaN values. An unknown or missing writer is treated as unsafe.
+   */
+  private[stats] def writerIncludesNaNInFloatingPointStats(createdBy: String): Boolean =
+    createdBy != null && createdBy.startsWith("parquet-mr")
+
   def apply(
       columnMappingMode: DeltaColumnMappingMode,
       dataSchema: StructType,
       statsSchema: StructType,
       parquetRebaseMode: String,
       ignoreMissingStats: Boolean = true,
-      stringTruncateLength: Option[Int] = None): StatsCollector = {
+      stringTruncateLength: Option[Int] = None,
+      skipFloatingPointStats: Boolean = false): StatsCollector = {
     columnMappingMode match {
       case NoMapping | NameMapping =>
         StatsCollectorNameMapping(
-          dataSchema, statsSchema, parquetRebaseMode, ignoreMissingStats, stringTruncateLength)
+          dataSchema, statsSchema, parquetRebaseMode, ignoreMissingStats, stringTruncateLength,
+          skipFloatingPointStats)
       case IdMapping =>
         StatsCollectorIdMapping(
-          dataSchema, statsSchema, parquetRebaseMode, ignoreMissingStats, stringTruncateLength)
+          dataSchema, statsSchema, parquetRebaseMode, ignoreMissingStats, stringTruncateLength,
+          skipFloatingPointStats)
       case _ =>
         throw new UnsupportedOperationException(
           s"$columnMappingMode mapping is currently not supported")
@@ -598,9 +637,11 @@ object StatsCollector {
       statsSchema: StructType,
       parquetRebaseMode: String,
       ignoreMissingStats: Boolean,
-      stringTruncateLength: Option[Int])
+      stringTruncateLength: Option[Int],
+      skipFloatingPointStats: Boolean)
     extends StatsCollector(
-      dataSchema, statsSchema, parquetRebaseMode, ignoreMissingStats, stringTruncateLength) {
+      dataSchema, statsSchema, parquetRebaseMode, ignoreMissingStats, stringTruncateLength,
+      skipFloatingPointStats) {
 
     /**
      * Maps schema physical field path to parquet metadata column index via parquet metadata column
@@ -693,9 +734,11 @@ object StatsCollector {
       statsSchema: StructType,
       parquetRebaseMode: String,
       ignoreMissingStats: Boolean,
-      stringTruncateLength: Option[Int])
+      stringTruncateLength: Option[Int],
+      skipFloatingPointStats: Boolean)
     extends StatsCollector(
-      dataSchema, statsSchema, parquetRebaseMode, ignoreMissingStats, stringTruncateLength) {
+      dataSchema, statsSchema, parquetRebaseMode, ignoreMissingStats, stringTruncateLength,
+      skipFloatingPointStats) {
 
     // Define a FieldId type to better disambiguate between ids and indices in the code
     type FieldId = Int

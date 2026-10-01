@@ -33,13 +33,34 @@ public class MapType extends DataType {
   public static final String MAP_VALUE_NAME = "value";
 
   public MapType(DataType keyType, DataType valueType, boolean valueContainsNull) {
+    validateKeyType(keyType);
     this.keyField = new StructField(MAP_KEY_NAME, keyType, false);
     this.valueField = new StructField(MAP_VALUE_NAME, valueType, valueContainsNull);
   }
 
   public MapType(StructField keyField, StructField valueField) {
+    validateKeyType(keyField.getDataType());
     this.keyField = keyField;
     this.valueField = valueField;
+  }
+
+  /**
+   * The Delta protocol does not support collated string types as map keys. Only StringType with the
+   * default UTF8_BINARY collation is allowed.
+   *
+   * @see <a
+   *     href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md">
+   *     Collated String Type RFC</a>
+   */
+  private static void validateKeyType(DataType keyType) {
+    if (keyType instanceof StringType && !((StringType) keyType).isUTF8BinaryCollated()) {
+      throw new IllegalArgumentException(
+          String.format(
+              "MapType does not support collated string types as keys. "
+                  + "Found key type '%s', but only StringType with default UTF8_BINARY "
+                  + "collation is allowed.",
+              keyType));
+    }
   }
 
   public StructField getKeyField() {
@@ -68,6 +89,33 @@ public class MapType extends DataType {
         && ((MapType) dataType).getKeyType().equivalent(getKeyType())
         && ((MapType) dataType).getValueType().equivalent(getValueType())
         && ((MapType) dataType).isValueContainsNull() == isValueContainsNull();
+  }
+
+  /**
+   * Checks whether the given {@code dataType} is compatible with this type when writing data.
+   * Collation differences are ignored.
+   *
+   * <p>This method is intended to be used during the write path to validate that an input type
+   * matches the expected schema before data is written.
+   *
+   * <p>It should not be used in other cases, such as the read path.
+   *
+   * @param dataType the input data type being written
+   * @return {@code true} if the input type is compatible with this type.
+   */
+  @Override
+  public boolean isWriteCompatible(DataType dataType) {
+    if (this == dataType) {
+      return true;
+    }
+    if (dataType == null || getClass() != dataType.getClass()) {
+      return false;
+    }
+    MapType mapType = (MapType) dataType;
+    return ((keyField == null && mapType.keyField == null)
+            || (keyField != null && keyField.isWriteCompatible(mapType.keyField)))
+        && ((valueField == null && mapType.valueField == null)
+            || (valueField != null && valueField.isWriteCompatible(mapType.valueField)));
   }
 
   @Override

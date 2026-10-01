@@ -19,12 +19,12 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.Trigger

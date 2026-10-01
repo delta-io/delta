@@ -50,9 +50,16 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
       VectorUtils.buildArrayValue(partitionColumns.asJava, StringType.STRING),
       Optional.empty(), /* createdTime */
       VectorUtils.stringStringMapValue(tblProperties.asJava))
+    val protocol = new Protocol(
+      3, // minReaderVersion
+      7, // minWriterVersion to support table features
+      java.util.Collections.emptySet[String](), // readerFeatures
+      java.util.Collections.emptySet[String]() // writerFeatures
+    )
 
     TransactionStateRow.of(
       ColumnMapping.updateColumnMappingMetadataIfNeeded(metadata, true).orElse(metadata),
+      protocol,
       testTablePath,
       maxRetries)
   }

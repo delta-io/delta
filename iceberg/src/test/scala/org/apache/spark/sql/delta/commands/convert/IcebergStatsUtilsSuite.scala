@@ -25,12 +25,12 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
-import org.apache.iceberg.{DataFile, FileContent, FileFormat, PartitionData, PartitionSpec, Schema, StructLike}
-import org.apache.iceberg.transforms._
-import org.apache.iceberg.types.Conversions
-import org.apache.iceberg.types.Type
-import org.apache.iceberg.types.Type.TypeID
-import org.apache.iceberg.types.Types._
+import shadedForDelta.org.apache.iceberg.{DataFile, FileContent, FileFormat, PartitionData, PartitionSpec, Schema, StructLike}
+import shadedForDelta.org.apache.iceberg.transforms._
+import shadedForDelta.org.apache.iceberg.types.Conversions
+import shadedForDelta.org.apache.iceberg.types.Type
+import shadedForDelta.org.apache.iceberg.types.Type.TypeID
+import shadedForDelta.org.apache.iceberg.types.Types._
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.internal.config.ConfigEntry

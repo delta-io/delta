@@ -23,6 +23,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedDeltaData}
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.{MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.utils.FileStatus
 
@@ -144,7 +145,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
         deltas = badJsonsList,
         checkpoints = checkpointFs10List)
     }.getMessage
-    assert(exMsg === "deltas must all be actual delta (commit) files")
+    assert(exMsg.startsWith("deltas must all be actual delta (commit) files"))
   }
 
   test("constructor -- all checkpoints must be actual checkpoint files") {
@@ -154,7 +155,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
         deltas = deltasFs11To12List,
         checkpoints = badCheckpointsList)
     }.getMessage
-    assert(exMsg === "checkpoints must all be actual checkpoint files")
+    assert(exMsg.startsWith("checkpoints must all be actual checkpoint files"))
   }
 
   test("constructor -- deltas and checkpoints cannot be empty") {
@@ -177,7 +178,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
     }.getMessage
 
     assert(exMsg.contains(
-      "checksum file's version should be less than or equal to logSegment's version"))
+      "checksum version (13) should be less than or equal to LogSegment version (12)"))
   }
 
   test("constructor -- deltaAtEndVersion must match version (checkpoint only)") {
@@ -188,7 +189,8 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
         deltaAtEndVersion = Some(deltaFileStatus(9)) // Wrong version - should be 10
       )
     }.getMessage
-    assert(exMsg === "deltaAtEndVersion must have version equal to the version of this LogSegment")
+    assert(exMsg.contains(
+      "deltaAtEndVersion (9) must be equal to LogSegment version (10)"))
   }
 
   test("constructor -- deltaAtEndVersion must match version (checkpoint + deltas)") {
@@ -200,7 +202,8 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
         deltaAtEndVersion = Some(deltaFileStatus(11)) // Wrong version - should be 12
       )
     }.getMessage
-    assert(exMsg === "deltaAtEndVersion must have version equal to the version of this LogSegment")
+    assert(exMsg.contains(
+      "deltaAtEndVersion (11) must be equal to LogSegment version (12)"))
   }
 
   test("constructor -- checksum version must be >= checkpoint version") {
@@ -216,7 +219,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
     }.getMessage
 
     assert(exMsg.contains(
-      "checksum file's version 9 should be greater than or equal to checkpoint version 10"))
+      "checksum version (9) should be greater than or equal to checkpoint version (10)"))
   }
 
   test("constructor -- if deltas non-empty then first delta must equal checkpointVersion + 1") {
@@ -226,7 +229,8 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
         deltas = deltaFs12List,
         checkpoints = checkpointFs10List)
     }.getMessage
-    assert(exMsg === "First delta file version must equal checkpointVersion + 1")
+    assert(exMsg.contains(
+      "First delta file version (12) must equal checkpointVersion + 1 (11)"))
   }
 
   test("constructor -- if deltas non-empty then last delta must equal version") {
@@ -236,7 +240,8 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
         deltas = deltaFs11List,
         checkpoints = checkpointFs10List)
     }.getMessage
-    assert(exMsg === "Last delta file version must equal the version of this LogSegment")
+    assert(exMsg.contains(
+      "Last delta file version (11) must equal LogSegment version (12)"))
   }
 
   test("constructor -- if no deltas then checkpointVersion must equal version") {
@@ -245,8 +250,8 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
         version = 11,
         checkpoints = checkpointFs10List)
     }.getMessage
-    assert(exMsg ===
-      "If there are no deltas, then checkpointVersion must equal the version of this LogSegment")
+    assert(exMsg.contains(
+      "If no deltas, then checkpointVersion (10) must equal LogSegment version (11)"))
   }
 
   test("constructor -- deltas not contiguous") {
@@ -556,4 +561,48 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
     assert(exMsg.contains("Currently, only file-based deltas are supported"))
   }
 
+  ////////////////////////////////
+  // newAsPublished tests       //
+  ////////////////////////////////
+
+  test("newAsPublished: list all files when there's no checkpoint") {
+    val commits = (0 to 10).map(i => FileStatus.of(s"$logPath/$i.json")) ++
+      (11 to 20).map(i => FileStatus.of(s"$logPath/$i.${java.util.UUID.randomUUID.toString}.json"))
+    val baseSegment = createLogSegmentForTest(
+      version = 20,
+      deltas = commits.asJava,
+      deltaAtEndVersion = Some(commits.last),
+      maxPublishedDeltaVersion = Optional.of(10))
+
+    val updated = baseSegment.newAsPublished()
+
+    assert(updated.getVersion === 20)
+    assert(updated.getDeltas.size() === 21)
+    updated.getDeltas.asScala.zipWithIndex.foreach { case (fs, i) =>
+      assert(fs.getPath == FileNames.deltaFile(logPath, i))
+    }
+    assert(updated.getDeltaFileAtEndVersion.getPath == FileNames.deltaFile(logPath, 20))
+    assert(updated.getMaxPublishedDeltaVersion == Optional.of(20L))
+  }
+
+  test("newAsPublished: list all files starting from checkpoint") {
+    val commits = (11 until 15).map(i => FileStatus.of(s"$logPath/$i.json")) ++
+      (15 to 20).map(i => FileStatus.of(s"$logPath/$i.${java.util.UUID.randomUUID.toString}.json"))
+    val baseSegment = createLogSegmentForTest(
+      version = 20,
+      deltas = commits.asJava,
+      deltaAtEndVersion = Some(commits.last),
+      checkpoints = checkpointFs10List,
+      maxPublishedDeltaVersion = Optional.of(15))
+
+    val updated = baseSegment.newAsPublished()
+
+    assert(updated.getVersion === 20)
+    assert(updated.getDeltas.size() === 10)
+    updated.getDeltas.asScala.zipWithIndex.foreach { case (fs, i) =>
+      assert(fs.getPath == FileNames.deltaFile(logPath, i + 11))
+    }
+    assert(updated.getDeltaFileAtEndVersion.getPath == FileNames.deltaFile(logPath, 20))
+    assert(updated.getMaxPublishedDeltaVersion == Optional.of(20L))
+  }
 }

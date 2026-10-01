@@ -100,8 +100,7 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
 
     testTable = testTable.copy(properties = Map.empty)
     resultTable = UniversalFormat.enforceSupportInCatalog(testTable, testMetadata)
-    assert(resultTable.nonEmpty)
-    assert(resultTable.get.properties("table_type") == "iceberg")
+    assert(resultTable.isEmpty)
   }
 
   test("basic test - managed table created with SQL") {

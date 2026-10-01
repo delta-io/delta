@@ -163,14 +163,14 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
           if (schemaHasChanged(snapshot, spark)) {
             updateSchema(spark, snapshot)
             recordDeltaEvent(
-              snapshot.deltaLog,
+              snapshot,
               "delta.catalog.update.schema",
               data = loggingData
             )
           } else if (propertiesHaveChanged(properties, snapshot.metadata, spark)) {
             updateProperties(spark, snapshot)
             recordDeltaEvent(
-              snapshot.deltaLog,
+              snapshot,
               "delta.catalog.update.properties",
               data = loggingData
             )
@@ -179,7 +179,7 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
             // table properties.
             updateProperties(spark, snapshot)
             recordDeltaEvent(
-              snapshot.deltaLog,
+              snapshot,
               "delta.catalog.update.clusteringColumns",
               data = loggingData
             )
@@ -187,7 +187,7 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
         } catch {
           case NonFatal(e) =>
             recordDeltaEvent(
-              snapshot.deltaLog,
+              snapshot,
               "delta.catalog.update.error",
               data = Map(
                 "exceptionMsg" -> ExceptionUtils.getMessage(e),
@@ -272,8 +272,8 @@ case class UpdateCatalog(table: CatalogTable) extends UpdateCatalogBase {
       spark: SparkSession,
       snapshot: Snapshot): Unit = {
     if (!shouldRun(spark, snapshot)) return
+    UpdateCatalog.activeAsyncRequests.incrementAndGet()
     Future[Unit] {
-      UpdateCatalog.activeAsyncRequests.incrementAndGet()
       execute(spark, snapshot)
     }(UpdateCatalog.getOrCreateExecutionContext(spark.sessionState.conf)).onComplete { _ =>
       UpdateCatalog.activeAsyncRequests.decrementAndGet()
@@ -358,8 +358,17 @@ object UpdateCatalog {
       catalog.externalCatalog.alterTableDataSchema(db, tblName, schema)
     }
 
-    // We have to update the properties anyway with the latest version/timestamp information
-    catalog.alterTable(table.copy(properties = updatedProperties(snapshot) ++ additionalProperties))
+    // We have to update the properties anyway with the latest version/timestamp information.
+    // If RETAIN_COMMENTS_DURING_REPLACE_TABLE is enabled, replace table may carry over table
+    // comments. UC has to be aware of this.
+    val updatedTable = table.copy(
+      properties = updatedProperties(snapshot) ++ additionalProperties)
+    catalog.alterTable(
+      if (spark.conf.get(DeltaSQLConf.RETAIN_COMMENTS_DURING_REPLACE_TABLE)) {
+        updatedTable.copy(comment = Option(snapshot.metadata.description))
+      } else {
+        updatedTable
+      })
   }
 
   /** Updates our properties map with the version and timestamp information of the snapshot. */

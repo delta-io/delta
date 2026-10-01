@@ -16,9 +16,13 @@
 package io.delta.kernel.internal.checkpoints;
 
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import java.util.HashMap;
+import java.util.Map;
 
 /** Action representing a SidecarFile in a top-level V2 checkpoint file. */
 public class SidecarFile {
@@ -58,5 +62,14 @@ public class SidecarFile {
 
   public long getModificationTime() {
     return modificationTime;
+  }
+
+  public Row toRow() {
+    Map<Integer, Object> dataMap = new HashMap<>();
+    dataMap.put(0, path);
+    dataMap.put(1, sizeInBytes);
+    dataMap.put(2, modificationTime);
+
+    return new GenericRow(READ_SCHEMA, dataMap);
   }
 }

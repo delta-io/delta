@@ -45,15 +45,18 @@ class DeltaConcurrentExceptionsSuite extends SparkFunSuite with SharedSparkSessi
 
   test("test MetadataChangedException") {
     intercept[org.apache.spark.sql.delta.DeltaConcurrentModificationException] {
-      throw org.apache.spark.sql.delta.DeltaErrors.metadataChangedException(None)
+      throw org.apache.spark.sql.delta.DeltaErrors
+        .metadataChangedException("test_table", None)
     }
 
     intercept[io.delta.exceptions.DeltaConcurrentModificationException] {
-      throw org.apache.spark.sql.delta.DeltaErrors.metadataChangedException(None)
+      throw org.apache.spark.sql.delta.DeltaErrors
+        .metadataChangedException("test_table", None)
     }
 
     intercept[org.apache.spark.sql.delta.MetadataChangedException] {
-      throw org.apache.spark.sql.delta.DeltaErrors.metadataChangedException(None)
+      throw org.apache.spark.sql.delta.DeltaErrors
+        .metadataChangedException("test_table", None)
     }
 
     intercept[org.apache.spark.sql.delta.DeltaConcurrentModificationException] {
@@ -89,73 +92,52 @@ class DeltaConcurrentExceptionsSuite extends SparkFunSuite with SharedSparkSessi
 
   test("test ConcurrentAppendException") {
     intercept[org.apache.spark.sql.delta.DeltaConcurrentModificationException] {
-      throw org.apache.spark.sql.delta.DeltaErrors.concurrentAppendException(None, "")
+      throw org.apache.spark.sql.delta.DeltaErrors.
+        concurrentAppendException(None, "t", -1, partitionOpt = None)
     }
 
     intercept[io.delta.exceptions.DeltaConcurrentModificationException] {
-      throw org.apache.spark.sql.delta.DeltaErrors.concurrentAppendException(None, "")
+      throw org.apache.spark.sql.delta.DeltaErrors.
+        concurrentAppendException(None, "t", -1, partitionOpt = None)
     }
 
     intercept[org.apache.spark.sql.delta.ConcurrentAppendException] {
-      throw org.apache.spark.sql.delta.DeltaErrors.concurrentAppendException(None, "")
-    }
-
-    intercept[org.apache.spark.sql.delta.DeltaConcurrentModificationException] {
-      throw new org.apache.spark.sql.delta.ConcurrentAppendException(None, "")
-    }
-
-    intercept[io.delta.exceptions.DeltaConcurrentModificationException] {
-      throw new org.apache.spark.sql.delta.ConcurrentAppendException(None, "")
+      throw org.apache.spark.sql.delta.DeltaErrors.
+        concurrentAppendException(None, "t", -1, partitionOpt = None)
     }
   }
 
   test("test ConcurrentDeleteReadException") {
     intercept[org.apache.spark.sql.delta.DeltaConcurrentModificationException] {
       throw org.apache.spark.sql.delta.DeltaErrors.
-        concurrentDeleteReadException(None, "")
+        concurrentDeleteReadException(None, "t", -1, partitionOpt = None)
     }
 
     intercept[io.delta.exceptions.DeltaConcurrentModificationException] {
       throw org.apache.spark.sql.delta.DeltaErrors
-        .concurrentDeleteReadException(None, "")
+        .concurrentDeleteReadException(None, "t", -1, partitionOpt = None)
     }
 
     intercept[org.apache.spark.sql.delta.ConcurrentDeleteReadException] {
       throw org.apache.spark.sql.delta.DeltaErrors
-        .concurrentDeleteReadException(None, "")
-    }
-
-    intercept[org.apache.spark.sql.delta.DeltaConcurrentModificationException] {
-      throw new org.apache.spark.sql.delta.ConcurrentDeleteReadException(None, "")
-    }
-
-    intercept[io.delta.exceptions.DeltaConcurrentModificationException] {
-      throw new org.apache.spark.sql.delta.ConcurrentDeleteReadException(None, "")
+        .concurrentDeleteReadException(None, "t", -1, partitionOpt = None)
     }
   }
 
   test("test ConcurrentDeleteDeleteException") {
     intercept[org.apache.spark.sql.delta.DeltaConcurrentModificationException] {
       throw org.apache.spark.sql.delta.DeltaErrors
-        .concurrentDeleteDeleteException(None, "")
+        .concurrentDeleteDeleteException(None, "t", -1, partitionOpt = None)
     }
 
     intercept[io.delta.exceptions.DeltaConcurrentModificationException] {
       throw org.apache.spark.sql.delta.DeltaErrors
-        .concurrentDeleteDeleteException(None, "")
+        .concurrentDeleteDeleteException(None, "t", -1, partitionOpt = None)
     }
 
     intercept[org.apache.spark.sql.delta.ConcurrentDeleteDeleteException] {
       throw org.apache.spark.sql.delta.DeltaErrors
-        .concurrentDeleteDeleteException(None, "")
-    }
-
-    intercept[org.apache.spark.sql.delta.DeltaConcurrentModificationException] {
-      throw new org.apache.spark.sql.delta.ConcurrentDeleteDeleteException(None, "")
-    }
-
-    intercept[io.delta.exceptions.DeltaConcurrentModificationException] {
-      throw new org.apache.spark.sql.delta.ConcurrentDeleteDeleteException(None, "")
+        .concurrentDeleteDeleteException(None, "t", -1, partitionOpt = None)
     }
   }
 

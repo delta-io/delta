@@ -168,6 +168,14 @@ class DeltaTaskStatisticsTracker(
     submittedFiles.clear()
     DeltaFileStatistics(results.toMap)
   }
+
+  def minVariantStatsExpressions: Seq[MinVariantStats] = {
+    aggregates.filter(_.isInstanceOf[MinVariantStats]).asInstanceOf[Seq[MinVariantStats]]
+  }
+
+  def maxVariantStatsExpressions: Seq[MaxVariantStats] = {
+    aggregates.filter(_.isInstanceOf[MaxVariantStats]).asInstanceOf[Seq[MaxVariantStats]]
+  }
 }
 
 /**

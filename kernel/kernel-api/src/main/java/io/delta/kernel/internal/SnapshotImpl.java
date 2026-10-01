@@ -23,7 +23,11 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Operation;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.clustering.ClusteringColumnInfo;
+import io.delta.kernel.commit.CatalogCommitter;
 import io.delta.kernel.commit.Committer;
+import io.delta.kernel.commit.PublishFailedException;
+import io.delta.kernel.commit.PublishMetadata;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.CommitInfo;
@@ -31,8 +35,12 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.checkpoints.Checkpointer;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumUtils;
+import io.delta.kernel.internal.checksum.ChecksumWriter;
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
@@ -40,17 +48,27 @@ import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.statistics.SnapshotStatistics;
+import io.delta.kernel.statistics.TableStats;
 import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Implementation of {@link Snapshot}. */
 public class SnapshotImpl implements Snapshot {
+
+  private static final Logger logger = LoggerFactory.getLogger(SnapshotImpl.class);
 
   private final Path logPath;
   private final Path dataPath;
@@ -76,6 +94,14 @@ public class SnapshotImpl implements Snapshot {
 
   private Lazy<SnapshotReport> lazySnapshotReport;
   private Lazy<Optional<List<Column>>> lazyClusteringColumns;
+  private Lazy<Optional<List<ClusteringColumnInfo>>> lazyClusteringColumnInfos;
+
+  /**
+   * Indicates whether this snapshot was built as a "latest" snapshot query (i.e., no time-travel
+   * parameters were provided). This is intent-based - it indicates what the user requested, not
+   * whether the snapshot is actually the latest version.
+   */
+  private final boolean wasBuiltAsLatest;
 
   // TODO: Do not take in LogReplay as a constructor argument.
   // TODO: Also take in clustering columns for post-commit snapshot
@@ -99,6 +125,10 @@ public class SnapshotImpl implements Snapshot {
     this.metadata = requireNonNull(metadata);
     this.committer = committer;
     this.inCommitTimestampOpt = inCommitTimestampOpt;
+    // TODO: Post-commit snapshots build a version-based SnapshotQueryContext
+    // (see TransactionImpl.buildPostCommitSnapshotOpt), so isLatestQuery() may be false even
+    // when this snapshot is intended to be the latest version.
+    this.wasBuiltAsLatest = snapshotContext.isLatestQuery();
 
     // We create the actual Snapshot report lazily (on first access) instead of eagerly in this
     // constructor because some Snapshot metrics, like {@link
@@ -110,6 +140,15 @@ public class SnapshotImpl implements Snapshot {
             () ->
                 ClusteringMetadataDomain.fromSnapshot(this)
                     .map(ClusteringMetadataDomain::getClusteringColumns));
+    // Cache the resolved per-column descriptors (physical/logical/data type) on first access
+    // so callers that read clustering metadata across multiple plan rules don't pay the
+    // schema walk repeatedly. Builds on top of `lazyClusteringColumns` -- each physical column
+    // is resolved against the snapshot's schema via ClusteringColumnInfo.resolveAll.
+    this.lazyClusteringColumnInfos =
+        new Lazy<>(
+            () ->
+                getPhysicalClusteringColumns()
+                    .map(physCols -> ClusteringColumnInfo.resolveAll(getSchema(), physCols)));
   }
 
   /////////////////
@@ -175,6 +214,11 @@ public class SnapshotImpl implements Snapshot {
   }
 
   @Override
+  public SnapshotStatistics getStatistics() {
+    return new SnapshotStatisticsImpl();
+  }
+
+  @Override
   public ScanBuilder getScanBuilder() {
     return new ScanBuilderImpl(
         dataPath, version, protocol, metadata, getSchema(), logReplay, getSnapshotReport());
@@ -184,6 +228,117 @@ public class SnapshotImpl implements Snapshot {
   public UpdateTableTransactionBuilder buildUpdateTableTransaction(
       String engineInfo, Operation operation) {
     return new UpdateTableTransactionBuilderImpl(this, engineInfo, operation);
+  }
+
+  @Override
+  public Snapshot publish(Engine engine) throws PublishFailedException {
+    final List<ParsedCatalogCommitData> allCatalogCommits = getLogSegment().getAllCatalogCommits();
+    final boolean isFileSystemBasedTable = !TableFeatures.isCatalogManagedSupported(protocol);
+    final boolean isCatalogCommitter = committer instanceof CatalogCommitter;
+
+    if (!allCatalogCommits.isEmpty()) {
+      if (isFileSystemBasedTable) {
+        throw new IllegalStateException( // This case should be impossible
+            "Cannot have catalog commits on a filesystem-managed table");
+      }
+
+      if (!isCatalogCommitter) {
+        throw new UnsupportedOperationException( // This case should also be impossible
+            String.format(
+                "[%s] Cannot publish: committer does not support publishing",
+                committer.getClass().getName()));
+      }
+    } else {
+      if (isFileSystemBasedTable) {
+        logger.info("Publishing not applicable: this is a filesystem-managed table");
+        return this;
+      }
+
+      if (!isCatalogCommitter) {
+        logger.info(
+            "[{}] Publishing not applicable: committer does not support publishing",
+            committer.getClass().getName());
+        return this;
+      }
+    }
+
+    // TODO: When we return a post-publish Snapshot, ensure to replace *all* catalog commits with
+    //       their published versions, not just the catalog commits that were published. For
+    //       example: if we have catalog commits v11, v12, and v13 but the maxPublishedVersion is
+    //       12, we will only publish v13. Nonetheless, our post-publish Snapshot must include the
+    //       published versions of v11 and v12, too.
+
+    final long maxPublishedDeltaVersion = getMaxPublishedDeltaVersionOrThrow();
+    final List<ParsedCatalogCommitData> catalogCommitsToPublish =
+        allCatalogCommits.stream()
+            .filter(commit -> commit.getVersion() > maxPublishedDeltaVersion)
+            .collect(Collectors.toList());
+
+    if (catalogCommitsToPublish.isEmpty()) {
+      logger.info("No catalog commits need to be published");
+      return this;
+    }
+
+    final PublishMetadata publishMetadata =
+        new PublishMetadata(version, logPath.toString(), catalogCommitsToPublish);
+
+    ((CatalogCommitter) committer).publish(engine, publishMetadata);
+    LogSegment updatedLogSegment = getLogSegment().newAsPublished();
+    return new SnapshotImpl(
+        dataPath,
+        version,
+        new Lazy<>(() -> updatedLogSegment),
+        logReplay,
+        protocol,
+        metadata,
+        committer,
+        SnapshotQueryContext.forVersionSnapshot(dataPath.toString(), version),
+        this.inCommitTimestampOpt);
+  }
+
+  @Override
+  public void writeChecksum(Engine engine, Snapshot.ChecksumWriteMode mode) throws IOException {
+    final Optional<Snapshot.ChecksumWriteMode> actualOpt = getStatistics().getChecksumWriteMode();
+
+    if (actualOpt.isEmpty()) {
+      logger.warn("Not writing checksum: checksum file already exists at version {}", version);
+      return;
+    }
+
+    final Snapshot.ChecksumWriteMode actual = actualOpt.get();
+
+    switch (mode) {
+      case SIMPLE:
+        if (actual == ChecksumWriteMode.FULL) {
+          throw new IllegalStateException(
+              "Cannot write checksum in SIMPLE mode: FULL mode required");
+        }
+
+        final CRCInfo crcInfo = logReplay.getCrcInfoAtSnapshotVersion().get();
+        logger.info("Executing checksum write in SIMPLE mode");
+        new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo);
+        return;
+      case FULL:
+        if (actual == ChecksumWriteMode.SIMPLE) {
+          logger.warn("Requested checksum write in FULL mode, but SIMPLE mode is available");
+        }
+        logger.info("Executing checksum write in FULL mode");
+        ChecksumUtils.computeStateAndWriteChecksum(engine, getLogSegment());
+        return;
+      default:
+        throw new IllegalStateException("Unknown checksum write mode: " + mode);
+    }
+  }
+
+  public void writeCheckpoint(Engine engine) throws IOException {
+    // Refuse to create a checkpoint if the table is CatalogManaged but the current snapshot is not
+    // published
+    if (TableFeatures.isCatalogManagedSupported(protocol)
+        && getLogSegment().getMaxPublishedDeltaVersion().orElse(-1L) < version) {
+      throw DeltaErrors.checkpointOnUnpublishedCommits(
+          getPath(), version, getLogSegment().getMaxPublishedDeltaVersion().orElse(-1L));
+    }
+    Checkpointer.checkpoint(engine, System::currentTimeMillis, this);
   }
 
   ///////////////////
@@ -208,6 +363,15 @@ public class SnapshotImpl implements Snapshot {
     return dataPath;
   }
 
+  /**
+   * Returns true if this snapshot was built as a "latest" snapshot query (i.e., no time-travel
+   * parameters were provided). This is intent-based - it indicates what the user requested, not
+   * whether the snapshot is actually the latest version.
+   */
+  public boolean wasBuiltAsLatest() {
+    return wasBuiltAsLatest;
+  }
+
   public Protocol getProtocol() {
     return protocol;
   }
@@ -229,6 +393,17 @@ public class SnapshotImpl implements Snapshot {
    */
   public Optional<List<Column>> getPhysicalClusteringColumns() {
     return lazyClusteringColumns.get();
+  }
+
+  /**
+   * Override of {@link Snapshot#getClusteringColumnInfos()} that returns the cached resolved
+   * descriptors (physical column, logical column, data type) for this snapshot. The first
+   * invocation computes the list by combining {@link #getPhysicalClusteringColumns()} with a
+   * column-mapping-aware schema walk; subsequent invocations return the cached result.
+   */
+  @Override
+  public Optional<List<ClusteringColumnInfo>> getClusteringColumnInfos() {
+    return lazyClusteringColumnInfos.get();
   }
 
   /**
@@ -279,5 +454,66 @@ public class SnapshotImpl implements Snapshot {
    */
   public Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
     return logReplay.getLatestTransactionIdentifier(engine, applicationId);
+  }
+
+  ////////////////////
+  // Helper Methods //
+  ////////////////////
+
+  private long getMaxPublishedDeltaVersionOrThrow() {
+    // The maxPublishedDeltaVersion is required for publishing to ensure published deltas are
+    // contiguous. The cases where it is unknown should be very rare (e.g. Kernel loaded a
+    // LogSegment consisting only of a checkpoint with no corresponding published delta).
+    // TODO: Kernel should LIST to authoritatively determine the maxPublishedDeltaVersion, or give
+    //       such utilities to CatalogCommitters for them to do this.
+    return getLogSegment()
+        .getMaxPublishedDeltaVersion()
+        .orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "maxPublishedDeltaVersion is unknown. This is required for publishing."));
+  }
+
+  ///////////////////
+  // Inner Classes //
+  ///////////////////
+
+  private class SnapshotStatisticsImpl implements SnapshotStatistics {
+    @Override
+    public Optional<Snapshot.ChecksumWriteMode> getChecksumWriteMode() {
+      final boolean checksumFileExists =
+          getLogSegment()
+              .getLastSeenChecksum()
+              .map(checksumFile -> FileNames.checksumVersion(checksumFile.getPath()) == version)
+              .orElse(false);
+
+      if (checksumFileExists) {
+        return Optional.empty();
+      }
+
+      if (logReplay.getCrcInfoAtSnapshotVersion().isPresent()) {
+        return Optional.of(Snapshot.ChecksumWriteMode.SIMPLE);
+      }
+
+      return Optional.of(Snapshot.ChecksumWriteMode.FULL);
+    }
+
+    @Override
+    public Optional<Integer> getIncrementalChecksumLoadCost() {
+      return getLogSegment()
+          .getLastSeenChecksum()
+          .map(file -> (int) (version - FileNames.getFileVersion(new Path(file.getPath()))));
+    }
+
+    @Override
+    public Optional<TableStats> getTableStats(Engine engine) throws IOException {
+      Optional<CRCInfo> crc = getCurrentCrcInfo();
+      if (!crc.isPresent()) {
+        crc =
+            ChecksumUtils.tryBuildCrcIncrementally(
+                engine, getLogSegment(), logReplay.getLastSeenCrcInfo());
+      }
+      return crc.map(c -> new TableStats(c.getTableSizeBytes(), c.getNumFiles()));
+    }
   }
 }

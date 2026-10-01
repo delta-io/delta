@@ -268,7 +268,7 @@ trait CDCReaderImpl extends CDCReaderBase {
     )
 
     var totalBytes = 0L
-    var numAddFiles, numRemoveFiles, numAddCRCFiles = 0L
+    var numAddFiles, numRemoveFiles, numAddCDCFiles = 0L
 
     changes.foreach {
       case (v, actions) =>
@@ -311,16 +311,7 @@ trait CDCReaderImpl extends CDCReaderBase {
         // extracted here cannot be relied on for correctness.
         var commitInfo: Option[CommitInfo] = None
         actions.foreach {
-          case c: AddCDCFile =>
-            cdcActions.append(c)
-            numAddCRCFiles += 1L
-            totalBytes += c.size
-          case a: AddFile =>
-            numAddFiles += 1L
-            totalBytes += a.size
-          case r: RemoveFile =>
-            numRemoveFiles += 1L
-            totalBytes += r.size.getOrElse(0L)
+          case c: AddCDCFile => cdcActions.append(c)
           case i: CommitInfo => commitInfo = Some(i)
           case _ => // do nothing
         }
@@ -333,6 +324,7 @@ trait CDCReaderImpl extends CDCReaderBase {
           .flatMap(_.inCommitTimestamp)
           .map(ict => new Timestamp(ict))
           .getOrElse(nonICTTimestampsByVersion.get(v).orNull)
+        val changesDataFunc = CommitInfo.fileActionChangesData(commitInfo)
         // When `isStreaming` = `true` the [CommitInfo] action is only used for passing the
         // in-commit timestamp to this method. We should filter them out.
         commitInfo = if (isStreaming) None else commitInfo
@@ -340,6 +332,8 @@ trait CDCReaderImpl extends CDCReaderBase {
         // If there are CDC actions, we read them exclusively if we should not use the
         // Add and RemoveFiles.
         if (cdcActions.nonEmpty && !useCoarseGrainedCDC) {
+          numAddCDCFiles += cdcActions.size
+          totalBytes += cdcActions.map(_.size).sum
           changeFiles.append(CDCDataSpec(v, ts, cdcActions.toSeq, commitInfo))
         } else {
           val shouldSkipIndexedFile = commitInfo.exists(CDCReader.shouldSkipFileActionsInCommit)
@@ -351,8 +345,12 @@ trait CDCReaderImpl extends CDCReaderBase {
           } else {
             // Otherwise, we take the AddFile and RemoveFile actions with dataChange = true and
             // infer CDC from them.
-            val addActions = actions.collect { case a: AddFile if a.dataChange => a }
-            val removeActions = actions.collect { case r: RemoveFile if r.dataChange => r }
+            val addActions = actions.collect { case a: AddFile if changesDataFunc(a) => a }
+            val removeActions = actions.collect { case r: RemoveFile if changesDataFunc(r) => r }
+            numAddFiles += addActions.size
+            numRemoveFiles += removeActions.size
+            totalBytes += addActions.map(_.size).sum
+            totalBytes += removeActions.map(_.size.getOrElse(0L)).sum
             addFiles.append(
               CDCDataSpec(
                 version = v,
@@ -418,12 +416,13 @@ trait CDCReaderImpl extends CDCReaderBase {
         "useCoarseGrainedCDC" -> useCoarseGrainedCDC,
         "numAddFiles" -> numAddFiles,
         "numRemoveFiles" -> numRemoveFiles,
-        "numAddCRCFiles" -> numAddCRCFiles,
+        // numAddCRCFiles is a typo, kept for backwards compatability.
+        "numAddCRCFiles" -> numAddCDCFiles,
         "totalBytes" -> totalBytes,
         "isStreaming" -> isStreaming
       )
     )
-    val totalFiles = numAddFiles + numRemoveFiles + numAddCRCFiles
+    val totalFiles = numAddFiles + numRemoveFiles + numAddCDCFiles
     CDCVersionDiffInfo(
       (emptyDf +: dfs).reduce((df1, df2) => df1.union(
         df2
@@ -605,37 +604,6 @@ trait CDCReaderImpl extends CDCReaderBase {
   }
 
   /**
-   * Builds a map from commit versions to associated commit timestamps where the timestamp
-   * is the modification time of the commit file. Note that this function will not return
-   * InCommitTimestamps, it is up to the consumer of this function to decide whether the
-   * file modification time is the correct commit timestamp or whether they need to read the ICT.
-   *
-   * @param start  start commit version
-   * @param end  end commit version (inclusive)
-   */
-  def getNonICTTimestampsByVersion(
-      deltaLog: DeltaLog,
-      start: Long,
-      end: Long): Map[Long, Timestamp] = {
-    // Correct timestamp values are only available through DeltaHistoryManager.getCommits(). Commit
-    // info timestamps are wrong, and file modification times are wrong because they need to be
-    // monotonized first. This just performs a list (we don't read the contents of the files in
-    // getCommits()) so the performance overhead is minimal.
-    val monotonizationStart =
-      math.max(start - DeltaHistoryManager.POTENTIALLY_UNMONOTONIZED_TIMESTAMPS, 0)
-    val commits = DeltaHistoryManager.getCommitsWithNonIctTimestamps(
-      deltaLog.store,
-      deltaLog.logPath,
-      monotonizationStart,
-      Some(end + 1),
-      deltaLog.newDeltaHadoopConf())
-
-    // Note that the timestamps come from filesystem modification timestamps, so they're
-    // milliseconds since epoch and we don't need to deal with timezones.
-    commits.map(f => (f.version -> new Timestamp(f.timestamp))).toMap
-  }
-
-  /**
    * Get the block of change data from start to end Delta log versions (both sides inclusive).
    * The returned DataFrame has isStreaming set to false.
    *
@@ -702,7 +670,7 @@ trait CDCReaderImpl extends CDCReaderBase {
     // but CDCReader use CaseInsensitiveStringMap vs. CaseInsensitiveMap used by DataFrameReader.
     def toBoolean(input: String, name: String): Boolean = {
       Try(input.toBoolean).toOption.getOrElse {
-        throw DeltaErrors.illegalDeltaOptionException(name, input, "must be 'true' or 'false'")
+        throw DeltaErrors.illegalDeltaOptionMustBeBoolean(name, input)
       }
     }
 
@@ -838,14 +806,6 @@ trait CDCReaderImpl extends CDCReaderBase {
     val commitInfo = versionToCommitInfo.get(fileVersion.version)
     new CDCDataSpec(fileVersion, addFiles.toSeq, commitInfo)
   }.toSeq
-
-  /**
-   * Represents the changes between some start and end version of a Delta table
-   * @param fileChangeDf contains all of the file changes (AddFile, RemoveFile, AddCDCFile)
-   * @param numFiles the number of AddFile + RemoveFile + AddCDCFiles that are in the df
-   * @param numBytes the total size of the AddFile + RemoveFile + AddCDCFiles that are in the df
-   */
-  case class CDCVersionDiffInfo(fileChangeDf: DataFrame, numFiles: Long, numBytes: Long)
 
   override def getConstructedCDCRelation(
     snapshotWithSchema: SnapshotWithSchemaMode,

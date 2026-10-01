@@ -25,9 +25,9 @@ import scala.concurrent.duration._
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
 import org.apache.spark.sql.delta.fuzzer.{PhaseLockingTransactionExecutionObserver => TransactionObserver}
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
+import org.apache.spark.sql.util.ScalaExtensions.OptionExt
 import io.delta.tables.{DeltaTable => IODeltaTable}
 
-import org.apache.spark.SparkException
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
@@ -48,6 +48,9 @@ trait ConflictResolutionTestUtils
 
   override val timeout: FiniteDuration = 120.seconds
 
+  /** Wraps `executeImpl`. Default is pass-through; suites may override for setup/cleanup. */
+  def wrapExecution[T](thunk: => T): T = thunk
+
   def abbreviate(str: String, abbrevMarker: String, len: Int): String = {
     if (str == null || abbrevMarker == null) {
       null
@@ -67,7 +70,9 @@ trait ConflictResolutionTestUtils
     def execute(ctx: TestContext): Unit = {
       ctx.trackTransaction(this) {
         withSQLConf(sqlConf.toSeq: _*) {
-          executeImpl(ctx)
+          wrapExecution {
+            executeImpl(ctx)
+          }
         }
       }
     }
@@ -98,7 +103,9 @@ trait ConflictResolutionTestUtils
       withSQLConf(sqlConf.toSeq: _*) {
         val (observer_, future_) = runFunctionWithObserver(name, executor,
           fn = () => {
-            executeImpl(ctx)
+            wrapExecution {
+              executeImpl(ctx)
+            }
             // DV tests do not use the results. We just return an empty array to conform with
             // function's signature.
             Array.empty[Row]
@@ -120,14 +127,7 @@ trait ConflictResolutionTestUtils
         ctx.trackTransaction(this) {
           unblockCommit(observer.get)
           waitForCommit(observer.get)
-          try {
-            ThreadUtils.awaitResult(future.get, Duration.Inf)
-          } catch {
-            case e: SparkException if e.getCause.isInstanceOf[ExecutionException] =>
-              throw e.getCause
-            case e: SparkException =>
-              throw e
-          }
+          ThreadUtils.awaitResult(future.get, Duration.Inf)
         }
       }
 
@@ -170,7 +170,7 @@ trait ConflictResolutionTestUtils
 
   case class Insert(
       rows: Seq[Long],
-      partitionColumn: Long = 0L,
+      partitionColumn: Option[Long] = Some(0L),
       sqlConf: Map[String, String] = Map.empty) extends TestTransaction(sqlConf) {
     override val name: String = {
       val rowsStr = abbreviate(rows.mkString(","), "...", 10)
@@ -182,8 +182,11 @@ trait ConflictResolutionTestUtils
     }
 
     override def executeImpl(ctx: TestContext): Unit = {
-      rows.toDF(ID_COLUMN).withColumn(PARTITION_COLUMN, lit(partitionColumn))
-        .write.format("delta").mode("append").save(ctx.deltaLog.dataPath.toString)
+      var df = rows.toDF(ID_COLUMN)
+      partitionColumn.ifDefined { p =>
+        df = df.withColumn(PARTITION_COLUMN, lit(p))
+      }
+      df.write.format("delta").mode("append").save(ctx.deltaLog.dataPath.toString)
     }
 
     override def dataChange: Boolean = true

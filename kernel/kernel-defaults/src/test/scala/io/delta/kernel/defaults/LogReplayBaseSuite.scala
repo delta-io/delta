@@ -228,9 +228,9 @@ trait FileReadMetrics { self: Object =>
     }
   }
 
-  def getVersionsRead: Seq[Long] = versionsRead
+  def getVersionsRead: Seq[Long] = versionsRead.toSeq
 
-  def getCompactionsRead: Seq[(Long, Long)] = compactionVersionsRead
+  def getCompactionsRead: Seq[(Long, Long)] = compactionVersionsRead.toSeq
 
   def getLastCheckpointMetadataReadCalls: Int = lastCheckpointMetadataReadCalls
 

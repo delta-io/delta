@@ -32,7 +32,8 @@ import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DateTimeUtils, DeltaCommitFileProvider, FileNames,
+  JsonUtils, TimestampFormatter}
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
@@ -132,6 +133,12 @@ class DeltaTimeTravelSuite extends QueryTest
       .select($"ts".cast("string")).as[String].collect()
       .map(i => s"$i")
   }
+
+  /** Table-setup SQL hook. V2-force subclasses override it to run setup on the V1 connector. */
+  protected def setupSql(sqlText: String): Unit = spark.sql(sqlText)
+
+  /** Table-setup action hook. V2-force subclasses override it to run setup on the V1 connector. */
+  protected def runSetup[T](f: => T): T = f
 
   private def historyTest(testName: String)(f: (DeltaLog, ManualClock) => Unit): Unit = {
     testQuietly(testName) {
@@ -251,7 +258,7 @@ class DeltaTimeTravelSuite extends QueryTest
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 17:34:18.0",
-          "tableName" -> "2018-10-24 17:14:18.0",
+          "lastCommitTimestamp" -> "2018-10-24 17:14:18.0",
           "maximumTimestamp" -> "2018-10-24 17:14:18")
       )
       assert(history.getActiveCommitAtTime(start + 180.minutes, true).version === 9)
@@ -572,7 +579,7 @@ class DeltaTimeTravelSuite extends QueryTest
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
-          "tableName" -> "2018-10-24 14:14:18.0",
+          "lastCommitTimestamp" -> "2018-10-24 14:14:18.0",
           "maximumTimestamp" -> "2018-10-24 14:14:18")
       )
 
@@ -586,7 +593,7 @@ class DeltaTimeTravelSuite extends QueryTest
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
-          "tableName" -> "2018-10-24 14:14:18.0",
+          "lastCommitTimestamp" -> "2018-10-24 14:14:18.0",
           "maximumTimestamp" -> "2018-10-24 14:14:18")
       )
 
@@ -755,8 +762,10 @@ class DeltaTimeTravelSuite extends QueryTest
     withDatabase("testDb") {
       sql("CREATE DATABASE testDb")
       withTable("tbl") {
-        spark.range(10).write.format("delta").saveAsTable("testDb.tbl")
-        val ts = sql("DESCRIBE HISTORY testDb.tbl").select("timestamp").head().getTimestamp(0)
+        val ts = runSetup {
+          spark.range(10).write.format("delta").saveAsTable("testDb.tbl")
+          sql("DESCRIBE HISTORY testDb.tbl").select("timestamp").head().getTimestamp(0)
+        }
 
         sql(s"SELECT * FROM testDb.tbl TIMESTAMP AS OF " +
           s"coalesce(CAST ('$ts' AS TIMESTAMP), current_date())")
@@ -826,8 +835,11 @@ class DeltaTimeTravelSuite extends QueryTest
         val ex = intercept[VersionNotFoundException] {
           spark.sql(s"SELECT * from $tableName FOR VERSION AS OF 2")
         }
-        assert(ex.getMessage contains
-          "Cannot time travel Delta table to version 2. Available versions: [0, 1]")
+        checkError(
+          ex,
+          "DELTA_VERSION_NOT_FOUND",
+          sqlState = "22003",
+          parameters = Map("userVersion" -> "2", "earliest" -> "0", "latest" -> "1"))
 
         val timeAtVersion0 = new Timestamp(start).toString
         val timeAtVersion1 = new Timestamp(start + 20.minutes).toString
@@ -851,7 +863,7 @@ class DeltaTimeTravelSuite extends QueryTest
           sqlState = "42816",
           parameters = Map(
             "providedTimestamp" -> s"$timeAfterVersion2",
-            "tableName" -> s"$timeAtVersion1",
+            "lastCommitTimestamp" -> s"$timeAtVersion1",
             "maximumTimestamp" -> s"${timeAtVersion1.replaceFirst("\\.\\d+$", "")}") // exclude ms
         )
       }
@@ -862,8 +874,8 @@ class DeltaTimeTravelSuite extends QueryTest
   test("SPARK-41154: Correct relation caching for queries with time travel spec") {
     val tblName = "tab"
     withTable(tblName) {
-      sql(s"CREATE TABLE $tblName USING DELTA AS SELECT 1 as c")
-      sql(s"INSERT INTO $tblName SELECT 2 as c")
+      setupSql(s"CREATE TABLE $tblName USING DELTA AS SELECT 1 as c")
+      setupSql(s"INSERT INTO $tblName SELECT 2 as c")
       checkAnswer(
         sql(s"""
           |SELECT * FROM $tblName VERSION AS OF '0'
@@ -877,7 +889,7 @@ class DeltaTimeTravelSuite extends QueryTest
   test("Dataframe-based time travel works with different timestamp precisions") {
     val tblName = "test_tab"
     withTable(tblName) {
-      sql(s"CREATE TABLE spark_catalog.default.$tblName (a int) USING DELTA")
+      setupSql(s"CREATE TABLE spark_catalog.default.$tblName (a int) USING DELTA")
       // Ensure that the current timestamp is different from the one in the table.
       Thread.sleep(1000)
       // Microsecond precision timestamp.
@@ -890,7 +902,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val sdf = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
       val current_time_seconds = sdf.format(new java.sql.Timestamp(System.currentTimeMillis()))
 
-      sql(s"INSERT INTO spark_catalog.default.$tblName VALUES (1)")
+      setupSql(s"INSERT INTO spark_catalog.default.$tblName VALUES (1)")
       checkAnswer(spark.read.option("timestampAsOf", current_time_micros)
         .table(s"spark_catalog.default.$tblName"), Seq.empty)
       checkAnswer(spark.read.option("timestampAsOf", current_time_millis.toString)

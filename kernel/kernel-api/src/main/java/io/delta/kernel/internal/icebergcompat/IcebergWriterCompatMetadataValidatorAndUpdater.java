@@ -93,12 +93,13 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
               DOMAIN_METADATA_W_FEATURE,
               VACUUM_PROTOCOL_CHECK_RW_FEATURE,
               CHECKPOINT_V2_RW_FEATURE,
+              CHECKPOINT_PROTECTION_W_FEATURE,
               IN_COMMIT_TIMESTAMP_W_FEATURE,
               CLUSTERING_W_FEATURE,
               TIMESTAMP_NTZ_RW_FEATURE,
               TYPE_WIDENING_RW_FEATURE,
               TYPE_WIDENING_RW_PREVIEW_FEATURE,
-              CATALOG_MANAGED_R_W_FEATURE_PREVIEW)
+              CATALOG_MANAGED_RW_FEATURE)
           .collect(toSet());
 
   protected static IcebergCompatCheck createUnsupportedFeaturesCheck(

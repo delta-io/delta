@@ -136,7 +136,7 @@ object AutoCompactUtils extends DeltaLogging {
       isModifiedPartitionsOnlyAutoCompactEnabled(spark) && reservePartitionEnabled(spark)
     val freePartitions =
       if (shouldReservePartitions) {
-        filterFreePartitions(deltaLog.tableId, partitionsAddedToOpt.get)
+        filterFreePartitions(deltaLog.unsafeVolatileTableId, partitionsAddedToOpt.get)
       } else {
         partitionsAddedToOpt.get
       }
@@ -183,7 +183,8 @@ object AutoCompactUtils extends DeltaLogging {
 
     val numChosenPartitions = finalPartitions.size
     if (shouldReservePartitions) {
-      finalPartitions = tryReservePartitions(deltaLog.tableId, finalPartitions)
+      finalPartitions = tryReservePartitions(
+        deltaLog.unsafeVolatileTableId, finalPartitions)
     }
     // Abort if all chosen partitions were reserved by a concurrent thread.
     if (numChosenPartitions > 0 && finalPartitions.isEmpty) {
@@ -235,7 +236,7 @@ object AutoCompactUtils extends DeltaLogging {
         // files threshold; otherwise, use 0 to indicate that any partition is qualified.
         val minNumFilesPerPartition = if (partitionEarlySkippingEnabled) minNumFiles else 0L
         val pickedPartitions = tablePartitionStats.filterPartitionsWithSmallFiles(
-          deltaLog.tableId,
+          deltaLog.unsafeVolatileTableId,
           freePartitionsAddedTo,
           minNumFilesPerPartition)
         if (pickedPartitions.isEmpty) {
@@ -250,7 +251,7 @@ object AutoCompactUtils extends DeltaLogging {
       } else if (partitionEarlySkippingEnabled) {
         // If only early skipping is enabled, then check whether there is any partition with more
         // files than minNumFiles.
-        val maxNumFiles = tablePartitionStats.maxNumFilesInTable(deltaLog.tableId)
+        val maxNumFiles = tablePartitionStats.maxNumFilesInTable(deltaLog.unsafeVolatileTableId)
         val shouldCompact = maxNumFiles >= minNumFiles
         if (shouldCompact) {
           ChosenPartitionsResult(shouldRunAC = true,

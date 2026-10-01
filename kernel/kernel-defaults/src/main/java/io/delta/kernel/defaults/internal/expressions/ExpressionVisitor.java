@@ -15,9 +15,9 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.createPredicate;
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
+import static io.delta.kernel.internal.util.ExpressionUtils.createPredicate;
 import static java.util.stream.Collectors.joining;
 
 import io.delta.kernel.expressions.*;
@@ -73,6 +73,8 @@ abstract class ExpressionVisitor<R> {
   abstract R visitStartsWith(Predicate predicate);
 
   abstract R visitIn(In in);
+
+  abstract R visitStGeometryBoxesIntersectOnStats(Predicate predicate);
 
   final R visit(Expression expression) {
     if (expression instanceof PartitionValueExpression) {
@@ -144,6 +146,9 @@ abstract class ExpressionVisitor<R> {
         } else {
           return visitIn(new In(children.get(0), children.subList(1, children.size())));
         }
+      case "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS":
+        return visitStGeometryBoxesIntersectOnStats(
+            createPredicate(name, children, collationIdentifier));
       default:
         throw new UnsupportedOperationException(
             String.format("Scalar expression `%s` is not supported.", name));

@@ -23,6 +23,7 @@ import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
 import scala.language.postfixOps
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
@@ -44,6 +45,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.JsonToStructs
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.NullType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 
@@ -249,7 +251,8 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
-            featuresToExclude = Seq(CatalogOwnedTableFeature)), Metadata(), add)
+            featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+            Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -279,7 +282,8 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
-            featuresToExclude = Seq(CatalogOwnedTableFeature)), Metadata(), add)
+            featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+            Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -770,7 +774,7 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  test("DeltaFileProviderUtils.getDeltaFilesInVersionRange") {
+  test("getCommitsInVersionRange returns the requested contiguous version range") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
@@ -778,25 +782,36 @@ class DeltaLogSuite extends QueryTest
       spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
       spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
       val log = DeltaLog.forTable(spark, new Path(path))
-      val result = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
+      val commits = DeltaFileProviderUtils.getCommitsInVersionRange(
         spark, log, startVersion = 1, endVersion = 3, catalogTableOpt = None)
-      assert(result.map(FileNames.getFileVersion) === Seq(1, 2, 3))
-      val filesAreUnbackfilledArray = result.map(FileNames.isUnbackfilledDeltaFile)
+      // The range read returns exactly the requested contiguous versions, in ascending order, and
+      // every commit in the range yields a non-empty action list.
+      assert(commits.map(_.version) === Seq(1, 2, 3))
+      assert(commits.forall(_.getActionsIterator().processAndClose(_.nonEmpty)))
+    }
+  }
 
-      val (fileV1, fileV2, fileV3) = (result(0), result(1), result(2))
-      assert(FileNames.getFileVersion(fileV1) === 1)
-      assert(FileNames.getFileVersion(fileV2) === 2)
-      assert(FileNames.getFileVersion(fileV3) === 3)
-
-      val backfillInterval =
-        catalogOwnedCoordinatorBackfillBatchSize.getOrElse(0L)
-      if (backfillInterval == 0 || backfillInterval == 1) {
-        assert(filesAreUnbackfilledArray === Seq(false, false, false))
-      } else if (backfillInterval == 2) {
-        assert(filesAreUnbackfilledArray === Seq(false, false, true))
-      } else {
-        assert(filesAreUnbackfilledArray === Seq(true, true, true))
-      }
+  test("parallelReadAndParseDeltaFilesAsIterator reads the same commits as" +
+      "getCommitsInVersionRange") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      val log = DeltaLog.forTable(spark, new Path(path))
+      val commits = DeltaFileProviderUtils.getCommitsInVersionRange(
+        spark, log, startVersion = 1, endVersion = 3, catalogTableOpt = None)
+      assert(commits.map(_.version) === Seq(1, 2, 3))
+      // Reading the commits serially and in parallel must yield identical actions per version, and
+      // parallelReadAndParseDeltaFilesAsIterator must preserve the input order.
+      val expected =
+        commits.map(c => c.version -> c.getActionsIterator().processAndClose(_.toList))
+      val parallelActions =
+        DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(spark, commits)
+          .map(_.processAndClose(_.toList))
+      val actual = commits.map(_.version).zip(parallelActions)
+      assert(actual === expected)
     }
   }
 
@@ -856,6 +871,145 @@ class DeltaLogSuite extends QueryTest
       }
     }
   }
+
+  private def testCreateDataFrame(shouldDropNullTypeColumns: Boolean): Unit = {
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key ->
+      shouldDropNullTypeColumns.toString) {
+      withTempDir { tempDir =>
+        spark.sql("select CAST(null as VOID) as nullTypeCol, id from range(10)")
+          .write
+          .format("delta")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        val df = deltaLog.createDataFrame(deltaLog.update(), Seq.empty, isStreaming = false)
+        val nullTypeFields = df.schema.filter(_.dataType == NullType)
+        if (shouldDropNullTypeColumns) {
+          assert(nullTypeFields.isEmpty)
+        } else {
+          assert(nullTypeFields.size == 1)
+        }
+      }
+    }
+  }
+
+  test("DeltaLog.createDataFrame should drop null columns with feature flag") {
+    testCreateDataFrame(shouldDropNullTypeColumns = true)
+  }
+
+  test("DeltaLog.createDataFrame should not drop null columns without feature flag") {
+    testCreateDataFrame(shouldDropNullTypeColumns = false)
+  }
+
+  /**
+   * Creates a delta table with `numVersions + 1` commits (1 CREATE + `numVersions` INSERTs, so
+   * versions `0..numVersions`), then deletes the requested commit JSON files so the next
+   * listing returns a non-contiguous sequence. Returns the [[DeltaLog]] of the resulting table.
+   */
+  private def createDeltaTableWithCommitGaps(
+      tableDir: File,
+      numVersions: Int,
+      versionsToDelete: Seq[Long]): DeltaLog = {
+    val log = DeltaLog.forTable(spark, tableDir.getCanonicalPath)
+    spark.sql(s"CREATE TABLE delta.`${tableDir.getCanonicalPath}` (id INT) USING delta")
+    (1 to numVersions).foreach { i =>
+      spark.sql(s"INSERT INTO delta.`${tableDir.getCanonicalPath}` VALUES ($i)")
+    }
+    val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+    versionsToDelete.foreach { v =>
+      val deltaFile = FileNames.unsafeDeltaFile(log.logPath, v)
+      assert(fs.delete(deltaFile, false),
+        s"failed to delete $deltaFile when seeding commit gaps for the test")
+    }
+    log
+  }
+
+  for (api <- Seq("getChangeLogFiles", "getChanges")) {
+    test(s"$api: failOnGapsInTests=true records the gap usage event and then throws") {
+      withTempDir { tableDir =>
+        val log = createDeltaTableWithCommitGaps(
+          tableDir, numVersions = 10, versionsToDelete = Seq(0, 1, 2, 3, 7))
+        val records = Log4jUsageLogger.track {
+          withSQLConf(
+              DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_LOG_GAPS.key -> "true",
+              DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_FAIL_ON_GAPS_IN_TESTS.key -> "true") {
+            val e = intercept[IllegalStateException] {
+              val iter =
+                if (api == "getChangeLogFiles") log.getChangeLogFiles(startVersion = 0)
+                else log.getChanges(startVersion = 0)
+              // Consume the iterator. We expect a gap between version 6 and version 8 (we
+              // deleted version 7); the iterator starts at version 4 because versions 0..3
+              // were deleted (no constraint on the first emitted version).
+              iter.toList
+            }
+            assert(e.getMessage.contains("expected 7"))
+            assert(e.getMessage.contains("got 8"))
+          }
+        }
+        val gapEvents = records.filter(
+          _.tags.get("opType").contains("delta.getChangeLogFiles.versionGap"))
+        assert(gapEvents.size === 1,
+          "FATAL mode must still emit the gap usage event before throwing, " +
+            s"got: $gapEvents")
+      }
+    }
+
+    test(s"$api: logGaps=true (failOnGapsInTests=false) throttles to at most 2 even with 4 gaps") {
+      // Versions present after deletion: 2,3,4,7,8,9,11,12,13,15,16,19,20. Deleting 0/1 just
+      // shifts the start (no gap fires for the unconstrained first emit). The four honest gaps
+      // are 4->7, 9->11, 13->15, 16->19. The ThrottledEventLogger caps emission at the first 2.
+      withTempDir { tableDir =>
+        val log = createDeltaTableWithCommitGaps(
+          tableDir, numVersions = 20, versionsToDelete = Seq(0, 1, 5, 6, 10, 14, 17, 18))
+        val records = Log4jUsageLogger.track {
+          withSQLConf(
+              DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_LOG_GAPS.key -> "true",
+              DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_FAIL_ON_GAPS_IN_TESTS.key -> "false") {
+            val iter =
+              if (api == "getChangeLogFiles") log.getChangeLogFiles(startVersion = 0)
+              else log.getChanges(startVersion = 0)
+            iter.toList // force-consume so all gaps are observed
+          }
+        }
+        val gapEvents = records.filter(
+          _.tags.get("opType").contains("delta.getChangeLogFiles.versionGap"))
+        assert(gapEvents.size === 2,
+          s"expected the throttler to cap at 2 gap events despite 4 underlying gaps, " +
+            s"got ${gapEvents.size}: $gapEvents")
+
+        // The two events that survive throttling are the first two encountered, in order.
+        val payloads = gapEvents.map(r => JsonUtils.fromJson[Map[String, Any]](r.blob))
+        assert(payloads(0)("prevVersion").toString == "4" &&
+            payloads(0)("nextVersion").toString == "7",
+          s"first gap event should describe the 4->7 gap, got: ${payloads(0)}")
+        assert(payloads(1)("prevVersion").toString == "9" &&
+            payloads(1)("nextVersion").toString == "11",
+          s"second gap event should describe the 9->11 gap, got: ${payloads(1)}")
+      }
+    }
+
+    test(s"$api: both switches off skips the check entirely") {
+      withTempDir { tableDir =>
+        val log = createDeltaTableWithCommitGaps(
+          tableDir, numVersions = 10, versionsToDelete = Seq(0, 1, 2, 3, 7))
+        val records = Log4jUsageLogger.track {
+          withSQLConf(
+              DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_LOG_GAPS.key -> "false",
+              DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_FAIL_ON_GAPS_IN_TESTS.key -> "false") {
+            val iter =
+              if (api == "getChangeLogFiles") log.getChangeLogFiles(startVersion = 0)
+              else log.getChanges(startVersion = 0)
+            iter.toList // must not throw
+          }
+        }
+        val gapEvents = records.filter(
+          _.tags.get("opType").contains("delta.getChangeLogFiles.versionGap"))
+        assert(gapEvents.isEmpty,
+          s"expected no gap events when both switches are off, got: $gapEvents")
+      }
+    }
+  }
+
 }
 
 class DeltaLogWithCatalogOwnedBatch1Suite extends DeltaLogSuite {

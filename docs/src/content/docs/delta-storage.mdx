@@ -33,6 +33,116 @@ where `<scheme>` is the scheme of the paths of your storage system. This configu
   disabling the dynamic scheme-based delegation.
 </Aside>
 
+
+## Troubleshooting Delta Storage dependency error
+
+If you see an error like `java.lang.NoClassDefFoundError: io/delta/storage/LogStore` it usually means the **Delta Storage** dependency is missing from the Spark classpath.
+
+##### Error Message with stack trace
+
+```text
+com.google.common.util.concurrent.ExecutionError: java.lang.NoClassDefFoundError: io/delta/storage/LogStore
+Please ensure that the delta-storage dependency is included.
+
+If using Python, please ensure you call `configure_spark_with_delta_pip` or use
+`--packages io.delta:delta-spark_<scala-version>:<delta-lake-version>`.
+See https://docs.delta.io/latest/quick-start.html#python.
+
+More information about this dependency and how to include it can be found here:
+https://docs.delta.io/latest/porting.html#delta-lake-1-1-or-below-to-delta-lake-1-2-or-above.
+
+  at com.google.common.cache.LocalCache$Segment.get(LocalCache.java:2084)
+  at com.google.common.cache.LocalCache.get(LocalCache.java:4017)
+  at com.google.common.cache.LocalCache$LocalManualCache.get(LocalCache.java:4898)
+  at org.apache.spark.sql.delta.DeltaLog$.getDeltaLogFromCache$1(DeltaLog.scala:995)
+  at org.apache.spark.sql.delta.DeltaLog$.initializeDeltaLog$1(DeltaLog.scala:1006)
+  at org.apache.spark.sql.delta.DeltaLog$.apply(DeltaLog.scala:1017)
+  at org.apache.spark.sql.delta.DeltaLog$.forTable(DeltaLog.scala:801)
+  at org.apache.spark.sql.delta.sources.DeltaDataSource.createRelation(DeltaDataSource.scala:197)
+  at org.apache.spark.sql.execution.datasources.SaveIntoDataSourceCommand.run(SaveIntoDataSourceCommand.scala:55)
+  at org.apache.spark.sql.execution.command.ExecutedCommandExec.sideEffectResult$lzycompute(commands.scala:79)
+  at org.apache.spark.sql.execution.command.ExecutedCommandExec.sideEffectResult(commands.scala:77)
+  at org.apache.spark.sql.execution.command.ExecutedCommandExec.executeCollect(commands.scala:88)
+  at org.apache.spark.sql.execution.QueryExecution.$anonfun$eagerlyExecuteCommands$2(QueryExecution.scala:155)
+  at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId0$8(SQLExecution.scala:162)
+  at org.apache.spark.sql.execution.SQLExecution$.withSessionTagsApplied(SQLExecution.scala:268)
+  at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId0$7(SQLExecution.scala:124)
+  at org.apache.spark.JobArtifactSet$.withActiveJobArtifactState(JobArtifactSet.scala:94)
+  at org.apache.spark.sql.artifact.ArtifactManager.$anonfun$withResources$1(ArtifactManager.scala:112)
+  at org.apache.spark.sql.artifact.ArtifactManager.withClassLoaderIfNeeded(ArtifactManager.scala:106)
+  at org.apache.spark.sql.artifact.ArtifactManager.withResources(ArtifactManager.scala:111)
+  at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId0$6(SQLExecution.scala:124)
+  at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:291)
+  at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId0$1(SQLExecution.scala:123)
+  at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:804)
+  at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId0(SQLExecution.scala:77)
+  at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:233)
+  at org.apache.spark.sql.execution.QueryExecution.$anonfun$eagerlyExecuteCommands$1(QueryExecution.scala:155)
+  at org.apache.spark.sql.execution.QueryExecution$.withInternalError(QueryExecution.scala:654)
+  at org.apache.spark.sql.execution.QueryExecution.org$apache$spark$sql$execution$QueryExecution$$eagerlyExecute$1(QueryExecution.scala:154)
+  at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$3.applyOrElse(QueryExecution.scala:169)
+  at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$3.applyOrElse(QueryExecution.scala:164)
+  at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:470)
+  at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:86)
+  at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:470)
+  at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:37)
+  at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:360)
+  at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:356)
+  at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:37)
+  at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:37)
+  at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:446)
+  at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:164)
+  at org.apache.spark.sql.execution.QueryExecution.$anonfun$lazyCommandExecuted$1(QueryExecution.scala:126)
+  at scala.util.Try$.apply(Try.scala:217)
+  at org.apache.spark.util.Utils$.doTryWithCallerStacktrace(Utils.scala:1378)
+  at org.apache.spark.util.Utils$.getTryWithCallerStacktrace(Utils.scala:1439)
+  at org.apache.spark.util.LazyTry.get(LazyTry.scala:58)
+  at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:131)
+  at org.apache.spark.sql.execution.QueryExecution.assertCommandExecuted(QueryExecution.scala:192)
+  at org.apache.spark.sql.classic.DataFrameWriter.runCommand(DataFrameWriter.scala:622)
+  at org.apache.spark.sql.classic.DataFrameWriter.saveToV1Source(DataFrameWriter.scala:273)
+  at org.apache.spark.sql.classic.DataFrameWriter.saveInternal(DataFrameWriter.scala:235)
+  at org.apache.spark.sql.classic.DataFrameWriter.save(DataFrameWriter.scala:118)
+  ... 42 elided
+
+```
+
+### Why this happens
+
+When you provide the Delta Spark JAR using the `--jars` option (for example, when testing a locally-built JAR), Spark **does not automatically fetch transitive dependencies**. In this case, `delta-spark` may be present, but `delta-storage` is not.
+
+As a result, operations that need to initialize the Delta log (for example, writing a Delta table) can fail when Delta attempts to load the LogStore API:
+
+```scala
+df.write.format("delta").save("/tmp/delta")
+```
+
+### How to fix
+
+When using the `--jars` option, you can do either of the following:
+
+- Include both `delta-spark` and `delta-storage` JARs:
+
+```bash
+spark-shell \
+  --jars delta-spark_<scala-version>-<delta-version>.jar,delta-storage-<delta-version>.jar \
+  --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" \
+  --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"
+```
+
+<Aside type="note">
+  -  When specifying the JARs with `--jars`, do not include spaces after the comma. 
+</Aside>
+
+- Use the assembly JAR (build it using `build/sbt "spark/assembly"`):
+
+```bash
+spark-shell \
+  --jars delta-spark-assembly-<delta-version>.jar \
+  --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" \
+  --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"
+```
+
 ## Amazon S3
 
 Delta Lake supports reads and writes to S3 in two different modes: Single-cluster and Multi-cluster.

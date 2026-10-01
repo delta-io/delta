@@ -31,9 +31,9 @@ trait ActionUtils extends VectorTestUtils {
       TableFeatures.TABLE_FEATURES_MIN_READER_VERSION,
       TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION,
       Set(
-        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()).asJava,
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName()).asJava,
       Set(
-        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName(),
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName(),
         TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE.featureName()).asJava)
 
   val basicPartitionedMetadata = testMetadata(
@@ -45,11 +45,11 @@ trait ActionUtils extends VectorTestUtils {
     new CommitInfo(
       if (ictEnabled) Optional.of(1L) else Optional.empty(), // ICT
       1L, // timestamp
-      "engineInfo",
-      "operation",
+      Optional.of("engineInfo"),
+      Optional.of("operation"),
       Collections.emptyMap(), // operationParameters
-      false, // isBlindAppend
-      "txnId",
+      Optional.of(false), // isBlindAppend
+      Optional.of("txnId"),
       Collections.emptyMap() // operationMetrics
     )
   }
