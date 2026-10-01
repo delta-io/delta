@@ -5,6 +5,11 @@ Delta transaction log protocol. That means any PR touching `PROTOCOL.md` or
 anything under `protocol_rfcs/` (new RFCs, RFC updates, acceptances and
 rejections).
 
+The repo-wide [`AGENTS.md`](../AGENTS.md) at the root points here from its
+"Protocol and RFC changes" section, so PRs that change only the root
+`PROTOCOL.md` are covered too. Keep all protocol-specific review detail in this
+file; the root section is only a pointer and a short summary.
+
 The checklist comes from the review history of these PRs. That covers about
 145 PRs touching `PROTOCOL.md` (2019–2026) and 44 PRs touching `protocol_rfcs/`
 (about 900 review comments). PR numbers in brackets, e.g. [#4094], point to
