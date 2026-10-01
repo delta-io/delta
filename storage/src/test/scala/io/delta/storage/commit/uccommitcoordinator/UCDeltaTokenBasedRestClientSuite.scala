@@ -1075,4 +1075,154 @@ class UCDeltaTokenBasedRestClientSuite
       client.loadTable(new TableIdentifier("c", "s", "t"))
     }
   }
+
+  // --------------- identity sequences (CIC) ---------------
+
+  // UCDeltaClient is name-based: the request path carries the three-level name, like loadTable.
+  // Asserted as a suffix so the ApiClient's base-path prefix (if any) does not matter.
+  private val idSeqPathSuffix =
+    s"/catalogs/$testCatalog/schemas/$testSchema/tables/$testTable/identitySequences"
+
+  test("createIdentitySequence POSTs the sequence spec to the identitySequences path") {
+    val method = new java.util.concurrent.atomic.AtomicReference[String]()
+    val path = new java.util.concurrent.atomic.AtomicReference[String]()
+    val body = new java.util.concurrent.atomic.AtomicReference[String]()
+    deltaHandler = (exchange, requestBody) => {
+      method.set(exchange.getRequestMethod)
+      path.set(exchange.getRequestURI.getPath)
+      body.set(requestBody)
+      sendJson(exchange, HttpStatus.SC_OK, "{}")
+    }
+    withClient { c =>
+      c.createIdentitySequence(testIdentifier, "seq-1", 1L, 2L)
+    }
+    assert(method.get() === "POST")
+    assert(path.get().endsWith(idSeqPathSuffix))
+    val spec = objectMapper.readTree(body.get()).get("sequences").get(0)
+    assert(spec.get("sequence_id").asText() === "seq-1")
+    assert(spec.get("start").asLong() === 1L)
+    assert(spec.get("step").asLong() === 2L)
+  }
+
+  test("createIdentitySequence is a no-op on 200") {
+    deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_OK, "{}")
+    withClient { c => c.createIdentitySequence(testIdentifier, "seq-1", 1L, 1L) }
+  }
+
+  test("createIdentitySequence throws IllegalStateException on 409 conflict") {
+    deltaHandler = (exchange, _) => sendJson(exchange, 409, """{"error":"exists"}""")
+    withClient { c =>
+      val e = intercept[IllegalStateException] {
+        c.createIdentitySequence(testIdentifier, "seq-1", 1L, 1L)
+      }
+      assert(e.getMessage.contains("already exists"))
+    }
+  }
+
+  test("createIdentitySequence rejects a zero step before issuing a request") {
+    withClient { c =>
+      intercept[IllegalArgumentException] {
+        c.createIdentitySequence(testIdentifier, "seq-1", 1L, 0L)
+      }
+    }
+  }
+
+  test("reserveIdentityIds POSTs to /reserve and returns the granted range") {
+    val path = new java.util.concurrent.atomic.AtomicReference[String]()
+    deltaHandler = (exchange, _) => {
+      path.set(exchange.getRequestURI.getPath)
+      sendJson(exchange, HttpStatus.SC_OK,
+        """{"ranges":[{"sequence_id":"seq-1","range_start":10,"range_end":13,"step":1}]}""")
+    }
+    withClient { c =>
+      val range = c.reserveIdentityIds(testIdentifier, "seq-1", 4L, 1L)
+      assert(range.getSequenceId === "seq-1")
+      assert(range.getRangeStart === 10L)
+      assert(range.getRangeEnd === 13L)
+      assert(range.getStep === 1L)
+    }
+    assert(path.get().endsWith(idSeqPathSuffix + "/reserve"))
+  }
+
+  test("reserveIdentityIds accepts a descending (negative step) range") {
+    deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_OK,
+      """{"ranges":[{"sequence_id":"seq-1","range_start":10,"range_end":4,"step":-2}]}""")
+    withClient { c =>
+      val range = c.reserveIdentityIds(testIdentifier, "seq-1", 4L, -2L)
+      assert(range.getRangeStart === 10L)
+      assert(range.getRangeEnd === 4L)
+      assert(range.getStep === -2L)
+    }
+  }
+
+  test("reserveIdentityIds throws NoSuchElementException on 404") {
+    deltaHandler = (exchange, _) => sendJson(exchange, 404, """{"error":"unknown seq"}""")
+    withClient { c =>
+      intercept[java.util.NoSuchElementException] {
+        c.reserveIdentityIds(testIdentifier, "seq-1", 4L, 1L)
+      }
+    }
+  }
+
+  test("reserveIdentityIds fails when the echoed step differs from the request (drift)") {
+    deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_OK,
+      """{"ranges":[{"sequence_id":"seq-1","range_start":10,"range_end":13,"step":5}]}""")
+    withClient { c =>
+      val e = intercept[IllegalStateException] {
+        c.reserveIdentityIds(testIdentifier, "seq-1", 4L, 1L)
+      }
+      assert(e.getMessage.contains("does not match"))
+    }
+  }
+
+  test("reserveIdentityIds fails when the range does not span count values") {
+    deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_OK,
+      """{"ranges":[{"sequence_id":"seq-1","range_start":10,"range_end":99,"step":1}]}""")
+    withClient { c =>
+      val e = intercept[IllegalStateException] {
+        c.reserveIdentityIds(testIdentifier, "seq-1", 4L, 1L)
+      }
+      assert(e.getMessage.contains("does not span"))
+    }
+  }
+
+  test("reserveIdentityIds fails when the batch does not return exactly one range") {
+    deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_OK, """{"ranges":[]}""")
+    withClient { c =>
+      intercept[IllegalStateException] {
+        c.reserveIdentityIds(testIdentifier, "seq-1", 4L, 1L)
+      }
+    }
+  }
+
+  test("reserveIdentityIds rejects a non-positive count before issuing a request") {
+    withClient { c =>
+      intercept[IllegalArgumentException] {
+        c.reserveIdentityIds(testIdentifier, "seq-1", 0L, 1L)
+      }
+    }
+  }
+
+  test("dropIdentitySequence POSTs to /drop and is a no-op on 200 and 404") {
+    val path = new java.util.concurrent.atomic.AtomicReference[String]()
+    deltaHandler = (exchange, _) => {
+      path.set(exchange.getRequestURI.getPath)
+      sendJson(exchange, HttpStatus.SC_OK, """{"results":[{"sequence_id":"seq-1","existed":true}]}""")
+    }
+    withClient { c => c.dropIdentitySequence(testIdentifier, "seq-1") }
+    assert(path.get().endsWith(idSeqPathSuffix + "/drop"))
+
+    // A 404 (table already gone) is also a no-op.
+    deltaHandler = (exchange, _) => sendJson(exchange, 404, """{"error":"table gone"}""")
+    withClient { c => c.dropIdentitySequence(testIdentifier, "seq-1") }
+  }
+
+  test("dropIdentitySequence throws on an unexpected error") {
+    deltaHandler = (exchange, _) => sendJson(exchange, 500, """{"error":"boom"}""")
+    withClient { c =>
+      intercept[RuntimeException] {
+        c.dropIdentitySequence(testIdentifier, "seq-1")
+      }
+    }
+  }
 }
