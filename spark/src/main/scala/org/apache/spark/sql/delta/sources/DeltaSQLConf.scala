@@ -853,6 +853,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val VACUUM_PROTECTION_SET_TOMBSTONES_FROM_COMMITS_ENABLED =
+    buildConf("vacuum.protectionSet.tombstonesFromCommits.enabled")
+      .internal()
+      .doc("When enabled, Vacuum derives the 'files removed within the retention window' part " +
+        "of its protection set by commit traversal instead of reading tombstones inline from " +
+        "the reconstructed checkpoint state. This removes Vacuum's dependency on checkpoints " +
+        "carrying tombstones. Defaults to off.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_VACUUM_PARALLEL_DELETE_PARALLELISM =
     buildConf("vacuum.parallelDelete.parallelism")
       .doc("Sets the number of partitions to use for parallel deletes. If not set, defaults to " +
