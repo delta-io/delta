@@ -18,13 +18,11 @@ package io.delta.storage.internal;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 import org.apache.hadoop.fs.Abortable;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -35,8 +33,6 @@ import org.apache.hadoop.fs.StreamCapabilities;
 import org.apache.hadoop.fs.s3a.AWSServiceIOException;
 import org.apache.hadoop.fs.s3a.Constants;
 import org.apache.hadoop.fs.s3a.RemoteFileChangedException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import static org.apache.hadoop.fs.Options.CreateFileOptionKeys
     .FS_OPTION_CREATE_CONDITIONAL_OVERWRITE;
@@ -47,13 +43,10 @@ import static org.apache.hadoop.fs.Options.CreateFileOptionKeys
  */
 public final class S3ConditionalWrite {
 
-    private static final Logger LOG = LoggerFactory.getLogger(S3ConditionalWrite.class);
-
     static final String WRITE_ID_METADATA_KEY = "delta-log-store-write-id";
     static final String WRITE_ID_HEADER_OPTION =
         Constants.FS_S3A_CREATE_HEADER + "." + WRITE_ID_METADATA_KEY;
     static final String WRITE_ID_XATTR = Constants.XA_HEADER_PREFIX + WRITE_ID_METADATA_KEY;
-    static final int REPLAY_BUFFER_MEMORY_LIMIT_BYTES = 1024 * 1024;
 
     private S3ConditionalWrite() {}
 
@@ -73,33 +66,13 @@ public final class S3ConditionalWrite {
             throw failure;
         }
 
-        final S3WriteReplayBuffer replayBuffer =
-            new S3WriteReplayBuffer(REPLAY_BUFFER_MEMORY_LIMIT_BYTES);
-        Throwable primaryFailure = null;
         try {
-            try {
-                writeActions(actions, stream, replayBuffer);
-                replayBuffer.seal();
-            } catch (IOException | RuntimeException | Error failure) {
-                abortAfterFailure(stream, failure);
-                throw failure;
-            }
-            closeConditionalWrite(fs, path, writeId, stream, replayBuffer);
+            writeActions(actions, stream);
         } catch (IOException | RuntimeException | Error failure) {
-            primaryFailure = failure;
+            abortAfterFailure(stream, failure);
             throw failure;
-        } finally {
-            try {
-                replayBuffer.close();
-            } catch (IOException | RuntimeException cleanupFailure) {
-                if (primaryFailure == null) {
-                    LOG.warn("Failed to delete the S3 conditional-write replay buffer",
-                        cleanupFailure);
-                } else {
-                    primaryFailure.addSuppressed(cleanupFailure);
-                }
-            }
         }
+        closeConditionalWrite(fs, path, writeId, stream);
     }
 
     private static FSDataOutputStream createConditionalStream(
@@ -115,12 +88,10 @@ public final class S3ConditionalWrite {
 
     private static void writeActions(
             Iterator<String> actions,
-            FSDataOutputStream stream,
-            S3WriteReplayBuffer replayBuffer) throws IOException {
+            FSDataOutputStream stream) throws IOException {
         while (actions.hasNext()) {
             final byte[] line =
                 (actions.next() + "\n").getBytes(StandardCharsets.UTF_8);
-            replayBuffer.write(line);
             stream.write(line);
         }
     }
@@ -129,43 +100,15 @@ public final class S3ConditionalWrite {
             FileSystem fs,
             Path path,
             String writeId,
-            FSDataOutputStream initialStream,
-            S3WriteReplayBuffer replayBuffer) throws IOException {
-        final int retryLimit = Math.max(
-            0,
-            fs.getConf().getInt(Constants.RETRY_LIMIT, Constants.RETRY_LIMIT_DEFAULT));
-        FSDataOutputStream stream = initialStream;
-        int retries = 0;
-
-        while (true) {
-            try {
-                stream.close();
-                return;
-            } catch (IOException failure) {
-                final ReconciliationResult reconciliation =
-                    reconcileConditionalFailure(fs, path, writeId, failure);
-                if (reconciliation == ReconciliationResult.OWN_WRITE_FOUND) {
-                    return;
-                }
-                if (retries >= retryLimit) {
-                    throw failure;
-                }
-
-                retries += 1;
-                waitBeforeRetry(fs, retries, failure);
-                stream = createConditionalStream(fs, path, writeId);
-                try {
-                    requireAbortable(stream, path);
-                    replayBuffer.replayTo(stream);
-                } catch (IOException | RuntimeException | Error replayFailure) {
-                    abortAfterFailure(stream, replayFailure);
-                    throw replayFailure;
-                }
-            }
+            FSDataOutputStream stream) throws IOException {
+        try {
+            stream.close();
+        } catch (IOException failure) {
+            reconcileConditionalFailure(fs, path, writeId, failure);
         }
     }
 
-    private static ReconciliationResult reconcileConditionalFailure(
+    private static void reconcileConditionalFailure(
             FileSystem fs,
             Path path,
             String writeId,
@@ -175,9 +118,6 @@ public final class S3ConditionalWrite {
             storedWriteId = fs.getXAttr(path, WRITE_ID_XATTR);
         } catch (FileNotFoundException notFound) {
             failure.addSuppressed(notFound);
-            if (isConditionalRequestConflict(failure)) {
-                return ReconciliationResult.RETRY_REQUIRED;
-            }
             throw failure;
         } catch (IOException | UnsupportedOperationException reconciliationFailure) {
             failure.addSuppressed(reconciliationFailure);
@@ -185,7 +125,7 @@ public final class S3ConditionalWrite {
         }
 
         if (Arrays.equals(writeId.getBytes(StandardCharsets.UTF_8), storedWriteId)) {
-            return ReconciliationResult.OWN_WRITE_FOUND;
+            return;
         }
 
         if (isConditionalConflict(failure)) {
@@ -216,27 +156,6 @@ public final class S3ConditionalWrite {
         }
     }
 
-    private static void waitBeforeRetry(
-            FileSystem fs,
-            int retries,
-            IOException originalFailure) throws InterruptedIOException {
-        final long baseDelayMillis = fs.getConf().getTimeDuration(
-            Constants.RETRY_INTERVAL,
-            Constants.RETRY_INTERVAL_DEFAULT,
-            TimeUnit.MILLISECONDS);
-        final long delayMillis = Math.max(0, baseDelayMillis) * retries;
-        try {
-            Thread.sleep(delayMillis);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            final InterruptedIOException failure =
-                new InterruptedIOException("Interrupted while retrying S3 conditional write");
-            failure.initCause(interrupted);
-            failure.addSuppressed(originalFailure);
-            throw failure;
-        }
-    }
-
     private static boolean isConditionalRequestConflict(IOException failure) {
         return failure instanceof AWSServiceIOException
             && ((AWSServiceIOException) failure).statusCode() == 409;
@@ -250,8 +169,4 @@ public final class S3ConditionalWrite {
             || isConditionalRequestConflict(failure);
     }
 
-    private enum ReconciliationResult {
-        OWN_WRITE_FOUND,
-        RETRY_REQUIRED
-    }
 }

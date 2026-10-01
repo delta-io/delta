@@ -121,36 +121,19 @@ class S3ConditionalWriteSuite extends AnyFunSuite {
     assert(fs.buildCount == 1)
   }
 
-  test("409 with no destination opens a new stream and replays exact bytes with same owner") {
+  test("409 with no visible destination preserves the original failure without replay") {
     val fs = new TestFileSystem
-    fs.getConf.setInt(Constants.RETRY_LIMIT, 1)
-    fs.getConf.set(Constants.RETRY_INTERVAL, "0ms")
-    val first = fs.enqueueStream(closeFailure = Some(conditionalRequestConflict()))
-    val second = fs.enqueueStream()
-    fs.readXAttr = (_, _) => throw new FileNotFoundException(path.toString)
-
-    S3ConditionalWrite.write(fs, path, Iterator("first", "second").asJava)
-
-    assert(fs.buildCount == 2)
-    assert(fs.writeIds.distinct.size == 1)
-    assert(first.bytes.sameElements(second.bytes))
-    assert(new String(second.bytes, UTF_8) == "first\nsecond\n")
-  }
-
-  test("409 replay stops at the configured retry limit") {
-    val fs = new TestFileSystem
-    fs.getConf.setInt(Constants.RETRY_LIMIT, 1)
-    fs.getConf.set(Constants.RETRY_INTERVAL, "0ms")
-    fs.enqueueStream(closeFailure = Some(conditionalRequestConflict()))
-    fs.enqueueStream(closeFailure = Some(conditionalRequestConflict()))
+    val closeFailure = conditionalRequestConflict()
+    fs.enqueueStream(closeFailure = Some(closeFailure))
     fs.readXAttr = (_, _) => throw new FileNotFoundException(path.toString)
 
     val error = intercept[AWSServiceIOException] {
       S3ConditionalWrite.write(fs, path, Iterator("payload").asJava)
     }
 
+    assert(error eq closeFailure)
     assert(error.statusCode() == 409)
-    assert(fs.buildCount == 2)
+    assert(fs.buildCount == 1)
   }
 
   test("probe failure preserves the original ambiguous close failure") {
@@ -202,23 +185,6 @@ class S3ConditionalWriteSuite extends AnyFunSuite {
     assert(stream.aborted)
     assert(error.getSuppressed.contains(cleanupFailure))
     assert(fs.xAttrReads == 0)
-  }
-
-  test("replay failure aborts the replacement stream") {
-    val fs = new TestFileSystem
-    fs.getConf.setInt(Constants.RETRY_LIMIT, 1)
-    fs.getConf.set(Constants.RETRY_INTERVAL, "0ms")
-    fs.enqueueStream(closeFailure = Some(conditionalRequestConflict()))
-    val replacementWriteFailure = new IOException("replacement write failed")
-    val replacement = fs.enqueueStream(writeFailure = Some(replacementWriteFailure))
-    fs.readXAttr = (_, _) => throw new FileNotFoundException(path.toString)
-
-    val error = intercept[IOException] {
-      S3ConditionalWrite.write(fs, path, Iterator("payload").asJava)
-    }
-
-    assert(error eq replacementWriteFailure)
-    assert(replacement.aborted)
   }
 
   test("missing abort capability fails closed before writing") {

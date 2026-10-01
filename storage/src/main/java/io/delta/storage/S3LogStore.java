@@ -32,7 +32,7 @@ import org.apache.hadoop.fs.Path;
  * create options, custom create headers, extended-attribute reads, and abortable output streams.
  * Unsupported capabilities fail the write instead of falling back to JVM-local coordination.</p>
  */
-public class S3LogStore extends S3SingleDriverLogStore {
+public class S3LogStore extends BaseS3LogStore {
 
     public S3LogStore(Configuration hadoopConf) {
         super(hadoopConf);
@@ -45,13 +45,12 @@ public class S3LogStore extends S3SingleDriverLogStore {
             Boolean overwrite,
             Configuration hadoopConf) throws IOException {
         if (overwrite) {
-            super.write(path, actions, true, hadoopConf);
+            writeWithPathLock(path, actions, true, hadoopConf);
             return;
         }
 
         final FileSystem fs = path.getFileSystem(hadoopConf);
-        final Path resolvedPath =
-            S3SingleDriverLogStore.resolvePathWithoutUserInfo(fs, path);
+        final Path resolvedPath = BaseS3LogStore.resolvePathWithoutUserInfo(fs, path);
         S3ConditionalWrite.write(fs, resolvedPath, actions);
     }
 }
