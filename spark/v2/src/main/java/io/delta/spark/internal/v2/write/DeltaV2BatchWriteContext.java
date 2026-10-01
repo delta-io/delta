@@ -16,7 +16,6 @@
 package io.delta.spark.internal.v2.write;
 
 import io.delta.kernel.Operation;
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -25,6 +24,8 @@ import io.delta.spark.internal.v2.utils.SerializableKernelRowWrapper;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.StructType;
 
 /**
@@ -61,7 +62,8 @@ class DeltaV2BatchWriteContext extends DeltaV2WriteContext {
       LogicalWriteInfo writeInfo) {
     super(engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
     this.transaction =
-        initialSnapshot
+        DeltaV2Snapshot$.MODULE$
+            .getKernelSnapshot(initialSnapshot)
             .buildUpdateTableTransaction(getEngineInfo(), Operation.WRITE)
             .build(getEngine());
     Row txnState = transaction.getTransactionState(getEngine());

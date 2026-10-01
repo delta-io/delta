@@ -17,7 +17,7 @@
 package io.delta.spark.internal.v2.catalog;
 
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.SnapshotImpl;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.ColumnTypeChangeSupport;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
@@ -47,7 +47,7 @@ public abstract class DeltaV2TableShims implements SupportsSchemaEvolution, Supp
   protected abstract AbstractProtocol protocol();
   protected abstract AbstractMetadata metadata();
   protected abstract Engine kernelEngine();
-  protected abstract SnapshotImpl initialSnapshot();
+  protected abstract Snapshot initialSnapshot();
   protected abstract Optional<CatalogTable> catalogTable();
 
   /**

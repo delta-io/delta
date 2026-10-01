@@ -27,7 +27,6 @@ import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.types.StructType;
 
@@ -55,7 +54,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
    * @param engine Kernel engine (persisted in DeltaV2Table, shared across operations)
    * @param tablePath filesystem path to the Delta table root
    * @param hadoopConf Hadoop configuration (with merged table options)
-   * @param initialSnapshot Kernel snapshot loaded at table construction time
+   * @param initialSnapshot snapshot loaded at table construction time
    * @param snapshotManager reloads the latest snapshot; used by the streaming write to build each
    *     epoch's commit against the current table state (see {@link DeltaV2StreamingWrite})
    * @param dataSchema the table's data (non-partition) schema, from DeltaV2Table's SchemaProvider
@@ -115,7 +114,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         engine,
         hadoopConf,
         tablePath,
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
+        initialSnapshot,
         snapshotManager,
         dataSchema,
         partitionSchema,
