@@ -17,8 +17,8 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.cic.{
   CreateSequenceRequest,
   DropSequenceRequest,
@@ -34,27 +34,28 @@ import org.apache.spark.sql.test.SharedSparkSession
 
 trait ConcurrentIdentityColumnSuiteBase extends QueryTest
   with SharedSparkSession
-  // Wires Delta's session catalog + SQL extension; without it, identity-column DDL falls to
-  // Spark's V2 session catalog and fails with UNSUPPORTED_FEATURE.TABLE_OPERATION.
-  with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoSQLTestUtils {
+  with MergeIntoSQLTestUtils
+  with CatalogOwnedTestBaseSuite {
+
+  // CIC requires a catalog-managed (UC coordinated-commits) table. Therefore we rely on the
+  // `CatalogOwnedTestBaseSuite`. It sets the feature conf and registers an in-memory commit
+  // coordinator. The `catalogOwnedCoordinatorBackfillBatchSize` needs to be non-zero, because it
+  // toggles whether or not to create tables as catalog-managed by default.
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 
   override protected def sparkConf: SparkConf = super.sparkConf
+    // This suite uses `delta.$tempPath` to access tables.
+    .set(DeltaSQLConf.CATALOG_MANAGED_BLOCK_PATH_BASED_ACCESS_IN_TABLE_RESOLUTION.key, "false")
     .set(
       DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_SERVICE_CLASS_NAME.key,
       classOf[SharedLocalIdentitySequenceService].getName)
-    // Ensure the feature is enabled for the CIC suites regardless of its default.
-    .set(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key, "true")
     // Small cold-start reserve so every reserve-continue test drains its initial range and
-    // exercises the reserve-more path.
+    // exercises the reserve-more / async-refill path. Set here (not per-case) because the reserve
+    // sizing confs are static (driver-scoped) and reject a withSQLConf override; the exact value is
+    // not asserted anywhere, only that a small reserve forces repeated reserves.
     .set(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_RESERVE_DRIVER_INITIAL_SIZE.key, "2")
-    // A SQL `VALUES` / `range` INSERT is a LocalRelation whose partition count is
-    // min(numRows, leafNodeDefaultParallelism). OSS's multi-core test session would split a small
-    // insert across tasks and fire one cold reserve per task, breaking exact reserve-count
-    // assertions.
-    .set("spark.sql.leafNodeDefaultParallelism", "1")
 
   /** The shared local backend the injected wrapper forwards to; suites assert on it. */
   protected def localService: LocalIdentitySequenceService =
@@ -136,16 +137,23 @@ trait ConcurrentIdentityColumnSuiteBase extends QueryTest
       s"$violations value(s) in identity column not congruent with start=$start step=$step.")
   }
 
-  protected def createTargetTableStatement(columns: Seq[String]): String = {
+  protected def createTargetTableStatement(
+      columns: Seq[String],
+      catalogManaged: Boolean = true): String = {
+    def feature(f: TableFeature, value: String): String =
+      s"${TableFeatureProtocolUtils.propertyKey(f)} = '$value'"
+    val properties =
+      (if (catalogManaged) Seq(feature(CatalogOwnedTableFeature, "supported")) else Nil) ++
+        Seq(
+          feature(ConcurrentIdentityColumnsTableFeature, "enabled"),
+          feature(DomainMetadataTableFeature, "enabled"),
+          feature(IdentityColumnsTableFeature, "enabled"))
     s"""
        |CREATE TABLE target (
        |${columns.mkString(", ")})
        |USING DELTA
        |LOCATION '$tempPath'
-       |tblproperties(
-       |${TableFeatureProtocolUtils.propertyKey(ConcurrentIdentityColumnsTableFeature)} = 'enabled',
-       |${TableFeatureProtocolUtils.propertyKey(DomainMetadataTableFeature)} = 'enabled',
-       |${TableFeatureProtocolUtils.propertyKey(IdentityColumnsTableFeature)} = 'enabled')
+       |tblproperties(${properties.mkString(", ")})
        |""".stripMargin
   }
 }

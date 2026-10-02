@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.actions.{Metadata, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.util.ScalaExtensions._
@@ -70,6 +70,9 @@ object ConcurrentIdentityColumnCreateTableHook extends DeltaLogging {
    * metadata stamped onto identity columns. No-op if any gating condition is
    * not met. Does NOT call the service; registration happens post-commit via
    * [[createSequencesForCommittedSchema]].
+   *
+   * The catalog-managed requirement is NOT checked here. It is enforced separately,
+   * once the protocol is finalized, by [[assertCatalogManagedIfCic]].
    */
   def maybeStampSequenceMetadata(
       sparkSession: SparkSession,
@@ -118,6 +121,30 @@ object ConcurrentIdentityColumnCreateTableHook extends DeltaLogging {
       // the service post-commit.
       val sequenceId = java.util.UUID.randomUUID().toString
       ConcurrentIdentityColumnSchema.withConcurrentSequenceMetadata(field, sequenceId)
+    }
+  }
+
+  /**
+   * Keeps the CIC table feature active after a REPLACE whose TBLPROPERTIES did not re-declare it.
+   * If [[DeltaSQLConf.REPLACE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED]] is active, an error is thrown
+   * because dropping the CIC feature involves retiring the sequences which should be done via
+   * `DROP FEATURE`.
+   */
+  def carryOverCicFeatureOnReplace(
+      preReplaceSnapshot: Snapshot,
+      newMetadata: Metadata,
+      replaceTableProtocolDowngradeAllowed: Boolean): Metadata = {
+    if (preReplaceSnapshot.protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature) &&
+        !hasCicFeature(newMetadata)) {
+      if (replaceTableProtocolDowngradeAllowed) {
+        throw ConcurrentIdentityColumnErrors.replaceCannotDropFeature(
+          ConcurrentIdentityColumnSchema.sequenceServiceTableId(preReplaceSnapshot.metadata))
+      }
+      newMetadata.copy(configuration = newMetadata.configuration +
+        (TableFeatureProtocolUtils.propertyKey(ConcurrentIdentityColumnsTableFeature) ->
+          TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
+    } else {
+      newMetadata
     }
   }
 
@@ -239,4 +266,16 @@ object ConcurrentIdentityColumnCreateTableHook extends DeltaLogging {
   private def hasCicFeature(metadata: Metadata): Boolean =
     TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(metadata.configuration)
       .contains(ConcurrentIdentityColumnsTableFeature)
+
+  def willBeCatalogManaged(snapshot: Snapshot, metadata: Metadata): Boolean =
+    snapshot.isCatalogOwned ||
+      TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(metadata.configuration)
+        .contains(CatalogOwnedTableFeature)
+
+  def assertCatalogManagedIfCic(protocol: Protocol, tableId: String): Unit = {
+    if (protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature) &&
+        !protocol.isFeatureSupported(CatalogOwnedTableFeature)) {
+      throw ConcurrentIdentityColumnErrors.requiresCatalogManaged(tableId)
+    }
+  }
 }
