@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils._
 import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogramUtils
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -522,47 +523,90 @@ class ChecksumSuite
     }
   }
 
-  test("DV metrics are only served from the CRC when the aggregation would have computed them") {
+  for (writeChecksum <- BOOLEAN_DOMAIN)
+  test(s"DV metrics remain available after disabling DV creation: writeChecksum=$writeChecksum") {
     withCrcTable { tableName =>
-      // Table with deletion vectors enabled, so the CRC carries the DV metrics.
-      sql(s"CREATE TABLE $tableName (id LONG) USING delta " +
-        s"TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')")
-      sql(s"INSERT INTO $tableName SELECT * FROM range(10)")
-      sql(s"DELETE FROM $tableName WHERE id = 1")
+      withSQLConf(
+        DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> writeChecksum.toString,
+        DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED.key -> "true",
+        DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true"
+      ) {
+        sql(s"CREATE TABLE $tableName (id LONG) USING delta " +
+          s"TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')")
+        spark.range(10).coalesce(1).write.format("delta").mode("append").saveAsTable(tableName)
+        sql(s"DELETE FROM $tableName WHERE id = 1")
+        val expectedHistogram = DeletedRecordCountsHistogramUtils.emptyHistogram
+        expectedHistogram.insert(1L)
 
-      withSQLConf(DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true") {
-        val s = freshSnapshot(tableName)
-        assert(s.checksumOpt.flatMap(_.numDeletedRecordsOpt).contains(1L),
-          "test setup should produce a CRC carrying the DV metrics")
-        assert(s.numDeletedRecordsOpt.contains(1L))
-        assert(s.numDeletionVectorsOpt.contains(1L))
-        assert(!s.stateReconstructionTriggered,
-          "DV metrics present in the CRC must not trigger state reconstruction")
-      }
+        for (dvCreationEnabled <- Seq(true, false)) {
+          if (!dvCreationEnabled) {
+            sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+              s"('delta.enableDeletionVectors' = 'false')")
+          }
+          for (readFromChecksum <- BOOLEAN_DOMAIN) {
+            withSQLConf(
+              DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key ->
+                readFromChecksum.toString) {
+              val snapshot = freshSnapshot(tableName)
+              assert(snapshot.checksumOpt.isDefined == writeChecksum)
+              snapshot.checksumOpt.foreach { checksum =>
+                assert(checksum.numDeletedRecordsOpt.contains(1L))
+                assert(checksum.numDeletionVectorsOpt.contains(1L))
+                assert(checksum.deletedRecordCountsHistogramOpt.contains(expectedHistogram))
+              }
 
-      // Disabling DV creation makes the aggregation stop computing the DV metrics (it gates on
-      // deletionVectorsWritable). The accessors must follow the aggregation rather than the
-      // still-populated CRC, otherwise the fast path would change the returned value.
-      sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.enableDeletionVectors' = 'false')")
-      withSQLConf(DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true") {
-        val s = freshSnapshot(tableName)
-        val fromCrc = withSQLConf(
-          DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "false") {
-          val baseline = freshSnapshot(tableName)
-          (baseline.numDeletedRecordsOpt, baseline.numDeletionVectorsOpt)
+              // Existing DVs are still readable when creation is disabled. Both access paths
+              // must report them, including their deleted-record histogram (delta-io/delta#7507).
+              assert(snapshot.numDeletedRecordsOpt.contains(1L))
+              assert(snapshot.numDeletionVectorsOpt.contains(1L))
+              assert(snapshot.deletedRecordCountsHistogramOpt.contains(expectedHistogram))
+              assert(snapshot.stateReconstructionTriggered == !(writeChecksum && readFromChecksum),
+                s"writeChecksum=$writeChecksum, readFromChecksum=$readFromChecksum, " +
+                  s"dvCreationEnabled=$dvCreationEnabled")
+              assert(snapshot.validateChecksum())
+            }
+          }
         }
-        assert(s.numDeletedRecordsOpt == fromCrc._1)
-        assert(s.numDeletionVectorsOpt == fromCrc._2)
+      }
+    }
+  }
 
-        // Canary. Today these accessors reach the value through state reconstruction, because
-        // the aggregation does not compute the DV metrics while DV creation is disabled. If the
-        // readable/writable divergence is ever reconciled
-        // (https://github.com/delta-io/delta/issues/7507), the CRC becomes able to serve them
-        // and this assertion starts failing. When that happens, update `checksumDVMetricsComputed`
-        // along with the aggregation so these fields are served from the CRC again instead of
-        // silently falling back to state reconstruction forever.
-        assert(s.stateReconstructionTriggered,
-          "DV metrics currently fall back to state reconstruction when DV creation is disabled")
+  for {
+    metricsEnabled <- BOOLEAN_DOMAIN
+    histogramEnabled <- BOOLEAN_DOMAIN
+    if !metricsEnabled || !histogramEnabled
+  }
+  test(s"DV metrics respect collection configs: " +
+      s"metricsEnabled=$metricsEnabled, histogramEnabled=$histogramEnabled") {
+    withCrcTable { tableName =>
+      withSQLConf(
+        DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED.key -> "true",
+        DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true"
+      ) {
+        sql(s"CREATE TABLE $tableName (id LONG) USING delta " +
+          s"TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')")
+        spark.range(10).coalesce(1).write.format("delta").mode("append").saveAsTable(tableName)
+        sql(s"DELETE FROM $tableName WHERE id = 1")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.enableDeletionVectors' = 'false')")
+
+        for (readFromChecksum <- BOOLEAN_DOMAIN) {
+          withSQLConf(
+            DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key ->
+              readFromChecksum.toString,
+            DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED.key -> metricsEnabled.toString,
+            DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED.key ->
+              histogramEnabled.toString
+          ) {
+            val snapshot = freshSnapshot(tableName)
+            assert(snapshot.checksumOpt.flatMap(_.numDeletionVectorsOpt).contains(1L))
+            assert(snapshot.checksumOpt.flatMap(_.deletedRecordCountsHistogramOpt).nonEmpty)
+            assert(snapshot.numDeletedRecordsOpt == Option.when(metricsEnabled)(1L))
+            assert(snapshot.numDeletionVectorsOpt == Option.when(metricsEnabled)(1L))
+            assert(snapshot.deletedRecordCountsHistogramOpt.isEmpty)
+          }
+        }
       }
     }
   }
