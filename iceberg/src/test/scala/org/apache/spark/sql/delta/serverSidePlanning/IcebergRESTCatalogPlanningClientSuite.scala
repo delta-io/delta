@@ -26,7 +26,7 @@ import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructFiel
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Table}
 import shadedForDelta.org.apache.iceberg.catalog._
 import shadedForDelta.org.apache.iceberg.expressions.{Binder, Expressions}
-import shadedForDelta.org.apache.iceberg.rest.IcebergRESTServer
+import shadedForDelta.org.apache.iceberg.rest.{IcebergRESTServer, PlanStatus}
 import shadedForDelta.org.apache.iceberg.types.Types
 
 class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSession {
@@ -78,6 +78,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   // Tests that the REST /plan endpoint returns 0 files for an empty table.
   test("basic plan table scan via IcebergRESTCatalogPlanningClient") {
     withTempTable("testTable") { table =>
+      server.clearCaptured()
       val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", () => "")
       try {
         val scanPlan = client.planScan(defaultNamespace.toString, "testTable")
@@ -85,6 +86,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         assert(scanPlan.files != null, "Scan plan files should not be null")
         assert(scanPlan.files.isEmpty,
           s"Empty table should have 0 files, got ${scanPlan.files.length}")
+        assert(server.getPlanPollRequestCount() == 0)
       } finally {
         client.close()
       }
@@ -506,6 +508,50 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
+  test("rejects delete files in completed planning result") {
+    withTempTable("deleteFilesUnsupported") { _ =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.deleteFilesUnsupported")
+      server.clearCaptured()
+      configureFastPolling(numRetries = 1)
+      server.setSubmittedPollsBeforeCompletion(0)
+      server.setInjectDeleteFiles(true)
+
+      val client =
+        new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
+      try {
+        val exception = intercept[UnsupportedOperationException] {
+          client.planScan(defaultNamespace.toString, "deleteFilesUnsupported")
+        }
+        assert(exception.getMessage.contains("Delete files"))
+        assert(server.getPlanPollRequestCount() == 1)
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("rejects plan tasks in completed planning result") {
+    withTempTable("planTasksUnsupported") { _ =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.planTasksUnsupported")
+      server.clearCaptured()
+      configureFastPolling(numRetries = 1)
+      server.setSubmittedPollsBeforeCompletion(0)
+      server.setInjectPlanTasks(true)
+
+      val client =
+        new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
+      try {
+        val exception = intercept[UnsupportedOperationException] {
+          client.planScan(defaultNamespace.toString, "planTasksUnsupported")
+        }
+        assert(exception.getMessage.contains("Plan tasks"))
+        assert(server.getPlanPollRequestCount() == 1)
+      } finally {
+        client.close()
+      }
+    }
+  }
+
   /**
    * Convenience wrapper for withTempTable that uses the test suite's default values.
    */
@@ -523,51 +569,211 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     IcebergRESTServerTestUtils.populateTestData(spark, tableName)
   }
 
-  test("retry on transient 503 server error") {
+  private def configureFastPolling(numRetries: Int): Unit = {
+    server.setCatalogDefaults(Map(
+      "rest-scan-planning.poll-timeout-ms" -> "1000",
+      "rest-scan-planning.poll-num-retries" -> numRetries.toString,
+      "rest-scan-planning.poll-min-wait-ms" -> "1",
+      "rest-scan-planning.poll-max-wait-ms" -> "1",
+      "rest-scan-planning.poll-scale-factor" -> "1.0").asJava)
+  }
+
+  test("poll submitted scan plan until completed") {
+    withTempTable("asyncPlanCompletes") { _ =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.asyncPlanCompletes")
+      server.clearCaptured()
+      configureFastPolling(numRetries = 3)
+      server.setSubmittedPollsBeforeCompletion(2)
+      // The completed GET is where the spec puts storage-credentials; assert we surface them.
+      server.setTestCredentials(Map(
+        "s3.access-key-id" -> "test-access-key",
+        "s3.secret-access-key" -> "test-secret-key",
+        "s3.session-token" -> "test-session-token").asJava)
+
+      val client =
+        new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
+      try {
+        val scanPlan = client.planScan(defaultNamespace.toString, "asyncPlanCompletes")
+        assert(scanPlan.files.length == 2)
+        assert(scanPlan.credentials.isDefined,
+          "Completed poll result should surface storage-credentials")
+        assert(server.getPlanRequestCount() == 1)
+        assert(server.getPlanPollRequestCount() == 3)
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("stop polling after configured retry count") {
+    withTempTable("asyncPlanRetriesExhausted") { _ =>
+      server.clearCaptured()
+      configureFastPolling(numRetries = 0)
+      server.setSubmittedPollsBeforeCompletion(1)
+
+      val client =
+        new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
+      try {
+        val exception = intercept[java.io.IOException] {
+          client.planScan(defaultNamespace.toString, "asyncPlanRetriesExhausted")
+        }
+        assert(exception.getMessage.contains("numRetries=0"))
+        assert(server.getPlanPollRequestCount() == 1)
+        assert(server.getPlanCancelRequestCount() == 1)
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("reject malformed poll config before submitting a plan") {
+    withTempTable("asyncPlanBadPollConfig") { _ =>
+      server.clearCaptured()
+      server.setCatalogDefaults(Map(
+        "rest-scan-planning.poll-timeout-ms" -> "1000",
+        "rest-scan-planning.poll-num-retries" -> "1",
+        "rest-scan-planning.poll-min-wait-ms" -> "1",
+        "rest-scan-planning.poll-max-wait-ms" -> "1",
+        "rest-scan-planning.poll-scale-factor" -> "abc").asJava)
+      server.setSubmittedPollsBeforeCompletion(0)
+
+      val client =
+        new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
+      try {
+        val exception = intercept[IllegalArgumentException] {
+          client.planScan(defaultNamespace.toString, "asyncPlanBadPollConfig")
+        }
+        assert(exception.getMessage.contains("poll-scale-factor"))
+        assert(server.getPlanRequestCount() == 0)
+        assert(server.getPlanPollRequestCount() == 0)
+        assert(server.getPlanCancelRequestCount() == 0)
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("reject submitted plan when endpoint list is omitted") {
+    withTempTable("asyncPlanEndpointsOmitted") { _ =>
+      server.clearCaptured()
+      server.setAdvertiseEndpoints(false)
+      server.setSubmittedPollsBeforeCompletion(0)
+
+      val client =
+        new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
+      try {
+        val exception = intercept[UnsupportedOperationException] {
+          client.planScan(defaultNamespace.toString, "asyncPlanEndpointsOmitted")
+        }
+        assert(exception.getMessage.contains("GET"))
+        assert(exception.getMessage.contains("/plan/{plan-id}"))
+        assert(server.getPlanPollRequestCount() == 0)
+        // No endpoints advertised at all, so cancel is not advertised either: no DELETE.
+        assert(server.getPlanCancelRequestCount() == 0)
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("reject submitted plan when fetch endpoint is not advertised") {
+    withTempTable("asyncPlanEndpointMissing") { _ =>
+      server.clearCaptured()
+      server.setAdvertiseFetchPlanningResult(false)
+      server.setSubmittedPollsBeforeCompletion(0)
+
+      val client =
+        new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
+      try {
+        val exception = intercept[UnsupportedOperationException] {
+          client.planScan(defaultNamespace.toString, "asyncPlanEndpointMissing")
+        }
+        assert(exception.getMessage.contains("GET"))
+        assert(exception.getMessage.contains("/plan/{plan-id}"))
+        assert(server.getPlanPollRequestCount() == 0)
+        // POST already allocated a plan-id; since cancel is advertised we best-effort DELETE it
+        // before failing rather than leaking the submitted plan.
+        assert(server.getPlanCancelRequestCount() == 1)
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("surface terminal failed and cancelled poll statuses") {
+    Seq(
+      (PlanStatus.FAILED, "TestPlanningFailure"),
+      (PlanStatus.CANCELLED, "cancelled")
+    ).foreach { case (status, expectedMessage) =>
+      withTempTable(s"asyncPlan${status.toString}") { _ =>
+        server.clearCaptured()
+        configureFastPolling(numRetries = 1)
+        server.setSubmittedPollsBeforeCompletion(0)
+        server.setFetchPlanningResultStatus(status)
+
+        val client =
+          new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
+        try {
+          val exception = intercept[IllegalStateException] {
+            client.planScan(defaultNamespace.toString, s"asyncPlan${status.toString}")
+          }
+          assert(exception.getMessage.contains(expectedMessage))
+          assert(server.getPlanPollRequestCount() == 1)
+          assert(server.getPlanCancelRequestCount() == 0)
+        } finally {
+          client.close()
+        }
+      }
+    }
+  }
+
+  test("cancel submitted plan when poll fails mid-flight") {
+    withTempTable("asyncPlanPollFails") { _ =>
+      server.clearCaptured()
+      configureFastPolling(numRetries = 0)
+      server.setSubmittedPollsBeforeCompletion(0)
+      // Fail the poll with a 404 (a client error the HTTP client does not retry) so the poll
+      // exits with an IOException rather than a terminal plan status.
+      server.setFailNextFetchRequests(1, 404)
+
+      val client =
+        new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
+      try {
+        val exception = intercept[java.io.IOException] {
+          client.planScan(defaultNamespace.toString, "asyncPlanPollFails")
+        }
+        assert(exception.getMessage.contains("404"))
+        assert(server.getPlanPollRequestCount() == 1)
+        // A mid-poll failure leaves the plan submitted server-side, so we best-effort cancel it.
+        assert(server.getPlanCancelRequestCount() == 1)
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("does not retry POST /plan on transient 503 server error") {
+    // A POST /plan that returns 5xx after (possibly) allocating a plan-id must not be retried,
+    // otherwise a retry can leak a second server-side plan. Only idempotent methods (GET poll,
+    // DELETE cancel) are retried on 5xx.
     withTempTable("retryTest503") { table =>
       populateTestData(s"rest_catalog.${defaultNamespace}.retryTest503")
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", () => "")
       try {
         server.clearCaptured()
-        // Configure server to fail the first plan request with 503
+        // Configure server to fail the first plan request with 503.
         server.setFailNextPlanRequests(1, 503)
 
-        // Client should retry and succeed on the second attempt
-        val scanPlan = client.planScan(defaultNamespace.toString, "retryTest503")
-        assert(scanPlan != null, "Scan plan should not be null after retry")
-        assert(scanPlan.files.nonEmpty, "Scan plan should have files after successful retry")
-
-        // Verify 2 requests were made: 1 failed (503) + 1 success
-        assert(server.getPlanRequestCount() == 2,
-          s"Expected 2 plan requests (1 retry), got ${server.getPlanRequestCount()}")
-      } finally {
-        server.clearCaptured()
-        client.close()
-      }
-    }
-  }
-
-  test("retries exhausted on persistent 503 server error") {
-    // No populateTestData needed: failure injection intercepts at the servlet level before
-    // table data is accessed, so we only need the table to exist for a valid URI.
-    withTempTable("retryTestExhausted") { table =>
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", () => "")
-      try {
-        server.clearCaptured()
-        // Configure server to fail more requests than the client will retry (max 3 retries = 4
-        // total attempts). Setting 10 failures ensures all retries see 503.
-        server.setFailNextPlanRequests(10, 503)
-
         val exception = intercept[java.io.IOException] {
-          client.planScan(defaultNamespace.toString, "retryTestExhausted")
+          client.planScan(defaultNamespace.toString, "retryTest503")
         }
         assert(exception.getMessage.contains("503"),
           s"Error should mention 503 status code. Got: ${exception.getMessage}")
 
-        // Verify 4 requests were made: 1 original + 3 retries (max retries = 3)
-        assert(server.getPlanRequestCount() == 4,
-          s"Expected 4 plan requests (1 + 3 retries), got ${server.getPlanRequestCount()}")
+        // Verify only 1 POST was made (no retry for POST /plan on 5xx).
+        assert(server.getPlanRequestCount() == 1,
+          s"Expected 1 plan request (no POST retry), got ${server.getPlanRequestCount()}")
       } finally {
         server.clearCaptured()
         client.close()
