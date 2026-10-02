@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.catalyst.TableIdentifier
+
 /**
  * Thrown by the Concurrent Identity Column (CIC) service-backed reservation guards when a
  * write would emit identity values outside a reserved range. It is a [[DeltaThrowable]] carrying
@@ -78,11 +80,7 @@ object ConcurrentIdentityColumnErrors {
       "DELTA_CONCURRENT_IDENTITY_COLUMN_EMPTY_RESERVE_RANGE",
       Array(sequenceId, tableId))
 
-  /**
-   * Service-returned metadata disagrees with the schema-declared metadata. Generalized from the
-   * old STEP_MISMATCH so the same class covers start/other metadata drift later: the `property`
-   * param names which one drifted (value "step" today).
-   */
+  /** Service-returned metadata disagrees with the schema-declared metadata. */
   def metadataMismatch(
       grantedStep: Long,
       sequenceId: String,
@@ -90,6 +88,22 @@ object ConcurrentIdentityColumnErrors {
     new ConcurrentIdentityColumnReservationException(
       "DELTA_CONCURRENT_IDENTITY_COLUMN_METADATA_MISMATCH",
       Array("step", grantedStep.toString, sequenceId, columnStep.toString))
+
+  def requiresCatalogManaged(tableId: String): Throwable =
+    DeltaErrors.operationNotSupportedException(
+      "Enabling concurrent identity columns on a table that is not catalog-managed",
+      TableIdentifier(tableId))
+
+  /**
+   * A CREATE OR REPLACE TABLE would drop [[ConcurrentIdentityColumnsTableFeature]] from a table
+   * that supports it. REPLACE can only reach this point under
+   * `REPLACE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED`. CIC removal is not supported that way because it
+   * bypasses the sequence-retiring pre-downgrade path.
+   */
+  def replaceCannotDropFeature(tableId: String): Throwable =
+    DeltaErrors.operationNotSupportedException(
+      "Removing concurrent identity columns with CREATE OR REPLACE TABLE",
+      TableIdentifier(tableId))
 
   /**
    * A schema-stamped sequenceId is gone from the service. Not recoverable on the write path:
