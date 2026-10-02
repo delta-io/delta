@@ -22,7 +22,6 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
-import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import java.util.HashMap;
 import java.util.Map;
@@ -67,6 +66,10 @@ public class InCommitTimestampUtils {
    * delta file. This function assumes that this batch is the leading batch of a single delta file
    * and attempts to extract the commitInfo action from the first row. If the commitInfo action is
    * not present or does not contain an inCommitTimestamp, this function returns an empty Optional.
+   *
+   * <p>Works with both the full {@link io.delta.kernel.internal.actions.CommitInfo#FULL_SCHEMA} and
+   * minimal read schemas that contain only the {@code inCommitTimestamp} field, as long as {@code
+   * inCommitTimestamp} appears as the first child (ordinal 0) of the {@code commitInfo} column.
    */
   public static Optional<Long> tryExtractInCommitTimestamp(
       ColumnarBatch firstActionsBatchFromSingleDelta) {
@@ -78,10 +81,13 @@ public class InCommitTimestampUtils {
     ColumnVector commitInfoVector =
         firstActionsBatchFromSingleDelta.getColumnVector(commitInfoOrdinal);
     // CommitInfo is always the first action in the batch when inCommitTimestamp is enabled.
-    int expectedRowIdOfCommitInfo = 0;
-    CommitInfo commitInfo =
-        CommitInfo.fromColumnVector(commitInfoVector, expectedRowIdOfCommitInfo);
-    return commitInfo != null ? commitInfo.getInCommitTimestamp() : Optional.empty();
+    if (commitInfoVector.getSize() == 0 || commitInfoVector.isNullAt(0)) {
+      return Optional.empty();
+    }
+    // inCommitTimestamp is child ordinal 0 in both CommitInfo.FULL_SCHEMA and the minimal
+    // ICT-only sub-schema used in PROTOCOL_METADATA_READ_SCHEMA.
+    ColumnVector ictVector = commitInfoVector.getChild(0);
+    return ictVector.isNullAt(0) ? Optional.empty() : Optional.of(ictVector.getLong(0));
   }
 
   /** Returns true if the current transaction implicitly/explicitly enables ICT. */
