@@ -1,14 +1,18 @@
-# AGENTS.md — Reviewing Delta protocol changes and RFCs
+# AGENTS.md — Writing and reviewing Delta protocol changes and RFCs
 
-These are instructions for an AI agent reviewing pull requests that change the
-Delta transaction log protocol. That means any PR touching `PROTOCOL.md` or
+These are instructions for an AI agent writing or reviewing changes to the
+Delta transaction log protocol. That means any change touching `PROTOCOL.md` or
 anything under `protocol_rfcs/` (new RFCs, RFC updates, acceptances and
 rejections).
 
+- **Writing** a protocol change: follow sections A–D. Then review your own
+  draft with sections 1–7 before opening the PR (section D).
+- **Reviewing** a protocol PR: follow sections 1–7.
+
 The repo-wide [`AGENTS.md`](../AGENTS.md) at the root points here from its
 "Protocol and RFC changes" section, so PRs that change only the root
-`PROTOCOL.md` are covered too. Keep all protocol-specific review detail in this
-file; the root section is only a pointer and a short summary.
+`PROTOCOL.md` are covered too. Keep all protocol-specific detail in this file;
+the root section is only a pointer and a short summary.
 
 The checklist comes from the review history of these PRs. That covers about
 145 PRs touching `PROTOCOL.md` (2019–2026) and 44 PRs touching `protocol_rfcs/`
@@ -22,6 +26,165 @@ the author never tested. Review as if every reader and writer will follow the
 text exactly as written, and nothing more.
 
 ---
+
+## A. The RFC lifecycle, step by step
+
+`protocol_rfcs/README.md` defines the process. These are the steps in order.
+
+### Proposing a new RFC
+1. Open a GitHub issue of type Protocol Change Request. All discussion happens
+   there. Reach basic consensus that the feature should exist before writing
+   the RFC.
+2. Copy `protocol_rfcs/template.md` to `protocol_rfcs/<feature-name>.md`
+   (meaningful kebab-case) and fill it in (section B).
+3. Put the right issue number in the issue link at the top [#7272].
+4. Add one row to the **Proposed RFCs** table in `protocol_rfcs/README.md`:
+   date proposed, link to the RFC file, issue link, and title [#2599].
+5. Give the table feature and any new table properties a `-dev` suffix while
+   the RFC is proposed.
+6. Review your own draft (section D).
+7. Open a PR with a `[PROTOCOL]` title tag. Link the issue with "see #N",
+   never "closes", "fixes" or "resolves", because merging a proposed RFC must
+   not close the issue.
+8. The PR changes only the RFC file and the README row. Engine code for the
+   feature must not merge into master until the RFC PR merges, and until
+   acceptance it must stay behind feature flags so existing users aren't
+   affected.
+
+### Updating a proposed RFC
+1. Rebase on current master first. RFC text written against an outdated
+   master can undo newer changes [#6696].
+2. Update every place the changed term or rule appears: the RFC, `PROTOCOL.md`,
+   other RFCs and all examples [#6696].
+3. In the PR description, say whether the change is editorial or changes
+   meaning, and why it is needed.
+4. If the design has changed so much that it's a different proposal, write a
+   new RFC that explains why the old one is superseded, and move the old one to
+   `rejected/` [#4382].
+
+### Accepting an RFC
+Do this only when the acceptance criteria in `protocol_rfcs/README.md` are
+met: a thoroughly tested production implementation (for example in
+delta-spark), and at least a discussion, ideally a prototype, showing that
+Delta Kernel can implement it.
+1. Merge the RFC's spec text (everything below the `--------` separator) into
+   `PROTOCOL.md`. Keep its meaning sentence by sentence. If implementation
+   experience changed the design, update the RFC file in the same PR so the two
+   match [#6066].
+2. Check the spec against what the production implementation actually writes:
+   names, serialized forms, edge cases and feature removal.
+3. Drop the `-dev` suffix from feature and property names in the spec. The code
+   must drop it too, in its own engine PR [#3416].
+4. Add the feature to **"Valid Feature Names in Table Features"**, each new
+   property to the **Table Properties** table, and table of contents entries
+   for new sections [#2808, #6696].
+5. `git mv` the RFC file to `protocol_rfcs/accepted/` and fix links to the old
+   path [#6066].
+6. Move the README row from Proposed to **Accepted** and fill in "Date
+   accepted".
+7. In the PR description:
+   - Link the production implementation, both its PRs and its tests.
+   - Link the Kernel feasibility discussion or prototype.
+   - Summarize any differences between the final spec and the proposed RFC.
+   - Use "closes #N".
+8. Change the issue title to include `[ACCEPTED]`.
+
+### Rejecting an RFC
+1. `git mv` the RFC file to `protocol_rfcs/rejected/`.
+2. Move the README row to **Rejected** and fill in the date.
+3. Use "closes #N" in the PR, and change the issue title to include
+   `[REJECTED]`.
+4. Plan the removal of any experimental code, in its own engine PR.
+
+## B. Drafting the RFC
+
+- **Start from [`template.md`](template.md) and fill in every section.** If a
+  section doesn't apply, keep the heading and write "Not applicable because
+  …". Each template section is something reviewers have repeatedly asked for.
+  An empty or missing one usually costs a review round.
+- **Write the part below the separator as spec text.** On acceptance it goes
+  into `PROTOCOL.md` with little or no rewording. A design doc alone is not
+  enough.
+- **An RFC comes before the implementation.** Specify what any conforming
+  engine must do. Don't describe how a particular implementation works, cite
+  its code, or base a requirement on what one codebase happens to do. A
+  prototype can be linked from the issue, but the RFC must make sense without
+  it. Evidence from implementations belongs in the acceptance PR description
+  (section A).
+- **When the RFC changes existing `PROTOCOL.md` text,** quote the current text
+  from master, name the section, and show the new text.
+- Follow the spec style in section 4. Copy the structure and wording of
+  existing features such as Column Mapping, In-Commit Timestamps and Type
+  Widening.
+- Define every new term before using it (section 5, item 9). Say who each
+  requirement applies to and when, using MUST / MUST NOT / SHOULD / MAY
+  (section 3.7).
+- Make every example complete, valid, and an exact match for the schema
+  tables (section 3.9).
+- If you are an agent drafting for an author, don't settle open design
+  questions yourself. List them under "Open questions" for the author to
+  decide.
+
+## C. Choosing readers and writers, or writers only
+
+Reviewers argue about this choice more than any other. Answer these questions
+in order and write the reasoning in the RFC's feature summary.
+
+1. **Does any client need to understand the feature at all?** If ignoring it
+   is always safe for both readers and writers, a table feature may not be
+   needed. Log compaction files, for example, are optional to read and to
+   write [#2122]. Explain why in the RFC.
+2. **Would an old reader that ignores the feature return exactly the same
+   results as a reader that understands it, for every table state the feature
+   allows?** "Ignores" means it skips every new action, field, file, property
+   and data encoding. "Results" covers everything a reader does:
+   - scan results
+   - filters, and data skipping with statistics
+   - partition pruning
+   - time travel
+   - change data feed reads
+   - reading checkpoints
+
+   If any of these can differ, the feature must apply to **readers and
+   writers**.
+3. **Otherwise, writers only** is possible, but only if correctness depends
+   just on writers following the new rules, for example keeping an invariant
+   or writing extra metadata. The writer feature is what stops old writers
+   from breaking those rules.
+4. Write down why ignoring the feature still gives correct results. "Old
+   readers ignore it" is not enough on its own.
+
+Examples from `PROTOCOL.md`:
+- **Readers and writers:**
+  - `deletionVectors`: an old reader that ignores deletion vectors returns
+    deleted rows.
+  - `columnMapping`: an old reader looks up columns by their logical names,
+    but the data files use physical names.
+  - `timestampNtz`.
+- **Writers only:**
+  - `appendOnly`, `checkConstraints` and `generatedColumns`: readers see the
+    same data, and only writers have to enforce the rules.
+  - `rowTracking`.
+- **A warning example:** collations [#3068]. Without a reader feature, an old
+  reader compares strings with the default ordering and returns wrong query
+  results.
+
+## D. Self-review before opening the PR
+
+1. Run sections 2 and 3 against your own draft, as if you were reviewing
+   someone else's PR.
+2. Fill in the compatibility table and the interaction table in the RFC
+   itself. Don't leave them for reviewers to ask about. Missing interactions
+   and an unspecified lifecycle caused most of the long reviews (section 5).
+3. Fix every BLOCKING and IMPORTANT finding. Anything you can't resolve goes
+   under "Open questions" in the RFC.
+4. Put the summary block from section 7 in the PR description, plus any
+   findings still open, so reviewers can see what was checked.
+
+---
+
+Sections 1–7 are for reviewing a protocol PR, whether someone else's or your
+own (section D).
 
 ## 1. First, classify the PR
 
@@ -65,8 +228,13 @@ Then also tell the author if any of these apply:
       `closes` / `fixes` / `resolves`, because merging a proposed RFC must not
       close the issue.
 - [ ] File name is meaningful kebab-case `protocol_rfcs/<feature-name>.md`. It
-      follows `template.md`: title, issue link, context or motivation, a
-      separator, then the proposed `PROTOCOL.md` changes.
+      follows `template.md`, and every template section is filled in or
+      marked "Not applicable because …". That includes the feature summary,
+      the compatibility and interaction tables, and the spec text below the
+      separator.
+- [ ] The RFC describes the protocol, not an implementation. It doesn't cite
+      engine code or base a requirement on what one codebase does (section
+      B).
 - [ ] Exactly one new row in the **Proposed RFCs** table in
       `protocol_rfcs/README.md`, with date proposed, a working link, the issue
       link and the title [#2599]. (The README text mentions `index.md`, but the
@@ -94,7 +262,7 @@ Then also tell the author if any of these apply:
 - [ ] **Acceptance criteria (from `protocol_rfcs/README.md`) are met and backed
       by evidence.** There is a thoroughly tested production implementation, and
       at least a feasibility discussion (ideally a prototype) for Delta Kernel.
-      If evidence is missing, ask "is there a production implementation?"
+      The PR description links both. If evidence is missing, ask "is there a production implementation?"
       [#7326]. That a lot of time has passed is not evidence.
 - [ ] External specs the RFC depends on are stable (for example a Parquet spec
       change) [#4096].
