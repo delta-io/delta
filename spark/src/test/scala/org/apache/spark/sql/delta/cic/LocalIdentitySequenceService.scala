@@ -169,6 +169,13 @@ class LocalIdentitySequenceService extends IdentitySequenceService {
   def hasSequence(tableId: String, sequenceId: String): Boolean =
     sequences.containsKey((tableId, sequenceId))
 
+  /**
+   * The immutable `start` the sequence was registered under, or `None` if no sequence is
+   * registered under this (tableId, sequenceId) scope. Only used in tests.
+   */
+  def sequenceStart(tableId: String, sequenceId: String): Option[Long] =
+    Option(sequences.get((tableId, sequenceId))).map(_.start)
+
   /** Number of times [[createSequence]] has been called since last [[reset]]. */
   def createSequenceCount: Long = createSequenceInvocations.get()
 
