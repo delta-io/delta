@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.cic.{
   CreateSequenceRequest,
   DropSequenceRequest,
@@ -37,6 +38,7 @@ trait ConcurrentIdentityColumnSuiteBase extends QueryTest
   with DeltaTestUtilsForTempViews
   with DeltaDMLTestUtilsPathBased
   with MergeIntoSQLTestUtils
+  with DeltaSQLCommandTest
   with CatalogOwnedTestBaseSuite {
 
   // CIC requires a catalog-managed (UC coordinated-commits) table. Therefore we rely on the
@@ -46,8 +48,8 @@ trait ConcurrentIdentityColumnSuiteBase extends QueryTest
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 
   override protected def sparkConf: SparkConf = super.sparkConf
-    // This suite uses `delta.$tempPath` to access tables.
-    .set(DeltaSQLConf.CATALOG_MANAGED_BLOCK_PATH_BASED_ACCESS_IN_TABLE_RESOLUTION.key, "false")
+    // Ensure the feature is enabled for the CIC suites regardless of its default.
+    .set(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key, "true")
     .set(
       DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_SERVICE_CLASS_NAME.key,
       classOf[SharedLocalIdentitySequenceService].getName)
@@ -56,6 +58,11 @@ trait ConcurrentIdentityColumnSuiteBase extends QueryTest
     // sizing confs are static (driver-scoped) and reject a withSQLConf override; the exact value is
     // not asserted anywhere, only that a small reserve forces repeated reserves.
     .set(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_RESERVE_DRIVER_INITIAL_SIZE.key, "2")
+    // A SQL `VALUES` / `range` INSERT is a LocalRelation whose partition count is
+    // min(numRows, leafNodeDefaultParallelism). A multi-core test session would split a small
+    // insert across tasks and fire one cold reserve per task, breaking exact reserve-count
+    // assertions.
+    .set("spark.sql.leafNodeDefaultParallelism", "1")
 
   /** The shared local backend the injected wrapper forwards to; suites assert on it. */
   protected def localService: LocalIdentitySequenceService =
