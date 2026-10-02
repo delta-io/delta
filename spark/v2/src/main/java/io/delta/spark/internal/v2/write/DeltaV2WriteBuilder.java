@@ -24,6 +24,7 @@ import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
+import org.apache.spark.sql.delta.DeltaConfigs;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
@@ -107,6 +108,9 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       }
     }
 
+    // Resolved once here through the same V1 accessor (alternate keys and default included) and
+    // passed down as a boolean, so the batch and streaming writes share one decision.
+    boolean variantShreddingEnabled = isVariantShreddingEnabled(initialSnapshot);
     // Returns a mode-dispatching Write: toBatch() -> DeltaV2BatchWrite (batch commit off
     // initialSnapshot), toStreaming() -> DeltaV2StreamingWrite (per-epoch commit off the latest
     // snapshot via snapshotManager). Both modes share the executor-side write-state construction.
@@ -118,7 +122,19 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         snapshotManager,
         dataSchema,
         partitionSchema,
-        writeInfo);
+        writeInfo,
+        variantShreddingEnabled);
+  }
+
+  /**
+   * Whether {@code snapshot} opted into shredded variant writes.
+   *
+   * <p>Read through the V1 {@link DeltaConfigs} accessor so alternate property keys and the
+   * property default are handled exactly as the V1 write path handles them. Package-visible because
+   * the streaming commit re-reads it off a reloaded snapshot to detect a mid-query change.
+   */
+  static boolean isVariantShreddingEnabled(Snapshot snapshot) {
+    return (Boolean) DeltaConfigs.ENABLE_VARIANT_SHREDDING().fromMetaData(snapshot.metadata());
   }
 
   static void validateDataSchema(Snapshot initialSnapshot, StructType dataSchema) {

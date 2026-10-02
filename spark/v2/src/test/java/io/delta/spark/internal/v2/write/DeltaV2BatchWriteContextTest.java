@@ -60,7 +60,8 @@ public class DeltaV2BatchWriteContextTest extends DeltaV2TestBase {
             snapshot,
             tableSchema,
             new StructType(),
-            new TestLogicalWriteInfo(tableSchema));
+            new TestLogicalWriteInfo(tableSchema),
+            /* variantShreddingEnabled */ false);
 
     assertSame(engine, context.getEngine());
     assertNotNull(context.getTransaction());
