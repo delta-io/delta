@@ -23,7 +23,7 @@ import io.delta.kernel.CommitRangeBuilder.CommitBoundary
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.DeltaHistoryManager
+import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl}
 import io.delta.kernel.internal.commitrange.CommitRangeImpl
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
@@ -309,8 +309,6 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
     }
   }
 
-  // We test this in the unit tests as well, but since those use the withProtocolAndMetadata API
-  // we also test it here with a real table where we load the P&M from the log
   test("reading a catalogManaged table without providing maxCatalogVersion fails") {
     withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
       // With logData
@@ -320,13 +318,34 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
           .withLogData(parsedLogData.asJava)
           .build(defaultEngine)
       }
-      // Without logData (and with time-travel-version)
+      // Without logData
       intercept[IllegalArgumentException] {
         TableManager
           .loadSnapshot(tablePath)
-          .atVersion(0)
           .build(defaultEngine)
       }
+    }
+  }
+
+  test("path-based catalogManaged version time travel after latest fails") {
+    withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
+      val latestSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .atVersion(2)
+        .withLogData(parsedLogData.asJava)
+        .withMaxCatalogVersion(2)
+        .build(defaultEngine)
+        .asInstanceOf[SnapshotImpl]
+
+      val e = intercept[IllegalArgumentException] {
+        TableManager
+          .loadSnapshot(tablePath)
+          .atVersion(3)
+          // Bypass target-version file loading to isolate validation against the latest protocol.
+          .withProtocolAndMetadata(latestSnapshot.getProtocol, latestSnapshot.getMetadata)
+          .build(defaultEngine)
+      }
+      assert(e.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
     }
   }
 
@@ -341,6 +360,102 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
           .withMaxCatalogVersion(0)
           .build(engine)
       }
+    }
+  }
+
+  test("file-system version time travel after latest fails") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(tablePath = tablePath, schema = testSchema)
+
+      val e = intercept[KernelException] {
+        TableManager
+          .loadSnapshot(tablePath)
+          .atVersion(1)
+          .build(engine)
+      }
+      assert(e.getMessage.contains("latest available version is 0"))
+    }
+  }
+
+  test("time travel across catalogManaged upgrade") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine = engine,
+        tablePath = tablePath,
+        schema = testSchema,
+        tableProperties = Map("delta.enableInCommitTimestamps" -> "true"))
+      val v0Snapshot = TableManager.loadSnapshot(tablePath).build(engine)
+      val v0Timestamp = v0Snapshot.getTimestamp(engine)
+
+      val catalogManagedCommit = getTestResourceFilePath(
+        "catalog-owned-preview/_delta_log/00000000000000000000.json")
+      val catalogManagedProtocol = java.nio.file.Files
+        .readAllLines(java.nio.file.Paths.get(catalogManagedCommit))
+        .asScala
+        .find(_.startsWith("{\"protocol\""))
+        .get
+      val upgradeCommit =
+        s"""{"commitInfo":{"inCommitTimestamp":${v0Timestamp + 1},""" +
+          s""""timestamp":${v0Timestamp + 1}}}""" + "\n" +
+          catalogManagedProtocol + "\n"
+      val logPath = new Path(tablePath, "_delta_log")
+      java.nio.file.Files.write(
+        java.nio.file.Paths.get(FileNames.deltaFile(logPath, 1)),
+        upgradeCommit.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+      val versionSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .atVersion(0)
+        .withMaxCatalogVersion(1)
+        .build(engine)
+      assert(versionSnapshot.getVersion === 0)
+
+      val latestSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .withMaxCatalogVersion(1)
+        .build(engine)
+      val timestampSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .atTimestamp(v0Timestamp, latestSnapshot)
+        .withMaxCatalogVersion(1)
+        .build(engine)
+      assert(timestampSnapshot.getVersion === 0)
+    }
+  }
+
+  test("time travel across catalogManaged downgrade") {
+    withTempDir { tempDir =>
+      val source = new java.io.File(getTestResourceFilePath("catalog-owned-preview"))
+      org.apache.commons.io.FileUtils.copyDirectory(source, tempDir)
+
+      val logPath = new Path(tempDir.getCanonicalPath, "_delta_log")
+      val v0Timestamp = 1749830855993L
+      val protocolAction =
+        """{"protocol":{"minReaderVersion":3,"minWriterVersion":7,"readerFeatures":[],""" +
+          """"writerFeatures":["inCommitTimestamp","invariants","appendOnly",""" +
+          """"checkpointProtection"]}}""" + "\n"
+      val downgradeCommit =
+        s"""{"commitInfo":{"inCommitTimestamp":${v0Timestamp + 1},""" +
+          s""""timestamp":${v0Timestamp + 1}}}""" + "\n" +
+          protocolAction
+      java.nio.file.Files.write(
+        java.nio.file.Paths.get(FileNames.deltaFile(logPath, 1)),
+        downgradeCommit.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+      val versionSnapshot = TableManager
+        .loadSnapshot(tempDir.getCanonicalPath)
+        .atVersion(0)
+        .build(defaultEngine)
+      assert(versionSnapshot.getVersion === 0)
+
+      val latestSnapshot = TableManager
+        .loadSnapshot(tempDir.getCanonicalPath)
+        .build(defaultEngine)
+      val timestampSnapshot = TableManager
+        .loadSnapshot(tempDir.getCanonicalPath)
+        .atTimestamp(v0Timestamp, latestSnapshot)
+        .build(defaultEngine)
+      assert(timestampSnapshot.getVersion === 0)
     }
   }
 
