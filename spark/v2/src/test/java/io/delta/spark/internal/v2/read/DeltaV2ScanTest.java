@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
@@ -515,7 +514,10 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     List<PartitionedFile> afterDppFiles = getPartitionedFiles(deltaV2Scan);
     long afterDppTotalBytes = getTotalBytes(deltaV2Scan);
     long afterDppEstimatedSize = getEstimatedSizeInBytes(deltaV2Scan);
-    assert (beforeDppFiles.containsAll(afterDppFiles));
+    // Compare by file path: each getPartitionedFiles call rebuilds fresh PartitionedFile instances
+    // (physical input partitions are materialized on demand), so the surviving files are a subset
+    // by path rather than by object identity.
+    assert (partitionedFilePaths(beforeDppFiles).containsAll(partitionedFilePaths(afterDppFiles)));
     assert (beforeDppTotalBytes >= afterDppTotalBytes);
 
     List<PartitionedFile> expectedPartitionFilesAfterDpp = new ArrayList<>();
@@ -531,7 +533,8 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     }
 
     assertEquals(expectedPartitionFilesAfterDpp.size(), afterDppFiles.size());
-    assertEquals(new HashSet<>(expectedPartitionFilesAfterDpp), new HashSet<>(afterDppFiles));
+    assertEquals(
+        partitionedFilePaths(expectedPartitionFilesAfterDpp), partitionedFilePaths(afterDppFiles));
     assertEquals(expectedTotalBytesAfterDpp, afterDppTotalBytes);
     // Runtime filtering updates the selected-file byte sum used by the size API.
     assertEquals(afterDppTotalBytes, afterDppEstimatedSize);
@@ -540,6 +543,13 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   private static List<PartitionedFile> getPartitionedFiles(DeltaV2Scan scan) throws Exception {
     return Arrays.stream(scan.toBatch().planInputPartitions())
         .flatMap(partition -> Arrays.stream(((FilePartition) partition).files()))
+        .collect(Collectors.toList());
+  }
+
+  private static List<String> partitionedFilePaths(List<PartitionedFile> files) {
+    return files.stream()
+        .map(pf -> pf.filePath().toString())
+        .sorted()
         .collect(Collectors.toList());
   }
 
