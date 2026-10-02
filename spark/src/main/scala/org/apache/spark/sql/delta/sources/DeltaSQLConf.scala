@@ -3811,13 +3811,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
-    buildConf("streaming.initialSnapshotMaxFiles")
-      .internal()
-      .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
-      .intConf
-      .createWithDefault(100000)
-
   val DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT =
     buildConf("streaming.distributedInitialSnapshot")
       .internal()
