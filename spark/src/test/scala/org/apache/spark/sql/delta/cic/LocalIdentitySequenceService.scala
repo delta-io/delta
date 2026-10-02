@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.cic
 
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 
 import scala.collection.mutable
 
@@ -64,6 +64,12 @@ class LocalIdentitySequenceService extends IdentitySequenceService {
   // at least once, then a refill fails). It is a floor, not an exact match, so once armed the fault
   // survives Spark task retries: every retry's reserve also fails, so the write cannot slip past.
   private val failReserveIdsAtOrAfter = new AtomicLong(Long.MaxValue)
+  // The error the armed fault throws; overridable so a caller can inject a backend's real type.
+  @volatile private var injectedReserveError: String => Throwable = new RuntimeException(_)
+
+  // Test-only fault injection: when `true`, every `reserveIds` throws
+  // [[IdentitySequenceServiceDisabledException]].
+  private val serviceDisabled = new AtomicBoolean(false)
 
   override def createSequence(req: CreateSequenceRequest): Unit = {
     require(req.step != 0L, "step must be non-zero")
@@ -91,13 +97,18 @@ class LocalIdentitySequenceService extends IdentitySequenceService {
     // rejected with IllegalArgumentException.
     require(req.count > 0L, s"reserveIds requires count > 0, got ${req.count}")
     require(req.step != 0L, "reserveIds requires a non-zero step")
+    if (serviceDisabled.get()) {
+      throw new IdentitySequenceServiceDisabledException(
+        s"Identity sequence service disabled (test) for sequence ${req.sequenceId} " +
+        s"(table ${req.tableId}).")
+    }
     val invocation = reserveIdsInvocations.incrementAndGet()
     reserveRequestSizesBuf.synchronized { reserveRequestSizesBuf += req.count }
     // Test-only fault injection: throw before advancing the counter so the failing reserve hands
     // out no range (mirrors a UC RPC that fails after the request is sent but before it commits).
     // Counted above, so the injected failure still increments reserveIdsCount.
     if (invocation >= failReserveIdsAtOrAfter.get()) {
-      throw new RuntimeException(
+      throw injectedReserveError(
         s"Injected reserveIds failure on invocation $invocation for sequence ${req.sequenceId} " +
         s"(table ${req.tableId})")
     }
@@ -156,6 +167,8 @@ class LocalIdentitySequenceService extends IdentitySequenceService {
     dropSequenceInvocations.set(0L)
     reserveRequestSizesBuf.synchronized { reserveRequestSizesBuf.clear() }
     failReserveIdsAtOrAfter.set(Long.MaxValue)
+    injectedReserveError = new RuntimeException(_)
+    serviceDisabled.set(false)
   }
 
   /**
@@ -165,9 +178,32 @@ class LocalIdentitySequenceService extends IdentitySequenceService {
    */
   def failReserveIdsStartingAt(ordinal: Long): Unit = failReserveIdsAtOrAfter.set(ordinal)
 
+  /**
+   * As [[failReserveIdsStartingAt]], but the fault throws `error` (given the injected-failure
+   * message) instead of a plain RuntimeException. The error type is cleared by [[reset]].
+   */
+  def failReserveIdsStartingAt(ordinal: Long, error: String => Throwable): Unit = {
+    injectedReserveError = error
+    failReserveIdsAtOrAfter.set(ordinal)
+  }
+
+  /**
+   * Test-only fault injection: when `disabled`, every [[reserveIds]] call throws
+   * [[IdentitySequenceServiceDisabledException]], modelling the UC/Commit-Store identity-sequence
+   * kill switch being off. Cleared by [[reset]].
+   */
+  def setServiceDisabled(disabled: Boolean): Unit = serviceDisabled.set(disabled)
+
   /** True iff a sequence is registered under exactly this (tableId, sequenceId) scope. */
   def hasSequence(tableId: String, sequenceId: String): Boolean =
     sequences.containsKey((tableId, sequenceId))
+
+  /**
+   * The immutable `start` the sequence was registered under, or `None` if no sequence is
+   * registered under this (tableId, sequenceId) scope. Only used in tests.
+   */
+  def sequenceStart(tableId: String, sequenceId: String): Option[Long] =
+    Option(sequences.get((tableId, sequenceId))).map(_.start)
 
   /** Number of times [[createSequence]] has been called since last [[reset]]. */
   def createSequenceCount: Long = createSequenceInvocations.get()

@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta.cic
  * Driver-side trait for the UC Identity Sequence Service: the backend that hands
  * out non-overlapping ranges of identity values for Concurrent Identity Columns (CIC).
  *
- * Two operations are exposed:
+ * Three operations are exposed:
  *   - `createSequence`: registers a sequence under a caller-generated `sequenceId`.
  *     The driver generates a unique sequenceId up front and stamps it into the column metadata
  *     before the DDL commit. Used by `CREATE TABLE` with the CIC feature and by the
@@ -30,6 +30,8 @@ package org.apache.spark.sql.delta.cic
  *     in-flight write. Returns the sequenceId, `[rangeStart, rangeEnd]` (inclusive)
  *     and an echo of the immutable `step`. Callers verify the step matches the
  *     schema-declared step to detect drifted state.
+ *   - `dropSequence`: retires a sequence the table no longer references (DROP FEATURE
+ *     downgrade, REPLACE re-stamp). Idempotent.
  *
  * Driver-only. Do not capture an instance in any closure that ships to executors.
  */
@@ -68,6 +70,12 @@ trait IdentitySequenceService {
    */
   def dropSequence(req: DropSequenceRequest): Unit
 }
+
+/**
+ * Thrown by an [[IdentitySequenceService]] backend when the service is administratively disabled.
+ */
+class IdentitySequenceServiceDisabledException(message: String, cause: Throwable = null)
+  extends RuntimeException(message, cause)
 
 /**
  * Request to register an identity sequence.
