@@ -54,8 +54,10 @@ text exactly as written, and nothing more.
 ### Updating a proposed RFC
 1. Rebase on current master first. RFC text written against an outdated
    master can undo newer changes [#6696].
-2. Update every place the changed term or rule appears: the RFC, `PROTOCOL.md`,
-   other RFCs and all examples [#6696].
+2. Update every place in the RFC where the changed term or rule appears,
+   including its examples [#6696]. If the RFC proposes changes to existing
+   `PROTOCOL.md` text, describe them in the RFC below the separator. Don't edit
+   `PROTOCOL.md` itself before the acceptance PR.
 3. In the PR description, say whether the change is editorial or changes
    meaning, and why it is needed.
 4. If the design has changed so much that it's a different proposal, write a
@@ -136,8 +138,11 @@ in order and write the reasoning in the RFC's feature summary.
    write [#2122]. Explain why in the RFC.
 2. **Would an old reader that ignores the feature return exactly the same
    results as a reader that understands it, for every table state the feature
-   allows?** "Ignores" means it skips every new action, field, file, property
-   and data encoding. "Results" covers everything a reader does:
+   allows?** "Ignores" means the old reader follows the older protocol without
+   recognizing any new action, field, property, file meaning or data encoding.
+   Work out what it would actually produce. Don't assume it safely skips whole
+   files unless the existing protocol requires that. "Results" covers
+   everything a reader does:
    - scan results
    - filters, and data skipping with statistics
    - partition pruning
@@ -160,7 +165,6 @@ Examples from `PROTOCOL.md`:
     deleted rows.
   - `columnMapping`: an old reader looks up columns by their logical names,
     but the data files use physical names.
-  - `timestampNtz`.
 - **Writers only:**
   - `appendOnly`, `checkConstraints` and `generatedColumns`: readers see the
     same data, and only writers have to enforce the rules.
@@ -171,8 +175,8 @@ Examples from `PROTOCOL.md`:
 
 ## D. Self-review before opening the PR
 
-1. Run sections 2 and 3 against your own draft, as if you were reviewing
-   someone else's PR.
+1. Run sections 1–7 against your own draft, as if you were reviewing someone
+   else's PR. For a new RFC, the PR type is `NEW-RFC`.
 2. Fill in the compatibility table and the interaction table in the RFC
    itself. Don't leave them for reviewers to ask about. Missing interactions
    and an unspecified lifecycle caused most of the long reviews (section 5).
