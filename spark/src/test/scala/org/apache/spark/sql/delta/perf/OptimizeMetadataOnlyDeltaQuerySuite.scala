@@ -21,11 +21,14 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaLog, DeltaTestUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaStatistics.TIGHT_BOUNDS
 import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.JsonUtils
+import com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterAll
@@ -847,6 +850,203 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       DeltaTable.forPath(spark, tempPath).delete("id = 1")
       assert(!getFilesWithDeletionVectors(DeltaLog.forTable(spark, new Path(tempPath))).isEmpty)
       checkOptimizationIsNotTriggered(querySql)
+    }
+  }
+
+  test("min-max - dv-enabled table without any DV files") {
+    // When a table has the deletion-vectors table feature enabled but no AddFile actually
+    // carries a deletion vector, every file still has tight stat bounds (the protocol
+    // treats absent `stats.tightBounds` as tight). The MIN/MAX optimization should apply.
+    withTempDir { dir =>
+      val tempPath = dir.getCanonicalPath
+      spark.range(1, 10, 1, 1).write.format("delta").save(tempPath)
+      enableDeletionVectorsInTable(new Path(tempPath), true)
+      assert(getFilesWithDeletionVectors(DeltaLog.forTable(spark, new Path(tempPath))).isEmpty)
+      checkResultsAndOptimizedPlan(
+        s"SELECT MIN(id), MAX(id) FROM delta.`$tempPath`",
+        "LocalRelation [none#0L, none#1L]")
+    }
+  }
+
+  test("min-max - dv-enabled table with tight bounds after stats recompute") {
+    // Simulate an external "compute stats" that recomputes per-file stats with tight bounds
+    // on files that still carry a deletion vector. The MIN/MAX optimization should apply
+    // because every file's per-column bounds are now tight, even though DVs are present.
+    withTempDir { dir =>
+      val tempPath = dir.getCanonicalPath
+      spark.range(1, 10, 1, 1).write.format("delta").save(tempPath)
+      val querySql = s"SELECT MIN(id), MAX(id) FROM delta.`$tempPath`"
+      checkResultsAndOptimizedPlan(querySql, "LocalRelation [none#0L, none#1L]")
+
+      enableDeletionVectorsInTable(new Path(tempPath), true)
+      // Delete an interior id so the file's stored min/max (1 and 9) remain accurate
+      // after the deletion: the only thing that needs to change to make the bounds
+      // tight is the `tightBounds` flag itself.
+      DeltaTable.forPath(spark, tempPath).delete("id = 5")
+      val log = DeltaLog.forTable(spark, new Path(tempPath))
+      assert(!getFilesWithDeletionVectors(log).isEmpty)
+      // After DELETE, stats have wide bounds. MIN/MAX optimization must NOT trigger here.
+      checkOptimizationIsNotTriggered(querySql)
+
+      // Recommit the same AddFiles with `tightBounds` set to true, preserving the
+      // existing min/max from the original stats (which remain accurate because we
+      // only removed an interior value).
+      val txn = log.startTransaction()
+      val rewrittenAddFiles = txn.snapshot.allFiles.collect().toSeq.map { action =>
+        val statsNode = JsonUtils.mapper.readTree(action.stats).asInstanceOf[ObjectNode]
+        statsNode.put(TIGHT_BOUNDS, true)
+        action.copy(stats = JsonUtils.toJson(statsNode))
+      }
+      txn.commitManually(rewrittenAddFiles: _*)
+
+      // Optimization should now apply and produce the correct MIN=1, MAX=9.
+      checkResultsAndOptimizedPlan(querySql, "LocalRelation [none#0L, none#1L]")
+    }
+  }
+
+  test("min-max - mixed wide and tight files where tight file dominates both bounds") {
+    // A wide-bound file co-exists with a tight-bound file, and the tight file's stat
+    // bounds completely contain the wide file's actual data, so the table-wide MIN/MAX
+    // coincide with the aggregate over only the tight files. The optimization should
+    // therefore still apply for both MIN and MAX.
+    withTempDir { dir =>
+      val tempPath = dir.getCanonicalPath
+      // File A: ids 5..10 (single file). Stats: min=5, max=10, tight.
+      spark.range(5, 11, 1, 1).write.format("delta").save(tempPath)
+
+      enableDeletionVectorsInTable(new Path(tempPath), true)
+      // Delete an interior id of File A so its stored min/max remain 5 and 10, but
+      // the AddFile is rewritten with tightBounds=false (wide) due to the new DV.
+      DeltaTable.forPath(spark, tempPath).delete("id = 7")
+      val log = DeltaLog.forTable(spark, new Path(tempPath))
+      assert(!getFilesWithDeletionVectors(log).isEmpty)
+
+      // File B: ids 3..11 (single file). Stats: min=3, max=11, tight (no DV on this file).
+      spark.range(3, 12, 1, 1).write.format("delta").mode("append").save(tempPath)
+
+      val querySql = s"SELECT MIN(id), MAX(id) FROM delta.`$tempPath`"
+      // Table-wide MIN=3, MAX=11 are both achieved by the tight file B. Even though
+      // File A is wide, its stat range [5..10] cannot push the table-wide MIN below
+      // 3 or the MAX above 11, so the optimization is sound.
+      checkResultsAndOptimizedPlan(querySql, "LocalRelation [none#0L, none#1L]")
+    }
+  }
+
+  test("min-max - mixed wide and tight files where only one direction is recoverable") {
+    // A wide file's stat range extends past the tight file in the MAX direction but not
+    // in the MIN direction. The MIN optimization should still be applicable (because
+    // min_all equals min_tight), but the MAX side cannot be answered from metadata
+    // (max_all is from the wide file, max_tight is strictly smaller). Because the
+    // optimizer requires every aggregate in the query to be answerable, asking for both
+    // MIN and MAX falls back to a normal scan, but asking for MIN alone is optimized.
+    withTempDir { dir =>
+      val tempPath = dir.getCanonicalPath
+      // File A: ids 5..14 (single file). Stats: min=5, max=14, tight.
+      spark.range(5, 15, 1, 1).write.format("delta").save(tempPath)
+
+      enableDeletionVectorsInTable(new Path(tempPath), true)
+      // Delete id=14, which only File A contains. The AddFile is rewritten with
+      // wide bounds (tightBounds=false), but the stored stat_max stays at 14 even
+      // though the file's actual max is now 13. The MAX side of the optimization
+      // therefore cannot trust the wide file.
+      DeltaTable.forPath(spark, tempPath).delete("id = 14")
+      val log = DeltaLog.forTable(spark, new Path(tempPath))
+      assert(!getFilesWithDeletionVectors(log).isEmpty)
+
+      // File B: ids 3..11 (single file). Stats: min=3, max=11, tight.
+      spark.range(3, 12, 1, 1).write.format("delta").mode("append").save(tempPath)
+
+      // MIN: min_all = min(5,3) = 3, min_tight = min(3) = 3 => optimization triggers.
+      val minOnly = s"SELECT MIN(id) FROM delta.`$tempPath`"
+      checkResultsAndOptimizedPlan(minOnly, "LocalRelation [none#0L]")
+
+      // MAX: max_all = max(14,11) = 14, max_tight = max(11) = 11 => cannot optimize.
+      val maxOnly = s"SELECT MAX(id) FROM delta.`$tempPath`"
+      checkOptimizationIsNotTriggered(maxOnly)
+
+      // Mixed query: MAX cannot be optimized, so the entire query falls back.
+      val both = s"SELECT MIN(id), MAX(id) FROM delta.`$tempPath`"
+      checkOptimizationIsNotTriggered(both)
+    }
+  }
+
+  test("min-max - partition values ignore files fully removed by a deletion vector") {
+    // A file whose deletion vector invalidates every record contributes no rows to the
+    // table, so its partition value must not be able to set the table-wide MIN/MAX.
+    // Such files are protocol-legal: nothing requires `cardinality < numRecords`.
+    withTempDir { dir =>
+      val tempPath = dir.getCanonicalPath
+      // A single Spark partition writes exactly one file per partition value. Partition 1
+      // gets two rows and is the only one kept, so the files to fully delete are exactly
+      // the single-row ones. Identifying them by row count rather than by partition value
+      // keeps this test independent of the column mapping mode.
+      spark.range(0, 4, 1, 1)
+        .select(
+          col("id").cast("int").as("Column1"),
+          when(col("id") === 0, lit(0))
+            .when(col("id") === 3, lit(2))
+            .otherwise(lit(1)).as("Column2"))
+        .write.format("delta").partitionBy("Column2").save(tempPath)
+
+      val log = DeltaLog.forTable(spark, new Path(tempPath))
+      enableDeletionVectorsInTable(new Path(tempPath), true)
+
+      val files = log.update().allFiles.collect()
+      assert(files.length === 3)
+      val (filesToFullyDelete, filesToKeep) = files.partition(_.numPhysicalRecords.contains(1L))
+      assert(filesToFullyDelete.length === 2)
+      assert(filesToKeep.length === 1)
+
+      // Cover every row of each file with a deletion vector instead of removing the
+      // AddFile, which is what a writer does when it cannot prove the file is fully
+      // replaced (see TouchedFileWithDV.isFullyReplaced).
+      filesToFullyDelete.foreach { file =>
+        removeRowsFromFile(log, file, Seq.range(0, file.numPhysicalRecords.get))
+      }
+      val remainingFiles = log.update().allFiles.collect()
+      assert(remainingFiles.length === 3)
+      assert(remainingFiles.count(_.numLogicalRecords.contains(0L)) === 2)
+
+      // Only partition 1 still has rows, so MIN and MAX must both be 1.
+      checkResultsAndOptimizedPlan(
+        s"SELECT MIN(Column2), MAX(Column2) FROM delta.`$tempPath`",
+        "LocalRelation [none#0, none#1]")
+      checkAnswer(
+        spark.sql(s"SELECT MIN(Column2), MAX(Column2) FROM delta.`$tempPath`"),
+        Row(1, 1))
+    }
+  }
+
+  test("min-max - partition values keep files partially removed by a deletion vector") {
+    // A file that still has live rows genuinely contributes its partition value, so the
+    // optimization must keep using it.
+    withTempDir { dir =>
+      val tempPath = dir.getCanonicalPath
+      // A single Spark partition writes exactly one file per partition value, each with
+      // two rows, so removing one row per file leaves every file non-empty.
+      spark.range(0, 4, 1, 1)
+        .select(
+          col("id").cast("int").as("Column1"),
+          (col("id") % 2).cast("int").as("Column2"))
+        .write.format("delta").partitionBy("Column2").save(tempPath)
+
+      val log = DeltaLog.forTable(spark, new Path(tempPath))
+      enableDeletionVectorsInTable(new Path(tempPath), true)
+
+      val files = log.update().allFiles.collect()
+      assert(files.length === 2)
+      files.foreach { file =>
+        assert(file.numPhysicalRecords.get === 2)
+        removeRowsFromFile(log, file, Seq(0L))
+      }
+      assert(log.update().allFiles.collect().forall(_.numLogicalRecords.contains(1L)))
+
+      checkResultsAndOptimizedPlan(
+        s"SELECT MIN(Column2), MAX(Column2) FROM delta.`$tempPath`",
+        "LocalRelation [none#0, none#1]")
+      checkAnswer(
+        spark.sql(s"SELECT MIN(Column2), MAX(Column2) FROM delta.`$tempPath`"),
+        Row(0, 1))
     }
   }
 
