@@ -222,6 +222,10 @@ class DeltaV2Snapshot(
       DomainMetadata(domain, kernelDomainMetadata.getConfiguration, kernelDomainMetadata.isRemoved)
     }.toSeq
 
+  // Kernel serves domain metadata without V1 state reconstruction, so it is always known.
+  override protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] =
+    Some(domainMetadata)
+
   // --- ValidateChecksum: Kernel has no V1 checksum to validate; no-op ------------------------
   override def validateChecksum(contextInfo: Map[String, String]): Boolean = true
 
