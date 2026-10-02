@@ -35,6 +35,7 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, hash, struct}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
 /** Helpers for emitting an inline AMT checkpoint during a commit. */
@@ -255,6 +256,9 @@ object AMTWriteHelper extends DeltaLogging {
     val amtDf = AMTContentStats.forWrite(amtWithPartition, metadata, protocol)
     val schema = AMTSingleAction.persistedSchema(metadata, protocol)
     val recordCountIdx = amtDf.schema.fieldIndex("record_count")
+    val trackingIdx = amtDf.schema.fieldIndex("tracking")
+    val trackingSchema = amtDf.schema("tracking").dataType.asInstanceOf[StructType]
+    val sequenceNumberIdx = trackingSchema.fieldIndex("sequence_number")
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
@@ -277,9 +281,16 @@ object AMTWriteHelper extends DeltaLogging {
 
           var entryCount = 0
           var entryRows = 0L
+          var minSequenceNumber = Long.MaxValue
           val countingRows = iter.map { row =>
             entryCount += 1
             entryRows += row.getLong(recordCountIdx)
+            val tracking = row.getStruct(trackingIdx, trackingSchema.length)
+            require(!tracking.isNullAt(sequenceNumberIdx),
+              "Cannot write an EXISTING AMT leaf entry without a materialized " +
+                "tracking.sequence_number.")
+            minSequenceNumber = Math.min(
+              minSequenceNumber, tracking.getLong(sequenceNumberIdx))
             row
           }
           val status = Checkpoints.writeSingleFileOnExecutor(
@@ -302,6 +313,7 @@ object AMTWriteHelper extends DeltaLogging {
             deletedFileAndRowCount = emptyFileRowCount,
             replacedFileAndRowCount = emptyFileRowCount,
             modifiedFileAndRowCount = emptyFileRowCount,
+            minSequenceNumber = minSequenceNumber,
             contentTreeVersion = contentTreeVersion,
             firstRowId = firstRowIdForNewLeaves)
           Iterator.single(DataManifestEntry(
@@ -352,7 +364,9 @@ object AMTWriteHelper extends DeltaLogging {
    * Tallies a freshly written leaf's entries into per-status file and row counts in a single pass,
    * then builds its `(Tracking, ManifestInfo)`. Each entry contributes one file and its physical
    * `record_count` rows to the count group for its tracking status (ADDED, EXISTING, DELETED,
-   * REPLACED, or MODIFIED).
+   * REPLACED, or MODIFIED). It also computes the minimum effective data sequence number over live
+   * entries (ADDED, EXISTING, and MODIFIED), starting from the content tree version. A missing
+   * sequence number or a leaf with no live entries therefore uses the current snapshot sequence.
    */
   private[amt] def addedTrackingForLeaf(
       entries: Seq[DataEntry],
@@ -362,10 +376,16 @@ object AMTWriteHelper extends DeltaLogging {
     // allocating an intermediate object per entry.
     var addedFiles, existingFiles, deletedFiles, replacedFiles, modifiedFiles = 0
     var addedRows, existingRows, deletedRows, replacedRows, modifiedRows = 0L
+    var minSequenceNumber = contentTreeVersion
     entries.foreach { entry =>
       val rows = entry.record_count
       require(entry.tracking.first_row_id.isDefined,
         s"Cannot write AMT leaf entry without a materialized first_row_id: ${entry.location}.")
+      if (Tracking.Status.liveEntryStatuses.contains(entry.tracking.status)) {
+        entry.tracking.sequence_number.foreach { currentEntrySequenceNumber =>
+          minSequenceNumber = Math.min(minSequenceNumber, currentEntrySequenceNumber)
+        }
+      }
       entry.tracking.status match {
         case Tracking.Status.Added =>
           addedFiles += 1
@@ -396,6 +416,7 @@ object AMTWriteHelper extends DeltaLogging {
       deletedFileAndRowCount = FileRowCount(deletedFiles, deletedRows),
       replacedFileAndRowCount = FileRowCount(replacedFiles, replacedRows),
       modifiedFileAndRowCount = FileRowCount(modifiedFiles, modifiedRows),
+      minSequenceNumber = minSequenceNumber,
       contentTreeVersion = contentTreeVersion,
       firstRowId = firstRowId)
   }
@@ -407,6 +428,7 @@ object AMTWriteHelper extends DeltaLogging {
       deletedFileAndRowCount: FileRowCount,
       replacedFileAndRowCount: FileRowCount,
       modifiedFileAndRowCount: FileRowCount,
+      minSequenceNumber: Long,
       contentTreeVersion: Long,
       firstRowId: Long): (Tracking, ManifestInfo) = {
     val tracking = initializeTracking(Tracking.Status.Added).copy(
@@ -423,7 +445,8 @@ object AMTWriteHelper extends DeltaLogging {
       existing_rows_count = existingFileAndRowCount.rowCount,
       deleted_rows_count = deletedFileAndRowCount.rowCount,
       replaced_rows_count = replacedFileAndRowCount.rowCount,
-      modified_rows_count = modifiedFileAndRowCount.rowCount)
+      modified_rows_count = modifiedFileAndRowCount.rowCount,
+      min_sequence_number = minSequenceNumber)
     (tracking, manifestInfo)
   }
 
@@ -582,7 +605,7 @@ object AMTWriteHelper extends DeltaLogging {
       deleted_rows_count = 0L,
       replaced_rows_count = 0L,
       modified_rows_count = 0L,
-      // No data sequence numbers are assigned yet; 0 is the conventional "unset" minimum.
+      // Placeholder overridden before a newly written manifest is emitted.
       min_sequence_number = 0L,
       dv = None,
       dv_cardinality = None)

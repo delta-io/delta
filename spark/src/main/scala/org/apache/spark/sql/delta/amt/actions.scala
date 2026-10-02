@@ -1019,7 +1019,7 @@ object DeletionVector {
  * @param deleted_rows_count Rows across DELETED files.
  * @param replaced_rows_count Rows across REPLACED files.
  * @param modified_rows_count Rows across MODIFIED files.
- * @param min_sequence_number Minimum data sequence number across the manifest's entries.
+ * @param min_sequence_number Minimum data sequence number across the manifest's live entries.
  * @param dv Inline manifest deletion-vector bitmap over leaf row positions.
  * @param dv_cardinality Number of positions the inline manifest DV marks.
  */
