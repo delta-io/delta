@@ -19,18 +19,20 @@ package org.apache.spark.sql.delta.serverSidePlanning
 import java.io.IOException
 import java.lang.reflect.Method
 import java.util.Locale
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.http.client.methods.{HttpGet, HttpPost}
+import org.apache.http.client.methods.{HttpDelete, HttpGet, HttpPost}
 import org.apache.http.entity.{ContentType, StringEntity}
 import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpRequest, HttpRequestInterceptor, HttpResponse, HttpStatus}
 import org.apache.http.client.ServiceUnavailableRetryStrategy
 import org.apache.http.impl.client.{DefaultHttpRequestRetryHandler, HttpClientBuilder}
-import org.apache.http.protocol.HttpContext
+import org.apache.http.protocol.{HttpContext, HttpCoreContext}
 import org.apache.http.message.BasicHeader
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -41,8 +43,14 @@ import org.json4s._
 import org.json4s.jackson.JsonMethods._
 import shadedForDelta.org.apache.iceberg.PartitionSpec
 import shadedForDelta.org.apache.iceberg.expressions.Expressions
+import shadedForDelta.org.apache.iceberg.rest.{PlanStatus, RESTUtil}
 import shadedForDelta.org.apache.iceberg.rest.requests.{PlanTableScanRequest, PlanTableScanRequestParser}
-import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse
+import shadedForDelta.org.apache.iceberg.rest.responses.{
+  BaseScanTaskResponse,
+  ErrorResponse,
+  FetchPlanningResultResponse,
+  PlanTableScanResponse}
+import shadedForDelta.org.apache.iceberg.util.Tasks
 
 /**
  * Case class for parsing Iceberg REST catalog /v1/config response.
@@ -50,8 +58,9 @@ import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse
  * The optional "prefix" in overrides is used for multi-tenant catalog paths.
  */
 private case class CatalogConfigResponse(
-    defaults: Map[String, String],
-    overrides: Map[String, String])
+    defaults: Map[String, String] = Map.empty,
+    overrides: Map[String, String] = Map.empty,
+    endpoints: Option[Seq[String]] = None)
 
 /**
  * Iceberg REST implementation of ServerSidePlanningClient that calls Iceberg REST catalog server.
@@ -68,11 +77,13 @@ private case class CatalogConfigResponse(
  * @param catalogName Name of the catalog for config endpoint query parameter.
  * @param tokenSupplier Supplier of auth tokens, called per-request to support OAuth.
  *                      Returns empty string if no auth is needed.
+ * @param clientProperties Client-provided Iceberg REST catalog properties.
  */
 class IcebergRESTCatalogPlanningClient(
     baseUriRaw: String,
     catalogName: String,
-    tokenSupplier: () => String
+    tokenSupplier: () => String,
+    clientProperties: Map[String, String] = Map.empty
 ) extends ServerSidePlanningClient with Logging {
 
   // Normalize baseUri to handle trailing slashes
@@ -89,6 +100,47 @@ class IcebergRESTCatalogPlanningClient(
   private val AZURE_SAS_TOKEN_KEY_PREFIX = "adls.sas-token."
   private val GCS_TOKEN_KEY = "gcs.oauth2.token"
   private val GCS_EXPIRY_KEY = "gcs.oauth2.token-expires-at"
+
+  // Iceberg REST scan-planning poll properties and defaults.
+  // NOTE: Of these, only `rest-scan-planning.poll-timeout-ms` is a documented config key in
+  // released Iceberg 1.11.0 (RESTCatalogProperties). The poll-num-retries / poll-min-wait-ms /
+  // poll-max-wait-ms / poll-scale-factor keys track the still-open Iceberg proposal #17846;
+  // released 1.11.0 hard-codes retries and backoff inside RESTTableScan. We read them from
+  // /v1/config so a server that adopts the proposal can tune them, and fall back to the
+  // hard-coded defaults below otherwise.
+  private val POLL_TIMEOUT_MS = "rest-scan-planning.poll-timeout-ms"
+  private val POLL_TIMEOUT_MS_DEFAULT = TimeUnit.MINUTES.toMillis(5)
+  private val POLL_NUM_RETRIES = "rest-scan-planning.poll-num-retries"
+  private val POLL_NUM_RETRIES_DEFAULT = 10
+  private val POLL_MIN_WAIT_MS = "rest-scan-planning.poll-min-wait-ms"
+  private val POLL_MIN_WAIT_MS_DEFAULT = TimeUnit.SECONDS.toMillis(1)
+  private val POLL_MAX_WAIT_MS = "rest-scan-planning.poll-max-wait-ms"
+  private val POLL_MAX_WAIT_MS_DEFAULT = TimeUnit.MINUTES.toMillis(1)
+  private val POLL_SCALE_FACTOR = "rest-scan-planning.poll-scale-factor"
+  private val POLL_SCALE_FACTOR_DEFAULT = 2.0
+  private val FETCH_PLANNING_RESULT_ENDPOINT =
+    "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan/{plan-id}"
+  private val CANCEL_PLANNING_ENDPOINT =
+    "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan/{plan-id}"
+
+  // Credential vending header sent on POST /plan and GET /plan/{plan-id}, matching Iceberg REST
+  // clients. Servers that only vend storage credentials when the client opts in rely on this
+  // header being present; without it a completed plan can come back without storage-credentials.
+  private val ACCESS_DELEGATION_HEADER = "X-Iceberg-Access-Delegation"
+  private val ACCESS_DELEGATION_VENDED_CREDENTIALS = "vended-credentials"
+
+  private case class PollSettings(
+      timeoutMs: Long,
+      numRetries: Int,
+      minWaitMs: Long,
+      maxWaitMs: Long,
+      scaleFactor: Double)
+
+  private case class CompletedPlanningResult(
+      response: FetchPlanningResultResponse,
+      responseBody: String)
+
+  private class NotCompleteException extends RuntimeException
 
   private case class S3Credentials(
       accessKeyId: String,
@@ -174,23 +226,8 @@ class IcebergRESTCatalogPlanningClient(
     }
   }
 
-  /**
-   * Lazily fetch the catalog configuration and construct the endpoint URI root.
-   * Calls /v1/config?warehouse=<catalogName> per Iceberg REST catalog spec to get the prefix.
-   * If no prefix is returned, uses baseUri directly without any prefix per Iceberg spec.
-   */
-  private lazy val icebergRestCatalogUriRoot: String = {
-    fetchCatalogPrefix() match {
-      case Some(prefix) => s"$baseUri/$prefix"
-      case None => baseUri
-    }
-  }
-
-  /**
-   * Fetch catalog prefix from /v1/config endpoint per Iceberg REST catalog spec.
-   * Returns None on any error or if no prefix is defined in the config.
-   */
-  private def fetchCatalogPrefix(): Option[String] = {
+  /** Fetch the server's catalog configuration once. */
+  private lazy val catalogConfig: CatalogConfigResponse = {
     val configUri = s"$baseUri/config?warehouse=$catalogName"
     try {
       val httpGet = new HttpGet(configUri)
@@ -198,22 +235,80 @@ class IcebergRESTCatalogPlanningClient(
       try {
         if (response.getStatusLine.getStatusCode == HttpStatus.SC_OK) {
           val body = EntityUtils.toString(response.getEntity)
-          val config = JsonUtils.fromJson[CatalogConfigResponse](body)
-          // Apply overrides on top of defaults per Iceberg REST spec
-          config.overrides.get("prefix").orElse(config.defaults.get("prefix"))
+          JsonUtils.fromJson[CatalogConfigResponse](body)
         } else {
-          None
+          CatalogConfigResponse(Map.empty, Map.empty)
         }
       } finally {
         response.close()
       }
     } catch {
       case e: Exception =>
-        logWarning(s"Failed to fetch catalog prefix from $configUri. " +
-          s"Falling back to base URI. Error: ${e.getMessage}")
-        None
+        logWarning(s"Failed to fetch catalog config from $configUri. " +
+          s"Falling back to defaults. Error: ${e.getMessage}")
+        CatalogConfigResponse(Map.empty, Map.empty)
     }
   }
+
+  /**
+   * Merge catalog properties using Iceberg REST precedence:
+   * server overrides > client properties > server defaults > client defaults.
+   *
+   * Client defaults are applied by the propertyAs* helpers when a key is absent from this map.
+   */
+  private lazy val catalogProperties: Map[String, String] =
+    Option(catalogConfig.defaults).getOrElse(Map.empty) ++
+      Option(clientProperties).getOrElse(Map.empty) ++
+      Option(catalogConfig.overrides).getOrElse(Map.empty)
+
+  /**
+   * Lazily construct the endpoint URI root from the Iceberg REST catalog config prefix.
+   * If no prefix is returned, use baseUri directly.
+   */
+  private lazy val icebergRestCatalogUriRoot: String =
+    catalogProperties.get("prefix").map(prefix => s"$baseUri/$prefix").getOrElse(baseUri)
+
+  private lazy val pollSettings: PollSettings = {
+    val settings = PollSettings(
+      timeoutMs = propertyAsLong(POLL_TIMEOUT_MS, POLL_TIMEOUT_MS_DEFAULT),
+      numRetries = propertyAsInt(POLL_NUM_RETRIES, POLL_NUM_RETRIES_DEFAULT),
+      minWaitMs = propertyAsLong(POLL_MIN_WAIT_MS, POLL_MIN_WAIT_MS_DEFAULT),
+      maxWaitMs = propertyAsLong(POLL_MAX_WAIT_MS, POLL_MAX_WAIT_MS_DEFAULT),
+      scaleFactor = propertyAsDouble(POLL_SCALE_FACTOR, POLL_SCALE_FACTOR_DEFAULT))
+
+    require(settings.timeoutMs > 0, s"$POLL_TIMEOUT_MS must be positive")
+    require(settings.numRetries >= 0, s"$POLL_NUM_RETRIES must be non-negative")
+    require(settings.minWaitMs > 0, s"$POLL_MIN_WAIT_MS must be positive")
+    require(settings.maxWaitMs >= settings.minWaitMs,
+      s"$POLL_MAX_WAIT_MS must be greater than or equal to $POLL_MIN_WAIT_MS")
+    require(settings.scaleFactor >= 1.0, s"$POLL_SCALE_FACTOR must be at least 1.0")
+    settings
+  }
+
+  private def propertyAsLong(key: String, default: Long): Long =
+    catalogProperties.get(key).map(value => parseProperty(key, value)(_.toLong)).getOrElse(default)
+
+  private def propertyAsInt(key: String, default: Int): Int =
+    catalogProperties.get(key).map(value => parseProperty(key, value)(_.toInt)).getOrElse(default)
+
+  private def propertyAsDouble(key: String, default: Double): Double =
+    catalogProperties.get(key)
+      .map(value => parseProperty(key, value)(_.toDouble))
+      .getOrElse(default)
+
+  private def parseProperty[T](key: String, value: String)(parse: String => T): T = {
+    Try(parse(value)).getOrElse(
+      throw new IllegalArgumentException(s"Invalid value for $key: '$value'"))
+  }
+
+  // A missing endpoints list is treated as the Iceberg default endpoint set, which does not
+  // include fetch planning, so an absent list is reported as unsupported (same as Iceberg's
+  // Endpoint.check refusing a submitted plan it cannot follow up on).
+  private def supportsFetchPlanningResult: Boolean =
+    catalogConfig.endpoints.exists(_.contains(FETCH_PLANNING_RESULT_ENDPOINT))
+
+  private def supportsCancelPlanning: Boolean =
+    catalogConfig.endpoints.exists(_.contains(CANCEL_PLANNING_ENDPOINT))
 
   // Default headers without auth -- auth is injected per-request via HttpRequestInterceptor
   private val httpHeaders = {
@@ -318,9 +413,9 @@ class IcebergRESTCatalogPlanningClient(
     val builder = HttpClientBuilder.create()
       .setDefaultHeaders(httpHeaders)
       .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
-      // requestSentRetryEnabled=true: safe to retry already-sent requests because
-      // planScan is a read-only operation (idempotent POST to /plan endpoint)
-      .setRetryHandler(new DefaultHttpRequestRetryHandler(HTTP_MAX_RETRIES, true))
+      // Do not retry requests that may have reached the server. Retrying POST /plan after an
+      // ambiguous transport failure could allocate a duplicate server-side plan.
+      .setRetryHandler(new DefaultHttpRequestRetryHandler(HTTP_MAX_RETRIES, false))
       .setServiceUnavailableRetryStrategy(new ServerErrorRetryStrategy(HTTP_MAX_RETRIES))
 
     // Per-request interceptor: calls tokenSupplier() to get the current token.
@@ -357,6 +452,9 @@ class IcebergRESTCatalogPlanningClient(
     // where prefix comes from /v1/config?warehouse=<catalogName> per Iceberg REST spec.
     // See: https://iceberg.apache.org/rest-catalog-spec/
     val planTableScanUri = s"$icebergRestCatalogUriRoot/namespaces/$database/tables/$table/plan"
+    // Validate poll settings before POST /plan. Otherwise a malformed rest-scan-planning.poll-*
+    // value from /v1/config would only throw after the server had already allocated a plan-id.
+    val _ = pollSettings
 
     // Request planning for current snapshot. snapshotId = 0 means "use current snapshot"
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
@@ -391,59 +489,199 @@ class IcebergRESTCatalogPlanningClient(
         PlanTableScanRequestParser.toJson(request)
     }
     val httpPost = new HttpPost(planTableScanUri)
+    httpPost.setHeader(ACCESS_DELEGATION_HEADER, ACCESS_DELEGATION_VENDED_CREDENTIALS)
     httpPost.setEntity(new StringEntity(requestJson, ContentType.APPLICATION_JSON))
     val httpResponse = httpClient.execute(httpPost)
+    val (statusCode, responseBody) = try {
+      httpResponse.getStatusLine.getStatusCode -> EntityUtils.toString(httpResponse.getEntity)
+    } finally {
+      httpResponse.close()
+    }
 
     // Only unpartitioned tables are supported. This map is used when parsing the response
     // to resolve partition specs. The validation that the table is actually unpartitioned
     // happens later in convertToScanPlan when we check file.partition().size().
     val unpartitionedSpecMap = Map(UNPARTITIONED_SPEC_ID -> PartitionSpec.unpartitioned())
 
-    try {
-      val statusCode = httpResponse.getStatusLine.getStatusCode
-      val responseBody = EntityUtils.toString(httpResponse.getEntity)
-      if (statusCode == HttpStatus.SC_OK || statusCode == HttpStatus.SC_CREATED) {
-        // Parse response with caseSensitive=false to match request and Spark's case-insensitive
-        // column handling
-        val icebergResponse = parsePlanTableScanResponse(
-          responseBody, unpartitionedSpecMap, caseSensitive = false)
+    if (statusCode == HttpStatus.SC_OK || statusCode == HttpStatus.SC_CREATED) {
+      // Parse response with caseSensitive=false to match request and Spark's case-insensitive
+      // column handling
+      val icebergResponse = parsePlanTableScanResponse(
+        responseBody, unpartitionedSpecMap, caseSensitive = false)
 
-        // Verify plan status is "completed". The Iceberg REST spec allows async planning
-        // where the server returns "submitted" status and the client must poll for results.
-        // We don't support async planning yet, so we require "completed" status.
-        val planStatus = icebergResponse.planStatus()
-        if (planStatus != null && planStatus.toString.toLowerCase(Locale.ROOT) != "completed") {
-          throw new UnsupportedOperationException(
-            s"Async planning not supported. Plan status was '$planStatus' but " +
-            s"expected 'completed'. Table: $database.$table")
-        }
-
-        convertToScanPlan(icebergResponse, responseBody)
-      } else {
-        // TODO: Parse structured ErrorResponse JSON from Iceberg REST spec instead of raw body
-        throw new IOException(
-          s"Failed to plan table scan for $database.$table. " +
-          s"HTTP status: $statusCode, Response: $responseBody")
+      icebergResponse.planStatus() match {
+        case PlanStatus.COMPLETED =>
+          convertToScanPlan(icebergResponse, responseBody)
+        case PlanStatus.SUBMITTED =>
+          val planId = Option(icebergResponse.planId())
+            .filter(_.nonEmpty)
+            .getOrElse(throw new IllegalStateException(
+              s"Submitted scan plan response did not contain a plan ID. Table: $database.$table"))
+          val encodedPlanId = RESTUtil.encodeString(planId)
+          val planUri =
+            s"$icebergRestCatalogUriRoot/namespaces/$database/tables/$table/plan/$encodedPlanId"
+          if (!supportsFetchPlanningResult) {
+            // The POST already allocated a server-side plan; best-effort cancel it (if the server
+            // advertises cancellation) before failing, so we do not leak a submitted plan.
+            cancelPlanning(planUri, planId)
+            throw new UnsupportedOperationException(
+              s"Server does not support endpoint: $FETCH_PLANNING_RESULT_ENDPOINT")
+          }
+          fetchPlanningResult(database, table, planId, planUri, unpartitionedSpecMap)
+        case PlanStatus.FAILED =>
+          throw planningFailure(database, table, Option(icebergResponse.planId()),
+            icebergResponse.errorResponse())
+        case status =>
+          throw new IllegalStateException(
+            s"Unexpected scan plan status '$status'. Table: $database.$table")
       }
-    } finally {
-      httpResponse.close()
+    } else {
+      // TODO: Parse structured ErrorResponse JSON from Iceberg REST spec instead of raw body
+      throw new IOException(
+        s"Failed to plan table scan for $database.$table. " +
+        s"HTTP status: $statusCode, Response: $responseBody")
     }
   }
 
+  private def fetchPlanningResult(
+      database: String,
+      table: String,
+      planId: String,
+      fetchUri: String,
+      specsById: Map[Int, PartitionSpec]): ScanPlan = {
+    val result = new AtomicReference[CompletedPlanningResult]()
+    // Set when the server reports a terminal status (FAILED / CANCELLED). Those plan-ids are
+    // already done server-side, so we must not send a cancel for them.
+    val serverTerminal = new AtomicBoolean(false)
+
+    try {
+      val settings = pollSettings
+      // Poll GET /plan/{plan-id} only. Plan-task pagination (GET /tasks) is not supported.
+      val pollPlan: Tasks.Task[String, Exception] = (_: String) => {
+        val httpGet = new HttpGet(fetchUri)
+        httpGet.setHeader(ACCESS_DELEGATION_HEADER, ACCESS_DELEGATION_VENDED_CREDENTIALS)
+        val httpResponse = httpClient.execute(httpGet)
+        val (statusCode, responseBody) = try {
+          httpResponse.getStatusLine.getStatusCode -> EntityUtils.toString(httpResponse.getEntity)
+        } finally {
+          httpResponse.close()
+        }
+
+        if (statusCode != HttpStatus.SC_OK) {
+          throw new IOException(
+            s"Failed to fetch scan plan $planId for $database.$table. " +
+              s"HTTP status: $statusCode, Response: $responseBody")
+        }
+
+        val response =
+          parseFetchPlanningResultResponse(responseBody, specsById, caseSensitive = false)
+        response.planStatus() match {
+          case PlanStatus.COMPLETED =>
+            result.set(CompletedPlanningResult(response, responseBody))
+          case PlanStatus.SUBMITTED =>
+            throw new NotCompleteException
+          case PlanStatus.FAILED =>
+            serverTerminal.set(true)
+            throw planningFailure(database, table, Some(planId), response.errorResponse())
+          case PlanStatus.CANCELLED =>
+            serverTerminal.set(true)
+            throw new IllegalStateException(
+              s"Scan plan $planId for $database.$table was cancelled")
+          case status =>
+            throw new IllegalStateException(
+              s"Unexpected scan plan status '$status' for plan $planId. Table: $database.$table")
+        }
+      }
+
+      try {
+        Tasks.foreach(planId)
+          .exponentialBackoff(
+            settings.minWaitMs,
+            settings.maxWaitMs,
+            settings.timeoutMs,
+            settings.scaleFactor)
+          .retry(settings.numRetries)
+          .onlyRetryOn(classOf[NotCompleteException])
+          .throwFailureWhenFinished()
+          .run(pollPlan, classOf[Exception])
+      } catch {
+        case e: NotCompleteException =>
+          throw new IOException(
+            s"Scan plan $planId for $database.$table did not complete within configured " +
+              s"poll limits (timeout=${settings.timeoutMs} ms, " +
+              s"numRetries=${settings.numRetries})",
+            e)
+      }
+    } finally {
+      // Best-effort cancel whenever we leave the poll loop without a completed result and the
+      // server has not already reported a terminal status. This covers timeout / retry
+      // exhaustion, malformed poll config, and mid-poll transport or unexpected-status
+      // failures, matching Iceberg's RESTTableScan which cancels from onFailure.
+      // Cancellation is a no-op unless the server advertises the cancel endpoint.
+      if (result.get() == null && !serverTerminal.get()) {
+        cancelPlanning(fetchUri, planId)
+      }
+    }
+
+    val completed = result.get()
+    convertToScanPlan(completed.response, completed.responseBody)
+  }
+
+  private def cancelPlanning(planUri: String, planId: String): Unit = {
+    if (supportsCancelPlanning) {
+      try {
+        val response = httpClient.execute(new HttpDelete(planUri))
+        try {
+          val statusCode = response.getStatusLine.getStatusCode
+          if (statusCode != HttpStatus.SC_NO_CONTENT && statusCode != HttpStatus.SC_NOT_FOUND) {
+            logWarning(
+              s"Failed to cancel scan plan $planId. HTTP status: $statusCode")
+          }
+        } finally {
+          response.close()
+        }
+      } catch {
+        case e: Exception =>
+          logWarning(s"Failed to cancel scan plan $planId", e)
+      }
+    }
+  }
+
+  private def planningFailure(
+      database: String,
+      table: String,
+      planId: Option[String],
+      error: ErrorResponse): IllegalStateException = {
+    val planDescription = planId.map(id => s" $id").getOrElse("")
+    val errorDescription = Option(error)
+      .map(value => s"${value.`type`()} (code=${value.code()}): ${value.message()}")
+      .getOrElse("unknown error")
+    new IllegalStateException(
+      s"Scan plan$planDescription for $database.$table failed: $errorDescription")
+  }
+
   /**
-   * Convert Iceberg PlanTableScanResponse to simple ScanPlan data class.
+   * Convert an Iceberg scan task response to a simple ScanPlan data class.
    *
    * Validates response structure and ensures the table is unpartitioned.
    */
   private def convertToScanPlan(
-      response: PlanTableScanResponse,
+      response: BaseScanTaskResponse,
       responseBody: String): ScanPlan = {
-    require(response != null, "PlanTableScanResponse cannot be null")
+    require(response != null, "Scan task response cannot be null")
+    if (response.planTasks() != null && !response.planTasks().isEmpty) {
+      throw new UnsupportedOperationException(
+        "Plan tasks are not supported; completed scan plans must contain inline file scan tasks")
+    }
     require(response.fileScanTasks() != null, "File scan tasks cannot be null")
 
     val files = response.fileScanTasks().asScala.map { task =>
       require(task != null, "FileScanTask cannot be null")
       require(task.file() != null, "DataFile cannot be null")
+      if (task.deletes() != null && !task.deletes().isEmpty) {
+        throw new UnsupportedOperationException(
+          "Delete files are not supported; file scan tasks must not reference delete files")
+      }
 
       // Validate that the server does not expect the application of a residual. The application of
       // a residual filter is currently not supported, and its ignorance leads to wrong results.
@@ -499,6 +737,21 @@ class IcebergRESTCatalogPlanningClient(
     implicit val formats: Formats = DefaultFormats
     val json = parse(responseBody)
 
+    // Iceberg's spec returns storage-credentials as a list keyed by path prefix and picks the
+    // credential whose prefix is the longest match for a given file. ScanPlan currently carries a
+    // single credential set applied to every file (unpartitioned, single-location tables), so it
+    // cannot represent per-prefix selection. Rather than silently pick the first entry and risk
+    // reading files with the wrong credentials, fail loud when the server returns more than one.
+    val credentialEntries = json \ "storage-credentials" match {
+      case JArray(entries) => entries
+      case _ => Nil
+    }
+    if (credentialEntries.size > 1) {
+      throw new UnsupportedOperationException(
+        s"Multiple storage-credentials entries (${credentialEntries.size}) are not supported; " +
+          "only a single credential set applied to all files is currently handled")
+    }
+
     // Extract config map from storage-credentials[0].config
     val config: Option[Map[String, String]] = try {
       (json \ "storage-credentials")(0) \ "config" match {
@@ -530,6 +783,10 @@ class IcebergRESTCatalogPlanningClient(
    * Retries up to maxRetries times with doubling intervals (1s, 2s, 4s, ...).
    * Does NOT retry on client errors (4xx) since those indicate request-level issues.
    *
+   * POST /plan is intentionally excluded: a 5xx after the server has already allocated a plan-id
+   * is ambiguous, and retrying would leak a second server-side plan (same hazard as
+   * requestSentRetryEnabled). We only retry idempotent methods (GET poll, DELETE cancel).
+   *
    * The ServiceUnavailableRetryStrategy interface calls retryRequest() first, then
    * getRetryInterval(), so we capture the execution count in retryRequest() and
    * use it to compute the backoff in getRetryInterval().
@@ -549,8 +806,12 @@ class IcebergRESTCatalogPlanningClient(
         executionCount: Int,
         context: HttpContext): Boolean = {
       lastExecutionCount.set(executionCount)
+      val method = Option(context.getAttribute(HttpCoreContext.HTTP_REQUEST))
+        .collect { case r: HttpRequest => r.getRequestLine.getMethod }
+        .getOrElse("")
       val statusCode = response.getStatusLine.getStatusCode
-      statusCode >= 500 && executionCount <= maxRetries
+      // Never retry POST: a retried submit can allocate a duplicate server-side plan.
+      !method.equalsIgnoreCase("POST") && statusCode >= 500 && executionCount <= maxRetries
     }
 
     // Exponential backoff: 1s, 2s, 4s, ...
@@ -562,12 +823,34 @@ class IcebergRESTCatalogPlanningClient(
     json: String,
     specsById: Map[Int, PartitionSpec],
     caseSensitive: Boolean): PlanTableScanResponse = {
+    parseScanResponse(
+      "shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponseParser",
+      json,
+      specsById,
+      caseSensitive).asInstanceOf[PlanTableScanResponse]
+  }
 
-    // Use reflection to access the private fromJson method in the Iceberg parser class.
-    // The method is not part of the public API, so we need reflection and setAccessible.
-    val parserClass = Utils.classForName(
-      "shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponseParser")
+  private def parseFetchPlanningResultResponse(
+      json: String,
+      specsById: Map[Int, PartitionSpec],
+      caseSensitive: Boolean): FetchPlanningResultResponse = {
+    parseScanResponse(
+      "shadedForDelta.org.apache.iceberg.rest.responses.FetchPlanningResultResponseParser",
+      json,
+      specsById,
+      caseSensitive).asInstanceOf[FetchPlanningResultResponse]
+  }
 
+  /**
+   * Use reflection to access the package-private String-based fromJson methods in Iceberg's
+   * response parsers. These methods are not part of Iceberg's public API.
+   */
+  private def parseScanResponse(
+      parserClassName: String,
+      json: String,
+      specsById: Map[Int, PartitionSpec],
+      caseSensitive: Boolean): AnyRef = {
+    val parserClass = Utils.classForName(parserClassName)
     val fromJsonMethod: Method = parserClass.getDeclaredMethod(
       "fromJson",
       classOf[String],
@@ -581,6 +864,6 @@ class IcebergRESTCatalogPlanningClient(
       json,
       specsById.map { case (k, v) => Int.box(k) -> v }.asJava,
       Boolean.box(caseSensitive)
-    ).asInstanceOf[PlanTableScanResponse]
+    )
   }
 }
