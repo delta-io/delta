@@ -306,9 +306,20 @@ class UCManagedTableSnapshotManagerSuite
           maxRatifiedVersion,
           Optional.of(maxRatifiedVersion - 1))
       }
+    }
+  }
 
-      intercept[IllegalArgumentException] {
-        manager.getTableChanges(defaultEngine, maxRatifiedVersion + 5, Optional.empty())
+  test("getTableChanges: throws typed exceptions for future start and end versions") {
+    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
+      val manager = createManager(ucClient, tablePath)
+
+      Seq(maxRatifiedVersion + 1, maxRatifiedVersion + 5).foreach { version =>
+        intercept[VersionToLoadAfterLatestCommitException] {
+          manager.getTableChanges(defaultEngine, version, Optional.empty())
+        }
+        intercept[VersionToLoadAfterLatestCommitException] {
+          manager.getTableChanges(defaultEngine, 0L, Optional.of(version))
+        }
       }
     }
   }

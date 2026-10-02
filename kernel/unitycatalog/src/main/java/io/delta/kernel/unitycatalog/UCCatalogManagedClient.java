@@ -276,7 +276,7 @@ public class UCCatalogManagedClient {
    * @throws IllegalArgumentException if neither startVersionOpt nor startTimestampOpt is provided
    * @throws IllegalArgumentException if both startVersionOpt and startTimestampOpt are defined
    * @throws IllegalArgumentException if both endVersionOpt and endTimestampOpt are defined
-   * @throws IllegalArgumentException if either startVersionOpt or endVersionOpt is provided and is
+   * @throws VersionToLoadAfterLatestCommitException if either startVersionOpt or endVersionOpt is
    *     greater than the latest ratified version from UC
    */
   public CommitRange loadCommitRange(
@@ -504,7 +504,7 @@ public class UCCatalogManagedClient {
     BiConsumer<Long, String> validateVersion =
         (version, type) -> {
           if (version > maxRatifiedVersion) {
-            throw new IllegalArgumentException(
+            throw new VersionToLoadAfterLatestCommitException(
                 String.format(
                     "[%s] Cannot load commit range with %s version %d as the latest version "
                         + "ratified by UC is %d",
