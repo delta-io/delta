@@ -130,37 +130,71 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
   }
 
   test("service calls are keyed by the UC table id when the table carries one") {
-    // Create must rely on the UC table id not the one stored in the Delta metadata.
-    withTable("target") {
-      val ucTableId = s"uc-${java.util.UUID.randomUUID()}"
-      spark.sql(
-        s"""CREATE TABLE target (
-           |  ids BIGINT GENERATED ALWAYS AS IDENTITY,
-           |  values INT)
-           |USING DELTA
-           |LOCATION '$tempPath'
-           |tblproperties(
-           |  '${UCCommitCoordinatorClient.UC_TABLE_ID_KEY}' = '$ucTableId',
-           |  ${TableFeatureProtocolUtils.propertyKey(ConcurrentIdentityColumnsTableFeature)}
-           |    = 'enabled',
-           |  ${TableFeatureProtocolUtils.propertyKey(DomainMetadataTableFeature)} = 'enabled',
-           |  ${TableFeatureProtocolUtils.propertyKey(IdentityColumnsTableFeature)} = 'enabled')
-           |""".stripMargin)
-      val metadataId = deltaLog.update().metadata.id
-      assert(metadataId != ucTableId, "Setup: the two ids must differ for this test to bite.")
-      val seqAfterCreate = syncedSequenceId.getOrElse(fail("CREATE must stamp a sequenceId."))
-      assert(localService.hasSequence(ucTableId, seqAfterCreate),
-        "CREATE registration must key the sequence under the UC table id.")
-      assert(!localService.hasSequence(metadataId, seqAfterCreate),
-        "CREATE registration must not key the sequence under the metadata.id.")
+    // For a catalog-owned table the catalog table id (io.unitycatalog.tableId) is the service
+    // scope: it is used for authorizing and the backend keys the counter by it, so it is what
+    // every service call must carry, NOT the Delta metadata.id. CREATE registration and the write
+    // reservation must resolve the same scope through
+    // ConcurrentIdentityColumnSchema.sequenceServiceTableId; a path passing metadata.id
+    // would die here with a not-found.
+    withoutDefaultCCTableFeature {
+      withTable("target") {
+        spark.sql(
+          s"""CREATE TABLE target (
+             |  ids BIGINT GENERATED ALWAYS AS IDENTITY,
+             |  values INT)
+             |USING DELTA
+             |LOCATION '$tempPath'
+             |tblproperties(
+             |  ${TableFeatureProtocolUtils.propertyKey(IdentityColumnsTableFeature)} = 'enabled')
+             |""".stripMargin)
 
-      // The write reservation resolves the same scope; a metadata.id-keyed reserve would
-      // fail with SEQUENCE_NOT_FOUND instead of writing these rows.
-      spark.sql(s"INSERT INTO delta.`$tempPath` (values) VALUES (10), (20), (30)")
-      assertCorrectIdentityColumn(
-        readDeltaTable(tempPath).select("ids"),
-        expectedSize = 3L, start = 1L, step = 1L,
-        expectedMin = Long.MinValue, expectedMax = Long.MaxValue)
+        val seqId = java.util.UUID.randomUUID().toString
+        val ucTableId = java.util.UUID.randomUUID().toString
+        val base = deltaLog.update().metadata
+        assert(ucTableId != base.id, "Setup: the UC table id must differ from the metadata.id.")
+        // Stamp the identity column with a concurrent sequence id and add the UC table id.
+        val stampedFields = base.schema.map { f =>
+          if (ColumnWithDefaultExprUtils.isIdentityColumn(f)) {
+            ConcurrentIdentityColumnSchema.withConcurrentSequenceMetadata(f, seqId)
+          } else {
+            f
+          }
+        }
+        val stampedMetadata = base.copy(
+          schemaString = base.schema.copy(fields = stampedFields.toArray).json,
+          configuration =
+            base.configuration + (UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> ucTableId))
+        val txn = deltaLog.startTransaction()
+        txn.updateProtocol(txn.protocol.merge(
+          Protocol.forTableFeature(ConcurrentIdentityColumnsTableFeature)))
+        txn.commit(Seq(stampedMetadata), DeltaOperations.ManualUpdate)
+
+        val snapshot = deltaLog.update()
+        assert(
+          ConcurrentIdentityColumnSchema.getSequenceId(snapshot.metadata.schema("ids"))
+            .contains(seqId),
+          "Fixture: the committed schema must carry the stamped sequenceId.")
+        localService.reset()
+
+        ConcurrentIdentityColumnCreateTableHook.createSequencesForCommittedSchema(
+          snapshot, localService)
+
+        assert(localService.hasSequence(ucTableId, seqId),
+          "Registration must key the sequence under the UC table id.")
+        assert(!localService.hasSequence(base.id, seqId),
+          "Registration must not key the sequence under the metadata.id.")
+
+        // Check that the write reservation actually works under the UC table id.
+        val reservesBefore = localService.reserveIdsCount
+        spark.sql(s"INSERT INTO delta.`$tempPath` (values) VALUES (10), (20), (30)")
+        assert(localService.reserveIdsCount > reservesBefore,
+          "The write reservation must reserve from the service under the resolved UC table id.")
+        assert(!localService.hasSequence(base.id, seqId),
+          "The reservation must not fall back to a metadata.id-keyed scope.")
+        assertCorrectIdentityColumn(
+          readDeltaTable(tempPath).select("ids"),
+          expectedSize = 3L, start = 1, step = 1, expectedMin = 1, expectedMax = Long.MaxValue)
+      }
     }
   }
 
@@ -355,6 +389,113 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
         .getSequenceId(deltaLog.update().metadata.schema("ids")).get
       assert(secondSeqId != firstSeqId,
         s"REPLACE must re-stamp with a fresh sequence id; both are $secondSeqId")
+    }
+  }
+
+  test("CREATE OR REPLACE that retains the CIC feature but omits it from TBLPROPERTIES " +
+      "re-stamps the identity column") {
+    // A REPLACE cannot drop a table feature, so a table that supports
+    // ConcurrentIdentityColumnsTableFeature still supports it after a REPLACE whose TBLPROPERTIES
+    // do not re-declare the feature.
+    withTable("target") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
+        spark.sql(createTargetTableStatement(Seq(
+          "ids BIGINT GENERATED ALWAYS AS IDENTITY",
+          "values INT")))
+        spark.sql(s"INSERT INTO delta.`$tempPath` (values) VALUES (10), (20), (30)")
+      }
+      val firstSeqId = ConcurrentIdentityColumnSchema
+        .getSequenceId(deltaLog.update().metadata.schema("ids")).get
+
+      // REPLACE without re-declaring the CIC feature.
+      val replaceSql =
+        s"""
+           |CREATE OR REPLACE TABLE target (
+           |  ids BIGINT GENERATED ALWAYS AS IDENTITY,
+           |  values INT)
+           |USING DELTA
+           |LOCATION '$tempPath'
+           |tblproperties(
+           |${TableFeatureProtocolUtils.propertyKey(IdentityColumnsTableFeature)} = 'enabled',
+           |${TableFeatureProtocolUtils.propertyKey(DomainMetadataTableFeature)} = 'enabled')
+           |""".stripMargin
+      withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
+        spark.sql(replaceSql)
+      }
+
+      // Precondition: the feature is sticky across REPLACE, so the table still advertises CIC and
+      // the write path routes through the sequence service.
+      assert(
+        deltaLog.update().protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature),
+        "Setup: REPLACE must not drop the CIC feature; the write path routes on it.")
+
+      // The replaced identity column must carry a fresh sequence pointer.
+      val secondSeqId = ConcurrentIdentityColumnSchema
+        .getSequenceId(deltaLog.update().metadata.schema("ids"))
+      assert(secondSeqId.isDefined,
+        "REPLACE that retains the CIC feature must re-stamp the identity column.")
+      assert(secondSeqId.get != firstSeqId,
+        s"REPLACE must re-stamp with a fresh sequence id; both are ${secondSeqId.get}")
+
+      // The first write after the REPLACE must succeed.
+      withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
+        spark.sql(s"INSERT INTO delta.`$tempPath` (values) VALUES (40)")
+      }
+      assertCorrectIdentityColumn(
+        readDeltaTable(tempPath).select("ids"),
+        expectedSize = 1L, start = 1, step = 1, expectedMin = 1, expectedMax = Long.MaxValue)
+    }
+  }
+
+  test("CREATE OR REPLACE that would drop the CIC feature under protocol downgrade is refused") {
+    // REPLACE normally cannot drop a table feature, so carryOverCicFeatureOnReplace re-adds CIC and
+    // re-stamps (see the test above). The one path that could actually drop it is
+    // REPLACE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED, under which the commit recomputes the protocol from
+    // the new metadata alone. CIC must not leave the protocol that way and an error is thrown.
+    withTable("target") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
+        spark.sql(createTargetTableStatement(Seq(
+          "ids BIGINT GENERATED ALWAYS AS IDENTITY",
+          "values INT")))
+      }
+      val originalSeqId = ConcurrentIdentityColumnSchema
+        .getSequenceId(deltaLog.update().metadata.schema("ids")).get
+
+      // REPLACE that omits the CIC feature.
+      val replaceSql =
+        s"""
+           |CREATE OR REPLACE TABLE target (
+           |  ids BIGINT GENERATED ALWAYS AS IDENTITY,
+           |  values INT)
+           |USING DELTA
+           |LOCATION '$tempPath'
+           |tblproperties(
+           |${TableFeatureProtocolUtils.propertyKey(IdentityColumnsTableFeature)} = 'enabled',
+           |${TableFeatureProtocolUtils.propertyKey(DomainMetadataTableFeature)} = 'enabled')
+           |""".stripMargin
+      val cause = causeChain(intercept[Exception] {
+        withSQLConf(
+            DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true",
+            DeltaSQLConf.REPLACE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED.key -> "true") {
+          spark.sql(replaceSql)
+        }
+      }).collectFirst { case e: DeltaAnalysisException => e }
+        .getOrElse(fail("expected a DeltaAnalysisException refusing the REPLACE"))
+      assert(cause.getErrorClass === "DELTA_OPERATION_NOT_ALLOWED_DETAIL",
+        s"expected operation-not-allowed refusal; got ${cause.getErrorClass}")
+      assert(
+        cause.getMessageParameters.get("operation") ===
+          "Removing concurrent identity columns with CREATE OR REPLACE TABLE",
+        s"unexpected operation: ${cause.getMessageParameters.get("operation")}")
+
+      // The refused REPLACE aborts before commit, so the original CIC table is untouched.
+      val snapshot = deltaLog.update()
+      assert(snapshot.protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature),
+        "A refused REPLACE must leave the CIC feature in place.")
+      assert(
+        ConcurrentIdentityColumnSchema.getSequenceId(snapshot.metadata.schema("ids"))
+          .contains(originalSeqId),
+        "A refused REPLACE must leave the original sequence pointer unchanged.")
     }
   }
 
@@ -1141,6 +1282,29 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
           parameters = actualParams)
         assert(localService.createSequenceCount === createdSequencesBeforeCreate,
           "CREATE must not create a sequence when the kill switch is on.")
+      }
+    }
+  }
+
+  test("CREATE TABLE with the CIC feature is refused when the table is not catalog-managed") {
+    // CIC requires a catalog-managed table. With default-catalog-owned creation disabled and no
+    // explicit catalogManaged opt-in, the CREATE must be refused before any sequence is stamped.
+    withoutDefaultCCTableFeature {
+      withTable("target") {
+        val cause = causeChain(intercept[Exception] {
+          spark.sql(createTargetTableStatement(
+            Seq(
+              "ids BIGINT GENERATED ALWAYS AS IDENTITY",
+              "values INT"),
+            catalogManaged = false))
+        }).collectFirst { case e: DeltaAnalysisException => e }
+          .getOrElse(fail("expected a DeltaAnalysisException refusing the CREATE"))
+        assert(cause.getErrorClass === "DELTA_OPERATION_NOT_ALLOWED_DETAIL",
+          s"expected operation-not-allowed refusal; got ${cause.getErrorClass}")
+        assert(
+          cause.getMessageParameters.get("operation") ===
+            "Enabling concurrent identity columns on a table that is not catalog-managed",
+          s"unexpected operation: ${cause.getMessageParameters.get("operation")}")
       }
     }
   }
