@@ -23,9 +23,10 @@ import org.apache.spark.SparkFunSuite
  * [[ConcurrentIdentityColumnErrors]]. EMPTY_RESERVE_RANGE, METADATA_MISMATCH, and
  * USING_WRONG_GENERATOR are invariants/backstops that a wired write path is not expected to hit,
  * so they are verified directly on the builder output with `checkError` (error class, SQLSTATE,
- * and parameters , never the message prose). The user-triggerable variants
- * (CONVERSION_INCOMPLETE, DISABLED, SEQUENCE_NOT_FOUND) are exercised through their real paths in
- * ConcurrentIdentityColumnServiceBackendSuite and ConcurrentIdentityColumnConversionSuite.
+ * and parameters , never the message prose). The remaining user-triggerable variants
+ * (CONVERSION_INCOMPLETE, DISABLED, SEQUENCE_NOT_FOUND) are exercised
+ * through their real paths in [[ConcurrentIdentityColumnServiceBackendSuite]] and
+ * [[ConcurrentIdentityColumnConversionSuite]].
  */
 class ConcurrentIdentityColumnErrorsSuite extends SparkFunSuite {
 
