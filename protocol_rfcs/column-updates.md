@@ -169,7 +169,7 @@ order.
 The row commit version column contains either the commit version of the update that last changed
 this row, or `NULL` to indicate that the most recent update changed this row. This column can be
 referenced in two ways: using the name (`delta.rowTracking.materializedRowCommitVersionColumnName`)
-from Delta, and using the field id (2147483539) from Iceberg.
+or using the field id (2147483539).
 
 The rest are value columns that represent the current values for the associated base file columns.
 Values associated with base file rows that are already deleted by a DV might contain either stale
@@ -189,8 +189,8 @@ path | String | A relative path to a column file from the root of the table. The
 sizeInBytes | Long | The size of the column file in bytes. | required
 
 `fieldIds` must be non-empty and duplicate-free. A field ID must occur in at most one
-`ColumnFileDescriptor` within a single `add`. At the moment, only top-level fields are supported for
-Column Updates.
+`ColumnFileDescriptor` within a single `add`. Only top-level fields are supported for Column
+Updates.
 
 The row commit version field, despite being a metadata column that is always included in the file,
 gets field id 2147483539, which must only be included in `fieldIds` to indicate that the associated
