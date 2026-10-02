@@ -547,10 +547,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   }
 
   private static List<String> partitionedFilePaths(List<PartitionedFile> files) {
-    return files.stream()
-        .map(pf -> pf.filePath().toString())
-        .sorted()
-        .collect(Collectors.toList());
+    return files.stream().map(pf -> pf.filePath().toString()).sorted().collect(Collectors.toList());
   }
 
   @Test
