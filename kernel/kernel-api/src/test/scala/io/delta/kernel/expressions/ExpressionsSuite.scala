@@ -77,4 +77,60 @@ class ExpressionsSuite extends AnyFunSuite {
     }
     assert(ex.getMessage.contains("exceeds max precision"))
   }
+
+  test("equals and hashCode: equal literals produce equal hash codes") {
+    assert(Literal.ofInt(5) == Literal.ofInt(5))
+    assert(Literal.ofInt(5).hashCode() == Literal.ofInt(5).hashCode())
+
+    // Identity hashing would place two equal literals in different buckets.
+    val set = new java.util.HashSet[Literal]()
+    set.add(Literal.ofInt(5))
+    set.add(Literal.ofInt(5))
+    assert(set.size() == 1)
+
+    val map = new java.util.HashMap[Literal, String]()
+    map.put(Literal.ofString("a"), "v")
+    assert(map.get(Literal.ofString("a")) == "v")
+  }
+
+  test("equals and hashCode: binary literals compare by value") {
+    val lit1 = Literal.ofBinary(Array[Byte](1, 2, 3))
+    val lit2 = Literal.ofBinary(Array[Byte](1, 2, 3))
+
+    assert(lit1 == lit2)
+    assert(lit1.hashCode() == lit2.hashCode())
+    assert(lit1 != Literal.ofBinary(Array[Byte](1, 2, 4)))
+    assert(lit1 != Literal.ofBinary(Array[Byte](1, 2)))
+
+    val map = new java.util.HashMap[Literal, String]()
+    map.put(lit1, "v")
+    assert(map.get(lit2) == "v")
+  }
+
+  test("equals and hashCode: collated string literals compare by collation") {
+    val collation1 = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
+    val collation2 = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
+    val lit1 = Literal.ofString("a", collation1)
+    val lit2 = Literal.ofString("a", collation2)
+
+    assert(lit1 == lit2)
+    assert(lit1.hashCode() == lit2.hashCode())
+    assert(lit1 != Literal.ofString("a"))
+  }
+
+  test("equals and hashCode: differing value or data type are not equal") {
+    assert(Literal.ofInt(5) != Literal.ofInt(6))
+    assert(Literal.ofInt(5) != Literal.ofLong(5L))
+    // Integer(5) and Long(5L) both hash to 5, so the data type must be part of the hash.
+    assert(Literal.ofInt(5).hashCode() != Literal.ofLong(5L).hashCode())
+  }
+
+  test("equals and hashCode: null literals are equal and hash without throwing") {
+    val nullInt1 = Literal.ofNull(IntegerType.INTEGER)
+    val nullInt2 = Literal.ofNull(IntegerType.INTEGER)
+
+    assert(nullInt1 == nullInt2)
+    assert(nullInt1.hashCode() == nullInt2.hashCode())
+    assert(nullInt1 != Literal.ofNull(LongType.LONG))
+  }
 }
