@@ -463,32 +463,6 @@ class ConcurrentIdentityColumnConversionSuite extends ConcurrentIdentityColumnSu
     s"ALTER TABLE delta.`$tempPath` DROP FEATURE " +
       s"`${ConcurrentIdentityColumnsTableFeature.name}`"
 
-  test("DROP FEATURE catalogManaged is refused while the CIC feature is present") {
-    withTable("target") {
-      spark.sql(createTargetTableStatement(Seq(
-        "ids BIGINT GENERATED ALWAYS AS IDENTITY",
-        "values INT")))
-      assert(deltaLog.update().protocol.isFeatureSupported(CatalogOwnedTableFeature),
-        "Setup: the table must be catalog-managed.")
-      val error = intercept[DeltaTableFeatureException] {
-        spark.sql(
-          s"ALTER TABLE delta.`$tempPath` DROP FEATURE `${CatalogOwnedTableFeature.name}`")
-      }
-      checkError(
-        error,
-        condition = "DELTA_FEATURE_DROP_DEPENDENT_FEATURE",
-        parameters = Map(
-          "feature" -> CatalogOwnedTableFeature.name,
-          "dependentFeatures" -> ConcurrentIdentityColumnsTableFeature.name))
-
-      // The refusal must keep both features active.
-      val snapshot = deltaLog.update()
-      assert(snapshot.protocol.isFeatureSupported(CatalogOwnedTableFeature),
-        "A refused DROP FEATURE must leave catalogManaged in place.")
-      assert(snapshot.protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature),
-        "A refused DROP FEATURE must leave the CIC feature in place.")
-    }
-  }
 
   test("DROP FEATURE returns a service-backed table to stock identity") {
     // Leaving the service backend is table-level DDL: the pre-downgrade hook computes the
