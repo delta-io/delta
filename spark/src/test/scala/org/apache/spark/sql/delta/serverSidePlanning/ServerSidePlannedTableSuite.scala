@@ -134,6 +134,19 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
+  test("planning client handles a data column named _metadata") {
+    withTable("test_db.metadata_conflict") {
+      sql(
+        """CREATE TABLE test_db.metadata_conflict (_metadata BIGINT, value STRING)
+          |USING delta""".stripMargin)
+      sql("INSERT INTO test_db.metadata_conflict VALUES (1, 'a')")
+
+      val plan = new TestServerSidePlanningClient(spark)
+        .planScan("test_db", "metadata_conflict")
+      assert(plan.files.nonEmpty)
+    }
+  }
+
   test("verify normal path unchanged when feature disabled") {
     // Explicitly disable server-side planning
     spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "false")

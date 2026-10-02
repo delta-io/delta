@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.{DeltaLogging, LogThrottler}
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -417,6 +418,97 @@ object DeltaTableUtils extends PredicateHelper
     target transform {
       case l @ LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
         l.copy(relation = hfsr.copy(location = fileIndex)(hfsr.sparkSession))
+    }
+  }
+
+  /**
+   * Add the file source metadata column to the output of `target`, and return the updated plan
+   * together with the attribute referencing the added column.
+   *
+   * Commands such as UPDATE/DELETE/MERGE read `_metadata.file_path` to identify the files that
+   * need to be rewritten. That column cannot be looked up by name on the resulting DataFrame:
+   * views don't expose metadata columns, so resolving `_metadata` fails whenever the command
+   * targets a view. Instead we add the column to the scan and thread it through the projections
+   * above it, so it can be referenced directly by its attribute.
+   *
+   * This follows the same approach that `DMLWithDeletionVectorsHelper.replaceFileIndex` already
+   * uses to request the metadata column for the deletion vector code paths, which is why those
+   * paths work on views today. The difference is that this only adds the column, leaving the file
+   * index untouched, and that it renames the column on conflict.
+   *
+   * @param target the logical plan to add the file source metadata column to
+   */
+  def addFileMetadataColumn(target: LogicalPlan): (LogicalPlan, AttributeReference) = {
+    var fileMetadataCol: AttributeReference = null
+
+    val newTarget = target transformUp {
+      case l @ LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
+        val metadataCol = hfsr.fileFormat.createFileMetadataCol()
+        // Rename the added column when the table has a data column with the same name, so that
+        // references to that data column stay unambiguous. Renaming is safe because we reference
+        // the added column by its attribute rather than by name, and because the logical name
+        // that identifies it as the file source metadata column is kept in its metadata.
+        var name = metadataCol.name
+        while (l.output.exists(_.name.equalsIgnoreCase(name))) {
+          name = s"_$name"
+        }
+        fileMetadataCol = metadataCol.withName(name)
+        l.copy(output = l.output :+ fileMetadataCol)
+      case p @ Project(projectList, _) =>
+        if (fileMetadataCol == null) {
+          throw new IllegalStateException("File metadata column is not yet created.")
+        }
+        p.copy(projectList = projectList :+ fileMetadataCol)
+    }
+
+    if (fileMetadataCol == null) {
+      throw new IllegalStateException(
+        "Could not find a file source relation to add the file metadata column to.")
+    }
+    (newTarget, fileMetadataCol)
+  }
+
+  /**
+   * Runs `thunk` with nested schema pruning disabled when `condition` references a variant column.
+   *
+   * Spark's "Early Filter and Projection Push-Down" batch is not idempotent when a scan requests
+   * the file source metadata column while a shredded variant column is only referenced by a
+   * filter that gets pushed below the variant reconstruction projection. That leaves the
+   * projection unused, and nested schema pruning only removes it on a second application of the
+   * batch.
+   *
+   * Finding the files to rewrite is exactly that shape: it reads `_metadata.file_path` and
+   * outputs nothing else.
+   *
+   * Note that `RuleExecutor` only checks idempotence when `Utils.isTesting`, so this surfaces as a
+   * test failure rather than as a user visible one: the batch runs once outside tests and the plan
+   * it produces is correct. Disabling nested pruning here avoids depending on an optimizer result
+   * that Spark itself reports as invalid, at the cost of not pruning nested fields for this one
+   * query. It is limited to conditions that reference a variant column.
+   *
+   * Spark fixed this in SPARK-59171 by running `SchemaPruning` after `PushVariantIntoScan` in
+   * `SparkOptimizer.earlyScanPushDownRules`. That fix is only on Spark master: every Spark version
+   * this repo builds against (see `CrossSparkVersions.ALL_SPECS`) still orders `SchemaPruning`
+   * before `PushVariantIntoScan` and therefore still needs this workaround.
+   *
+   * When a Spark version containing SPARK-59171 is added, make this a no-op for that version
+   * rather than deleting it, since the older versions remain supported. Follow the shim pattern
+   * used elsewhere for cross-version differences (e.g. `VariantShreddingShims`): add a
+   * `needsVariantPruningWorkaround` shim returning `false` under the new version's
+   * `scala-shims/spark-X.Y` directory and `true` for the existing ones, then short-circuit here.
+   * This helper can be dropped entirely once no supported version predates the fix.
+   */
+  def withNestedSchemaPruningDisabledForVariant[T](
+      spark: SparkSession,
+      condition: Expression)(thunk: => T): T = {
+    val referencesVariant = condition.references.exists { attr =>
+      SchemaUtils.typeExistsRecursively(attr.dataType)(_.isInstanceOf[VariantType])
+    }
+    if (!referencesVariant) {
+      thunk
+    } else {
+      val newConf = spark.sessionState.conf.copy(SQLConf.NESTED_SCHEMA_PRUNING_ENABLED -> false)
+      SQLConf.withExistingConf(newConf)(thunk)
     }
   }
 
