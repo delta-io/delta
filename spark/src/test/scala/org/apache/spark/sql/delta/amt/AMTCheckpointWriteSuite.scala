@@ -690,6 +690,15 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       assert(mi.added_files_count == 0 && mi.deleted_files_count == 0 &&
         mi.replaced_files_count == 0 && mi.modified_files_count == 0,
         s"A fresh full-rewrite leaf counts only existing files; got $mi.")
+      val dataSequenceNumbers = withManifestDataEntries(
+        Seq(leaf.toFileStatus(context.provider.tableRoot).getPath.toString)) { entries =>
+        entries.select("tracking.sequence_number").collect().map(_.getLong(0))
+      }
+      assert(dataSequenceNumbers.nonEmpty,
+        s"A full-rewrite leaf must contain at least one data sequence number; got $leaf.")
+      assert(mi.min_sequence_number == dataSequenceNumbers.min,
+        s"min_sequence_number must match the leaf's live entries; got $mi vs " +
+          s"${dataSequenceNumbers.toSeq}.")
     }
     // Conservation: the per-leaf counts account for every live file and row (a multi-leaf tree
     // keeps no root-resident data entries).

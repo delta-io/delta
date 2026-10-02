@@ -31,7 +31,6 @@ import java.util.*;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.Expression;
@@ -47,6 +46,7 @@ import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.stats.DataSize;
 import org.apache.spark.sql.delta.stats.DeltaScan;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
@@ -68,7 +68,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
   private final DeltaV2SnapshotManager snapshotManager;
-  private final io.delta.kernel.Snapshot initialSnapshot;
+  private final Snapshot initialSnapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -109,7 +109,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
   // TODO(#6743): bundle scan-level schemas into a single ScanSchemaContext.
   public DeltaV2Scan(
       DeltaV2SnapshotManager snapshotManager,
-      io.delta.kernel.Snapshot initialSnapshot,
+      Snapshot initialSnapshot,
       StructType tableSchema,
       StructType dataSchema,
       StructType partitionSchema,
@@ -146,6 +146,14 @@ class DeltaV2Scan extends DeltaV2JavaLogging
         SchemaUtils.ddlOrderedOutputSchema(tableSchema, readDataSchema, partitionSchema);
     this.ddlOrderedReadOutputSchema =
         isCDCRead ? CDCSchemaContext.appendCDCColumns(ddlOrdered) : ddlOrdered;
+  }
+
+  /**
+   * Returns the Kernel snapshot wrapped by {@link #initialSnapshot} for operations that have not
+   * migrated to the shared snapshot facade yet.
+   */
+  private SnapshotImpl kernelSnapshot() {
+    return DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot);
   }
 
   /** Read schema for the scan, in the table's DDL column order. */
@@ -186,7 +194,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     if (isCDCRead) {
       schemaForBatchCheck = CDCSchemaContext.appendCDCColumns(schemaForBatchCheck);
     }
-    if (PartitionUtils.tableSupportsDeletionVectors(initialSnapshot)) {
+    if (PartitionUtils.tableSupportsDeletionVectors(kernelSnapshot())) {
       schemaForBatchCheck =
           new DeletionVectorSchemaContext(schemaForBatchCheck, partitionSchema)
               .getSchemaWithDvColumn();
@@ -421,8 +429,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
   public String getTablePath() {
     // PartitionUtils passes the resolved path to SparkPath.fromUrlString, so the table root must be
     // URL-encoded (for example, spaces and literal '%' characters).
-    final String tableRoot =
-        new Path(((SnapshotImpl) initialSnapshot).getDataPath().toString()).toUri().toString();
+    final String tableRoot = initialSnapshot.dataPath().toUri().toString();
     return tableRoot.endsWith("/") ? tableRoot : tableRoot + "/";
   }
 
@@ -612,8 +619,8 @@ class DeltaV2Scan extends DeltaV2JavaLogging
       return false;
     }
     DeltaV2Scan that = (DeltaV2Scan) o;
-    return Objects.equals(initialSnapshot.getPath(), that.initialSnapshot.getPath())
-        && initialSnapshot.getVersion() == that.initialSnapshot.getVersion()
+    return Objects.equals(initialSnapshot.path(), that.initialSnapshot.path())
+        && initialSnapshot.version() == that.initialSnapshot.version()
         && Objects.equals(dataSchema, that.dataSchema)
         && Objects.equals(partitionSchema, that.partitionSchema)
         && Objects.equals(readDataSchema, that.readDataSchema)
@@ -639,8 +646,8 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     int result =
         Objects.hash(
             catalogStats,
-            initialSnapshot.getPath(),
-            initialSnapshot.getVersion(),
+            initialSnapshot.path(),
+            initialSnapshot.version(),
             dataSchema,
             partitionSchema,
             readDataSchema,

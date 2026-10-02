@@ -2976,8 +2976,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /**
    * Prepares one commit attempt:
-   *   - generates Uniform/Iceberg metadata
    *   - handles writing Adaptive metadata tree
+   *   - generates Uniform/Iceberg metadata
    * Invoked directly on the first attempt;
    * On a conflict retry, [[rebaseCurrentTransactionInfo]] invokes it after conflict resolution.
    *
@@ -2988,12 +2988,24 @@ trait OptimisticTransactionImpl extends TransactionHelper
       amtWriterManager: AMTWriterManager,
       winningCommitMetrics: Seq[WinningCommitMetrics] = Seq.empty): PrepareCommitResult = {
     val targetCatalogTable = catalogTable
+    // Validate resolved file actions before writing AMT. Iceberg conversion does not change them.
+    ConflictChecker.trackDataChange(
+      spark,
+      currentTransactionInfo.finalActionsToCommit.iterator,
+      deltaLog,
+      currentTransactionInfo.op,
+      callerContext = "doCommit").foreach(_ => ())
+    val amtWriteResultOpt = amtWriterManager.writeAMT(
+      nextAttemptVersion = attemptVersion,
+      currentTransactionInfo = currentTransactionInfo,
+      preCommitLogSegment = preCommitLogSegment,
+      winningCommitMetricsForConflictedRange = winningCommitMetrics)
+
     // If the table requires atomic Iceberg metadata generation
     // , generate iceberg metadata and update the transaction info.
     var icebergMetadataGenerationDurationMsOpt: Option[Long] = None
     var updatedCurrentTransactionInfo =
-      targetCatalogTable
-      .map { table =>
+      targetCatalogTable.map { table =>
         val startNanos = System.nanoTime()
         // Following call generates Iceberg metadata and updates CurrentTransactionInfo
         val (updatedInfo, isConversionPerformed) =
@@ -3010,20 +3022,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         }
         updatedInfo
       }.getOrElse(currentTransactionInfo)
+
     val baseActions = updatedCurrentTransactionInfo.finalActionsToCommit
-    // Validate the complete post-conflict-resolution action set before AMT can replace file actions
-    // in the commit JSON with a checkpoint representation.
-    ConflictChecker.trackDataChange(
-      spark,
-      baseActions.iterator,
-      deltaLog,
-      updatedCurrentTransactionInfo.op,
-      callerContext = "doCommit").foreach(_ => ())
-    val amtWriteResultOpt = amtWriterManager.writeAMT(
-      nextAttemptVersion = attemptVersion,
-      currentTransactionInfo = updatedCurrentTransactionInfo,
-      preCommitLogSegment = preCommitLogSegment,
-      winningCommitMetricsForConflictedRange = winningCommitMetrics)
     val actions = amtWriteResultOpt match {
       case Some(result) if !result.includeActionsInCommitJson =>
         throw new UnsupportedOperationException(
