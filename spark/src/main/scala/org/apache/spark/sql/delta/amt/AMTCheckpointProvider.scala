@@ -27,6 +27,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.expressions.Window
@@ -343,6 +344,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
   private[delta] def verifyCommitBackReferences(
       spark: SparkSession,
       deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable],
       committedActions: Seq[Action]): Unit = {
     // Key by (path, dv) so a same-path replace is handled: the removed (path, oldDv) is checked
     // against the AMT, while the re-added (path, newDv) is a distinct key absent from the tree.
@@ -365,7 +367,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     // Keys an intermediate commit (after this AMT) already re-committed. The first superseding
     // add/remove must carry a back reference; a 2nd superseding one of the same key need not.
     val intermediateCommittedKeys =
-      deltaLog.getChanges(checkpointVersion + 1).flatMap(_._2).collect {
+      deltaLog.getChanges(checkpointVersion + 1, catalogTableOpt).flatMap(_._2).collect {
         case a: AddFile => a.toUniqueFileActionTuple(tableRoot, useObjectIdentity = true)
         case r: RemoveFile => r.toUniqueFileActionTuple(tableRoot, useObjectIdentity = true)
       }.toSet
