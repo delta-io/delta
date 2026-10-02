@@ -75,6 +75,11 @@ object ConcurrentIdentityColumnConversion {
       sparkSession: SparkSession,
       txn: OptimisticTransaction,
       newMetadata: Metadata): (Metadata, Seq[Action]) = {
+    // CIC requires a catalog-managed (UC coordinated-commits) table.
+    if (!ConcurrentIdentityColumnCreateTableHook.willBeCatalogManaged(txn.snapshot, newMetadata)) {
+      throw ConcurrentIdentityColumnErrors.requiresCatalogManaged(
+        tableId = ConcurrentIdentityColumnSchema.sequenceServiceTableId(newMetadata))
+    }
     val identityColumns = newMetadata.schema.filter(ColumnWithDefaultExprUtils.isIdentityColumn)
     if (identityColumns.isEmpty) return (newMetadata, Nil)
     ConcurrentIdentityColumnSchema.checkColumnLimit(

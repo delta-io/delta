@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.cic.IdentitySequenceServices
-import org.apache.spark.sql.delta.cic.CreateSequenceRequest
+import org.apache.spark.sql.delta.cic.{CreateSequenceRequest, ReserveIdsRequest}
 
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions.{max, min}
@@ -29,11 +29,9 @@ import org.apache.spark.sql.types.StructField
  * Like legacy SYNC ([[IdentityColumn.syncIdentity]]), this reconciles the effective high-water
  * mark with the data. The difference is WHERE that mark lives: legacy writes the schema
  * `delta.identity.highWaterMark`, but for a service-backed CIC column generation reads the
- * external sequence, so [[syncIdentity]] rescans the data and reseeds the service just past it,
- * minting a FRESH sequence and re-stamping `delta.identity.concurrent.sequenceId`. Reseeding past
- * the data advances the effective high-water mark exactly as legacy SYNC does. As with legacy
- * SYNC it doubles as repair: it covers both a normal reconcile (explicit inserts the service never
- * saw) and a deleted/restarted-service repair.
+ * external sequence, so [[syncIdentity]] rescans the data, mints a FRESH sequence under the
+ * column's original start/step, advances its counter past the data extreme by reserving the
+ * already-covered range, and re-stamps `delta.identity.concurrent.sequenceId`.
  *
  * Reconciling the service sequence against the ACTUAL DATA lives here, not in conversion:
  * conversion ([[ConcurrentIdentityColumnConversion]]) trusts the schema HWM and never scans,
@@ -57,8 +55,9 @@ object ConcurrentIdentityColumnSync {
     snapshot.protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature)
 
   /**
-   * Repair one CIC identity column: scan the data extreme, mint a fresh sequence seeded
-   * strictly past it, and return the re-stamped field.
+   * Repair one CIC identity column: scan the data extreme, mint a fresh sequence under the
+   * original start/step whose counter is advanced strictly past that extreme, and return the
+   * re-stamped field.
    *
    * @param snapshot the table snapshot SYNC is reading.
    * @param field the identity column to sync; must carry a sequence pointer.
@@ -78,20 +77,38 @@ object ConcurrentIdentityColumnSync {
       val row = df.select(expr).collect().head
       if (row.isNullAt(0)) None else Some(row.getLong(0))
     }
-    // First lattice value strictly past the extreme; `start` for an empty table.
-    val seed = extreme
-      .map(e => Math.addExact(IdentityColumn.roundToNext(info.start, info.step, e), info.step))
-      .getOrElse(info.start)
+    // First lattice value strictly past the extreme (`start` for an empty table), and the number
+    // of already-covered values the fresh counter must advance by: (seed - start) / step.
+    val (seed, usedCount) = try {
+      val seed = extreme
+        .map(e => Math.addExact(IdentityColumn.roundToNext(info.start, info.step, e), info.step))
+        .getOrElse(info.start)
+      (seed, Math.subtractExact(seed, info.start) / info.step)
+    } catch {
+      case e: ArithmeticException =>
+        IdentityOverflowLogger.logOverflow()
+        throw e
+    }
     // The driver generates the fresh sequenceId up front and passes it to the
     // service, then stamps the same value; the service stores it rather than minting one.
     val sequenceId = java.util.UUID.randomUUID().toString
-    IdentitySequenceServices.resolve(df.sparkSession).createSequence(
+    val service = IdentitySequenceServices.resolve(df.sparkSession)
+    val tableId = ConcurrentIdentityColumnSchema.sequenceServiceTableId(snapshot.metadata)
+    // Register the sequence with the column's original start/step and set it to the correct value.
+    service.createSequence(
       CreateSequenceRequest(
         sequenceId = sequenceId,
-        tableId = ConcurrentIdentityColumnSchema.sequenceServiceTableId(snapshot.metadata),
-        start = seed,
+        tableId = tableId,
+        start = info.start,
         step = info.step,
         columnInformation = Some(DeltaColumnMapping.getPhysicalName(field))))
+    if (usedCount > 0L) {
+      service.reserveIds(ReserveIdsRequest(
+        sequenceId = sequenceId,
+        tableId = tableId,
+        count = usedCount,
+        step = info.step))
+    }
     ConcurrentIdentityColumnSchema.withConcurrentSequenceMetadata(field, sequenceId)
   }
 }
