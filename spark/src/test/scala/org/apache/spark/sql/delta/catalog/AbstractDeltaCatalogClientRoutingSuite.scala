@@ -182,6 +182,47 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     m
   }
 
+  test("loadTable passes the declared write intent to the UC client") {
+    val recordedIntents = scala.collection.mutable.ArrayBuffer.empty[Boolean]
+    val stub = new ThrowingUCDeltaClient {
+      override def loadTable(
+          tableIdentifier: StorageTableIdentifier, writeIntent: Boolean): TableInfo = {
+        recordedIntents += writeIntent
+        throw new StorageNoSuchTableException("sentinel: metadata fetch not under test")
+      }
+    }
+    val client = new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = stub)
+    val ident = Identifier.of(Array("sch"), "tbl")
+
+    intercept[org.apache.spark.sql.catalyst.analysis.NoSuchTableException] {
+      client.loadTable(ident)
+    }
+    intercept[org.apache.spark.sql.catalyst.analysis.NoSuchTableException] {
+      client.loadTable(ident, writeIntent = true)
+    }
+    assert(recordedIntents.toList === List(false, true))
+  }
+
+  test("the server-side-planning fallback never serves a declared write") {
+    val info = existingDeltaTableInfo()
+    val stub = new ThrowingUCDeltaClient {
+      override def loadTable(
+          tableIdentifier: StorageTableIdentifier, writeIntent: Boolean): TableInfo =
+        throw new CredentialFetchFailedException("denied", null, info)
+    }
+    val client = new UCDeltaCatalogClientImpl(
+      catalogName = "main", ucClient = stub, serverSidePlanningEnabled = true)
+    val ident = Identifier.of(Array("sch"), "tbl")
+
+    // SSP tables are read-only, so a declared write must surface the credential denial instead
+    // of being handed a table that fails later with "does not support writes".
+    intercept[CredentialFetchFailedException] {
+      client.loadTable(ident, writeIntent = true)
+    }
+    // The intent-less load keeps the SSP fallback.
+    assert(client.loadTable(ident) != null)
+  }
+
   test("createStagingTable: managed Delta create on the new path stages + augments props") {
     val (client, stub) = newRecordingClient()
     val ident = Identifier.of(Array("sch"), "tbl")
