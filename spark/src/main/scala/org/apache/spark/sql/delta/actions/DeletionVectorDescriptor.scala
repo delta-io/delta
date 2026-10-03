@@ -20,7 +20,7 @@ import java.io.{ByteArrayInputStream, ByteArrayOutputStream, DataInputStream, Da
 import java.net.URI
 import java.util.{Base64, UUID}
 
-import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaIllegalArgumentException}
 import org.apache.spark.sql.delta.DeltaUDF
 import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -183,50 +183,24 @@ case class DeletionVectorDescriptor(
    * Parse the prefix and UUID of a u DV. Returns None if the DV is not of type u.
    */
   @JsonIgnore
-  def getRandomPrefixAndUuid: Option[(String, UUID)] = storageType match {
-    case UUID_DV_MARKER =>
-      // If the file was written with a random prefix, we have to extract that,
-      // before decoding the UUID.
-      val randomPrefixLength = pathOrInlineDv.length - Codec.Base85Codec.ENCODED_UUID_LENGTH
-      val (randomPrefix, encodedUuid) = pathOrInlineDv.splitAt(randomPrefixLength)
-      Some((randomPrefix, Codec.Base85Codec.decodeUUID(encodedUuid)))
-    case _ =>
-      None
-  }
+  def getRandomPrefixAndUuid: Option[(String, UUID)] =
+    DeletionVectorDescriptor.getRandomPrefixAndUuid(storageType, pathOrInlineDv)
 
   /**
    * Computes a normalized object identity for this descriptor. Use this when the caller wants
    * to identify the underlying DV object rather than this descriptor's storage encoding.
    */
   def normalizedTableRelativeObjectId(tableRoot: Path): String = {
-    storageType match {
-      case INLINE_DV_MARKER =>
-        formatIdentity(INLINE_DV_MARKER, pathOrInlineDv, offset)
-      case UUID_DV_MARKER =>
-        val (randomPrefix, uuid) = getRandomPrefixAndUuid.get
-        val fileName = assembleDeletionVectorFileName(uuid)
-        val relativePath = if (randomPrefix.isEmpty) fileName else s"$randomPrefix/$fileName"
-        formatIdentity(RELATIVE_DV_MARKER, relativePath, offset)
-      case RELATIVE_DV_MARKER =>
-        formatIdentity(RELATIVE_DV_MARKER, pathOrInlineDv, offset)
-      case PATH_DV_MARKER =>
-        val path = SparkPath.fromUrlString(pathOrInlineDv).toPath.toString
-        val relativePath = AMTUtils.relativizeLocation(tableRoot.toString, path)
-        if (AMTUtils.isAbsoluteLocation(relativePath)) {
-          formatIdentity(PATH_DV_MARKER, pathOrInlineDv, offset)
-        } else {
-          formatIdentity(RELATIVE_DV_MARKER, relativePath, offset)
-        }
-      case _ =>
-        throw new IllegalArgumentException(
-          s"Unsupported deletion vector storage type: $storageType")
-    }
+    DeletionVectorDescriptor.normalizedTableRelativeObjectId(
+      storageType,
+      pathOrInlineDv,
+      offset,
+      tableRoot)
   }
 
   /**
    * Like [[normalizedTableRelativeObjectId]] but identifies the physical DV file rather than the
-   * individual DV within it and returns the normalized (storageType, path) with no offset. Today
-   * this is only used for table clone.
+   * individual DV within it and returns the normalized (storageType, path) with no offset.
    */
   private[delta] def normalizedTableRelativeObjectFile(tableRoot: Path): (String, String) = {
     storageType match {
@@ -373,6 +347,52 @@ object DeletionVectorDescriptor {
     }
   }
 
+  private def getRandomPrefixAndUuid(
+      storageType: String,
+      pathOrInlineDv: String): Option[(String, UUID)] = storageType match {
+    case UUID_DV_MARKER =>
+      // If the file was written with a random prefix, we have to extract that,
+      // before decoding the UUID.
+      val randomPrefixLength = pathOrInlineDv.length - Codec.Base85Codec.ENCODED_UUID_LENGTH
+      val (randomPrefix, encodedUuid) = pathOrInlineDv.splitAt(randomPrefixLength)
+      Some((randomPrefix, Codec.Base85Codec.decodeUUID(encodedUuid)))
+    case _ =>
+      None
+  }
+
+  /**
+   * See comments of [[normalizedTableRelativeObjectId]] in class.
+   */
+  private[delta] def normalizedTableRelativeObjectId(
+      storageType: String,
+      pathOrInlineDv: String,
+      offset: Option[Int],
+      tableRoot: Path): String = {
+    storageType match {
+      case INLINE_DV_MARKER =>
+        formatIdentity(INLINE_DV_MARKER, pathOrInlineDv, offset)
+      case UUID_DV_MARKER =>
+        val (randomPrefix, uuid) = getRandomPrefixAndUuid(storageType, pathOrInlineDv).get
+        val fileName = assembleDeletionVectorFileName(uuid)
+        val relativePath = if (randomPrefix.isEmpty) fileName else s"$randomPrefix/$fileName"
+        formatIdentity(RELATIVE_DV_MARKER, relativePath, offset)
+      case RELATIVE_DV_MARKER =>
+        formatIdentity(RELATIVE_DV_MARKER, pathOrInlineDv, offset)
+      case PATH_DV_MARKER =>
+        val path = SparkPath.fromUrlString(pathOrInlineDv).toPath.toString
+        val relativePath = AMTUtils.relativizeLocation(tableRoot.toString, path)
+        if (AMTUtils.isAbsoluteLocation(relativePath)) {
+          formatIdentity(PATH_DV_MARKER, pathOrInlineDv, offset)
+        } else {
+          formatIdentity(RELATIVE_DV_MARKER, relativePath, offset)
+        }
+      case _ =>
+        throw new DeltaIllegalArgumentException(
+          errorClass = "INTERNAL_ERROR",
+          messageParameters = Array(s"Unsupported deletion vector storage type: $storageType"))
+    }
+  }
+
   private final val deletionVectorFileNameRegex =
     raw"${new Path(DELETION_VECTOR_FILE_NAME_CORE).toUri}_([^.]+)\.bin".r
   private final val deletionVectorFileNamePattern = deletionVectorFileNameRegex.pattern
@@ -417,6 +437,13 @@ object DeletionVectorDescriptor {
   /**
    * Utility method to create a [[DeletionVectorDescriptor]] for an unencoded path relative to the
    * table root. Callers are responsible for relativizing the path before invoking this method.
+   *
+   * @param relativePath Relative path to the table root. Must be unencoded.
+   * @param sizeInBytes Size of the serialized DV in bytes (raw data size, before encoding).
+   * @param cardinality Number of rows the DV logically removes from the file.
+   * @param offset Start of the data for this DV.
+   * @param maxRowIndex Transient property that is used to validate DV correctness. It is not
+   *                    stored in the log.
    */
   def createRelativePathDVDescriptor(
       relativePath: String,

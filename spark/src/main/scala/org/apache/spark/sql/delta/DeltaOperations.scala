@@ -106,6 +106,12 @@ object DeltaOperations {
      */
     def isInPlaceFileMetadataUpdate: Option[Boolean]
 
+    /**
+     * Whether we expect logical data changes from this operation.
+     * Validated during commit, gated by `DELTA_COMMIT_VALIDATE_EXPECTED_DATA_CHANGE_MODE`.
+     */
+    def expectedFileDataChange: Option[Boolean]
+
 
     /**
      * Whether this operation is allowed to change the set and order of partition columns.
@@ -212,6 +218,9 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    // The dataChange write option allows WRITE to be used for data-rearrangement operations.
+    override def expectedFileDataChange: Option[Boolean] = None
+
     def shouldCollectInsertReplaceMetrics: Boolean =
       (predicate.nonEmpty && replaceWhereMetricsEnabled) ||
         replaceOnCond.nonEmpty ||
@@ -234,6 +243,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -254,6 +265,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -284,6 +297,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
+
     override def canChangePartitionColumns: Boolean = false
   }
   /** Recorded when truncating the table. */
@@ -296,6 +311,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -320,6 +337,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -397,6 +416,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -436,6 +457,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
+
     override def canChangePartitionColumns: Boolean = false
   }
   /** Recorded when the table is created. */
@@ -463,6 +486,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
 
     override def canChangePartitionColumns: Boolean = true
   }
@@ -515,6 +540,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
+
     // We allow ReplaceTable operations to change partition columns when they are
     // 1) creating/replacing a new table, 2) not invoked via saveAsTable or 3) invoked via
     // saveAsTable but with schema overwrite.
@@ -534,6 +561,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
+
     override def canChangePartitionColumns: Boolean = false
   }
   /** Recorded when the table properties are unset. */
@@ -548,6 +577,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -567,6 +598,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -582,6 +615,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -603,6 +638,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -618,6 +655,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -635,6 +674,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
 
     override def canChangePartitionColumns: Boolean = true
   }
@@ -655,6 +696,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -673,6 +716,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -687,6 +732,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -704,6 +751,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -717,6 +766,8 @@ object DeltaOperations {
     // adding a new Delta operation. For test-only code use TestOperation.
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = None
 
+    override def expectedFileDataChange: Option[Boolean] = None
+
     override def canChangePartitionColumns: Boolean = true
   }
 
@@ -728,6 +779,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -747,6 +800,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -761,6 +816,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -772,6 +829,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -791,6 +850,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -804,6 +865,8 @@ object DeltaOperations {
 
     // ComputeStats operation only updates statistics of existing files.
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -828,6 +891,9 @@ object DeltaOperations {
     // between the current and the restored state is computed using only the (path, DV) pairs as
     // identifiers, meaning that metadata differences are ignored.
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    // RESTORE can deliberately stamp file actions with either value via RESTORE_DATA_CHANGE.
+    override def expectedFileDataChange: Option[Boolean] = None
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -877,6 +943,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -892,6 +960,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = false
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -914,6 +984,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = false
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(true)
 
     override def canChangePartitionColumns: Boolean = true
   }
@@ -939,6 +1011,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -960,6 +1034,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -983,6 +1059,8 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -998,6 +1076,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -1015,6 +1095,8 @@ object DeltaOperations {
 
     // RowTrackingBackfill only updates tags of existing files.
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -1035,6 +1117,8 @@ object DeltaOperations {
 
     // RowTrackingUnBackfill only updates metadata of existing files.
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
 
     override def canChangePartitionColumns: Boolean = false
   }
@@ -1063,6 +1147,8 @@ object DeltaOperations {
     // Only removes domain metadata.
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
 
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
+
     override def canChangePartitionColumns: Boolean = false
   }
 
@@ -1081,6 +1167,7 @@ object DeltaOperations {
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = None
   ) extends Operation(operationName) {
     override val parameters: Map[String, Any] = Map.empty
+    override def expectedFileDataChange: Option[Boolean] = None
 
     // Perform the check for testing.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
@@ -1111,6 +1198,8 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
 
     override def canChangePartitionColumns: Boolean = false
   }

@@ -26,6 +26,91 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
  */
 class AMTIncrementalWriteCoreSuite extends AMTIncrementalWriteTestBase {
 
+  test("snapshot-backed AMT base bootstraps an incremental write from an empty snapshot") {
+    withTable("amt_snapshot_base_empty") {
+      val tableName = "amt_snapshot_base_empty"
+      createAMTTable(tableName, checkpointInterval = Int.MaxValue)
+      val deltaLog = deltaLogForName(tableName)
+      val snapshot = deltaLog.update()
+      assert(snapshot.numOfFiles === 0L)
+      assert(!snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider])
+
+      val baseProvider = new BaseSnapshotActionsProvider(snapshot)
+      val base = baseProvider.load()
+      assert(base.metadata === snapshot.metadata)
+      assert(base.protocol === snapshot.protocol)
+      assert(base.setTransactions === snapshot.setTransactions)
+      assert(base.domainMetadatas === snapshot.domainMetadata)
+      assert(base.version === snapshot.version)
+      assert(base.fileActionsFromRoot.isEmpty)
+      assert(base.allLeafs.isEmpty)
+      assert(base.lastManifestCommitWithFullRewrite.isEmpty)
+
+      val add = fakeAdd(1)
+      val attemptVersion = snapshot.version + 1
+      val result = new IncrementalAMTWriter(spark, deltaLog).writeIncremental(
+        oldAMTActionsProvider = baseProvider,
+        intermediateLogCommits = Seq.empty,
+        attemptVersion = attemptVersion,
+        actionsToCommit = Seq(add),
+        trigger = "snapshot-bootstrap-test")
+      val metric = result.amtWriteMetrics
+
+      assert(result.contentRootVersion === attemptVersion)
+      assert(result.checkpoint.version === attemptVersion)
+      assert(result.checkpoint.metaData === snapshot.metadata)
+      assert(result.checkpoint.protocol === snapshot.protocol)
+      assert(result.checkpoint.contentRoot.isIncremental.contains(true))
+      assert(result.checkpoint.contentRoot.lastManifestCommitWithFullRewrite.contains(
+        attemptVersion))
+      assert(result.includeActionsInCommitJson)
+      assert(result.leaves.isEmpty)
+      assert(metric.incremental === "true")
+      val incrementalMetrics = metric.incrementalWriteMetrics.getOrElse(
+        fail("The snapshot bootstrap must report incremental-write metrics."))
+      assert(incrementalMetrics.numIntermediateCommits === 0)
+
+      val rootPath = result.checkpoint.contentRoot
+        .getAbsolutePath(deltaLog.dataPath).toString
+      assert(trackingStatusToLocationsMap(rootPath) ===
+        Map(Tracking.Status.Added -> Set(add.path)))
+    }
+  }
+
+  test("snapshot-backed AMT base rejects a nonempty snapshot") {
+    withTable("amt_snapshot_base_nonempty") {
+      val tableName = "amt_snapshot_base_nonempty"
+      createAMTTable(tableName, checkpointInterval = Int.MaxValue)
+      val deltaLog = deltaLogForName(tableName)
+      deltaLog.startTransaction().commit(Seq(fakeAdd(1)), writeOperation)
+      val snapshot = deltaLog.update()
+      assert(!snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider])
+      assert(snapshot.numOfFiles === 1L)
+
+      val error = intercept[IllegalArgumentException] {
+        new BaseSnapshotActionsProvider(snapshot)
+      }
+      assert(error.getMessage.contains("currently requires an empty snapshot"))
+    }
+  }
+
+  test("snapshot-backed AMT base rejects a snapshot with an AMT checkpoint") {
+    withTable("amt_snapshot_base_existing_amt") {
+      val tableName = "amt_snapshot_base_existing_amt"
+      createAMTTable(tableName, checkpointInterval = Int.MaxValue)
+      val deltaLog = deltaLogForName(tableName)
+      commitCheckpoint(deltaLog, incremental = false)
+      val snapshot = deltaLog.update()
+      assert(snapshot.numOfFiles === 0L)
+      assert(snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider])
+
+      val error = intercept[IllegalArgumentException] {
+        new BaseSnapshotActionsProvider(snapshot)
+      }
+      assert(error.getMessage.contains("must not already have an AMT checkpoint"))
+    }
+  }
+
   test("deleting a file from a promoted root drops it via replay, no leaf, no tombstone") {
     withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "8") {
       withTables() { (baselineDeltaLog, amtDeltaLog) =>

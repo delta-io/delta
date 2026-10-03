@@ -316,6 +316,17 @@ trait DeltaErrorsBase
       messageParameters = Array(columns.mkString("[", ",", "]")))
   }
 
+  def unexpectedCommittedDataChange(
+      operation: String,
+      actionType: String,
+      actualDataChange: Boolean,
+      expectedDataChange: Boolean): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_COMMIT_UNEXPECTED_DATA_CHANGE",
+      messageParameters =
+        Array(operation, actionType, actualDataChange.toString, expectedDataChange.toString))
+  }
+
   /**
    * Thrown when a CDC query contains conflict 'starting' or 'ending' options, e.g. when both
    * starting version and starting timestamp are specified.
@@ -1347,11 +1358,87 @@ trait DeltaErrorsBase
       messageParameters = Array(file))
   }
 
-  def illegalDeltaOptionException(name: String, input: String, explain: String): Throwable = {
+  private def illegalDeltaOption(
+      subClass: String,
+      name: String,
+      input: String,
+      subclassParameters: Map[String, String] = Map.empty,
+      cause: Throwable = null): Throwable = {
+    val errorClass = s"DELTA_ILLEGAL_OPTION.$subClass"
+    val allParameters = Map("input" -> input, "name" -> name) ++ subclassParameters
+    // Order the parameter values to match the parameter names in the (combined main and
+    // subclass) message template, so callers pass parameters by name rather than by position.
+    val orderedParameters =
+      DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null).map(allParameters)
     new DeltaIllegalArgumentException(
-      errorClass = "DELTA_ILLEGAL_OPTION",
-      messageParameters = Array(input, name, explain))
+      errorClass = errorClass,
+      messageParameters = orderedParameters,
+      cause = cause)
   }
+
+  def illegalDeltaOptionMustBeOneOf(
+      name: String, input: String, validValues: Seq[String]): Throwable =
+    illegalDeltaOption(
+      "MUST_BE_ONE_OF", name, input, Map("validValues" -> validValues.mkString(", ")))
+
+  def illegalDeltaOptionMustBeBoolean(name: String, input: String): Throwable =
+    illegalDeltaOptionMustBeOneOf(name, input, Seq("'true'", "'false'"))
+
+  def illegalDeltaOptionMustBeInteger(name: String, input: String): Throwable =
+    illegalDeltaOption("MUST_BE_INTEGER", name, input)
+
+  def illegalDeltaOptionMustBeNonNegativeNumber(name: String, input: String): Throwable =
+    illegalDeltaOption("MUST_BE_NON_NEGATIVE_NUMBER", name, input)
+
+  def illegalDeltaOptionMustBePositiveNumber(name: String, input: String): Throwable =
+    illegalDeltaOption("MUST_BE_POSITIVE_NUMBER", name, input)
+
+  def illegalDeltaOptionNoEmptyColumnNames(name: String, input: String): Throwable =
+    illegalDeltaOption("NO_EMPTY_COLUMN_NAMES", name, input)
+
+  def illegalDeltaOptionMustBeSizeConfiguration(name: String, input: String): Throwable =
+    illegalDeltaOption("MUST_BE_SIZE_CONFIGURATION", name, input)
+
+  def illegalDeltaOptionDynamicPartitionOverwriteOnly(name: String, input: String): Throwable =
+    illegalDeltaOption("DYNAMIC_PARTITION_OVERWRITE_ONLY", name, input)
+
+  def illegalDeltaOptionSchemaModeWithTimeTravel(name: String, input: String): Throwable =
+    illegalDeltaOption("SCHEMA_MODE_WITH_TIME_TRAVEL", name, input)
+
+  def illegalDeltaOptionInvalidReorgParquetFormatVersion(
+      name: String, input: String, cause: Throwable): Throwable =
+    illegalDeltaOption("INVALID_REORG_PARQUET_FORMAT_VERSION", name, input, cause = cause)
+
+  def illegalDeltaOptionInvalidParquetFormatVersion(
+      name: String, input: String, cause: Throwable): Throwable =
+    illegalDeltaOption(
+      "INVALID_PARQUET_FORMAT_VERSION", name, input,
+      subclassParameters = Map("causeExceptionMessage" -> cause.getMessage), cause = cause)
+
+  def illegalDeltaOptionUnrecognizedNamedArgument(
+      name: String, input: String, functionName: String, validArguments: String): Throwable =
+    illegalDeltaOption(
+      "UNRECOGNIZED_NAMED_ARGUMENT", name, input,
+      Map("functionName" -> functionName, "validArguments" -> validArguments))
+
+  def illegalDeltaOptionParquetCompressionCodecConflict(
+      name: String, input: String, property: String, propertyValue: String): Throwable =
+    illegalDeltaOption(
+      "PARQUET_COMPRESSION_CODEC_CONFLICT", name, input,
+      Map("property" -> property, "propertyValue" -> propertyValue))
+
+  def illegalDeltaOptionParquetWriterVersionConflict(
+      name: String,
+      input: String,
+      property: String,
+      propertyValue: String,
+      resolvedVersion: String): Throwable =
+    illegalDeltaOption(
+      "PARQUET_WRITER_VERSION_CONFLICT", name, input,
+      Map(
+        "property" -> property,
+        "propertyValue" -> propertyValue,
+        "resolvedVersion" -> resolvedVersion))
 
   def invalidIdempotentWritesMissingWriteOptionsException(): Throwable = {
     new DeltaIllegalArgumentException(
@@ -2726,6 +2813,12 @@ trait DeltaErrorsBase
       conflictingCommitVersion: Long): FullAMTWriteFailedWithConflict =
     new FullAMTWriteFailedWithConflict(conflictingCommitVersion)
 
+  def concurrentAMTCheckpointLandedException(
+      latestManifestCommitVersion: Long,
+      latestContentRootVersion: Long): ConcurrentAMTCheckpointLandedException =
+    new ConcurrentAMTCheckpointLandedException(
+      latestManifestCommitVersion, latestContentRootVersion)
+
   def metadataChangedException(
       table: String,
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.MetadataChangedException = {
@@ -2745,21 +2838,17 @@ trait DeltaErrorsBase
 
   def protocolChangedException(
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ProtocolChangedException = {
-    val additionalInfo = conflictingCommit.map { v =>
-      if (v.version.getOrElse(-1) == 0) {
-        "This happens when multiple writers are writing to an empty directory. " +
-          "Creating the table ahead of time will avoid this conflict. "
-      } else {
-        ""
-      }
-    }.getOrElse("")
-    new io.delta.exceptions.ProtocolChangedException(
-      Array(
-        additionalInfo,
-        conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
-        DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
-      )
-    )
+    val docLink = DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
+    conflictingCommit match {
+      case Some(ci) if ci.version.getOrElse(-1L) == 0 =>
+        io.delta.exceptions.ProtocolChangedException(
+          "WRITE_TO_EMPTY_DIRECTORY", Array(docLink, JsonUtils.toJson(ci)))
+      case Some(ci) =>
+        io.delta.exceptions.ProtocolChangedException(
+          "CONFLICTING_COMMIT", Array(docLink, JsonUtils.toJson(ci)))
+      case None =>
+        new io.delta.exceptions.ProtocolChangedException(Array(docLink))
+    }
   }
 
   def unsupportedReaderTableFeaturesInTableException(
@@ -4245,7 +4334,14 @@ trait DeltaErrorsBase
       snapshot: SnapshotDescriptor,
       catalogTableOpt: Option[CatalogTable]): Unit = {
     if (snapshot.isCatalogOwned) {
-      throw operationBlockedOnCatalogManagedTable(operation)
+      val allowedOperations = catalogTableOpt
+        .flatMap(_.storage.properties.get(
+          CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY))
+        .map(_.split(","))
+        .getOrElse(Array.empty[String])
+      if (!allowedOperations.contains(operation)) {
+        throw operationBlockedOnCatalogManagedTable(operation)
+      }
     }
   }
 
@@ -4367,6 +4463,28 @@ class FullAMTWriteFailedWithConflict(
   extends io.delta.exceptions.DeltaConcurrentModificationException(
     s"A concurrent commit at version $conflictingCommitVersion changed content this full AMT " +
       "checkpoint describes; it must be regenerated against the updated snapshot.")
+
+/**
+ * Thrown by the AMT write path when a losing maintenance OPTIMIZE checkpoint finds that a
+ * concurrent winning commit already installed a new AMT tree that makes this checkpoint redundant.
+ *
+ * Unlike [[io.delta.exceptions.ConcurrentWriteException]], this is never surfaced to the caller:
+ * the maintenance checkpoint commit site ([[org.apache.spark.sql.delta.amt.AMTUtils]]
+ * `emitAMTCheckpoint`) catches it and treats the checkpoint as a graceful no-op, because the
+ * winner's tree -- committed at `manifestCommitVersion`, describing content-root version
+ * `contentRootVersion` -- already provides an up-to-date AMT.
+ * Since this is not user-facing, it does not use an `errorClass`.
+ *
+ * @param manifestCommitVersion the version at which the winner committed the superseding AMT tree.
+ * @param contentRootVersion    the table version that winner's content root describes.
+ */
+class ConcurrentAMTCheckpointLandedException(
+    val manifestCommitVersion: Long,
+    val contentRootVersion: Long)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(
+    s"A concurrent commit already installed an up-to-date AMT tree (manifest commit version " +
+      s"$manifestCommitVersion, content-root version $contentRootVersion); the losing " +
+      "maintenance checkpoint is redundant and was skipped.")
 
 /**
  * Thrown when time travelling to a version that does not exist in the Delta Log.

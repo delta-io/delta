@@ -18,7 +18,6 @@ package io.delta.spark.internal.v2.write;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
@@ -39,7 +38,7 @@ import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.DataWriterFactory;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -409,11 +408,12 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                     defaultEngine,
                     spark.sessionState().newHadoopConf(),
                     path,
-                    DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
+                    mgr.loadLatestSnapshot(),
                     mgr,
                     data,
                     part,
-                    WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()))
+                    WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
+                    /* variantShreddingEnabled */ false)
                 .toBatch();
 
     DataWriter<InternalRow> writer =
@@ -502,11 +502,12 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 defaultEngine,
                 spark.sessionState().newHadoopConf(),
                 path,
-                DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
+                mgr.loadLatestSnapshot(),
                 mgr,
                 data,
                 part,
-                WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()))
+                WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
+                /* variantShreddingEnabled */ false)
             .toBatch();
   }
 
@@ -544,11 +545,12 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 defaultEngine,
                 spark.sessionState().newHadoopConf(),
                 path,
-                DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot()),
+                mgr.loadLatestSnapshot(),
                 mgr,
                 data,
                 part,
-                WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()))
+                WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
+                /* variantShreddingEnabled */ false)
             .toBatch();
   }
 
@@ -565,8 +567,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
   private DeltaV2BatchWrite newPartitionedWrite(String path) {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
-    Snapshot snapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(PARTITIONED_FULL_SCHEMA, CaseInsensitiveStringMap.empty());
     DeltaV2Write write =
@@ -578,7 +579,8 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
             snapshotManager,
             PARTITIONED_DATA_SCHEMA,
             PARTITIONED_PART_SCHEMA,
-            info);
+            info,
+            /* variantShreddingEnabled */ false);
     return (DeltaV2BatchWrite) write.toBatch();
   }
 
@@ -665,9 +667,8 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
 
   private DeltaV2BatchWrite newWrite(String path) {
     Snapshot snapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-            new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf())
-                .loadLatestSnapshot());
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf())
+            .loadLatestSnapshot();
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
     return new DeltaV2BatchWrite(
@@ -677,6 +678,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
         snapshot,
         TABLE_SCHEMA,
         new StructType(),
-        info);
+        info,
+        /* variantShreddingEnabled */ false);
   }
 }
