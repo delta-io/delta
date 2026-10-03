@@ -41,17 +41,19 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, the `add` action supports a `backReference` field:</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, the `add` action supports the following fields. Writers must populate `snapshotId` on every `add` written while the feature is enabled, and must populate `dvSnapshotId` if and only if `deletionVector` is non-null:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the leaf-manifest entry this add supersedes in place, without a paired `remove` (e.g., a stats backfill). Null otherwise, including a DV update, where the backreference is on the paired `remove`. Contains `manifest` (String) and `pos` (Int). See [Backreferences](#backreferences).</ins> |
+| <ins>snapshotId</ins> | <ins>Long</ins> | <ins>Snapshot ID that started the current data-file lifecycle. If the file was live immediately before the commit and remains live, its existing value must be preserved; otherwise this is the current transaction's snapshot ID. See [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance).</ins> |
+| <ins>dvSnapshotId</ins> | <ins>Long</ins> | <ins>Snapshot ID that started the current deletion-vector lifecycle. The existing value must be preserved while the deletion vector is unchanged, set to the current transaction's snapshot ID when the deletion vector is added or replaced, and set to null when the action has no deletion vector. See [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance).</ins> |
 
 ### Remove File
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#remove-file)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, the `remove` action must include a `backReference` when the file's entry lives in a leaf manifest, set `extendedFileMetadata` to true, and have a null `deletionTimestamp`:</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, the `remove` action must include a `backReference` when the file's entry lives in a leaf manifest, set `extendedFileMetadata` to true, have a null `deletionTimestamp`, and include the following snapshot provenance fields. Writers must populate `snapshotId` on every `remove` written while the feature is enabled, and must populate `dvSnapshotId` if and only if `deletionVector` is non-null:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
@@ -59,6 +61,8 @@ This design enables:
 | <ins>extendedFileMetadata</ins> | <ins>Boolean</ins> | <ins>Must be true. `partitionValues` and `size` are always present on the `remove`.</ins> |
 | <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the file's entry in a leaf manifest. Null when the file has no leaf-manifest entry — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Int). See [Backreferences](#backreferences).</ins> |
 | <ins>stats</ins> | <ins>String</ins> | <ins>Must be present. Statistics of the removed file, with `numRecords` required at minimum; column statistics are included when recorded for the file. Copied from the matching `add.stats`, or converted from the file's tree entry (`record_count`, `content_stats`).</ins> |
+| <ins>snapshotId</ins> | <ins>Long</ins> | <ins>The current transaction's snapshot ID, identifying the snapshot in which the data-file entry was deleted or replaced. See [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance).</ins> |
+| <ins>dvSnapshotId</ins> | <ins>Long</ins> | <ins>The removed file's `dvSnapshotId`. Must be null when the removed file has no deletion vector. See [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance).</ins> |
 
 <ins>`remove` actions are transient. During log replay a `remove` cancels the matching `add` (or, via its `backReference`, marks the corresponding tree entry deleted) and is then discarded. Removes are **not** retained as tombstones in checkpoints or in the reconstructed table state. There is no timestamp-based tombstone expiration; physical file cleanup is driven by tree reachability (see [Metadata Cleanup](#metadata-cleanup)).</ins>
 
@@ -463,9 +467,19 @@ When folding a log `add` into a manifest, writers convert `add.stats` to `conten
 
 `value_count` and `nan_value_count` have no Delta source and are left unpopulated (readers treat them as unknown). `tightBounds` carries Delta's wide-bounds-under-deletion-vectors semantics to `tight_bounds`, consistent with manifest-level stats being `tight_bounds = false` when an MDV is present.
 
-## Snapshot ID Generation
+## Snapshot ID Generation and Provenance
 
-The `snapshot_id` field in tracking identifies when content was added or modified. Writers must generate a unique long value for each manifest commit.
+The `snapshot_id` field in tracking identifies the snapshot in which an entry was added, deleted, or replaced. The `dv_snapshot_id` field identifies the snapshot in which an entry's current deletion vector was added.
+
+Writers must generate one non-negative random 63-bit snapshot ID for each transaction that writes a manifest or contains `add` or `remove` actions. The ID must be generated once per transaction and preserved across conflict retries. A transaction uses the same ID for its manifest tracking and for every data-file or deletion-vector lifecycle that it starts or terminates.
+
+The top-level `snapshotId` and `dvSnapshotId` fields on `add` and `remove` actions preserve this provenance across log commits until the actions are folded into a manifest:
+
+- A newly live file, including a file that was previously removed and is now re-added, starts a new data-file lifecycle. Its `add.snapshotId` is the current transaction's snapshot ID. If the file has a deletion vector, its `add.dvSnapshotId` is also the current transaction's snapshot ID; otherwise `add.dvSnapshotId` is null.
+- An `add` for a file that was already live preserves `snapshotId`. It also preserves `dvSnapshotId` when the deletion vector is unchanged, uses the current transaction's snapshot ID when the deletion vector is added or replaced, and uses null when the resulting file has no deletion vector. Thus, a metadata-only update preserves both IDs, while a deletion-vector update preserves only the data-file ID.
+- A `remove` uses the current transaction's snapshot ID as `remove.snapshotId`, identifying when the prior data-file entry was deleted or replaced. It preserves the removed file's `dvSnapshotId`, or uses null if that file had no deletion vector.
+
+When converting an `add` to a live DATA entry, writers map `add.snapshotId` to `tracking.snapshot_id` and `add.dvSnapshotId` to `tracking.dv_snapshot_id`. For a terminal DATA entry with status `DELETED` or `REPLACED`, writers map the corresponding fields from the `remove`. Conversely, readers reconstructing an `add` from a live DATA entry must copy the resolved `tracking.snapshot_id` and `tracking.dv_snapshot_id` values to the top-level action fields.
 
 ## Row Tracking Compatibility
 
@@ -580,6 +594,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Choose a commit type based on operation size: a log commit for small changes, a manifest commit for large changes or when the compaction threshold is reached (see [Commit Types](#commit-types)).
 - Maintain a two-level tree (root -> leaves) and not create nested manifest references.
 - Record a `backReference` for every file read from the tree, and use the accumulated backreferences to build MDVs and re-add entries when producing a manifest commit (see [Backreferences](#backreferences) and [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
+- Assign and preserve `snapshotId` and `dvSnapshotId` on file actions according to their data-file and deletion-vector lifecycles (see [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance)).
 - Populate manifest entries with partition values, content stats, deletion vectors, and tracking and sequence numbers (see [Content Entry Schema](#content-entry-schema) and [Row Tracking Compatibility](#row-tracking-compatibility)).
 - Materialize row-tracking and partition columns in data files, tagged with their Iceberg `field_id`s (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns) and [Partition Values](#partition-values)).
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
