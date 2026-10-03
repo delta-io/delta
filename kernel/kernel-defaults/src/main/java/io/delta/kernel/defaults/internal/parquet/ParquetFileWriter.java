@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.parquet;
 
 import static io.delta.kernel.defaults.internal.parquet.ParquetIOUtils.createParquetOutputFile;
+import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.extractDataFileStatistics;
 import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.readDataFileStatistics;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.emptyMap;
@@ -230,7 +231,8 @@ public class ParquetFileWriter {
         }
 
         return Optional.of(
-            constructDataFileStatus(parquetOutputFile.getPath(), dataSchema, currentFileRowCount));
+            constructDataFileStatus(
+                parquetOutputFile.getPath(), dataSchema, currentFileRowCount, writer));
       }
 
       /**
@@ -463,19 +465,18 @@ public class ParquetFileWriter {
   }
 
   /**
-   * Construct the {@link DataFileStatus} for the given file path. It reads the file status and
-   * Parquet footer to compute the statistics for the file.
-   *
-   * <p>Potential improvement in future to directly compute the statistics while writing the file if
-   * this becomes a sufficiently large part of the write operation time.
+   * Construct the {@link DataFileStatus} for the given file path. It reads the file status and uses
+   * the in-memory Parquet footer from {@code writer} to compute statistics when available, falling
+   * back to reopening the file if {@code writer} is null.
    *
    * @param path the path of the file
    * @param dataSchema the schema of the data in the file
-   * @param numRows the number of rows in the file. If no column stats are required, this is used to
-   *     construct the {@link DataFileStatistics}. Otherwise, the stats are read from the file.
+   * @param numRows the number of rows in the file. Used only when no column stats are required.
+   * @param writer the closed {@link ParquetWriter}, or null if it was never successfully created
    * @return the {@link DataFileStatus} for the file
    */
-  private DataFileStatus constructDataFileStatus(String path, StructType dataSchema, long numRows) {
+  private DataFileStatus constructDataFileStatus(
+      String path, StructType dataSchema, long numRows, ParquetWriter<Integer> writer) {
     try {
       // Get the FileStatus to figure out the file size and modification time
       FileStatus fileStatus = fileIO.getFileStatus(path);
@@ -490,7 +491,11 @@ public class ParquetFileWriter {
                 emptyMap() /* maxValues */,
                 emptyMap() /* nullCount */,
                 Optional.empty() /* tightBounds */);
+      } else if (writer != null) {
+        // Use the in-memory footer from the writer — no need to reopen the file.
+        stats = extractDataFileStatistics(writer.getFooter(), dataSchema, statsColumns);
       } else {
+        // Writer was never successfully created; fall back to reading the footer from storage.
         stats =
             readDataFileStatistics(
                 fileIO.newInputFile(resolvedPath, fileStatus.getSize()), dataSchema, statsColumns);
