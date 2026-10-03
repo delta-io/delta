@@ -114,7 +114,7 @@ class ColumnDefaultsSuite extends AnyFunSuite with WriteUtils {
         val e = intercept[UnsupportedOperationException] {
           appendData(engine, tablePath, data = Seq(Map.empty[String, Literal] -> dataBatches1))
         }
-        assert(e.getMessage == "Writing into column mapping enabled table is not supported yet.")
+        assert(e.getMessage == "Writing with Column Default values is not supported yet.")
       }
     }
 
