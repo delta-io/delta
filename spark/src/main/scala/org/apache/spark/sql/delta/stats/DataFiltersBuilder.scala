@@ -594,27 +594,28 @@ class DataFiltersBuilder(
    *  CAST(a AS DATE) = '2024-09-11' -> CAST(parsed_stats[minValues][a] AS DATE) = '2024-09-11'
    *
    * @param expr    The expression to rewrite.
-   * @param clusteringColumnPaths The logical paths to the clustering columns in the table.
+   * @param isColumnEligible Given the logical path to a skipping-eligible column, returns whether
+   *                that column may be rewritten as partition-like. Callers typically restrict this
+   *                to clustering columns, since those are more likely to have matching min-max
+   *                values, but it isn't required for correctness -- see `fileMustBeScanned`.
    * @return        If the expression is safe to rewrite, return the rewritten expression and a
    *                set of referenced attributes (with both the logical path to the column and the
    *                column type).
    */
   private def rewriteDataFiltersAsPartitionLikeInternal(
       expr: Expression,
-      clusteringColumnPaths: Set[Seq[String]])
+      isColumnEligible: Seq[String] => Boolean)
   : Option[(Expression, Set[ResolvedPartitionLikeReference])] = expr match {
     // The expression is an eligible reference to an attribute.
     // Do NOT allow partition-like filtering on timestamp columns because timestamps are truncated
     // to millisecond precision, meaning that we can't guarantee that the collected minVal and
     // maxVal are the same.
     // Applying these partition-like filters will generally only be beneficial if a large
-    // percentage of files have the same min-max value. As a rough heuristic, only allow rewriting
-    // expressions that reference only the clustering columns (since these columns are more likely
-    // to have the same min-max values).
+    // percentage of files have the same min-max value. As a rough heuristic, callers typically
+    // only allow rewriting expressions that reference the clustering columns (since these columns
+    // are more likely to have the same min-max values) -- see `isColumnEligible`.
     case SkippingEligibleColumn(c, SkippingEligibleDataType(dt))
-      if dt != TimestampType && dt != TimestampNTZType &&
-        (!limitPartitionLikeFiltersToClusteringColumns ||
-          clusteringColumnPaths.exists(SchemaUtils.areLogicalNamesEqual(_, c.reverse))) =>
+      if dt != TimestampType && dt != TimestampNTZType && isColumnEligible(c) =>
       // Only rewrite the expression if all stats are collected for this column.
       val minStatsCol = StatsColumn(MIN, c, dt)
       val maxStatsCol = StatsColumn(MAX, c, dt)
@@ -645,7 +646,7 @@ class DataFiltersBuilder(
       in.values().flatMap { possiblyNullValues =>
         // Rewrite the children of InSubqueryExec, then replace the subquery with an InSet
         // containing the materialized values.
-        rewriteDataFiltersAsPartitionLikeInternal(in.child, clusteringColumnPaths).flatMap {
+        rewriteDataFiltersAsPartitionLikeInternal(in.child, isColumnEligible).flatMap {
           case (rewrittenChildren, referencedStats) =>
             Some(InSet(rewrittenChildren, possiblyNullValues.toSet), referencedStats)
         }
@@ -653,7 +654,7 @@ class DataFiltersBuilder(
     // For all other eligible expressions, recursively rewrite the children.
     case other if shouldRewriteAsPartitionLike(other) =>
       val childResults = other.children.map(
-        rewriteDataFiltersAsPartitionLikeInternal(_, clusteringColumnPaths))
+        rewriteDataFiltersAsPartitionLikeInternal(_, isColumnEligible))
       Option.whenNot (childResults.exists(_.isEmpty)) {
         val (children, stats) = childResults.map(_.get).unzip
         (other.withNewChildren(children), stats.flatten.toSet)
@@ -700,6 +701,42 @@ class DataFiltersBuilder(
   }
 
   /**
+   * Given a successfully rewritten partition-like expression (attribute references replaced by
+   * references to their column's MIN stat) and the set of attributes it references, builds the
+   * final guarded [[DataSkippingPredicate]]:
+   * 1. Construct an expression that returns true if any of the referenced columns are not
+   *     partition-like on a given file.
+   * 2. The final expression is a union of the above expressions: a file is read if it's either
+   *     not partition-like on any of the columns or if the rewritten expression evaluates to
+   *     true.
+   */
+  private def buildPartitionLikeSkippingPredicate(
+      newExpr: Expression,
+      referencedStats: Set[ResolvedPartitionLikeReference]): DataSkippingPredicate = {
+    // Create an expression that returns true if a file must be read because it has mismatched
+    // min-max values or partial nulls on any of the referenced columns.
+    val numRecordsStatsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
+    val numRecordsColOpt = getStatsColumnOpt(numRecordsStatsCol)
+    val statsCols = referencedStats.flatMap(_.referencedStatsCols) + numRecordsStatsCol
+    val mustScanFileExpression = referencedStats.map { resolvedReference =>
+      fileMustBeScanned(resolvedReference, numRecordsColOpt)
+    }.toSeq.reduceLeftOption { (l, r) => Or(l, r) }.getOrElse(Literal(false))
+
+    // Only evaluate the rewritten expression if the file passes the validation expression,
+    // ensuring that any non-partition-like input (that might cause a filter evaluation
+    // exception) is skipped. Note that we cannot rely on short-circuiting here, since
+    // common subexpression elimination during codegen may move the evaluation of the
+    // condition before that of the file validation expression, so we need to explicitly use
+    // a conditional expression to guarantee the correct evaluation order.
+    val finalExpr = If(mustScanFileExpression, Literal(true), newExpr)
+
+    // Create the final data skipping expression - read a file either if it's has nulls on any
+    // referenced column, has mismatched stats on any referenced column, or the filter
+    // expression evaluates to `true`.
+    DataSkippingPredicate(Column(finalExpr), statsCols.toSet)
+  }
+
+  /**
    * Rewrites the given expression as a partition-like expression if possible:
    * 1. Rewrite the attribute references in the expression to reference the collected min stats
    *     on the attribute reference's column.
@@ -717,29 +754,50 @@ class DataFiltersBuilder(
       clusteringColumns: Seq[String], expr: Expression): Option[DataSkippingPredicate] = {
     val clusteringColumnPaths =
       clusteringColumns.map(UnresolvedAttribute.quotedString(_).nameParts).toSet
-    rewriteDataFiltersAsPartitionLikeInternal(expr, clusteringColumnPaths).map {
+    val isColumnEligible = (c: Seq[String]) =>
+      !limitPartitionLikeFiltersToClusteringColumns ||
+        clusteringColumnPaths.exists(SchemaUtils.areLogicalNamesEqual(_, c.reverse))
+    rewriteDataFiltersAsPartitionLikeInternal(expr, isColumnEligible).map {
       case (newExpr, referencedStats) =>
-        // Create an expression that returns true if a file must be read because it has mismatched
-        // min-max values or partial nulls on any of the referenced columns.
-        val numRecordsStatsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
-        val numRecordsColOpt = getStatsColumnOpt(numRecordsStatsCol)
-        val statsCols = referencedStats.flatMap(_.referencedStatsCols) + numRecordsStatsCol
-        val mustScanFileExpression = referencedStats.map { resolvedReference =>
-          fileMustBeScanned(resolvedReference, numRecordsColOpt)
-        }.toSeq.reduceLeftOption { (l, r) => Or(l, r) }.getOrElse(Literal(false))
+        buildPartitionLikeSkippingPredicate(newExpr, referencedStats)
+    }
+  }
 
-        // Only evaluate the rewritten expression if the file passes the validation expression,
-        // ensuring that any non-partition-like input (that might cause a filter evaluation
-        // exception) is skipped. Note that we cannot rely on short-circuiting here, since
-        // common subexpression elimination during codegen may move the evaluation of the
-        // condition before that of the file validation expression, so we need to explicitly use
-        // a conditional expression to guarantee the correct evaluation order.
-        val finalExpr = If(mustScanFileExpression, Literal(true), newExpr)
-
-        // Create the final data skipping expression - read a file either if it's has nulls on any
-        // referenced column, has mismatched stats on any referenced column, or the filter
-        // expression evaluates to `true`.
-        DataSkippingPredicate(Column(finalExpr), statsCols.toSet)
+  /**
+   * Always-on, narrowly-scoped recovery of file skipping for comparisons where Spark's implicit
+   * type coercion wrapped a skipping-eligible column reference in a [[Cast]]. The most common
+   * case is comparing a STRING column against an unquoted numeric literal, e.g. `a = 255` on a
+   * STRING column `a`, which Spark's `PromoteStrings` coercion rule rewrites to
+   * `CAST(a AS DOUBLE) = 255.0` -- casting the *column*, not the literal. Unlike an ordinary
+   * min/max range check, this can't assume the column's (lexicographically-ordered) stored stats
+   * remain ordered the same way after the cast, so it is only safe to answer for files that
+   * provably contain a single distinct, non-null value for the column (MIN == MAX): the cast can
+   * then be evaluated directly against that single value, and ordering is a non-issue.
+   *
+   * This reuses the same `fileMustBeScanned` (MIN == MAX) safety guard as
+   * [[rewriteDataFiltersAsPartitionLike]], so it can never incorrectly skip a file. It differs
+   * from that method in two ways: it is not gated behind
+   * `DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED`/clustering/file-count-threshold configs,
+   * and it allows any skipping-eligible column (not just clustering columns) -- both are safe
+   * here because this is only ever attempted for filters that contain a `Cast` wrapping a
+   * skipping-eligible column, i.e. filters that are otherwise completely ineligible for data
+   * skipping. It therefore adds no extra per-file evaluation cost to ordinary queries.
+   *
+   * @param expr The data filtering expression to rewrite.
+   * @return If `expr` contains a Cast-wrapped skipping-eligible column and is otherwise safe to
+   *         rewrite, the resulting guarded [[DataSkippingPredicate]]. Otherwise, `None`.
+   */
+  def constructImplicitCastSkippingFilter(expr: Expression): Option[DataSkippingPredicate] = {
+    val containsCastOverSkippingEligibleColumn = expr.exists {
+      case Cast(SkippingEligibleColumn(_, _), _, _, _) => true
+      case _ => false
+    }
+    if (!containsCastOverSkippingEligibleColumn) {
+      return None
+    }
+    rewriteDataFiltersAsPartitionLikeInternal(expr, isColumnEligible = _ => true).map {
+      case (newExpr, referencedStats) =>
+        buildPartitionLikeSkippingPredicate(newExpr, referencedStats)
     }
   }
 }
