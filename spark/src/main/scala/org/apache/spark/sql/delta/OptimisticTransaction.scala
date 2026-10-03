@@ -2723,7 +2723,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     if (!DeltaUtils.isTesting) return
     amtProviderOpt match {
       case Some(amt) =>
-        amt.verifyCommitBackReferences(spark, deltaLog, finalActions)
+        amt.verifyCommitBackReferences(spark, deltaLog, catalogTable, finalActions)
       case None =>
         // Not an AMT-backed table: no file action may carry a back reference.
         finalActions.foreach {

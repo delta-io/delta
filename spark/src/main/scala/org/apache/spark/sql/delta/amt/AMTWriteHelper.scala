@@ -247,10 +247,12 @@ object AMTWriteHelper extends DeltaLogging {
     val tableRootSparkPath = SparkPath.fromPath(tableRoot)
     val metadataDirSparkPath = SparkPath.fromPath(metadataDir)
     val tableRootPath = tableRootSparkPath.toPath
-    val amtDs = addFilesDs.map { add =>
-      require(add.baseRowId.isDefined,
-        s"Cannot write AMT leaf entry without a materialized baseRowId: ${add.path}.")
-      DataEntry.fromAddFile(add, dataEntryTracking, tableRootPath).wrap
+    val amtDs = addFilesDs.mapPartitions { iter =>
+      iter.map { add =>
+        require(add.baseRowId.isDefined,
+          s"Cannot write AMT leaf entry without a materialized baseRowId: ${add.path}.")
+        DataEntry.fromAddFile(add, dataEntryTracking, tableRootPath).wrap
+      }
     }
     val amtWithPartition = AMTPartitionValues.forWrite(amtDs.toDF(), metadata.partitionSchema)
     val amtDf = AMTContentStats.forWrite(amtWithPartition, metadata, protocol)
