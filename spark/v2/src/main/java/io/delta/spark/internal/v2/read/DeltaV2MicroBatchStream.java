@@ -1147,8 +1147,10 @@ class DeltaV2MicroBatchStream
         startSnapshot =
             DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
                 snapshotManager.loadSnapshotAt(startVersion));
-      } catch (io.delta.kernel.exceptions.KernelException e) {
+      } catch (io.delta.kernel.exceptions.KernelException | IllegalArgumentException e) {
         // startVersion may not yet exist (e.g. startingVersion=latest resolves to latest+1).
+        // Path-based tables throw KernelException; UC catalog-managed tables throw
+        // IllegalArgumentException from UCCatalogManagedClient.
         // TODO(#6745): narrow this catch once kernel exposes a specific exception subclass
         // for "version not yet materialized".
         return;

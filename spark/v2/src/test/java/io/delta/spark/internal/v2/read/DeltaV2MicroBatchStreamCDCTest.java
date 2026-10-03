@@ -160,6 +160,38 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(latestVersion + 1));
   }
 
+  @Test
+  public void testValidateCDFEnabled_swallowsForUnmaterializedStartVersionOnCatalogManagedTable(
+      @TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdf_future_version_uc_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
+    sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    // Mimics UCManagedTableSnapshotManager
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, hadoopConf) {
+          @Override
+          public Snapshot loadSnapshotAt(long version) {
+            long latest = loadLatestSnapshot().version();
+            if (version > latest) {
+              throw new IllegalArgumentException(
+                  String.format(
+                      "Cannot load table version %s as the latest version ratified by UC is %s",
+                      version, latest));
+            }
+            return super.loadSnapshotAt(version);
+          }
+        };
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    long latestVersion = snapshotManager.loadLatestSnapshot().version();
+    // startingVersion=latest resolves to latest+1
+    assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(latestVersion + 1));
+  }
+
   private static final DeltaV2MicroBatchStreamTest.ScenarioSetup CDC_TWO_INSERT_SETUP =
       (tableName, tempDir) -> {
         sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
