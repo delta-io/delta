@@ -38,13 +38,6 @@ trait DeltaSourceDeletionVectorTests
 
   import testImplicits._
 
-  /**
-   * Executes a DML SQL statement (DELETE, INSERT, etc.).
-   * Overridable so that V2 suites can route DML through the V1 connector,
-   * since DeltaV2Table (V2) is read-only and does not support writes.
-   */
-  protected def executeDml(sqlText: String): Unit = sql(sqlText)
-
   test("allow to delete files before starting a streaming query") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))

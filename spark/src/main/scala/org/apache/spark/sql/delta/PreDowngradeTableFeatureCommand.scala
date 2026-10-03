@@ -624,6 +624,19 @@ case class GeospatialPreDowngradeCommand(table: DeltaTableV2)
   }
 }
 
+case class FileTypePreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * There is no `file` type in the schema yet, so a table can never contain `file` columns and
+   * there are never any traces of the feature to remove. Once `file` column support lands, this
+   * must remove or reject remaining `file` usages before the feature can be dropped (mirroring
+   * [[GeospatialPreDowngradeCommand]]).
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus =
+    PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+}
+
 case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
     with DeltaLogging {

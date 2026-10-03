@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, SetTransaction}
 
 /**
@@ -51,6 +51,35 @@ case class BaseAMTActionsResult(
  */
 trait BaseAMTActionsProvider {
   def load(): BaseAMTActionsResult
+}
+
+/**
+ * A [[BaseAMTActionsProvider]] backed by a Delta snapshot with no previous AMT.
+ *
+ * Currently supports only empty snapshots. Supporting nonempty snapshots requires preserving
+ * file tracking semantics and loading live files without collecting an unbounded snapshot on the
+ * driver.
+ */
+class BaseSnapshotActionsProvider(
+    snapshot: Snapshot) extends BaseAMTActionsProvider {
+  require(!snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider],
+    "A snapshot-backed AMT base must not already have an AMT checkpoint.")
+  require(snapshot.numOfFiles == 0,
+    "The snapshot-backed AMT actions provider currently requires an empty snapshot.")
+
+  override def load(): BaseAMTActionsResult = {
+    BaseAMTActionsResult(
+      metadata = snapshot.metadata,
+      protocol = snapshot.protocol,
+      setTransactions = snapshot.setTransactions,
+      domainMetadatas = snapshot.domainMetadata,
+      // Safe because of the empty-snapshot invariant above. A nonempty implementation must supply
+      // every live base file here without eagerly collecting an unbounded snapshot to the driver.
+      fileActionsFromRoot = Seq.empty,
+      allLeafs = Seq.empty,
+      version = snapshot.version,
+      lastManifestCommitWithFullRewrite = None)
+  }
 }
 
 /** A [[BaseAMTActionsProvider]] backed by an already-resolved [[AMTCheckpointProvider]]. */

@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.v2.interop
 import java.io.File
 import java.nio.file.{Files, StandardCopyOption}
 
-import org.apache.spark.sql.delta.{DeltaOperations, OptimisticTransaction, OptimisticTransactionSuite}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaOperations, OptimisticTransaction, OptimisticTransactionSuite}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.test.V2ForceTest
 import io.delta.spark.internal.v2.kernel.KernelEngineFactory
@@ -252,6 +252,31 @@ class DeltaV2OptimisticTransactionSuite
     }
   }
 
+  test("commit to a row-tracking table drops the Kernel-owned row-tracking domain metadata") {
+    withTempDir { dir =>
+      withSQLConf(
+        "spark.databricks.delta.properties.defaults.enableRowTracking" -> "true") {
+        spark.range(0, 5).toDF("id").coalesce(1)
+          .write.format("delta").save(dir.getCanonicalPath)
+      }
+      val txn = startKernelTxn(dir)
+      val add = AddFile(
+        path = "synthetic-row-tracking-file",
+        partitionValues = Map.empty,
+        size = 1L,
+        modificationTime = 1L,
+        dataChange = true,
+        stats = """{"numRecords":3}""")
+      txn.commit(add :: Nil, DeltaOperations.ManualUpdate)
+
+      val post = latestKernelSnapshot(dir)
+      assert(post.version === 1L)
+      val committed =
+        post.allFiles.collect().find(_.path == "synthetic-row-tracking-file").get
+      assert(committed.baseRowId.isDefined)
+    }
+  }
+
   test("unsupported actions fail loudly") {
     withTempDir { dir =>
       seedTable(dir)
@@ -347,41 +372,42 @@ class DeltaV2OptimisticTransactionSuite
     }
   }
 
-  /**
-   * Seeds a table partitioned by a single column `p` of `partitionType`, inserts one row with
-   * `partitionValueSql`, then commits a synthetic [[AddFile]] through Kernel reusing the seeded
-   * row's serialized partition values. Asserts the commit succeeds and advances the version.
-   *
-   * This exercises the partition-value typing in `generateKernelAppendActionRows`: Kernel's
-   * `getWriteContext` validates each literal's type against the partition schema with exact
-   * type-equality, so a non-string partition column would fail if values were still typed as
-   * strings.
-   */
+  /** Checks the append with typed partition values. */
   private def checkTypedPartitionAppend(
-      partitionType: String, partitionValueSql: String): Unit = {
+      partitionType: String,
+      partitionValueSql: String,
+      mappingMode: Option[String] = None): Unit = {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
+      val columnMappingProperty = mappingMode
+        .map(mode => s" TBLPROPERTIES ('delta.columnMapping.mode' = '$mode')")
+        .getOrElse("")
       spark.sql(
         s"""CREATE TABLE delta.`$path` (id LONG, p $partitionType)
-           |USING delta PARTITIONED BY (p)""".stripMargin)
+           |USING delta PARTITIONED BY (p)$columnMappingProperty""".stripMargin)
       spark.sql(s"INSERT INTO delta.`$path` VALUES (1, $partitionValueSql)")
 
       val base = latestKernelSnapshot(dir)
-      val baseVersion = base.version
       val sample = base.allFiles.collect().head
+      val physicalPartitionName = DeltaColumnMapping.getPhysicalName(base.metadata.schema("p"))
+      assert(sample.partitionValues.keySet === Set(physicalPartitionName))
+      if (mappingMode.isDefined) {
+        assert(physicalPartitionName.startsWith("col-"))
+      }
 
-      val txn = startKernelTxn(dir)
       val add = AddFile(
         path = s"synthetic-${sample.path}",
         partitionValues = sample.partitionValues,
         size = 1L,
         modificationTime = 1L,
         dataChange = true)
-      txn.commit(add :: Nil, DeltaOperations.ManualUpdate)
+      startKernelTxn(dir).commit(add :: Nil, DeltaOperations.ManualUpdate)
 
       val post = latestKernelSnapshot(dir)
-      assert(post.version === baseVersion + 1)
-      assert(post.allFiles.collect().map(_.path).exists(_.startsWith("synthetic-")))
+      assert(post.version === base.version + 1)
+      val committedAdds = post.allFiles.collect().filter(_.path == add.path)
+      assert(committedAdds.length === 1)
+      assert(committedAdds.head.partitionValues === sample.partitionValues)
     }
   }
 
@@ -411,6 +437,12 @@ class DeltaV2OptimisticTransactionSuite
 
   test("append to string-partitioned table still works") {
     checkTypedPartitionAppend("STRING", "'foo'")
+  }
+
+  Seq("name", "id").foreach { mappingMode =>
+    test(s"append with column mapping(mode: $mappingMode) is enabled") {
+      checkTypedPartitionAppend("INT", "5", Some(mappingMode))
+    }
   }
 
   private def concurrentAppend(

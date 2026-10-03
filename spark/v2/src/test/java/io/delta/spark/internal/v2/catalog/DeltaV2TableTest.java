@@ -26,6 +26,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.mockConstruction;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
@@ -35,6 +41,7 @@ import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.CachedSnapshotManager;
 import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManager;
 import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache$;
 import java.io.File;
@@ -53,6 +60,8 @@ import java.util.function.BiFunction;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
@@ -69,6 +78,8 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataTypes;
@@ -80,6 +91,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
+import org.mockito.MockedConstruction;
 import scala.Option;
 
 public class DeltaV2TableTest extends DeltaV2TestBase {
@@ -595,8 +608,8 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
           DeltaV2TableManagerCache$.MODULE$.forTable(
               sessionB, path, tableOptions, catalogTableOptB);
 
-      assertTrue(tableA.getSnapshotManager() instanceof PathBasedSnapshotManager);
-      assertTrue(tableB.getSnapshotManager() instanceof PathBasedSnapshotManager);
+      assertTrue(tableA.getSnapshotManager() instanceof CachedSnapshotManager);
+      assertTrue(tableB.getSnapshotManager() instanceof CachedSnapshotManager);
       assertSame(managerA, managerB);
       assertSame(managerA.kernelContext(), managerB.kernelContext());
       assertSame(managerA.kernelContext().getDefaultEngine(), tableA.kernelEngine());
@@ -624,6 +637,77 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     }
   }
 
+  @Test
+  public void testNamedTableQueryLoadsSnapshotWithItsQueryContext(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "test_query_context_snapshot_load";
+    spark.sql(String.format("CREATE TABLE %s (id INT) USING delta LOCATION '%s'", tableName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1), (2)", tableName));
+    CatalogTable catalogTable =
+        spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tableName));
+    TableIdentifier expectedIdentifier = catalogTable.identifier();
+
+    Snapshot realSnapshot =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf())
+            .loadLatestSnapshot();
+    AssertionError legacyApiError =
+        new AssertionError("DeltaV2Table query used the legacy snapshot API");
+    DeltaV2TableManagerCache$.MODULE$.clearCache();
+    try (MockedConstruction<CachedSnapshotManager> mockedManagers =
+        mockConstruction(
+            CachedSnapshotManager.class,
+            (mock, context) -> {
+              when(mock.loadLatestSnapshot(any(DeltaV2QueryContext.class)))
+                  .thenReturn(realSnapshot);
+              when(mock.loadLatestSnapshot()).thenThrow(legacyApiError);
+            })) {
+      ThrowingRunnable checkQuery =
+          () ->
+              withSQLConf(
+                  "spark.sql.catalog.query_context_test",
+                  QueryContextTestCatalog.class.getName(),
+                  () -> {
+                    String query =
+                        String.format(
+                            "SELECT id FROM query_context_test.default.%s ORDER BY id", tableName);
+                    List<Row> rows = spark.sql(query).collectAsList();
+                    assertEquals(Arrays.asList(RowFactory.create(1), RowFactory.create(2)), rows);
+                  });
+      checkQuery.run();
+
+      assertEquals(1, mockedManagers.constructed().size());
+      CachedSnapshotManager manager = mockedManagers.constructed().get(0);
+      ArgumentCaptor<DeltaV2QueryContext> queryContextCaptor =
+          ArgumentCaptor.forClass(DeltaV2QueryContext.class);
+      verify(manager, atLeastOnce()).loadLatestSnapshot(queryContextCaptor.capture());
+      verify(manager, never()).loadLatestSnapshot();
+      DeltaV2QueryContext queryContext = queryContextCaptor.getValue();
+      assertTrue(queryContext.catalogTableOpt().isDefined());
+      TableIdentifier capturedIdentifier = queryContext.catalogTableOpt().get().identifier();
+      assertEquals(expectedIdentifier, capturedIdentifier);
+    } finally {
+      DeltaV2TableManagerCache$.MODULE$.clearCache();
+      spark.sql(String.format("DROP TABLE IF EXISTS %s", tableName));
+    }
+  }
+
+  /** Loads session-catalog metadata through V2 for query-context propagation tests. */
+  public static class QueryContextTestCatalog extends TestCatalog {
+    @Override
+    public DeltaV2Table loadTable(Identifier identifier) {
+      TableIdentifier tableIdentifier =
+          new TableIdentifier(identifier.name(), Option.apply(identifier.namespace()[0]));
+      try {
+        CatalogTable catalogTable =
+            SparkSession.active().sessionState().catalog().getTableMetadata(tableIdentifier);
+        return new DeltaV2Table(identifier, catalogTable, Collections.emptyMap());
+      } catch (Exception e) {
+        throw new RuntimeException("Failed to load table: " + identifier, e);
+      }
+    }
+  }
+
   private static Map<String, String> recordingFileSystemOptions(
       SparkSession sessionA, SparkSession sessionB) {
     return Collections.emptyMap();
@@ -631,7 +715,8 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
 
   private static void assertLatestSnapshot(
       DeltaV2Table table, SparkSession activeSession, long expectedVersion, long expectedFiles) {
-    Snapshot snapshot = table.getSnapshotManager().loadLatestSnapshot();
+    DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.apply(table.getCatalogTable());
+    Snapshot snapshot = table.getSnapshotManager().loadLatestSnapshot(queryContext);
     Dataset<?> allFiles = snapshot.allFiles();
     assertEquals(expectedVersion, snapshot.version());
     assertSame(activeSession, allFiles.sparkSession());
@@ -909,7 +994,9 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
     SnapshotImpl snapshotV0 =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(0L));
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
+            snapshotManager.loadSnapshotAt(
+                0L, DeltaV2QueryContext$.MODULE$.apply(Optional.empty())));
     Metadata metadataV0 = snapshotV0.getMetadata();
     Protocol protocolV0 = snapshotV0.getProtocol();
     String tableId = metadataV0.getId();
@@ -1047,14 +1134,16 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
 
   /** withVersion(N) returns a copy pinned to the snapshot at version N. */
   @Test
-  public void testWithVersionPinsToHistoricalSnapshot(@TempDir File tempDir) {
+  public void testWithVersionPinsToHistoricalSnapshot(@TempDir File tempDir) throws Exception {
     String path = tempDir.getAbsolutePath();
     spark.sql(
         String.format("CREATE TABLE test_with_version (id INT) USING delta LOCATION '%s'", path));
     spark.sql("ALTER TABLE test_with_version ADD COLUMNS (name STRING)");
 
     Identifier identifier = Identifier.of(new String[] {"default"}, "test_with_version");
-    DeltaV2Table latest = new DeltaV2Table(identifier, path);
+    CatalogTable catalogTable =
+        spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_with_version"));
+    DeltaV2Table latest = new DeltaV2Table(identifier, catalogTable, Collections.emptyMap());
     assertEquals(2, latest.schema().fields().length);
 
     // withVersion(0) pins to the historical snapshot.
@@ -1109,14 +1198,16 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
 
   /** withTimestamp(t) resolves to the commit active at t and pins to that snapshot. */
   @Test
-  public void testWithTimestampPinsToHistoricalSnapshot(@TempDir File tempDir) {
+  public void testWithTimestampPinsToHistoricalSnapshot(@TempDir File tempDir) throws Exception {
     String path = tempDir.getAbsolutePath();
     spark.sql(
         String.format("CREATE TABLE test_with_timestamp (id INT) USING delta LOCATION '%s'", path));
     spark.sql("ALTER TABLE test_with_timestamp ADD COLUMNS (name STRING)");
 
     Identifier identifier = Identifier.of(new String[] {"default"}, "test_with_timestamp");
-    DeltaV2Table latest = new DeltaV2Table(identifier, path);
+    CatalogTable catalogTable =
+        spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_with_timestamp"));
+    DeltaV2Table latest = new DeltaV2Table(identifier, catalogTable, Collections.emptyMap());
     assertEquals(2, latest.schema().fields().length);
 
     // The timestamp of the v0 commit resolves back to v0.

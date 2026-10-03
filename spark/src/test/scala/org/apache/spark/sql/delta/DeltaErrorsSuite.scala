@@ -27,7 +27,7 @@ import scala.sys.process.Process
 // scalastyle:off import.ordering.noEmptyLine
 // scalastyle:off line.size.limit
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
@@ -38,16 +38,18 @@ import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, Inva
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
+import org.mockito.Mockito.{mock, when}
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.{ErrorClassesJsonReader, SparkContext, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable}
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, Length, LessThanOrEqual, Literal, SparkVersion}
 import org.apache.spark.sql.catalyst.expressions.Uuid
@@ -751,9 +753,36 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.cannotChangeDataType("example message")
+        throw DeltaErrors.cannotChangeDataType(
+          DataTypeChangeViolation.ChangeDataType(
+            column = "col", fromType = IntegerType, toType = LongType))
       }
-      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE", "429BQ", Map("dataType" -> "example message"))
+      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE.CHANGE_DATA_TYPE", "429BQ",
+        Map("columnName" -> "col", "fromType" -> "INT", "toType" -> "BIGINT"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotChangeDataType(
+          DataTypeChangeViolation.AddNonNullableColumn("col"))
+      }
+      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE.ADD_NON_NULLABLE_COLUMN", "429BQ",
+        Map("columnName" -> "col"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotChangeDataType(
+          DataTypeChangeViolation.DropColumns(Seq("col1", "col2")))
+      }
+      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE.DROP_COLUMNS", "429BQ",
+        Map("columnNames" -> "col1, col2"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotChangeDataType(
+          DataTypeChangeViolation.TightenNullability("col"))
+      }
+      checkError(e, "DELTA_CANNOT_CHANGE_DATA_TYPE.TIGHTEN_NULLABILITY", "429BQ",
+        Map("columnName" -> "col"))
     }
     {
       val table = CatalogTable(TableIdentifier("my table"), null, null, null)
@@ -911,12 +940,16 @@ trait DeltaErrorsSuiteBase
       val s1 = StructType(Seq(StructField("c0", IntegerType)))
       val s2 = StructType(Seq(StructField("c0", StringType)))
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.alterTableReplaceColumnsException(s1, s2, "incompatible")
+        throw DeltaErrors.alterTableReplaceColumnsException(
+          s1, s2, DataTypeChangeViolation.ChangeDataType(
+            column = "c0", fromType = IntegerType, toType = StringType))
       }
-      checkError(e, "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP", "0AKDC", Map(
-        "details" -> "incompatible",
+      checkError(e, "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP.CHANGE_DATA_TYPE", "0AKDC", Map(
         "oldSchema" -> s1.treeString,
-        "newSchema" -> s2.treeString))
+        "newSchema" -> s2.treeString,
+        "columnName" -> "c0",
+        "fromType" -> "INT",
+        "toType" -> "STRING"))
     }
     {
       checkError(
@@ -1020,7 +1053,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.failRelativizePath("somePath")
       }
-      checkError(e, "DELTA_FAIL_RELATIVIZE_PATH", "XXKDS", Map(
+      checkError(e, "DELTA_FAIL_RELATIVIZE_PATH", "22KD1", Map(
         "path" -> "somePath",
         "config" -> DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR.key
       ))
@@ -1032,13 +1065,111 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_ILLEGAL_FILE_FOUND", "XXKDS", Map("file" -> "someFile"))
     }
     {
-      val name = "name"
-      val input = "input"
-      val explain = "explain"
-      val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.illegalDeltaOptionException(name, input, explain)
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionMustBeInteger("name", "input")
       }
-      checkError(e, "DELTA_ILLEGAL_OPTION", "42616", Map("name" -> name, "input" -> input, "explain" -> explain))
+      checkError(err, "DELTA_ILLEGAL_OPTION.MUST_BE_INTEGER", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionMustBeNonNegativeNumber("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.MUST_BE_NON_NEGATIVE_NUMBER", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionMustBePositiveNumber("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.MUST_BE_POSITIVE_NUMBER", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionNoEmptyColumnNames("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.NO_EMPTY_COLUMN_NAMES", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionMustBeSizeConfiguration("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.MUST_BE_SIZE_CONFIGURATION", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionDynamicPartitionOverwriteOnly("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.DYNAMIC_PARTITION_OVERWRITE_ONLY", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionSchemaModeWithTimeTravel("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.SCHEMA_MODE_WITH_TIME_TRAVEL", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionInvalidReorgParquetFormatVersion(
+          "name", "input", new IllegalArgumentException("bad version"))
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.INVALID_REORG_PARQUET_FORMAT_VERSION", "42616",
+        Map("input" -> "input", "name" -> "name"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionMustBeOneOf("name", "input", Seq("a", "b"))
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.MUST_BE_ONE_OF", "42616",
+        Map("input" -> "input", "name" -> "name", "validValues" -> "a, b"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionMustBeBoolean("name", "input")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.MUST_BE_ONE_OF", "42616",
+        Map("input" -> "input", "name" -> "name", "validValues" -> "'true', 'false'"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionInvalidParquetFormatVersion(
+          "name", "input", new IllegalArgumentException("bad version"))
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.INVALID_PARQUET_FORMAT_VERSION", "42616",
+        Map("input" -> "input", "name" -> "name", "causeExceptionMessage" -> "bad version"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionUnrecognizedNamedArgument(
+          "name", "input", "read_files", "a, b")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.UNRECOGNIZED_NAMED_ARGUMENT", "42616",
+        Map("input" -> "input", "name" -> "name", "functionName" -> "read_files",
+          "validArguments" -> "a, b"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionParquetCompressionCodecConflict(
+          "name", "input", "delta.parquet.compression.codec", "gzip")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.PARQUET_COMPRESSION_CODEC_CONFLICT", "42616",
+        Map("input" -> "input", "name" -> "name",
+          "property" -> "delta.parquet.compression.codec", "propertyValue" -> "gzip"))
+    }
+    {
+      val err = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalDeltaOptionParquetWriterVersionConflict(
+          "name", "input", "delta.parquet.format.version", "v3", "V2")
+      }
+      checkError(err, "DELTA_ILLEGAL_OPTION.PARQUET_WRITER_VERSION_CONFLICT", "42616",
+        Map("input" -> "input", "name" -> "name",
+          "property" -> "delta.parquet.format.version", "propertyValue" -> "v3",
+          "resolvedVersion" -> "V2"))
     }
     {
       val version = "version"
@@ -2917,12 +3048,39 @@ trait DeltaErrorsSuiteBase
         "current transaction read the table."))
     }
     {
+      // No conflicting commit: The plain DELTA_PROTOCOL_CHANGED superclass should be used.
       val e = intercept[io.delta.exceptions.ProtocolChangedException] {
         throw org.apache.spark.sql.delta.DeltaErrors.protocolChangedException(None)
       }
-      checkError(e, "DELTA_PROTOCOL_CHANGED", "2D521", Map.empty[String, String])
-      assert(e.getMessage.contains("The protocol version of the Delta table has been changed " +
-        "by a concurrent update."))
+      checkError(e, "DELTA_PROTOCOL_CHANGED", "2D521",
+        Map("docLink" -> generateDocsLink("/concurrency-control.html")))
+    }
+    {
+      // A conflicting commit at version 0 indicates that a concurrent writer created the table while this
+      // transaction wrote to an empty directory.
+      val conflictingCommit = CommitInfo.empty(version = Some(0))
+        .copy(timestamp = new Timestamp(0), operationParameters = Map.empty)
+      val e = intercept[io.delta.exceptions.ProtocolChangedException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .protocolChangedException(Some(conflictingCommit))
+      }
+      checkError(e, "DELTA_PROTOCOL_CHANGED.WRITE_TO_EMPTY_DIRECTORY", "2D521",
+        Map(
+          "docLink" -> generateDocsLink("/concurrency-control.html"),
+          "conflictingCommit" -> JsonUtils.toJson(conflictingCommit)))
+    }
+    {
+      // A conflicting commit at a >0 version should be reported via the CONFLICTING_COMMIT subclass.
+      val conflictingCommit = CommitInfo.empty(version = Some(1))
+        .copy(timestamp = new Timestamp(0), operationParameters = Map.empty)
+      val e = intercept[io.delta.exceptions.ProtocolChangedException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .protocolChangedException(Some(conflictingCommit))
+      }
+      checkError(e, "DELTA_PROTOCOL_CHANGED.CONFLICTING_COMMIT", "2D521",
+        Map(
+          "docLink" -> generateDocsLink("/concurrency-control.html"),
+          "conflictingCommit" -> JsonUtils.toJson(conflictingCommit)))
     }
     {
       val e = intercept[io.delta.exceptions.MetadataChangedException] {
@@ -3108,6 +3266,37 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.columnRenameNotSupported
       },
       "DELTA_UNSUPPORTED_RENAME_COLUMN.ENABLE_COLUMN_MAPPING", "0AKDC", versionParams)
+  }
+
+  test("catalog-managed maintenance operation uses the catalog allowlist") {
+    val managedSnapshot = mock(classOf[SnapshotDescriptor])
+    when(managedSnapshot.isCatalogOwned).thenReturn(true)
+    val property = CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY
+
+    def tableWithOperations(value: String): CatalogTable = CatalogTable(
+      identifier = TableIdentifier("table"),
+      tableType = CatalogTableType.MANAGED,
+      storage = CatalogStorageFormat.empty.copy(
+        properties = Map(property -> value)),
+      schema = new StructType())
+
+    DeltaErrors.checkCatalogManagedTableOperationAllowed(
+      CatalogManagedTableMaintenanceOperation.DATA_CLEANUP,
+      managedSnapshot,
+      Some(tableWithOperations("DATA_CLEANUP,METADATA_CLEANUP")))
+
+    intercept[DeltaUnsupportedOperationException] {
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_REORGANIZATION,
+        managedSnapshot,
+        Some(tableWithOperations("DATA_CLEANUP,METADATA_CLEANUP")))
+    }
+    intercept[DeltaUnsupportedOperationException] {
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_CLEANUP,
+        managedSnapshot,
+        None)
+    }
   }
 
   private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {

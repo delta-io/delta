@@ -30,7 +30,9 @@ import scala.util.matching.Regex
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -66,6 +68,33 @@ object DeltaTestUtilsBase {
    * Used to gate NullType tests so they run on Spark 4.1+ and are skipped on Spark 4.0.
    */
   def nullTypeColumnsSupported: Boolean = !org.apache.spark.SPARK_VERSION.startsWith("4.0")
+
+  /**
+   * Collects `t` and every throwable in its cause chain (cycle-guarded) and asserts that at
+   * least one of them satisfies `f`.
+   */
+  def assertThrowableInCauseChain(t: Throwable)(f: Throwable => Boolean): Unit = {
+    val throwables = scala.collection.mutable.ArrayBuffer.empty[Throwable]
+    var current: Throwable = t
+    while (current != null && !throwables.contains(current)) {
+      throwables += current
+      current = current.getCause
+    }
+    assert(throwables.exists(f),
+      s"No throwable in the cause chain matched the predicate. Chain: " +
+        throwables.map(_.getClass.getName).mkString("[", ", ", "]"))
+  }
+
+  /**
+   * Asserts that at least one throwable in `t`'s cause chain is a `SparkThrowable` whose error
+   * condition equals `condition`.
+   */
+  def assertThrowableWithConditionInCauseChain(t: Throwable, condition: String): Unit = {
+    assertThrowableInCauseChain(t) {
+      case st: org.apache.spark.SparkThrowable => st.getCondition == condition
+      case _ => false
+    }
+  }
 }
 
 trait CDCTestMixin {
@@ -477,6 +506,51 @@ trait DeltaCheckpointTestUtils
   }
 }
 
+trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
+  self: SparkFunSuite with SharedSparkSession =>
+
+  /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
+  protected def minorCompactDeltaLog(
+      tablePath: String,
+      startVersion: Long,
+      endVersion: Long,
+      tableName: Option[String] = None): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    val snapshotForReplay = deltaLog.update()
+    val logReplay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = None,
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
+        snapshotForReplay.metadata, snapshotForReplay.protocol, spark),
+      retainFirstBackreference = AMTUtils.amtEnabled(snapshotForReplay))
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+    val catalogTable = tableName
+      .map(name => spark.sessionState.catalog.getTableMetadata(new TableIdentifier(name)))
+    CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        spark, catalogTable, snapshotForReplay).foreach {
+      tableCommitCoordinatorClient =>
+        CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
+          version = endVersion,
+          deltaLog = deltaLog,
+          tableCommitCoordinatorClient = tableCommitCoordinatorClient,
+          deltaCommitFileProvider = DeltaCommitFileProvider(snapshotForReplay),
+          catalogTableOpt = catalogTable)
+    }
+
+    (startVersion to endVersion).foreach { versionToRead =>
+      val file = FileNames.unsafeDeltaFile(deltaLog.logPath, versionToRead)
+      val actionsIterator = deltaLog.store.readAsIterator(file, hadoopConf).map(Action.fromJson)
+      logReplay.append(versionToRead, actionsIterator)
+    }
+    deltaLog.store.write(
+      path = FileNames.compactedDeltaFile(deltaLog.logPath, startVersion, endVersion),
+      actions = logReplay.checkpoint.map(_.json).toIterator,
+      overwrite = true,
+      hadoopConf = hadoopConf)
+  }
+}
+
 object DeltaTestUtils extends DeltaTestUtilsBase {
 
   sealed trait TableIdentifierOrPath
@@ -503,6 +577,25 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
       dataChange: Boolean = true,
       stats: String = "{\"numRecords\": 1}"): AddFile = {
     AddFile(encodedPath, partitionValues, size, modificationTime, dataChange, stats)
+  }
+
+  /**
+   * Rewrites the `dataChange` an existing commit records in its [[CommitInfo]], leaving its file
+   * actions untouched so that the two can be made to disagree -- which no write path produces, and
+   * which is the only way to observe which of the two a reader consulted.
+   */
+  def recordDataChangeInCommitInfo(
+      deltaLog: DeltaLog, version: Long, dataChange: Option[Boolean]): Unit = {
+    val conf = deltaLog.newDeltaHadoopConf()
+    val commitFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+    val rewritten = deltaLog.store.read(commitFile, conf).map { line =>
+      Action.fromJson(line) match {
+        case commitInfo: CommitInfo => commitInfo.copy(dataChange = dataChange).json
+        case _ => line
+      }
+    }
+    deltaLog.store.write(commitFile, rewritten.toIterator, overwrite = true, conf)
+    DeltaLog.clearCache()
   }
 
 

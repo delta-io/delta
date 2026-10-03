@@ -18,11 +18,13 @@ package io.delta.spark.internal.v2.read
 
 import java.util.{List => JList, Objects}
 
+import org.apache.spark.sql.delta.Snapshot
 import io.delta.spark.internal.v2.DeltaV2Logging
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import io.delta.spark.internal.v2.utils.PartitionUtils
 import org.apache.hadoop.conf.Configuration
-import io.delta.kernel.{Snapshot => KernelSnapshot}
 import io.delta.kernel.expressions.{Predicate => KernelPredicate}
+import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.read.{Batch, InputPartition, PartitionReaderFactory}
@@ -41,7 +43,7 @@ import org.apache.spark.sql.types.StructType
 // `private[this]` cannot read `that.field`. Other retained fields are `private[this]`; the two
 // filter-array params are consumed only to derive the equality sets, so they take no `val`.
 private[read] final class DeltaV2Batch(
-    private val kernelSnapshot: KernelSnapshot,
+    private val initialSnapshot: Snapshot,
     private val dataSchema: StructType,
     private val partitionSchema: StructType,
     private val readDataSchema: StructType,
@@ -62,7 +64,7 @@ private[read] final class DeltaV2Batch(
 
   // Use Objects.requireNonNull (throws NullPointerException) rather than Scala's require (throws
   // IllegalArgumentException) to preserve the exact null-check behavior of the original Java class.
-  Objects.requireNonNull(kernelSnapshot, "kernelSnapshot is null")
+  Objects.requireNonNull(initialSnapshot, "initialSnapshot is null")
   Objects.requireNonNull(dataSchema, "dataSchema is null")
   Objects.requireNonNull(partitionSchema, "partitionSchema is null")
   Objects.requireNonNull(readDataSchema, "readDataSchema is null")
@@ -78,6 +80,9 @@ private[read] final class DeltaV2Batch(
   private val kernelPushedFilterSet = kernelPushedFilters.toSet
   private val filterSet = allFilters.toSet
   private[this] val sqlConf: SQLConf = SQLConf.get
+
+  private def kernelSnapshot: KernelSnapshot =
+    DeltaV2Snapshot.getKernelSnapshot(initialSnapshot)
 
   override def planInputPartitions(): Array[InputPartition] = {
     recordFrameProfile("batchScan.planInputPartitions") {

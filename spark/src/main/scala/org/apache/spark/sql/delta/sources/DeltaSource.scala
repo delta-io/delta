@@ -1192,24 +1192,10 @@ case class DeltaSource(
       startOffsetOption: Option[DeltaSourceOffset],
       endOffset: DeltaSourceOffset): (Long, Long, Boolean) = {
     val (startVersion, startIndex, isInitialSnapshot) = if (startOffsetOption.isEmpty) {
-      getStartingVersion match {
-        case Some(v) =>
-          (v, DeltaSourceOffset.BASE_INDEX, false)
-
-        case None =>
-          if (endOffset.isInitialSnapshot) {
-            (endOffset.reservoirVersion, DeltaSourceOffset.BASE_INDEX, true)
-          } else {
-            assert(
-              endOffset.reservoirVersion > 0, s"invalid reservoirVersion in endOffset: $endOffset")
-            // Load from snapshot `endOffset.reservoirVersion - 1L` so that `index` in `endOffset`
-            // is still valid.
-            // It's OK to use the previous version as the updated initial snapshot, even if the
-            // initial snapshot might have been different from the last time when this starting
-            // offset was computed.
-            (endOffset.reservoirVersion - 1L, DeltaSourceOffset.BASE_INDEX, true)
-          }
-      }
+      val startingVersion = getStartingVersion
+      (DeltaStreamUtils.resolveFirstBatchStartVersion(endOffset, startingVersion),
+        DeltaSourceOffset.BASE_INDEX,
+        startingVersion.isEmpty)
     } else {
       val startOffset = startOffsetOption.get
       if (!startOffset.isInitialSnapshot) {
