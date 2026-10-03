@@ -57,6 +57,8 @@ class IdempotentCommitRetrySuite
       log.startTransaction(catalogTableOpt = None).commit(
         Seq(createTestAddFile(encodedPath = "file-1")), ManualUpdate)
 
+      assert(log.unsafeVolatileSnapshot.checksumOpt.isDefined,
+        "The post-commit snapshot must reuse the checksum derived before the commit")
       val snapshot = log.update()
       assert(snapshot.version == 1)
       assert(snapshot.allFiles.collect().map(_.path).toSeq == Seq("file-1"),
