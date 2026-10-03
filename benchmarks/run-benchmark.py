@@ -54,7 +54,7 @@ benchmarks = {
 }
 
 delta_log_store_classes = {
-    "aws": "spark.delta.logStore.class=org.apache.spark.sql.delta.storage.S3SingleDriverLogStore",
+    "aws": "spark.delta.logStore.class=io.delta.storage.S3SingleDriverLogStore",
     "gcp": "spark.delta.logStore.gs.impl=io.delta.storage.GCSLogStore",
 }
 
