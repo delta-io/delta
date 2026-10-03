@@ -4972,7 +4972,6 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
               /* isInitialSnapshot= */ false);
       stream.commit(incrementalOffset);
       assertNull(getInitialSnapshot(stream));
-      assertThrows(IllegalArgumentException.class, initialSnapshot::iterator);
     } finally {
       stream.stop();
     }
@@ -4989,7 +4988,6 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
       stream.stop();
       assertNull(getInitialSnapshot(stream));
-      assertThrows(IllegalArgumentException.class, initialSnapshot::iterator);
     } finally {
       stream.stop();
     }

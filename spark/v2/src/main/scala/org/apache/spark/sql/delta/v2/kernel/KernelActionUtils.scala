@@ -135,6 +135,7 @@ private[v2] object KernelActionUtils {
       size = addFile.getSize,
       modificationTime = addFile.getModificationTime,
       dataChange = addFile.getDataChange,
+      stats = addFile.getStatsJson.toScala.orNull,
       tags = tagsFromKernel(addFile.getTags),
       deletionVector = deletionVectorFromKernel(addFile.getDeletionVector),
       baseRowId = addFile.getBaseRowId.toScala.map(_.longValue()),
