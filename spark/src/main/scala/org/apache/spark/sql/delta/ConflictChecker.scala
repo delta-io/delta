@@ -74,6 +74,7 @@ private[delta] case class CurrentTransactionInfo(
     val currentCommitAttemptAMTCheckpointOpt: Option[Checkpoint] = None
     , val convertedIcebergMetadata: Option[UniformMetadata] = None
     , idempotentCommitAlreadyLandedAt: Option[Long] = None
+    , val readFilePathLookup: ReadFilePathLookup = new ReadFilePathLookup
  ) {
 
   /**
@@ -115,6 +116,40 @@ private[delta] case class CurrentTransactionInfo(
   val isRowTrackingUnBackfillTxn = op.name == ROW_TRACKING_UNBACKFILL_OPERATION_NAME
 
   def isConflict(winningTxn: SetTransaction): Boolean = readAppIds.contains(winningTxn.appId)
+
+  /** `path -> partitionValues` for every file in `readFiles`. See [[ReadFilePathLookup]]. */
+  def readFilePathToPartitionValues: Map[String, Map[String, String]] =
+    readFilePathLookup.get(readFiles)
+}
+
+/**
+ * Lazily built `path -> partitionValues` lookup over the files read by a transaction, used to
+ * check the files removed by winning commits against the files the transaction read.
+ *
+ * `CurrentTransactionInfo` is copied at least once per winning commit (e.g. by
+ * `AMTUtils.updateCurrentTransactionInfo`), so a `lazy val` on it would be rebuilt for every
+ * winning commit: O(read files * winning commits) work on the driver, which dominates conflict
+ * detection for long-running transactions over tables with many files. Held as a constructor field
+ * instead, the lookup is shared by all copies and is rebuilt only when `readFiles` is replaced
+ * (e.g. by row tracking backfill conflict resolution).
+ *
+ * It does not take part in the equality, hash code or string form of `CurrentTransactionInfo`.
+ */
+private[delta] final class ReadFilePathLookup {
+  private var indexedReadFiles: Set[AddFile] = _
+  private var pathToPartitionValues: Map[String, Map[String, String]] = _
+
+  def get(readFiles: Set[AddFile]): Map[String, Map[String, String]] = synchronized {
+    if (!(indexedReadFiles eq readFiles)) {
+      pathToPartitionValues = readFiles.iterator.map(f => f.path -> f.partitionValues).toMap
+      indexedReadFiles = readFiles
+    }
+    pathToPartitionValues
+  }
+
+  override def equals(other: Any): Boolean = other.isInstanceOf[ReadFilePathLookup]
+  override def hashCode(): Int = 0
+  override def toString: String = "ReadFilePathLookup"
 }
 
 object CurrentTransactionInfo {
@@ -1215,25 +1250,28 @@ private[delta] class ConflictChecker(
    */
   protected def checkForDeletedFilesAgainstCurrentTxnReadFiles(): Unit = {
     recordTime("checked-deletes") {
-      // Fail if files have been deleted that the txn read.
-      val readFilePaths = currentTransactionInfo.readFiles.map(
-        f => f.path -> f.partitionValues).toMap
-      val deleteReadOverlap = winningCommitSummary.removedFiles
-        .find(r => readFilePaths.contains(r.path))
-      if (deleteReadOverlap.nonEmpty) {
-        val partitionOpt = getPrettyPartitionMessage(readFilePaths(deleteReadOverlap.get.path))
-        throw DeltaErrors.concurrentDeleteReadException(
-          winningCommitSummary.commitInfo,
-          getTableNameOrPath,
-          winningCommitVersion,
-          partitionOpt)
-      }
-      if (winningCommitSummary.removedFiles.nonEmpty && currentTransactionInfo.readWholeTable) {
-        throw DeltaErrors.concurrentDeleteReadException(
-          winningCommitSummary.commitInfo,
-          getTableNameOrPath,
-          winningCommitVersion,
-          partitionOpt = None)
+      val removedFiles = winningCommitSummary.removedFiles
+      // Only a winning commit that removed files can conflict here, so skip the others (e.g.
+      // blind appends) without building the read file lookup.
+      if (removedFiles.nonEmpty) {
+        // Fail if files have been deleted that the txn read.
+        val readFilePaths = currentTransactionInfo.readFilePathToPartitionValues
+        val deleteReadOverlap = removedFiles.find(r => readFilePaths.contains(r.path))
+        if (deleteReadOverlap.nonEmpty) {
+          val partitionOpt = getPrettyPartitionMessage(readFilePaths(deleteReadOverlap.get.path))
+          throw DeltaErrors.concurrentDeleteReadException(
+            winningCommitSummary.commitInfo,
+            getTableNameOrPath,
+            winningCommitVersion,
+            partitionOpt)
+        }
+        if (currentTransactionInfo.readWholeTable) {
+          throw DeltaErrors.concurrentDeleteReadException(
+            winningCommitSummary.commitInfo,
+            getTableNameOrPath,
+            winningCommitVersion,
+            partitionOpt = None)
+        }
       }
     }
   }
@@ -1244,19 +1282,21 @@ private[delta] class ConflictChecker(
    */
   protected def checkForDeletedFilesAgainstCurrentTxnDeletedFiles(): Unit = {
     recordTime("checked-2x-deletes") {
-      // Fail if a file is deleted twice.
-      val deletedFilePaths = currentTransactionInfo.actions
-        .collect { case r: RemoveFile => r.path -> r.partitionValues }
-        .toMap
-      val deleteOverlap = winningCommitSummary.removedFiles
-        .find(r => deletedFilePaths.contains(r.path))
-      if (deleteOverlap.nonEmpty) {
-        val partitionOpt = getPrettyPartitionMessage(deletedFilePaths(deleteOverlap.get.path))
-        throw DeltaErrors.concurrentDeleteDeleteException(
-          winningCommitSummary.commitInfo,
-          getTableNameOrPath,
-          winningCommitVersion,
-          partitionOpt)
+      val removedFiles = winningCommitSummary.removedFiles
+      if (removedFiles.nonEmpty) {
+        // Fail if a file is deleted twice.
+        val deletedFilePaths = currentTransactionInfo.actions.iterator
+          .collect { case r: RemoveFile => r.path -> r.partitionValues }
+          .toMap
+        val deleteOverlap = removedFiles.find(r => deletedFilePaths.contains(r.path))
+        if (deleteOverlap.nonEmpty) {
+          val partitionOpt = getPrettyPartitionMessage(deletedFilePaths(deleteOverlap.get.path))
+          throw DeltaErrors.concurrentDeleteDeleteException(
+            winningCommitSummary.commitInfo,
+            getTableNameOrPath,
+            winningCommitVersion,
+            partitionOpt)
+        }
       }
     }
   }
