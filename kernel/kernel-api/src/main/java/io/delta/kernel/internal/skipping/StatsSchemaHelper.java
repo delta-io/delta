@@ -166,14 +166,18 @@ public class StatsSchemaHelper {
         logicalToPhysicalColumnAndDataType.entrySet().stream()
             .collect(
                 Collectors.toMap(
-                    Map.Entry::getKey, e -> e.getValue()._1 // map to just the column
-                    ));
+                    Map.Entry::getKey,
+                    e -> e.getValue()._1, // map to just the column
+                    (v1, v2) -> v1,
+                    () -> new TreeMap<>(CASE_INSENSITIVE_COLUMN_COMPARATOR)));
     this.logicalToDataType =
         logicalToPhysicalColumnAndDataType.entrySet().stream()
             .collect(
                 Collectors.toMap(
-                    Map.Entry::getKey, e -> e.getValue()._2 // map to just the data type
-                    ));
+                    Map.Entry::getKey,
+                    e -> e.getValue()._2, // map to just the data type
+                    (v1, v2) -> v1,
+                    () -> new TreeMap<>(CASE_INSENSITIVE_COLUMN_COMPARATOR)));
   }
 
   /**
@@ -269,6 +273,28 @@ public class StatsSchemaHelper {
   //////////////////////////////////////////////////////////////////////////////////
   // Private static fields and methods
   //////////////////////////////////////////////////////////////////////////////////
+
+  /**
+   * Comparator for {@link Column} keys that compares each name component case-insensitively. This
+   * allows data-skipping lookups to find a schema column regardless of the case used in the query
+   * predicate (e.g. a filter on {@code "value"} correctly matches a schema column named {@code
+   * "Value"}).
+   */
+  private static final Comparator<Column> CASE_INSENSITIVE_COLUMN_COMPARATOR =
+      (a, b) -> {
+        String[] aNames = a.getNames();
+        String[] bNames = b.getNames();
+        if (aNames.length != bNames.length) {
+          return aNames.length - bNames.length;
+        }
+        for (int i = 0; i < aNames.length; i++) {
+          int cmp = aNames[i].compareToIgnoreCase(bNames[i]);
+          if (cmp != 0) {
+            return cmp;
+          }
+        }
+        return 0;
+      };
 
   private static final Set<String> SKIPPING_ELIGIBLE_TYPE_NAMES =
       new HashSet<String>() {
@@ -414,7 +440,7 @@ public class StatsSchemaHelper {
    */
   private Map<Column, Tuple2<Column, DataType>> getLogicalToPhysicalColumnAndDataType(
       StructType dataSchema) {
-    Map<Column, Tuple2<Column, DataType>> result = new HashMap<>();
+    Map<Column, Tuple2<Column, DataType>> result = new TreeMap<>(CASE_INSENSITIVE_COLUMN_COMPARATOR);
     for (StructField field : dataSchema.fields()) {
       if (field.getDataType() instanceof StructType) {
         Map<Column, Tuple2<Column, DataType>> nestedCols =
