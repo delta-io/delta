@@ -63,10 +63,18 @@ case class DeltaSharingSingleAction(
 }
 
 /**
- * The delta sharing protocol from the response of a rpc. It only wraps a delta protocol now, but
- * can be extended with additional delta sharing fields if needed later.
+ * The delta sharing protocol from the response of a rpc.
+ * It wraps a delta protocol, and adds one delta sharing field:
+ *     - version: the version the protocol was committed at, used to generate the faked delta log
+ *                file on the client side. It is null for a snapshot query (single head protocol)
+ *                and for the response of a server that doesn't emit historical protocols; it is set
+ *                for each protocol change streamed by a cdf/streaming query when the client opts in
+ *                via includeHistoricalProtocol.
  */
-case class DeltaSharingProtocol(deltaProtocol: Protocol) extends DeltaSharingAction {
+case class DeltaSharingProtocol(
+    deltaProtocol: Protocol,
+    version: java.lang.Long = null)
+    extends DeltaSharingAction {
 
   override def wrap: DeltaSharingSingleAction = DeltaSharingSingleAction(protocol = this)
 }

@@ -1048,6 +1048,93 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     }
   }
 
+  // A CDF query whose range spans a protocol upgrade (enabling deletionVectors mid-range) only
+  // reads correctly when the client opts in to historical protocols: with the flag on the server
+  // streams the v2 Protocol upgrade so the local delta log can read the post-upgrade DV files;
+  // with the flag off the recipient is left on the stale head protocol and the read fails.
+  Seq(true, false).foreach { flagOn =>
+    test("DeltaSharingDataSource cdf query spanning a protocol upgrade " +
+      s"[historicalProtocol=$flagOn]") {
+      withTempDir { tempDir =>
+        val deltaTableName = "delta_table_cdf_protocol_upgrade"
+        withTable(deltaTableName) {
+          // v0: create with CDF on and DV explicitly off (overriding any session default that turns
+          // DV on at creation) so the head protocol has no DV reader feature.
+          sql(s"""
+                 |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA
+                 |TBLPROPERTIES (
+                 |  delta.enableChangeDataFeed = true,
+                 |  delta.enableDeletionVectors = false
+                 |)
+                 |""".stripMargin)
+          // v1: inserts before the protocol upgrade.
+          sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "two")""")
+          // v2: enable deletionVectors -> a protocol upgrade committed inside the range
+          // (minReaderVersion/minWriterVersion bumped, DV reader/writer feature added).
+          sql(s"""ALTER TABLE $deltaTableName
+                 |SET TBLPROPERTIES (delta.enableDeletionVectors = true)""".stripMargin)
+          // v3: a DV-based delete, only readable with the upgraded protocol.
+          sql(s"""DELETE FROM $deltaTableName WHERE c1 = 2""")
+          // v4: more inserts after the upgrade.
+          sql(s"""INSERT INTO $deltaTableName VALUES (3, "three")""")
+
+          // Sanity check: the protocol actually changed inside the range.
+          val log = DeltaLog.forTable(spark, new TableIdentifier(deltaTableName))
+          assert(log.getSnapshotAt(1).protocol != log.getSnapshotAt(4).protocol,
+            "Test setup expects a protocol upgrade between v1 and v4.")
+
+          val sharedTableName = "shared_table_cdf_protocol_upgrade"
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          prepareMockedClientAndFileSystemResultForCdf(deltaTableName, sharedTableName, 0L)
+
+          withSQLConf(
+            (getDeltaSharingClassesSQLConf ++ Map(
+              DeltaSQLConf.DELTA_SHARING_CDF_ENABLE_HISTORICAL_PROTOCOL.key -> flagOn.toString
+            )).toSeq: _*
+          ) {
+            val profileFile = prepareProfileFile(tempDir)
+            val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+            def sharedCdf(): DataFrame = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", 0L)
+              .load(tablePath)
+
+            if (flagOn) {
+              // The v2 protocol upgrade is streamed, so the shared CDF read matches a local read.
+              val expected = spark.read
+                .format("delta")
+                .option("readChangeFeed", "true")
+                .option("startingVersion", 0L)
+                .table(deltaTableName)
+              checkAnswer(sharedCdf(), expected)
+              assert(sharedCdf().count() > 0)
+            } else {
+              // Without the upgrade, the local delta log has DV-enabled metadata on a stale
+              // protocol lacking the DV feature, rejected with
+              // DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH.
+              val e = intercept[Exception] {
+                sharedCdf().collect()
+              }
+              val rootMsg = Iterator
+                .iterate[Throwable](e)(_.getCause)
+                .takeWhile(_ != null)
+                .map(t => Option(t.getMessage).getOrElse(""))
+                .mkString(" | ")
+              assert(
+                rootMsg.contains("DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH"),
+                s"Expected DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH in error chain, got: $rootMsg")
+              assert(
+                rootMsg.contains("deletionVectors"),
+                s"Expected deletionVectors mentioned in error chain, got: $rootMsg")
+            }
+          }
+        }
+      }
+    }
+  }
+
   test("DeltaSharingDataSource auto-resolves responseFormat for cdf query gated by flag") {
     withTempDir { tempDir =>
       for (autoResolveEnabled <- Seq(true, false)) {

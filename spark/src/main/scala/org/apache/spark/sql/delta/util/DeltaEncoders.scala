@@ -81,8 +81,12 @@ private[delta] trait DeltaEncoders {
   private lazy val _addCdcFileEncoder = new DeltaEncoder[AddCDCFile]
   implicit def addCdcFileEncoder: Encoder[AddCDCFile] = _addCdcFileEncoder.get
 
-  private lazy val _pmtvEncoder = new DeltaEncoder[(Protocol, Metadata, Option[Long], Long)]
-  implicit def pmtvEncoder: Encoder[(Protocol, Metadata, Option[Long], Long)] = _pmtvEncoder.get
+  /** Params: Protocol, Metadata, Option[InCommitTimestamp], Option[LastManifestCommit], Version */
+  private lazy val _pmtlvEncoder =
+    new DeltaEncoder[(Protocol, Metadata, Option[Long], Option[LastManifestCommit], Long)]
+  implicit def pmtlvEncoder:
+    Encoder[(Protocol, Metadata, Option[Long], Option[LastManifestCommit], Long)] =
+      _pmtlvEncoder.get
 
   private lazy val _v2CheckpointActionsEncoder = new DeltaEncoder[(CheckpointMetadata, SidecarFile)]
   implicit def v2CheckpointActionsEncoder: Encoder[(CheckpointMetadata, SidecarFile)] =

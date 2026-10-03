@@ -18,6 +18,7 @@ package io.delta.kernel.defaults.engine.hadoopio;
 import io.delta.kernel.defaults.engine.fileio.PositionOutputStream;
 import java.io.IOException;
 import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.StreamCapabilities;
 
 public class HadoopPositionOutputStream extends PositionOutputStream {
   private final FSDataOutputStream delegateStream;
@@ -48,7 +49,14 @@ public class HadoopPositionOutputStream extends PositionOutputStream {
 
   @Override
   public void close() throws IOException {
-    delegateStream.close();
+    // If the write was aborted and the underlying stream supports a true abort (e.g. S3A cancels
+    // its multipart upload), abort so nothing is published to the destination. Otherwise fall
+    // back to a normal close; callers that stage via temp-then-rename skip the rename on abort.
+    if (isAborted() && delegateStream.hasCapability(StreamCapabilities.ABORTABLE_STREAM)) {
+      delegateStream.abort();
+    } else {
+      delegateStream.close();
+    }
   }
 
   @Override

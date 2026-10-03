@@ -158,6 +158,12 @@ case class WriteIntoDelta(
         clusterBySpecOpt
       }
     val rearrangeOnly = options.rearrangeOnly
+    if (rearrangeOnly) {
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_REORGANIZATION,
+        txn.snapshot,
+        txn.catalogTable)
+    }
     val charPadding = sparkSession.conf.get(SQLConf.READ_SIDE_CHAR_PADDING)
     val charAsVarchar = sparkSession.conf.get(SQLConf.CHAR_AS_VARCHAR)
     val dataSchema = if (!charAsVarchar && charPadding) {
@@ -382,10 +388,9 @@ case class WriteIntoDelta(
 
         if (!useDynamicPartitionOverwriteMode &&
             options.useNullIntolerantEqualityWithDPO.isDefined) {
-          throw DeltaErrors.illegalDeltaOptionException(
+          throw DeltaErrors.illegalDeltaOptionDynamicPartitionOverwriteOnly(
             name = DeltaOptions.USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
-            input = options.useNullIntolerantEqualityWithDPO.get.toString,
-            explain = "This option should be specified only in Dynamic Partition Overwrite mode.")
+            input = options.useNullIntolerantEqualityWithDPO.get.toString)
         }
 
         val deletedFiles = if (useDynamicPartitionOverwriteMode) {

@@ -221,13 +221,15 @@ object DeltaSharingUtils extends Logging {
       client: DeltaSharingClient,
       table: Table,
       cdfOptions: Map[String, String],
-      fileIdHash: Option[String] = None): RefresherFunction = { (_: Option[String]) =>
+      fileIdHash: Option[String] = None,
+      includeHistoricalProtocol: Boolean = false): RefresherFunction = { (_: Option[String]) =>
     {
       val tableFiles = client.getCDFFiles(
         table = table,
         cdfOptions = cdfOptions,
         includeHistoricalMetadata = true,
-        fileIdHash = fileIdHash
+        fileIdHash = fileIdHash,
+        includeHistoricalProtocol = includeHistoricalProtocol
       )
       getTableRefreshResult(tableFiles)
     }
@@ -244,14 +246,16 @@ object DeltaSharingUtils extends Logging {
       table: Table,
       startingVersion: Long,
       endingVersion: Option[Long],
-      fileIdHash: Option[String] = None): RefresherFunction = { (_: Option[String]) =>
+      fileIdHash: Option[String] = None,
+      includeHistoricalProtocol: Boolean = false): RefresherFunction = { (_: Option[String]) =>
     {
       val tableFiles = client
         .getFiles(
           table = table,
           startingVersion = startingVersion,
           endingVersion = endingVersion,
-          fileIdHash = fileIdHash
+          fileIdHash = fileIdHash,
+          includeHistoricalProtocol = includeHistoricalProtocol
         )
       getTableRefreshResult(tableFiles)
     }

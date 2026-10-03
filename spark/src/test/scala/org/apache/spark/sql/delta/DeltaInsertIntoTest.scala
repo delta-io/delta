@@ -42,7 +42,8 @@ import org.apache.spark.sql.types.StructType
 trait DeltaInsertIntoTest
   extends QueryTest
   with DeltaDMLTestUtilsPathBased
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaTableProvider {
 
   val catalogName = "spark_catalog"
 
@@ -227,7 +228,7 @@ trait DeltaInsertIntoTest
         withSchemaEvolution: Boolean): Unit =
       spark.read.table("source").write.mode(mode)
         .option("mergeSchema", withSchemaEvolution.toString)
-        .format("delta")
+        .format(writeFormat)
         .insertInto("target")
   }
 
@@ -243,7 +244,7 @@ trait DeltaInsertIntoTest
         withSchemaEvolution: Boolean): Unit = {
       spark.read.table("source").write.mode(mode)
         .option("mergeSchema", withSchemaEvolution.toString)
-        .format("delta")
+        .format(writeFormat)
         .saveAsTable("target")
     }
   }
@@ -261,7 +262,7 @@ trait DeltaInsertIntoTest
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("target"))
       spark.read.table("source").write.mode(mode)
         .option("mergeSchema", withSchemaEvolution.toString)
-        .format("delta")
+        .format(writeFormat)
         .save(deltaLog.dataPath.toString)
     }
   }
@@ -277,15 +278,12 @@ trait DeltaInsertIntoTest
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      withSQLConf(
-          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
-        spark.read.table("source").write.mode(mode)
-          .option("replaceOn", s"t.$whereCol = $whereValue")
-          .option("targetAlias", "t")
-          .option("mergeSchema", withSchemaEvolution.toString)
-          .format("delta")
-          .insertInto("target")
-      }
+      spark.read.table("source").write.mode(mode)
+        .option("replaceOn", s"t.$whereCol = $whereValue")
+        .option("targetAlias", "t")
+        .option("mergeSchema", withSchemaEvolution.toString)
+        .format(writeFormat)
+        .insertInto("target")
     }
   }
 
@@ -300,16 +298,13 @@ trait DeltaInsertIntoTest
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      withSQLConf(
-          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
-        val deltaLog = DeltaLog.forTable(spark, TableIdentifier("target"))
-        spark.read.table("source").write.mode(mode)
-          .option("replaceOn", s"t.$whereCol = $whereValue")
-          .option("targetAlias", "t")
-          .option("mergeSchema", withSchemaEvolution.toString)
-          .format("delta")
-          .save(deltaLog.dataPath.toString)
-      }
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+      spark.read.table("source").write.mode(mode)
+        .option("replaceOn", s"t.$whereCol = $whereValue")
+        .option("targetAlias", "t")
+        .option("mergeSchema", withSchemaEvolution.toString)
+        .format(writeFormat)
+        .save(deltaLog.dataPath.toString)
     }
   }
 
@@ -328,7 +323,7 @@ trait DeltaInsertIntoTest
         .mode(mode)
         .option("partitionOverwriteMode", "dynamic")
         .option("mergeSchema", withSchemaEvolution.toString)
-        .format("delta")
+        .format(writeFormat)
         .insertInto("target")
   }
 
@@ -404,7 +399,7 @@ trait DeltaInsertIntoTest
         .writeStream
         .option("checkpointLocation", checkpointLocation.toString)
         .option("mergeSchema", withSchemaEvolution.toString)
-        .format("delta")
+        .format(writeFormat)
         .trigger(Trigger.AvailableNow())
         .toTable("target")
       try {
@@ -494,6 +489,30 @@ trait DeltaInsertIntoTest
     def toDF: DataFrame = readFromJSON(data, schema)
   }
 
+  protected def checkExpectedRows(
+      actual: => DataFrame,
+      insert: Insert,
+      initialData: TestData,
+      insertData: TestData): Unit = {
+    checkAnswer(actual, insert.expectedResult(initialData.toDF, insertData.toDF))
+  }
+
+  protected def checkExpectedRows(actual: => DataFrame, expectedData: TestData): Unit = {
+    checkAnswer(actual, expectedData.toDF)
+  }
+
+  protected def createTableFromTestData(
+      tableName: String,
+      data: TestData,
+      partitionBy: Seq[String] = Seq.empty): Unit = {
+    val writer = data.toDF.write.format(writeFormat)
+    if (partitionBy.nonEmpty) {
+      writer.partitionBy(partitionBy: _*)
+    }
+    writer.saveAsTable(tableName)
+  }
+
+
   /**
    * Test runner to cover INSERT operations defined above.
    * @param name                Test name
@@ -529,14 +548,10 @@ trait DeltaInsertIntoTest
     for (insert <- inserts) {
       test(s"${insert.name} - $name") {
         withTable("source", "target") {
-          val writer = initialData.toDF.write.format("delta")
-          if (partitionBy.nonEmpty) {
-            writer.partitionBy(partitionBy: _*)
-          }
-          writer.saveAsTable("target")
+          createTableFromTestData("target", initialData, partitionBy)
           // Write the data to insert to a table so that we can use it in both SQL and dataframe
           // writer inserts.
-          insertData.toDF.write.format("delta").saveAsTable("source")
+          createTableFromTestData("source", insertData)
 
           def runInsert(): Unit =
             insert.runInsert(
@@ -546,18 +561,18 @@ trait DeltaInsertIntoTest
               withSchemaEvolution = withSchemaEvolution
             )
 
-          withSQLConf(confs: _*) {
+          withConf(confs: _*) {
             expectedResult match {
               case ExpectedResult.Success(expectedSchema: StructType) =>
                 runInsert()
                 val target = spark.read.table("target")
                 assert(target.schema === expectedSchema)
-                checkAnswer(target, insert.expectedResult(initialData.toDF, insertData.toDF))
+                checkExpectedRows(target, insert, initialData, insertData)
               case ExpectedResult.Success(expectedData: TestData) =>
                 runInsert()
                 val target = spark.read.table("target")
                 assert(target.schema === expectedData.schema)
-                checkAnswer(spark.read.table("target"), expectedData.toDF)
+                checkExpectedRows(target, expectedData)
               case ExpectedResult.Failure(checkError) =>
                 val ex = if (insert == StreamingInsert) {
                   intercept[StreamingQueryException] {

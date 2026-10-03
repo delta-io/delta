@@ -41,7 +41,6 @@ import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
-import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{col, count, lit, replace, startswith, substr, sum}
@@ -167,16 +166,10 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val snapshot = table.update()
       deltaLog.protocolWrite(snapshot.protocol)
 
-      if (snapshot.isCatalogOwned) {
-        table.catalogTable.foreach { catalogTable =>
-          assert(
-            catalogTable.tableType == CatalogTableType.MANAGED,
-            s"All Catalog Owned tables should be MANAGED tables, " +
-              s"but found ${catalogTable.tableType} for table ${catalogTable.identifier}."
-          )
-        }
-        throw DeltaErrors.operationBlockedOnCatalogManagedTable("VACUUM")
-      }
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_CLEANUP,
+        snapshot,
+        table.catalogTable)
 
       // By default, we will do full vacuum unless LITE vacuum conf is set
       val isLiteVacuumEnabled = spark.sessionState.conf.getConf(DeltaSQLConf.LITE_VACUUM_ENABLED)
@@ -744,7 +737,7 @@ trait VacuumCommandImpl extends DeltaCommand {
 
     dv match {
       case Some(dv) if dv.isOnDisk =>
-        if (dv.isRelative) {
+        if (dv.isUuidRelative) {
           // We actually want a relative path here.
           Some((pathToUrlEncodedString(dv.absolutePath(new Path("."))), dv.sizeInBytes))
         } else {
@@ -809,38 +802,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       eligibleEndCommitVersion: Long,
       relativizeIgnoreError: Option[Boolean]): Dataset[SerializableFileStatus] = {
     import org.apache.spark.sql.delta.implicits._
-    // When coordinated commits are enabled, commit files could be found in _delta_log directory
-    // as well as in commit directory. We get the delta log files outside of the retention window
-    // from both the places.
-    val prefix = listingPrefix(deltaLog.logPath, eligibleStartCommitVersion)
-    val eligibleDeltaLogFilesFromDeltaLogDirectory =
-      deltaLog.store.listFrom(prefix, deltaLog.newDeltaHadoopConf)
-        .collect { case DeltaFile(f, deltaFileVersion) => (f, deltaFileVersion) }
-        .takeWhile(_._2 <= eligibleEndCommitVersion)
-        .toSeq
-
-    val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
-    val commitDirPath = FileNames.commitDirPath(deltaLog.logPath)
-    val updatedStartCommitVersion =
-      eligibleDeltaLogFilesFromDeltaLogDirectory.lastOption.map(_._2)
-        .getOrElse(eligibleStartCommitVersion)
-    val eligibleDeltaLogFilesFromCommitDirectory = if (fs.exists(commitDirPath)) {
-      deltaLog.store
-        .listFrom(listingPrefix(commitDirPath, updatedStartCommitVersion),
-          deltaLog.newDeltaHadoopConf)
-        .collect { case UnbackfilledDeltaFile(f, deltaFileVersion, _) => (f, deltaFileVersion) }
-        .takeWhile(_._2 <= eligibleEndCommitVersion)
-        .toSeq
-    } else {
-      Seq.empty
-    }
-
-    val allDeltaLogFilesOutsideTheRetentionWindow = eligibleDeltaLogFilesFromDeltaLogDirectory ++
-      eligibleDeltaLogFilesFromCommitDirectory
-    val deltaLogFileIndex = DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT,
-      allDeltaLogFilesOutsideTheRetentionWindow.map(_._1)).get
-
-    val allActions = deltaLog.loadIndex(deltaLogFileIndex).as[SingleAction]
+    val allActions = new DeltaHistoryManager(deltaLog)
+      .getAllStagedAndCommittedFileActions(eligibleStartCommitVersion, eligibleEndCommitVersion)
     val nonCDFFiles = allActions
       .where("remove IS NOT NULL")
       .select(col("remove")

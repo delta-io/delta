@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import scala.util.Try
@@ -48,7 +49,7 @@ import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableComm
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType}
 import org.apache.spark.util.Utils
 
 /**
@@ -834,6 +835,22 @@ case class CreateDeltaTableCommand(
         // Unity Catalog table id stored in `io.unitycatalog.tableId`.
         newMetadata = newMetadata.copy(id = txn.snapshot.metadata.id)
       }
+
+      // Carry over table and column comments from the old table when the new DDL
+      // does not explicitly specify them.
+      if (sparkSession.conf.get(DeltaSQLConf.RETAIN_COMMENTS_DURING_REPLACE_TABLE)) {
+        // Table comments
+        if (newMetadata.description == null) {
+          newMetadata = newMetadata.copy(description = txn.metadata.description)
+        }
+        // Schema / column comments, only when overwriteSchema=true is not set
+        if (!options.canOverwriteSchema) {
+          val updatedSchema = CreateDeltaTableCommand.carryOverStructTypeComments(
+            txn.metadata.schema, newMetadata.schema)
+          newMetadata = newMetadata.copy(schemaString = updatedSchema.json)
+        }
+      }
+
       txn.updateMetadataForNewTableInReplace(newMetadata)
     }
   }
@@ -875,6 +892,61 @@ case class CreateDeltaTableCommand(
     if (table.partitionColumnNames.nonEmpty &&
       ClusteredTableUtils.isSupported(protocol)) {
       throw DeltaErrors.replacingClusteredTableWithPartitionedTableNotAllowed()
+    }
+  }
+}
+
+object CreateDeltaTableCommand {
+  /**
+   * Carries over comments from the old schema to the new schema for all fields matched by name
+   * (case-insensitively), when the new field does not already have an explicit comment. This
+   * applies to every top-level column as well as recursively through nested struct type.
+   */
+  private[delta] def carryOverStructTypeComments(
+      oldStruct: StructType,
+      newStruct: StructType): StructType = {
+    // Match field names case-insensitively.
+    def normalizeName(name: String): String = name.toLowerCase(Locale.ROOT)
+    val oldFieldsByName = oldStruct.fields.map(field => normalizeName(field.name) -> field).toMap
+    StructType(newStruct.fields.map { newField =>
+      val matched = oldFieldsByName.get(normalizeName(newField.name))
+      // Keep the new field's comment when it has one; otherwise carry over the old field's.
+      val fieldWithComment = if (newField.metadata.contains("comment")) {
+        newField
+      } else {
+        matched.flatMap(_.getComment()) match {
+          case Some(c) => newField.withComment(c)
+          case None => newField
+        }
+      }
+      // Recurse into nested types to carry over comments on inner struct fields
+      val newDataType = matched
+        .map(field =>
+          carryOverDataTypeComments(field.dataType, fieldWithComment.dataType)
+        )
+        .getOrElse(fieldWithComment.dataType)
+      fieldWithComment.copy(dataType = newDataType)
+    })
+  }
+
+  /**
+   * Recursively carries over column comments through nested DataTypes.
+   * Handles StructType, ArrayType, and MapType at arbitrary nesting depth.
+   */
+  private[delta] def carryOverDataTypeComments(
+      oldType: DataType,
+      newType: DataType): DataType = {
+    (oldType, newType) match {
+      case (oldStruct: StructType, newStruct: StructType) =>
+        carryOverStructTypeComments(oldStruct, newStruct)
+      case (ArrayType(oldElem, _), ArrayType(newElem, nullable)) =>
+        ArrayType(carryOverDataTypeComments(oldElem, newElem), nullable)
+      case (MapType(oldK, oldV, _), MapType(newK, newV, nullable)) =>
+        MapType(carryOverDataTypeComments(oldK, newK),
+          carryOverDataTypeComments(oldV, newV),
+          nullable
+        )
+      case _ => newType
     }
   }
 }

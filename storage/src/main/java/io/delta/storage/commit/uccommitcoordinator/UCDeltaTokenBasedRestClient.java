@@ -48,6 +48,7 @@ import io.unitycatalog.client.delta.model.DeltaCreateStagingTableRequest;
 import io.unitycatalog.client.delta.model.DeltaCreateTableRequest;
 import io.unitycatalog.client.delta.model.DeltaDomainMetadataUpdates;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.client.delta.model.DeltaMaintenanceOperation;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
 import io.unitycatalog.client.delta.model.DeltaRemoveDomainMetadataUpdate;
 import io.unitycatalog.client.delta.model.DeltaRemovePropertiesUpdate;
@@ -88,6 +89,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -114,6 +116,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private final String baseUri;
   private final TokenProvider tokenProvider;
   private final Map<String, String> appVersions;
+  private final boolean credentialVendingEnabled;
   private final boolean credentialRenewalEnabled;
   private final boolean credentialScopedFsEnabled;
   private final Supplier<Configuration> hadoopConfSupplier;
@@ -125,6 +128,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
    *   <li>{@code uri} (required) -- the UC server endpoint.</li>
    *   <li>{@code auth.*} / {@code token} (legacy) -- authentication parameters.</li>
    *   <li>{@code appVersions.*} -- caller-supplied version entries.</li>
+   *   <li>{@code credentialVending.enabled} -- request temporary storage credentials while loading
+   *       or creating tables (default true).</li>
    *   <li>{@code renewCredential.enabled} -- enable credential renewal (default true).</li>
    *   <li>{@code credScopedFs.enabled} -- enable credential-scoped FS (default true).</li>
    * </ul>
@@ -159,6 +164,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     this.baseUri = baseUri;
     this.tokenProvider = tokenProvider;
     this.appVersions = appVersions;
+    this.credentialVendingEnabled = UCConfigUtils.isCredentialVendingEnabled(ucConfig);
     this.credentialRenewalEnabled = UCConfigUtils.isCredentialRenewalEnabled(ucConfig);
     this.credentialScopedFsEnabled = UCConfigUtils.isCredentialScopedFsEnabled(ucConfig);
     this.hadoopConfSupplier = hadoopConfSupplier != null ? hadoopConfSupplier : Configuration::new;
@@ -613,6 +619,24 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     AdaptedTableMetadata adapted = new AdaptedTableMetadata(name, m);
     Optional<UniformMetadata> uniformMetadata =
         toStorageUniformMetadata(response.getUniform());
+    List<DeltaMaintenanceOperation> responseMaintenanceOperations =
+        response.getAllowedMaintenanceOperations();
+    List<String> clientMaintenanceOperations =
+        responseMaintenanceOperations == null
+            ? Collections.emptyList()
+            : responseMaintenanceOperations.stream()
+                .map(DeltaMaintenanceOperation::getValue)
+                .collect(Collectors.toList());
+    if (!credentialVendingEnabled) {
+      return new TableInfo(
+          ucTableId,
+          tableType,
+          location,
+          adapted,
+          Collections.emptyMap(),
+          clientMaintenanceOperations,
+          uniformMetadata);
+    }
     Map<String, String> storageProps;
     try {
       storageProps = fetchTableCredentials(catalog, schema, name, location);
@@ -621,13 +645,26 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       // recover. The exception carries the catalog-side TableInfo (with empty storageProperties)
       // so the caller can still build a CatalogTable.
       TableInfo withoutCreds = new TableInfo(
-          ucTableId, tableType, location, adapted, Collections.emptyMap(), uniformMetadata);
+          ucTableId,
+          tableType,
+          location,
+          adapted,
+          Collections.emptyMap(),
+          clientMaintenanceOperations,
+          uniformMetadata);
       throw new CredentialFetchFailedException(
           String.format("Credential fetch failed for table %s.%s.%s (HTTP %s): %s",
               catalog, schema, name, e.getCode(), e.getResponseBody()),
           e, withoutCreds);
     }
-    return new TableInfo(ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
+    return new TableInfo(
+        ucTableId,
+        tableType,
+        location,
+        adapted,
+        storageProps,
+        clientMaintenanceOperations,
+        uniformMetadata);
   }
 
   private static Optional<UniformMetadata> toStorageUniformMetadata(
@@ -673,7 +710,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     String location = r.getLocation();
     UCDeltaModels.TableType tableType =
         UCDeltaModels.TableType.valueOf(r.getTableType().getValue());
-    Map<String, String> storageProps = fetchStagingCredentials(location, tableId.toString());
+    Map<String, String> storageProps = credentialVendingEnabled
+        ? fetchStagingCredentials(location, tableId.toString())
+        : Collections.emptyMap();
     return new UCDeltaModels.StagingTableInfo(
         tableId,
         tableType,

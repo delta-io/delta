@@ -227,7 +227,7 @@ class OptimisticTransactionSuite
       t => t.metadata
     ),
     concurrentWrites = Seq(
-      Metadata()),
+      testDefaultMetadata()),
     actions = Nil)
 
   check(
@@ -289,6 +289,25 @@ class OptimisticTransactionSuite
     actions = Seq(
       AddFile("b", Map.empty, 1, 1, dataChange = true)))
 
+  check(
+    "multiple concurrent appends",
+    conflicts = false,
+    initialSetup = { log =>
+      Seq(testDefaultMetadata(), testDefaultProtocol()).foreach { action =>
+        log.startTransaction().commit(Seq(action), ManualUpdate)
+      }
+    },
+    reads = Nil,
+    concurrentTxns = Seq(
+      t => t.commit(Seq(createTestAddFile(encodedPath = "winner-1")), Truncate()),
+      t => t.commit(Seq(createTestAddFile(encodedPath = "winner-2")), Truncate())),
+    actions = Seq(createTestAddFile(encodedPath = "loser")),
+    operation = Truncate(),
+    expectedErrorClass = None,
+    expectedErrorMessageParameters = None,
+    exceptionClass = None,
+    additionalSQLConfs = Seq.empty)
+
   override def beforeEach(): Unit = {
     super.beforeEach()
     CommitCoordinatorProvider.clearNonDefaultBuilders()
@@ -331,6 +350,16 @@ class OptimisticTransactionSuite
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       val txn = log.startTransaction()
       assert(txn.logPath === log.logPath)
+    }
+  }
+
+  test("newDeltaHadoopConf resolves to deltaLog.newDeltaHadoopConf") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val txn = log.startTransaction()
+      def asMap(conf: org.apache.hadoop.conf.Configuration): Map[String, String] =
+        conf.iterator().asScala.map(e => e.getKey -> e.getValue).toMap
+      assert(asMap(txn.newDeltaHadoopConf()) === asMap(log.newDeltaHadoopConf()))
     }
   }
 
@@ -593,6 +622,25 @@ class OptimisticTransactionSuite
       assert(testTxn.preCommitLogSegment.lastCommitFileModificationTimestamp < testTxnEndTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointProvider.version == 10)
+    }
+  }
+
+  test("commit fails after exhausting the retry budget") {
+    withSQLConf(DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> "0") {
+      withTempDir { dir =>
+        val log = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath))
+        Seq(testDefaultMetadata(), testDefaultProtocol()).foreach { action =>
+          log.startTransaction().commit(Seq(action), ManualUpdate)
+        }
+        val txn = startTestTransaction(log.dataPath)
+        log.startTransaction().commit(
+          Seq(createTestAddFile(encodedPath = "winner-1")), Truncate())
+
+        val e = intercept[DeltaIllegalStateException] {
+          txn.commit(Seq(createTestAddFile(encodedPath = "loser")), Truncate())
+        }
+        assert(e.getErrorClass == "DELTA_MAX_COMMIT_RETRIES_EXCEEDED")
+      }
     }
   }
 
@@ -1185,7 +1233,8 @@ class OptimisticTransactionSuite
               newProtocolOpt = None,
               op = DeltaOperations.Restore(Some(0), None),
               context = Map.empty,
-              metrics = Map.empty)
+              metrics = Map.empty,
+              dataChange = Some(true))
           }
           if (conflict) {
             assert(e.isInstanceOf[ConcurrentWriteException])
@@ -1797,7 +1846,7 @@ class OptimisticTransactionSuite
    */
   private def commitMixedDataChangeBatch(
       tempDir: File,
-      mode: DeltaSQLConf.ConsistentDataChangeValidationMode,
+      mode: DeltaSQLConf.DataChangeValidationMode,
       useCommitLarge: Boolean)
       : (Seq[UsageRecord], Option[Throwable]) = {
     withSQLConf(
@@ -1820,7 +1869,8 @@ class OptimisticTransactionSuite
               newProtocolOpt = None,
               op = DeltaOperations.ManualUpdate,
               context = Map.empty,
-              metrics = Map.empty)
+              metrics = Map.empty,
+              dataChange = Some(true))
           } else {
             log.startTransaction().commit(mixedActions, ManualUpdate)
           }
@@ -1834,13 +1884,13 @@ class OptimisticTransactionSuite
   }
 
   for (useCommitLarge <- BOOLEAN_DOMAIN) {
-    val callerContext = if (useCommitLarge) "commitLarge" else "commit"
+    val callerContext = if (useCommitLarge) "commitLarge" else "doCommit"
 
     test(s"consistent dataChange validation: FATAL mode throws and logs payload" +
         s" ($callerContext)") {
       withTempDir { tempDir =>
         val (records, thrown) = commitMixedDataChangeBatch(
-          tempDir, DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL, useCommitLarge)
+          tempDir, DeltaSQLConf.DataChangeValidationMode.FATAL, useCommitLarge)
         assert(thrown.exists(_.isInstanceOf[IllegalStateException]))
         assert(records.size == 1)
         val payload = JsonUtils.fromJson[Map[String, Any]](records.head.blob)
@@ -1858,7 +1908,7 @@ class OptimisticTransactionSuite
         s" ($callerContext)") {
       withTempDir { tempDir =>
         val (records, thrown) = commitMixedDataChangeBatch(
-          tempDir, DeltaSQLConf.ConsistentDataChangeValidationMode.LOG, useCommitLarge)
+          tempDir, DeltaSQLConf.DataChangeValidationMode.LOG, useCommitLarge)
         assert(thrown.isEmpty)
         assert(records.size == 1)
       }
@@ -1868,7 +1918,7 @@ class OptimisticTransactionSuite
         s" ($callerContext)") {
       withTempDir { tempDir =>
         val (records, thrown) = commitMixedDataChangeBatch(
-          tempDir, DeltaSQLConf.ConsistentDataChangeValidationMode.OFF, useCommitLarge)
+          tempDir, DeltaSQLConf.DataChangeValidationMode.OFF, useCommitLarge)
         assert(thrown.isEmpty)
         assert(records.isEmpty)
       }
@@ -1878,7 +1928,7 @@ class OptimisticTransactionSuite
   test("consistent dataChange validation: uniform commit passes in FATAL mode") {
     withTempDir { tempDir =>
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE.key ->
-          DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL.toString) {
+          DeltaSQLConf.DataChangeValidationMode.FATAL.toString) {
         val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
         val seedTxn = log.startTransaction()
         seedTxn.updateMetadataForNewTable(Metadata())
@@ -1896,7 +1946,7 @@ class OptimisticTransactionSuite
   test("consistent dataChange validation: AddCDCFile is excluded from the check") {
     withTempDir { tempDir =>
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE.key ->
-          DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL.toString) {
+          DeltaSQLConf.DataChangeValidationMode.FATAL.toString) {
         val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
         val seedTxn = log.startTransaction()
         seedTxn.updateMetadataForNewTable(Metadata())
@@ -1913,4 +1963,131 @@ class OptimisticTransactionSuite
     }
   }
 
+  for (consistentMode <- Seq("off", "log", "fatal")) {
+    test(s"dataChange validation preserves CommitInfo logging with consistency=$consistentMode") {
+      withTempDir { tempDir =>
+        withSQLConf(
+            DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE.key -> consistentMode,
+            DeltaSQLConf.DELTA_COMMIT_VALIDATE_EXPECTED_DATA_CHANGE_MODE.key -> "log") {
+          val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+          for {
+            declared <- Seq(None, Some(false), Some(true))
+            fileDataChange <- Seq(None, Some(false), Some(true))
+            commitInfoFirst <- BOOLEAN_DOMAIN
+          } {
+            withClue(s"declared=$declared, files=$fileDataChange, infoFirst=$commitInfoFirst: ") {
+              val commitInfo = CommitInfo.empty().copy(dataChange = declared)
+              val otherActions: Seq[Action] = fileDataChange.toSeq.flatMap { dataChange =>
+                Seq(
+                  createTestAddFile(encodedPath = "a", dataChange = dataChange),
+                  createTestAddFile(encodedPath = "b", dataChange = dataChange))
+              } ++ Seq(Metadata(), AddCDCFile("_change_data/cdc-file", Map.empty, size = 1L))
+              val actions = if (commitInfoFirst) {
+                commitInfo +: otherActions
+              } else {
+                otherActions :+ commitInfo
+              }
+              val allRecords = Log4jUsageLogger.track {
+                val validated = ConflictChecker.trackDataChange(
+                  spark, actions.iterator, log, DeltaOperations.ComputeStats(Nil), "test")
+                assert(validated.toVector == actions)
+              }
+              val derivedDataChange = fileDataChange.getOrElse(false)
+              val expectMismatch = consistentMode != "off" &&
+                declared.exists(_ != derivedDataChange)
+              val mismatches = filterUsageRecords(
+                allRecords, "delta.commit.commitInfoDataChangeMismatch")
+              assert(mismatches.size == (if (expectMismatch) 1 else 0))
+              if (expectMismatch) {
+                val payload = JsonUtils.fromJson[Map[String, Any]](mismatches.head.blob)
+                assert(payload("declaredDataChange") == declared.get)
+                assert(payload("derivedDataChange") == derivedDataChange)
+              }
+              val unexpected = filterUsageRecords(allRecords, "delta.commit.unexpectedDataChange")
+              assert(unexpected.size == (if (derivedDataChange) 1 else 0))
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private def commitAndCaptureUnexpectedDataChange(
+      tempDir: File,
+      op: DeltaOperations.Operation,
+      addFiles: Seq[AddFile],
+      dataChange: Boolean,
+      seedExisting: Boolean,
+      mode: String = "log"): Seq[UsageRecord] = {
+    val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+    val seedTxn = log.startTransaction()
+    seedTxn.updateMetadataForNewTable(Metadata())
+    val seedActions = if (seedExisting) addFiles.map(_.copy(dataChange = true)) else Seq.empty
+    seedTxn.commit(seedActions, ManualUpdate)
+
+    withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATE_EXPECTED_DATA_CHANGE_MODE.key -> mode) {
+      val allRecords = Log4jUsageLogger.track {
+        log.startTransaction().commit(addFiles.map(_.copy(dataChange = dataChange)), op)
+      }
+      filterUsageRecords(allRecords, "delta.commit.unexpectedDataChange")
+    }
+  }
+
+  test("unexpected dataChange committing dataChange=true is captured") {
+    withTempDir { tempDir =>
+      val operation = DeltaOperations.ComputeStats(Nil)
+      val records = commitAndCaptureUnexpectedDataChange(
+        tempDir,
+        operation,
+        Seq(createTestAddFile(encodedPath = "leaked")),
+        dataChange = true,
+        seedExisting = true)
+      assert(records.size == 1)
+      val payload = JsonUtils.fromJson[Map[String, Any]](records.head.blob)
+      assert(payload("callerContext") == "doCommit")
+      assert(payload("operation") == operation.name)
+      assert(payload.contains("operationParameters"))
+      assert(payload("actualDataChange") == true)
+      assert(payload("path") == "leaked")
+    }
+  }
+
+  test("unexpected dataChange: an op with expectedFileDataChange=None is not checked (fatal)") {
+    withTempDir { tempDir =>
+      val records = commitAndCaptureUnexpectedDataChange(
+        tempDir,
+        ManualUpdate,
+        Seq(createTestAddFile(encodedPath = "data")),
+        dataChange = true,
+        seedExisting = false,
+        mode = "fatal")
+      assert(records.isEmpty)
+    }
+  }
+
+  test("unexpected dataChange: fatal mode throws on a no-data-change commit") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val seedTxn = log.startTransaction()
+      seedTxn.updateMetadataForNewTable(Metadata())
+      val leaked = createTestAddFile(encodedPath = "leaked")
+      val operation = DeltaOperations.ComputeStats(Nil)
+      seedTxn.commit(Seq(leaked.copy(dataChange = true)), ManualUpdate)
+      withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATE_EXPECTED_DATA_CHANGE_MODE.key -> "fatal") {
+        val e = intercept[DeltaIllegalStateException] {
+          log.startTransaction().commit(
+            Seq(leaked.copy(dataChange = true)), operation)
+        }
+        checkError(
+          exception = e,
+          condition = "DELTA_COMMIT_UNEXPECTED_DATA_CHANGE",
+          sqlState = "XXKDS",
+          parameters = Map(
+            "operation" -> operation.name,
+            "actionType" -> "AddFile",
+            "actualDataChange" -> "true",
+            "expectedDataChange" -> "false"))
+      }
+    }
+  }
 }

@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitStats, Commit
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
-import org.apache.spark.sql.delta.amt.AMTWriteMetrics
+import org.apache.spark.sql.delta.amt.AMTCommitStats
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{FileSizeHistogram, FileSizeHistogramUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.MDC
@@ -50,6 +51,15 @@ trait TransactionHelper extends DeltaLogging {
 
   /** The path to the Delta log directory. */
   def logPath: Path
+
+  /** The Hadoop [[Configuration]] used to access the Delta log. */
+  def newDeltaHadoopConf(): Configuration = deltaLog.newDeltaHadoopConf()
+
+  /** Canonical name of the commit log store class for commit-stats telemetry. */
+  protected def commitLogStoreClassName: String = deltaLog.store.getClass.getCanonicalName
+
+  /** Value used for the `TAG_LOG_STORE_CLASS` operation tag. */
+  protected[delta] def commitLogStoreClassNameForTag: String = deltaLog.store.getClass.getName
 
   def catalogTable: Option[CatalogTable]
   def snapshot: Snapshot
@@ -374,7 +384,8 @@ trait TransactionHelper extends DeltaLogging {
         fileSizeHistogramOpt: Option[FileSizeHistogram],
         commitInfoOpt: Option[CommitInfo],
         commitSizeBytes: Long,
-        amtWriteMetricsOpt: Option[AMTWriteMetrics] = None): Unit = {
+        amtCommitStatsOpt: Option[AMTCommitStats] = None,
+        isIdempotentRetry: Boolean = false): Unit = {
       assertStateBeforeFinalization()
 
       val doCollectCommitStats =
@@ -420,7 +431,7 @@ trait TransactionHelper extends DeltaLogging {
         removeFilesHistogram = removeFilesHistogram.map(FileSizeHistogramUtils.compress),
         numOfDomainMetadatas = numOfDomainMetadatas,
         txnId = Some(txnId),
-        amtWriteMetrics = amtWriteMetricsOpt)
+        amtCommitStats = amtCommitStatsOpt)
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
     }
 
