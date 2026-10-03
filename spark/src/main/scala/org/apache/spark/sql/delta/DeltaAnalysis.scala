@@ -119,7 +119,7 @@ class DeltaAnalysis(protected val session: SparkSession)
         deltaTable = d,
         writeOptions = a.writeOptions,
         allowSchemaEvolution = true,
-        isDfByNameInsert = false)
+        isSqlInsert = true)
       if (projection != a.query) {
         a.copy(query = projection)
       } else {
@@ -302,7 +302,9 @@ class DeltaAnalysis(protected val session: SparkSession)
         deltaTable = deltaTableV2,
         query = o.query,
         schema = tableRelation.schema,
-        writeOptions = o.writeOptions)
+        writeOptions = o.writeOptions,
+        checkNestedFieldsByOrdinal =
+          conf.getConf(DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED))
       val projectedQuery = if (needsAdjustment) {
         resolveQueryColumnsByOrdinal(
           query = o.query,
@@ -360,7 +362,7 @@ class DeltaAnalysis(protected val session: SparkSession)
         deltaTable = d,
         writeOptions = o.writeOptions,
         allowSchemaEvolution = true,
-        isDfByNameInsert = false)
+        isSqlInsert = true)
       if (projection != o.query) {
         val aliases = AttributeMap(o.query.output.zip(projection.output).collect {
           case (l: AttributeReference, r: AttributeReference) if !l.sameRef(r) => (l, r)
@@ -392,7 +394,7 @@ class DeltaAnalysis(protected val session: SparkSession)
           deltaTable = d,
           writeOptions = o.writeOptions,
           allowSchemaEvolution = true,
-          isDfByNameInsert = false)
+          isSqlInsert = true)
       } else {
         o.query
       }
