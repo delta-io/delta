@@ -80,7 +80,23 @@ object ConcurrentIdentityColumnErrors {
       "DELTA_CONCURRENT_IDENTITY_COLUMN_EMPTY_RESERVE_RANGE",
       Array(sequenceId, tableId))
 
-  /** Service-returned metadata disagrees with the schema-declared metadata. */
+  /**
+   * A column carries both a service-sequence pointer and a stock `delta.identity.highWaterMark`.
+   * The two name rival generators, so a writer must reject this state rather than fall back to
+   * high-water-mark generation for the column; SYNC IDENTITY repairs it.
+   */
+  def highWaterMarkConflict(
+      columnName: String,
+      tableId: String): ConcurrentIdentityColumnReservationException =
+    new ConcurrentIdentityColumnReservationException(
+      "DELTA_CONCURRENT_IDENTITY_COLUMN_HIGH_WATER_MARK_CONFLICT",
+      Array(columnName, tableId))
+
+  /**
+   * Service-returned metadata disagrees with the schema-declared metadata. Generalized from the
+   * old STEP_MISMATCH so the same class covers start/other metadata drift later: the `property`
+   * param names which one drifted (value "step" today).
+   */
   def metadataMismatch(
       grantedStep: Long,
       sequenceId: String,
@@ -103,6 +119,18 @@ object ConcurrentIdentityColumnErrors {
   def replaceCannotDropFeature(tableId: String): Throwable =
     DeltaErrors.operationNotSupportedException(
       "Removing concurrent identity columns with CREATE OR REPLACE TABLE",
+      TableIdentifier(tableId))
+
+  /**
+   * A column still carries a service-sequence pointer but the Concurrent Identity Columns feature
+   * is no longer supported. The orphaned "needs repair" state created by `ALTER TABLE ... UNSET
+   * MANAGED` combined with a `RESTORE` to a CIC-era version.
+   */
+  def orphanedSequencePointerRequiresSync(tableId: String): Throwable =
+    DeltaErrors.operationNotSupportedException(
+      "Writing to an identity column with an orphaned concurrent identity columns sequence " +
+        "pointer (the feature is no longer supported); run " +
+        "ALTER TABLE ... ALTER COLUMN ... SYNC IDENTITY to repair the column first",
       TableIdentifier(tableId))
 
   /**

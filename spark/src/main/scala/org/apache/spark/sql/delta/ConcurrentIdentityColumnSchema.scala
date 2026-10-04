@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
 import org.apache.spark.sql.SparkSession
@@ -98,6 +98,15 @@ object ConcurrentIdentityColumnSchema {
    */
   def stripConcurrentSequenceMetadata(metadata: Metadata): Metadata = {
     val schema = metadata.schema
+    val stripped = stripConcurrentSequenceMetadata(schema)
+    if (stripped eq schema) metadata else metadata.copy(schemaString = stripped.json)
+  }
+
+  /**
+   * Returns a copy of `schema` with the sequence ID stripped from every identity column, or
+   * `schema` itself when no column carries one.
+   */
+  def stripConcurrentSequenceMetadata(schema: StructType): StructType = {
     val stripped = schema.map { field =>
       if (!hasConcurrentSequenceMetadata(field)) {
         field
@@ -106,11 +115,7 @@ object ConcurrentIdentityColumnSchema {
       }
     }
     val anyStripped = stripped.zip(schema).exists { case (out, in) => out ne in }
-    if (!anyStripped) {
-      metadata
-    } else {
-      metadata.copy(schemaString = schema.copy(fields = stripped.toArray).json)
-    }
+    if (!anyStripped) schema else schema.copy(fields = stripped.toArray)
   }
 
   /** Returns a copy of `field` with the sequence ID removed. */
@@ -121,12 +126,14 @@ object ConcurrentIdentityColumnSchema {
       .build())
 
   /**
-   * Returns a copy of `field` with the sequence ID attached. Existing
-   * metadata is preserved, including the standard `delta.identity.*` keys.
+   * Returns a copy of `field` with the sequence ID attached. The standard `delta.identity.*`
+   * start/step/allowExplicitInsert keys are preserved, but the stock `delta.identity.highWaterMark`
+   * is removed.
    */
   def withConcurrentSequenceMetadata(field: StructField, sequenceId: String): StructField =
     field.copy(metadata = new MetadataBuilder()
       .withMetadata(field.metadata)
+      .remove(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK)
       .putString(SEQUENCE_ID, sequenceId)
       .build())
 }
