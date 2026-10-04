@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
 import org.apache.spark.sql.SparkSession
@@ -76,6 +76,14 @@ object ConcurrentIdentityColumnSchema {
   def hasConcurrentSequenceMetadata(schema: StructType): Boolean =
     schema.exists(hasConcurrentSequenceMetadata)
 
+  /**
+   * True only if `schema` still carries a per-column sequence pointer and `protocol` no longer
+   * supports [[ConcurrentIdentityColumnsTableFeature]].
+   */
+  def isOrphaned(protocol: Protocol, schema: StructType): Boolean =
+    !protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature) &&
+      hasConcurrentSequenceMetadata(schema)
+
   /** The driver-generated sequence id for this column, if present. */
   def getSequenceId(field: StructField): Option[String] =
     if (hasConcurrentSequenceMetadata(field)) Some(field.metadata.getString(SEQUENCE_ID)) else None
@@ -121,12 +129,14 @@ object ConcurrentIdentityColumnSchema {
       .build())
 
   /**
-   * Returns a copy of `field` with the sequence ID attached. Existing
-   * metadata is preserved, including the standard `delta.identity.*` keys.
+   * Returns a copy of `field` with the sequence ID attached. The standard `delta.identity.*`
+   * start/step/allowExplicitInsert keys are preserved, but the stock `delta.identity.highWaterMark`
+   * is removed.
    */
   def withConcurrentSequenceMetadata(field: StructField, sequenceId: String): StructField =
     field.copy(metadata = new MetadataBuilder()
       .withMetadata(field.metadata)
+      .remove(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK)
       .putString(SEQUENCE_ID, sequenceId)
       .build())
 }
