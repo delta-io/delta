@@ -82,8 +82,9 @@ object DeltaSourceUtils {
         case child => child
       }
       children match {
-        case Array(_: LiteralValue[_], _: NamedReference)
-            if Set("=", "<=>", ">", "<", ">=", "<=").contains(other.name()) =>
+        case Array(literal: LiteralValue[_], _: NamedReference)
+            if literal.dataType == BooleanType &&
+              Set("=", "<=>", ">", "<", ">=", "<=").contains(other.name()) =>
           val name = other.name() match {
             case ">" => "<"
             case "<" => ">"

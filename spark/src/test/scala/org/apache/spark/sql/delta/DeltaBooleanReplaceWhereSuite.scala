@@ -37,13 +37,15 @@ class DeltaBooleanReplaceWhereSuite extends QueryTest with DeltaSQLCommandTest {
     writeApi <- ReplaceWhereApi.values
     flagEnabled <- Seq(false, true)
   } {
+    // Off: SQL/V2 error and keep all rows; on: replace the true row. Option works in both states.
     test("Overwrite: boolean REPLACE WHERE b <=> true, " +
         s"$writeApi, flagEnabled=$flagEnabled") {
       withSQLConf(
           DeltaSQLConf.V2_EXPRESSION_BUILDER_PRESERVE_BOOLEAN_LITERALS_ENABLED.key ->
             flagEnabled.toString,
           DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}".replace("-", "_")
+        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}"
+          .replace("-", "_")
         withTable(table) {
           sql(s"CREATE TABLE $table (id INT, b BOOLEAN) USING delta")
           sql(s"INSERT INTO $table VALUES (1, true), (2, false), (3, NULL)")
@@ -77,13 +79,15 @@ class DeltaBooleanReplaceWhereSuite extends QueryTest with DeltaSQLCommandTest {
       }
     }
 
+    // Off: SQL/V2 error and keep all rows; on: replace the true row. Option works in both states.
     test("Overwrite: boolean REPLACE WHERE true <=> b, " +
         s"$writeApi, flagEnabled=$flagEnabled") {
       withSQLConf(
           DeltaSQLConf.V2_EXPRESSION_BUILDER_PRESERVE_BOOLEAN_LITERALS_ENABLED.key ->
             flagEnabled.toString,
           DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}".replace("-", "_")
+        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}"
+          .replace("-", "_")
         withTable(table) {
           sql(s"CREATE TABLE $table (id INT, b BOOLEAN) USING delta")
           sql(s"INSERT INTO $table VALUES (1, true), (2, false), (3, NULL)")
@@ -117,13 +121,15 @@ class DeltaBooleanReplaceWhereSuite extends QueryTest with DeltaSQLCommandTest {
       }
     }
 
+    // Off: SQL/V2 error and keep all rows; on: replace the false row. Option works in both states.
     test("Overwrite: boolean REPLACE WHERE b <=> false, " +
         s"$writeApi, flagEnabled=$flagEnabled") {
       withSQLConf(
           DeltaSQLConf.V2_EXPRESSION_BUILDER_PRESERVE_BOOLEAN_LITERALS_ENABLED.key ->
             flagEnabled.toString,
           DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}".replace("-", "_")
+        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}"
+          .replace("-", "_")
         withTable(table) {
           sql(s"CREATE TABLE $table (id INT, b BOOLEAN) USING delta")
           sql(s"INSERT INTO $table VALUES (1, true), (2, false), (3, NULL)")
@@ -157,13 +163,16 @@ class DeltaBooleanReplaceWhereSuite extends QueryTest with DeltaSQLCommandTest {
       }
     }
 
+    // Off: SQL/V2 error and keep all rows; on: replace false and null rows.
+    // Option replaces both rows in either state.
     test("Overwrite: boolean REPLACE WHERE NOT (b <=> true), " +
         s"$writeApi, flagEnabled=$flagEnabled") {
       withSQLConf(
           DeltaSQLConf.V2_EXPRESSION_BUILDER_PRESERVE_BOOLEAN_LITERALS_ENABLED.key ->
             flagEnabled.toString,
           DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}".replace("-", "_")
+        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}"
+          .replace("-", "_")
         withTable(table) {
           sql(s"CREATE TABLE $table (id INT, b BOOLEAN) USING delta")
           sql(s"INSERT INTO $table VALUES (1, true), (2, false), (3, NULL)")
@@ -197,13 +206,15 @@ class DeltaBooleanReplaceWhereSuite extends QueryTest with DeltaSQLCommandTest {
       }
     }
 
+    // Off: SQL/V2 error and keep all rows; on: replace non-null rows. Option works in both states.
     test("Overwrite: boolean REPLACE WHERE b IN (true, false), " +
         s"$writeApi, flagEnabled=$flagEnabled") {
       withSQLConf(
           DeltaSQLConf.V2_EXPRESSION_BUILDER_PRESERVE_BOOLEAN_LITERALS_ENABLED.key ->
             flagEnabled.toString,
           DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}".replace("-", "_")
+        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}"
+          .replace("-", "_")
         withTable(table) {
           sql(s"CREATE TABLE $table (id INT, b BOOLEAN) USING delta")
           sql(s"INSERT INTO $table VALUES (1, true), (2, false), (3, NULL)")
@@ -237,13 +248,15 @@ class DeltaBooleanReplaceWhereSuite extends QueryTest with DeltaSQLCommandTest {
       }
     }
 
+    // Off: SQL/V2 keep the true row; on: replace it. Option replaces it in both states.
     test("Overwrite: boolean REPLACE WHERE b <=> true OR id = 4, " +
         s"$writeApi, flagEnabled=$flagEnabled") {
       withSQLConf(
           DeltaSQLConf.V2_EXPRESSION_BUILDER_PRESERVE_BOOLEAN_LITERALS_ENABLED.key ->
             flagEnabled.toString,
           DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}".replace("-", "_")
+        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}"
+          .replace("-", "_")
         withTable(table) {
           sql(s"CREATE TABLE $table (id INT, b BOOLEAN) USING delta")
           sql(s"INSERT INTO $table VALUES (1, true), (2, false), (3, NULL)")
@@ -275,13 +288,15 @@ class DeltaBooleanReplaceWhereSuite extends QueryTest with DeltaSQLCommandTest {
       }
     }
 
+    // Off/on: all three APIs replace all rows for a constant true predicate.
     test("Overwrite: boolean REPLACE WHERE true, " +
         s"$writeApi, flagEnabled=$flagEnabled") {
       withSQLConf(
           DeltaSQLConf.V2_EXPRESSION_BUILDER_PRESERVE_BOOLEAN_LITERALS_ENABLED.key ->
             flagEnabled.toString,
           DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}".replace("-", "_")
+        val table = s"$SESSION_CATALOG_NAME.default.rw_${UUID.randomUUID()}"
+          .replace("-", "_")
         withTable(table) {
           sql(s"CREATE TABLE $table (id INT, b BOOLEAN) USING delta")
           sql(s"INSERT INTO $table VALUES (1, true), (2, false), (3, NULL)")
