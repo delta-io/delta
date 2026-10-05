@@ -2560,12 +2560,13 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           | The default of 500 is based on retained-heap measurements through this footer-read
           | path. A representative deeply nested schema with 4 KiB AddFile stats retained about
           | 150 KiB per file. Adding conservative allowances of 64 KiB for per-file-unique footer
-          | metadata and 66 KiB for per-file-unique stats gives a 280 KiB per-file envelope, or
-          | about 137 MiB per task at the default. The 150 KiB measurement already includes 4 KiB
-          | stats; not subtracting that overlap from the 66 KiB term is deliberately conservative.
-          | Four concurrent tasks would retain about 547 MiB for these batch-local graphs. At
-          | 5,000 files, the same envelope would be about 1.34 GiB per task. These estimates exclude
-          | the partition input, collision set, executor baseline and filesystem buffers.
+          | metadata and 66 KiB for per-file-unique stats gives a 280 KiB per-file envelope. At the
+          | default, this is about 137 MiB of batch-local retained heap per task. The 150 KiB
+          | measurement already includes 4 KiB stats; not subtracting that overlap from the
+          | 66 KiB term is deliberately conservative.
+          | Executor-level retention scales with the number of concurrent REORG tasks. These
+          | estimates exclude the partition input, collision set, executor baseline and filesystem
+          | buffers.
           |""".stripMargin)
       .intConf
       .checkValue(_ >= 0, "'reorg.footerScan.batchSize' must be >= 0 (0 disables batching).")
