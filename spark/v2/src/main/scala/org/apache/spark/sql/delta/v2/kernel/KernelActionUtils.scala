@@ -52,7 +52,7 @@ import io.delta.kernel.internal.data.{StructRow => KernelStructRow}
 import io.delta.kernel.internal.util.{VectorUtils => KernelVectorUtils}
 
 /**
- * Bridges Kernel's actions to V1 Delta actions.
+ * Bridges Kernel and V1 Delta actions.
  */
 private[v2] object KernelActionUtils {
 
@@ -135,10 +135,42 @@ private[v2] object KernelActionUtils {
       size = addFile.getSize,
       modificationTime = addFile.getModificationTime,
       dataChange = addFile.getDataChange,
+      stats = addFile.getStatsJson.toScala.orNull,
       tags = tagsFromKernel(addFile.getTags),
       deletionVector = deletionVectorFromKernel(addFile.getDeletionVector),
       baseRowId = addFile.getBaseRowId.toScala.map(_.longValue()),
       defaultRowCommitVersion = addFile.getDefaultRowCommitVersion.toScala.map(_.longValue()))
+  }
+
+  /**
+   * Converts the fields represented by Kernel's scan AddFile schema from a V1 [[AddFile]].
+   * Fields absent from Kernel's schema are intentionally dropped.
+   */
+  def toKernelScanAddFile(addFile: AddFile): KernelAddFile = {
+    val deletionVector = Option(addFile.deletionVector).map { dv =>
+      new KernelDeletionVectorDescriptor(
+        dv.storageType,
+        dv.pathOrInlineDv,
+        dv.offset.map(Int.box).toJava,
+        dv.sizeInBytes,
+        dv.cardinality)
+    }
+
+    val row = KernelAddFile.createAddFileRowWithStatsJson(
+      addFile.path,
+      KernelVectorUtils.stringStringMapValue(addFile.partitionValues.asJava),
+      addFile.size,
+      addFile.modificationTime,
+      addFile.dataChange,
+      deletionVector.toJava,
+      Option(addFile.tags)
+        .map(tags => KernelVectorUtils.stringStringMapValue(tags.asJava))
+        .toJava,
+      addFile.baseRowId.map(Long.box).toJava,
+      addFile.defaultRowCommitVersion.map(Long.box).toJava,
+      Option(addFile.stats).toJava)
+
+    new KernelAddFile(row)
   }
 
   /**
