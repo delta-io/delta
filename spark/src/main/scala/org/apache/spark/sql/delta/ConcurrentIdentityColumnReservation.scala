@@ -218,10 +218,14 @@ class IdentityColumnReservation(
       // must not leave the first column half-registered).
       val columnsToReserve = IdentityColumn.getIdentityColumns(snapshot.metadata.schema)
         .map { col =>
-          val sequenceId = ConcurrentIdentityColumnSchema.getSequenceId(col).getOrElse {
+          val identityInfo = IdentityColumn.getIdentityInfo(col)
+          val sequenceId = ConcurrentIdentityColumnSchema.getSequenceId(col)
+          // A service-backed column must not also carry a stock high-water mark: the two name
+          // rival generators. Reject rather than risk generating from the wrong backend.
+          if (identityInfo.highWaterMark.isDefined || sequenceId.isEmpty) {
             throw ConcurrentIdentityColumnErrors.conversionIncomplete(col.name, metadataId)
           }
-          (col, IdentityColumn.getIdentityInfo(col), sequenceId)
+          (col, identityInfo, sequenceId)
         }
       // No up-front reserve: record only the sequence scope the reserve-more generator needs,
       // plus a degenerate slot (range end unused on the reserve-more path). Each executor
@@ -230,7 +234,7 @@ class IdentityColumnReservation(
         val slot =
           NumericRange.inclusive(identityInfo.start, identityInfo.start, identityInfo.step)
         newSlots(col.name) = slot
-        newSequenceIds(col.name) = sequenceId
+        newSequenceIds(col.name) = sequenceId.get
       }
       _reservedSlots = newSlots.toMap
       _reservedSequenceIds = newSequenceIds.toMap

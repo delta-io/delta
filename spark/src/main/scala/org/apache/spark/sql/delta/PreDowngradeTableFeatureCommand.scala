@@ -914,7 +914,7 @@ case class ConcurrentIdentityColumnsPreDowngradeCommand(table: DeltaTableV2)
     // The service's table scope; also the id every CIC event reports, never `metadata.id`.
     val serviceTableId = ConcurrentIdentityColumnSchema.sequenceServiceTableId(metadata)
     // Sequences the downgrade no longer references; retired from the service after the commit
-    // (see below) so a failed commit only orphans them rather than dropping a live table's id.
+    // (see below) so a failed commit only orphans them rather than dropping an in-use id.
     // Left empty under `withoutService`, which never touches the service.
     val droppedSequenceIds = ArrayBuffer.empty[String]
     val downgraded = metadata.schema.map { field =>
@@ -973,7 +973,7 @@ case class ConcurrentIdentityColumnsPreDowngradeCommand(table: DeltaTableV2)
       DeltaOperations.UpdateColumnMetadata("DROP FEATURE", changes.toSeq))
     // Post-commit: retire the now-unreferenced service sequences. Best-effort and idempotent --
     // dropping after the commit means a drop failure only leaves a harmless orphan (the table no
-    // longer references it), never a live table pointing at a dropped sequence.
+    // longer references it), never a table still pointing at a dropped sequence.
     if (droppedSequenceIds.nonEmpty) {
       val service = IdentitySequenceServices.resolve(spark)
       droppedSequenceIds.foreach { sequenceId =>
