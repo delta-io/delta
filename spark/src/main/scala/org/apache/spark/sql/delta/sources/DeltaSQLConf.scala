@@ -1987,6 +1987,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val REPLACE_WHERE_V2_PREDICATE_CONVERSION_ENABLED =
+    buildConf("replaceWhere.v2PredicateConversion.enabled")
+      .internal()
+      .doc("When enabled, conditional overwrites require complete V2-to-V1 predicate conversion " +
+        "and reject predicates containing unsupported expressions. When disabled, retain the " +
+        "legacy conversion, which can drop unsupported OR branches.")
+      .booleanConf
+      .createWithDefault(false)
+
   val REPLACEWHERE_DATACOLUMNS_ENABLED =
     buildConf("replaceWhere.dataColumns.enabled")
       .doc(
