@@ -25,13 +25,13 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.delta.kernel.Operation;
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
+import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.io.File;
@@ -44,7 +44,9 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.shims.VariantShreddingShims;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -65,7 +67,7 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     Engine engine = DefaultEngine.create(hadoopConf);
     createKernelTable(path, tableSchema, engine);
-    Snapshot snapshot = TableManager.loadSnapshot(path).build(engine);
+    Snapshot snapshot = new PathBasedSnapshotManager(path, engine).loadLatestSnapshot();
 
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
@@ -100,7 +102,7 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     Engine engine = DefaultEngine.create(hadoopConf);
     createKernelTable(path, tableSchema, engine);
-    Snapshot snapshot = TableManager.loadSnapshot(path).build(engine);
+    Snapshot snapshot = new PathBasedSnapshotManager(path, engine).loadLatestSnapshot();
 
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
@@ -117,7 +119,8 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
     // turned into the executor-side factory. A real factory with a serialized txn state proves the
     // shared setup produced usable state.
     Transaction txn =
-        snapshot
+        DeltaV2Snapshot$.MODULE$
+            .getKernelSnapshot(snapshot)
             .buildUpdateTableTransaction(DeltaV2WriteContext.getEngineInfo(), Operation.WRITE)
             .build(engine);
     DeltaV2DataWriterFactory factory = context.buildDataWriterFactory(txn);
@@ -141,7 +144,7 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     Engine engine = DefaultEngine.create(hadoopConf);
-    Snapshot snapshot = TableManager.loadSnapshot(path).build(engine);
+    Snapshot snapshot = new PathBasedSnapshotManager(path, engine).loadLatestSnapshot();
 
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
@@ -177,7 +180,7 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     Engine engine = DefaultEngine.create(hadoopConf);
-    Snapshot snapshot = TableManager.loadSnapshot(path).build(engine);
+    Snapshot snapshot = new PathBasedSnapshotManager(path, engine).loadLatestSnapshot();
 
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
@@ -191,7 +194,8 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
             /* variantShreddingEnabled */ false);
 
     Transaction txn =
-        snapshot
+        DeltaV2Snapshot$.MODULE$
+            .getKernelSnapshot(snapshot)
             .buildUpdateTableTransaction(DeltaV2WriteContext.getEngineInfo(), Operation.WRITE)
             .build(engine);
     assertNotNull(context.buildDataWriterFactory(txn));
@@ -289,7 +293,7 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     Engine engine = DefaultEngine.create(hadoopConf);
     createKernelTable(path, schema, engine);
-    Snapshot snapshot = TableManager.loadSnapshot(path).build(engine);
+    Snapshot snapshot = new PathBasedSnapshotManager(path, engine).loadLatestSnapshot();
     return DeltaV2WriteContext.create(
         engine,
         hadoopConf,

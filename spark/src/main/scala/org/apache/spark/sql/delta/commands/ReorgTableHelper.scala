@@ -120,7 +120,9 @@ trait ReorgTableHelper extends Serializable {
     import org.apache.spark.sql.delta.implicits._
 
     files.toDF(spark).as[AddFile].mapPartitions { iter =>
-      val sqlConf = SparkSession.active.sessionState.conf
+      // Runs on executors, where no SparkSession is active; SQLConf.get returns the task's
+      // read-only conf propagated from the driver.
+      val sqlConf = SQLConf.get
       // A positive batch size limits the decoded AddFiles, candidate-file map and Parquet footers
       // materialized for the current batch. The input UnsafeRows and the partition-wide collision
       // set remain retained for the task. A zero batch size restores whole-partition

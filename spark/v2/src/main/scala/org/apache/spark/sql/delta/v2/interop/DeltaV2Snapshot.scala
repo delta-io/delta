@@ -143,8 +143,9 @@ class DeltaV2Snapshot(
   /**
    * Table size in bytes from CRC when present; None otherwise.
    */
-  override protected[delta] def sizeInBytesIfKnown: Option[Long] =
+  override protected[delta] def sizeInBytesIfKnown: Option[Long] = {
     kernelSnapshot.getCurrentCrcInfo.toScala.map(_.getTableSizeBytes)
+  }
 
   // No V1 commit-file index; not used by the Kernel scan path.
   override protected[delta] lazy val deltaFileIndexOpt: Option[DeltaLogFileIndex] = unimplemented

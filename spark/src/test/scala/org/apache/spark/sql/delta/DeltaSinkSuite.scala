@@ -554,14 +554,18 @@ class DeltaSinkSuite
   /** Whether any data file in `target`'s current snapshot stores variant column `v` shredded. */
   private def targetHasShreddedVariant(target: String): Boolean = {
     val deltaLog = deltaLogForTarget(target)
-    val files = deltaLog.update().allFiles.collect().map(_.absolutePath(deltaLog).toString)
+    val snapshot = deltaLog.update()
+    // Parquet footers carry physical column names, which differ from `v` under column mapping.
+    val physicalName = DeltaColumnMapping.getPhysicalName(snapshot.schema("v"))
+    val files = snapshot.allFiles.collect().map(_.absolutePath(deltaLog).toString)
     assert(files.nonEmpty, s"expected at least one data file in $target")
     files.exists { file =>
       val reader =
         ParquetFileReader.open(deltaLog.newDeltaHadoopConf(), new org.apache.hadoop.fs.Path(file))
       try {
         val schema = reader.getFooter.getFileMetaData.getSchema
-        schema.getType(schema.getFieldIndex("v")).asGroupType().containsField("typed_value")
+        schema.getType(schema.getFieldIndex(physicalName)).asGroupType()
+          .containsField("typed_value")
       } finally {
         reader.close()
       }

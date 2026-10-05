@@ -31,7 +31,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.logging.log4j.Level
 import org.apache.parquet.hadoop.Footer
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.SerializableConfiguration
@@ -106,6 +106,30 @@ class DeltaReorgSuite extends QueryTest
       executePurge(path)
       val versionAfter = log.update().version
       assert(versionBefore === versionAfter)
+    }
+  }
+
+  test("Purge DVs when tasks cannot see a SparkSession") {
+    // On a cluster, executors have no active or default SparkSession. In local mode the tasks
+    // fall back to the JVM-wide default session, so clear it to reproduce executor behavior.
+    val targetDf = spark.range(0, 100, 1, numPartitions = 5).toDF()
+    withTempDeltaTable(targetDf) { (_, log) =>
+      val path = log.dataPath.toString
+      sql(s"DELETE FROM delta.`$path` WHERE id IN (0, 99)")
+
+      val defaultSession = SparkSession.getDefaultSession
+      SparkSession.clearDefaultSession()
+      try {
+        executePurge(path)
+      } finally {
+        defaultSession.foreach(SparkSession.setDefaultSession)
+      }
+      val (addFiles, _) = getFileActionsInLastVersion(log)
+      assert(addFiles.nonEmpty)
+      assert(addFiles.forall(_.deletionVector === null))
+      checkAnswer(
+        sql(s"SELECT * FROM delta.`$path`"),
+        (1 to 98).toDF())
     }
   }
 

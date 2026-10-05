@@ -65,6 +65,7 @@ class AMTIncrementalWriteSpillSuite extends AMTIncrementalWriteTestBase {
         //   3(fixed) + 0(spilled) + 12(remaining) = 15 > 8 -> spill a batch of 8 (remaining = 4)
         //   3(fixed) + 1(spilled) +  4(remaining) =  8 == 8 -> stop.
         // => 1 new leaf, and the 4 leftover adds stay root-resident.
+        val appendVersion = amtDeltaLog.update().version + 1
         commitBoth(baselineDeltaLog, amtDeltaLog, (25 to 36).map(fakeAdd))
         createIncrementalAMTAndValidate(
           baselineDeltaLog,
@@ -75,6 +76,11 @@ class AMTIncrementalWriteSpillSuite extends AMTIncrementalWriteTestBase {
             numRootEntriesExistingStatus = 4,
             numLeavesExistingStatus = 3,
             numLeavesAddedStatus = 1))
+        val newLeaves = amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT"))
+          .leaves.filter(_.tracking.status == Tracking.Status.Added)
+        assert(newLeaves.size == 1, s"Expected one newly spilled leaf; found ${newLeaves.size}.")
+        assert(newLeaves.head.manifest_info.min_sequence_number == appendVersion,
+          s"The new leaf must use append sequence $appendVersion; got ${newLeaves.head}.")
       }
     }
   }
@@ -114,6 +120,7 @@ class AMTIncrementalWriteSpillSuite extends AMTIncrementalWriteTestBase {
         //   3 + 2 + 14 = 19 > 8 -> spill 8 (remaining  6)
         //   3 + 3 +  6 = 12 > 8 -> spill 6 (remaining  0)
         // => 4 new leaves, 0 root-resident adds.
+        val appendVersion = amtDeltaLog.update().version + 1
         commitBoth(baselineDeltaLog, amtDeltaLog, (25 to 54).map(fakeAdd))
         createIncrementalAMTAndValidate(
           baselineDeltaLog,
@@ -138,6 +145,9 @@ class AMTIncrementalWriteSpillSuite extends AMTIncrementalWriteTestBase {
             .values.sum
           assert(entries <= 8,
             s"Spilled leaf ${leaf.location} holds $entries entries, over the cap of 8.")
+          assert(leaf.manifest_info.min_sequence_number == appendVersion,
+            s"Spilled leaf ${leaf.location} must use append sequence $appendVersion; got " +
+              s"${leaf.manifest_info.min_sequence_number}.")
         }
       }
     }
