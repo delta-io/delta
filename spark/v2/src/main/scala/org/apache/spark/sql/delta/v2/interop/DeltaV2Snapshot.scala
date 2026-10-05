@@ -28,6 +28,8 @@ import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Pr
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, FileSizeHistogram, StatisticsCollection}
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
+import org.apache.spark.sql.delta.RowId
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import com.databricks.spark.util.TagDefinition
 import org.apache.hadoop.fs.Path
@@ -131,6 +133,12 @@ class DeltaV2Snapshot(
 
   override lazy val protocol: Protocol =
     KernelActionUtils.protocolFromKernel(kernelSnapshot.getProtocol)
+
+  override def getRowTrackingHighWaterMark(): Option[Long] = {
+    kernelSnapshot.getDomainMetadata("delta.rowTracking").toScala.map { configuration =>
+      JsonUtils.fromJson[RowId.RowTrackingMetadataDomain](configuration).rowIdHighWaterMark
+    }
+  }
 
   override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
 
