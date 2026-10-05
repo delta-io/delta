@@ -364,7 +364,7 @@ object IcebergTransactionUtils
     /**
      * Sets `TableMetadata.lastSequenceNumber` without adding an Iceberg snapshot. This is used when
      * a metadata-only Delta commit must advance the corresponding Iceberg sequence boundary.
-     * Iceberg does not expose a public mutator, so Delta updates the field reflectively.
+     * Iceberg does not expose a public mutator, so the field is updated reflectively.
      *
      * @param metadata metadata instance to update
      * @param sequenceNumber new last sequence number
