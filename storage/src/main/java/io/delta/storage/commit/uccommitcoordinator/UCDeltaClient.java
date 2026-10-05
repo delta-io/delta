@@ -103,4 +103,64 @@ public interface UCDeltaClient extends UCClient {
       String tableId,
       TableIdentifier tableIdentifier,
       CommitReport report) throws IOException;
+
+  /**
+   * Registers (create-or-get) the identity sequence {@code sequenceId} under
+   * {@code tableIdentifier}. Idempotent on a matching {@code (start, step)}; a mismatch is a
+   * conflict (the sequence already exists with different immutable parameters). {@code step} must
+   * be non-zero. Returns nothing: the caller already holds {@code start}/{@code step} and stamps
+   * them into the schema metadata.
+   */
+  default void createIdentitySequence(
+      TableIdentifier tableIdentifier, String sequenceId, long start, long step) {
+    throw new UnsupportedOperationException(
+        "createIdentitySequence is not supported by " + getClass().getName());
+  }
+
+  /**
+   * Reserves a range of {@code count} identity values from the sequence {@code sequenceId} under
+   * {@code tableIdentifier}, advancing the sequence. {@code count} must be positive; {@code step}
+   * is the step the caller expects and is echoed back on the range for a drift check. The returned
+   * range is inclusive and follows the sign of {@code step} (descending for a negative step).
+   */
+  default IdentitySequenceRange reserveIdentityIds(
+      TableIdentifier tableIdentifier, String sequenceId, long count, long step) {
+    throw new UnsupportedOperationException(
+        "reserveIdentityIds is not supported by " + getClass().getName());
+  }
+
+  /**
+   * Drops (retires) the identity sequence {@code sequenceId} under {@code tableIdentifier}.
+   * Idempotent: dropping an unknown or already-retired sequence is a no-op.
+   */
+  default void dropIdentitySequence(TableIdentifier tableIdentifier, String sequenceId) {
+    throw new UnsupportedOperationException(
+        "dropIdentitySequence is not supported by " + getClass().getName());
+  }
+
+  /** An inclusive range of identity values reserved from a sequence. */
+  class IdentitySequenceRange {
+    private final String sequenceId;
+    private final long rangeStart;
+    private final long rangeEnd;
+    private final long step;
+
+    public IdentitySequenceRange(String sequenceId, long rangeStart, long rangeEnd, long step) {
+      this.sequenceId = sequenceId;
+      this.rangeStart = rangeStart;
+      this.rangeEnd = rangeEnd;
+      this.step = step;
+    }
+
+    public String getSequenceId() { return sequenceId; }
+
+    /** First value in the reserved range (inclusive). */
+    public long getRangeStart() { return rangeStart; }
+
+    /** Last value in the reserved range (inclusive); less than {@code rangeStart} if step < 0. */
+    public long getRangeEnd() { return rangeEnd; }
+
+    /** The sequence's stored step, echoed by the service. */
+    public long getStep() { return step; }
+  }
 }
