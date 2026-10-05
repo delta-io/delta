@@ -16,8 +16,6 @@
 
 package io.delta.spark.internal.v2.read
 
-import scala.jdk.CollectionConverters._
-
 import org.apache.spark.sql.delta.DeltaTableProvider
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -105,7 +103,7 @@ private[read] trait DeltaV2ScanE2ETestUtils
       query: => DataFrame,
       context: String): Seq[Boolean] = {
     withDeltaV2ScanForSelectedFiles(query, context) { scan =>
-      scan.getSelectedFiles.asScala.map(_.getDeletionVector.isPresent).toSeq
+      scan.preparedScan().files.map(_.deletionVector != null)
     }
   }
 
