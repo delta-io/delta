@@ -307,6 +307,7 @@ class DeltaReorgSuite extends QueryTest
           loggerNames = Seq(footerLogger),
           level = Some(Level.INFO)) {
         select(batchSize = 3, parallelism = 3)
+        select(batchSize = 0, parallelism = 7)
       }
       val messages = footerLogs.loggingEvents.map(_.getMessage.getFormattedMessage)
       val details = messages.mkString(" | ")
@@ -318,6 +319,12 @@ class DeltaReorgSuite extends QueryTest
       assert(observedBatchSizes === expectedBatchSizes,
         s"footer reader observed batches $observedBatchSizes instead of $expectedBatchSizes " +
           s"at parallelism=3 in $details")
+      val observedUnbatchedSizes = messages.collect {
+        case readLog(size, "7") => size.toInt
+      }
+      assert(observedUnbatchedSizes === Seq(files.size),
+        s"footer reader observed unbatched calls $observedUnbatchedSizes instead of " +
+          s"${Seq(files.size)} at parallelism=7 in $details")
     }
   }
 
