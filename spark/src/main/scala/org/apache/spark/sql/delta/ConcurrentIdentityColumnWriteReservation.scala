@@ -43,23 +43,34 @@ object ConcurrentIdentityColumnWriteReservation {
       metadata: Metadata,
       protocol: Protocol,
       data: DataFrame): Option[IdentityColumnReservation] = {
+    val hasSequencePointer =
+      ConcurrentIdentityColumnSchema.hasConcurrentSequenceMetadata(metadata.schema)
+    val featureSupported = protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature)
+
+    if (!featureSupported && !hasSequencePointer) return None
+
     // Kill switch: when CIC is disabled, a write to a table that still carries CIC sequence
     // pointers must fail loud rather than fall through to the legacy high-water-mark generator
     if (!spark.conf.get(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED) &&
-        metadata.schema.exists(ConcurrentIdentityColumnSchema.hasConcurrentSequenceMetadata)) {
+        hasSequencePointer) {
       throw ConcurrentIdentityColumnErrors.concurrentIdentityColumnsDisabled(
         operation = "write to", tableId = metadata.id)
     }
-    // Feature gate: the selective routing check, so a non-CIC write (the overwhelming common
-    // case) returns here without the per-column work below.
-    if (!protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature)) return None
 
     val identityColumns =
       metadata.schema.filter(ColumnWithDefaultExprUtils.isIdentityColumn)
-    if (identityColumns.isEmpty) return None
-
     val columnsByName = CaseInsensitiveMap(data.schema.map(f => f.name -> f).toMap)
     val needsGeneration = identityColumns.filterNot(f => columnsByName.contains(f.name))
+
+    // The feature was removed but a per-column sequence pointer remains.
+    if (ConcurrentIdentityColumnSchema.isOrphaned(protocol, metadata.schema)) {
+      if (needsGeneration.nonEmpty) {
+        throw ConcurrentIdentityColumnErrors.orphanedSequencePointerRequiresSync(metadata.id)
+      }
+      return None
+    }
+
+    // The feature is supported. Reserve only when the write needs new identity values.
     if (needsGeneration.isEmpty) return None
 
     // Cheap sizing hint only: a planning-time row-count estimate (present for sources that carry
