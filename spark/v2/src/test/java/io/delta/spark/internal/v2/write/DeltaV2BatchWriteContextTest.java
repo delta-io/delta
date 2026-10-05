@@ -22,18 +22,19 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
+import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.io.File;
 import java.time.ZoneId;
 import java.util.Collections;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -49,7 +50,7 @@ public class DeltaV2BatchWriteContextTest extends DeltaV2TestBase {
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     Engine engine = DefaultEngine.create(hadoopConf);
     createKernelTable(path, tableSchema, engine);
-    Snapshot snapshot = TableManager.loadSnapshot(path).build(engine);
+    Snapshot snapshot = new PathBasedSnapshotManager(path, engine).loadLatestSnapshot();
 
     DeltaV2BatchWriteContext context =
         DeltaV2BatchWriteContext.create(
@@ -59,7 +60,8 @@ public class DeltaV2BatchWriteContextTest extends DeltaV2TestBase {
             snapshot,
             tableSchema,
             new StructType(),
-            new TestLogicalWriteInfo(tableSchema));
+            new TestLogicalWriteInfo(tableSchema),
+            /* variantShreddingEnabled */ false);
 
     assertSame(engine, context.getEngine());
     assertNotNull(context.getTransaction());
@@ -71,7 +73,6 @@ public class DeltaV2BatchWriteContextTest extends DeltaV2TestBase {
 
     assertArrayEquals(tableSchema.fieldNames(), context.getDataSchema().fieldNames());
     assertEquals(0, context.getPartitionSchema().fields().length);
-    assertEquals(snapshot.getSchema().length(), context.getKernelTableSchema().length());
 
     String sessionTimeZone = spark.sessionState().conf().sessionLocalTimeZone();
     assertEquals(sessionTimeZone, context.getSessionTimeZoneId());

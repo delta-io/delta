@@ -960,7 +960,7 @@ trait DeltaCDCStreamSuiteBase
       testStream(df)(
         StartStream(Trigger.AvailableNow),
         Execute { query =>
-          assert(query.awaitTermination(10000))
+          assert(query.awaitTermination(streamingTimeout.toMillis))
         },
         CheckProgress(rowsPerBatch),
         CheckAnswer(

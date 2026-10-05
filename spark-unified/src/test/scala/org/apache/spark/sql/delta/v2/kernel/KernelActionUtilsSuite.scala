@@ -20,7 +20,7 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata}
 import io.delta.kernel.{CommitActions => KernelCommitActions}
 import io.delta.kernel.data.{ColumnarBatch => KernelColumnarBatch}
 import io.delta.kernel.data.{ColumnVector => KernelColumnVector}
@@ -32,6 +32,7 @@ import io.delta.kernel.internal.actions.{CommitInfo => KernelCommitInfo}
 import io.delta.kernel.internal.actions.{
   DeletionVectorDescriptor => KernelDeletionVectorDescriptor
 }
+import io.delta.kernel.internal.actions.{DomainMetadata => KernelDomainMetadata}
 import io.delta.kernel.internal.actions.{Format => KernelFormat}
 import io.delta.kernel.internal.actions.{Metadata => KernelMetadata}
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
@@ -407,17 +408,32 @@ class KernelActionUtilsSuite extends SparkFunSuite {
     assert(adds.head.defaultRowCommitVersion === Some(7L))
   }
 
+  test("readActions decodes domain metadata and its removal flag") {
+    val configuration = """{"rowIdHighWaterMark":7}"""
+    val kernelActions = Seq(
+      new KernelDomainMetadata("delta.rowTracking", configuration, false),
+      new KernelDomainMetadata("test.userDomain", "{}", true))
+    val domainColumn = new GenericColumnVector(
+      kernelActions.map(_.toRow()).asJava,
+      KernelDomainMetadata.FULL_SCHEMA)
+
+    val actions = KernelActionUtils.readActions(
+      singleColumnCommitActions(KernelDeltaAction.DOMAINMETADATA.colName, domainColumn))
+
+    assert(actions === Seq(
+      DomainMetadata("delta.rowTracking", configuration, removed = false),
+      DomainMetadata("test.userDomain", "{}", removed = true)))
+  }
+
   test("readActions fails loud on an action type with no decoder (hand-built commit batch)") {
     val presentColumn = new GenericColumnVector(
       java.util.Collections.singletonList("present"), StringType.STRING)
-    Seq(KernelDeltaAction.DOMAINMETADATA, KernelDeltaAction.CDC)
-      .foreach { action =>
-        val e = intercept[UnsupportedOperationException] {
-          KernelActionUtils.readActions(singleColumnCommitActions(action.colName, presentColumn))
-        }
-        assert(e.getMessage.contains("No V1 action from Kernel decoder"))
-        assert(e.getMessage.contains(action.colName))
-      }
+    val action = KernelDeltaAction.CDC
+    val e = intercept[UnsupportedOperationException] {
+      KernelActionUtils.readActions(singleColumnCommitActions(action.colName, presentColumn))
+    }
+    assert(e.getMessage.contains("No V1 action from Kernel decoder"))
+    assert(e.getMessage.contains(action.colName))
   }
 
 }

@@ -610,7 +610,7 @@ class AMTConflictResolutionSuite
         rounds,
         expectedLosingCommitType = FULL_CHECKPOINT,
         expectedLosingTreeType = Some(FULL_TREE),
-        expectedTreeOutcome = REGENERATE_VIA_TXN_RETRY,
+        expectedTreeOutcome = RETRY_VIA_NEW_TXN,
         expectedWinnerTreeSatisfiesRequirement = Some(false),
         expectedException = Some(classOf[FullAMTWriteFailedWithConflict]),
         numIncrementalCheckpointWinners = 1)
@@ -723,7 +723,7 @@ class AMTConflictResolutionSuite
         rounds,
         expectedLosingCommitType = FULL_CHECKPOINT,
         expectedLosingTreeType = Some(FULL_TREE),
-        expectedTreeOutcome = REGENERATE_VIA_TXN_RETRY,
+        expectedTreeOutcome = RETRY_VIA_NEW_TXN,
         expectedWinnerTreeSatisfiesRequirement = None,
         expectedException = Some(classOf[FullAMTWriteFailedWithConflict]),
         numLogOnlyWinners = 1,
@@ -846,14 +846,16 @@ class AMTConflictResolutionSuite
     runTwoTreeRoundsReuseRegenerate(loserInlinesTree = true)
   }
   // A losing OPTIMIZE checkpoint -- full or incremental -- whose winner rewrote a pre-base file
-  // (non-base-preserving) cannot reuse its base: it signals FullAMTWriteFailedWithConflict, and
-  // deltaLog.checkpoint must refresh (deltaLog.update()) and retry, regenerating the AMT against
-  // the post-winner snapshot rather than swallowing it or surfacing an error. The regenerated tree
-  // keeps its full/incremental characteristic.
+  // (non-base-preserving) cannot reuse its base, so it rebuilds the tree rather than swallowing the
+  // conflict or surfacing an error. A losing incremental checkpoint recreates itself in the same
+  // transaction (its base is unchanged and its fold window is small). A losing full checkpoint
+  // signals FullAMTWriteFailedWithConflict, and deltaLog.checkpoint refreshes (deltaLog.update())
+  // and retries, regenerating the full AMT against the post-winner snapshot. Either way the rebuilt
+  // tree keeps its full/incremental characteristic.
   for ((label, triggerMode, regeneratedTreeIsIncremental) <- Seq(
       ("full", AMTTriggerMode.CheckpointIntervalFull, false),
       ("incremental", AMTTriggerMode.CheckpointIntervalIncremental, true))) {
-    test(s"deltaLog.checkpoint regenerates a $label checkpoint that lost to a " +
+    test(s"deltaLog.checkpoint rebuilds a $label checkpoint that lost to a " +
         "non-base-preserving winner") {
       withTable(s"amt_ckpt_hook_regenerates_$label") {
         val name = s"amt_ckpt_hook_regenerates_$label"
@@ -875,22 +877,29 @@ class AMTConflictResolutionSuite
             if (regeneratedTreeIsIncremental) INCREMENTAL_CHECKPOINT else FULL_CHECKPOINT,
           expectedLosingTreeType =
             Some(if (regeneratedTreeIsIncremental) INCREMENTAL_TREE else FULL_TREE),
-          expectedTreeOutcome = REGENERATE_VIA_TXN_RETRY,
+          // The incremental loser rebuilds its tree in-transaction
+          // (REBUILT_OPTIMIZE_CHECKPOINT_INCREMENTAL_TREE, no exception); the full loser signals a
+          // regenerate for deltaLog.checkpoint to retry.
+          expectedTreeOutcome =
+            if (regeneratedTreeIsIncremental) REBUILT_OPTIMIZE_CHECKPOINT_INCREMENTAL_TREE
+            else RETRY_VIA_NEW_TXN,
           expectedWinnerTreeSatisfiesRequirement = None,
-          expectedException = Some(classOf[FullAMTWriteFailedWithConflict]),
+          expectedException =
+            if (regeneratedTreeIsIncremental) None
+            else Some(classOf[FullAMTWriteFailedWithConflict]),
           numLogOnlyWinners = 1,
           allLogWinnersPreserveLosingTree = Some(false))
 
-        // The retry committed a fresh checkpoint past the winner (not a silent no-op), the delete
+        // The rebuild committed a fresh checkpoint past the winner (not a silent no-op), the delete
         // survived, and the table stays AMT-backed.
         val latest = deltaLog.update()
         assert(latest.version > versionBeforeRetry,
-          s"the retry must commit a new checkpoint past the winner; before=$versionBeforeRetry " +
+          s"the rebuild must commit a new checkpoint past the winner; before=$versionBeforeRetry " +
             s"after=${latest.version}")
         val checkpoint = checkpointAt(deltaLog, latest.version).getOrElse(
-          fail("the retried checkpoint must carry an AMT checkpoint at its version."))
+          fail("the rebuilt checkpoint must carry an AMT checkpoint at its version."))
         assert(checkpoint.contentRoot.isIncremental.contains(regeneratedTreeIsIncremental),
-          s"the regenerated checkpoint must be a fresh $label tree.")
+          s"the rebuilt checkpoint must be a fresh $label tree.")
         val liveIdsAfter = spark.sql(s"SELECT id FROM $name").collect().map(_.getInt(0)).toSet
         assert(!liveIdsAfter.contains(1) && liveIdsAfter.contains(2) && liveIdsAfter.contains(3),
           s"the delete of id=1 must survive the regenerated checkpoint; after=$liveIdsAfter")
@@ -965,7 +974,7 @@ class AMTConflictResolutionSuite
         rounds,
         expectedLosingCommitType = FULL_CHECKPOINT,
         expectedLosingTreeType = Some(FULL_TREE),
-        expectedTreeOutcome = REGENERATE_VIA_TXN_RETRY,
+        expectedTreeOutcome = RETRY_VIA_NEW_TXN,
         expectedWinnerTreeSatisfiesRequirement = Some(false),
         expectedException = Some(classOf[FullAMTWriteFailedWithConflict]),
         numIncrementalCheckpointWinners = 1)
@@ -1048,7 +1057,7 @@ class AMTConflictResolutionSuite
             Seq(round),
             expectedLosingCommitType = FULL_CHECKPOINT,
             expectedLosingTreeType = Some(FULL_TREE),
-            expectedTreeOutcome = REGENERATE_VIA_TXN_RETRY,
+            expectedTreeOutcome = RETRY_VIA_NEW_TXN,
             expectedWinnerTreeSatisfiesRequirement = None,
             expectedException = Some(classOf[FullAMTWriteFailedWithConflict]),
             numLogOnlyWinners = 1,

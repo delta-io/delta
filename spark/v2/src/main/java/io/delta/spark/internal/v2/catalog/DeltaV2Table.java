@@ -23,7 +23,6 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.internal.v2.exception.NoRecreatableHistoryException;
 import io.delta.spark.internal.v2.exception.TableNotFoundException;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
@@ -81,7 +80,6 @@ import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
@@ -376,8 +374,8 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
     return kernelEngine;
   }
 
-  protected SnapshotImpl initialSnapshot() {
-    return DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot);
+  protected Snapshot initialSnapshot() {
+    return initialSnapshot;
   }
 
   protected Optional<CatalogTable> catalogTable() {
@@ -593,12 +591,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
   @Override
   public RowLevelOperationBuilder newRowLevelOperationBuilder(RowLevelOperationInfo info) {
     requireNonNull(info, "row-level operation info is null");
-    return new DeltaRowLevelOperationBuilder(
-        this,
-        kernelEngine,
-        hadoopConf,
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
-        info);
+    return new DeltaRowLevelOperationBuilder(this, kernelEngine, hadoopConf, initialSnapshot, info);
   }
 
   @Override
