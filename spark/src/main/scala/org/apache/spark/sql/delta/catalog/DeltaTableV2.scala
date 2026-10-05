@@ -47,8 +47,9 @@ import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.connector.expressions._
+import org.apache.spark.sql.connector.expressions.filter.Predicate
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
-import org.apache.spark.sql.errors.QueryCompilationErrors
+import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.sources.{BaseRelation, Filter, InsertableRelation}
 import org.apache.spark.sql.types.StructType
@@ -622,6 +623,29 @@ private class WriteIntoDeltaBuilder(
   override def truncate(): WriteIntoDeltaBuilder = {
     forceOverwrite = true
     this
+  }
+
+  override def canOverwrite(predicates: Array[Predicate]): Boolean = {
+    if (table.spark.sessionState.conf.getConf(
+        DeltaSQLConf.REPLACE_WHERE_V2_PREDICATE_CONVERSION_ENABLED)) {
+      val filters = DeltaSourceUtils.toV1Strict(predicates)
+      filters.length == predicates.length && canOverwrite(filters)
+    } else {
+      super.canOverwrite(predicates)
+    }
+  }
+
+  override def overwrite(predicates: Array[Predicate]): WriteBuilder = {
+    if (table.spark.sessionState.conf.getConf(
+        DeltaSQLConf.REPLACE_WHERE_V2_PREDICATE_CONVERSION_ENABLED)) {
+      if (!canOverwrite(predicates)) {
+        throw QueryExecutionErrors.overwriteTableByUnsupportedExpressionError(table)
+      }
+      val filters = DeltaSourceUtils.toV1Strict(predicates)
+      overwrite(filters)
+    } else {
+      super.overwrite(predicates)
+    }
   }
 
   override def overwrite(filters: Array[Filter]): WriteBuilder = {

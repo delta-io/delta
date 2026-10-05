@@ -21,6 +21,8 @@ import java.util.Locale
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.connector.expressions.filter.{And => V2And, Not => V2Not, Or => V2Or, Predicate}
+import org.apache.spark.sql.internal.connector.PredicateUtils
 import org.apache.spark.sql.sources
 import org.apache.spark.sql.sources.Filter
 
@@ -50,6 +52,35 @@ object DeltaSourceUtils {
   /** Check whether this table is a Delta table based on information from the Catalog. */
   def isDeltaTable(provider: Option[String]): Boolean = {
     provider.exists(isDeltaDataSourceName)
+  }
+
+  /**
+   * Omits whole predicates that cannot be converted completely. Callers requiring exact conversion
+   * must check that the result contains one filter per predicate.
+   */
+  private[delta] def toV1Strict(predicates: Array[Predicate]): Array[Filter] = {
+    predicates.flatMap(toV1Strict(_))
+  }
+
+  private def toV1Strict(predicate: Predicate): Option[Filter] = {
+    predicate match {
+      case and: V2And =>
+        for {
+          left <- toV1Strict(and.left())
+          right <- toV1Strict(and.right())
+        } yield sources.And(left, right)
+
+      case or: V2Or =>
+        for {
+          left <- toV1Strict(or.left())
+          right <- toV1Strict(or.right())
+        } yield sources.Or(left, right)
+
+      case not: V2Not =>
+        toV1Strict(not.child()).map(sources.Not)
+
+      case _ => PredicateUtils.toV1(predicate)
+    }
   }
 
   /** Creates Spark literals from a value exposed by the public Spark API. */
