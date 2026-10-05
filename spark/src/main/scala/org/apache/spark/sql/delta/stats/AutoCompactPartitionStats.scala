@@ -66,18 +66,22 @@ class AutoCompactPartitionStats(
    */
   class PartitionStat(
       var numFiles: Long,
+      @deprecated("this attribute is no longer used but kept for compatibility purposes.")
       var wasAutoCompacted: Boolean = false) {
 
     /**
-     * Determine whether this partition can be autocompacted based on the number of small files or
-     * if this [[AutoCompactPartitionStats]] instance has not auto compacted it yet.
-     * @param minNumFiles The minimum number of files this table-partition should have to trigger
-     *                    Auto Compaction in case it has already been compacted once.
+     * Determine whether this partition should be autocompacted based on the number of small files.
+     * @param minNumFiles The minimum number of files this table-partition must have to trigger
+     *                    Auto Compaction.
      */
+    @deprecated("this method is no longer used but kept for compatibility purposes.")
     def hasSufficientSmallFilesOrHasNotBeenCompacted(minNumFiles: Long): Boolean =
       !wasAutoCompacted || hasSufficientFiles(minNumFiles)
 
+    @deprecated("this method is no longer used but kept for compatibility purposes.")
     def hasSufficientFiles(minNumFiles: Long): Boolean = numFiles >= minNumFiles
+
+    def hasSufficientSmallFiles(minNumFiles: Long): Boolean = numFiles >= minNumFiles
   }
 
   /**
@@ -305,12 +309,13 @@ class AutoCompactPartitionStats(
     tablePartitionStatsCache.get(tableId).map { tablePartitionStates =>
       targetPartitions.filter { partitionKey =>
         tablePartitionStates.get(partitionKey.##).exists { partitionState =>
-          partitionState.hasSufficientSmallFilesOrHasNotBeenCompacted(minNumFiles)
+          partitionState.hasSufficientSmallFiles(minNumFiles)
         }
       }
     }.getOrElse(Set.empty)
   }
 
+  @deprecated("this method is no longer used but kept for compatibility purposes.")
   def markPartitionsAsCompacted(tableId: String, compactedPartitions: Set[PartitionKey])
   : Unit = synchronized {
     tablePartitionStatsCache.get(tableId).foreach { tablePartitionStats =>
