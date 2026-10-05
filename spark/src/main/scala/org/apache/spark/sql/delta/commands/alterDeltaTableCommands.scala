@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.hadoop.fs.Path
@@ -886,6 +887,24 @@ case class AlterTableChangeColumnDeltaCommand(
                   val field = ConcurrentIdentityColumnSync.syncIdentity(txn.snapshot, newColumn, df)
                   txn.readWholeTable()
                   field
+                } else if (
+                    ConcurrentIdentityColumnSchema.hasConcurrentSequenceMetadata(newColumn)) {
+                  // Orphaned CIC column: the feature was dropped by UNSET MANAGED but the sequence
+                  // pointer was kept as the repair sentinel.
+                  val allowLoweringHighWaterMarkForSyncIdentity = sparkSession.conf
+                    .get(DeltaSQLConf.DELTA_IDENTITY_ALLOW_SYNC_IDENTITY_TO_LOWER_HIGH_WATER_MARK)
+                  val columnWithoutHighWaterMark = newColumn.copy(metadata = new MetadataBuilder()
+                    .withMetadata(newColumn.metadata)
+                    .remove(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK)
+                    .build())
+                  val field = IdentityColumn.syncIdentity(
+                    deltaLog,
+                    columnWithoutHighWaterMark,
+                    df,
+                    allowLoweringHighWaterMarkForSyncIdentity)
+                  txn.setSyncIdentity()
+                  txn.readWholeTable()
+                  ConcurrentIdentityColumnSchema.withoutConcurrentSequenceMetadata(field)
                 } else {
                   val allowLoweringHighWaterMarkForSyncIdentity = sparkSession.conf
                     .get(DeltaSQLConf.DELTA_IDENTITY_ALLOW_SYNC_IDENTITY_TO_LOWER_HIGH_WATER_MARK)
@@ -1026,7 +1045,7 @@ case class AlterTableChangeColumnDeltaCommand(
 
       // Post-commit: retire the old service sequence that SYNC replaced. Best-effort and
       // idempotent -- dropping after the commit means a failure only leaves a harmless orphan
-      // (the table now points at the new sequence), never a live table pointing at a dropped one.
+      // (the table now points at the new sequence), never a table still pointing at a dropped one.
       cicSyncOldSequenceId.foreach { oldSeqId =>
         val meta = txn.metadata
         import org.apache.spark.sql.delta.cic.DropSequenceRequest
