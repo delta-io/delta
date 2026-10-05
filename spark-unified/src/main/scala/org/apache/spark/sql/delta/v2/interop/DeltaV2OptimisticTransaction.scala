@@ -27,6 +27,7 @@ import scala.collection.mutable.HashMap
 import scala.jdk.OptionConverters._
 
 import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, LogSegment, OptimisticTransaction, RowId, Snapshot, VersionChecksum}
+import org.apache.spark.sql.delta.WinningCommitSummary
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, CommitInfo, Protocol}
 import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook, PostCommitHook}
