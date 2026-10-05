@@ -36,6 +36,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.DataSkippingReaderConf
+import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogram
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
@@ -1136,6 +1137,14 @@ class DummySnapshot(
 
   override def domainMetadata: Seq[DomainMetadata] = domainMetadataOpt.getOrElse(Seq.empty)
   override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
+  // The base DV accessors gate on DV readability of this snapshot's protocol, but a dummy snapshot
+  // seeds the incremental checksum of the first commit, which may enable DVs. Serve the
+  // already-computed initial state directly so that checksum starts from zeroed DV metrics instead
+  // of None, which would force a state reconstruction on the next commit.
+  override def numDeletedRecordsOpt: Option[Long] = computedState.numDeletedRecordsOpt
+  override def numDeletionVectorsOpt: Option[Long] = computedState.numDeletionVectorsOpt
+  override def deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram] =
+    computedState.deletedRecordCountsHistogramOpt
   override protected[delta] lazy val getInCommitTimestampOpt: Option[Long] = None
   /* A dummy snapshot never has a manifest commit. */
   override lazy val lastManifestCommitOpt: Option[LastManifestCommit] = None
