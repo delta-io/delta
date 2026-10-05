@@ -112,8 +112,8 @@ defaultRowCommitVersion | Long | First commit version in which an `add` action w
 
 ## Checkpoint Schema
 
-> ***In the appendix section for `Checkpoint Schema` add the following fields after
-> `defaultRowCommitVersion` inside all references to the `add` struct.
+> ***In the appendix section for `Checkpoint Schema` add the following fields inside all references
+> to the `add` and `remove` structs.
 
 ```
 |    |-- fileCommitVersion: long
@@ -144,11 +144,14 @@ To support this feature:
   `writerFeatures`.
 - The table property `delta.columnMapping.mode` must be set to `name` or `id`.
 - The feature `rowTracking` must exist in the table protocol's `writerFeatures`.
+- The table property `delta.enableRowTracking` must be set to `true`, and the table property
+  `delta.rowTrackingSuspended` must be either set to `false` or missing.
 - The feature `catalogManaged` must exist in the table protocol's `readerFeatures` and
   `writerFeatures`.
 - The feature `changeDataFeed` must not exist in the table protocol's `writerFeatures`.
-- The features `icebergCompatV1` and `icebergCompatV2` must both not exists in the table protocol's
+- The features `icebergCompatV1` and `icebergCompatV2` must both not exist in the table protocol's
   `writerFeatures`.
+- The feature `icebergWriterCompatV1` must not exist in the table protocol's `writerFeatures`.
 
 Column Updates store values in [Column Files](#column-file-format) that are tracked in metadata
 using [Column File Descriptors](#column-file-descriptor-struct).
@@ -201,7 +204,7 @@ field id.
 ## Column File Set Identity
 
 The identity of a column file set (`columnFileSetId`) is the relative path to the latest column
-file within a single `add` action.
+file within a single `add` or `remove` action.
 
 Keeping only the latest file path, and not including the entirety of the column file set is a
 deliberate choice to keep the identity for a single action small and independent of amount of
@@ -248,6 +251,21 @@ The procedure for writing a column file (i.e. options (3) and (4) from the above
    field ids that contain changes in the current write and the commit version field id;
 5. remove all `ColumnFileDescriptor`s that contain no associated field ids as a result of step (2);
 6. update the `defaultRowCommitVersion` to the commit version of the current operation.
+
+Newly produced `remove` actions must copy over `columnFiles` from their respective stale `add`
+actions.
+
+### `fileCommitVersion` and `defaultRowCommitVersion` handling
+
+Any write that includes a new `add` action (not a replacement `add`), must populate
+`fileCommitVersion` and `defaultRowCommitVersion` with the version that introduces this `add`
+action.
+
+`remove` and replacement `add` actions must keep `fileCommitVersion` unchanged.
+
+Even though `fileCommitVersion` is optional in the schema, when `columnFiles` are non-empty, this
+field is required. If a stale `add` does not contain a valid `fileCommitVersion`, it must be filled
+using `defaultRowCommitVersion`.
 
 ## Statistics
 
@@ -456,9 +474,10 @@ WHERE key = 'a'
 
 ### Adaptive Metadata Tree
 
-When `adaptiveMetadata` is enabled, the `remove` and replacement `add` actions for a column update
-must reference the old base file entry according to the AMT
-[backreference requirements](iceberg-v4-metadata.md#backreferences).
+When `adaptiveMetadata` is enabled, the `remove` action for a column update must reference the old
+base file entry according to the AMT [backreference
+requirements](iceberg-v4-metadata.md#backreferences). The replacement `add` action must not
+contain a backreference.
 
 `file_sequence_number`s contain information about versions in which the base file was introduced,
 column updates must keep these unchanged. This field corresponds to `fileCommitVersion` in a Delta
@@ -469,7 +488,12 @@ column file, column updates should rewrite them to new values.
 
 For example, a base file added in version 10 and updated through a column file in version 20 has
 `file_sequence_number = 10` and `sequence_number = 20`. DV-only updates and metadata-only rewrites
-must preserve all three tracking fields.
+must preserve all three tracking fields (`sequence_number`, `file_sequence_number`,
+`latest_column_file_snapshot_id`).
+
+This diverges from the AMT RFC saying that
+`file_sequence_number` and `sequence_number` always resolve to the same value, parallel to
+`defaultRowCommitVersion` and `fileCommitVersion` diverging.
 
 Iceberg requires more fields for column files than Delta keeps within `add` actions -- all extra
 fields are wired through `amtPassthrough`:
@@ -507,6 +531,14 @@ Field ID | Field Name | Delta Type | Required | Description
 168 | `split_offsets` | Array\<Long\> | Optional | Row group split offsets.
 
 `key_metadata` is not preserved because it is not supported in Delta.
+
+##### Tracking
+
+AMT's [Tracking](./iceberg-v4-metadata.md#tracking) struct gains the following field:
+
+Field ID | Field Name | Delta Type | Required | Description
+-|-|-|-|-
+160 | `latest_column_file_snapshot_id` | Long | Optional | Snapshot ID where the latest column file was added. Inherited when null. Must be null when `column_files` is null.
 
 #### Metadata Cleanup
 
