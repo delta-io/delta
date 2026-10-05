@@ -28,6 +28,8 @@ import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Pr
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, FileSizeHistogram, StatisticsCollection}
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
+import org.apache.spark.sql.delta.RowId
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import com.databricks.spark.util.TagDefinition
 import org.apache.hadoop.fs.Path
@@ -132,6 +134,12 @@ class DeltaV2Snapshot(
   override lazy val protocol: Protocol =
     KernelActionUtils.protocolFromKernel(kernelSnapshot.getProtocol)
 
+  override def getRowTrackingHighWaterMark(): Option[Long] = {
+    kernelSnapshot.getDomainMetadata("delta.rowTracking").toScala.map { configuration =>
+      JsonUtils.fromJson[RowId.RowTrackingMetadataDomain](configuration).rowIdHighWaterMark
+    }
+  }
+
   override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
 
   override def numOfFiles: Long = numOfFilesIfKnown.getOrElse(allFiles.count())
@@ -143,8 +151,9 @@ class DeltaV2Snapshot(
   /**
    * Table size in bytes from CRC when present; None otherwise.
    */
-  override protected[delta] def sizeInBytesIfKnown: Option[Long] =
+  override protected[delta] def sizeInBytesIfKnown: Option[Long] = {
     kernelSnapshot.getCurrentCrcInfo.toScala.map(_.getTableSizeBytes)
+  }
 
   // No V1 commit-file index; not used by the Kernel scan path.
   override protected[delta] lazy val deltaFileIndexOpt: Option[DeltaLogFileIndex] = unimplemented
@@ -220,6 +229,10 @@ class DeltaV2Snapshot(
     kernelSnapshot.getActiveDomainMetadataMap.asScala.map { case (domain, kernelDomainMetadata) =>
       DomainMetadata(domain, kernelDomainMetadata.getConfiguration, kernelDomainMetadata.isRemoved)
     }.toSeq
+
+  // Kernel serves domain metadata without V1 state reconstruction, so it is always known.
+  override protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] =
+    Some(domainMetadata)
 
   // --- ValidateChecksum: Kernel has no V1 checksum to validate; no-op ------------------------
   override def validateChecksum(contextInfo: Map[String, String]): Boolean = true

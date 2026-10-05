@@ -26,7 +26,8 @@ import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
 import scala.jdk.OptionConverters._
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, LogSegment, OptimisticTransaction, Snapshot, VersionChecksum, WinningCommitSummary}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, LogSegment, OptimisticTransaction, RowId, Snapshot, VersionChecksum}
+import org.apache.spark.sql.delta.WinningCommitSummary
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, CommitInfo, Protocol}
 import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook, PostCommitHook}
@@ -36,14 +37,14 @@ import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 import io.delta.storage.commit.Commit
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
-import io.delta.kernel.{CommitActions => KernelCommitActions, DataWriteContext => KernelDataWriteContext, Operation => KernelOperation, Snapshot => KernelSnapshot, Table => KernelTable, Transaction => KernelTransaction}
+import io.delta.kernel.{CommitActions => KernelCommitActions, DataWriteContext => KernelDataWriteContext, Operation => KernelOperation, PartitionKeyType => KernelPartitionKeyType, Snapshot => KernelSnapshot, Table => KernelTable, Transaction => KernelTransaction}
 import io.delta.kernel.data.{Row => KernelRow}
 import io.delta.kernel.engine.{Engine => KernelEngine}
 import io.delta.kernel.expressions.{Literal => KernelLiteral}
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshotImpl}
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 import io.delta.kernel.internal.commitrange.{CommitRangeImpl => KernelCommitRangeImpl}
-import io.delta.kernel.internal.util.{PartitionUtils => KernelPartitionUtils, Utils => KernelUtils}
+import io.delta.kernel.internal.util.{ColumnMapping => KernelColumnMapping, PartitionUtils => KernelPartitionUtils, Utils => KernelUtils}
 import io.delta.kernel.statistics.{DataFileStatistics => KernelDataFileStatistics}
 import io.delta.kernel.types.{StringType => KernelStringType}
 import io.delta.kernel.utils.{CloseableIterable => KernelCloseableIterable, DataFileStatus => KernelDataFileStatus}
@@ -244,7 +245,8 @@ private[v2] class DeltaV2OptimisticTransaction(
    * Reads the commit's actions through Kernel and wraps them as a [[WinningCommitSummary]] for
    * the ConflictChecker.
    */
-  override protected def readWinningCommitSummary(fileStatus: FileStatus): WinningCommitSummary = {
+  override protected def readWinningCommitSummary(
+      fileStatus: FileStatus): WinningCommitSummary = {
     val (actions, readTimeMs) = readCommitActions(fileStatus)
     new WinningCommitSummary(actions, fileStatus, readTimeMs)
   }
@@ -273,9 +275,12 @@ private[v2] class DeltaV2OptimisticTransaction(
       : (Option[VersionChecksum], Commit, CurrentTransactionInfo) = {
     val actions = currentTransactionInfo.finalActionsToCommit
     val addFiles = new ArrayBuffer[AddFile]()
+    var rowTrackingHighWaterMark: Option[Long] = None
     actions.foreach {
       case a: AddFile => addFiles += a
       case _: CommitInfo => // Kernel generates its own; V1 operation provenance is an JNR gap.
+      case RowId.RowTrackingMetadataDomain(domain) =>
+        rowTrackingHighWaterMark = Some(domain.rowIdHighWaterMark)
       case other =>
         throw new UnsupportedOperationException(
           "DeltaV2 unsupported operation: cannot commit action " +
@@ -295,6 +300,10 @@ private[v2] class DeltaV2OptimisticTransaction(
       .buildUpdateTableTransaction("DeltaV2OptimisticTransaction", KernelOperation.WRITE)
       .build(kernelEngine)
     try {
+      rowTrackingHighWaterMark.foreach { highWaterMark =>
+        val domainMetadata = RowId.RowTrackingMetadataDomain(highWaterMark).toDomainMetadata
+        kernelTxn.addDomainMetadata(domainMetadata.domain, domainMetadata.configuration)
+      }
       val kernelTxnState = kernelTxn.getTransactionState(kernelEngine)
       val kernelCommitResult = kernelTxn.commit(
         kernelEngine,
@@ -322,7 +331,7 @@ private[v2] class DeltaV2OptimisticTransaction(
     val partitionColNames = kernelSnapshot.getPartitionColumnNames.asScala
     val partitionColumnDataTypesByName = kernelSchema.fields().asScala
       .filter(f => partitionColNames.exists(_.equalsIgnoreCase(f.getName)))
-      .map(f => f.getName -> f.getDataType).toMap
+      .map(f => KernelColumnMapping.getPhysicalName(f) -> f.getDataType).toMap
 
     def generateKernelWriteContext(
         partitionValues: Map[String, String]): KernelDataWriteContext = {
@@ -332,7 +341,9 @@ private[v2] class DeltaV2OptimisticTransaction(
             partitionColumnDataTypesByName.getOrElse(name, KernelStringType.STRING)
           name -> KernelPartitionUtils.literalForPartitionValue(kernelDataType, value)
         }.asJava
-      KernelTransaction.getWriteContext(kernelEngine, kernelTxnState, kernelLiteralPartitionValues)
+      // partition keys are physical column names, specify PHYSICAL in getWriteContext.
+      KernelTransaction.getWriteContext(
+        kernelEngine, kernelTxnState, kernelLiteralPartitionValues, KernelPartitionKeyType.PHYSICAL)
     }
 
     def kernelDataFileStatusFor(addFile: AddFile): KernelDataFileStatus =

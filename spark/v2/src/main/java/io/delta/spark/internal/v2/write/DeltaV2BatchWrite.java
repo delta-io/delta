@@ -15,7 +15,6 @@
  */
 package io.delta.spark.internal.v2.write;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.TransactionCommitResult;
 import io.delta.kernel.data.Row;
@@ -32,6 +31,7 @@ import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,10 +64,18 @@ class DeltaV2BatchWrite implements Write, BatchWrite {
       Snapshot initialSnapshot,
       StructType dataSchema,
       StructType partitionSchema,
-      LogicalWriteInfo writeInfo) {
+      LogicalWriteInfo writeInfo,
+      boolean variantShreddingEnabled) {
     this.context =
         DeltaV2BatchWriteContext.create(
-            engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
+            engine,
+            hadoopConf,
+            tablePath,
+            initialSnapshot,
+            dataSchema,
+            partitionSchema,
+            writeInfo,
+            variantShreddingEnabled);
   }
 
   @Override

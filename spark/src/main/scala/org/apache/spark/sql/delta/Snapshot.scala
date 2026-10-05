@@ -36,6 +36,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.DataSkippingReaderConf
+import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogram
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
@@ -315,11 +316,12 @@ class Snapshot(
    * been backfilled.
    */
   private[delta] def allCommitsBackfilled: Boolean = {
-    lastKnownBackfilledVersion >= FileNames.getFileVersion(logSegment.deltas.last) &&
-      // This should always be true because we synchronously backfill during checkpoint
-      // creation and always create a new snapshot after that, which will force the
-      // latest LogSegment to be used.
-      lastKnownBackfilledVersion >= logSegment.checkpointProvider.version
+    // This should never happen, but we check anyway to be defensive.
+    if (lastKnownBackfilledVersion > this.version) {
+      throw new IllegalStateException("`lastKnownBackfilledVersion` should never be greater " +
+        "than the snapshot's version.")
+    }
+    lastKnownBackfilledVersion == this.version
   }
 
   /**
@@ -516,6 +518,12 @@ class Snapshot(
           s"${logSegment.toPrettyString}")
     }
 
+    if (amtCheckpointProviderOpt.isDefined && logSegment.deltaAtCheckpointVersionOpt.isEmpty) {
+      throw new IllegalStateException(
+        s"An AMT-enabled snapshot must define deltaAtCheckpointVersionOpt, got None.\n" +
+          s"${logSegment.toPrettyString}")
+    }
+
     (amtCheckpointProviderOpt, lastManifestCommitOpt) match {
       // Normally, the AMT checkpoint provider's version matches the lastManifestCommit exactly.
       // However, during time travel it may instead describe something newer, i.e. a later manifest
@@ -575,6 +583,10 @@ class Snapshot(
   override def metadata: Metadata = _reconstructedProtocolMetadataICTAndLMC.metadata
 
   override def protocol: Protocol = _reconstructedProtocolMetadataICTAndLMC.protocol
+
+  /** The row tracking high watermark assigned in this snapshot. */
+  def getRowTrackingHighWaterMark(): Option[Long] =
+    RowId.RowTrackingMetadataDomain.fromSnapshot(this).map(_.rowIdHighWaterMark)
 
   /**
    * Tries to retrieve the protocol, metadata, and in-commit-timestamp (if needed) from the
@@ -845,16 +857,7 @@ class Snapshot(
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
-  /**
-   * Ensures that commit files are backfilled up to the current version in the snapshot.
-   *
-   * This method checks if there are any un-backfilled versions up to the current version and
-   * triggers the backfilling process using the commit-coordinator. It verifies that the delta file
-   * for the current version exists after the backfilling process.
-   *
-   * @throws IllegalStateException
-   *   if the delta file for the current version is not found after backfilling.
-   */
+  /** Ensures that commit files are backfilled up to the current version in the snapshot. */
   def ensureCommitFilesBackfilled(catalogTableOpt: Option[CatalogTable]): Unit = {
     val tableCommitCoordinatorClientOpt = if (isCatalogOwned) {
       CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(spark, catalogTableOpt, this)
@@ -864,20 +867,12 @@ class Snapshot(
     val tableCommitCoordinatorClient = tableCommitCoordinatorClientOpt.getOrElse {
       return
     }
-    val minUnbackfilledVersion = DeltaCommitFileProvider(this).minUnbackfilledVersion
-    if (minUnbackfilledVersion <= version) {
-      val hadoopConf = deltaLog.newDeltaHadoopConf()
-      tableCommitCoordinatorClient.backfillToVersion(
-        catalogTableOpt.map(_.identifier),
-        version,
-        lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
-      val fs = deltaLog.logPath.getFileSystem(hadoopConf)
-      val expectedBackfilledDeltaFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
-      if (!fs.exists(expectedBackfilledDeltaFile)) {
-        throw new IllegalStateException("Backfilling of commit files failed. " +
-          s"Expected delta file $expectedBackfilledDeltaFile not found.")
-      }
-    }
+    CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
+      version,
+      deltaLog,
+      tableCommitCoordinatorClient,
+      DeltaCommitFileProvider(this),
+      catalogTableOpt)
   }
 
 
@@ -1142,6 +1137,14 @@ class DummySnapshot(
 
   override def domainMetadata: Seq[DomainMetadata] = domainMetadataOpt.getOrElse(Seq.empty)
   override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
+  // The base DV accessors gate on DV readability of this snapshot's protocol, but a dummy snapshot
+  // seeds the incremental checksum of the first commit, which may enable DVs. Serve the
+  // already-computed initial state directly so that checksum starts from zeroed DV metrics instead
+  // of None, which would force a state reconstruction on the next commit.
+  override def numDeletedRecordsOpt: Option[Long] = computedState.numDeletedRecordsOpt
+  override def numDeletionVectorsOpt: Option[Long] = computedState.numDeletionVectorsOpt
+  override def deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram] =
+    computedState.deletedRecordCountsHistogramOpt
   override protected[delta] lazy val getInCommitTimestampOpt: Option[Long] = None
   /* A dummy snapshot never has a manifest commit. */
   override lazy val lastManifestCommitOpt: Option[LastManifestCommit] = None

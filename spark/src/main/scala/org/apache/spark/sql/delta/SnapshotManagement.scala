@@ -563,6 +563,9 @@ trait SnapshotManagement { self: DeltaLog =>
       val deltasAfterCheckpoint = deltas.filter { file =>
         deltaVersion(file) > newCheckpointVersion
       }
+      val deltaAtCheckpointVersionOpt = deltas.find { file =>
+        deltaVersion(file) == newCheckpointVersion
+      }
 
       // Here we validate that we are able to create a valid LogSegment by just using commit deltas
       // and without considering minor-compacted deltas. We want to fail early if log is messed up
@@ -620,6 +623,7 @@ trait SnapshotManagement { self: DeltaLog =>
         newVersion,
         deltas = deltasAndCompactedDeltasForLogSegment,
         nonCompactedDeltasOpt = nonCompactedDeltasOpt,
+        deltaAtCheckpointVersionOpt = deltaAtCheckpointVersionOpt,
         checkpointProviderOpt = checkpointProviderOpt,
         lastCommitTimestamp))
     }
@@ -883,6 +887,7 @@ trait SnapshotManagement { self: DeltaLog =>
           // `deltasAfterCheckpoint` comes from a listing with `includeMinorCompactions = false`,
           // so it must not contain compacted deltas.
           nonCompactedDeltasOpt = Some(deltasAfterCheckpoint),
+          deltaAtCheckpointVersionOpt = deltas.find(deltaVersion(_) == cp.version),
           checkpointProviderOpt = Some(checkpointProvider),
           deltasAfterCheckpoint.last.getModificationTime))
       case None =>
@@ -918,6 +923,8 @@ trait SnapshotManagement { self: DeltaLog =>
           // `deltas` came from a listing with `includeMinorCompactions = false`, so it must not
           // contain compacted deltas.
           nonCompactedDeltasOpt = Some(deltas),
+          // No checkpoint here, so there is no delta at a checkpoint version to track.
+          deltaAtCheckpointVersionOpt = None,
           checkpointProviderOpt = None,
           lastCommitTimestamp = deltas.last.getModificationTime))
     }
@@ -1077,7 +1084,12 @@ trait SnapshotManagement { self: DeltaLog =>
       oldLogSegment.checkpointProvider.topLevelFiles.filter(isCheckpointFile)
     // Collect the compacted and non-compacted deltas from the old log segment. The result should be
     // identical to a listing within this window, which is sorted by the file name.
-    val deltasAndCompactedDeltas =
+    // In `getLogSegmentForVersion`, `oldLogSegment.deltaAtCheckpointVersionOpt` will be filtered
+    // out from the final field `deltas` of the returned segment, so the LogSegment structure is
+    // still maintained (checkpoint + deltas **after** checkpoint). It still needs to be supplied as
+    // part of `allFiles` though, because it needs to be reused as the `deltaAtCheckpointVersionOpt`
+    // of the returned segment when the checkpoint provider remains unchanged.
+    val deltasAndCompactedDeltas = oldLogSegment.deltaAtCheckpointVersionOpt.toSeq ++
       (oldLogSegment.deltas ++ oldLogSegment.nonCompactedDeltasOpt.getOrElse(Seq.empty))
         .distinct
         .sortBy(_.getPath.getName)
@@ -1916,6 +1928,9 @@ object SerializableFileStatus {
  * @param nonCompactedDeltasOpt The full list of non-compacted delta commit files, if known. When
  *                              provided, it must represent all the individual delta files in range
  *                              [checkpointProvider.version + 1, version].
+ * @param deltaAtCheckpointVersionOpt The commit file at checkpoint version, maybe unbackfilled
+ *                                    for AMT tables. Tracked separately for filename resolution.
+ *                                    Absent when the checkpoint provider is empty with version -1.
  * @param checkpointProvider provider to give information about Checkpoint files.
  * @param lastCommitFileModificationTimestamp The "unadjusted" file modification timestamp of the
  *          last commit within this segment. By unadjusted, we mean that the commit timestamps may
@@ -1926,10 +1941,10 @@ case class LogSegment(
     version: Long,
     deltas: Seq[FileStatus],
     nonCompactedDeltasOpt: Option[Seq[FileStatus]],
+    deltaAtCheckpointVersionOpt: Option[FileStatus],
     checkpointProvider: UninitializedCheckpointProvider,
     lastCommitFileModificationTimestamp: Long) {
 
-  // Assert the invariants of nonCompactedDeltasOpt in testing.
   if (DeltaUtils.isTesting) {
     nonCompactedDeltasOpt.foreach { nonCompactedDeltas =>
       if (nonCompactedDeltas.exists(!isDeltaFile(_))) {
@@ -1942,6 +1957,21 @@ case class LogSegment(
       if (actualVersions != expectedVersions) {
         throw new IllegalArgumentException(
           s"Expected nonCompactedDeltasOpt to be $expectedVersions, but got $actualVersions.")
+      }
+    }
+    deltaAtCheckpointVersionOpt.foreach { delta =>
+      if (checkpointProvider.version == -1) {
+        throw new IllegalArgumentException(
+          s"deltaAtCheckpointVersionOpt must be None for empty checkpoint, but got $delta.")
+      }
+      if (!isDeltaFile(delta)) {
+        throw new IllegalArgumentException(
+          s"deltaAtCheckpointVersionOpt must be a delta file, but got ${delta}.")
+      }
+      if (deltaVersion(delta) != checkpointProvider.version) {
+        throw new IllegalArgumentException(
+          s"deltaAtCheckpointVersionOpt must correspond to the checkpoint version " +
+            s"${checkpointProvider.version}, but got $delta.")
       }
     }
   }
@@ -1984,29 +2014,81 @@ case class LogSegment(
       }
   }
 
-  private[delta] lazy val lastBackfilledVersionInSegment =
+  private[delta] lazy val lastBackfilledVersionInSegment: Long =
     // This works if the last backfilled file is a minor-compaction, because
     // FileNames.getFileVersion returns the minor-compaction end version,
     // which correctly initializes the lastBackfilledVersionInSegment.
     CoordinatedCommitsUtils.getLastBackfilledFile(deltas).map(getFileVersion)
-      .getOrElse(checkpointProvider.version)
+      // All files are unbackfilled after the checkpoint version. For AMT tables, the file at the
+      // checkpoint version may or may not have been backfilled, hence the following match cases.
+      .getOrElse {
+        (checkpointProvider.version, deltaAtCheckpointVersionOpt) match {
+          // `deltaAtCheckpointVersionOpt` can only be None when the checkpoint provider is empty
+          // with version -1, and no corresponding delta file exists.
+          // The last backfilled version is still the checkpoint version.
+          case (cpVersion, None) => cpVersion
+
+          case (-1, Some(delta)) =>
+            throw new IllegalStateException(s"Unexpected delta file for empty checkpoint: $delta.")
+
+          case (0, Some(delta)) if isUnbackfilledDeltaFile(delta) =>
+            // Commit-0 must go through filesystem and can never be unbackfilled.
+            throw new IllegalStateException(s"Unexpected unbackfilled delta file at v0: $delta.")
+
+          case (cpVersion, Some(delta)) if isBackfilledDeltaFile(delta) => cpVersion
+          case (cpVersion, Some(delta)) if isUnbackfilledDeltaFile(delta) => cpVersion - 1
+
+          case (cpVersion, Some(file)) =>
+            throw new IllegalStateException(
+              s"Unexpected deltaAtCheckpointVersionOpt for checkpoint version $cpVersion: $file."
+            )
+        }
+      }
+
+  /** Returns the unbackfilled commits in the [[LogSegment]] */
+  lazy val unbackfilledDeltas: Seq[(FileStatus, Long, String)] =
+    // If `deltas` contains a compacted delta [X...Y], then every commit up to Y must be backfilled.
+    // (guaranteed by minor-compaction hook), so collecting from `deltas` is sufficient.
+    // If `deltas` contains no compacted deltas, then for AMT tables, `deltaAtCheckpointVersionOpt`
+    // (must be defined for AMT tables) might still be unbackfilled, so we collect from it as well.
+    (deltaAtCheckpointVersionOpt.toSeq ++ deltas).collect {
+      case UnbackfilledDeltaFile(file, version, uuid) => (file, version, uuid)
+    }
+
+  // Override the case-class toString so logging a LogSegment cannot OOM the driver: the generated
+  // toString expands the full deltas / nonCompactedDeltasOpt collections, which can be very large.
+  // The per-element rendering matches the generated toString (each file's FileStatus); only the
+  // number of files is capped. See [[LogSegment.truncatedDeltaString]].
+  override def toString: String = {
+    def renderDeltas(files: Seq[FileStatus]): String =
+      LogSegment.truncatedDeltaString(files)(_.toString)
+    val nonCompactedDeltasStr =
+      nonCompactedDeltasOpt.map(files => s"Some(${renderDeltas(files)})").getOrElse("None")
+    s"LogSegment($logPath, $version, ${renderDeltas(deltas)}, $nonCompactedDeltasStr, " +
+      s"$checkpointProvider, $lastCommitFileModificationTimestamp)"
+  }
 
   def toPrettyString: String = {
-    // E.g., "[1, 2, <3, 4, 5>, 6]".
-    def renderDeltas(files: Seq[FileStatus]): String = {
-      files.map {
+    def renderDelta(file: FileStatus): String = {
+      file match {
         case CompactedDeltaFile(_, startVersion, endVersion) =>
           s"<${(startVersion to endVersion).mkString(", ")}>"
         case delta =>
           deltaVersion(delta).toString
-      }.mkString("[", ", ", "]")
+      }
     }
+    // E.g., "[1, 2, <3, 4, 5>, 6]".
+    def renderDeltas(files: Seq[FileStatus]): String = {
+      files.map(renderDelta).mkString("[", ", ", "]")
+    }
+    val deltaAtCpStr = deltaAtCheckpointVersionOpt.map(renderDelta).getOrElse("None")
     s"""
       |LogSegment(
       |  logPath = $logPath,
       |  version = $version,
       |  deltas = ${renderDeltas(deltas)},
       |  nonCompactedDeltasOpt = ${nonCompactedDeltasOpt.map(renderDeltas).getOrElse("None")},
+      |  deltaAtCheckpointVersionOpt = $deltaAtCpStr,
       |  checkpointProvider = ${checkpointProvider.version},
       |  lastCommitFileModificationTimestamp = $lastCommitFileModificationTimestamp
       |)
@@ -2024,11 +2106,18 @@ object LogSegment {
       version: Long,
       deltas: Seq[FileStatus],
       nonCompactedDeltasOpt: Option[Seq[FileStatus]],
+      deltaAtCheckpointVersionOpt: Option[FileStatus],
       checkpointProviderOpt: Option[UninitializedCheckpointProvider],
       lastCommitTimestamp: Long): LogSegment = {
     val checkpointProvider = checkpointProviderOpt.getOrElse(EmptyCheckpointProvider)
     LogSegment(
-      logPath, version, deltas, nonCompactedDeltasOpt, checkpointProvider, lastCommitTimestamp)
+      logPath,
+      version,
+      deltas,
+      nonCompactedDeltasOpt,
+      deltaAtCheckpointVersionOpt,
+      checkpointProvider,
+      lastCommitTimestamp)
   }
 
   /** The LogSegment for an empty transaction log directory. */
@@ -2037,6 +2126,29 @@ object LogSegment {
     version = -1L,
     deltas = Nil,
     nonCompactedDeltasOpt = Some(Nil),
+    deltaAtCheckpointVersionOpt = None,
     checkpointProviderOpt = None,
     lastCommitTimestamp = -1L)
+
+  /**
+   * Renders `elems` for a log/error message, keeping at most
+   * [[DeltaSQLConf.DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT]] entries. Rendering every element of a
+   * very large collection can materialize a huge string and OOM the driver, so only the retained
+   * entries are stringified; this is safe to call on an arbitrarily large collection.
+   */
+  private[delta] def truncatedDeltaString[T](elems: Seq[T])(render: T => String): String = {
+    val truncationThresholdKey = DeltaSQLConf.DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT
+    val truncationThreshold = SparkSession.getActiveSession
+      .map(_.sessionState.conf.getConf(truncationThresholdKey))
+      .getOrElse(truncationThresholdKey.defaultValue.get)
+    val size = elems.size
+    // -1 (or any negative value) disables truncation; otherwise the threshold is below `size`
+    // here, so it fits in an Int for `take`.
+    if (truncationThreshold >= 0 && size > truncationThreshold) {
+      elems.iterator.take(truncationThreshold.toInt).map(render)
+        .mkString("[", ", ", s", ... (${size - truncationThreshold} of $size deltas omitted)]")
+    } else {
+      elems.iterator.map(render).mkString("[", ", ", "]")
+    }
+  }
 }

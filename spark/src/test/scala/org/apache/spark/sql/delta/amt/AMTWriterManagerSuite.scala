@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaOperations, FullAMTWriteFailedWithConflict, LogSegment, Snapshot, SnapshotManagement, WinningCommitMetrics, WinningCommitSummary}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, RemoveFile}
+import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, CurrentTransactionInfo, DeltaOperations, FullAMTWriteFailedWithConflict, LogSegment, Snapshot, SnapshotManagement, WinningCommitMetrics, WinningCommitSummary}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, RemoveFile}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -41,7 +41,7 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       operation: DeltaOperations.Operation = DeltaOperations.ManualUpdate):
       (AMTWriterManager, Snapshot) = {
     val snapshot = deltaLogForName(tableName).update()
-    (new AMTWriterManager(snapshot, operation), snapshot)
+    (new AMTWriterManager("txn", snapshot, operation), snapshot)
   }
 
   // A minimal transaction info over `snapshot` carrying `actions`, for direct writeAMT calls.
@@ -99,9 +99,6 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
         assertLeafCount(result.leaves)
         // The commit carries no user actions, so the tree describes state as of the read version.
         assert(result.contentRootVersion == snapshot.version)
-        // The metric records the trigger name carried on the operation.
-        assert(manager.metrics.writeAttempts.head.trigger ==
-          AMTTriggerMode.CheckpointIntervalFull.name)
       }
     }
   }
@@ -155,6 +152,133 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
         winningCommitMetricsForConflictedRange = Seq(anyWinner))
       assert(result.isEmpty,
         "a log-only commit rebasing past a winner tree writes no AMT (re-derivation is elsewhere).")
+    }
+  }
+
+  test("writeAMT skips a full checkpoint that lost to a full-rewrite winner") {
+    withTable("amt_full_ckpt_skips_full_winner") {
+      val name = "amt_full_ckpt_skips_full_winner"
+      createAMTTable(name, checkpointInterval = 2)
+      withSQLConf(leafPackingConfs: _*) {
+        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles)
+
+        val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint(
+          incremental = false, triggerName = AMTTriggerMode.CheckpointIntervalFull.name))
+        // First attempt: the full checkpoint materializes its own full tree (describing the read
+        // snapshot), caching a full last-write result on the manager.
+        val fullResult = manager.writeAMT(
+          nextAttemptVersion = snapshot.version + 1,
+          currentTransactionInfo = txnInfoFor(snapshot, actions = Seq.empty),
+          preCommitLogSegment = snapshot.logSegment,
+          winningCommitMetricsForConflictedRange = Seq.empty).getOrElse(
+            fail("the full OPTIMIZE checkpoint must materialize an AMT on its first attempt."))
+        assert(fullResult.checkpoint.contentRoot.isIncremental.contains(false),
+          "precondition: the first attempt must write a full (non-incremental) tree.")
+
+        // A concurrent winner installed its own full-rewrite tree at the target version. That tree
+        // already provides an up-to-date AMT, so this losing full checkpoint is redundant and
+        // skips.
+        val fullWinner = fullResult.checkpoint.copy(version = snapshot.version + 1)
+        val fullWinnerMetric = anyWinner.copy(checkpointAction = Some(fullWinner))
+        val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
+        val ex = intercept[ConcurrentAMTCheckpointLandedException] {
+          manager.writeAMT(
+            nextAttemptVersion = snapshot.version + 2,
+            currentTransactionInfo = txnInfoFor(
+              snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = Some(fullWinner)),
+            preCommitLogSegment = retrySegment,
+            winningCommitMetricsForConflictedRange = Seq(fullWinnerMetric))
+        }
+        assert(ex.contentRootVersion == fullWinner.contentRoot.version,
+          "the skip signal must carry the winner tree's content-root version.")
+      }
+    }
+  }
+
+  test("writeAMT skips an incremental checkpoint that lost to a tree-installing winner") {
+    withTable("amt_incr_ckpt_skips_tree_winner") {
+      val name = "amt_incr_ckpt_skips_tree_winner"
+      createAMTTable(name, checkpointInterval = 2)
+      withSQLConf(leafPackingConfs: _*) {
+        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles)
+        // An incremental rewrite requires an existing full tree to build on.
+        commitCheckpoint(deltaLogForName(name), incremental = false)
+
+        val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint(
+          incremental = true, triggerName = AMTTriggerMode.CheckpointIntervalIncremental.name))
+        val baseTree = amtProvider(snapshot).map(_.checkpointAction).getOrElse(
+          fail("the table must be AMT-backed for this case."))
+        // First attempt: the incremental checkpoint extends the base tree, caching an incremental
+        // last-write result on the manager.
+        val incrementalResult = manager.writeAMT(
+          nextAttemptVersion = snapshot.version + 1,
+          currentTransactionInfo = txnInfoFor(
+            snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = Some(baseTree)),
+          preCommitLogSegment = snapshot.logSegment,
+          winningCommitMetricsForConflictedRange = Seq.empty).getOrElse(
+            fail("the incremental OPTIMIZE checkpoint must materialize an AMT on its first " +
+              "attempt."))
+        assert(incrementalResult.checkpoint.contentRoot.isIncremental.contains(true),
+          "precondition: the first attempt must write an incremental tree.")
+
+        // A concurrent winner installed a newer tree. Any winner tree supersedes a losing
+        // incremental checkpoint, so it is redundant and skips.
+        val winnerTree = baseTree.copy(version = baseTree.version + 1)
+        val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
+        intercept[ConcurrentAMTCheckpointLandedException] {
+          manager.writeAMT(
+            nextAttemptVersion = snapshot.version + 2,
+            currentTransactionInfo = txnInfoFor(
+              snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = Some(winnerTree)),
+            preCommitLogSegment = retrySegment,
+            winningCommitMetricsForConflictedRange = Seq(anyWinner))
+        }
+      }
+    }
+  }
+
+  test("writeAMT signals a full-AMT regenerate for a full checkpoint that lost to an " +
+    "incremental winner") {
+    withTable("amt_full_ckpt_regenerates_vs_incr_winner") {
+      val name = "amt_full_ckpt_regenerates_vs_incr_winner"
+      createAMTTable(name, checkpointInterval = 2)
+      withSQLConf(leafPackingConfs: _*) {
+        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles)
+
+        val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint(
+          incremental = false, triggerName = AMTTriggerMode.CheckpointIntervalFull.name))
+        val fullResult = manager.writeAMT(
+          nextAttemptVersion = snapshot.version + 1,
+          currentTransactionInfo = txnInfoFor(snapshot, actions = Seq.empty),
+          preCommitLogSegment = snapshot.logSegment,
+          winningCommitMetricsForConflictedRange = Seq.empty).getOrElse(
+            fail("the full OPTIMIZE checkpoint must materialize an AMT on its first attempt."))
+
+        // The winner installed an INCREMENTAL tree. It neither satisfies the requested full AMT nor
+        // serves as a full base to fold onto, so the full checkpoint signals a regenerate for the
+        // caller to refresh and retry rather than skipping.
+        val incrementalRoot = ContentRoot(
+          path = fullResult.checkpoint.contentRoot.path,
+          sizeInBytes = fullResult.checkpoint.contentRoot.sizeInBytes,
+          version = snapshot.version + 1,
+          isIncremental = true,
+          lastManifestCommitWithFullRewrite = 0L,
+          numLeaves = fullResult.checkpoint.contentRoot.numLeaves.getOrElse(0L))
+        val incrementalWinner =
+          fullResult.checkpoint.copy(version = snapshot.version + 1, contentRoot = incrementalRoot)
+        val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
+        val ex = intercept[FullAMTWriteFailedWithConflict] {
+          manager.writeAMT(
+            nextAttemptVersion = snapshot.version + 2,
+            currentTransactionInfo = txnInfoFor(
+              snapshot, actions = Seq.empty,
+              preCommitLatestAMTCheckpointOpt = Some(incrementalWinner)),
+            preCommitLogSegment = retrySegment,
+            winningCommitMetricsForConflictedRange = Seq(anyWinner))
+        }
+        assert(ex.conflictingCommitVersion == incrementalWinner.version,
+          "the regenerate signal must carry the winner commit's version.")
+      }
     }
   }
 
