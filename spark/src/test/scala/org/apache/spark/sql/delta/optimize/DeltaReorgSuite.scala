@@ -355,6 +355,10 @@ class DeltaReorgSuite extends QueryTest
     }
   }
 
+  test("REORG footer scan batch size has a memory-bounded default") {
+    assert(DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_BATCH_SIZE.defaultValue.contains(500))
+  }
+
   test("REORG footer scan parallelism matches ForkJoinPool bounds") {
     withSQLConf(
         DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_PARALLELISM.key -> Short.MaxValue.toString) {
