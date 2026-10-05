@@ -401,6 +401,16 @@ class FeatureEnablementConcurrencySuite
         UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableId,
         DeltaConfigs.CHECKPOINT_INTERVAL.key -> "20")))
     assert(!result16.areValid)
+
+    // Test 17: a key in the removal allow list may be unset conflict-free, even when it is not in
+    // the change allow list (the removal and change allow lists are independent).
+    val result17 = conflictChecker.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map("prop1" -> "value1")),
+      winningMetadata = Metadata(configuration = Map.empty),
+      removalAllowList = Set("prop1"),
+      allowList = Set.empty)
+    val expected17 = conflictChecker.ConfigurationChanges(areValid = true, removed = Set("prop1"))
+    assert(result17 === expected17)
   }
 
   test("CatalogOwned and VacuumProtocolCheck features allow concurrent txns at upgrade") {
