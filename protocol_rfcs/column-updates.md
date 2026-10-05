@@ -163,8 +163,8 @@ following columns:
 - a subset of base file columns with added nullability (i.e. `INTEGER NOT NULL`/`Int` in the base
   file becomes `INTEGER`/`Option[Int]` in the column file).
 
-A column file has one row for each physical row in the base file, and these rows are in the same
-order.
+A column file has one row for each physical row in the base file, and these rows must be in the
+same order.
 
 The row commit version column contains either the commit version of the update that last changed
 this row, or `NULL` to indicate that the most recent update changed this row. This column can be
@@ -264,7 +264,7 @@ values to calculate stats for columns that are shadowed by a column file is inva
 Column files introduce writers being able to add new data for an `add` action without changing the
 base file's `path`. `defaultRowCommitVersion` is thus modified in a way where it still represents
 the commit version that last introduced new data. `fileCommitVersion` keeps track of which version
-originally introduced the base file.
+originally introduced the base file. See [Row Tracking](#row-tracking).
 
 ## Column File Cleanup
 
@@ -505,6 +505,8 @@ Field ID | Field Name | Delta Type | Required | Description
 165 | `file_format` | String | Required | File format name. Delta only supports `parquet`.
 166 | `file_size_in_bytes` | Long | Required | Total column file size in bytes.
 168 | `split_offsets` | Array\<Long\> | Optional | Row group split offsets.
+
+`key_metadata` is not preserved because it is not supported in Delta.
 
 #### Metadata Cleanup
 
