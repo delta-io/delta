@@ -391,7 +391,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
           hadoopConf,
           useRename = false,
           outputSchema = Some(AMTSingleAction.persistedSchema(metadata, protocol)),
-          writeAsIcebergManifest = true)
+          format = new AMTParquetFileFormat)
         val relative = AMTUtils.relativizeLocation(dataPath.toString, file.toString)
         assert(relative == s"${FileNames.AMT_METADATA_DIR_NAME}/$fileName" &&
           !relative.contains("%20"),

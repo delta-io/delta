@@ -43,7 +43,6 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
-import org.apache.parquet.hadoop.ParquetOutputFormat
 
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.MDC
@@ -1389,11 +1388,9 @@ object Checkpoints
    *                  (the default, classic-checkpoint behavior) it is `df.schema.asNullable` (fully
    *                  nullable). The AMT manifest writer passes its id-carrying schema. The resolved
    *                  schema is the value returned to the caller.
-   * @param writeAsIcebergManifest When true, applies the Iceberg-V4 manifest write settings via
-   *                  [[configureIcebergManifestParquetWrite]]: list-element / map key-value field
-   *                  ids (carried on `outputSchema` via `parquet.field.nested.ids`, which the stock
-   *                  `ParquetWriteSupport` omits) and int64 `TIMESTAMP(MICROS)` timestamps. Needed
-   *                  for the AMT manifest schema. Default false uses the standard parquet write.
+   * @param format    The Parquet file format whose `prepareWrite` configures the write. Defaults to
+   *                  the standard [[ParquetFileFormat]]. The AMT manifest writer passes
+   *                  `AMTParquetFileFormat`, which applies the Iceberg-V4 manifest write settings.
    * @return The schema actually written.
    */
   def writeAtomicCheckpointParquetFile(
@@ -1403,18 +1400,12 @@ object Checkpoints
       hadoopConf: Configuration,
       useRename: Boolean,
       outputSchema: Option[StructType] = None,
-      writeAsIcebergManifest: Boolean = false): StructType =
+      format: ParquetFileFormat = new ParquetFileFormat()): StructType =
       recordFrameProfile(
         "Checkpoints", "writeAtomicCheckpointParquetFile") {
     val schema = outputSchema.getOrElse(df.schema.asNullable)
-    val format = new ParquetFileFormat()
     val job = Job.getInstance(hadoopConf)
     val factory = format.prepareWrite(spark, job, Map.empty, schema)
-    if (writeAsIcebergManifest) {
-      // Write as an Iceberg-V4 manifest (nested field ids + int64 micros timestamps). Applied after
-      // prepareWrite so it overrides what prepareWrite put on the job.
-      configureIcebergManifestParquetWrite(job)
-    }
     val serConf = new SerializableConfiguration(job.getConfiguration)
     val finalSparkPath = SparkPath.fromPath(finalPath)
 
@@ -1448,22 +1439,6 @@ object Checkpoints
         Iterator(status)
       }.collect()
     schema
-  }
-
-  /**
-   * Applies the extra Parquet write settings an AMT Iceberg-V4 manifest needs, on top of what
-   * `ParquetFileFormat.prepareWrite` sets. Call after `prepareWrite` and before the job's
-   * `Configuration` is snapshotted for executors, so these override the defaults. Keep in sync with
-   * the Iceberg write behaviors in `DeltaParquetFileFormatBase.prepareWrite`:
-   *   - timestamps as int64 `TIMESTAMP(MICROS)` (Iceberg-legal; Spark's default is `INT96`);
-   *   - list-element / map key-value field ids via [[DeltaParquetWriteSupport]] (the stock
-   *     `ParquetWriteSupport` omits them).
-   */
-  private[delta] def configureIcebergManifestParquetWrite(job: Job): Unit = {
-    job.getConfiguration.set(
-      SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
-      SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
-    ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
   }
 
   // scalastyle:off argcount
