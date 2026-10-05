@@ -39,14 +39,20 @@ import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.MetastoresApi;
 import io.unitycatalog.client.auth.TokenProvider;
+import io.unitycatalog.client.delta.api.DeltaIdentitySequencesApi;
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.model.DeltaAddCommitUpdate;
 import io.unitycatalog.client.delta.model.DeltaAssertTableUUID;
 import io.unitycatalog.client.delta.model.DeltaClusteringDomainMetadata;
 import io.unitycatalog.client.delta.model.DeltaCommit;
+import io.unitycatalog.client.delta.model.DeltaCreateIdentitySequences;
 import io.unitycatalog.client.delta.model.DeltaCreateStagingTableRequest;
 import io.unitycatalog.client.delta.model.DeltaCreateTableRequest;
 import io.unitycatalog.client.delta.model.DeltaDomainMetadataUpdates;
+import io.unitycatalog.client.delta.model.DeltaDropIdentitySequences;
+import io.unitycatalog.client.delta.model.DeltaIdentityIdRange;
+import io.unitycatalog.client.delta.model.DeltaIdentityReservation;
+import io.unitycatalog.client.delta.model.DeltaIdentitySequenceSpec;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
 import io.unitycatalog.client.delta.model.DeltaMaintenanceOperation;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
@@ -56,6 +62,8 @@ import io.unitycatalog.client.delta.model.DeltaReportMetricsRequest;
 import io.unitycatalog.client.delta.model.DeltaReportMetricsRequestReport;
 import io.unitycatalog.client.delta.model.DeltaReportMetricsRequestReportCommitReport;
 import io.unitycatalog.client.delta.model.DeltaReportMetricsRequestReportCommitReportFileSizeHistogram;
+import io.unitycatalog.client.delta.model.DeltaReserveIdentityRanges;
+import io.unitycatalog.client.delta.model.DeltaReserveIdentityRangesResponse;
 import io.unitycatalog.client.delta.model.DeltaRowTrackingDomainMetadata;
 import io.unitycatalog.client.delta.model.DeltaSetDomainMetadataUpdate;
 import io.unitycatalog.client.delta.model.DeltaSetLatestBackfilledVersionUpdate;
@@ -85,6 +93,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -112,6 +121,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
   private DeltaTablesApi deltaTablesApi;
   private MetastoresApi metastoresApi;
+  private DeltaIdentitySequencesApi identitySequencesApi;
   private final ApiClient apiClient;
   private final String baseUri;
   private final TokenProvider tokenProvider;
@@ -161,6 +171,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     this.apiClient = builder.build();
     this.deltaTablesApi = new DeltaTablesApi(this.apiClient);
     this.metastoresApi = new MetastoresApi(this.apiClient);
+    this.identitySequencesApi = new DeltaIdentitySequencesApi(this.apiClient);
     this.baseUri = baseUri;
     this.tokenProvider = tokenProvider;
     this.appVersions = appVersions;
@@ -217,7 +228,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   }
 
   private void ensureOpen() {
-    if (deltaTablesApi == null || metastoresApi == null) {
+    if (deltaTablesApi == null || metastoresApi == null || identitySequencesApi == null) {
       throw new IllegalStateException("UCDeltaTokenBasedRestClient has been closed.");
     }
   }
@@ -435,10 +446,130 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     }
   }
 
+  // ===========================
+  // Concurrent Identity Columns (CIC) identity sequences
+  // ===========================
+  //
+  // Name-based, like the table operations above: the three-level UC name is resolved from the
+  // TableIdentifier and the generated DeltaIdentitySequencesApi is called directly. ApiException is
+  // mapped to the exceptions the CIC reservation path expects (NoSuchElementException for an
+  // unknown sequence, IllegalStateException for drift).
+
+  @Override
+  public void createIdentitySequence(
+      TableIdentifier tableIdentifier, String sequenceId, long start, long step) {
+    ensureOpen();
+    if (step == 0L) {
+      throw new IllegalArgumentException("step must be non-zero");
+    }
+    ResolvedTableName name = requireThreePartName(tableIdentifier);
+    DeltaCreateIdentitySequences body = new DeltaCreateIdentitySequences().addSequencesItem(
+        new DeltaIdentitySequenceSpec().sequenceId(sequenceId).start(start).step(step));
+    try {
+      identitySequencesApi.createIdentitySequences(name.catalog, name.schema, name.table, body);
+    } catch (ApiException e) {
+      switch (e.getCode()) {
+        case HTTP_CONFLICT:
+          throw new IllegalStateException(String.format(
+              "Sequence %s on table %s already exists with a different start/step: %s",
+              sequenceId, name.fullName, e.getResponseBody()), e);
+        case HTTP_BAD_REQUEST:
+          throw new IllegalArgumentException(String.format(
+              "Invalid createIdentitySequence request for sequence %s on table %s: %s",
+              sequenceId, name.fullName, e.getResponseBody()), e);
+        default:
+          throw new RuntimeException(String.format(
+              "createIdentitySequence failed for sequence %s on table %s (HTTP %s): %s",
+              sequenceId, name.fullName, e.getCode(), e.getResponseBody()), e);
+      }
+    }
+  }
+
+  @Override
+  public IdentitySequenceRange reserveIdentityIds(
+      TableIdentifier tableIdentifier, String sequenceId, long count, long step) {
+    ensureOpen();
+    if (count <= 0L) {
+      throw new IllegalArgumentException("reserveIdentityIds requires count > 0, got " + count);
+    }
+    if (step == 0L) {
+      throw new IllegalArgumentException("reserveIdentityIds requires a non-zero step");
+    }
+    ResolvedTableName name = requireThreePartName(tableIdentifier);
+    DeltaReserveIdentityRanges body = new DeltaReserveIdentityRanges().addReservationsItem(
+        new DeltaIdentityReservation().sequenceId(sequenceId).count(count).step(step));
+    DeltaReserveIdentityRangesResponse response;
+    try {
+      response =
+          identitySequencesApi.reserveIdentityRanges(name.catalog, name.schema, name.table, body);
+    } catch (ApiException e) {
+      if (e.getCode() == HTTP_NOT_FOUND) {
+        // Unknown or soft-deleted sequence. The reservation path maps this to SEQUENCE_NOT_FOUND.
+        throw new NoSuchElementException(String.format(
+            "Sequence not found: %s (table %s): %s", sequenceId, name.fullName,
+            e.getResponseBody()));
+      }
+      if (e.getCode() == HTTP_BAD_REQUEST) {
+        throw new IllegalArgumentException(String.format(
+            "Invalid reserveIdentityIds request for sequence %s on table %s: %s",
+            sequenceId, name.fullName, e.getResponseBody()), e);
+      }
+      throw new RuntimeException(String.format(
+          "reserveIdentityIds failed for sequence %s on table %s (HTTP %s): %s",
+          sequenceId, name.fullName, e.getCode(), e.getResponseBody()), e);
+    }
+    List<DeltaIdentityIdRange> ranges = response.getRanges();
+    // Single-sequence batch in, single range out, positional with the request.
+    if (ranges == null || ranges.size() != 1) {
+      throw new IllegalStateException(String.format(
+          "reserveIdentityIds expected exactly one granted range for sequence %s (table %s), got %s",
+          sequenceId, name.fullName, ranges == null ? "null" : ranges.size()));
+    }
+    DeltaIdentityIdRange range = ranges.get(0);
+    long grantedStep = range.getStep();
+    long rangeStart = range.getRangeStart();
+    long rangeEnd = range.getRangeEnd();
+    // The service owns the step; a granted step that disagrees with the requested (schema-declared)
+    // step means service state drifted from the table. Fail loud.
+    if (grantedStep != step) {
+      throw new IllegalStateException(String.format(
+          "Granted step %s does not match the requested step %s for sequence %s (table %s); "
+              + "service state drifted.", grantedStep, step, sequenceId, name.fullName));
+    }
+    // Verify the granted range spans exactly `count` values at that step (checked arithmetic).
+    long expectedEnd = Math.addExact(rangeStart, Math.multiplyExact(grantedStep, count - 1L));
+    if (rangeEnd != expectedEnd) {
+      throw new IllegalStateException(String.format(
+          "Granted range [%s, %s] does not span %s values at step %s for sequence %s (table %s).",
+          rangeStart, rangeEnd, count, grantedStep, sequenceId, name.fullName));
+    }
+    return new IdentitySequenceRange(sequenceId, rangeStart, rangeEnd, grantedStep);
+  }
+
+  @Override
+  public void dropIdentitySequence(TableIdentifier tableIdentifier, String sequenceId) {
+    ensureOpen();
+    ResolvedTableName name = requireThreePartName(tableIdentifier);
+    DeltaDropIdentitySequences body =
+        new DeltaDropIdentitySequences().addSequenceIdsItem(sequenceId);
+    try {
+      identitySequencesApi.dropIdentitySequences(name.catalog, name.schema, name.table, body);
+    } catch (ApiException e) {
+      // Idempotent: a 404 (table gone) is a no-op; the sequence is certainly retired.
+      if (e.getCode() == HTTP_NOT_FOUND) {
+        return;
+      }
+      throw new RuntimeException(String.format(
+          "dropIdentitySequence failed for sequence %s on table %s (HTTP %s): %s",
+          sequenceId, name.fullName, e.getCode(), e.getResponseBody()), e);
+    }
+  }
+
   @Override
   public void close() throws IOException {
     this.deltaTablesApi = null;
     this.metastoresApi = null;
+    this.identitySequencesApi = null;
   }
 
   // ===========================
