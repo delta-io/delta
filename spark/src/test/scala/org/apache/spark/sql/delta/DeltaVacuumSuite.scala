@@ -1411,6 +1411,8 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
             assert(operationParamsBegin("retentionCheckEnabled") === "false")
             assert(operationMetricsBegin("numFilesToDelete") === filesDeleted.toString)
             assert(operationMetricsBegin("sizeOfDataToDelete") === (filesDeleted * 9).toString)
+            assert(operationParamsBegin("typeOfVacuum") ===
+              (if (isLiteVacuum) "LITE" else "FULL"))
 
             if (retentionHours == 0) {
               assert(
@@ -1421,7 +1423,10 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
               operationParamsBegin("defaultRetentionMillis") ===
                 DeltaLog.tombstoneRetentionMillis(table.initialSnapshot.metadata).toString)
 
-            assert(operationParamsEnd === Map("status" -> "COMPLETED"))
+            val expectedVacuumType = if (isLiteVacuum) "LITE" else "FULL"
+            assert(operationParamsEnd === Map(
+              "typeOfVacuum" -> expectedVacuumType,
+              "status" -> "COMPLETED"))
             assert(operationMetricsEnd === Map("numDeletedFiles" -> filesDeleted.toString,
               "numVacuumedDirectories" -> "1"))
           }
