@@ -1987,6 +1987,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val V2_EXPRESSION_BUILDER_PRESERVE_BOOLEAN_LITERALS_ENABLED =
+    buildConf("v2ExpressionBuilder.preserveBooleanLiterals.enabled")
+      .internal()
+      .doc("When enabled, REPLACE WHERE b <=> true and b IN (true, false) succeed " +
+        "instead of failing with 'Table does not support overwrite by expression'. " +
+        "It also replaces matching true rows for b <=> true OR id = 4 " +
+        "instead of incorrectly retaining them.")
+      .booleanConf
+      .createWithDefault(DeltaUtils.isTesting)
+
   val REPLACEWHERE_DATACOLUMNS_ENABLED =
     buildConf("replaceWhere.dataColumns.enabled")
       .doc(

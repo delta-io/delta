@@ -47,6 +47,7 @@ import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.connector.expressions._
+import org.apache.spark.sql.connector.expressions.filter.Predicate
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -622,6 +623,15 @@ private class WriteIntoDeltaBuilder(
   override def truncate(): WriteIntoDeltaBuilder = {
     forceOverwrite = true
     this
+  }
+
+  override def canOverwrite(predicates: Array[Predicate]): Boolean = {
+    val filters = DeltaSourceUtils.translateV2Predicates(predicates)
+    filters.length == predicates.length && canOverwrite(filters)
+  }
+
+  override def overwrite(predicates: Array[Predicate]): WriteBuilder = {
+    overwrite(DeltaSourceUtils.translateV2Predicates(predicates))
   }
 
   override def overwrite(filters: Array[Filter]): WriteBuilder = {

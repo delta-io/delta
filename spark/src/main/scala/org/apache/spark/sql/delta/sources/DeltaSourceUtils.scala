@@ -21,8 +21,13 @@ import java.util.Locale
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.connector.expressions.{LiteralValue, NamedReference}
+import org.apache.spark.sql.connector.expressions.filter.{AlwaysFalse => V2AlwaysFalse, AlwaysTrue => V2AlwaysTrue, And => V2And, Not => V2Not, Or => V2Or, Predicate}
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.connector.PredicateUtils
 import org.apache.spark.sql.sources
 import org.apache.spark.sql.sources.Filter
+import org.apache.spark.sql.types.BooleanType
 
 object DeltaSourceUtils {
   val NAME = "delta"
@@ -50,6 +55,46 @@ object DeltaSourceUtils {
   /** Check whether this table is a Delta table based on information from the Catalog. */
   def isDeltaTable(provider: Option[String]): Boolean = {
     provider.exists(isDeltaDataSourceName)
+  }
+
+  /** Converts V2 overwrite predicates into filters for the V1 write adapter. */
+  def translateV2Predicates(predicates: Array[Predicate]): Array[Filter] = {
+    if (SQLConf.get.getConf(
+        DeltaSQLConf.V2_EXPRESSION_BUILDER_PRESERVE_BOOLEAN_LITERALS_ENABLED)) {
+      PredicateUtils.toV1(predicates.map(preserveBooleanLiterals))
+    } else {
+      PredicateUtils.toV1(predicates)
+    }
+  }
+
+  private def preserveBooleanLiterals(predicate: Predicate): Predicate = predicate match {
+    case and: V2And =>
+      new V2And(preserveBooleanLiterals(and.left()), preserveBooleanLiterals(and.right()))
+    case or: V2Or =>
+      new V2Or(preserveBooleanLiterals(or.left()), preserveBooleanLiterals(or.right()))
+    case not: V2Not =>
+      new V2Not(preserveBooleanLiterals(not.child()))
+    case other =>
+      // Boolean operands can arrive as predicates. Restore literals before converting to V1.
+      val children = other.children().map {
+        case _: V2AlwaysTrue => LiteralValue(true, BooleanType)
+        case _: V2AlwaysFalse => LiteralValue(false, BooleanType)
+        case child => child
+      }
+      children match {
+        case Array(_: LiteralValue[_], _: NamedReference)
+            if Set("=", "<=>", ">", "<", ">=", "<=").contains(other.name()) =>
+          val name = other.name() match {
+            case ">" => "<"
+            case "<" => ">"
+            case ">=" => "<="
+            case "<=" => ">="
+            case name => name
+          }
+          new Predicate(name, children.reverse)
+        case _ =>
+          new Predicate(other.name(), children)
+      }
   }
 
   /** Creates Spark literals from a value exposed by the public Spark API. */
