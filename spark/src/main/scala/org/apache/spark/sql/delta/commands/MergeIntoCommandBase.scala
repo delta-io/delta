@@ -66,6 +66,7 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS) &&
       DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
   }
+
   // The concurrent identity column (CIC) reservation for this MERGE, set by
   // [[reserveIdentityValuesIfNeeded]] before any executor consumes
   // [[computeCicNotMatchedClausesForInsertExpressions]]. Driver-only; never captured in a closure.
@@ -122,6 +123,12 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
           }
         }.distinct
         if (stampedGeneratedColumns.nonEmpty) {
+          if (ConcurrentIdentityColumnSchema.isOrphaned(targetFileIndex.protocol, schema)) {
+            // The feature was removed but a per-column sequence pointer remains.
+            throw ConcurrentIdentityColumnErrors.orphanedSequencePointerRequiresSync(
+              targetFileIndex.metadata.id)
+          }
+          // Feature still supported but no reservation was created.
           throw ConcurrentIdentityColumnErrors.usingWrongGenerator(
             stampedGeneratedColumns, targetFileIndex.metadata.id)
         }
@@ -130,7 +137,7 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
   }
 
   /**
-   * Create the identity reservation for the insert-only and classic MERGE paths: seed the
+   * Create the identity reservation for the insert-only and full MERGE paths: seed the
    * reservation before any write consumes [[computeCicNotMatchedClausesForInsertExpressions]].
    *
    * `sizeHint` follows the same precise -> estimate -> rate-based tiering the INSERT path uses:
