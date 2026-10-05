@@ -19,7 +19,7 @@ How to use this template:
 ## Feature summary
 
 <!-- Fill in the list below. -->
-- Table feature name: `featureName-dev` <!-- lowerCamelCase. Keep the `-dev` suffix until the RFC is accepted. Write "No table feature" and give the reason if none is needed. -->
+- Table feature name: `featureName-dev` <!-- lowerCamelCase. A temporary `-dev` suffix is strongly recommended until the RFC is accepted; if you don't use one, say why. Write "No table feature" and give the reason if none is needed. -->
 - Readers and writers, or writers only: <!-- Give the reason. An old reader that ignores this feature must still return correct results for the feature to be writers only. -->
 - Minimum protocol versions: <!-- e.g. reader version 3, writer version 7 -->
 - Required features: <!-- Features that must also be supported, e.g. `domainMetadata`. -->

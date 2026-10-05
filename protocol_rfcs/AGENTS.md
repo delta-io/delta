@@ -40,8 +40,11 @@ text exactly as written, and nothing more.
 3. Put the right issue number in the issue link at the top [#7272].
 4. Add one row to the **Proposed RFCs** table in `protocol_rfcs/README.md`:
    date proposed, link to the RFC file, issue link, and title [#2599].
-5. Give the table feature and any new table properties a `-dev` suffix while
-   the RFC is proposed.
+5. It is strongly recommended (`protocol_rfcs/README.md`), not required, to
+   give the table feature and any new table properties a temporary `-dev`
+   suffix while the RFC is proposed. The suffix tells users the feature is
+   experimental, with no compatibility guarantee. If the RFC doesn't use one,
+   it should say why.
 6. Review your own draft (section D).
 7. Open a PR with a `[PROTOCOL]` title tag. Link the issue with "see #N",
    never "closes", "fixes" or "resolves", because merging a proposed RFC must
@@ -52,6 +55,10 @@ text exactly as written, and nothing more.
    affected.
 
 ### Updating a proposed RFC
+This covers an RFC whose PR has merged, so the file is on master at
+`protocol_rfcs/<feature-name>.md` and listed under **Proposed RFCs**, but it
+has not been accepted. (Before the RFC PR merges, push changes to that PR.)
+Each update is a new PR that edits the RFC file:
 1. Rebase on current master first. RFC text written against an outdated
    master can undo newer changes [#6696].
 2. Update every place in the RFC where the changed term or rule appears,
@@ -64,6 +71,16 @@ text exactly as written, and nothing more.
    new RFC that explains why the old one is superseded, and move the old one to
    `rejected/` [#4382].
 
+### Changing a feature after its RFC is accepted
+Once an RFC is accepted, its spec lives in `PROTOCOL.md`, and the file in
+`protocol_rfcs/accepted/` is a historical record. Don't edit that file to
+change the feature. Instead:
+- If the change is fully backward compatible (a clarification, a fix to a clear
+  mistake, or writing down behavior all major implementations already have),
+  edit `PROTOCOL.md` directly under the DIRECT-SPEC rules in section 2.
+- Otherwise (a new requirement, field, action or table feature), propose a new
+  RFC that names the accepted RFC it changes.
+
 ### Accepting an RFC
 Do this only when the acceptance criteria in `protocol_rfcs/README.md` are
 met: a thoroughly tested production implementation (for example in
@@ -75,8 +92,8 @@ Delta Kernel can implement it.
    match [#6066].
 2. Check the spec against what the production implementation actually writes:
    names, serialized forms, edge cases and feature removal.
-3. Drop the `-dev` suffix from feature and property names in the spec. The code
-   must drop it too, in its own engine PR [#3416].
+3. If the RFC used a `-dev` suffix, drop it from feature and property names in
+   the spec. The code must drop it too, in its own engine PR [#3416].
 4. Add the feature to **"Valid Feature Names in Table Features"**, each new
    property to the **Table Properties** table, and table of contents entries
    for new sections [#2808, #6696].
@@ -156,6 +173,16 @@ in order and write the reasoning in the RFC's feature summary.
    just on writers following the new rules, for example keeping an invariant
    or writing extra metadata. The writer feature is what stops old writers
    from breaking those rules.
+
+   This includes features that store optional information in the log that is
+   not needed for correctness but matters for read performance (for example
+   extra statistics or other data-skipping metadata). Old readers can ignore
+   it and still return correct results, just more slowly. But writers must
+   know about it explicitly, so that they at least preserve it when they
+   write checkpoints instead of silently dropping it. Such a feature is a
+   candidate for a writers-only feature. Check performance as well as
+   correctness: say what happens to read performance when an old writer or
+   an old checkpoint writer touches the table.
 4. Write down why ignoring the feature still gives correct results. "Old
    readers ignore it" is not enough on its own.
 
@@ -246,8 +273,10 @@ Then also tell the author if any of these apply:
 - [ ] The proposed changes are written as **spec text to be added to
       `PROTOCOL.md`** (new sections, schema tables, reader and writer
       requirements). A design doc alone is not enough.
-- [ ] While experimental, the table feature name and property names use a
-      `-dev` (or preview) suffix.
+- [ ] While experimental, the table feature name and property names should
+      use a `-dev` (or preview) suffix. This is strongly recommended, not
+      required. If it's missing, ask why (NIT unless there is a reason the
+      suffix matters for this feature).
 - [ ] If this RFC replaces an earlier one, the RFC says why the earlier one is
       superseded and moves it to `rejected/` [#4382].
 
@@ -280,7 +309,7 @@ Then also tell the author if any of these apply:
 - [ ] All the bookkeeping is done in the same PR:
   - RFC file moved with `git mv` to `protocol_rfcs/accepted/`.
   - README row moved from Proposed to **Accepted**, with "Date accepted".
-  - The `-dev`/preview suffix is dropped everywhere, in spec and code [#3416].
+  - Any `-dev`/preview suffix is dropped everywhere, in spec and code [#3416].
   - The feature is added to **"Valid Feature Names in Table Features"** in the
     `PROTOCOL.md` appendix [#2808, #2868, #7650].
   - TOC entries are added for the new sections.
