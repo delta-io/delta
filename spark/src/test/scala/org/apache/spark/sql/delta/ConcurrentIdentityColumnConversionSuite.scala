@@ -857,7 +857,7 @@ class ConcurrentIdentityColumnConversionSuite extends ConcurrentIdentityColumnSu
       assert(localService.dropSequenceCount === dropsBefore,
         "A failed catalog drop must not attempt sequence retirement.")
       assert(localService.hasSequence(serviceTableId, sequenceId),
-        "A failed catalog drop must leave the live table's sequence intact.")
+        "A failed catalog drop must leave the table's sequence intact.")
     }
   }
 
