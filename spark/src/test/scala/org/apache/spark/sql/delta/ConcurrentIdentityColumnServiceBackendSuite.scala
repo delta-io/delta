@@ -23,13 +23,14 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.NumericRange
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{MetadataBuilder, StructType}
 
 /**
  * Verifies the IdentitySequenceService backend end-to-end:
@@ -533,6 +534,48 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
       createUnconvertedLegacyTable()
       val reservesBefore = localService.reserveIdsCount
 
+      val reservation =
+        new TestServiceBackedIdentityColumnReservation(deltaLog, None, spark)
+      val ex = intercept[ConcurrentIdentityColumnReservationException] {
+        reservation.reserveValuesForIdentityColumns(numRows = 1L)
+      }
+      checkError(
+        ex,
+        condition = "DELTA_CONCURRENT_IDENTITY_COLUMN_CONVERSION_INCOMPLETE",
+        sqlState = "XXKDS",
+        parameters = Map(
+          "columnName" -> "ids",
+          "tableId" -> deltaLog.update().metadata.id))
+
+      assert(localService.reserveIdsCount === reservesBefore,
+        "Pre-scan must throw BEFORE any reserveIds call (all-or-nothing contract).")
+    }
+  }
+
+  test("service-backed reservation throws when a stamped column also carries a high-water mark") {
+    // A CIC column must never carry both a sequence pointer and a stock high-water mark.
+    withTable("target") {
+      spark.sql(createTargetTableStatement(Seq(
+        "ids BIGINT GENERATED ALWAYS AS IDENTITY",
+        "values INT")))
+      assert(syncedSequenceId.isDefined, "Fixture: the CIC column must be stamped.")
+
+      // Fabricate the invalid both-metadata state.
+      val txn = deltaLog.startTransaction()
+      val schemaWithBoth = StructType(txn.metadata.schema.map { field =>
+        if (field.name == "ids") {
+          field.copy(metadata = new MetadataBuilder()
+            .withMetadata(field.metadata)
+            .putLong(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK, 1L)
+            .build())
+        } else {
+          field
+        }
+      })
+      txn.updateMetadata(txn.metadata.copy(schemaString = schemaWithBoth.json))
+      txn.commit(Nil, DeltaOperations.ManualUpdate)
+
+      val reservesBefore = localService.reserveIdsCount
       val reservation =
         new TestServiceBackedIdentityColumnReservation(deltaLog, None, spark)
       val ex = intercept[ConcurrentIdentityColumnReservationException] {
