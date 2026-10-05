@@ -583,6 +583,10 @@ class Snapshot(
 
   override def protocol: Protocol = _reconstructedProtocolMetadataICTAndLMC.protocol
 
+  /** The row tracking high watermark assigned in this snapshot. */
+  def getRowTrackingHighWaterMark(): Option[Long] =
+    RowId.RowTrackingMetadataDomain.fromSnapshot(this).map(_.rowIdHighWaterMark)
+
   /**
    * Tries to retrieve the protocol, metadata, and in-commit-timestamp (if needed) from the
    * checksum file. If the checksum file is not present or if the protocol or metadata is missing

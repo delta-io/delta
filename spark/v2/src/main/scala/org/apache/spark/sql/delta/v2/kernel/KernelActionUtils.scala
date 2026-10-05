@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.actions.{
   AddFile,
   CommitInfo,
   DeletionVectorDescriptor,
+  DomainMetadata,
   Format,
   Metadata,
   Protocol,
@@ -42,6 +43,7 @@ import io.delta.kernel.internal.actions.{CommitInfo => KernelCommitInfo}
 import io.delta.kernel.internal.actions.{
   DeletionVectorDescriptor => KernelDeletionVectorDescriptor
 }
+import io.delta.kernel.internal.actions.{DomainMetadata => KernelDomainMetadata}
 import io.delta.kernel.internal.actions.{Metadata => KernelMetadata}
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
 import io.delta.kernel.internal.actions.{RemoveFile => KernelRemoveFile}
@@ -115,6 +117,9 @@ private[v2] object KernelActionUtils {
     case KernelDeltaAction.TXN =>
       setTransactionFromKernel(
         KernelSetTransaction.fromColumnVector(columnVector, rowId))
+    case KernelDeltaAction.DOMAINMETADATA =>
+      domainMetadataFromKernel(
+        KernelDomainMetadata.fromColumnVector(columnVector, rowId))
     case other =>
       throw new UnsupportedOperationException(
         s"No V1 action from Kernel decoder for a '${other.colName}' action yet")
@@ -228,6 +233,16 @@ private[v2] object KernelActionUtils {
       appId = txn.getAppId,
       version = txn.getVersion,
       lastUpdated = txn.getLastUpdated.toScala.map(_.longValue()))
+  }
+
+  /**
+   * Converts a Kernel [[KernelDomainMetadata]] into a V1 [[DomainMetadata]].
+   */
+  def domainMetadataFromKernel(domainMetadata: KernelDomainMetadata): DomainMetadata = {
+    DomainMetadata(
+      domainMetadata.getDomain,
+      domainMetadata.getConfiguration,
+      domainMetadata.isRemoved)
   }
 
   private def deletionVectorFromKernel(
