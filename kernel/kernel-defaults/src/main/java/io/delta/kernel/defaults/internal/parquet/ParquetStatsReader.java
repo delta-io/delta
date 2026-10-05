@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.function.UnaryOperator.identity;
 import static org.apache.hadoop.shaded.com.google.common.collect.ImmutableMap.toImmutableMap;
+import static org.apache.parquet.hadoop.ParquetFileWriter.CURRENT_VERSION;
 
 import io.delta.kernel.defaults.engine.fileio.InputFile;
 import io.delta.kernel.expressions.Column;
@@ -28,6 +29,7 @@ import io.delta.kernel.internal.util.GeometryUtils;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.*;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.*;
@@ -36,6 +38,8 @@ import org.apache.hadoop.shaded.com.google.common.collect.Multimap;
 import org.apache.parquet.column.statistics.*;
 import org.apache.parquet.column.statistics.geospatial.BoundingBox;
 import org.apache.parquet.column.statistics.geospatial.GeospatialStatistics;
+import org.apache.parquet.format.FileMetaData;
+import org.apache.parquet.format.converter.ParquetMetadataConverter;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
@@ -89,6 +93,41 @@ public class ParquetStatsReader {
     }
 
     return constructFileStats(metadataForColumn.build(), dataSchema, statsColumns, rowCount);
+  }
+
+  /**
+   * Extract statistics from the in-memory {@link ParquetMetadata} footer of a {@link
+   * org.apache.parquet.hadoop.ParquetWriter}.
+   *
+   * <p>Statistics collected in memory while writing haven't gone through the normalization
+   * `parquet-java` applies when a footer is serialized to and re-parsed from disk:
+   *
+   * <ul>
+   *   <li>dropping NaN min/max
+   *   <li>canonicalizing +/-0.0
+   *   <li>dropping oversized binary/string min/max
+   *   <li>omitting invalid or empty geospatial bounds
+   * </ul>
+   *
+   * This runs the footer through the same in-memory serialize/deserialize round-trip `parquet-java`
+   * uses (via {@link ParquetMetadataConverter#toParquetMetadata} and {@link
+   * ParquetMetadataConverter#fromParquetMetadata}) to get a normalized copy.
+   *
+   * @param footer the in-memory {@link ParquetMetadata} to extract statistics from
+   * @param dataSchema the schema of the data in the file
+   * @param statsColumns the columns for which statistics should be collected
+   * @return file/column level statistics as a {@link DataFileStatistics} instance
+   */
+  public static DataFileStatistics extractDataFileStatisticsFromInMemoryFooter(
+      ParquetMetadata footer, StructType dataSchema, List<Column> statsColumns) {
+    try {
+      ParquetMetadataConverter converter = new ParquetMetadataConverter();
+      FileMetaData serialized = converter.toParquetMetadata(CURRENT_VERSION, footer);
+      ParquetMetadata normalized = converter.fromParquetMetadata(serialized);
+      return extractDataFileStatistics(normalized, dataSchema, statsColumns);
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
   }
 
   /**

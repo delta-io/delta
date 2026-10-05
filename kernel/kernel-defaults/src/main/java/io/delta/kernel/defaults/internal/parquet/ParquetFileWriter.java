@@ -16,7 +16,7 @@
 package io.delta.kernel.defaults.internal.parquet;
 
 import static io.delta.kernel.defaults.internal.parquet.ParquetIOUtils.createParquetOutputFile;
-import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.extractDataFileStatistics;
+import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.extractDataFileStatisticsFromInMemoryFooter;
 import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.readDataFileStatistics;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.emptyMap;
@@ -43,6 +43,7 @@ import org.apache.parquet.hadoop.ParquetOutputFormat;
 import org.apache.parquet.hadoop.ParquetWriter;
 import org.apache.parquet.hadoop.api.WriteSupport;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
+import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.io.api.RecordConsumer;
 import org.apache.parquet.schema.MessageType;
 import org.slf4j.Logger;
@@ -230,9 +231,11 @@ public class ParquetFileWriter {
           }
         }
 
+        // The footer is only available once the writer has been successfully closed.
+        ParquetMetadata footer = committed && writer != null ? writer.getFooter() : null;
         return Optional.of(
             constructDataFileStatus(
-                parquetOutputFile.getPath(), dataSchema, currentFileRowCount, writer));
+                parquetOutputFile.getPath(), dataSchema, currentFileRowCount, footer));
       }
 
       /**
@@ -466,17 +469,18 @@ public class ParquetFileWriter {
 
   /**
    * Construct the {@link DataFileStatus} for the given file path. It reads the file status and uses
-   * the in-memory Parquet footer from {@code writer} to compute statistics when available, falling
-   * back to reopening the file if {@code writer} is null.
+   * the in-memory Parquet {@code footer} to compute statistics when available, falling back to
+   * reopening the file if {@code footer} is null.
    *
    * @param path the path of the file
    * @param dataSchema the schema of the data in the file
    * @param numRows the number of rows in the file. Used only when no column stats are required.
-   * @param writer the closed {@link ParquetWriter}, or null if it was never successfully created
+   * @param footer the in-memory footer of the closed writer, or null if the writer was never
+   *     successfully created
    * @return the {@link DataFileStatus} for the file
    */
   private DataFileStatus constructDataFileStatus(
-      String path, StructType dataSchema, long numRows, ParquetWriter<Integer> writer) {
+      String path, StructType dataSchema, long numRows, ParquetMetadata footer) {
     try {
       // Get the FileStatus to figure out the file size and modification time
       FileStatus fileStatus = fileIO.getFileStatus(path);
@@ -491,9 +495,9 @@ public class ParquetFileWriter {
                 emptyMap() /* maxValues */,
                 emptyMap() /* nullCount */,
                 Optional.empty() /* tightBounds */);
-      } else if (writer != null) {
+      } else if (footer != null) {
         // Use the in-memory footer from the writer — no need to reopen the file.
-        stats = extractDataFileStatistics(writer.getFooter(), dataSchema, statsColumns);
+        stats = extractDataFileStatisticsFromInMemoryFooter(footer, dataSchema, statsColumns);
       } else {
         // Writer was never successfully created; fall back to reading the footer from storage.
         stats =
