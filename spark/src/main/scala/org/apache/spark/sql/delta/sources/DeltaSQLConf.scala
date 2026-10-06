@@ -1992,6 +1992,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val REPLACEWHERE_LITERAL_STRING_PREDICATES_ENABLED =
+    buildConf("replaceWhere.literalStringPredicates.enabled")
+      .internal()
+      .doc("When enabled, Delta overwrite filters preserve literal string operands. " +
+        "When disabled, startsWith, endsWith, and contains use the legacy LIKE translation.")
+      .booleanConf
+      .createWithDefault(true)
+
   val REPLACEWHERE_DATACOLUMNS_ENABLED =
     buildConf("replaceWhere.dataColumns.enabled")
       .doc(
