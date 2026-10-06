@@ -70,9 +70,6 @@ object AMTUsageLogs {
   val ALERT_UNEXPECTED_LEAF_TRACKING_STATUS =
     "amt.unexpectedLeafTrackingStatus"
 
-  // A manifest deletion vector has inconsistent bytes and cardinality.
-  val ALERT_MALFORMED_MANIFEST_DV = "amt.malformedManifestDV"
-
   // Alert raised when a base-preserving winning commit's Add/Remove file carries a new commit
   // sequence number (defaultRowCommitVersion newer than the losing full checkpoint's version)
   // yet a non-empty back reference into the base tree -- contradictory signals.

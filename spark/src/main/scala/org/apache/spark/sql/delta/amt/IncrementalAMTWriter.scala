@@ -361,7 +361,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
           // The MDV grew this commit: MODIFIED, or DELETED once every live entry is masked.
           AMTWriteHelper.modifiedOrDeletedTrackingForLeaf(
             pointer, newMdvPositions, deletedPositions, replacedPositions)
-        } else if (pointer.manifest_info.dv_cardinality.getOrElse(0L) == pointer.record_count) {
+        } else if (pointer.manifest_info.dvCardinality == pointer.record_count) {
           AMTWriteHelper.deletedTrackingForCarriedLeaf(pointer)
         } else {
           // Untouched leaf (no new MDVs) that still holds live files: carry it forward EXISTING.

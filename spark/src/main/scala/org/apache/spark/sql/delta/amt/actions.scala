@@ -257,16 +257,15 @@ object AMTSingleAction {
     required(504L, "added_files_count"),
     required(505L, "existing_files_count"),
     required(506L, "deleted_files_count"),
-    required(520L, "replaced_files_count"),
-    required(524L, "modified_files_count"),
+    required(523L, "replaced_files_count"),
+    required(525L, "modified_files_count"),
     required(512L, "added_rows_count"),
     required(513L, "existing_rows_count"),
     required(514L, "deleted_rows_count"),
-    required(521L, "replaced_rows_count"),
-    required(525L, "modified_rows_count"),
+    required(524L, "replaced_rows_count"),
+    required(526L, "modified_rows_count"),
     required(516L, "min_sequence_number"),
-    optional(522L, "dv"),
-    optional(523L, "dv_cardinality"))
+    optional(522L, "dv"))
 
   /** Nested-struct field specs, keyed by the top-level field name that carries the struct. */
   private val nestedStructFields: Map[String, Seq[AMTFieldSpec]] = Map(
@@ -730,26 +729,11 @@ case class DataManifestEntry(
 
   /**
    * The inline manifest deletion vector on this leaf, if any, as (bitmap bytes, cardinality).
-   * Per the V4 spec, `dv` and `dv_cardinality` must both be set or both unset; a partially
-   * populated pair is malformed and rejected.
+   * The cardinality is derived by decoding the bitmap.
    */
   @JsonIgnore
-  def manifestDV: Option[(Array[Byte], Long)] = {
-    AMTUtils.invariantCheckWithLogging(
-      checkInvariant = manifest_info.dv.isDefined == manifest_info.dv_cardinality.isDefined,
-      opTypeSuffix = AMTUsageLogs.ALERT_MALFORMED_MANIFEST_DV,
-      message =
-        s"Malformed manifest DV on leaf $location: dv and dv_cardinality must both be set or " +
-          s"both unset (dv.isDefined=${manifest_info.dv.isDefined}, " +
-          s"dv_cardinality=${manifest_info.dv_cardinality}).",
-      data = Map(
-        "leafLocation" -> location,
-        "dvIsDefined" -> manifest_info.dv.isDefined,
-        "dvCardinalityIsDefined" -> manifest_info.dv_cardinality.isDefined))
-    manifest_info.dv.flatMap { dv =>
-      manifest_info.dv_cardinality.map(cardinality => (dv, cardinality))
-    }
-  }
+  def manifestDV: Option[(Array[Byte], Long)] =
+    manifest_info.dv.map(dv => (dv, manifest_info.dvCardinality))
 }
 
 /**
@@ -1005,9 +989,7 @@ object DeletionVector {
  * Field IDs and required/optional match the V4 `manifest_info` struct verbatim.
  *
  * `dv` carries the inline manifest deletion-vector bitmap over leaf row
- * positions; `dv_cardinality` is its count. Manifest DVs live INSIDE
- * `manifest_info`, not as separate root rows -- a deliberate choice in
- * the Combined Data + DV Entry model.
+ * positions; its cardinality is derived on demand via [[ManifestInfo.dvCardinality]]
  *
  * @param added_files_count Count of ADDED file entries in the referenced manifest.
  * @param existing_files_count Count of EXISTING file entries.
@@ -1021,26 +1003,30 @@ object DeletionVector {
  * @param modified_rows_count Rows across MODIFIED files.
  * @param min_sequence_number Minimum data sequence number across the manifest's live entries.
  * @param dv Inline manifest deletion-vector bitmap over leaf row positions.
- * @param dv_cardinality Number of positions the inline manifest DV marks.
  */
 case class ManifestInfo(
     added_files_count: Int,           // ID: 504, required.
     existing_files_count: Int,        // ID: 505, required.
     deleted_files_count: Int,         // ID: 506, required.
-    replaced_files_count: Int,        // ID: 520, required.
-    modified_files_count: Int,        // ID: 524, required.
+    replaced_files_count: Int,        // ID: 523, required.
+    modified_files_count: Int,        // ID: 525, required.
     added_rows_count: Long,           // ID: 512, required.
     existing_rows_count: Long,        // ID: 513, required.
     deleted_rows_count: Long,         // ID: 514, required.
-    replaced_rows_count: Long,        // ID: 521, required.
-    modified_rows_count: Long,        // ID: 525, required.
+    replaced_rows_count: Long,        // ID: 524, required.
+    modified_rows_count: Long,        // ID: 526, required.
     min_sequence_number: Long,        // ID: 516, required.
-    dv: Option[Array[Byte]],          // ID: 522, optional (inline manifest DV bitmap).
-    dv_cardinality: Option[Long]) {   // ID: 523, optional.
+    dv: Option[Array[Byte]]) {        // ID: 522, optional (inline manifest DV bitmap).
 
   /** Live (non-tombstone) file entries: ADDED, EXISTING and MODIFIED are all live. */
   def liveFilesCount: Int = added_files_count + existing_files_count + modified_files_count
 
   /** Tombstone file entries: DELETED and REPLACED. */
   def tombstoneFilesCount: Int = deleted_files_count + replaced_files_count
+
+  /**
+   * Cardinality of the inline manifest DV, derived by decoding `dv` (0 when absent).
+   */
+  @JsonIgnore
+  def dvCardinality: Long = dv.map(AMTUtils.deserializeMdv(_).cardinality).getOrElse(0L)
 }

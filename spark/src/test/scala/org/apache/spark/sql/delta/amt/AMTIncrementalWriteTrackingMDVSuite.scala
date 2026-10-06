@@ -270,7 +270,7 @@ class AMTIncrementalWriteTrackingMDVSuite extends AMTIncrementalWriteTestBase {
             numLeavesExistingStatus = leafToAddFileMapping.size - 1))
         val provider = amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT"))
         provider.leaves.foreach { leaf =>
-          val card = leaf.manifest_info.dv_cardinality.getOrElse(0L)
+          val card = leaf.manifest_info.dvCardinality
           if (leaf.location == victimLeaf) {
             assert(card == 1L, s"The victim leaf must carry exactly one MDV bit; got $card.")
           } else {

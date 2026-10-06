@@ -77,8 +77,7 @@ class AMTInheritanceSuite extends SparkFunSuite {
       replaced_rows_count = 0L,
       modified_rows_count = 0L,
       min_sequence_number = 0L,
-      dv = None,
-      dv_cardinality = None))
+      dv = None))
 
   test("an ADDED entry with null tracking inherits every inheritable field") {
     val resolved = resolve(childTracking())
