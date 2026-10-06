@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * This class is directly copied from iceberg repo 1.11.0 with the following change:
+ * This class is directly copied from iceberg repo 1.12.0 with the following change:
  * Changes: L40: suppressFirstRowId returns the file directly instead of nulling out its first_row_id.
  *          UniForm assigns each Iceberg data file's first_row_id from the Delta baseRowId; the
  *          upstream behavior of suppressing the explicitly-set first_row_id for newly-added
@@ -229,6 +229,11 @@ class Delegates {
     @Override
     public Map<Integer, Long> nanValueCounts() {
       return wrapped.nanValueCounts();
+    }
+
+    @Override
+    public Map<Integer, Integer> avgValueSizes() {
+      return wrapped.avgValueSizes();
     }
 
     @Override

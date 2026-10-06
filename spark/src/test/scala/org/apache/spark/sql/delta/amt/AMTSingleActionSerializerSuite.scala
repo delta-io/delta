@@ -365,7 +365,8 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       cardinality = 3L,
       offset = Some(8))
     val amtDv = DeletionVector.fromDescriptor(dv, tableRoot)
-    assert(amtDv.location == dv.absolutePath(tableRoot).toString)
+    assert(amtDv.location ==
+      s"test%dv%prefix-/${DeletionVectorDescriptor.assembleDeletionVectorFileName(id)}")
     assert(amtDv.location.contains("test%dv%prefix-"))
     assert(amtDv.offset == 8L)
     assert(amtDv.cardinality == 3L)
@@ -376,6 +377,8 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(roundTripped.storageType == DeletionVectorDescriptor.RELATIVE_DV_MARKER)
     assert(roundTripped.pathOrInlineDv.contains("test%dv%prefix-"))
     assert(roundTripped.absolutePath(tableRoot) == dv.absolutePath(tableRoot))
+    assert(roundTripped.normalizedTableRelativeObjectId(tableRoot) ==
+      dv.normalizedTableRelativeObjectId(tableRoot))
   }
 
   test("DeletionVector round-trips an absolute-path DV outside the table root") {

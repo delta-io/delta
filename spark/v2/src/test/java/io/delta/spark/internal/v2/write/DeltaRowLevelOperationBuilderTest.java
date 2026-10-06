@@ -17,7 +17,6 @@ package io.delta.spark.internal.v2.write;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
@@ -35,7 +34,7 @@ import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.RowLevelOperation;
 import org.apache.spark.sql.connector.write.RowLevelOperationBuilder;
 import org.apache.spark.sql.connector.write.RowLevelOperationInfo;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -108,8 +107,7 @@ public class DeltaRowLevelOperationBuilderTest extends DeltaV2TestBase {
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     Engine engine = DefaultEngine.create(hadoopConf);
     Snapshot snapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-            new PathBasedSnapshotManager(tempDir.getAbsolutePath(), engine).loadLatestSnapshot());
+        new PathBasedSnapshotManager(tempDir.getAbsolutePath(), engine).loadLatestSnapshot();
 
     assertThrows(
         NullPointerException.class,
@@ -141,9 +139,7 @@ public class DeltaRowLevelOperationBuilderTest extends DeltaV2TestBase {
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     Engine engine = DefaultEngine.create(hadoopConf);
     Snapshot snapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-            new PathBasedSnapshotManager(table.getTablePath().toString(), engine)
-                .loadLatestSnapshot());
+        new PathBasedSnapshotManager(table.getTablePath().toString(), engine).loadLatestSnapshot();
     return new DeltaRowLevelOperationBuilder(
         table, engine, hadoopConf, snapshot, testInfo(command));
   }

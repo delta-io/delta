@@ -36,7 +36,6 @@ import org.apache.spark.sql.delta.stats.{
   StatisticsCollection,
   StatsCollectionUtils
 }
-import org.apache.spark.sql.delta.util.JsonUtils.toJsonColumn
 import org.apache.spark.sql.delta.util.TableParquetVersionOption
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
@@ -48,7 +47,7 @@ import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.connector.catalog._
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions.{col, to_json}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
@@ -332,7 +331,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       statsDataSchema: Seq[Attribute],
       statsCollection: StatisticsCollection): (Expression, Seq[Attribute]) = {
     val resolvedPlan = DataFrameUtils.ofRows(spark, LocalRelation(statsDataSchema))
-      .select(toJsonColumn(Column(
+      .select(to_json(Column(
         EncodeNestedVariantAsZ85String(statsCollection.statsCollector.expr))))
       .queryExecution.analyzed
 
