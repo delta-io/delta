@@ -826,19 +826,22 @@ class AMTSnapshotDiscoverySuite
     }
   }
 
-  test("[minor compaction] an incremental checkpoint over a compacted pre-commit segment throws") {
+  test("[minor compaction] incremental checkpoint replays a compacted pre-commit segment") {
     val name = "amt_compaction_incremental"
     withTable(name) {
-      val (_, _, _) =
-        buildDeltaLogWithCompactedDeltasAndStaleLastCheckpointHint(name)
-      // With compacted deltas in the pre-commit segment, Incremental AMT writer appends
-      // non-contiguous versions to InMemoryLogReplay, which fails the contiguity assertion.
+      val (_, _, _) = buildDeltaLogWithCompactedDeltasAndStaleLastCheckpointHint(name)
       // Cold load the delta log to incorporate the compacted deltas into the snapshot.
       val (coldDeltaLog, _) = coldLoad(name)
-      val e = intercept[Throwable] {
-        commitCheckpoint(coldDeltaLog, incremental = true)
-      }
-      assert(e.getMessage().contains("Attempted to replay version"))
+      commitCheckpoint(coldDeltaLog, incremental = true)
+      val postCommitSnapshot = coldDeltaLog.unsafeVolatileSnapshot
+      assertSnapshotTrimmed(
+        postCommitSnapshot,
+        expectedVersion = 9L,
+        expectedAMTContentRootVersion = 8L,
+        expectedIndividualDeltas = Seq(9L),
+        expectedCompactedDeltas = Seq.empty,
+        expectedNonCompactedDeltas = Seq(9L),
+        expectedData = Set(1, 2, 3, 4, 5))
     }
   }
 }
