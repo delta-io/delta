@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import scala.util.Try
@@ -48,7 +49,7 @@ import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableComm
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType}
 import org.apache.spark.util.Utils
 
 /**
@@ -67,8 +68,12 @@ import org.apache.spark.util.Utils
  * @param output SQL output of the command
  * @param protocol This is used to create a table with specific protocol version
  * @param allowCatalogManaged This is used to create UC managed table with catalogManaged feature
- * @param createTableFunc If specified, call this function to create the table, instead of
- *                        Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
+ * @param createTableFunc If specified, call this function (with a [[CreateTableFuncParams]]
+ *                        carrying the cleaned [[CatalogTable]], the post-commit [[Snapshot]], and
+ *                        any extra metadata such as UniForm Iceberg) to create the table, instead
+ *                        of Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
+ *                        The snapshot is included so callers that need committed protocol/metadata
+ *                        (e.g. catalog-managed Delta) can avoid re-loading the table.
  */
 case class CreateDeltaTableCommand(
     override val table: CatalogTable,
@@ -80,7 +85,7 @@ case class CreateDeltaTableCommand(
     override val output: Seq[Attribute] = Nil,
     protocol: Option[Protocol] = None,
     override val allowCatalogManaged: Boolean = false,
-    createTableFunc: Option[CatalogTable => Unit] = None)
+    createTableFunc: Option[CreateTableFuncParams => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging
@@ -147,6 +152,7 @@ case class CreateDeltaTableCommand(
       tableExists = deltaLog.tableExists,
       query = query,
       catalogTableProperties = tableWithLocation.properties,
+      catalogTable = tableWithLocation,
       existingTableSnapshotOpt =
         if (deltaLog.tableExists) Some(deltaLog.unsafeVolatileSnapshot) else None)
 
@@ -208,6 +214,13 @@ case class CreateDeltaTableCommand(
           // to once again go through analysis
           val data = DataFrameUtils.ofRows(sparkSession, query)
           val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+          if (options.isReplaceOnOrUsingDefined) {
+            if (options.replaceOn.isDefined) {
+              throw DeltaErrors.operationNotSupportedException("replaceOn")
+            } else {
+              throw DeltaErrors.operationNotSupportedException("replaceUsing")
+            }
+          }
           val deltaWriter = WriteIntoDelta(
             deltaLog = deltaLog,
             mode = mode,
@@ -256,7 +269,16 @@ case class CreateDeltaTableCommand(
       didNotChangeMetadata,
       createTableFunc)
 
+    runPostTableCreationUpdates(
+      sparkSession, txnUsedForCommit, deltaLog, postCommitSnapshot, tableWithLocation)
+  }
 
+  private def runPostTableCreationUpdates(
+      sparkSession: SparkSession,
+      txnUsedForCommit: OptimisticTransaction,
+      deltaLog: DeltaLog,
+      postCommitSnapshot: Snapshot,
+      tableWithLocation: CatalogTable): Unit = {
 
     if (UniversalFormat.hudiEnabled(postCommitSnapshot.metadata) &&
         !txnUsedForCommit.containsPostCommitHook(HudiConverterHook)) {
@@ -338,10 +360,22 @@ case class CreateDeltaTableCommand(
       )
       (taggedCommitData, op)
     }
+    // A V1 saveAsTable overwrite only overwrites data: it skips replaceMetadataIfNecessary, so
+    // table properties are left untouched, the committed config stays the snapshot's, and
+    // deltaWriter.configuration (writer/catalog options only) never persists. We pass
+    // snapshot ++ writer to the enforcement check below only so it sees that committed (snapshot)
+    // config -- which includes properties kept solely in the Delta log (e.g.
+    // delta.enableIcebergCompatV3 set via ALTER TABLE). Without it the check reads
+    // deltaWriter.configuration alone, misses the snapshot's flag, and wrongly fails the write with
+    // "IcebergCompat cannot be disabled". (V2 createOrReplace / SQL REPLACE do redefine properties,
+    // via replaceMetadataIfNecessary.)
+    val writerConfiguration = if (isV1WriterSaveAsTableOverwrite) {
+      txn.snapshot.metadata.configuration ++ deltaWriter.configuration
+    } else deltaWriter.configuration
     val updatedConfiguration = UniversalFormat.enforceDependenciesInConfiguration(
       sparkSession,
       tableWithLocation,
-      deltaWriter.configuration,
+      writerConfiguration,
       txn.snapshot
     )
     val updatedWriter = deltaWriter.withNewWriterConfiguration(updatedConfiguration)
@@ -349,7 +383,9 @@ case class CreateDeltaTableCommand(
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
       val (taggedCommitData, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
-      txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
+      InsertAtomicReplaceExecutionObserver.getObserver.commit {
+        txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
+      }
     }
     txnToReturn
   }
@@ -724,7 +760,7 @@ case class CreateDeltaTableCommand(
       )
 
     // Legacy saveAsTable with Overwrite mode
-    case TableCreationModes.CreateOrReplace if options.exists(_.replaceWhere.isDefined) =>
+    case TableCreationModes.CreateOrReplace if options.exists(_.isInsertAtomicReplaceOp) =>
       DeltaOperations.Write(
         mode = mode,
         partitionBy = Option(table.partitionColumnNames),
@@ -733,7 +769,9 @@ case class CreateDeltaTableCommand(
         isDynamicPartitionOverwrite = options.flatMap(
           o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
         canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
-        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None),
+        replaceOnCond = options.flatMap(_.replaceOn),
+        replaceUsingCols = options.flatMap(_.replaceUsing)
       )
 
     // New DataSourceV2 saveAsTable with overwrite mode behavior
@@ -776,6 +814,12 @@ case class CreateDeltaTableCommand(
     if (isReplace && dontOverwriteSchema) {
       throw DeltaErrors.illegalUsageException(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "replacing")
     }
+    // `replaceUsing`/`replaceOn` can only replace parts of the table, so combining them with
+    // commands that can overwrite schema could corrupt the table: the non-replaced rows would
+    // still have the old schema while newly written rows would have the new schema.
+    if (options.isReplaceOnOrUsingDefined) {
+      throw DeltaErrors.dfv2CreateReplaceIncompatibleReplaceOnOrUsingError()
+    }
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
@@ -791,6 +835,22 @@ case class CreateDeltaTableCommand(
         // Unity Catalog table id stored in `io.unitycatalog.tableId`.
         newMetadata = newMetadata.copy(id = txn.snapshot.metadata.id)
       }
+
+      // Carry over table and column comments from the old table when the new DDL
+      // does not explicitly specify them.
+      if (sparkSession.conf.get(DeltaSQLConf.RETAIN_COMMENTS_DURING_REPLACE_TABLE)) {
+        // Table comments
+        if (newMetadata.description == null) {
+          newMetadata = newMetadata.copy(description = txn.metadata.description)
+        }
+        // Schema / column comments, only when overwriteSchema=true is not set
+        if (!options.canOverwriteSchema) {
+          val updatedSchema = CreateDeltaTableCommand.carryOverStructTypeComments(
+            txn.metadata.schema, newMetadata.schema)
+          newMetadata = newMetadata.copy(schemaString = updatedSchema.json)
+        }
+      }
+
       txn.updateMetadataForNewTableInReplace(newMetadata)
     }
   }
@@ -832,6 +892,61 @@ case class CreateDeltaTableCommand(
     if (table.partitionColumnNames.nonEmpty &&
       ClusteredTableUtils.isSupported(protocol)) {
       throw DeltaErrors.replacingClusteredTableWithPartitionedTableNotAllowed()
+    }
+  }
+}
+
+object CreateDeltaTableCommand {
+  /**
+   * Carries over comments from the old schema to the new schema for all fields matched by name
+   * (case-insensitively), when the new field does not already have an explicit comment. This
+   * applies to every top-level column as well as recursively through nested struct type.
+   */
+  private[delta] def carryOverStructTypeComments(
+      oldStruct: StructType,
+      newStruct: StructType): StructType = {
+    // Match field names case-insensitively.
+    def normalizeName(name: String): String = name.toLowerCase(Locale.ROOT)
+    val oldFieldsByName = oldStruct.fields.map(field => normalizeName(field.name) -> field).toMap
+    StructType(newStruct.fields.map { newField =>
+      val matched = oldFieldsByName.get(normalizeName(newField.name))
+      // Keep the new field's comment when it has one; otherwise carry over the old field's.
+      val fieldWithComment = if (newField.metadata.contains("comment")) {
+        newField
+      } else {
+        matched.flatMap(_.getComment()) match {
+          case Some(c) => newField.withComment(c)
+          case None => newField
+        }
+      }
+      // Recurse into nested types to carry over comments on inner struct fields
+      val newDataType = matched
+        .map(field =>
+          carryOverDataTypeComments(field.dataType, fieldWithComment.dataType)
+        )
+        .getOrElse(fieldWithComment.dataType)
+      fieldWithComment.copy(dataType = newDataType)
+    })
+  }
+
+  /**
+   * Recursively carries over column comments through nested DataTypes.
+   * Handles StructType, ArrayType, and MapType at arbitrary nesting depth.
+   */
+  private[delta] def carryOverDataTypeComments(
+      oldType: DataType,
+      newType: DataType): DataType = {
+    (oldType, newType) match {
+      case (oldStruct: StructType, newStruct: StructType) =>
+        carryOverStructTypeComments(oldStruct, newStruct)
+      case (ArrayType(oldElem, _), ArrayType(newElem, nullable)) =>
+        ArrayType(carryOverDataTypeComments(oldElem, newElem), nullable)
+      case (MapType(oldK, oldV, _), MapType(newK, newV, nullable)) =>
+        MapType(carryOverDataTypeComments(oldK, newK),
+          carryOverDataTypeComments(oldV, newV),
+          nullable
+        )
+      case _ => newType
     }
   }
 }

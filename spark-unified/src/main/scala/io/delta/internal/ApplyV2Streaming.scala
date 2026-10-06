@@ -19,7 +19,7 @@ package io.delta.internal
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._
 
-import io.delta.spark.internal.v2.catalog.SparkTable
+import io.delta.spark.internal.v2.catalog.DeltaV2Table
 import io.delta.spark.internal.v2.utils.ScalaUtils
 import org.apache.spark.sql.delta.DeltaV2Mode
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
@@ -35,12 +35,12 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Rule for applying the V2 streaming path by rewriting V1 StreamingRelation
- * with Delta DataSource to StreamingRelationV2 with SparkTable.
+ * with Delta DataSource to StreamingRelationV2 with DeltaV2Table.
  *
  * This rule handles the case where Spark's FindDataSourceTable rule has converted
  * a StreamingRelationV2 (with DeltaTableV2) back to a StreamingRelation because
  * DeltaTableV2 doesn't advertise STREAMING_READ capability. We convert it back to
- * StreamingRelationV2 with SparkTable (from sparkV2) which does support streaming.
+ * StreamingRelationV2 with DeltaV2Table (from sparkV2) which does support streaming.
  *
  * See [[DeltaV2Mode]] for configuration behavior.
  *
@@ -79,11 +79,11 @@ class ApplyV2Streaming(
       val ident =
         Identifier.of(catalogTable.identifier.database.toArray, catalogTable.identifier.table)
       val table =
-        new SparkTable(
+        new DeltaV2Table(
           ident,
           catalogTable,
           // Use user-specified streaming options to override catalog storage properties.
-          // SparkTable handles merging catalogTable storage props internally.
+          // DeltaV2Table handles merging catalogTable storage props internally.
           ScalaUtils.toJavaMap(s.dataSource.options))
       val catalog = catalogTable.identifier.catalog.map(
         session.sessionState.catalogManager.catalog)

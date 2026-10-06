@@ -350,6 +350,11 @@ public class DefaultJsonRow implements Row {
       };
     }
 
+    if (dataType instanceof GeometryType || dataType instanceof GeographyType) {
+      throwIfTypeMismatch("string", jsonValue.isTextual(), jsonValue);
+      return jsonValue.asText();
+    }
+
     throw new UnsupportedOperationException(
         String.format("Unsupported DataType %s for RootNode %s", dataType, jsonValue));
   }

@@ -30,7 +30,7 @@ import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.defaults.internal.data.vector.DefaultStructVector
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
-import io.delta.kernel.defaults.utils.{AbstractWriteUtils, TestRow, WriteUtils}
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, GeoTestUtils, TestRow, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.{Column, Literal}
@@ -39,6 +39,7 @@ import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
+import io.delta.kernel.internal.tablefeatures.TableFeatures.GEOSPATIAL_RW_FEATURE
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
@@ -61,13 +62,15 @@ import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.tables.DeltaTable
 
+import org.apache.spark.sql.delta.DeltaLog
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaTableWritesSuite extends AbstractDeltaTableWritesSuite with WriteUtils
 
 /** Transaction commit in this suite IS REQUIRED TO use commitTransaction than .commit */
 abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWriteUtils
-    with ParquetSuiteBase {
+    with GeoTestUtils with ParquetSuiteBase {
 
   ///////////////////////////////////////////////////////////////////////////
   // Create table tests
@@ -373,6 +376,27 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         "Kernel doesn't support writing data with partition column (p1) of type: array[integer]"))
     }
   }
+
+  Seq(
+    ("geometry", GeometryType.ofDefault(), "Geometry(crs=OGC:CRS84)"),
+    ("geography", GeographyType.ofDefault(), "Geography(crs=OGC:CRS84, algorithm=spherical)"))
+    .foreach { case (label, geoType, typeStr) =>
+      test(s"create partitioned table - $label partition column is rejected") {
+        withTempDirAndEngine { (tablePath, engine) =>
+          val schema = new StructType()
+            .add("id", INTEGER)
+            .add("geo", geoType)
+
+          val ex = intercept[KernelException] {
+            getCreateTxn(engine, tablePath, schema = schema, partCols = Seq("geo"))
+          }
+          assert(
+            ex.getMessage.contains(
+              s"Kernel doesn't support writing data with partition column (geo) of type: $typeStr"),
+            s"unexpected error message: ${ex.getMessage}")
+        }
+      }
+    }
 
   test("create a partitioned table") {
     withTempDirAndEngine { (tablePath, engine) =>
@@ -1279,6 +1303,68 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
+  test("insert into partitioned table - TIMESTAMP partition values use UTC ISO-8601") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val schema = new StructType()
+        .add("id", INTEGER)
+        .add("ts", TIMESTAMP)
+      val timestampPartitions = Seq(
+        1704103200123456L -> "2024-01-01T10:00:00.123456Z",
+        1704103200000000L -> "2024-01-01T10:00:00.000000Z",
+        1704103200000123L -> "2024-01-01T10:00:00.000123Z")
+      val partitionData = timestampPartitions.map { case (micros, _) =>
+        val partitionValues = Map("ts" -> ofTimestamp(micros))
+        val data =
+          generateData(schema, Seq("ts"), partitionValues, batchSize = 5, numBatches = 1)
+        partitionValues -> data
+      }
+
+      appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schema,
+        partCols = Seq("ts"),
+        data = partitionData)
+
+      val addFiles = DeltaLog.forTable(spark, tblPath).update().allFiles.collect()
+      assert(addFiles.length === timestampPartitions.length)
+      assert(
+        addFiles.map(_.partitionValues("ts")).toSet ===
+          timestampPartitions.map(_._2).toSet)
+
+      checkTable(tblPath, partitionData.flatMap(_._2).flatMap(_.toTestRows), engine = engine)
+    }
+  }
+
+  test("Spark reads Kernel-written TIMESTAMP partition values across time zones") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val schema = new StructType()
+        .add("id", INTEGER)
+        .add("ts", TIMESTAMP)
+      val partitionValues = Map("ts" -> ofTimestamp(1704103200123456L))
+      val data =
+        generateData(schema, Seq("ts"), partitionValues, batchSize = 5, numBatches = 1)
+
+      appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schema,
+        partCols = Seq("ts"),
+        data = Seq(partitionValues -> data))
+
+      val expectedRows = data.flatMap(_.toTestRows)
+      Seq("UTC", "GMT-8").foreach { timeZone =>
+        withSparkTimeZone(timeZone) {
+          val sparkRows =
+            spark.sql(s"SELECT * FROM delta.`$tblPath`").collect().map(TestRow(_))
+          checkAnswer(sparkRows, expectedRows)
+        }
+      }
+    }
+  }
+
   test("insert into partitioned table - already existing table") {
     withTempDirAndEngine { (tempTblPath, engine) =>
       val tblPath = tempTblPath + "/table+ with special chars"
@@ -2096,4 +2182,100 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
     newStructType
   }
+
+  // Reads (id INT, geo <geoType>) rows; Seq[Byte] avoids Array reference-equality surprises.
+  private def readGeoTable(tablePath: String): Seq[(Int, Option[Seq[Byte]])] = {
+    val schema = latestSnapshot(tablePath).getSchema
+    val out = scala.collection.mutable.ArrayBuffer.empty[(Int, Option[Seq[Byte]])]
+    readTableUsingKernel(defaultEngine, tablePath, schema).foreach { filteredBatch =>
+      val batch = filteredBatch.getData
+      val idIdx = batch.getSchema.indexOf("id")
+      val geoIdx = batch.getSchema.indexOf("geo")
+      val idCol = batch.getColumnVector(idIdx)
+      val geoCol = batch.getColumnVector(geoIdx)
+      val sel = filteredBatch.getSelectionVector
+      (0 until batch.getSize).foreach { rowId =>
+        val included = !sel.isPresent ||
+          (!sel.get().isNullAt(rowId) && sel.get().getBoolean(rowId))
+        if (included) {
+          val id = idCol.getInt(rowId)
+          val geo =
+            if (geoCol.isNullAt(rowId)) None else Some(geoCol.getBinary(rowId).toSeq)
+          out.append((id, geo))
+        }
+      }
+    }
+    out.toSeq
+  }
+
+  private def insertGeoBatch(
+      tablePath: String,
+      schema: StructType,
+      rows: Seq[(Int, Option[Array[Byte]])],
+      isNewTable: Boolean): TransactionCommitResult = {
+    val ids = rows.map(_._1)
+    val geos = rows.map(_._2)
+    val geoFieldType = schema.get("geo").getDataType
+    val batch = new DefaultColumnarBatch(
+      ids.length,
+      schema,
+      Array(intColumnVector(ids), geoColumnVector(geoFieldType, geos)))
+    val data =
+      Seq(Map.empty[String, Literal] -> Seq(new FilteredColumnarBatch(batch, Optional.empty())))
+    appendData(
+      defaultEngine,
+      tablePath,
+      isNewTable = isNewTable,
+      schema = if (isNewTable) schema else null,
+      data = data)
+  }
+
+  Seq(
+    ("geometry default CRS", GeometryType.ofDefault()),
+    ("geometry custom CRS", GeometryType.ofCRS("EPSG:4326")),
+    ("geography default", GeographyType.ofDefault()),
+    ("geography custom algorithm", new GeographyType("OGC:CRS84", "vincenty")))
+    .foreach { case (label, geoType) =>
+      test(s"create + insert + read roundtrip - $label") {
+        withTempDirAndEngine { (tablePath, engine) =>
+          val schema = new StructType()
+            .add("id", INTEGER)
+            .add("geo", geoType)
+
+          val rowsBatch1 = Seq[(Int, Option[Array[Byte]])](
+            (1, Some(pointWkb(1.0, 2.0))),
+            (2, None),
+            (3, Some(pointWkb(-3.5, 4.25))))
+          val rowsBatch2 = Seq[(Int, Option[Array[Byte]])](
+            (4, Some(pointWkb(10.0, 20.0))),
+            (5, Some(pointWkb(0.0, 0.0))))
+
+          val res0 = insertGeoBatch(tablePath, schema, rowsBatch1, isNewTable = true)
+          assert(res0.getVersion === 0)
+          val res1 = insertGeoBatch(tablePath, schema, rowsBatch2, isNewTable = false)
+          assert(res1.getVersion === 1)
+
+          val snapshot = latestSnapshot(tablePath)
+          val loadedGeoType = snapshot.getSchema.get("geo").getDataType
+          assert(loadedGeoType == geoType, s"loaded $loadedGeoType, expected $geoType")
+
+          val protocol = snapshot.getProtocol
+          val supported = protocol.getImplicitlyAndExplicitlySupportedFeatures
+          assert(supported.contains(GEOSPATIAL_RW_FEATURE), s"protocol features: $supported")
+          assert(protocol.getMinReaderVersion == 3)
+          assert(protocol.getMinWriterVersion == 7)
+
+          // id-keyed compare; cross-file/cross-partition row order is not guaranteed.
+          val expected = (rowsBatch1 ++ rowsBatch2).map { case (id, bytes) =>
+            (id, bytes.map(_.toSeq))
+          }.toMap
+          val actual = readGeoTable(tablePath).toMap
+          assert(actual.size === expected.size)
+          expected.foreach { case (id, expGeo) =>
+            assert(actual.contains(id), s"missing id=$id")
+            assert(actual(id) === expGeo, s"WKB mismatch at id=$id")
+          }
+        }
+      }
+    }
 }

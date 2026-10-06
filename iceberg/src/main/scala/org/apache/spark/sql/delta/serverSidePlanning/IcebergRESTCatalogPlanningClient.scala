@@ -27,7 +27,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.http.client.methods.{HttpGet, HttpPost}
 import org.apache.http.entity.{ContentType, StringEntity}
 import org.apache.http.util.EntityUtils
-import org.apache.http.{HttpHeaders, HttpResponse, HttpStatus}
+import org.apache.http.{HttpHeaders, HttpRequest, HttpRequestInterceptor, HttpResponse, HttpStatus}
 import org.apache.http.client.ServiceUnavailableRetryStrategy
 import org.apache.http.impl.client.{DefaultHttpRequestRetryHandler, HttpClientBuilder}
 import org.apache.http.protocol.HttpContext
@@ -66,12 +66,14 @@ private case class CatalogConfigResponse(
  * @param baseUriRaw Base URI of the Iceberg REST catalog up to /v1, e.g.,
  *                   "http://<catalog-URL>/iceberg/v1". Trailing slashes are handled automatically.
  * @param catalogName Name of the catalog for config endpoint query parameter.
- * @param token Authentication token for the catalog server.
+ * @param tokenSupplier Supplier of auth tokens, called per-request to support OAuth.
+ *                      Returns empty string if no auth is needed.
  */
 class IcebergRESTCatalogPlanningClient(
     baseUriRaw: String,
     catalogName: String,
-    token: String) extends ServerSidePlanningClient with Logging {
+    tokenSupplier: () => String
+) extends ServerSidePlanningClient with Logging {
 
   // Normalize baseUri to handle trailing slashes
   private val baseUri = baseUriRaw.stripSuffix("/")
@@ -120,7 +122,7 @@ class IcebergRESTCatalogPlanningClient(
     override def configure(conf: Configuration): Unit = {
       conf.set("fs.gs.impl.disable.cache", "true")
       conf.set("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER")
-      conf.set("fs.gs.auth.access.token.provider.impl",
+      conf.set("fs.gs.auth.access.token.provider",
         classOf[FixedGcsAccessTokenProvider].getName)
       conf.set("fs.gs.auth.access.token", oauth2Token)
       expirationEpochMs.foreach { ms =>
@@ -213,19 +215,13 @@ class IcebergRESTCatalogPlanningClient(
     }
   }
 
+  // Default headers without auth -- auth is injected per-request via HttpRequestInterceptor
   private val httpHeaders = {
-    val baseHeaders = Map(
+    Map(
       HttpHeaders.ACCEPT -> ContentType.APPLICATION_JSON.getMimeType,
       HttpHeaders.CONTENT_TYPE -> ContentType.APPLICATION_JSON.getMimeType,
       HttpHeaders.USER_AGENT -> buildUserAgent()
-    )
-    // Add Bearer token authentication if token is provided
-    val headersWithAuth = if (token.nonEmpty) {
-      baseHeaders + (HttpHeaders.AUTHORIZATION -> s"Bearer $token")
-    } else {
-      baseHeaders
-    }
-    headersWithAuth.map { case (k, v) => new BasicHeader(k, v) }.toSeq.asJava
+    ).map { case (k, v) => new BasicHeader(k, v) }.toSeq.asJava
   }
 
   /**
@@ -318,14 +314,28 @@ class IcebergRESTCatalogPlanningClient(
   // Maximum number of retries for transient HTTP failures (IOException, 5xx server errors)
   private val HTTP_MAX_RETRIES = 3
 
-  private lazy val httpClient = HttpClientBuilder.create()
-    .setDefaultHeaders(httpHeaders)
-    .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
-    // requestSentRetryEnabled=true: safe to retry already-sent requests because
-    // planScan is a read-only operation (idempotent POST to /plan endpoint)
-    .setRetryHandler(new DefaultHttpRequestRetryHandler(HTTP_MAX_RETRIES, true))
-    .setServiceUnavailableRetryStrategy(new ServerErrorRetryStrategy(HTTP_MAX_RETRIES))
-    .build()
+  private lazy val httpClient = {
+    val builder = HttpClientBuilder.create()
+      .setDefaultHeaders(httpHeaders)
+      .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
+      // requestSentRetryEnabled=true: safe to retry already-sent requests because
+      // planScan is a read-only operation (idempotent POST to /plan endpoint)
+      .setRetryHandler(new DefaultHttpRequestRetryHandler(HTTP_MAX_RETRIES, true))
+      .setServiceUnavailableRetryStrategy(new ServerErrorRetryStrategy(HTTP_MAX_RETRIES))
+
+    // Per-request interceptor: calls tokenSupplier() to get the current token.
+    // The token provider implementation handles caching as needed.
+    builder.addInterceptorFirst(new HttpRequestInterceptor {
+      override def process(request: HttpRequest, context: HttpContext): Unit = {
+        val token = tokenSupplier()
+        if (token != null && token.nonEmpty) {
+          request.setHeader(HttpHeaders.AUTHORIZATION, s"Bearer $token")
+        }
+      }
+    })
+
+    builder.build()
+  }
 
   override def canConvertFilters(filters: Array[Filter]): Boolean = {
     // Check if all filters can be converted to Iceberg expressions
@@ -350,7 +360,7 @@ class IcebergRESTCatalogPlanningClient(
 
     // Request planning for current snapshot. snapshotId = 0 means "use current snapshot"
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
-    val builder = new PlanTableScanRequest.Builder()
+    val builder = PlanTableScanRequest.builder()
       .withSnapshotId(CURRENT_SNAPSHOT_ID)
       // Set caseSensitive=false (defaults to true in spec) to match Spark's case-insensitive
       // column handling. Server should validate and block requests with caseSensitive=true.
@@ -368,18 +378,11 @@ class IcebergRESTCatalogPlanningClient(
       builder.withSelect(columnNames.asJava)
     }
 
-    val request = builder.build()
-
-    // Iceberg 1.11 adds withMinRowsRequested() support. For now, manually inject the field.
-    val requestJson = sparkLimitOption match {
-      case Some(limit) =>
-        implicit val formats: Formats = DefaultFormats
-        val jsonAst = parse(PlanTableScanRequestParser.toJson(request))
-        val modifiedJson = jsonAst merge JObject("min-rows-requested" -> JLong(limit.toLong))
-        compact(render(modifiedJson))
-      case None =>
-        PlanTableScanRequestParser.toJson(request)
+    sparkLimitOption.foreach { limit =>
+      builder.withMinRowsRequested(limit.toLong)
     }
+
+    val requestJson = PlanTableScanRequestParser.toJson(builder.build())
     val httpPost = new HttpPost(planTableScanUri)
     httpPost.setEntity(new StringEntity(requestJson, ContentType.APPLICATION_JSON))
     val httpResponse = httpClient.execute(httpPost)

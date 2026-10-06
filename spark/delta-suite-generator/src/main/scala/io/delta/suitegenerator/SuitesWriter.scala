@@ -96,16 +96,21 @@ class SuitesWriter(val outputDir: Path) {
       // Group by parent class: first item of the extends clause (last item of class def)
       .groupBy(suite => suite.classDefinition.children.last.children.head.text)
       .foreach { case (baseSuite, suites) =>
+        val groupPackage = testGroup.packageName.parse[Term].get.asInstanceOf[Term.Name]
         val src = SRC_HEADERS + "// scalastyle:off line.size.limit\n" +
-          source"""package $PACKAGE_NAME
+          source"""package $PACKAGE_NAME.$groupPackage
                    import ..${testGroup.imports}
                    ..${suites.sortBy(_.name).map(_.classDefinition)}"""
-        val srcFile = outputDir.resolve(s"${testGroup.name}$baseSuite.scala")
+        val srcDir = outputDir.resolve(testGroup.packageName)
+        if (!Files.exists(srcDir)) {
+          Files.createDirectory(srcDir)
+        }
+        val srcFile = outputDir.resolve(s"${testGroup.packageName}/$baseSuite.scala")
         val formattedSrc = Scalafmt.format(src, SCALAFMT_CONFIG).get
         writeFile(srcFile, formattedSrc)
       }
     // scalastyle:off println
-    println(s"Wrote ${suites.size} generated suites from ${testGroup.name} group.")
+    println(s"Wrote ${suites.size} generated suites from ${testGroup.packageName} group.")
     // scalastyle:on println
   }
 
@@ -115,7 +120,7 @@ class SuitesWriter(val outputDir: Path) {
   }
 
   def conclude(): Unit = {
-    val additionalFiles = Files.list(outputDir)
+    val additionalFiles = Files.walk(outputDir)
       .iterator()
       .asScala
       .filterNot(allFiles.contains)

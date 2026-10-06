@@ -16,16 +16,18 @@
 
 package org.apache.spark.sql.delta.schema
 
+import scala.collection.immutable.Queue
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening, TypeWideningMode}
+import org.apache.spark.sql.delta.{DataTypeChangeViolation, DeltaAnalysisException, DeltaCannotChangeDataTypeException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening, TypeWideningMode}
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.v2.interop.AbstractProtocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -82,6 +84,42 @@ object SchemaUtils extends DeltaLogging {
     }
 
     recurseIntoComplexTypes(schema, Nil)
+  }
+
+  /**
+   * Class to represent a nested column path.
+   */
+  private[delta] case class ColumnPath(parts: Queue[String] = Queue.empty) {
+    override def toString: String = parts.mkString(".")
+
+    def prepended(part: String): ColumnPath = ColumnPath(parts.+:(part))
+  }
+
+  /**
+   * Copied verbatim from Apache Spark.
+   *
+   * For the given dataType `dt` find all column paths that satisfy the given predicate `f`.
+   */
+  def findColumnPaths(dt: DataType)(f: DataType => Boolean): Seq[(ColumnPath, DataType)] = {
+    dt match {
+      case _ if f(dt) =>
+        Seq((ColumnPath(), dt))
+
+      case ArrayType(elementType, _) =>
+        findColumnPaths(elementType)(f).map { case (path, dt) => (path.prepended("element"), dt) }
+
+      case MapType(keyType, valueType, _) =>
+        findColumnPaths(keyType)(f).map { case (path, dt) => (path.prepended("key"), dt) } ++
+          findColumnPaths(valueType)(f).map { case (path, dt) => (path.prepended("value"), dt) }
+
+      case StructType(fields) =>
+        fields.flatMap { case StructField(name, dataType, _, _) =>
+          findColumnPaths(dataType)(f).map { case (path, dt) => (path.prepended(name), dt) }
+        }.toSeq
+
+      case _ =>
+        Nil
+    }
   }
 
   /** Copied over from DataType for visibility reasons. */
@@ -370,7 +408,7 @@ def normalizeColumnNamesInDataType(
             s"Types without nesting should match but $sourceDataType != $tableDataType")
         } else if (sourceDataType != tableDataType) {
           recordDeltaEvent(
-            deltaLog = deltaLog,
+            provider = deltaLog,
             opType = "delta.assertions.schemaNormalization.nonNestedTypeMismatch",
             tags = Map.empty,
             data = Map(
@@ -488,7 +526,8 @@ def normalizeColumnNamesInDataType(
       allowMissingColumns: Boolean = false,
       typeWideningMode: TypeWideningMode = TypeWideningMode.NoTypeWidening,
       newPartitionColumns: Seq[String] = Seq.empty,
-      oldPartitionColumns: Seq[String] = Seq.empty): Boolean = {
+      oldPartitionColumns: Seq[String] = Seq.empty,
+      caseSensitive: Boolean = true): Boolean = {
 
     def isNullabilityCompatible(existingNullable: Boolean, readNullable: Boolean): Boolean = {
       if (forbidTightenNullability) {
@@ -504,7 +543,8 @@ def normalizeColumnNamesInDataType(
           isReadCompatible(e, n,
             forbidTightenNullability,
             typeWideningMode = typeWideningMode,
-            allowMissingColumns = allowMissingColumns
+            allowMissingColumns = allowMissingColumns,
+            caseSensitive = caseSensitive
           )
         case (e: ArrayType, n: ArrayType) =>
           // if existing elements are non-nullable, so should be the new element
@@ -515,6 +555,8 @@ def normalizeColumnNamesInDataType(
           isNullabilityCompatible(e.valueContainsNull, n.valueContainsNull) &&
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
+        case (_: NullType, _) =>
+          true
         case (e: AtomicType, n: AtomicType)
           if typeWideningMode.shouldWidenTo(fromType = e, toType = n) => true
         case (a, b) => a == b
@@ -522,14 +564,24 @@ def normalizeColumnNamesInDataType(
     }
 
     def isStructReadCompatible(existing: StructType, newtype: StructType): Boolean = {
-      val existingFields = toFieldMap(existing)
       // scalastyle:off caselocale
+      def checkNoDuplicateColumns(schema: StructType, errorSubClass: String): Unit = {
+        val fieldNames = schema.fieldNames
+        val lowercaseNames = fieldNames.map(_.toLowerCase).toSet
+        if (lowercaseNames.size != fieldNames.length) {
+          val duplicates = fieldNames.groupBy(_.toLowerCase).collect {
+            case (_, names) if names.length > 1 => names.mkString(", ")
+          }
+          throw DeltaErrors.foundDuplicateColumnsException(errorSubClass,
+            duplicates.mkString(", "))
+        }
+      }
+
+      val existingFields = toFieldMap(existing)
+      checkNoDuplicateColumns(existing, "EXISTING_SCHEMA")
       val existingFieldNames = existing.fieldNames.map(_.toLowerCase).toSet
-      assert(existingFieldNames.size == existing.length,
-        "Delta tables don't allow field names that only differ by case")
+      checkNoDuplicateColumns(newtype, "READ_SCHEMA")
       val newFields = newtype.fieldNames.map(_.toLowerCase).toSet
-      assert(newFields.size == newtype.length,
-        "Delta tables don't allow field names that only differ by case")
       // scalastyle:on caselocale
 
       if (!allowMissingColumns &&
@@ -541,8 +593,8 @@ def normalizeColumnNamesInDataType(
       newtype.forall { newField =>
         // new fields are fine, they just won't be returned
         existingFields.get(newField.name).forall { existingField =>
-          // we know the name matches modulo case - now verify exact match
-          (existingField.name == newField.name
+          // when case-sensitive, verify exact name match (modulo case already matched)
+          ((!caseSensitive || existingField.name == newField.name)
             // if existing value is non-nullable, so should be the new value
             && isNullabilityCompatible(existingField.nullable, newField.nullable)
             // and the type of the field must be compatible, too
@@ -1066,15 +1118,16 @@ def normalizeColumnNamesInDataType(
       columnMappingMode: DeltaColumnMappingMode,
       columnPath: Seq[String] = Nil,
       failOnAmbiguousChanges: Boolean = false,
-      allowTypeWidening: Boolean = false): Option[String] = {
-    def verify(cond: Boolean, err: => String): Unit = {
+      allowTypeWidening: Boolean = false): Option[DataTypeChangeViolation] = {
+    def verify(cond: Boolean, violation: => DataTypeChangeViolation): Unit = {
       if (!cond) {
-        throw DeltaErrors.cannotChangeDataType(err)
+        throw DeltaErrors.cannotChangeDataType(violation)
       }
     }
 
     def verifyNullability(fn: Boolean, tn: Boolean, columnPath: Seq[String]): Unit = {
-      verify(tn || !fn, s"tightening nullability of ${UnresolvedAttribute(columnPath).name}")
+      verify(tn || !fn,
+        DataTypeChangeViolation.TightenNullability(UnresolvedAttribute(columnPath).name))
     }
 
     def check(fromDt: DataType, toDt: DataType, columnPath: Seq[String]): Unit = {
@@ -1103,8 +1156,8 @@ def normalizeColumnNamesInDataType(
               case None =>
                 addingColumns = true
                 verify(toField.nullable,
-                  "adding non-nullable column " +
-                  UnresolvedAttribute(columnPath :+ toField.name).name)
+                  DataTypeChangeViolation.AddNonNullableColumn(
+                    UnresolvedAttribute(columnPath :+ toField.name).name))
             }
           }
           val columnName = UnresolvedAttribute(columnPath).name
@@ -1113,19 +1166,21 @@ def normalizeColumnNamesInDataType(
           }
           if (columnMappingMode == NoMapping) {
             verify(remainingFields.isEmpty,
-              s"dropping column(s) [${remainingFields.map(_.name).mkString(", ")}]" +
-                (if (columnPath.nonEmpty) s" from $columnName" else ""))
+              DataTypeChangeViolation.DropColumns(
+                remainingFields.toSeq.map(field =>
+                  UnresolvedAttribute(columnPath :+ field.name).name)))
           }
 
+        case (_: NullType, _) => ()
         case (fromDataType: AtomicType, toDataType: AtomicType) if allowTypeWidening =>
           verify(TypeWidening.isTypeChangeSupported(fromDataType, toDataType),
-            s"changing data type of ${UnresolvedAttribute(columnPath).name} " +
-              s"from $fromDataType to $toDataType")
+            DataTypeChangeViolation.ChangeDataType(
+              UnresolvedAttribute(columnPath).name, fromDataType, toDataType))
 
         case (fromDataType, toDataType) =>
           verify(fromDataType == toDataType,
-            s"changing data type of ${UnresolvedAttribute(columnPath).name} " +
-              s"from $fromDataType to $toDataType")
+            DataTypeChangeViolation.ChangeDataType(
+              UnresolvedAttribute(columnPath).name, fromDataType, toDataType))
       }
     }
 
@@ -1133,8 +1188,8 @@ def normalizeColumnNamesInDataType(
       check(from, to, columnPath)
       None
     } catch {
-      case e: AnalysisException =>
-        Some(e.message)
+      case e: DeltaCannotChangeDataTypeException =>
+        Some(e.violation)
     }
   }
 
@@ -1559,6 +1614,7 @@ def normalizeColumnNamesInDataType(
     case DoubleType =>
     case StringType =>
     case DateType =>
+    case dt if org.apache.spark.sql.delta.shims.GeoTypesShim.isGeoSpatialType(dt) =>
     case TimestampType =>
     case TimestampNTZType =>
     case dt if dt.isInstanceOf[VariantType] =>
@@ -1601,7 +1657,7 @@ def normalizeColumnNamesInDataType(
   def findDependentGeneratedColumns(
       sparkSession: SparkSession,
       targetColumn: Seq[String],
-      protocol: Protocol,
+      protocol: AbstractProtocol,
       schema: StructType): Map[String, String] = {
     if (GeneratedColumn.satisfyGeneratedColumnProtocol(protocol) &&
         GeneratedColumn.hasGeneratedColumns(schema)) {

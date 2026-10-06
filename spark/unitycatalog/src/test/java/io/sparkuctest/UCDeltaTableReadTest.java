@@ -134,11 +134,4 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
           }
         });
   }
-
-  private void check(List<List<String>> actual, List<List<String>> expected) {
-    if (!actual.equals(expected)) {
-      throw new AssertionError(
-          String.format("Query results do not match.\nExpected: %s\nActual: %s", expected, actual));
-    }
-  }
 }

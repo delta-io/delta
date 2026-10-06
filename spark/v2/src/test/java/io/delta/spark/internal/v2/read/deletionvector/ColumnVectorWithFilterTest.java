@@ -23,6 +23,9 @@ import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.vectorized.ColumnVector;
+import org.apache.spark.sql.vectorized.ColumnarArray;
+import org.apache.spark.unsafe.types.CalendarInterval;
+import org.apache.spark.unsafe.types.VariantVal;
 import org.junit.jupiter.api.Test;
 
 public class ColumnVectorWithFilterTest {
@@ -113,6 +116,84 @@ public class ColumnVectorWithFilterTest {
           mappedNameColumn,
           i -> mappedNameColumn.getUTF8String(i).toString(),
           new String[] {"a", "c"});
+    }
+  }
+
+  @Test
+  void testIntervalColumnVector() {
+    try (WritableColumnVector delegate =
+        new OnHeapColumnVector(5, DataTypes.CalendarIntervalType)) {
+      for (int i = 0; i < 5; i++) {
+        delegate.putInterval(i, new CalendarInterval(i, i * 10, i * 100L));
+      }
+      ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {1, 3});
+
+      CalendarInterval row0 = mappedVector.getInterval(0);
+      assertNotNull(row0);
+      assertEquals(1, row0.months);
+      assertEquals(10, row0.days);
+      assertEquals(100L, row0.microseconds);
+
+      CalendarInterval row1 = mappedVector.getInterval(1);
+      assertNotNull(row1);
+      assertEquals(3, row1.months);
+      assertEquals(30, row1.days);
+      assertEquals(300L, row1.microseconds);
+    }
+  }
+
+  @Test
+  void testVariantColumnVector() {
+    try (WritableColumnVector delegate = new OnHeapColumnVector(5, DataTypes.VariantType)) {
+      WritableColumnVector valueChild = (WritableColumnVector) delegate.getChild(0);
+      WritableColumnVector metadataChild = (WritableColumnVector) delegate.getChild(1);
+      for (int i = 0; i < 5; i++) {
+        valueChild.putByteArray(i, ("value-" + i).getBytes());
+        metadataChild.putByteArray(i, ("meta-" + i).getBytes());
+      }
+      ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {1, 3});
+
+      VariantVal row0 = mappedVector.getVariant(0);
+      assertNotNull(row0);
+      assertArrayEquals("value-1".getBytes(), row0.getValue());
+      assertArrayEquals("meta-1".getBytes(), row0.getMetadata());
+
+      VariantVal row1 = mappedVector.getVariant(1);
+      assertNotNull(row1);
+      assertArrayEquals("value-3".getBytes(), row1.getValue());
+      assertArrayEquals("meta-3".getBytes(), row1.getMetadata());
+    }
+  }
+
+  @Test
+  void testArrayColumnVector() {
+    try (WritableColumnVector delegate =
+        new OnHeapColumnVector(3, DataTypes.createArrayType(DataTypes.IntegerType))) {
+      // 3 rows: row 0 = [10, 20], row 1 = [30], row 2 = [40, 50, 60].
+      // All elements live contiguously in the single int element child.
+      WritableColumnVector elementChild = (WritableColumnVector) delegate.getChild(0);
+      elementChild.reserve(6);
+      int[] flatElements = {10, 20, 30, 40, 50, 60};
+      for (int i = 0; i < flatElements.length; i++) {
+        elementChild.putInt(i, flatElements[i]);
+      }
+      delegate.putArray(0, 0, 2);
+      delegate.putArray(1, 2, 1);
+      delegate.putArray(2, 3, 3);
+
+      // Selected rows: [0, 2] -> survivors are row 0 ([10, 20]) and row 2 ([40, 50, 60]).
+      ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
+
+      ColumnarArray mappedRow0 = mappedVector.getArray(0);
+      assertEquals(2, mappedRow0.numElements());
+      assertEquals(10, mappedRow0.getInt(0));
+      assertEquals(20, mappedRow0.getInt(1));
+
+      ColumnarArray mappedRow1 = mappedVector.getArray(1);
+      assertEquals(3, mappedRow1.numElements());
+      assertEquals(40, mappedRow1.getInt(0));
+      assertEquals(50, mappedRow1.getInt(1));
+      assertEquals(60, mappedRow1.getInt(2));
     }
   }
 

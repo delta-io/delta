@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.test
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import io.delta.sql.DeltaSparkSessionExtension
 
-import org.apache.spark.SparkConf
+import org.apache.spark.{SparkConf, SparkException, SparkThrowable}
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -29,11 +29,58 @@ import org.apache.spark.sql.test.SharedSparkSession
  */
 trait DeltaSQLCommandTest extends SharedSparkSession {
 
+  /** Executes DDL and DML; connector-specific suites can override the execution mode. */
+  protected def executeDml(sqlText: String): Unit = sql(sqlText)
+
   override protected def sparkConf: SparkConf = {
     super.sparkConf
       .set(StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
         classOf[DeltaSparkSessionExtension].getName)
       .set(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
         classOf[DeltaCatalog].getName)
+  }
+
+  /**
+   * Sets all configurations specified in `pairs`, calls `f`, and then restores all configurations.
+   *
+   * Use this instead of `withSQLConf` as [[internal.SQLConf SQLConf]] is not part of Spark's public
+   * API.
+   */
+  protected def withConf[T](pairs: (String, String)*)(f: => T): T = {
+    val (keys, values) = pairs.unzip
+    val currentValues = keys.map { key =>
+      if (spark.conf.contains(key)) {
+        Some(spark.conf.get(key))
+      } else {
+        None
+      }
+    }
+    keys.lazyZip(values).foreach { (k, v) =>
+      spark.conf.set(k, v)
+    }
+    try f finally {
+      keys.zip(currentValues).foreach {
+        case (key, Some(value)) => spark.conf.set(key, value)
+        case (key, None) => spark.conf.unset(key)
+      }
+    }
+  }
+
+  /**
+   * Spark master now routes some invalid Delta table-property updates through the newer
+   * UNSUPPORTED_TABLE_CHANGE error class while released Spark versions still report the legacy
+   * temporary error. Both variants preserve the same message payload.
+   */
+  protected def checkInvalidBooleanTablePropertyError(
+      error: SparkException,
+      invalidValue: String): Unit = {
+    val sparkThrowable = error.asInstanceOf[SparkThrowable]
+    val errorClass = sparkThrowable.getErrorClass()
+    val expectedMessage = "For input string: \"" + invalidValue + "\""
+    assert(
+      Set("_LEGACY_ERROR_TEMP_2045", "UNSUPPORTED_TABLE_CHANGE").contains(errorClass),
+      s"Unexpected error class $errorClass with parameters " +
+        s"${sparkThrowable.getMessageParameters()}")
+    assert(sparkThrowable.getMessageParameters().get("message") == expectedMessage)
   }
 }

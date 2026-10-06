@@ -136,11 +136,11 @@ class TableFeaturesSuite extends AnyFunSuite {
     ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")), true),
     ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "false")), false),
     (
-      "variantShredding",
+      "variantShredding-preview",
       testMetadata(tblProps = Map("delta.enableVariantShredding" -> "true")),
       true),
     (
-      "variantShredding",
+      "variantShredding-preview",
       testMetadata(tblProps = Map("delta.enableVariantShredding" -> "false")),
       false),
     (
@@ -215,7 +215,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "clustering",
     "catalogManaged",
     "allowColumnDefaults",
-    "variantShredding-preview",
+    "variantShredding",
     "collations-preview").foreach {
     feature =>
       test(s"doesn't support auto enable by metadata: $feature") {
@@ -227,9 +227,6 @@ class TableFeaturesSuite extends AnyFunSuite {
   Seq(
     ("variantType", testMetadata(includeVariantTypeCol = true)),
     ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true"))),
-    (
-      "variantShredding",
-      testMetadata(tblProps = Map("delta.enableVariantShredding" -> "true"))),
     ("collations", testMetadata(includeCollatedStringTypeCol = true))).foreach {
     case (feature, metadataEnablingFeature) =>
       test("special handling of tables containing preview features: " + feature) {
@@ -243,6 +240,20 @@ class TableFeaturesSuite extends AnyFunSuite {
             metadataEnablingFeature)
         assert(!enable, "shouldn't enable non-preview feature")
       }
+  }
+
+  // variantShredding has the inverted relationship: only the preview feature is auto-enabled,
+  // so we verify that the preview is NOT auto-enabled when the GA feature is already in protocol.
+  test("special handling of tables containing variantShredding GA feature") {
+    val protocolWithGaFeature = new Protocol(3, 7)
+      .withFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE)
+
+    val enable = TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE
+      .asInstanceOf[FeatureAutoEnabledByMetadata]
+      .metadataRequiresFeatureToBeEnabled(
+        protocolWithGaFeature,
+        testMetadata(tblProps = Map("delta.enableVariantShredding" -> "true")))
+    assert(!enable, "shouldn't enable preview feature when GA feature is already supported")
   }
 
   test("hasKernelReadSupport expected to be true") {
@@ -1081,9 +1092,9 @@ class TableFeaturesSuite extends AnyFunSuite {
         set(
           "columnMapping",
           "deletionVectors",
-          "variantShredding",
+          "variantShredding-preview",
           "variantType")),
-      set("variantType", "variantShredding")),
+      set("variantType", "variantShredding-preview")),
     (
       testMetadata(includeGeometryTypeCol = true),
       new Protocol(1, 1),
@@ -1203,8 +1214,8 @@ class TableFeaturesSuite extends AnyFunSuite {
         set("columnMapping", "deletionVectors"),
         set("columnMapping", "deletionVectors", "icebergCompatV2"))),
     (
-      // Enable the variantShredding GA feature when the preview feature is already enabled.
-      // The GA feature should not be auto-enabled.
+      // Setting delta.enableVariantShredding=true is a no-op when the preview feature is
+      // already supported (the preview feature is what auto-enable would otherwise add).
       testMetadata(
         tblProps = Map("delta.enableVariantShredding" -> "true"),
         includeVariantTypeCol = true),
@@ -1212,7 +1223,18 @@ class TableFeaturesSuite extends AnyFunSuite {
         3,
         7,
         set("variantType", "variantShredding-preview"),
-        set("variantType", "variantShredding-preview")))).foreach {
+        set("variantType", "variantShredding-preview"))),
+    (
+      // Setting delta.enableVariantShredding=true is a no-op when the GA feature is already
+      // supported. We must not auto-add the preview feature in this case.
+      testMetadata(
+        tblProps = Map("delta.enableVariantShredding" -> "true"),
+        includeVariantTypeCol = true),
+      new Protocol(
+        3,
+        7,
+        set("variantType", "variantShredding"),
+        set("variantType", "variantShredding")))).foreach {
     case (newMetadata, currentProtocol) =>
       test(s"autoUpgradeProtocolBasedOnMetadata: no-op upgrade: $currentProtocol") {
         val newProtocolAndNewFeaturesEnabled =

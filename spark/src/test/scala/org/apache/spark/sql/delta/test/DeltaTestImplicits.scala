@@ -19,13 +19,16 @@ package org.apache.spark.sql.delta.test
 import java.io.File
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot}
+import scala.collection.mutable.ArrayBuffer
+
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CatalogOwnedTableFeature, DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
 import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.hooks.AutoCompact
@@ -69,17 +72,18 @@ object DeltaTestImplicits {
             // If neither metadata nor protocol is explicitly passed, then use default Metadata and
             // with the maximum protocol.
             txn.updateMetadataForNewTable(Metadata())
+            // AdaptiveMetadataTableFeature is WIP. Don't enable it by default in test tables.
+            val featuresToExclude = ArrayBuffer[TableFeature](AdaptiveMetadataTableFeature)
             val enableCatalogOwnedByDefault = SparkSession.active.conf.getOption(
               TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
                 .contains("supported")
-            if (enableCatalogOwnedByDefault) {
-              txn.updateProtocol(Action.supportedProtocolVersion())
-            } else {
-              txn.updateProtocol(Action.supportedProtocolVersion(
-                // CatalogOwnedTableFeature is enabled by protocol only without metadata, and should
-                // not be enabled by default.
-                featuresToExclude = Seq(CatalogOwnedTableFeature)))
+            if (!enableCatalogOwnedByDefault) {
+              // CatalogOwnedTableFeature is enabled by protocol only without metadata, and should
+              // not be enabled by default.
+              featuresToExclude += CatalogOwnedTableFeature
             }
+            txn.updateProtocol(
+              Action.supportedProtocolVersion(featuresToExclude = featuresToExclude.toSeq))
         }
         txn.commit(otherActions, op)
       } else {
@@ -131,7 +135,7 @@ object DeltaTestImplicits {
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
       tableCommitCoordinatorClient.commit(
-        commitVersion, actions, updatedActions, tableIdentifierOpt = None)
+        commitVersion, actions, updatedActions, tableIdentifierOpt = None, CatalogTrackedInfo.EMPTY)
     }
 
     def getCommits(

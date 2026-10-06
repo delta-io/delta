@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.File
 import java.lang.{Integer => JInt}
 
 import scala.language.implicitConversions
@@ -29,8 +28,10 @@ import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.ScanReportHelper
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
+import org.scalactic.source.Position
+import org.scalatest.Tag
 
-import org.apache.spark.QueryContext
+import org.apache.spark.{QueryContext, SparkConf, SparkThrowable}
 import org.apache.spark.sql.{functions, AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
@@ -2012,18 +2013,19 @@ trait MergeIntoExtendedSyntaxTests extends MergeIntoSuiteBaseMixin {
 
   private def testMergeErrorOnMultipleMatches(
       name: String,
-      confs: Seq[(String, String)] = Seq.empty)(
+      confs: Seq[(String, String)] = Seq.empty,
+      testTags: Seq[org.scalatest.Tag] = Seq.empty)(
       source: Seq[(Int, Int)],
       target: Seq[(Int, Int)],
       mergeOn: String,
       mergeClauses: MergeClause*): Unit = {
-    test(s"extended syntax - $name") {
+    test(s"extended syntax - $name", testTags: _*) {
       withSQLConf(confs: _*) {
         withKeyValueData(source, target) { case (sourceName, targetName) =>
           val docURL = "/delta-update.html#upsert-into-a-table-using-merge"
 
           checkError(
-            exception = intercept[DeltaUnsupportedOperationException] {
+            exception = intercept[SparkThrowable] {
               executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
             },
             "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE",
@@ -2377,7 +2379,10 @@ trait MergeIntoExtendedSyntaxTests extends MergeIntoSuiteBaseMixin {
 
   testMergeErrorOnMultipleMatches(
     "unconditional insert only merge - multiple matches when feature flag off",
-    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"))(
+    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"),
+    testTags = Seq(DSv2Incompatible(
+      "This covers legacy behavior where Delta was too strict. Existing and V2 behavior both " +
+        "are able to detect that the multiple matches aren't problematic and succeed")))(
     source = (1, 10) :: (1, 100) :: (2, 20) :: Nil,
     target = (1, 1) :: Nil,
     mergeOn = "s.key = t.key",
@@ -2385,7 +2390,10 @@ trait MergeIntoExtendedSyntaxTests extends MergeIntoSuiteBaseMixin {
 
   testMergeErrorOnMultipleMatches(
     "conditional insert only merge - multiple matches when feature flag off",
-    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"))(
+    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"),
+    testTags = Seq(DSv2Incompatible(
+      "V2 in-memory MERGE does not raise cardinality violations for insert-only MERGE " +
+        "even when MERGE_INSERT_ONLY_ENABLED=false")))(
     source = (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
     target = (1, 1) :: Nil,
     mergeOn = "s.key = t.key",
@@ -3462,6 +3470,104 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
           Row(2, part2) ::
           Row(-1, part3) :: Row(-1, part3) :: Row(-1, part3) ::
           Row(0, part4) ::
+          Nil)
+    }
+  }
+}
+
+trait MergeIntoNullTypeTests extends MergeIntoSuiteBaseMixin { self: MergeIntoTestUtils =>
+  import testImplicits._
+
+  protected override def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key, "false")
+
+  override protected def test(testName: String, testTags: Tag*)(testFun: => Any)
+      (implicit pos: Position): Unit = {
+    super.test(testName, testTags: _*) {
+      assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+      testFun
+    }
+  }
+
+  test("NullType in source non-key column") {
+    withTable("source") {
+      Seq((0, null), (1, null)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+
+      executeMerge(
+        target = s"$tableSQLIdentifier tgt",
+        source = "source src",
+        condition = "src.key1 = key2",
+        update = "key2 = 20 + key1, value = 20",
+        insert = "(key2, value) VALUES (key1 - 10, src.value)")
+
+      checkAnswer(readDeltaTableByIdentifier(),
+        Row(2, 2) :: // No change
+          Row(21, 20) :: // Update
+          Row(-10, null) :: // Insert
+          Nil)
+    }
+  }
+
+  test("NullType in source key column") {
+    withTable("source") {
+      Seq((null, 1), (null, 3), (null, 6)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+
+      executeMerge(
+        target = s"$tableSQLIdentifier tgt",
+        source = "source src",
+        condition = "src.key1 = key2",
+        update = "key2 = 20 + key1, value = 20",
+        insert = "(key2, value) VALUES (key1, src.value + 10)")
+
+      checkAnswer(readDeltaTableByIdentifier(),
+        Row(2, 2) :: // No change
+          Row(1, 4) :: // No change
+          Row(null, 11) :: // Insert
+          Row(null, 13) :: // Insert
+          Row(null, 16) :: // Insert
+          Nil)
+    }
+  }
+
+  test("NullType in target key column, no schema changes") {
+    withTable("source") {
+      Seq((1, 1), (0, 3), (1, 6)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((null, 2), (null, 4)).toDF("key2", "value"))
+
+      executeMerge(
+        target = s"$tableSQLIdentifier tgt",
+        source = "source src",
+        condition = "src.key1 = key2",
+        update = "key2 = null, value = 20 + src.value",
+        insert = "(key2, value) VALUES (null, src.value + 10)")
+
+      checkAnswer(readDeltaTableByIdentifier(),
+        Row(null, 2) :: // No change
+          Row(null, 4) :: // No change
+          Row(null, 11) :: // Insert
+          Row(null, 13) :: // Insert
+          Row(null, 16) :: // Insert
+          Nil)
+    }
+  }
+
+  test("NullType in source key column with nulls in target key column") {
+    withTable("source") {
+      Seq((null, 1)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq.apply[(Integer, Integer)]((null, 2), (1, 4)).toDF("key2", "value"))
+
+      executeMerge(
+        target = s"$tableSQLIdentifier tgt",
+        source = "source src",
+        condition = "src.key1 <=> key2",
+        update = "key2 = 20 + key1, value = 20",
+        insert = "(key2, value) VALUES (key1, src.value + 10)")
+
+      checkAnswer(readDeltaTableByIdentifier(),
+        Row(1, 4) :: // No change
+          Row(null, 20) :: // Update
           Nil)
     }
   }

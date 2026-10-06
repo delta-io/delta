@@ -133,7 +133,8 @@ class TestDeltaSharingClientForCDFUtils(
       table: Table,
       startingVersion: Long,
       endingVersion: Option[Long],
-      fileIdHash: Option[String]
+      fileIdHash: Option[String],
+      includeHistoricalProtocol: Boolean = false
   ): DeltaTableFiles = {
     throw new UnsupportedOperationException(s"getFiles with startingVersion($startingVersion)")
   }
@@ -142,7 +143,8 @@ class TestDeltaSharingClientForCDFUtils(
       table: Table,
       cdfOptions: Map[String, String],
       includeHistoricalMetadata: Boolean,
-      fileIdHash: Option[String]
+      fileIdHash: Option[String],
+      includeHistoricalProtocol: Boolean = false
   ): DeltaTableFiles = {
     numGetFileCalls += 1
     DeltaTableFiles(

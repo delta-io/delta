@@ -1185,7 +1185,8 @@ abstract class CommitCoordinatorSuiteBase
         Some(newProtocol),
         DeltaOperations.TestOperation("TEST"),
         Map.empty,
-        Map.empty)
+        Map.empty,
+        dataChange = Some(false))
       log = DeltaLog.forTable(spark, tablePath)
       assert(cs.numRegisterTableCalled.get === 1)
       assert(cs.numCommitsCalled.get === 0)
@@ -1821,7 +1822,7 @@ abstract class CommitCoordinatorSuiteBase
     val source = "sourcetable"
     val target = "targettable"
     sql(s"CREATE TABLE $source (id LONG) USING delta TBLPROPERTIES" + propertiesString)
-    sql(s"CREATE TABLE $target LIKE $source")
+    sql(s"CREATE TABLE $target LIKE $source USING DELTA")
     val snapshot = DeltaLog.forTable(spark, target).unsafeVolatileSnapshot
     assert(snapshot.tableCommitCoordinatorClientOpt.isEmpty)
     assert(!snapshot.isCatalogOwned)

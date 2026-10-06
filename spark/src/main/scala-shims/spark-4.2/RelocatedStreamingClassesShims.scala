@@ -71,7 +71,32 @@ object Relocated {
   }
 
   type StreamingRelation = StreamingRelationShim
-  val StreamingRelation: StreamingRelationShim.type = StreamingRelationShim
+  // In Spark 4.2, StreamingRelation gained a 4th param `sourceIdentifyingName`.
+  // Provide both:
+  //   - apply overloads forwarding to the Spark companion so construction
+  //     callsites like `StreamingRelation(dataSource)` continue to work.
+  //   - a custom 3-arg unapply so pattern matches stay source-compatible
+  //     with Spark 4.0/4.1 (where the companion's unapply naturally
+  //     returns 3 fields).
+  object StreamingRelation {
+    def apply(
+        dataSource: org.apache.spark.sql.execution.datasources.DataSource)
+      : StreamingRelationShim =
+      StreamingRelationShim(dataSource)
+
+    def apply(
+        dataSource: org.apache.spark.sql.execution.datasources.DataSource,
+        sourceName: String,
+        output: Seq[org.apache.spark.sql.catalyst.expressions.Attribute])
+      : StreamingRelationShim =
+      StreamingRelationShim(dataSource, sourceName, output)
+
+    def unapply(s: StreamingRelationShim): Option[(
+        org.apache.spark.sql.execution.datasources.DataSource,
+        String,
+        Seq[org.apache.spark.sql.catalyst.expressions.Attribute])] =
+      Some((s.dataSource, s.sourceName, s.output))
+  }
 
   type MetadataLogFileIndex = MetadataLogFileIndexShim
   def createMetadataLogFileIndex(

@@ -83,7 +83,7 @@ case class DeletionVectorStoredBitmap(
     // Verify that the cardinality in the bitmap matches the DV descriptor.
     if (bitmap.cardinality != dvDescriptor.cardinality) {
       recordDeltaEvent(
-        deltaLog = null,
+        provider = null,
         opType = "delta.assertions.deletionVectorReadCardinalityMismatch",
         data = Map(
           "deletionVectorPath" -> onDiskPath,

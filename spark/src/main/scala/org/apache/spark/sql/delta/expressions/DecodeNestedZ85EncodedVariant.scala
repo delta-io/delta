@@ -21,6 +21,7 @@ import org.apache.spark.sql.catalyst.analysis.TypeCheckResult
 import org.apache.spark.sql.catalyst.expressions.{Expression, UnaryExpression}
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
 import org.apache.spark.sql.delta.util.DeltaStatsJsonUtils
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.types.variant.{Variant, VariantUtil}
 import org.apache.spark.unsafe.types.VariantVal
@@ -78,15 +79,18 @@ case class DecodeNestedZ85EncodedVariant(child: Expression)
 
     dataType match {
       case VariantType =>
-        val variantVal = value.asInstanceOf[VariantVal]
-        val variant = new Variant(variantVal.getValue, variantVal.getMetadata)
-        if (VariantUtil.getType(variant.getValue, 0) == VariantUtil.Type.STRING) {
-          val z85String = variant.getString()
-          DeltaStatsJsonUtils.decodeVariantFromZ85(z85String)
-        } else {
-          throw new IllegalStateException(
-            s"Expected Z85-encoded variant string but got type " +
-              s"${VariantUtil.getType(variant.getValue, 0)}")
+        try {
+          val variantVal = value.asInstanceOf[VariantVal]
+          val variant = new Variant(variantVal.getValue, variantVal.getMetadata)
+          if (VariantUtil.getType(variant.getValue, 0) == VariantUtil.Type.STRING) {
+            val z85String = variant.getString()
+            DeltaStatsJsonUtils.decodeVariantFromZ85(z85String)
+          } else {
+            null
+          }
+        } catch {
+          case e: Exception =>
+            null
         }
 
       case st: StructType =>

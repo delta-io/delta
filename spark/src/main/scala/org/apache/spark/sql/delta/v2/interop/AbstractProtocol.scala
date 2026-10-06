@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
+import org.apache.spark.sql.delta.TableFeature
+
 /**
  * Abstract trait for protocol actions in Delta. This trait provides a common
  * abstraction that can be implemented by both Spark's V1 Protocol and Kernel's Protocol
@@ -40,5 +42,23 @@ trait AbstractProtocol {
    * Returns None if table features are not enabled for writers.
    */
   def writerFeatures: Option[Set[String]]
+
+  /**
+   * Field-wise equality across the abstract surface of [[AbstractProtocol]]. Use this instead of
+   * comparing fields ad-hoc at call sites so that adding a new field to this trait forces an
+   * update here rather than silently leaving stale comparisons elsewhere.
+   */
+  def equalsByFields(other: AbstractProtocol): Boolean =
+    minReaderVersion == other.minReaderVersion &&
+      minWriterVersion == other.minWriterVersion &&
+      readerFeatures == other.readerFeatures &&
+      writerFeatures == other.writerFeatures
+
+  /**
+   * Check if a `feature` is supported by this protocol. This means either (a) the protocol does
+   * not support table features but implicitly supports the feature, or (b) the protocol supports
+   * table features and explicitly references the feature.
+   */
+  def isFeatureSupported(feature: TableFeature): Boolean
 }
 

@@ -19,7 +19,6 @@ package io.delta.kernel.unitycatalog
 import java.util.Optional
 
 import scala.collection.JavaConverters._
-import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.{CommitRange, Operation}
 import io.delta.kernel.Snapshot
@@ -29,9 +28,8 @@ import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.unitycatalog.UCCatalogManagedCommitter
 import io.delta.kernel.utils.CloseableIterable
-import io.delta.storage.commit.{Commit, GetCommitsResponse}
+import io.delta.storage.commit.{GetCommitsResponse, TableIdentifier}
 
-import InMemoryUCClient.TableData
 import org.scalatest.funsuite.AnyFunSuite
 
 class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
@@ -240,6 +238,67 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
     }
   }
 
+  test("getTableStats on CCV2 table with unbackfilled commits") {
+    withTempDirAndEngine { case (tablePathUnresolved, engine) =>
+      val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+      // CREATE -- v0.json (published)
+      val result0 = ucCatalogManagedClient
+        .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
+        .build(engine)
+        .commit(engine, CloseableIterable.emptyIterable())
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      val postCommit0 = result0.getPostCommitSnapshot.get()
+      postCommit0.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
+
+      // WRITE v1, v2 -- staged commits (unbackfilled) with actual data + CRC
+      var currentSnapshot: Snapshot = postCommit0
+      for (i <- 1 to 2) {
+        currentSnapshot = writeDataAndVerify(
+          engine,
+          currentSnapshot,
+          ucClient,
+          expCommitVersion = i,
+          expNumCatalogCommits = i)
+        currentSnapshot.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
+      }
+
+      // WRITE v3 -- staged commit with data but NO CRC
+      val txn3 = currentSnapshot
+        .buildUpdateTableTransaction("engineInfo", Operation.WRITE)
+        .build(engine)
+      val result3 = commitAppendData(engine, txn3, seqOfUnpartitionedDataBatch1)
+      currentSnapshot = result3.getPostCommitSnapshot.get()
+
+      // Capture expected values from the post-commit snapshot
+      // Assert CRC is present in post-commit snapshot
+      assert(currentSnapshot.getStatistics.getChecksumWriteMode.get == ChecksumWriteMode.SIMPLE)
+      val postCommitCrc = currentSnapshot.asInstanceOf[SnapshotImpl].getCurrentCrcInfo()
+      assert(postCommitCrc.isPresent)
+      val expectedNumFiles = postCommitCrc.get().getNumFiles
+      val expectedTableSizeBytes = postCommitCrc.get().getTableSizeBytes
+
+      // Load fresh snapshot -- v1-v3 are ratified but unbackfilled catalog commits
+      val freshSnapshot = loadSnapshot(ucCatalogManagedClient, engine, testUcTableId, tablePath)
+      assert(freshSnapshot.getVersion === 3)
+      assert(freshSnapshot.getLogSegment.getMaxPublishedDeltaVersion.get() === 0)
+      val tableData = ucClient.getTableDataElseThrow(testUcTableId)
+      assert(tableData.getMaxRatifiedVersion === 3)
+      assert(tableData.getCommits.size === 3)
+
+      // getTableStats should match the post-commit snapshot even with unbackfilled commits
+      val stats = freshSnapshot.getStatistics
+      val tableStats = stats.getTableStats(engine)
+      assert(tableStats.isPresent)
+      assert(tableStats.get().getNumFiles === expectedNumFiles)
+      assert(tableStats.get().getTableSizeBytes === expectedTableSizeBytes)
+      // CRC at v2, snapshot at v3 => incremental load cost = 1
+      assert(stats.getIncrementalChecksumLoadCost === java.util.Optional.of(1))
+    }
+  }
+
   test("don't read versions past maxCatalogVersion even if they exist on filesystem") {
     withTempDirAndEngine { case (tablePathUnresolved, engine) =>
       val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
@@ -324,6 +383,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         ucClient,
         expCommitVersion = 3,
         expNumCatalogCommits = 3)
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
 
       // Step 3: Publish all versions
       postCommitSnapshot3.publish(engine)
@@ -333,6 +393,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         engine,
         testUcTableId,
         tablePath,
+        ucTableIdentifier,
         Optional.of(0),
         emptyLongOpt,
         emptyLongOpt,
@@ -349,6 +410,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         engine,
         testUcTableId,
         tablePath,
+        ucTableIdentifier,
         Optional.of(0),
         emptyLongOpt,
         emptyLongOpt,
@@ -362,6 +424,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         engine,
         testUcTableId,
         tablePath,
+        ucTableIdentifier,
         Optional.of(2),
         emptyLongOpt,
         emptyLongOpt,
@@ -385,9 +448,10 @@ object UCE2ESuite {
     override def getCommits(
         tableId: String,
         tableUri: java.net.URI,
+        tableIdentifier: TableIdentifier,
         startVersion: Optional[java.lang.Long],
         endVersion: Optional[java.lang.Long]): GetCommitsResponse = {
-      val response = super.getCommits(tableId, tableUri, startVersion, endVersion)
+      val response = super.getCommits(tableId, tableUri, tableIdentifier, startVersion, endVersion)
       maxVersionLimit match {
         case Some(limit) =>
           // Filter commits and limit maxRatifiedVersion

@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{MaterializedRowCommitVersion, MaterializedRowId, Snapshot}
+import org.apache.spark.sql.delta.{MaterializedRowCommitVersion, MaterializedRowId, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -103,17 +103,19 @@ trait ReorgTableHelper extends Serializable {
   protected def filterParquetFilesOnExecutors(
       spark: SparkSession,
       files: Seq[AddFile],
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       ignoreCorruptFiles: Boolean)(
       filterFileFn: StructType => Boolean): Seq[AddFile] = {
 
     val serializedConf = new SerializableConfiguration(snapshot.deltaLog.newDeltaHadoopConf())
-    val dataPath = new Path(snapshot.deltaLog.dataPath.toString)
+    val dataPath = new Path(snapshot.dataPath.toString)
 
     import org.apache.spark.sql.delta.implicits._
 
     files.toDF(spark).as[AddFile].mapPartitions { iter =>
-      val sqlConf = SparkSession.active.sessionState.conf
+      // Runs on executors, where no SparkSession is active; SQLConf.get returns the task's
+      // read-only conf propagated from the driver.
+      val sqlConf = SQLConf.get
       filterParquetFiles(
         sqlConf,
         iter.toList,

@@ -28,6 +28,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -37,6 +38,7 @@ import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+import org.apache.spark.sql.util.ScalaExtensions._
 import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.FileStatus
@@ -58,12 +60,13 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
  * @param numDeletionVectorsOpt The number of Deletion Vectors present in the snapshot.
  * @param numMetadata Number of `Metadata` actions in the snapshot
  * @param numProtocol Number of `Protocol` actions in the snapshot
- * @param histogramOpt Optional file size histogram. Note: the Delta spec field name is
- *                     `fileSizeHistogram` (used by Kernel/Java/Rust). Delta-Spark historically
- *                     wrote `histogramOpt`. The `@JsonAlias` allows reading both field names so
- *                     that CRC files written by either Kernel or Delta-Spark are compatible.
+ * @param fileSizeHistogram Optional file size histogram. This is the Delta spec field name
+ *                          (used by Kernel/Java/Rust). Delta-Spark historically wrote this as
+ *                          `histogramOpt`. The `@JsonAlias` allows reading both field names so
+ *                          that CRC files written by either Kernel or Delta-Spark are compatible.
  * @param deletedRecordCountsHistogramOpt A histogram of the deleted records count distribution
  *                                        for all the files in the snapshot.
+ * @param lastManifestCommit Info of the last AMT manifest commit up to this version.
  */
 case class VersionChecksum(
     txnId: Option[String],
@@ -81,18 +84,19 @@ case class VersionChecksum(
     domainMetadata: Option[Seq[DomainMetadata]],
     metadata: Metadata,
     protocol: Protocol,
-    // Accept both "histogramOpt" (legacy Delta-Spark) and
-    // "fileSizeHistogram" (Delta spec / Kernel).
-    @JsonAlias(Array("fileSizeHistogram"))
-    histogramOpt: Option[FileSizeHistogram],
+    // Accept both "fileSizeHistogram" (Delta spec / Kernel) and
+    // "histogramOpt" (legacy Delta-Spark).
+    @JsonAlias(Array("histogramOpt"))
+    fileSizeHistogram: Option[FileSizeHistogram],
     deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram],
-    allFiles: Option[Seq[AddFile]]) {
+    allFiles: Option[Seq[AddFile]],
+    lastManifestCommit: Option[LastManifestCommit]) {
 
   /**
-   * Converts to the protocol-compliant representation that serializes the histogram field as
-   * `fileSizeHistogram` (the Delta spec field name) instead of `histogramOpt`.
+   * Converts to the legacy representation that serializes the histogram field as
+   * `histogramOpt` (the legacy Delta-Spark field name) instead of `fileSizeHistogram`.
    */
-  def toProtocolCompliant: VersionChecksumProtocolCompliant = VersionChecksumProtocolCompliant(
+  def toLegacy: VersionChecksumLegacy = VersionChecksumLegacy(
     txnId = txnId,
     tableSizeBytes = tableSizeBytes,
     numFiles = numFiles,
@@ -105,18 +109,19 @@ case class VersionChecksum(
     domainMetadata = domainMetadata,
     metadata = metadata,
     protocol = protocol,
-    fileSizeHistogram = histogramOpt,
+    histogramOpt = fileSizeHistogram,
     deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramOpt,
-    allFiles = allFiles
+    allFiles = allFiles,
+    lastManifestCommit = lastManifestCommit
   )
 }
 
 /**
- * Protocol-compliant version of [[VersionChecksum]] that serializes the file size histogram
- * using the Delta spec field name `fileSizeHistogram` instead of the legacy `histogramOpt`.
- * Used only for CRC file writes when the protocol-compliant flag is enabled.
+ * Legacy version of [[VersionChecksum]] that serializes the file size histogram
+ * using the legacy Delta-Spark field name `histogramOpt` instead of `fileSizeHistogram`.
+ * Used only for CRC file writes when the protocol-compliant flag is disabled.
  */
-case class VersionChecksumProtocolCompliant(
+case class VersionChecksumLegacy(
     txnId: Option[String],
     tableSizeBytes: Long,
     numFiles: Long,
@@ -132,9 +137,10 @@ case class VersionChecksumProtocolCompliant(
     domainMetadata: Option[Seq[DomainMetadata]],
     metadata: Metadata,
     protocol: Protocol,
-    fileSizeHistogram: Option[FileSizeHistogram],
+    histogramOpt: Option[FileSizeHistogram],
     deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram],
-    allFiles: Option[Seq[AddFile]])
+    allFiles: Option[Seq[AddFile]],
+    lastManifestCommit: Option[LastManifestCommit])
 
 /**
  * Record the state of the table as a checksum file along with a commit.
@@ -166,9 +172,9 @@ trait RecordChecksum extends DeltaLogging {
     try {
       val toWrite = (if (spark.conf.get(
           DeltaSQLConf.DELTA_CHECKSUM_HISTOGRAM_FIELD_FOLLOWS_PROTOCOL)) {
-        JsonUtils.toJson(checksum.toProtocolCompliant)
-      } else {
         JsonUtils.toJson(checksum)
+      } else {
+        JsonUtils.toJson(checksum.toLegacy)
       }) + "\n"
       eventData("jsonSerializationTimeTakenMs") = System.currentTimeMillis() - startTimeMs
       eventData("checksumLength") = toWrite.length
@@ -211,6 +217,8 @@ trait RecordChecksum extends DeltaLogging {
    *                             `versionToCompute - 1` or a snapshot. Note that the snapshot may
    *                             belong to any version and this method will only use the snapshot if
    *                             it corresponds to `versionToCompute - 1`.
+   * @param mustIncludeFileSizeHistogram True if the new checksum must include a file size
+   *                                     histogram
    * @param includeAddFilesInCrc True if the new checksum should include a [[AddFile]]s.
    * @return Either the new checksum or an error code string if the checksum could not be computed.
    */
@@ -225,6 +233,7 @@ trait RecordChecksum extends DeltaLogging {
       operationName: String,
       txnIdOpt: Option[String],
       previousVersionState: Either[Snapshot, VersionChecksum],
+      mustIncludeFileSizeHistogram: Boolean,
       includeAddFilesInCrc: Boolean
   ): Either[String, VersionChecksum] = {
     // scalastyle:on argcount
@@ -267,6 +276,9 @@ trait RecordChecksum extends DeltaLogging {
         val oldCrcFiltered = oldCrcOpt
           .filterNot(_.metadata == null)
           .filterNot(_.protocol == null)
+          // If the old CRC doesn't have file size histogram, we can't use it to generate new CRC
+          // in case `mustIncludeFileSizeHistogram` is set.
+          .filterNot(_.fileSizeHistogram.isEmpty && mustIncludeFileSizeHistogram)
 
         val oldCrc = oldCrcFiltered.getOrElse {
           return Left("OLD_CRC_INCOMPLETE")
@@ -357,6 +369,12 @@ trait RecordChecksum extends DeltaLogging {
     var numFiles = oldVersionChecksum.numFiles
     var protocol = oldVersionChecksum.protocol
     var metadata = oldVersionChecksum.metadata
+    var lastManifestCommit: Option[LastManifestCommit] = oldVersionChecksum.lastManifestCommit
+    val fileSizeHistogram = if (spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)) {
+      oldVersionChecksum.fileSizeHistogram.map { h =>
+        FileSizeHistogram(h.sortedBinBoundaries, h.fileCounts.clone(), h.totalBytes.clone())
+      }
+    } else None
 
     // In incremental computation, tables initialized with DVs disabled contain None DV
     // statistics. DV statistics remain None even if DVs are enabled at a random point
@@ -399,6 +417,7 @@ trait RecordChecksum extends DeltaLogging {
         tableSizeBytes += a.size
         numFiles += 1
 
+        fileSizeHistogram.foreach(_.insert(a.size))
         // Only accumulate DV statistics when base stats are not None.
         val (dvCount, dvCardinality) =
           Option(a.deletionVector).map(1L -> _.cardinality).getOrElse(0L -> 0L)
@@ -408,12 +427,13 @@ trait RecordChecksum extends DeltaLogging {
 
       case _: RemoveFile if ignoreRemoveFiles => ()
 
-      // extendedFileMetadata == true implies fields partitionValues, size, and tags are present
+      // extendedFileMetadata == true implies fields partitionValues and size are present
       case r: RemoveFile if r.extendedFileMetadata == Some(true) =>
         val size = r.size.get
         tableSizeBytes -= size
         numFiles -= 1
 
+        fileSizeHistogram.foreach(_.remove(size))
         // Only accumulate DV statistics when base stats are not None.
         val (dvCount, dvCardinality) =
           Option(r.deletionVector).map(1L -> _.cardinality).getOrElse(0L -> 0L)
@@ -436,6 +456,7 @@ trait RecordChecksum extends DeltaLogging {
         metadata = m
       case ci: CommitInfo =>
         inCommitTimestamp = ci.inCommitTimestamp
+        lastManifestCommit = ci.lastManifestCommit
       case _ =>
     }
 
@@ -467,7 +488,8 @@ trait RecordChecksum extends DeltaLogging {
       if (computedNumFiles != numFiles || computedTableSizeBytes != tableSizeBytes) {
         val filePathsFromPreviousVersion = oldVersionChecksum.allFiles
           .orElse {
-            recordFrameProfile("Delta", "VersionChecksum.computeNewChecksum.allFiles") {
+            recordFrameProfile(
+                "Delta", "VersionChecksum.computeNewChecksum.allFiles") {
               oldSnapshot.map(_.allFiles.collect().toSeq)
             }
           }
@@ -529,7 +551,8 @@ trait RecordChecksum extends DeltaLogging {
       domainMetadata = domainMetadata,
       allFiles = allFiles,
       deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramOpt,
-      histogramOpt = None
+      fileSizeHistogram = fileSizeHistogram,
+      lastManifestCommit = lastManifestCommit
     ))
   }
 
@@ -582,7 +605,11 @@ trait RecordChecksum extends DeltaLogging {
     // We can also ignore file retention because that only affects [[RemoveFile]] actions.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      // Using object identity or not doesn't matter here for computing SetTransactions.
+      useDeletionVectorObjectIdentity = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC))
 
     logReplay.append(attemptVersion - 1, oldSetTransactions.toIterator)
     logReplay.append(attemptVersion, setTransactionsToCommit.toIterator)
@@ -611,7 +638,11 @@ trait RecordChecksum extends DeltaLogging {
     // We only work with DomainMetadata, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      // Using object identity or not doesn't matter here for computing DomainMetadata.
+      useDeletionVectorObjectIdentity = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC))
 
     val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_DOMAIN_METADATAS_IN_CRC)
 
@@ -660,8 +691,11 @@ trait RecordChecksum extends DeltaLogging {
     // to crc.
     val oldAllFiles = oldVersionChecksum.allFiles
       .orElse {
-        recordFrameProfile("Delta", "VersionChecksum.incrementallyComputeAddFiles") {
-          oldSnapshot.map(_.allFiles.collect().toSeq)
+        recordFrameProfile(
+            "Delta", "VersionChecksum.incrementallyComputeAddFiles") {
+          // Reconstructing from the read snapshot can surface stale leaf back references when that
+          // snapshot's AMT tree still had leaf manifests so strip them here.
+          oldSnapshot.map(_.allFiles.collect().toSeq.map(_.copy(backReference = None)))
         }
       }
       .getOrElse { return None }
@@ -676,7 +710,10 @@ trait RecordChecksum extends DeltaLogging {
     // We only work with AddFile, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      useDeletionVectorObjectIdentity = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_INCREMENTAL_CRC))
 
     logReplay.append(attemptVersion - 1, oldAllFiles.map(normalizePath).toIterator)
     logReplay.append(attemptVersion, actionsToCommit.map(normalizePath).toIterator)
@@ -814,7 +851,7 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
         "v2CheckpointEnabled" ->
           CheckpointProvider.isV2CheckpointEnabled(this),
         "checkpointProviderCheckpointPolicy" ->
-          checkpointProvider.checkpointPolicy.map(_.name).getOrElse("")
+          checkpointProvider.checkpointPolicyForLogging.map(_.name).getOrElse("")
       ) ++ contextInfo)
 
     val spark = sparkOpt.getOrElse {
@@ -834,9 +871,28 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
    */
   def validateFileListAgainstCRC(checksum: VersionChecksum, contextOpt: Option[String]): Boolean = {
     val fileSortKey = (f: AddFile) => (f.path, f.modificationTime, f.size)
-    val filesFromCrc = checksum.allFiles.map(_.sortBy(fileSortKey)).getOrElse { return true }
-    val filesFromStateReconstruction = recordFrameProfile("Delta", "snapshot.allFiles") {
+    var filesFromCrc = checksum.allFiles.map(_.sortBy(fileSortKey)).getOrElse { return true }
+    var filesFromStateReconstruction = recordFrameProfile(
+        "Delta", "snapshot.allFiles") {
       allFilesViaStateReconstruction.collect().toSeq.sortBy(fileSortKey)
+    }
+    // AMT manifest trees do not yet round-trip every AddFile field: `DataEntry.toAddFile` zeroes
+    // `modificationTime`, forces `dataChange = false`, drops `tags`, and reduces `stats` to
+    // `{"numRecords":n}`. Project those lossy fields before comparing.
+    if (AMTUtils.amtEnabled(self)) {
+      def normalizeForAmtTreeRoundTrip(f: AddFile): AddFile = f.copy(
+        // CRC and AMT reconstruction may use different path encodings for the same on-disk DV,
+        // so normalize both to absolute paths before comparing.
+        deletionVector = Option(f.deletionVector)
+          .map(_.copyWithAbsolutePath(deltaLog.dataPath))
+          .orNull,
+        modificationTime = 0L,
+        dataChange = false,
+        tags = null,
+        stats = f.numPhysicalRecords.map(n => s"""{"numRecords":$n}""").getOrElse(null))
+      filesFromCrc = filesFromCrc.map(normalizeForAmtTreeRoundTrip).sortBy(fileSortKey)
+      filesFromStateReconstruction =
+        filesFromStateReconstruction.map(normalizeForAmtTreeRoundTrip).sortBy(fileSortKey)
     }
     if (filesFromCrc == filesFromStateReconstruction) return true
 
@@ -966,6 +1022,33 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
         errorMap += ("domainMetadata" -> "domainMetadata mismatch")
         detailedErrorMapForUsageLogs += ("domainMetadata" -> JsonUtils.toJson(eventData))
       }
+    }
+    def compareFileSizeHistogram(
+        expectedOpt: Option[FileSizeHistogram],
+        foundOpt: Option[FileSizeHistogram]): Unit = {
+      val result = new ArrayBuffer[String]()
+      expectedOpt.zip(foundOpt).foreach {
+        // Only check if both expected and found are present. Missing histograms can happen
+        // when a commit is written by older writers or when histograms have been disabled in
+        // the Spark session conf.
+        case (expected, found) =>
+          if (!expected.sortedBinBoundaries.equals(found.sortedBinBoundaries)) {
+            result.append(s"FileSizeHistogram mismatch in sorted boundaries")
+          }
+          if (!java.util.Arrays.equals(expected.totalBytes, found.totalBytes)) {
+            result.append(s"FileSizeHistogram mismatch in file sizes")
+          }
+          if (!java.util.Arrays.equals(expected.fileCounts, found.fileCounts)) {
+            result.append(s"FileSizeHistogram mismatch in file counts")
+          }
+      }
+      if (result.nonEmpty) {
+        errorMap += ("fileSizeHistogram" -> result.mkString("\n"))
+      }
+    }
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)) {
+      compareFileSizeHistogram(
+        checksum.fileSizeHistogram, computedStateToCheckAgainst.fileSizeHistogram)
     }
     // Deletion vectors metrics.
     if (DeletionVectorUtils.deletionVectorsReadable(self)) {

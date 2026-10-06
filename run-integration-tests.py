@@ -129,19 +129,20 @@ def get_spark_variants(spark_specs):
     Builds the list of artifact variants to test from the Spark version specs.
 
     Each variant is a dict with:
-      - suffix: Maven artifact suffix, e.g. "" (unsuffixed), "_4.0", "_4.1"
-      - spark_version: full Spark version, e.g. "4.1.0", "4.0.1"
+      - suffix: Maven artifact suffix, e.g. "" (unsuffixed), "_4.0", "_4.1", "_4.2"
+      - spark_version: full Spark version, e.g. "4.0.1", "4.1.0", "4.2.0"
       - support_iceberg: "true" or "false"
       - support_hudi: "true" or "false"
 
     The first variant is always unsuffixed (backward compat) using the DEFAULT spec's metadata.
     Remaining variants are suffixed, one per non-master Spark version.
 
-    Example return value (given Spark 4.0 and 4.1 specs, with 4.1 as default):
+    Example return value (given Spark 4.0, 4.1, and 4.2 specs, with 4.2 as default):
       [
-        {"suffix": "",     "spark_version": "4.1.0", "support_iceberg": "false", "support_hudi": "false"},
+        {"suffix": "",     "spark_version": "4.2.0", "support_iceberg": "false", "support_hudi": "false"},
         {"suffix": "_4.0", "spark_version": "4.0.1", "support_iceberg": "true",  "support_hudi": "true"},
-        {"suffix": "_4.1", "spark_version": "4.1.0", "support_iceberg": "false", "support_hudi": "false"},
+        {"suffix": "_4.1", "spark_version": "4.1.0", "support_iceberg": "true",  "support_hudi": "false"},
+        {"suffix": "_4.2", "spark_version": "4.2.0", "support_iceberg": "false", "support_hudi": "false"},
       ]
     """
     variants = []
@@ -450,6 +451,17 @@ def run_s3_log_store_util_integration_tests():
         print("Failed IntegrationTests")
         raise
 
+def run_flink_integration_tests():
+    print("\n\n##### Running Flink tests #####")
+    env = { }
+    try:
+        cmd = ["build/sbt", "project flink", "testOnly *DeltaSinkTest"]
+        print("\nRunning IntegrationTests of Flink\n=====================")
+        print("Command: %s" % " ".join(cmd))
+        run_cmd(cmd, stream_output=True, env=env)
+    except:
+        print("Failed IntegrationTests")
+        raise
 
 def run_iceberg_integration_tests(root_dir, version, iceberg_version, extra_maven_repo, variant):
     """
@@ -735,6 +747,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Run only S3LogStoreUtil tests")
     parser.add_argument(
+        "--flink-only",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run only Flink tests")
+    parser.add_argument(
         "--scala-version",
         required=False,
         default="2.13",
@@ -941,6 +959,10 @@ if __name__ == "__main__":
 
     if args.s3_log_store_util_only:
         run_s3_log_store_util_integration_tests()
+        quit()
+
+    if args.flink_only:
+        run_flink_integration_tests()
         quit()
 
     if args.unity_catalog_commit_coordinator_integration_tests:

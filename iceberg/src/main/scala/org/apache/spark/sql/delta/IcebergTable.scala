@@ -195,7 +195,11 @@ class IcebergTable(
 
   checkConvertible()
 
-  val fileManifest = new IcebergFileManifest(spark, icebergTable, partitionSchema, convertStats)
+  val fileManifest = new IcebergFileManifest(
+    spark,
+    icebergTable,
+    partitionSchema,
+    convertStats)
 
   lazy val numFiles: Long =
     Option(icebergTable.currentSnapshot())
@@ -241,9 +245,10 @@ class IcebergTable(
      * AnalysisException
      */
      try {
-       SchemaMergingUtils.checkColumnNameDuplication(tableSchema, "during convert to Delta")
+       SchemaMergingUtils.checkColumnNameDuplication(tableSchema, "CONVERT_TO_DELTA")
      } catch {
-       case e: AnalysisException if e.getMessage.contains("during convert to Delta") =>
+       case e: AnalysisException
+           if e.getErrorClass == "DELTA_DUPLICATE_COLUMNS_FOUND.CONVERT_TO_DELTA" =>
          throw new UnsupportedOperationException(
            IcebergTable.caseSensitiveConversionExceptionMsg(e.getMessage))
      }

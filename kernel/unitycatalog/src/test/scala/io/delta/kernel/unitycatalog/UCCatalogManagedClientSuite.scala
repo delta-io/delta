@@ -20,7 +20,7 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{KernelException, VersionToLoadAfterLatestCommitException}
 import io.delta.kernel.internal.CreateTableTransactionBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_RW_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
@@ -90,6 +90,10 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
       loadSnapshot(ucCatalogManagedClient, tablePath = null)
     }
     assertThrows[NullPointerException] {
+      // ucTableIdentifier is null
+      loadSnapshot(ucCatalogManagedClient, ucTableIdentifier = null)
+    }
+    assertThrows[NullPointerException] {
       // versionToLoad is null
       loadSnapshot(ucCatalogManagedClient, versionToLoad = null)
     }
@@ -153,6 +157,26 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     testCatalogManagedTable()
   }
 
+  test("loadTable forwards table identifier to getCommits") {
+    withUCClientAndTestTable { (ucClient, tablePath, _) =>
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
+
+      ucCatalogManagedClient.loadSnapshot(
+        defaultEngine,
+        testUcTableId,
+        tablePath,
+        ucTableIdentifier,
+        emptyLongOpt,
+        emptyLongOpt)
+
+      val tableIdentifier = ucClient.getLastGetCommitsTableIdentifier
+      assert(tableIdentifier != null)
+      assert(tableIdentifier.getNamespace.toSeq == Seq("cat", "sch"))
+      assert(tableIdentifier.getName == "tbl")
+    }
+  }
+
   /* ---- Time-travel-by-version tests --- */
   test("loadTable correctly loads a UC table -- versionToLoad is a ratified commit (the max)") {
     testCatalogManagedTable(versionToLoad = Optional.of(2L))
@@ -166,12 +190,16 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     testCatalogManagedTable(versionToLoad = Optional.of(0L))
   }
 
-  test("loadTable throws if version to load is greater than max ratified version") {
-    val exMsg = intercept[IllegalArgumentException] {
-      testCatalogManagedTable(versionToLoad = Optional.of(9L))
-    }.getMessage
+  Seq(3L, 9L).foreach { versionToLoad =>
+    test(s"loadTable throws a typed exception for version $versionToLoad above max ratified") {
+      val ex = intercept[VersionToLoadAfterLatestCommitException] {
+        testCatalogManagedTable(versionToLoad = Optional.of(versionToLoad))
+      }
 
-    assert(exMsg.contains("Cannot load table version 9 as the latest version ratified by UC is 2"))
+      assert(ex.getMessage ==
+        s"[$testUcTableId] Cannot load table version $versionToLoad " +
+        "as the latest version ratified by UC is 2")
+    }
   }
 
   /* ---- Time-travel-by-timestamp tests --- */

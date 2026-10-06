@@ -25,7 +25,10 @@ import com.databricks.spark.util.DatabricksLogging
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.commands.{
+  DeltaInsertReplaceOnOrUsingCommand,
+  InsertReplaceOnOrUsingAPIOrigin,
+  WriteIntoDelta}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -121,8 +124,11 @@ class DeltaDataSource
     val deltaV2Mode = new DeltaV2Mode(sqlContext.sparkSession.sessionState.conf)
     if (schema.isDefined &&
         deltaV2Mode.shouldBypassSchemaValidationForStreaming(parameters.asJava)) {
-      require(!CDCReader.isCDCRead(options), "CDC read is not supported for schema bypass.")
-      return (shortName(), schema.get)
+      // For a CDF read, surface the change-data columns so this relation is a valid CDF
+      // source on its own, independent of the later ApplyV2Streaming rewrite to V2.
+      val schemaToUse =
+        if (CDCReader.isCDCRead(options)) CDCReader.cdcReadSchema(schema.get) else schema.get
+      return (shortName(), schemaToUse)
     }
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
@@ -248,18 +254,41 @@ class DeltaDataSource
 
     val deltaLog = Utils.getDeltaLogFromTableOrPath(
       sqlContext.sparkSession, catalogTableOpt, new Path(path), parameters)
-    WriteIntoDelta(
+    val deltaOptions = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
+    if (deltaOptions.isReplaceOnOrUsingDefined) {
+      if (deltaOptions.replaceOn.isDefined && !sqlContext.sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+        throw DeltaErrors.operationNotSupportedException("replaceOn")
+      } else if (deltaOptions.replaceUsing.isDefined &&
+          !sqlContext.sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+        throw DeltaErrors.operationNotSupportedException("replaceUsing")
+      }
+    }
+    val writeCmd = WriteIntoDelta(
       deltaLog = deltaLog,
       mode = mode,
-      new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf),
+      options = deltaOptions,
       partitionColumns = partitionColumns,
       configuration = DeltaConfigs.validateConfigurations(
         parameters.filterKeys(_.startsWith("delta.")).toMap),
       data = data,
       // empty catalogTable is acceptable as the code path is only for path based writes
       // (df.write.save("path")) which does not need to use/update catalog
-      catalogTableOpt = None
-      ).run(sqlContext.sparkSession)
+      catalogTableOpt = None)
+    val finalWriteCmd = if (deltaOptions.isReplaceOnOrUsingDefined) {
+      DeltaInsertReplaceOnOrUsingCommand.createCmdForSaveAndSaveAsTable(
+        deltaTable = DeltaTableV2(
+          spark = sqlContext.sparkSession,
+          path = deltaLog.dataPath,
+          catalogTable = None),
+        data = data,
+        writeCmd = writeCmd,
+        apiOrigin = InsertReplaceOnOrUsingAPIOrigin.DFv1Save)
+    } else {
+      writeCmd
+    }
+    finalWriteCmd.run(sqlContext.sparkSession)
 
     deltaLog.createRelation(catalogTableOpt = catalogTableOpt)
   }
@@ -314,9 +343,10 @@ class DeltaDataSource
   }
 
   /**
-   * Extend the default `supportsDataType` to allow VariantType.
+   * Extend the default `supportsDataType` to allow GeoSpatial types and VariantType.
    */
   override def supportsDataType(dt: DataType): Boolean = {
+    DeltaGeoSpatial.isGeoSpatialType(dt) ||
     dt.isInstanceOf[VariantType] || super.supportsDataType(dt)
   }
 
@@ -507,11 +537,14 @@ object DeltaDataSource extends DatabricksLogging {
         DeltaSourceMetadataTrackingLog.create(
           spark,
           schemaTrackingLocation,
-          sourceSnapshot,
-          catalogTableOpt,
+          sourceSnapshot.metadata.id,
+          sourceSnapshot.dataPath.toString,
           parameters,
           sourceMetadataPathOpt,
-          mergeConsecutiveSchemaChanges
+          mergeConsecutiveSchemaChanges,
+          consecutiveSchemaChangesMerger = Some(currentMetadata =>
+            DeltaSourceMetadataEvolutionSupport.getMergedConsecutiveMetadataChanges(
+              spark, sourceSnapshot.deltaLog, catalogTableOpt, currentMetadata))
         )
       }
   }

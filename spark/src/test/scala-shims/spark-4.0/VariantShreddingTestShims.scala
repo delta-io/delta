@@ -16,6 +16,10 @@
 
 package org.apache.spark.sql.delta.test.shims
 
+import java.math.{BigDecimal => JBigDecimal}
+
+import org.apache.spark.types.variant.Variant
+
 /**
  * Test shim for variant shredding to handle differences between Spark versions.
  * In Spark 4.0, VARIANT_INFER_SHREDDING_SCHEMA does not exist.
@@ -33,4 +37,7 @@ object VariantShreddingTestShims {
    * This allows tests to compile but the config will have no effect.
    */
   val variantInferShreddingSchemaKey: String = "spark.sql.dummy.variantInferShreddingSchema"
+
+  def getDecimalWithOriginalScale(v: Variant): JBigDecimal =
+    throw new UnsupportedOperationException("Variant shredding not supported in Spark 4.0")
 }

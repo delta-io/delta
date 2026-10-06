@@ -1449,6 +1449,209 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
+  private def createInsertReplaceTestData(
+      start: Long, end: Long, numPartitions: Int): DataFrame = {
+    spark.range(start = start, end = end, step = 1, numPartitions = numPartitions)
+      .toDF("id").selectExpr("id as id1", "id as id2")
+  }
+
+  private def getNumAddedChangeFiles(
+      deltaLog: DeltaLog,
+      enableCDF: Boolean): Int = {
+    if (enableCDF) {
+      deltaLog.getChanges(1).flatMap {
+        case (a, v) => v
+      }.filter(_.isInstanceOf[AddCDCFile])
+      .toSeq
+      .size
+    } else {
+      0
+    }
+  }
+
+  for {
+    (replaceOption, optionValue, expectedCond, opParam) <- Seq(
+      ("replaceOn", "t.id1 = s.id1 AND t.id2 = s.id2",
+        "t.id1 = s.id1 AND t.id2 = s.id2", "replaceOnCond"),
+      ("replaceUsing", "id1, id2", "(id1, id2)", "replaceUsingCols")
+    )
+  } {
+    testReplaceWhere(
+        s"save with $replaceOption operational metrics ") {
+        (enableCDF, enableStats) =>
+      withSQLConf(
+        DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true",
+        DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true"
+      ) {
+        withTempDir { dir =>
+          val path = dir.getAbsolutePath
+          val numRowsPerFile = 10
+          val numFiles = 10
+
+          createInsertReplaceTestData(
+              start = 0,
+              end = numFiles * numRowsPerFile,
+              numPartitions = numFiles)
+            .write
+            .format("delta")
+            .save(path)
+
+          createInsertReplaceTestData(
+              start = 0, end = 15, numPartitions = 2)
+            .as("s")
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(replaceOption, optionValue)
+            .option("targetAlias", "t")
+            .save(path)
+
+          val deltaLog = DeltaLog.forTable(spark, path)
+          val deltaTable = io.delta.tables.DeltaTable.forPath(path)
+          val numAddedChangeFiles =
+            getNumAddedChangeFiles(deltaLog = deltaLog, enableCDF = enableCDF)
+          val (numAddedBytesExpected, numRemovedBytesExpected) =
+            getLastCommitNumAddedAndRemovedBytes(deltaLog)
+          val lastVersion = deltaLog.update().version
+          val numAddedFiles = deltaLog.getChanges(lastVersion)
+            .flatMap(_._2).count(_.isInstanceOf[AddFile])
+          val numRemovedFilesCount = deltaLog.getChanges(lastVersion)
+            .flatMap(_._2).count(_.isInstanceOf[RemoveFile])
+
+          if (enableStats) {
+            checkOperationMetrics(
+              expectedMetrics = Map(
+                "numFiles" -> numAddedFiles.toString,
+                "numOutputRows" -> "20",
+                "numCopiedRows" -> "5",
+                "numAddedChangeFiles" -> numAddedChangeFiles.toString,
+                "numDeletedRows" -> "15",
+                "numOutputBytes" -> numAddedBytesExpected.toString,
+                "numRemovedBytes" -> numRemovedBytesExpected.toString,
+                "numRemovedFiles" -> numRemovedFilesCount.toString
+              ),
+              operationMetrics = getOperationMetrics(deltaTable.history(1)),
+              metricsSchema = replaceWhereMetricsSchema
+            )
+          } else {
+            checkOperationMetrics(
+              expectedMetrics = Map(
+                "numFiles" -> numAddedFiles.toString,
+                "numAddedChangeFiles" -> numAddedChangeFiles.toString,
+                "numOutputBytes" -> numAddedBytesExpected.toString,
+                "numRemovedBytes" -> numRemovedBytesExpected.toString,
+                "numRemovedFiles" -> numRemovedFilesCount.toString
+              ),
+              operationMetrics = getOperationMetrics(deltaTable.history(1)),
+              metricsSchema = replaceWhereMetricsSchema.filter(!_.contains("Rows"))
+            )
+          }
+
+          checkLastOperation(
+            path,
+            expectedOperationParameters =
+              Seq("mode", "partitionBy", opParam),
+            expectedColVals = Seq("WRITE", "Overwrite", expectedCond),
+            columns =
+              Seq($"operation", $"operationParameters.mode",
+                col(s"operationParameters.$opParam")))
+        }
+      }
+    }
+  }
+
+  for {
+    (replaceOption, optionValue, expectedCond, opParam) <- Seq(
+      ("replaceOn", "t.id1 = s.id1 AND t.id2 = s.id2",
+        "t.id1 = s.id1 AND t.id2 = s.id2", "replaceOnCond"),
+      ("replaceUsing", "id1, id2", "(id1, id2)", "replaceUsingCols")
+    )
+  } {
+    testReplaceWhere(
+        s"saveAsTable with $replaceOption operational metrics ") {
+        (enableCDF, enableStats) =>
+      withSQLConf(
+        DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true",
+        DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true"
+      ) {
+        withTable("target") {
+          val numRowsPerFile = 10
+          val numFiles = 10
+
+          createInsertReplaceTestData(
+              start = 0,
+              end = numFiles * numRowsPerFile,
+              numPartitions = numFiles)
+            .write
+            .format("delta")
+            .saveAsTable("target")
+
+          createInsertReplaceTestData(
+              start = 0, end = 15, numPartitions = 2)
+            .as("s")
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(replaceOption, optionValue)
+            .option("targetAlias", "t")
+            .saveAsTable("target")
+
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+          val deltaTable = io.delta.tables.DeltaTable.forName("target")
+          val numAddedChangeFiles =
+            getNumAddedChangeFiles(deltaLog = deltaLog, enableCDF = enableCDF)
+          val (numAddedBytesExpected, numRemovedBytesExpected) =
+            getLastCommitNumAddedAndRemovedBytes(deltaLog)
+          val lastVersion = deltaLog.update().version
+          val numAddedFiles = deltaLog.getChanges(lastVersion)
+            .flatMap(_._2).count(_.isInstanceOf[AddFile])
+          val numRemovedFilesCount = deltaLog.getChanges(lastVersion)
+            .flatMap(_._2).count(_.isInstanceOf[RemoveFile])
+
+          if (enableStats) {
+            checkOperationMetrics(
+              expectedMetrics = Map(
+                "numFiles" -> numAddedFiles.toString,
+                "numOutputRows" -> "20",
+                "numCopiedRows" -> "5",
+                "numAddedChangeFiles" -> numAddedChangeFiles.toString,
+                "numDeletedRows" -> "15",
+                "numOutputBytes" -> numAddedBytesExpected.toString,
+                "numRemovedBytes" -> numRemovedBytesExpected.toString,
+                "numRemovedFiles" -> numRemovedFilesCount.toString
+              ),
+              operationMetrics = getOperationMetrics(deltaTable.history(1)),
+              metricsSchema = replaceWhereMetricsSchema
+            )
+          } else {
+            checkOperationMetrics(
+              expectedMetrics = Map(
+                "numFiles" -> numAddedFiles.toString,
+                "numAddedChangeFiles" -> numAddedChangeFiles.toString,
+                "numOutputBytes" -> numAddedBytesExpected.toString,
+                "numRemovedBytes" -> numRemovedBytesExpected.toString,
+                "numRemovedFiles" -> numRemovedFilesCount.toString
+              ),
+              operationMetrics = getOperationMetrics(deltaTable.history(1)),
+              metricsSchema = replaceWhereMetricsSchema.filter(!_.contains("Rows"))
+            )
+          }
+
+          val targetPath = spark.sessionState.catalog
+            .getTableMetadata(TableIdentifier("target")).location.getPath
+          checkLastOperation(
+            targetPath,
+            expectedOperationParameters =
+              Seq("mode", "partitionBy", opParam),
+            expectedColVals = Seq("WRITE", "Overwrite", expectedCond),
+            columns =
+              Seq($"operation", $"operationParameters.mode",
+                col(s"operationParameters.$opParam")))
+        }
+      }
+    }
+  }
+
   test("replaceWhere metrics turned off - reverts to old behavior") {
     withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
         DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false",
@@ -1742,12 +1945,15 @@ trait DescribeDeltaHistorySuiteBase
     if (asserts.canOverwriteSchema) expected += ("canOverwriteSchema" -> "true")
     if (asserts.canMergeSchema) expected += ("canMergeSchema" -> "true")
     asserts.predicate.foreach(pred => expected += ("predicate" -> pred))
+    asserts.replaceOnCond.foreach(cond => expected += ("replaceOnCond" -> cond))
+    asserts.replaceUsingCols.foreach(cols => expected += ("replaceUsingCols" -> cols))
     assertInHistory(opParams, expected.result())
   }
 
   def assertInHistory(opParams: Map[String, String], expected: Map[String, String]): Unit = {
     val allParams = Seq(
-      "isDynamicPartitionOverwrite", "predicate", "canOverwriteSchema", "canMergeSchema"
+      "isDynamicPartitionOverwrite", "predicate", "canOverwriteSchema", "canMergeSchema",
+      "replaceUsingCols", "replaceOnCond"
     )
     expected.foreach { case (key, value) =>
       assert(opParams.get(key).exists(_.contains(value)),
@@ -1806,7 +2012,9 @@ case class WriteOptionsAssertion(
     isDynamicPartitionOverwrite: Boolean = false,
     canOverwriteSchema: Boolean = false,
     canMergeSchema: Boolean = false,
-    predicate: Option[String] = None
+    predicate: Option[String] = None,
+    replaceOnCond: Option[String] = None,
+    replaceUsingCols: Option[String] = None
 )
 
 /**
@@ -2070,6 +2278,30 @@ trait WriteOptionsTestBase {
       """)
     }
   }(WriteOptionsAssertion(isDynamicPartitionOverwrite = true))
+
+  testTableWrite("write options for saveAsTable with replaceOn option") { tableName =>
+    withSQLConf(
+      DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true"
+    ) {
+      testData(ids = Seq(6), parts = Seq(1))
+        .write.format("delta")
+        .mode("overwrite")
+        .option("replaceOn", "true")
+        .saveAsTable(tableName)
+    }
+  }(WriteOptionsAssertion(replaceOnCond = Some("true")))
+
+  testTableWrite("write options for saveAsTable with replaceUsing option") { tableName =>
+    withSQLConf(
+      DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true"
+    ) {
+      testData(ids = Seq(6), parts = Seq(1))
+        .write.format("delta")
+        .mode("overwrite")
+        .option("replaceUsing", "part")
+        .saveAsTable(tableName)
+    }
+  }(WriteOptionsAssertion(replaceUsingCols = Some("part")))
 }
 
 class DescribeDeltaHistorySuite

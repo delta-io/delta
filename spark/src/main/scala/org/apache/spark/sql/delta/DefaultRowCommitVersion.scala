@@ -28,7 +28,7 @@ object DefaultRowCommitVersion {
   def assignIfMissing(
       spark: SparkSession,
       protocol: Protocol,
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       actions: Iterator[Action],
       version: Long): Iterator[Action] = {
     if (!RowTracking.isSupported(protocol)) {

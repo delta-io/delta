@@ -81,31 +81,9 @@ class CatalogOwnedPropertySuite extends QueryTest
     sql(createTableSQLStr)
     // Manually insert UC_TABLE_ID to mock UC integration behavior.
     if (withCatalogOwned) {
-      val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName))
-      val deltaLog = DeltaLog.forTable(spark, catalogTable)
-      val snapshot = deltaLog.update(catalogTableOpt = Some(catalogTable))
-      val newMetadata = snapshot.metadata.copy(
-        configuration = snapshot.metadata.configuration +
-          (UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> java.util.UUID.randomUUID().toString)
-      )
-      deltaLog.startTransaction(Some(catalogTable))
-        .commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
+      addUCTableIdToTable(tableSource = Right(tableName))
     }
     validateCatalogOwnedAndUCTableId(tableName, expected = withCatalogOwned)
-  }
-
-  // Helper to manually insert UC_TABLE_ID to mock UC integration behavior.
-  // This is needed in OSS tests since there's no real UC integration.
-  private def mockUCTableIdInsertion(tableName: String): Unit = {
-    val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName))
-    val deltaLog = DeltaLog.forTable(spark, catalogTable)
-    val snapshot = deltaLog.update(catalogTableOpt = Some(catalogTable))
-    val newMetadata = snapshot.metadata.copy(
-      configuration = snapshot.metadata.configuration +
-        (UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> java.util.UUID.randomUUID().toString)
-    )
-    deltaLog.startTransaction(Some(catalogTable))
-      .commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
   }
 
   private def getUCTableIdFromTable(tableName: String): String = {
@@ -231,12 +209,16 @@ class CatalogOwnedPropertySuite extends QueryTest
       // Normal delta table.
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = false)
 
-      val error = intercept[IllegalStateException] {
+      val error = intercept[DeltaUnsupportedOperationException] {
         sql("REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
           s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
       }
-      assert(error.getMessage.contains(
-        "Specifying CatalogManaged in REPLACE TABLE command is not supported"))
+      checkError(
+        exception = error,
+        condition = "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED",
+        sqlState = Some("0A000"),
+        parameters = Map("tableName" -> "(`[^`]+`\\.)*`t1`"),
+        matchPVals = true)
     }
   }
 
@@ -271,13 +253,17 @@ class CatalogOwnedPropertySuite extends QueryTest
       createTableAndValidateCatalogOwned(tableName = "t2", withCatalogOwned = false)
       sql("INSERT INTO t2 VALUES (1), (2)")
 
-      val error = intercept[IllegalStateException] {
+      val error = intercept[DeltaUnsupportedOperationException] {
         sql("REPLACE TABLE t1 USING delta TBLPROPERTIES " +
           s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported') " +
           s"AS SELECT * FROM t2")
       }
-      assert(error.getMessage.contains(
-        "Specifying CatalogManaged in REPLACE TABLE command is not supported"))
+      checkError(
+        exception = error,
+        condition = "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED",
+        sqlState = Some("0A000"),
+        parameters = Map("tableName" -> "(`[^`]+`\\.)*`t1`"),
+        matchPVals = true)
     }
   }
 
@@ -354,7 +340,7 @@ class CatalogOwnedPropertySuite extends QueryTest
       sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
         s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
       // Mock UC integration behavior by inserting UC_TABLE_ID.
-      mockUCTableIdInsertion("t1")
+      addUCTableIdToTable(tableSource = Right("t1"))
 
       validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
       sql("INSERT INTO t1 VALUES (1), (2)")
@@ -449,12 +435,16 @@ class CatalogOwnedPropertySuite extends QueryTest
       sql("INSERT INTO t1 VALUES (1)")
 
       // CREATE OR REPLACE with CatalogManaged on existing non-CatalogManaged table should fail.
-      val error = intercept[IllegalStateException] {
+      val error = intercept[DeltaUnsupportedOperationException] {
         sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
           s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
       }
-      assert(error.getMessage.contains(
-        "Specifying CatalogManaged in REPLACE TABLE command is not supported"))
+      checkError(
+        exception = error,
+        condition = "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED",
+        sqlState = Some("0A000"),
+        parameters = Map("tableName" -> "(`[^`]+`\\.)*`t1`"),
+        matchPVals = true)
 
       // Original table should remain unchanged.
       validateCatalogOwnedAndUCTableId(tableName = "t1", expected = false)
@@ -469,7 +459,7 @@ class CatalogOwnedPropertySuite extends QueryTest
       sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
         s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
       // Mock UC integration behavior by inserting UC_TABLE_ID.
-      mockUCTableIdInsertion("t1")
+      addUCTableIdToTable(tableSource = Right("t1"))
       validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
       val ucTableIdFirst = getUCTableIdFromTable(tableName = "t1")
       sql("INSERT INTO t1 VALUES (1)")
@@ -499,17 +489,23 @@ class CatalogOwnedPropertySuite extends QueryTest
       // Source catalog-owned table
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
 
-      val error1 = intercept[DeltaUnsupportedOperationException] {
+      val error1 = intercept[UnsupportedOperationException] {
         sql(s"CREATE TABLE t2 LIKE t1 TBLPROPERTIES " +
           s"('${UCCommitCoordinatorClient.UC_TABLE_ID_KEY}' = '${UUID.randomUUID().toString}')")
       }
-      val error2 = intercept[DeltaUnsupportedOperationException] {
+      val error2 = intercept[UnsupportedOperationException] {
         sql(s"CREATE TABLE t3 LIKE t1 TBLPROPERTIES " +
           s"('${UCCommitCoordinatorClient.UC_TABLE_ID_KEY}' = '${UUID.randomUUID().toString}')")
       }
       Seq(error1, error2).foreach { error =>
-        checkError(error, "DELTA_CANNOT_MODIFY_TABLE_PROPERTY", "42939",
-          Map("prop" -> "io.unitycatalog.tableId"))
+        error match {
+          case deltaError: DeltaUnsupportedOperationException =>
+            checkError(deltaError, "DELTA_CANNOT_MODIFY_TABLE_PROPERTY", "42939",
+              Map("prop" -> "io.unitycatalog.tableId"))
+          case sparkError =>
+            assert(
+              sparkError.getMessage.contains("spark_catalog does not support CREATE TABLE LIKE"))
+        }
       }
     }
   }

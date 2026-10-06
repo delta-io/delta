@@ -1,0 +1,415 @@
+package io.delta.spark.internal.v2.read.changelog;
+
+import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
+import org.apache.spark.sql.SparkSession;
+import scala.collection.immutable.Map$;
+import io.delta.kernel.CommitActions;
+import io.delta.kernel.CommitRange;
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaLogActionUtils;
+import io.delta.kernel.internal.TableConfig;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.RemoveFile;
+import io.delta.kernel.internal.commitrange.CommitRangeImpl;
+import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.utils.PartitionUtils;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.spark.internal.v2.utils.StreamingHelper;
+import java.io.IOException;
+import java.io.Serializable;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.spark.paths.SparkPath;
+import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
+import org.apache.spark.sql.catalyst.expressions.JoinedRow;
+import org.apache.spark.sql.catalyst.expressions.UnsafeProjection;
+import org.apache.spark.sql.connector.read.Batch;
+import org.apache.spark.sql.connector.read.InputPartition;
+import org.apache.spark.sql.connector.read.PartitionReader;
+import org.apache.spark.sql.connector.read.PartitionReaderFactory;
+import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
+import org.apache.spark.sql.delta.DeltaErrors;
+import org.apache.spark.sql.delta.RowId$;
+import org.apache.spark.sql.execution.datasources.FilePartition;
+import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.internal.SQLConf;
+import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructType;
+import org.apache.spark.unsafe.types.UTF8String;
+import scala.Tuple2;
+
+/**
+ * Batch implementation for read-time CDF that turns a commit range into CDC input partitions. It
+ * iterates the AddFile, RemoveFile and Metadata actions of each commit in the range, emitting
+ * partitions packing multiple files, and rejects ranges whose schema or row-tracking state is not
+ * stable. {@link #createReaderFactory()} wraps the Parquet reader with
+ * {@link CDCPartitionReaderFactory} to append the CDC tail columns ({@code _change_type},
+ * {@code _commit_version}, {@code _commit_timestamp}).
+ *
+ * <p>Package privacy prevents callers from coupling to Delta's internal V2 implementation.
+ */
+class DeltaV2ChangelogBatch implements Batch {
+  private static final Set<DeltaLogActionUtils.DeltaAction> CHANGELOG_ACTION_SET =
+      Set.of(
+          DeltaLogActionUtils.DeltaAction.ADD,
+          DeltaLogActionUtils.DeltaAction.REMOVE,
+          DeltaLogActionUtils.DeltaAction.METADATA);
+  private static final String INSERT_CHANGE_TYPE = "insert";
+  private static final String DELETE_CHANGE_TYPE = "delete";
+
+  private final CommitRange commitRange;
+  private final Engine engine;
+  private final StructType endDataSchema;
+  private final Snapshot snapshot;
+  private final Configuration hadoopConf;
+
+  DeltaV2ChangelogBatch(
+      CommitRange commitRange,
+      Engine engine,
+      StructType endDataSchema,
+      Snapshot snapshot,
+      Configuration hadoopConf) {
+    this.commitRange = commitRange;
+    this.engine = engine;
+    this.endDataSchema = endDataSchema;
+    this.snapshot = snapshot;
+    this.hadoopConf = hadoopConf;
+  }
+
+
+  /**
+   * All per-file constants are packed into the file's {@code otherConstantMetadataColumnValues}
+   * map so the bin-packing reader can recover them per file: the row-tracking pair
+   * ({@code baseRowId}, {@code defaultRowCommitVersion}), the deletion-vector descriptor,
+   * and the CDC tail ({@code _change_type}, {@code _commit_version}, {@code _commit_timestamp}).
+   */
+  private static PartitionedFile buildPartition(
+      String path,
+      long size,
+      String changeType,
+      long commitVersion,
+      long commitTimestampMillis,
+      Supplier<Optional<Long>> baseRowIdAccessor,
+      Supplier<Optional<Long>> defaultRowCommitVersionAccessor,
+      String actionDescription,
+      String deletionVector,
+      String tablePath) {
+    long baseRowId =
+        baseRowIdAccessor
+            .get()
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        actionDescription + " " + path + " missing baseRowId"));
+    long defaultRcv =
+        defaultRowCommitVersionAccessor
+            .get()
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        actionDescription + " " + path + " missing defaultRowCommitVersion"));
+
+    scala.collection.immutable.Map<String, Object> constantMetadata =
+        (scala.collection.immutable.Map<String, Object>)
+          (scala.collection.immutable.Map<?, ?>)
+            Map$.MODULE$.empty();
+    constantMetadata =
+        constantMetadata.$plus(
+            new Tuple2<>(RowId$.MODULE$.BASE_ROW_ID(), baseRowId));
+    constantMetadata =
+        constantMetadata.$plus(
+            new Tuple2<>(
+                DefaultRowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME(),
+                defaultRcv));
+
+    for (Map.Entry<String, Object> entry :
+        PartitionUtils.buildDvMetadata(deletionVector).entrySet()) {
+      constantMetadata =
+          constantMetadata.$plus(new Tuple2<>(entry.getKey(), entry.getValue()));
+    }
+    constantMetadata = constantMetadata.$plus(new Tuple2<>(
+        CDCSchemaContext.CDC_COMMIT_VERSION, commitVersion));
+    constantMetadata = constantMetadata.$plus(new Tuple2<>(
+        CDCSchemaContext.CDC_COMMIT_TIMESTAMP,
+        TimeUnit.MILLISECONDS.toMicros(commitTimestampMillis)));
+    constantMetadata = constantMetadata.$plus(new Tuple2<>(
+        CDCSchemaContext.CDC_TYPE_COLUMN, changeType));
+
+    PartitionedFile file =
+        new PartitionedFile(
+            new GenericInternalRow(0),
+            sparkPathFromRawPath(tablePath, path),
+            /* start */ 0L,
+            /* length */ size,
+            /* locations */ new String[0],
+            /* modificationTime */ commitTimestampMillis,
+            /* fileSize */ size,
+            constantMetadata);
+    return file;
+  }
+
+  /**
+   * Rejects a schema at {@code version} that the end schema cannot read. Used for both the
+   * start/end pre-check and each in-range Metadata action.
+   */
+  private void requireReadCompatible(StructType schema, long version) {
+    if (!SchemaUtils.isReadCompatible(schema, endDataSchema)) {
+      DeltaErrors.throwChangelogSchemaChangeInRange(version);
+    }
+  }
+
+  @Override
+  public InputPartition[] planInputPartitions() {
+    List<PartitionedFile> partitions = new ArrayList<>();
+
+    // Pre-check catches schema drift between start and end. The per-commit loop below catches
+    // in-range Metadata commits.
+    StructType startSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+    requireReadCompatible(startSchema, ((CommitRangeImpl) commitRange).getStartVersion());
+
+    // TODO: Remove StreamingHelper usage. The helper is generic, only the class name is
+    // streaming-flavored.
+    //
+    // try-with-resources forces a catch (Exception) below because CommitActions.close()
+    // declares it. Unchecked exceptions pass through unchanged.
+    long totalBytes = 0L;
+    try (CloseableIterator<CommitActions> commitsIter =
+        StreamingHelper.getCommitActionsFromRangeUnsafe(
+            engine, (CommitRangeImpl) commitRange, snapshot.getPath(), CHANGELOG_ACTION_SET)) {
+      while (commitsIter.hasNext()) {
+        // Emit RemoveFiles before AddFiles per commit. The Spark analyzer re-sorts anyway, but
+        // direct-batch tests iterate in emission order and rely on the preimage-then-postimage
+        // shape.
+        List<PartitionedFile> commitRemoves = new ArrayList<>();
+        List<PartitionedFile> commitAdds = new ArrayList<>();
+        try (CommitActions commit = commitsIter.next();
+            CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
+          while (actionsIter.hasNext()) {
+            ColumnarBatch batch = actionsIter.next();
+            for (int rowId = 0; rowId < batch.getSize(); rowId++) {
+              Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
+              if (addOpt.isPresent()) {
+                AddFile add = addOpt.get();
+                String deletionVectorBase64 =
+                    add.getDeletionVector()
+                        .map(DeletionVectorDescriptor::serializeToBase64)
+                        .orElse(null);
+                commitAdds.add(
+                    buildPartition(
+                        add.getPath(),
+                        add.getSize(),
+                        INSERT_CHANGE_TYPE,
+                        commit.getVersion(),
+                        commit.getTimestamp(),
+                        add::getBaseRowId,
+                        add::getDefaultRowCommitVersion,
+                        "AddFile",
+                        deletionVectorBase64,
+                        snapshot.getPath()));
+                totalBytes += add.getSize();
+              }
+              Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
+              if (removeOpt.isPresent()) {
+                RemoveFile remove = removeOpt.get();
+                String deletionVectorBase64 =
+                    remove
+                        .getDeletionVector()
+                        .map(DeletionVectorDescriptor::serializeToBase64)
+                        .orElse(null);
+                commitRemoves.add(
+                    buildPartition(
+                        remove.getPath(),
+                        remove.getSize().orElse(0L),
+                        DELETE_CHANGE_TYPE,
+                        commit.getVersion(),
+                        commit.getTimestamp(),
+                        remove::getBaseRowId,
+                        remove::getDefaultRowCommitVersion,
+                        "RemoveFile",
+                        deletionVectorBase64,
+                        snapshot.getPath()));
+                totalBytes += remove.getSize().orElse(0L);
+              }
+              // Validate Metadata actions: schema and row-tracking config must match the
+              // end-version baseline established by DeltaV2ChangelogScanBuilder. Mid-range
+              // schema evolution or row-tracking-toggle would silently corrupt downstream
+              // CDC post-processing (row identity / column mapping drift).
+              Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
+              if (metadataOpt.isPresent()) {
+                Metadata md = metadataOpt.get();
+                StructType commitSchema =
+                    SchemaUtils.convertKernelSchemaToSparkSchema(md.getSchema());
+                requireReadCompatible(commitSchema, commit.getVersion());
+                // A new Metadata action fully replaces the prior configuration, so an absent
+                // row-tracking key means the table default (disabled), not an inherited value.
+                boolean rowTrackingEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(md);
+                if (!rowTrackingEnabled) {
+                  DeltaErrors.throwChangelogRowTrackingDisabledInRange(commit.getVersion());
+                }
+              }
+            }
+          }
+        } catch (Exception e) {
+          // A cause that already carries a Spark error class is rethrown unchanged by
+          // throwChangelogReadFailed; anything else is wrapped in a Delta error class.
+          DeltaErrors.throwChangelogReadFailed("PROCESS_COMMIT_ACTIONS", e);
+        }
+        partitions.addAll(commitRemoves);
+        partitions.addAll(commitAdds);
+      }
+    } catch (Exception e) {
+      DeltaErrors.throwChangelogReadFailed("PLAN_INPUT_PARTITIONS", e);
+    }
+    SQLConf sqlConf = SQLConf.get();
+    return PartitionUtils.planInputPartitions(
+        SparkSession.active(), partitions, totalBytes, hadoopConf, sqlConf);
+  }
+
+  /**
+   * Resolves a Delta-log file path against the table root. The two parts carry different encodings:
+   * {@code tablePath} (kernel snapshot path) is not URL-encoded, so a reserved character (a space,
+   * a {@code %}) appears literally, while {@code filePath} (the AddFile/RemoveFile path) is
+   * URL-encoded per the Delta protocol. Wrapping only the encoded filePath in a {@link URI},
+   * joining it onto the raw tablePath with {@link Path}, and using {@link SparkPath#fromPath}
+   * matches the encoding each part carries (the contract V1 TahoeFileIndex uses). Kept local to the
+   * changelog reader rather than shared, since the general scan/streaming path uses
+   * {@link SparkPath#fromUrlString} unchanged.
+   */
+  private static SparkPath sparkPathFromRawPath(String tablePath, String filePath) {
+    try {
+      Path child = new Path(new URI(filePath));
+      Path resolved = child.isAbsolute() ? child : new Path(new Path(tablePath), child);
+      return SparkPath.fromPath(resolved);
+    } catch (URISyntaxException e) {
+      throw new IllegalArgumentException(
+          "Could not parse Delta-log file path as URI: " + filePath, e);
+    }
+  }
+
+  @Override
+  public PartitionReaderFactory createReaderFactory() {
+    StructType partitionSchema = new StructType();
+    StructType readDataSchema =
+        endDataSchema.add(
+            DeltaV2Changelog.METADATA_COLUMN, DeltaV2Changelog.METADATA_STRUCT, false);
+    Filter[] dataFilters = new Filter[0];
+    scala.collection.immutable.Map<String, String> scalaOptions =
+        Map$.MODULE$.empty();
+    SQLConf sqlConf = SQLConf.get();
+
+    // Read-time CDF: tail columns are added by CDCPartitionReaderFactory below, so
+    // isWriteTimeCDCRead stays false (write-time streaming is the only true caller).
+    PartitionReaderFactory delegate =
+        PartitionUtils.createDeltaParquetReaderFactory(
+            snapshot,
+            endDataSchema,
+            partitionSchema,
+            readDataSchema,
+            /* ddlOrderedReadOutputSchema */ readDataSchema,
+            dataFilters,
+            scalaOptions,
+            hadoopConf,
+            sqlConf,
+            /* isWriteTimeCDCRead */ false);
+
+    StructType outputSchema =
+        readDataSchema
+            .add("_change_type", DataTypes.StringType, false)
+            .add("_commit_version", DataTypes.LongType, false)
+            .add("_commit_timestamp", DataTypes.TimestampType, false);
+    return new CDCPartitionReaderFactory(delegate, outputSchema);
+  }
+
+  /** Executor-side factory for CDC partition readers. */
+  static class CDCPartitionReaderFactory implements PartitionReaderFactory, Serializable {
+    private final PartitionReaderFactory delegate;
+    private final StructType outputSchema;
+
+    CDCPartitionReaderFactory(
+        PartitionReaderFactory delegate, StructType outputSchema) {
+      this.delegate = delegate;
+      this.outputSchema = outputSchema;
+    }
+
+    @Override
+    public PartitionReader<InternalRow> createReader(InputPartition partition) {
+      FilePartition filePartition = (FilePartition) partition;
+      return new CDCPartitionReader(delegate, filePartition, outputSchema);
+    }
+  }
+
+  static class CDCPartitionReader implements PartitionReader<InternalRow> {
+    private final PartitionReaderFactory delegate;
+    private final UnsafeProjection projection;
+    private final PartitionedFile[] files;
+    private final JoinedRow joined = new JoinedRow();
+    private final GenericInternalRow cdcTail = new GenericInternalRow(3);
+    private int currentFileIndex = 0;
+    private PartitionReader<InternalRow> currentBaseReader;
+
+
+    CDCPartitionReader(
+        PartitionReaderFactory delegate, FilePartition partition, StructType outputSchema) {
+      this.delegate = delegate;
+      this.projection = UnsafeProjection.create(outputSchema);
+      // Resolve the packed files once here so the loop below is accessor-agnostic.
+      this.files = partition.files();
+    }
+
+
+    @Override
+    public boolean next() throws IOException {
+      while (true) {
+        // current file still has rows
+        if (currentBaseReader != null && currentBaseReader.next()) {
+          return true;
+        }
+        // current files has no rows => close current file, open next
+        if (currentBaseReader != null) {
+          currentBaseReader.close();
+          currentBaseReader = null;
+        }
+        // last file has been read
+        if (currentFileIndex >= files.length) {
+          return false;
+        }
+        // open next file
+        PartitionedFile file = files[currentFileIndex++];
+        currentBaseReader =
+            delegate.createReader(new FilePartition(0, new PartitionedFile[] {file}));
+
+        scala.collection.immutable.Map<String, Object> meta =
+            file.otherConstantMetadataColumnValues();
+        this.cdcTail.update(0,
+            UTF8String.fromString((String) meta.apply(CDCSchemaContext.CDC_TYPE_COLUMN)));
+        this.cdcTail.setLong(1,
+            (Long) meta.apply(CDCSchemaContext.CDC_COMMIT_VERSION));
+        this.cdcTail.setLong(2,
+            (Long) meta.apply(CDCSchemaContext.CDC_COMMIT_TIMESTAMP));
+      }
+    }
+
+    @Override
+    public InternalRow get() {
+      return projection.apply(joined.apply(currentBaseReader.get(), cdcTail));
+    }
+
+    @Override
+    public void close() throws IOException {
+      if (currentBaseReader != null) {
+        currentBaseReader.close();
+      }
+    }
+  }
+}

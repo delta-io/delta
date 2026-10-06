@@ -17,23 +17,18 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.scalactic.source.Position
+import org.scalatest.Tag
 
 import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
-/**
- * Test suite covering behavior of INSERT operations with extra top-level columns or nested struct
- * fields in the input data.
- * This suite intends to exhaustively cover all the ways INSERT can be run on a Delta table. See
- * [[DeltaInsertIntoTest]] for a list of these INSERT operations covered.
- */
-class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
+trait DeltaInsertIntoEvolutionSuiteBase extends DeltaInsertIntoTest with DeltaTableProvider {
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
@@ -48,6 +43,15 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
     }.toMap
     checkAllTestCasesImplemented(ignoredTestCases)
   }
+}
+
+/**
+ * Test suite covering behavior of INSERT operations with extra top-level columns or nested struct
+ * fields in the input data.
+ * This suite intends to exhaustively cover all the ways INSERT can be run on a Delta table. See
+ * [[DeltaInsertIntoTest]] for a list of these INSERT operations covered.
+ */
+class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBase {
 
   for (enableAutoMergeSQLConf <- BOOLEAN_DOMAIN) {
     val testMsg = s"enableAutoMergeSQLConf=$enableAutoMergeSQLConf"
@@ -98,8 +102,9 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
     )
 
 
-    // Adding new top-level columns with schema evolution is allowed for all inserts, but dataframe
-    // inserts by name don't support implicit casting and will fail due to the type mismatch.
+    // Adding new top-level columns with schema evolution is allowed for all inserts.
+    // save() and saveAsTable() overwrite don't support implicit casting and will fail.
+    // SQL inserts by-name have different error messages and are covered in a separate test below.
     testInserts(s"insert with extra top-level column and implicit cast," +
       s"schemaEvolution=$schemaEvolution")(
       initialData = TestData("a int, b int", Seq("""{ "a": 1, "b": 2 }""")),
@@ -117,7 +122,8 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
         })
       },
-      includeInserts = insertsByPosition + StreamingInsert,
+      excludeInserts = insertsSQL.intersect(insertsByName) ++
+        insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
 
@@ -136,7 +142,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             "updateField" -> "b"
           ))
       }),
-      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      includeInserts = insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
 
@@ -253,13 +259,13 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
         })
       },
-      includeInserts = insertsSQL ++ insertsByPosition + StreamingInsert -- Seq(
+      excludeInserts = Set(
         // It's not possible to specify a column that doesn't exist in the target using SQL with an
         // explicit column list.
         SQLInsertColList(SaveMode.Append),
         SQLInsertColList(SaveMode.Overwrite),
-        SQLInsertOverwritePartitionColList
-      ),
+        SQLInsertOverwritePartitionColList) ++
+        insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
 
@@ -279,7 +285,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             "updateField" -> "s"
           ))
       }),
-      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      includeInserts = insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
   }
@@ -289,8 +295,8 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
   test("insert by name with extra top-level column and implicit cast fails " +
       "when byNameSchemaEvolution is disabled") {
     withTable("target") {
-      sql("CREATE TABLE target (a INT, b INT) USING DELTA")
-      withSQLConf(
+      sql(createTableSQL("target", "a INT, b INT"))
+      withConf(
           DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true",
           DeltaSQLConf.DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED.key -> "false") {
         val ex = intercept[SparkThrowable] {
@@ -307,4 +313,191 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
       }
     }
   }
+}
+
+class DeltaInsertIntoVoidEvolutionSuite extends DeltaInsertIntoEvolutionSuiteBase {
+
+  override protected def test(testName: String, testTags: Tag*)(testFun: => Any)
+      (implicit pos: Position): Unit = {
+    super.test(testName, testTags: _*) {
+      assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+      testFun
+    }
+  }
+
+  for (schemaEvolution <- BOOLEAN_DOMAIN) {
+    testInserts(s"insert and evolve void column into int," +
+      s"schemaEvolution=$schemaEvolution")(
+      initialData = TestData("a int, i int, v void", Seq("""{ "a": 1, "i": 1, "v": null }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, i int, v int",
+        Seq("""{ "a": 1, "i": 2, "v": 2 }""")),
+      expectedResult = if (schemaEvolution) {
+        ExpectedResult.Success(
+          expected = new StructType()
+            .add("a", IntegerType)
+            .add("i", IntegerType)
+            .add("v", IntegerType))
+      } else {
+        ExpectedResult.Failure(ex => {
+          checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
+        })
+      },
+      withSchemaEvolution = schemaEvolution
+    )
+  }
+
+  testInserts(s"insert and evolve void column into struct")(
+    initialData = TestData("a int, i int, v void", Seq("""{ "a": 1, "i": 1, "v": null }""")),
+    partitionBy = Seq("a"),
+    overwriteWhere = "a" -> 1,
+    insertData = TestData("a int, i int, v struct<x:int>",
+      Seq("""{ "a": 1, "i": 2, "v": { "x": 2 } }""")),
+    expectedResult = ExpectedResult.Success(
+      expected = new StructType()
+        .add("a", IntegerType)
+        .add("i", IntegerType)
+        .add("v", new StructType()
+          .add("x", IntegerType))),
+    withSchemaEvolution = true
+  )
+
+  testInserts(s"insert and evolve void column into array")(
+    initialData = TestData("a int, i int, v void", Seq("""{ "a": 1, "i": 1, "v": null }""")),
+    partitionBy = Seq("a"),
+    overwriteWhere = "a" -> 1,
+    insertData = TestData("a int, i int, v array<struct<x:int>>",
+      Seq("""{ "a": 1, "i": 2, "v": [{ "x": 2 }] }""")),
+    expectedResult = ExpectedResult.Success(
+      expected = new StructType()
+        .add("a", IntegerType)
+        .add("i", IntegerType)
+        .add("v", new ArrayType(
+          new StructType()
+            .add("x", IntegerType),
+          containsNull = true))),
+    withSchemaEvolution = true
+  )
+
+  testInserts(s"insert and evolve void column into map")(
+    initialData = TestData("a int, i int, v void", Seq("""{ "a": 1, "i": 1, "v": null }""")),
+    partitionBy = Seq("a"),
+    overwriteWhere = "a" -> 1,
+    insertData = TestData("a int, i int, v map<string, struct<x:int>>",
+      Seq("""{ "a": 1, "i": 2, "v": { "key": { "x": 2 } } }""")),
+    expectedResult = ExpectedResult.Success(
+      expected = new StructType()
+        .add("a", IntegerType)
+        .add("i", IntegerType)
+        .add("v", new MapType(
+          StringType,
+          new StructType()
+            .add("x", IntegerType),
+          valueContainsNull = true))),
+    withSchemaEvolution = true
+  )
+
+  testInserts(s"insert and evolve void column in struct into int")(
+    initialData = TestData("a int, i int, v struct<x:int, y:void>",
+      Seq("""{ "a": 1, "i": 1, "v": { "x": 1, "y": null } }""")),
+    partitionBy = Seq("a"),
+    overwriteWhere = "a" -> 1,
+    insertData = TestData("a int, i int, v struct<x:int, y:int>",
+      Seq("""{ "a": 1, "i": 2, "v": { "x": 2, "y": 2 } }""")),
+    expectedResult = ExpectedResult.Success(
+      expected = new StructType()
+        .add("a", IntegerType)
+        .add("i", IntegerType)
+        .add("v", new StructType()
+          .add("x", IntegerType)
+          .add("y", IntegerType))),
+    withSchemaEvolution = true
+  )
+
+  testInserts(s"insert and evolve void column in struct into struct")(
+    initialData = TestData("a int, i int, v struct<x:int, y:void>",
+      Seq("""{ "a": 1, "i": 1, "v": { "x": 1, "y": null } }""")),
+    partitionBy = Seq("a"),
+    overwriteWhere = "a" -> 1,
+    insertData = TestData("a int, i int, v struct<x:int, y:struct<f1:int>>",
+      Seq("""{ "a": 1, "i": 2, "v": { "x": 2, "y": { "f1": 2 } } }""")),
+    expectedResult = ExpectedResult.Success(
+      expected = new StructType()
+        .add("a", IntegerType)
+        .add("i", IntegerType)
+        .add("v", new StructType()
+          .add("x", IntegerType)
+          .add("y", new StructType()
+            .add("f1", IntegerType)))),
+    withSchemaEvolution = true
+  )
+
+  testInserts(s"insert and evolve void column in struct into struct with void")(
+    initialData = TestData("a int, i int, v struct<x:int, y:void>",
+      Seq("""{ "a": 1, "i": 1, "v": { "x": 1, "y": null } }""")),
+    partitionBy = Seq("a"),
+    overwriteWhere = "a" -> 1,
+    insertData = TestData("a int, i int, v struct<x:int, y:struct<f1:int, f2:void>>",
+      Seq("""{ "a": 1, "i": 2, "v": { "x": 2, "y": { "f1": 2, "f2": null } } }""")),
+    expectedResult = ExpectedResult.Success(
+      expected = new StructType()
+        .add("a", IntegerType)
+        .add("i", IntegerType)
+        .add("v", new StructType()
+          .add("x", IntegerType)
+          .add("y", new StructType()
+            .add("f1", IntegerType)
+            .add("f2", NullType)))),
+    excludeInserts = Set(StreamingInsert),
+    withSchemaEvolution = true
+  )
+
+  testInserts(s"insert and evolve void column in struct into struct with void")(
+    initialData = TestData("a int, i int, v struct<x:int, y:void>",
+      Seq("""{ "a": 1, "i": 1, "v": { "x": 1, "y": null } }""")),
+    partitionBy = Seq("a"),
+    overwriteWhere = "a" -> 1,
+    insertData = TestData("a int, i int, v struct<x:int, y:struct<f1:int, f2:void>>",
+      Seq("""{ "a": 1, "i": 2, "v": { "x": 2, "y": { "f1": 2, "f2": null } } }""")),
+    expectedResult = ExpectedResult.Failure(ex => {
+      checkError(ex, "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE")
+    }),
+    includeInserts = Set(StreamingInsert),
+    withSchemaEvolution = true
+  )
+
+  testInserts(s"insert and evolve void column in struct into array")(
+    initialData = TestData("a int, i int, v struct<x:int, y:void>",
+      Seq("""{ "a": 1, "i": 1, "v": { "x": 1, "y": null } }""")),
+    partitionBy = Seq("a"),
+    overwriteWhere = "a" -> 1,
+    insertData = TestData("a int, i int, v struct<x:int, y:array<int>>",
+      Seq("""{ "a": 1, "i": 2, "v": { "x": 2, "y": [2] } }""")),
+    expectedResult = ExpectedResult.Success(
+      expected = new StructType()
+        .add("a", IntegerType)
+        .add("i", IntegerType)
+        .add("v", new StructType()
+          .add("x", IntegerType)
+          .add("y", new ArrayType(IntegerType, containsNull = true)))),
+    withSchemaEvolution = true
+  )
+
+  testInserts(s"insert and evolve void column in struct into map")(
+    initialData = TestData("a int, i int, v struct<x:int, y:void>",
+      Seq("""{ "a": 1, "i": 1, "v": { "x": 1, "y": null } }""")),
+    partitionBy = Seq("a"),
+    overwriteWhere = "a" -> 1,
+    insertData = TestData("a int, i int, v struct<x:int, y:map<string,int>>",
+      Seq("""{ "a": 1, "i": 2, "v": { "x": 2, "y": { "key": 2 } } }""")),
+    expectedResult = ExpectedResult.Success(
+      expected = new StructType()
+        .add("a", IntegerType)
+        .add("i", IntegerType)
+        .add("v", new StructType()
+          .add("x", IntegerType)
+          .add("y", new MapType(StringType, IntegerType, valueContainsNull = true)))),
+    withSchemaEvolution = true
+  )
 }
