@@ -35,6 +35,7 @@ import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContex
 import io.delta.spark.internal.v2.read.metadata.MetadataStructReadFunction;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructSchemaContext;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -58,6 +59,7 @@ import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.delta.RowIndexFilterType;
+import org.apache.spark.sql.delta.stats.DeltaScan;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.FilePartition$;
@@ -132,6 +134,30 @@ public class PartitionUtils {
     long bytesPerCore = calculatedTotalBytes / minPartitionNum;
 
     return Math.min(defaultMaxSplitBytes, Math.max(openCostInBytes, bytesPerCore));
+  }
+
+  /**
+   * Materializes selected AddFiles only when a batch needs physical input partitions. Optimizer
+   * statistics and validation consumers retain the AddFiles without constructing partition rows,
+   * resolving paths, or serializing DV metadata.
+   */
+  public static InputPartition[] planInputPartitions(
+      SparkSession sparkSession,
+      DeltaScan deltaScan,
+      StructType partitionSchema,
+      String tablePath,
+      ZoneId zoneId,
+      Configuration hadoopConf,
+      SQLConf sqlConf) {
+    List<org.apache.spark.sql.delta.actions.AddFile> selectedFiles =
+        CollectionConverters.asJava(deltaScan.files());
+    List<PartitionedFile> partitionedFiles = new ArrayList<>(selectedFiles.size());
+    long totalBytes = 0L;
+    for (org.apache.spark.sql.delta.actions.AddFile addFile : selectedFiles) {
+      partitionedFiles.add(buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId));
+      totalBytes += addFile.size();
+    }
+    return planInputPartitions(sparkSession, partitionedFiles, totalBytes, hadoopConf, sqlConf);
   }
 
   /**
