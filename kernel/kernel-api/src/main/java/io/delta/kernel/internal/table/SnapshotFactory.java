@@ -208,7 +208,7 @@ public class SnapshotFactory {
       metadata = result.metadata;
     }
 
-    // Needs the loaded protocol, so this cannot run in SnapshotBuilderImpl's input validation.
+    // We cannot validate this earlier since we need to first load the protocol.
     validateMaxCatalogVersionPresence(engine, snapshotCtx.getSnapshotMetrics(), protocol);
 
     // TODO: When LogReplay becomes static utilities, we can create it inside of SnapshotImpl
@@ -275,42 +275,34 @@ public class SnapshotFactory {
   }
 
   /**
-   * Requires maxCatalogVersion exactly when {@code latestProtocol} is catalogManaged. The latest
-   * protocol governs because a time-travel target may predate a catalogManaged upgrade or
-   * downgrade.
+   * Validates maxCatalogVersion presence for the current query.
+   *
+   * <p>Latest queries validate against the loaded protocol, and timestamp queries validate against
+   * their supplied latest snapshot. Version time travel trusts the target protocol when it agrees
+   * with maxCatalogVersion presence. On disagreement, the target may predate a catalogManaged
+   * upgrade or downgrade, so only then load the latest protocol to decide.
    */
-  static void validateMaxCatalogVersionPresenceAgainst(
-      Protocol latestProtocol, Optional<Long> maxCatalogVersionOpt) {
-    if (TableFeatures.isCatalogManagedSupported(latestProtocol)) {
-      checkArgument(
-          maxCatalogVersionOpt.isPresent(),
-          "Must provide maxCatalogVersion for catalogManaged tables");
-    } else {
-      checkArgument(
-          !maxCatalogVersionOpt.isPresent(),
-          "Should not provide maxCatalogVersion for file-system managed tables");
+  private void validateMaxCatalogVersionPresence(
+      Engine engine, SnapshotMetrics snapshotMetrics, Protocol targetProtocol) {
+    if (ctx.timestampQueryContextOpt.isPresent()) {
+      validateMaxCatalogVersionPresenceAgainst(ctx.timestampQueryContextOpt.get()._1.getProtocol());
+    } else if (!ctx.versionOpt.isPresent()) {
+      validateMaxCatalogVersionPresenceAgainst(targetProtocol);
+    } else if (ctx.maxCatalogVersion.isPresent()
+        != TableFeatures.isCatalogManagedSupported(targetProtocol)) {
+      validateMaxCatalogVersionPresenceAgainst(loadLatestProtocol(engine, snapshotMetrics));
     }
   }
 
-  /**
-   * Validates maxCatalogVersion presence for latest and version queries. Timestamp queries are
-   * validated against their supplied latest snapshot in {@link SnapshotBuilderImpl}.
-   *
-   * <p>A latest query has already loaded the latest protocol. Version time travel trusts the target
-   * protocol when it agrees with maxCatalogVersion presence, so only a disagreement pays for
-   * loading the latest protocol.
-   */
-  private void validateMaxCatalogVersionPresence(
-      Engine engine, SnapshotMetrics snapshotMetrics, Protocol snapshotProtocol) {
-    if (ctx.timestampQueryContextOpt.isPresent()) {
-      return;
-    }
-    if (!ctx.versionOpt.isPresent()) {
-      validateMaxCatalogVersionPresenceAgainst(snapshotProtocol, ctx.maxCatalogVersion);
-    } else if (ctx.maxCatalogVersion.isPresent()
-        != TableFeatures.isCatalogManagedSupported(snapshotProtocol)) {
-      validateMaxCatalogVersionPresenceAgainst(
-          loadLatestProtocol(engine, snapshotMetrics), ctx.maxCatalogVersion);
+  private void validateMaxCatalogVersionPresenceAgainst(Protocol latestProtocol) {
+    if (TableFeatures.isCatalogManagedSupported(latestProtocol)) {
+      checkArgument(
+          ctx.maxCatalogVersion.isPresent(),
+          "Must provide maxCatalogVersion for catalogManaged tables");
+    } else {
+      checkArgument(
+          !ctx.maxCatalogVersion.isPresent(),
+          "Should not provide maxCatalogVersion for file-system managed tables");
     }
   }
 
