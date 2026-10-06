@@ -20,7 +20,7 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, DomainMetadata}
 import io.delta.kernel.{CommitActions => KernelCommitActions}
 import io.delta.kernel.data.{ColumnarBatch => KernelColumnarBatch}
 import io.delta.kernel.data.{ColumnVector => KernelColumnVector}
@@ -32,6 +32,7 @@ import io.delta.kernel.internal.actions.{CommitInfo => KernelCommitInfo}
 import io.delta.kernel.internal.actions.{
   DeletionVectorDescriptor => KernelDeletionVectorDescriptor
 }
+import io.delta.kernel.internal.actions.{DomainMetadata => KernelDomainMetadata}
 import io.delta.kernel.internal.actions.{Format => KernelFormat}
 import io.delta.kernel.internal.actions.{Metadata => KernelMetadata}
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
@@ -299,6 +300,39 @@ class KernelActionUtilsSuite extends SparkFunSuite {
     assert(addFile.deletionVector.cardinality === 5L)
   }
 
+  test("toKernelScanAddFile round-trips fields supported by Kernel") {
+    val v1AddFile = AddFile(
+      path = "part-00000.parquet",
+      partitionValues = Map("p" -> "1", "q" -> "x"),
+      size = 4096L,
+      modificationTime = 111L,
+      dataChange = true,
+      stats = """{"numRecords":9}""",
+      tags = Map("tag-a" -> "value-a"),
+      deletionVector = DeletionVectorDescriptor(
+        storageType = "u",
+        pathOrInlineDv = "storage-path",
+        offset = Some(10),
+        sizeInBytes = 128,
+        cardinality = 5L),
+      baseRowId = Some(42L),
+      defaultRowCommitVersion = Some(7L))
+
+    val roundTripped = KernelActionUtils.addFileFromKernel(
+      KernelActionUtils.toKernelScanAddFile(v1AddFile))
+
+    assert(roundTripped.path === v1AddFile.path)
+    assert(roundTripped.partitionValues === v1AddFile.partitionValues)
+    assert(roundTripped.size === v1AddFile.size)
+    assert(roundTripped.modificationTime === v1AddFile.modificationTime)
+    assert(roundTripped.dataChange === v1AddFile.dataChange)
+    assert(roundTripped.tagsOrEmpty === v1AddFile.tagsOrEmpty)
+    assert(roundTripped.deletionVector === v1AddFile.deletionVector)
+    assert(roundTripped.baseRowId === v1AddFile.baseRowId)
+    assert(roundTripped.defaultRowCommitVersion === v1AddFile.defaultRowCommitVersion)
+    assert(roundTripped.stats === v1AddFile.stats)
+  }
+
   test("addFileFromKernel maps absent optionals and empty partition values") {
     val addFile = KernelActionUtils.addFileFromKernel(
       kernelAddFile("f.parquet", Map.empty, size = 1L, modificationTime = 1L, dataChange = false))
@@ -407,17 +441,32 @@ class KernelActionUtilsSuite extends SparkFunSuite {
     assert(adds.head.defaultRowCommitVersion === Some(7L))
   }
 
+  test("readActions decodes domain metadata and its removal flag") {
+    val configuration = """{"rowIdHighWaterMark":7}"""
+    val kernelActions = Seq(
+      new KernelDomainMetadata("delta.rowTracking", configuration, false),
+      new KernelDomainMetadata("test.userDomain", "{}", true))
+    val domainColumn = new GenericColumnVector(
+      kernelActions.map(_.toRow()).asJava,
+      KernelDomainMetadata.FULL_SCHEMA)
+
+    val actions = KernelActionUtils.readActions(
+      singleColumnCommitActions(KernelDeltaAction.DOMAINMETADATA.colName, domainColumn))
+
+    assert(actions === Seq(
+      DomainMetadata("delta.rowTracking", configuration, removed = false),
+      DomainMetadata("test.userDomain", "{}", removed = true)))
+  }
+
   test("readActions fails loud on an action type with no decoder (hand-built commit batch)") {
     val presentColumn = new GenericColumnVector(
       java.util.Collections.singletonList("present"), StringType.STRING)
-    Seq(KernelDeltaAction.DOMAINMETADATA, KernelDeltaAction.CDC)
-      .foreach { action =>
-        val e = intercept[UnsupportedOperationException] {
-          KernelActionUtils.readActions(singleColumnCommitActions(action.colName, presentColumn))
-        }
-        assert(e.getMessage.contains("No V1 action from Kernel decoder"))
-        assert(e.getMessage.contains(action.colName))
-      }
+    val action = KernelDeltaAction.CDC
+    val e = intercept[UnsupportedOperationException] {
+      KernelActionUtils.readActions(singleColumnCommitActions(action.colName, presentColumn))
+    }
+    assert(e.getMessage.contains("No V1 action from Kernel decoder"))
+    assert(e.getMessage.contains(action.colName))
   }
 
 }

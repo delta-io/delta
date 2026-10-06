@@ -19,8 +19,6 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.TableConfig;
-import io.delta.spark.internal.v2.utils.ScalaUtils;
-import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.Write;
@@ -30,7 +28,6 @@ import org.apache.spark.sql.delta.DeltaConfigs;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.types.StructType;
 
@@ -58,7 +55,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
    * @param engine Kernel engine (persisted in DeltaV2Table, shared across operations)
    * @param tablePath filesystem path to the Delta table root
    * @param hadoopConf Hadoop configuration (with merged table options)
-   * @param initialSnapshot Kernel snapshot loaded at table construction time
+   * @param initialSnapshot snapshot loaded at table construction time
    * @param snapshotManager reloads the latest snapshot; used by the streaming write to build each
    *     epoch's commit against the current table state (see {@link DeltaV2StreamingWrite})
    * @param dataSchema the table's data (non-partition) schema, from DeltaV2Table's SchemaProvider
@@ -111,9 +108,8 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       }
     }
 
-    // Resolved here rather than inside the write context: this snapshot facade exposes Delta
-    // metadata, so the property resolves through the same V1 accessor (alternate keys and default
-    // included), while the context downstream holds only the Kernel snapshot.
+    // Resolved once here through the same V1 accessor (alternate keys and default included) and
+    // passed down as a boolean, so the batch and streaming writes share one decision.
     boolean variantShreddingEnabled = isVariantShreddingEnabled(initialSnapshot);
     // Returns a mode-dispatching Write: toBatch() -> DeltaV2BatchWrite (batch commit off
     // initialSnapshot), toStreaming() -> DeltaV2StreamingWrite (per-epoch commit off the latest
@@ -122,7 +118,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         engine,
         hadoopConf,
         tablePath,
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
+        initialSnapshot,
         snapshotManager,
         dataSchema,
         partitionSchema,
@@ -139,20 +135,6 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
    */
   static boolean isVariantShreddingEnabled(Snapshot snapshot) {
     return (Boolean) DeltaConfigs.ENABLE_VARIANT_SHREDDING().fromMetaData(snapshot.metadata());
-  }
-
-  /**
-   * The same property, resolved from a Kernel table configuration map rather than the snapshot
-   * facade. {@code DeltaConfig#fromMetaData} is defined as {@code fromMap(metadata.configuration)},
-   * so this is the identical lookup -- alternate keys and default included -- reached from the
-   * other snapshot representation. The streaming guard needs it because it holds the reloaded
-   * Kernel snapshot; going through the facade there would mean either naming that type in a file
-   * whose {@code Snapshot} is Kernel's, or reloading the table a second time and judging the guard
-   * against a different version than the commit.
-   */
-  static boolean isVariantShreddingEnabled(Map<String, String> tableConfiguration) {
-    return (Boolean)
-        DeltaConfigs.ENABLE_VARIANT_SHREDDING().fromMap(ScalaUtils.toScalaMap(tableConfiguration));
   }
 
   static void validateDataSchema(Snapshot initialSnapshot, StructType dataSchema) {

@@ -213,8 +213,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
         .getOrElse(fail("expected the test.userDomain domain"))
       assert(!userDomain.removed)
       assert(userDomain.configuration === """{"key":"value"}""")
-      // Inherited from SnapshotStateManager (not overridden here): Kernel serves domain metadata
-      // without V1 state reconstruction, so it is always "known".
+      // Kernel serves domain metadata without V1 state reconstruction, so it is always "known".
       assert(snapshot.domainMetadatasIfKnown.contains(snapshot.domainMetadata))
     }
   }
