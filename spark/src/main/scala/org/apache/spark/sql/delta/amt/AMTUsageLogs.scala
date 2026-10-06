@@ -40,6 +40,9 @@ object AMTUsageLogs {
 
   // Prefix for all of them is "delta.assert."
 
+  // A compacted delta overlaps the AMT base, but its individual commits are unavailable.
+  val ALERT_MISSING_NON_COMPACTED_DELTAS = "amt.missingNonCompactedDeltas"
+
   // A manifest_info contains both live files and tombstones.
   val ALERT_MIXED_LEAF_CONTENT = "amt.mixedLeafContent"
 

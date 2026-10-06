@@ -640,7 +640,7 @@ trait SnapshotManagement { self: DeltaLog =>
    * @return Returns a list of deltas/compacted-deltas which can be used to construct the
    *         [[LogSegment]] instead of `deltasAfterCheckpoint`.
    */
-  protected def useCompactedDeltasForLogSegment(
+  protected[delta] def useCompactedDeltasForLogSegment(
       deltasAndCompactedDeltas: Seq[FileStatus],
       deltasAfterCheckpoint: Array[FileStatus],
       latestCommitVersion: Long,
