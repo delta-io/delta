@@ -33,7 +33,6 @@ import org.apache.spark.TaskContext
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, hash, struct}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
@@ -262,12 +261,9 @@ object AMTWriteHelper extends DeltaLogging {
     val trackingSchema = amtDf.schema("tracking").dataType.asInstanceOf[StructType]
     val sequenceNumberIdx = trackingSchema.fieldIndex("sequence_number")
     val (factory, serConf) = {
-      val format = new ParquetFileFormat()
+      val format = new AMTParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
       val f = format.prepareWrite(spark, job, Map.empty, schema)
-      // Write as an Iceberg-V4 manifest (nested field ids + int64 micros timestamps). Applied after
-      // prepareWrite (before snapshotting the conf) so it flows to executors.
-      Checkpoints.configureIcebergManifestParquetWrite(job)
       (f, new SerializableConfiguration(job.getConfiguration))
     }
 
@@ -633,6 +629,6 @@ object AMTWriteHelper extends DeltaLogging {
       hadoopConf = hadoopConf,
       useRename = false,
       outputSchema = Some(AMTSingleAction.persistedSchema(metadata, protocol)),
-      writeAsIcebergManifest = true)
+      format = new AMTParquetFileFormat)
   }
 }
