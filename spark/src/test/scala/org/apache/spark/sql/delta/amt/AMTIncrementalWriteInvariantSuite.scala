@@ -189,7 +189,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
         modified_files_count = modifiedFiles,
         added_rows_count = 0L, existing_rows_count = 0L,
         deleted_rows_count = 0L, replaced_rows_count = 0L, modified_rows_count = 0L,
-        min_sequence_number = 0L, dv = None, dv_cardinality = None))
+        min_sequence_number = 0L, dv = None))
 
   test("carryForwardOneLeaf rejects a carried leaf mixing live files and tombstones") {
     withTables() { (_, amtDeltaLog) =>
