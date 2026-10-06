@@ -146,6 +146,13 @@ object SuiteGeneratorConfig {
     val UPDATE_SQL = DimensionMixin("UpdateSQL", alias = Some("SQL"))
     val UPDATE_DVS = DimensionMixin("UpdateSQLWithDeletionVectors", alias = Some("DV"))
     val UPDATE_ROW_TRACKING_DV = DimensionMixin("RowTrackingUpdateDV")
+    // WARNING: the UPDATE AMT dimensions below must be the last dimension of every config they are
+    // used in, because their mixins have to come after all other mixins:
+    // - Their sparkConf/beforeAll (and RowTrackingUpdateAMTMixin's executeUpdate) overrides are
+    //   public, and a later mixin overriding them as protected fails to compile.
+    // - Their executeUpdate must be the outermost one, so the AMT checkpoints bracket everything
+    //   the other mixins' executeUpdate overrides commit (e.g. the DVs UpdateTableWithDVsMixin adds
+    //   before each UPDATE).
     val UPDATE_AMT = DimensionMixin("UpdateAMT", alias = Some("AMT"))
     val ROW_TRACKING_UPDATE_AMT = DimensionMixin("RowTrackingUpdateAMT", alias = Some("AMT"))
     val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
@@ -413,7 +420,7 @@ object SuiteGeneratorConfig {
         ),
         TestConfig(
           List("RowTrackingUpdateCommonTests"),
-          List(List(Dims.ROW_TRACKING_UPDATE_AMT, Dims.UPDATE_ROW_TRACKING_DV.asOptional))
+          List(List(Dims.UPDATE_ROW_TRACKING_DV.asOptional, Dims.ROW_TRACKING_UPDATE_AMT))
         )
       )
     ),

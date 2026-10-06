@@ -31,13 +31,16 @@ import org.apache.spark.SparkConf
  */
 trait UpdateAMTTestBase extends AMTDMLTestUtils {
 
-  override protected def sparkConf: SparkConf = super.sparkConf
+  override def sparkConf: SparkConf = super.sparkConf
     // The UPDATE suites default new tables to `delta.enableDeletionVectors = false`, which AMT
     // rejects at CREATE since it requires deletion vectors. Unset it instead of setting it to true:
     // AMT then enables deletion vectors on the table itself, while the tests, which read this
     // default to predict whether UPDATE writes deletion vectors, keep seeing the command's
     // behavior. Whether UPDATE writes them is a command conf that the mixins below decide.
     .remove(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey)
+
+  // Override as public to pass compilation
+  override def beforeAll(): Unit = super.beforeAll()
 }
 
 /**
@@ -46,12 +49,12 @@ trait UpdateAMTTestBase extends AMTDMLTestUtils {
  *
  * Each UPDATE is bracketed by the [[AMTDMLTestUtils]] checkpoints.
  */
-trait UpdateAMTMixin extends UpdateAMTTestBase with UpdateBaseMixin {
+trait UpdateAMTMixin extends UpdateBaseMixin with UpdateAMTTestBase {
 
   // The base UPDATE suites assert rewrite semantics (copied rows, commit tags, file counts), so
   // keep UPDATE from writing deletion vectors on the DV-enabled AMT tables. Suites that mix in
   // DeletionVectorOnTestMixin turn them back on at runtime.
-  override protected def sparkConf: SparkConf = super.sparkConf
+  override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
 
   // These tests fail when row tracking or deletion vectors are enabled, and AMT tables always
@@ -124,7 +127,7 @@ trait UpdateAMTMixin extends UpdateAMTTestBase with UpdateBaseMixin {
  * row tracking checks around each UPDATE inspect the latest commit, which must be the UPDATE
  * itself.
  */
-trait RowTrackingUpdateAMTMixin extends UpdateAMTTestBase with RowTrackingUpdateSuiteBase {
+trait RowTrackingUpdateAMTMixin extends RowTrackingUpdateSuiteBase with UpdateAMTTestBase {
 
   override def excluded: Seq[String] = super.excluded ++ Seq(
     // These tests create the table with delta.enableRowTracking = false (one to assert row tracking
@@ -138,7 +141,7 @@ trait RowTrackingUpdateAMTMixin extends UpdateAMTTestBase with RowTrackingUpdate
   // The tests set `last_modified_version` to the version they expect the UPDATE to commit at and
   // check that it matches the rows' row commit versions. The full checkpoint shifts the UPDATE's
   // commit version, so pass the version it actually commits at instead.
-  override protected def executeUpdate(
+  override def executeUpdate(
       tableName: String,
       where: Option[String],
       newVersion: Long): Unit = {
