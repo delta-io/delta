@@ -45,14 +45,17 @@ sections below.
 including PRs that edit only `PROTOCOL.md` with no RFC.
 
 Before doing anything else, read [`protocol_rfcs/AGENTS.md`](protocol_rfcs/AGENTS.md)
-in full and follow it. It has two parts:
-- **Writing an RFC:** the RFC lifecycle step by step, how to draft from
-  [`protocol_rfcs/template.md`](protocol_rfcs/template.md), how to choose
-  between a readers-and-writers feature and a writers-only feature, and a
-  self-review before opening the PR.
-- **Reviewing:** how to classify the PR, process gates for each PR type, the
-  protocol-safety checklist, spec style conventions, and the required review
-  output format.
+in full and follow it. It covers both writing and reviewing, in five parts:
+1. **Process:** the PR types, and one checklist per type (new RFC, update,
+   acceptance, rejection, direct spec edit, editorial).
+2. **Protocol design rules:** readers-and-writers vs writers-only features,
+   reader and writer requirements, compatibility, and interactions with other
+   features.
+3. **Writing the spec text:** drafting from
+   [`protocol_rfcs/template.md`](protocol_rfcs/template.md), normative
+   language, examples, and `PROTOCOL.md` style.
+4. **Reviewing a protocol PR:** the procedure and the required output format.
+5. **Self-review** before opening the PR.
 
 Don't write or review a protocol change from this summary alone.
 

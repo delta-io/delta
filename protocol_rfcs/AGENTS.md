@@ -5,16 +5,26 @@ Delta transaction log protocol. That means any change touching `PROTOCOL.md` or
 anything under `protocol_rfcs/` (new RFCs, RFC updates, acceptances and
 rejections).
 
-- **Writing** a protocol change: follow sections A–D. Then review your own
-  draft with sections 1–7 before opening the PR (section D).
-- **Reviewing** a protocol PR: follow sections 1–7.
+The file has five parts:
+
+| Part | What it covers |
+|---|---|
+| [1. Process](#1-process) | PR types, and one checklist per type: what to do and what gets checked. |
+| [2. Protocol design rules](#2-protocol-design-rules) | What makes a protocol change safe: features, reader and writer rules, compatibility, interactions. |
+| [3. Writing the spec text](#3-writing-the-spec-text) | Drafting an RFC, normative language, examples, engine neutrality, `PROTOCOL.md` style. |
+| [4. Reviewing a protocol PR](#4-reviewing-a-protocol-pr) | The review procedure, common pitfalls, and the required output format. |
+| [5. Self-review before opening the PR](#5-self-review-before-opening-the-pr) | For authors: run the review on your own draft. |
+
+- **Writing** a protocol change: follow Parts 1–3, then Part 5.
+- **Reviewing** a protocol PR: follow Part 4, which uses Parts 1–3 as the
+  checklist.
 
 The repo-wide [`AGENTS.md`](../AGENTS.md) at the root points here from its
 "Protocol and RFC changes" section, so PRs that change only the root
 `PROTOCOL.md` are covered too. Keep all protocol-specific detail in this file;
 the root section is only a pointer and a short summary.
 
-The checklist comes from the review history of these PRs. That covers about
+The rules come from the review history of these PRs. That covers about
 145 PRs touching `PROTOCOL.md` (2019–2026) and 44 PRs touching `protocol_rfcs/`
 (about 900 review comments). PR numbers in brackets, e.g. [#4094], point to
 historical PRs in `delta-io/delta` where a reviewer raised that concern.
@@ -22,137 +32,204 @@ historical PRs in `delta-io/delta` where a reviewer raised that concern.
 The protocol is a standard that many independent engines implement
 (delta-spark, Delta Kernel Java/Rust, delta-rs, Trino, and others). A vague or
 wrong sentence can lead to wrong query results or data corruption in an engine
-the author never tested. Review as if every reader and writer will follow the
-text exactly as written, and nothing more.
+the author never tested. Write and review as if every reader and writer will
+follow the text exactly as written, and nothing more.
 
 ---
 
-## A. The RFC lifecycle, step by step
+## 1. Process
 
-`protocol_rfcs/README.md` defines the process. These are the steps in order.
+`protocol_rfcs/README.md` defines the RFC process. This part turns it into one
+checklist per PR type. Authors follow the checklist in order; reviewers check
+each item.
 
-### Proposing a new RFC
-1. Open a GitHub issue of type Protocol Change Request. All discussion happens
-   there. Reach basic consensus that the feature should exist before writing
-   the RFC.
-2. Copy `protocol_rfcs/template.md` to `protocol_rfcs/<feature-name>.md`
-   (meaningful kebab-case) and fill it in (section B).
-3. Put the right issue number in the issue link at the top [#7272].
-4. Add one row to the **Proposed RFCs** table in `protocol_rfcs/README.md`:
-   date proposed, link to the RFC file, issue link, and title [#2599].
-5. It is strongly recommended (`protocol_rfcs/README.md`), not required, to
-   give the table feature and any new table properties a temporary `-dev`
-   suffix while the RFC is proposed. The suffix tells users the feature is
-   experimental, with no compatibility guarantee. If the RFC doesn't use one,
-   it should say why.
-6. Review your own draft (section D).
-7. Open a PR with a `[PROTOCOL]` title tag. Link the issue with "see #N",
-   never "closes", "fixes" or "resolves", because merging a proposed RFC must
-   not close the issue.
-8. The PR changes only the RFC file and the README row. Engine code for the
-   feature must not merge into master until the RFC PR merges, and until
-   acceptance it must stay behind feature flags so existing users aren't
-   affected.
+### 1.1 PR types
 
-### Updating a proposed RFC
+Every protocol PR is exactly one of these types.
+
+| Type | How to recognize it |
+|---|---|
+| **NEW-RFC** | Adds a new file `protocol_rfcs/<name>.md` and a "Proposed RFCs" row in `protocol_rfcs/README.md`. |
+| **RFC-UPDATE** | Changes an existing proposed RFC in `protocol_rfcs/*.md`. |
+| **RFC-ACCEPT** | Moves an RFC to `protocol_rfcs/accepted/`, merges its text into `PROTOCOL.md`, and moves the README row. |
+| **RFC-REJECT** | Moves an RFC to `protocol_rfcs/rejected/`. |
+| **DIRECT-SPEC** | Changes `PROTOCOL.md` meaning without an RFC (a clarification, a bug fix, or making the spec match long-standing implementation behavior). |
+| **EDITORIAL** | Only typos, grammar, broken links, TOC or formatting changes in `PROTOCOL.md` or an RFC. No change in meaning. |
+
+Two problems to watch for in any PR:
+- **Wrong type.** For example, a DIRECT-SPEC PR that adds a new table feature,
+  a new action field, or a new requirement that old clients could break. Those
+  need an RFC [#5494 → reverted in #5708, #6798]. Another example: an EDITORIAL
+  PR that quietly changes meaning (for example "should" → "must", or deleting a
+  sentence).
+- **Mixed PR.** Spec changes bundled with engine code or unrelated cleanups.
+  The spec part goes in its own PR [#3378 → #3398, #1742].
+
+### 1.2 All PR types
+- [ ] PR title starts with `[PROTOCOL]` (or similar) and describes the change
+      accurately. Keep the title and description current after revisions
+      [#3750, #6175, #7148].
+- [ ] The PR description explains **why** the change is needed and what
+      problem it solves. For clarifications, it explains what the current text
+      gets wrong or leaves undefined [#4179, #2712].
+- [ ] The PR doesn't reformat existing Markdown tables or rewrap lines it
+      doesn't otherwise change [#2808, #1588].
+
+### 1.3 NEW-RFC: proposing a new RFC
+- [ ] A GitHub issue of type Protocol Change Request exists, and there is
+      basic consensus there that the feature should exist. All discussion
+      happens on the issue.
+- [ ] The RFC file is a copy of `protocol_rfcs/template.md` saved as
+      `protocol_rfcs/<feature-name>.md`, with a meaningful kebab-case name.
+      Every template section is filled in or marked "Not applicable because
+      …" (Part 3.1). That includes the feature summary, the compatibility and
+      interaction tables, and the spec text below the separator.
+- [ ] The issue link at the top of the RFC has the right number:
+      `**Associated Github issue for discussions: https://github.com/delta-io/delta/issues/N**`
+      [#7272].
+- [ ] Exactly one new row in the **Proposed RFCs** table in
+      `protocol_rfcs/README.md`, with date proposed, a working link to the RFC
+      file, the issue link and the title [#2599]. (The README text mentions
+      `index.md`, but the real index is `protocol_rfcs/README.md`.)
+- [ ] The table feature and any new table properties use a temporary `-dev`
+      suffix while the RFC is proposed. `protocol_rfcs/README.md` strongly
+      recommends this but doesn't require it. The suffix tells users the
+      feature is experimental, with no compatibility guarantee. If the RFC
+      doesn't use one, it says why. (Reviewers: NIT unless there is a reason
+      the suffix matters for this feature.)
+- [ ] If this RFC replaces an earlier one, it says why the earlier one is
+      superseded, and the PR moves the earlier one to `rejected/` [#4382].
+- [ ] The author has run the self-review (Part 5).
+- [ ] The PR title has a `[PROTOCOL]` tag. The PR links the issue with "see #N"
+      or "issue #N", **never** `closes` / `fixes` / `resolves`, because merging
+      a proposed RFC must not close the issue.
+- [ ] The PR changes only the RFC file and the README row. Engine code for the
+      feature must not merge into master until the RFC PR merges, and until
+      acceptance it stays behind feature flags so existing users aren't
+      affected.
+
+### 1.4 RFC-UPDATE: updating a proposed RFC
 This covers an RFC whose PR has merged, so the file is on master at
 `protocol_rfcs/<feature-name>.md` and listed under **Proposed RFCs**, but it
 has not been accepted. (Before the RFC PR merges, push changes to that PR.)
-Each update is a new PR that edits the RFC file:
-1. Rebase on current master first. RFC text written against an outdated
-   master can undo newer changes [#6696].
-2. Update every place in the RFC where the changed term or rule appears,
-   including its examples [#6696]. If the RFC proposes changes to existing
-   `PROTOCOL.md` text, describe them in the RFC below the separator. Don't edit
-   `PROTOCOL.md` itself before the acceptance PR.
-3. In the PR description, say whether the change is editorial or changes
-   meaning, and why it is needed.
-4. If the design has changed so much that it's a different proposal, write a
-   new RFC that explains why the old one is superseded, and move the old one to
-   `rejected/` [#4382].
+Each update is a new PR that edits the RFC file.
+- [ ] The branch is rebased on current master. RFC text written against an
+      outdated master can undo newer changes [#6696].
+- [ ] Every use of the changed term or rule is updated together: search the
+      RFC, `PROTOCOL.md`, other RFCs and all examples [#6696].
+- [ ] If the RFC proposes changes to existing `PROTOCOL.md` text, they are
+      described in the RFC below the separator. `PROTOCOL.md` itself is not
+      edited before the acceptance PR.
+- [ ] The PR description says whether the change is **editorial** or
+      **changes meaning**, and what implementation experience or ambiguity
+      prompted it.
+- [ ] Making a rule looser doesn't weaken an unrelated safety rule. Making a
+      rule stricter comes with a story for existing preview tables and older
+      writers [#5166, #4537].
+- [ ] If the design has changed so much that it's a different proposal, this
+      should be a new RFC that explains why the old one is superseded, with
+      the old one moved to `rejected/` [#4382].
 
-### Changing a feature after its RFC is accepted
+### 1.5 Changing a feature after its RFC is accepted
 Once an RFC is accepted, its spec lives in `PROTOCOL.md`, and the file in
 `protocol_rfcs/accepted/` is a historical record. Don't edit that file to
 change the feature. Instead:
 - If the change is fully backward compatible (a clarification, a fix to a clear
   mistake, or writing down behavior all major implementations already have),
-  edit `PROTOCOL.md` directly under the DIRECT-SPEC rules in section 2.
+  edit `PROTOCOL.md` directly as a DIRECT-SPEC PR (1.8).
 - Otherwise (a new requirement, field, action or table feature), propose a new
   RFC that names the accepted RFC it changes.
 
-### Accepting an RFC
-Do this only when the acceptance criteria in `protocol_rfcs/README.md` are
-met: a thoroughly tested production implementation (for example in
-delta-spark), and at least a discussion, ideally a prototype, showing that
-Delta Kernel can implement it.
-1. Merge the RFC's spec text (everything below the `--------` separator) into
-   `PROTOCOL.md`. Keep its meaning sentence by sentence. If implementation
-   experience changed the design, update the RFC file in the same PR so the two
-   match [#6066].
-2. Check the spec against what the production implementation actually writes:
-   names, serialized forms, edge cases and feature removal.
-3. If the RFC used a `-dev` suffix, drop it from feature and property names in
-   the spec. The code must drop it too, in its own engine PR [#3416].
-4. Add the feature to **"Valid Feature Names in Table Features"**, each new
-   property to the **Table Properties** table, and table of contents entries
-   for new sections [#2808, #6696].
-5. `git mv` the RFC file to `protocol_rfcs/accepted/` and fix links to the old
-   path [#6066].
-6. Move the README row from Proposed to **Accepted** and fill in "Date
-   accepted".
-7. In the PR description:
-   - Link the production implementation, both its PRs and its tests.
-   - Link the Kernel feasibility discussion or prototype.
-   - Summarize any differences between the final spec and the proposed RFC.
-   - Use "closes #N".
-8. Change the issue title to include `[ACCEPTED]`.
+### 1.6 RFC-ACCEPT: accepting an RFC
+- [ ] **The acceptance criteria in `protocol_rfcs/README.md` are met and backed
+      by evidence:** a thoroughly tested production implementation (for
+      example in delta-spark), and at least a discussion, ideally a prototype,
+      showing that Delta Kernel can implement it. If evidence is missing, ask
+      "is there a production implementation?" [#7326]. That a lot of time has
+      passed is not evidence.
+- [ ] External specs the RFC depends on are stable (for example a Parquet spec
+      change) [#4096].
+- [ ] **Merge fidelity.** The RFC's spec text (everything below the `--------`
+      separator) is merged into `PROTOCOL.md`, keeping its meaning sentence by
+      sentence. No meaning change, dropped requirement, or deleted existing
+      text, such as a cleanup step that is no longer mentioned [#6066]. If
+      implementation experience changed the design, the RFC file is updated in
+      the same PR so the two match.
+- [ ] The spec matches what the production implementation actually writes:
+      names, serialized forms, edge cases, and feature removal.
+- [ ] If the RFC used a `-dev` suffix, it is dropped from feature and property
+      names in the spec. The code drops it too, in its own engine PR [#3416].
+- [ ] The feature is added to **"Valid Feature Names in Table Features"** in
+      the `PROTOCOL.md` appendix, each new property to the **Table
+      Properties** table, and TOC entries for the new sections
+      [#2808, #2868, #7650, #6696].
+- [ ] The interaction table in Part 2.5 of this file is updated in the same
+      PR, adding a row for the newly accepted feature if other features must
+      account for it, so the table always reflects the features actually in
+      `PROTOCOL.md`.
+- [ ] The RFC file is moved with `git mv` to `protocol_rfcs/accepted/`, and
+      links to the old path are fixed [#6066].
+- [ ] The README row is moved from Proposed to **Accepted**, with "Date
+      accepted".
+- [ ] The PR description links the production implementation (its PRs and its
+      tests) and the Kernel feasibility discussion or prototype, and
+      summarizes any differences between the final spec and the proposed RFC.
+- [ ] The PR uses "closes #N", and the issue title gets an `[ACCEPTED]`
+      marker.
+- [ ] The whole of Part 2 is re-checked on the final text. Acceptance locks in
+      compatibility promises: cross-feature requirements, feature removal and
+      preview migration must be resolved now [#4094].
 
-### Rejecting an RFC
-1. `git mv` the RFC file to `protocol_rfcs/rejected/`.
-2. Move the README row to **Rejected** and fill in the date.
-3. Use "closes #N" in the PR, and change the issue title to include
-   `[REJECTED]`.
-4. Plan the removal of any experimental code, in its own engine PR.
+### 1.7 RFC-REJECT: rejecting an RFC
+- [ ] The RFC file is moved with `git mv` to `protocol_rfcs/rejected/`.
+- [ ] The README row is moved to **Rejected**, with the date.
+- [ ] The PR uses "closes #N", and the issue title gets a `[REJECTED]` marker.
+- [ ] There is a plan to remove any experimental code, in its own engine PR.
 
-## B. Drafting the RFC
+### 1.8 DIRECT-SPEC: changing `PROTOCOL.md` without an RFC
+Direct edits are the exception. Maintainers have said a direct edit "should
+absolutely not be used as a precedent for willy nilly changing the protocol"
+[#6699, #7496]. One is allowed only if **all** of these hold, and the PR says
+which one justifies it:
+- [ ] It is fully backward compatible: no new requirement that existing
+      conforming readers or writers would break [#6324].
+- [ ] It does one of these:
+  - writes down behavior every major implementation already has (cite the
+    evidence) [#5355, #4923, #6966]
+  - fixes a clear mistake in the spec or an example [#7531, #5640]
+  - removes ambiguity without picking a winner between existing
+    implementations
+- [ ] The author has checked major implementations (delta-spark, Kernel
+      Java/Rust, delta-rs, and ideally Trino) and they conform, or the PR
+      explains what happens to those that don't [#7496, #5495].
+- Otherwise it needs an RFC, or a `-dev` experimental field written only by
+  one implementation until the design settles [#6798].
 
-- **Start from [`template.md`](template.md) and fill in every section.** If a
-  section doesn't apply, keep the heading and write "Not applicable because
-  …". Each template section is something reviewers have repeatedly asked for.
-  An empty or missing one usually costs a review round.
-- **Write the part below the separator as spec text.** On acceptance it goes
-  into `PROTOCOL.md` with little or no rewording. A design doc alone is not
-  enough.
-- **An RFC comes before the implementation.** Specify what any conforming
-  engine must do. Don't describe how a particular implementation works, cite
-  its code, or base a requirement on what one codebase happens to do. A
-  prototype can be linked from the issue, but the RFC must make sense without
-  it. Evidence from implementations belongs in the acceptance PR description
-  (section A).
-- **When the RFC changes existing `PROTOCOL.md` text,** quote the current text
-  from master, name the section, and show the new text.
-- Follow the spec style in section 4. Copy the structure and wording of
-  existing features such as Column Mapping, In-Commit Timestamps and Type
-  Widening.
-- Define every new term before using it (section 5, item 9). Say who each
-  requirement applies to and when, using MUST / MUST NOT / SHOULD / MAY
-  (section 3.7).
-- Make every example complete, valid, and an exact match for the schema
-  tables (section 3.9).
-- If you are an agent drafting for an author, don't settle open design
-  questions yourself. List them under "Open questions" for the author to
-  decide.
+### 1.9 EDITORIAL
+- [ ] Nothing changes meaning. Check every edited sentence, especially
+      normative keywords and deleted text.
+- [ ] TOC anchors still resolve after any heading change.
 
-## C. Choosing readers and writers, or writers only
+---
+
+## 2. Protocol design rules
+
+Authors use this part to design the change and fill in the RFC's feature
+summary, compatibility table and interaction table. Reviewers go through every
+item. For each one, either raise a finding or be ready to say why it doesn't
+apply. "Not affected" needs a reason; don't assume it.
+
+### 2.1 Is a table feature needed, and for whom?
 
 Reviewers argue about this choice more than any other. Answer these questions
 in order and write the reasoning in the RFC's feature summary.
 
-1. **Does any client need to understand the feature at all?** If ignoring it
-   is always safe for both readers and writers, a table feature may not be
-   needed. Log compaction files, for example, are optional to read and to
-   write [#2122]. Explain why in the RFC.
+1. **Does any client need to understand the feature at all?** Any new action,
+   field, file, or data that readers or writers must understand
+   ("load-bearing") needs a table feature covering it [#4096, #1742]. If
+   ignoring it is always safe for both readers and writers, a table feature
+   may not be needed. Log compaction files, for example, are optional to read
+   and to write [#2122]. Explain why in the RFC.
 2. **Would an old reader that ignores the feature return exactly the same
    results as a reader that understands it, for every table state the feature
    allows?** "Ignores" means the old reader follows the older protocol without
@@ -184,7 +261,7 @@ in order and write the reasoning in the RFC's feature summary.
    correctness: say what happens to read performance when an old writer or
    an old checkpoint writer touches the table.
 4. Write down why ignoring the feature still gives correct results. "Old
-   readers ignore it" is not enough on its own.
+   readers ignore it" is not enough on its own [#2808, #2790].
 
 Examples from `PROTOCOL.md`:
 - **Readers and writers:**
@@ -200,167 +277,7 @@ Examples from `PROTOCOL.md`:
   reader compares strings with the default ordering and returns wrong query
   results.
 
-## D. Self-review before opening the PR
-
-1. Run sections 1–7 against your own draft, as if you were reviewing someone
-   else's PR. For a new RFC, the PR type is `NEW-RFC`.
-2. Fill in the compatibility table and the interaction table in the RFC
-   itself. Don't leave them for reviewers to ask about. Missing interactions
-   and an unspecified lifecycle caused most of the long reviews (section 5).
-3. Fix every BLOCKING and IMPORTANT finding. Anything you can't resolve goes
-   under "Open questions" in the RFC.
-4. Put the summary block from section 7 in the PR description, plus any
-   findings still open, so reviewers can see what was checked.
-
----
-
-Sections 1–7 are for reviewing a protocol PR, whether someone else's or your
-own (section D).
-
-## 1. First, classify the PR
-
-Pick exactly one type. Each type has different gates (section 2).
-
-| Type | How to recognize it |
-|---|---|
-| **NEW-RFC** | Adds a new file `protocol_rfcs/<name>.md` and a "Proposed RFCs" row in `protocol_rfcs/README.md`. |
-| **RFC-UPDATE** | Changes an existing proposed RFC in `protocol_rfcs/*.md`. |
-| **RFC-ACCEPT** | Moves an RFC to `protocol_rfcs/accepted/`, merges its text into `PROTOCOL.md`, and moves the README row. |
-| **RFC-REJECT** | Moves an RFC to `protocol_rfcs/rejected/`. |
-| **DIRECT-SPEC** | Changes `PROTOCOL.md` meaning without an RFC (a clarification, a bug fix, or making the spec match long-standing implementation behavior). |
-| **EDITORIAL** | Only typos, grammar, broken links, TOC or formatting changes in `PROTOCOL.md` or an RFC. No change in meaning. |
-
-Then also tell the author if any of these apply:
-- **Wrong type.** For example, a DIRECT-SPEC PR that adds a new table feature,
-  a new action field, or a new requirement that old clients could break. Those
-  need an RFC [#5494 → reverted in #5708, #6798]. Another example: an EDITORIAL
-  PR that quietly changes meaning (for example "should" → "must", or deleting a
-  sentence).
-- **Mixed PR.** Spec changes bundled with engine code or unrelated cleanups.
-  Ask for the spec part to be split out [#3378 → #3398, #1742].
-
-## 2. Process gates by PR type
-
-### All types
-- [ ] PR title starts with `[PROTOCOL]` (or similar) and describes the change
-      accurately. Ask for a fix if the title or description is stale after
-      revisions [#3750, #6175, #7148].
-- [ ] The PR description explains **why** the change is needed and what
-      problem it solves. For clarifications, it explains what the current text
-      gets wrong or leaves undefined [#4179, #2712].
-- [ ] The PR doesn't reformat existing Markdown tables or rewrap lines it
-      doesn't otherwise change [#2808, #1588].
-
-### NEW-RFC
-- [ ] A GitHub issue (Protocol Change Request) exists and the RFC links it as
-      `**Associated Github issue for discussions: https://github.com/delta-io/delta/issues/N**`.
-      Check that the issue number is correct [#7272].
-- [ ] The PR links the issue with "see #N" or "issue #N". It must **not** use
-      `closes` / `fixes` / `resolves`, because merging a proposed RFC must not
-      close the issue.
-- [ ] File name is meaningful kebab-case `protocol_rfcs/<feature-name>.md`. It
-      follows `template.md`, and every template section is filled in or
-      marked "Not applicable because …". That includes the feature summary,
-      the compatibility and interaction tables, and the spec text below the
-      separator.
-- [ ] The RFC describes the protocol, not an implementation. It doesn't cite
-      engine code or base a requirement on what one codebase does (section
-      B).
-- [ ] Exactly one new row in the **Proposed RFCs** table in
-      `protocol_rfcs/README.md`, with date proposed, a working link, the issue
-      link and the title [#2599]. (The README text mentions `index.md`, but the
-      real index is `protocol_rfcs/README.md`.)
-- [ ] The proposed changes are written as **spec text to be added to
-      `PROTOCOL.md`** (new sections, schema tables, reader and writer
-      requirements). A design doc alone is not enough.
-- [ ] While experimental, the table feature name and property names should
-      use a `-dev` (or preview) suffix. This is strongly recommended, not
-      required. If it's missing, ask why (NIT unless there is a reason the
-      suffix matters for this feature).
-- [ ] If this RFC replaces an earlier one, the RFC says why the earlier one is
-      superseded and moves it to `rejected/` [#4382].
-
-### RFC-UPDATE
-- [ ] The description says whether the change is **editorial** or **changes
-      meaning**, and what implementation experience or ambiguity prompted it.
-- [ ] Search the RFC, `PROTOCOL.md`, other RFCs and all examples for the old
-      term or rule, and make sure every use is updated together.
-- [ ] Making a rule looser must not weaken an unrelated safety rule. Making a
-      rule stricter needs a story for existing preview tables and older
-      writers [#5166, #4537].
-- [ ] The branch is up to date with master. Watch for RFC text written against
-      an outdated master that undoes newer changes [#6696].
-
-### RFC-ACCEPT
-- [ ] **Acceptance criteria (from `protocol_rfcs/README.md`) are met and backed
-      by evidence.** There is a thoroughly tested production implementation, and
-      at least a feasibility discussion (ideally a prototype) for Delta Kernel.
-      The PR description links both. If evidence is missing, ask "is there a production implementation?"
-      [#7326]. That a lot of time has passed is not evidence.
-- [ ] External specs the RFC depends on are stable (for example a Parquet spec
-      change) [#4096].
-- [ ] **Merge fidelity.** The `PROTOCOL.md` text matches the final RFC
-      sentence by sentence. Flag any meaning change, dropped requirement, or
-      deleted existing text, such as a cleanup step that is no longer mentioned
-      [#6066]. If the merged text intentionally differs, update the RFC file to
-      match.
-- [ ] The spec matches what the production implementation actually writes:
-      names, serialized forms, edge cases, and feature-drop behavior.
-- [ ] All the bookkeeping is done in the same PR:
-  - RFC file moved with `git mv` to `protocol_rfcs/accepted/`.
-  - README row moved from Proposed to **Accepted**, with "Date accepted".
-  - Any `-dev`/preview suffix is dropped everywhere, in spec and code [#3416].
-  - The feature is added to **"Valid Feature Names in Table Features"** in the
-    `PROTOCOL.md` appendix [#2808, #2868, #7650].
-  - TOC entries are added for the new sections.
-  - Any new table property is added to the **Table Properties** table [#6696].
-  - Links to the old RFC path are fixed [#6066].
-  - The PR uses "closes #N" for the issue, and the issue title gets an
-    `[ACCEPTED]` marker.
-- [ ] Re-run the full protocol-safety checklist (section 3) on the final text.
-      Acceptance locks in compatibility promises: cross-feature requirements,
-      feature removal and preview migration must be resolved now [#4094].
-
-### RFC-REJECT
-- [ ] RFC moved to `protocol_rfcs/rejected/`, README row moved to Rejected with
-      the date, "closes #N", issue title marked `[REJECTED]`, and a plan to
-      remove experimental code.
-
-### DIRECT-SPEC (no RFC)
-Direct edits are the exception. Maintainers have said a direct edit "should
-absolutely not be used as a precedent for willy nilly changing the protocol"
-[#6699, #7496]. Allow one only if **all** of these hold, and say which one
-justifies it:
-- [ ] It is fully backward compatible: no new requirement that existing
-      conforming readers or writers would break [#6324].
-- [ ] It does one of these:
-  - writes down behavior every major implementation already has (cite the
-    evidence) [#5355, #4923, #6966]
-  - fixes a clear mistake in the spec or an example [#7531, #5640]
-  - removes ambiguity without picking a winner between existing
-    implementations
-- [ ] The author has checked major implementations (delta-spark, Kernel
-      Java/Rust, delta-rs, and ideally Trino) and they conform, or the PR
-      explains what happens to those that don't [#7496, #5495].
-- Otherwise ask for an RFC, or a `-dev` experimental field written only by one
-  implementation until the design settles [#6798].
-
-## 3. Protocol-safety checklist
-
-Go through every item. For each one, either raise a finding or be ready to say
-why it doesn't apply. "Not affected" needs a reason; don't assume it.
-
-### 3.1 Table feature definition
-- [ ] Is a table feature needed? Any new action, field, file, or data that
-      readers or writers must understand ("load-bearing") needs a table feature
-      covering it [#4096, #1742]. If the PR says no feature is needed, check
-      the reasoning (for example log compaction is optional to read and write)
-      [#2122].
-- [ ] **Reader-writer feature or writer-only feature?** Writer-only is
-      acceptable only if an old reader that ignores the feature still returns
-      **correct** results. Collations show the risk: no reader feature would
-      mean wrong query results [#3068]. Check the PR's reasoning for this
-      choice [#2808, #2790].
+### 2.2 Table feature definition
 - [ ] Exact feature name: lowerCamelCase, plural where natural
       (`deletionVectors`, `checkConstraints`), consistent everywhere [#1450].
       A shipped feature name can't be renamed [#1747].
@@ -384,7 +301,7 @@ why it doesn't apply. "Not affected" needs a reason; don't assume it.
       dropped from the protocol, and what readers can assume afterwards
       [#4094, #5016].
 
-### 3.2 Reader and writer requirements
+### 2.3 Reader and writer requirements
 - [ ] Separate `Reader Requirements for <Feature>` and
       `Writer Requirements for <Feature>` subsections (say "Writer", not
       "Write"), each with complete instructions [#1742, #2808, #2122].
@@ -401,7 +318,7 @@ why it doesn't apply. "Not affected" needs a reason; don't assume it.
       and say what writers must guarantee. Don't require readers to verify it
       [#4058, #4096].
 
-### 3.3 Compatibility with older clients and existing tables
+### 2.4 Compatibility with older clients and existing tables
 Write down this matrix and check every cell:
 - old reader × new table, old writer × new table
 - new reader × old table, new writer × old table
@@ -425,7 +342,7 @@ Also check:
 - [ ] Making a field required (or making a "should" a "must") can make
       existing writers non-conformant. Check whether they still conform [#1682].
 
-### 3.4 Interactions with other features
+### 2.5 Interactions with other features
 For each feature below, either describe the interaction or say why there is
 none:
 
@@ -455,7 +372,7 @@ that depend on it. For example, type widening requires updating the
 IcebergCompat sections [#4094], and void type changes affect type widening
 [#6966].
 
-### 3.5 Concurrency and conflict detection
+### 2.6 Concurrency and conflict detection
 - [ ] Which concurrent transactions conflict because of the new actions or
       fields? [#1742]
 - [ ] Is there a race to "claim" a resource (files, IDs, domains)? Is it the
@@ -463,7 +380,7 @@ IcebergCompat sections [#4094], and void type changes affect type widening
       #2264].
 - [ ] If the motivation is a race, describe it step by step [#2712].
 
-### 3.6 Schemas, fields and allowed values
+### 2.7 Schemas, fields and allowed values
 - [ ] Every new field is listed in a schema table with **Field Name | Data
       Type | Description | optional/required** [#1588, #1890]. Give exact
       types ("String-string map", not "map") [#1946].
@@ -482,7 +399,37 @@ IcebergCompat sections [#4094], and void type changes affect type widening
 - [ ] Don't add a required field that can only take one value [#1450].
 - [ ] Introduce each term or property before using it [#6696].
 
-### 3.7 Normative language
+---
+
+## 3. Writing the spec text
+
+### 3.1 Drafting an RFC
+- **Start from [`template.md`](template.md) and fill in every section.** If a
+  section doesn't apply, keep the heading and write "Not applicable because
+  …". Each template section is something reviewers have repeatedly asked for.
+  An empty or missing one usually costs a review round.
+- **Write the part below the separator as spec text.** On acceptance it goes
+  into `PROTOCOL.md` with little or no rewording: new sections, schema tables,
+  reader and writer requirements. A design doc alone is not enough.
+- **An RFC comes before the implementation.** Specify what any conforming
+  engine must do. Don't describe how a particular implementation works, cite
+  its code, or base a requirement on what one codebase happens to do. A
+  prototype can be linked from the issue, but the RFC must make sense without
+  it. Evidence from implementations belongs in the acceptance PR description
+  (1.6).
+- **When the RFC changes existing `PROTOCOL.md` text,** quote the current text
+  from master, name the section, and show the new text.
+- Copy the structure and wording of existing features such as Column Mapping,
+  In-Commit Timestamps and Type Widening (3.6).
+- Define every new term before using it (4.2, item 9). Say who each
+  requirement applies to and when (3.2).
+- Make every example complete, valid, and an exact match for the schema
+  tables (3.4).
+- If you are an agent drafting for an author, don't settle open design
+  questions yourself. List them under "Open questions" for the author to
+  decide.
+
+### 3.2 Normative language
 - [ ] Use RFC 2119 keywords consistently: MUST / MUST NOT / SHOULD / MAY.
       Uppercase is preferred in new text. Flag ambiguous phrasing such as
       "may not", "will", "should avoid" or "is strongly enforced" and ask which
@@ -492,8 +439,10 @@ IcebergCompat sections [#4094], and void type changes affect type widening
 - [ ] Avoid double negatives and vague quantifiers. Check "all" vs "any" vs
       "some" [#4094, #6798].
 - [ ] Be careful with "as of version X" (it means X onward) vs a range [#1450].
+- [ ] Make rules as loose as safety allows. Don't add unnecessarily strict
+      requirements [#5166].
 
-### 3.8 Ambiguity check
+### 3.3 Ambiguity check
 Read each new rule as a hostile but conforming implementer would:
 - Which reading lets a writer produce a table that another conforming reader
   misreads?
@@ -503,7 +452,7 @@ Read each new rule as a hostile but conforming implementer would:
 - Scope questions: table schema or data file schema? Top-level or nested
   fields? Per commit or per snapshot? [#6966, #4058]
 
-### 3.9 Examples
+### 3.4 Examples
 Examples serve as conformance tests. A wrong example is a protocol bug.
 - [ ] Every JSON or log example is valid JSON. It matches the schema tables
       and prose exactly, including field names, types, nesting, and fields
@@ -519,7 +468,7 @@ Examples serve as conformance tests. A wrong example is a protocol bug.
 - [ ] Each new action or concept has at least one complete example, plus
       examples for tricky edge cases [#1450, #2122].
 
-### 3.10 Engine neutrality and spec scope
+### 3.5 Engine neutrality and spec scope
 - [ ] Rules must not depend on Spark, Scala/Java, SQL syntax or a vendor.
       Don't use `Int.MaxValue`; write the number [#3961]. Leave SQL syntax and
       keywords out of the spec unless they are the subject [#2264, #6620,
@@ -534,9 +483,8 @@ Examples serve as conformance tests. A wrong example is a protocol bug.
 - [ ] Put rationale in the feature introduction. Requirement sections say only
       what to do [#6939, #5893].
 
-## 4. Spec style conventions for `PROTOCOL.md`
-
-Flag violations as NIT, unless they break links or the TOC.
+### 3.6 Style conventions for `PROTOCOL.md`
+Reviewers flag violations as NIT, unless they break links or the TOC.
 - Main concepts go in the body. Byte-level formats go in the Appendix, each in
   its own section [#1372, #1494].
 - Follow the structure of existing features: intro → `## Enablement` (or
@@ -567,8 +515,24 @@ Flag violations as NIT, unless they break links or the TOC.
   of files" [#1300].
 - Table property keys use the `delta.` prefix.
 
-## 5. Common causes of many review rounds
+---
 
+## 4. Reviewing a protocol PR
+
+### 4.1 Procedure
+1. **Classify the PR** as exactly one type from 1.1, and report a wrong type
+   or a mixed PR.
+2. **Check the process gates:** 1.2 plus the checklist for that type
+   (1.3–1.9).
+3. **Check protocol safety:** every item in Part 2, for any PR that adds or
+   changes meaning. Fill in the compatibility matrix (2.4) and the
+   interactions (2.5) yourself, even if the RFC has its own tables.
+4. **Check the text:** Part 3.
+5. Look for the common causes of long reviews (4.2), and review from each
+   perspective in 4.3.
+6. **Write the review** in the format in 4.4.
+
+### 4.2 Common causes of many review rounds
 Watch for these. They caused most of the long reviews and rejections:
 1. Only the happy path is specified. Checkpoints, stats, feature removal,
    existing tables, CLONE/RESTORE and cleanup are left out [#7413, #4094].
@@ -589,10 +553,9 @@ Watch for these. They caused most of the long reviews and rejections:
 9. A new verb or concept ("register", "contains", "well-known", "stripped") is
    used without a definition [#3285, #6696, #6982, #6966].
 
-## 6. Review perspectives
-
-Run the checklist from each of these perspectives. They match the concerns
-the most active protocol reviewers raise most often:
+### 4.3 Review perspectives
+Run the review from each of these perspectives. They match the concerns the
+most active protocol reviewers raise most often:
 - **Adversarial correctness.** Can an old client, or a conforming but
   different client, get wrong results or corrupt the table? Check each rule
   for every legal and illegal state.
@@ -602,10 +565,9 @@ the most active protocol reviewers raise most often:
   bookkeeping, consistency with the rest of `PROTOCOL.md`, cross-feature
   sections updated, merge fidelity.
 - **Precise wording.** Normative keywords, consistent terms, structure that
-  matches existing features, making rules as loose as safety allows (no
-  unnecessarily strict requirements) [#5166].
+  matches existing features, rules no stricter than safety needs.
 
-## 7. Output format
+### 4.4 Output format
 
 Start with a summary:
 
@@ -613,9 +575,9 @@ Start with a summary:
 PR type: <NEW-RFC | RFC-UPDATE | RFC-ACCEPT | RFC-REJECT | DIRECT-SPEC | EDITORIAL>
 Feature(s): <name, reader-writer | writer-only, min versions, required features>
 Verdict: <READY | NEEDS CHANGES | BLOCKED (needs RFC / acceptance criteria not met)>
-Process gates: <pass/fail list from section 2>
-Compatibility matrix: <one line per cell from 3.3, marked safe / fails cleanly / UNSAFE>
-Interactions considered: <the features from 3.4 that apply, and why each is safe>
+Process gates: <pass/fail list from Part 1>
+Compatibility matrix: <one line per cell from 2.4, marked safe / fails cleanly / UNSAFE>
+Interactions considered: <the features from 2.5 that apply, and why each is safe>
 ```
 
 Then list findings, most severe first. Each finding has:
@@ -640,3 +602,17 @@ Rules for the reviewer:
   nits grouped and brief.
 - Make sure every claim about existing `PROTOCOL.md` text cites the section you
   checked.
+
+---
+
+## 5. Self-review before opening the PR
+
+1. Run the review in Part 4 against your own draft, as if it were someone
+   else's PR. For a new RFC, the PR type is `NEW-RFC`.
+2. Fill in the compatibility table and the interaction table in the RFC
+   itself. Don't leave them for reviewers to ask about. Missing interactions
+   and an unspecified lifecycle caused most of the long reviews (4.2).
+3. Fix every BLOCKING and IMPORTANT finding. Anything you can't resolve goes
+   under "Open questions" in the RFC.
+4. Put the summary block from 4.4 in the PR description, plus any findings
+   still open, so reviewers can see what was checked.
