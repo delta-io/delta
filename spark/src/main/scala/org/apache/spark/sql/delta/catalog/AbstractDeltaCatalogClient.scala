@@ -60,6 +60,13 @@ private[delta] trait AbstractDeltaCatalogClient {
   def loadTable(ident: Identifier): Table
 
   /**
+   * Same as [[loadTable(ident:*]], additionally declaring whether Spark resolved the table as
+   * the target of a write (`TableCatalog.loadTable(ident, writePrivileges)`). The default
+   * ignores the intent.
+   */
+  def loadTable(ident: Identifier, writeIntent: Boolean): Table = loadTable(ident)
+
+  /**
    * Reserves a fresh staging entry with the catalog for a new Delta table and returns
    * `properties` augmented with the catalog-supplied LOCATION, the catalog-assigned table
    * id, and the storage credentials Delta needs to write the initial commit.
