@@ -29,14 +29,7 @@ import org.apache.spark.sql.catalyst.catalog.{
   CatalogTableType,
   CatalogUtils
 }
-import org.apache.spark.sql.connector.catalog.{
-  Identifier,
-  Table,
-  TableCatalog,
-  TableInfo,
-  TransactionalCatalogPlugin,
-  V1Table
-}
+import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableInfo, TransactionalCatalogPlugin, V1Table}
 import org.apache.spark.sql.delta.{
   CatalogOwnedTableFeature,
   DeltaErrors,

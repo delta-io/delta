@@ -53,12 +53,12 @@ private[catalog] class DeltaV2SparkTransaction(
 }
 
 /**
- * A transaction-scoped catalog. Its main purpose is to track table loads/scans within the
- * transaction. This is the Delta implementation of a core pattern of the v2 transaction
- * machinery. The main idea is to create a dedicated catalog instance for each Spark transaction.
- * This catalog instance is tied to the lifecycle of the particular Spark transaction and it
- * will maintain state only for that transaction (e.g. table pinning). It is implemented as a
- * decorator of the actual catalog.
+ * A transaction-scoped catalog. This is the Delta implementation of a core pattern of the v2
+ * transaction machinery. The main idea is to create a dedicated catalog instance for each Spark
+ * transaction, tied to the lifecycle of that transaction. It is implemented as a decorator of the
+ * actual catalog. For now it only provides the wiring: it forwards every call to the delegate.
+ * Tracking the tables loaded during the transaction (e.g. table pinning) is going to be added in
+ * follow up work.
  *
  * It extends [[DeltaCatalogLike]] (the shared Delta catalog contract) rather than the concrete
  * catalog, so it inherits none of that catalog's instance state. The contract bundles the full

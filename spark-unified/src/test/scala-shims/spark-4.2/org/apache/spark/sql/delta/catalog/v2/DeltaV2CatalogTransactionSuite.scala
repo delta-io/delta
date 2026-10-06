@@ -56,13 +56,13 @@ class DeltaV2CatalogTransactionSuite
    * Defaults to a recording transactional catalog.
    */
   protected def sessionCatalogImpl: Option[String] =
-    Some(classOf[TestTransactionalDeltaCatalog].getName)
+    Some(classOf[DeltaV2TestTransactionalCatalog].getName)
 
   /** Runs `write` and asserts it began a [[DeltaV2SparkTransaction]] */
   protected def validate(write: => DataFrame): Unit = {
-    TestTransactionalDeltaCatalog.lastTransaction = null
+    DeltaV2TestTransactionalCatalog.lastTransaction = null
     write
-    assert(Option(TestTransactionalDeltaCatalog.lastTransaction)
+    assert(Option(DeltaV2TestTransactionalCatalog.lastTransaction)
       .exists(_.isInstanceOf[DeltaV2SparkTransaction]),
       "a write over the transactional session catalog should begin a DeltaV2SparkTransaction")
   }
@@ -72,7 +72,7 @@ class DeltaV2CatalogTransactionSuite
     assert(sessionCatalog.isInstanceOf[TransactionalCatalogPlugin])
   }
 
-  test("Writes begin a SparkTransaction") {
+  test("Writes begin a DeltaV2SparkTransaction") {
     withTable("t") {
       sql("CREATE TABLE t (id INT) USING delta")
       validate { sql("INSERT INTO t VALUES (1), (2)") }
@@ -89,12 +89,34 @@ class DeltaV2CatalogTransactionSuite
     }
   }
 
-  test("a path-based write begins a SparkTransaction") {
+  test("a path-based write begins a DeltaV2SparkTransaction") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       sql(s"CREATE TABLE delta.`$path` (id INT) USING delta")
       validate { sql(s"INSERT INTO delta.`$path` VALUES (1), (2)") }
       checkAnswer(sql(s"SELECT id FROM delta.`$path` ORDER BY id"), Seq(Row(1), Row(2)))
+    }
+  }
+
+  test("changes clause resolves through the transactional catalog inside a write") {
+    withTable("src", "dst") {
+      // The read-time (v2) CDF path needs row tracking on the source.
+      sql(
+        """CREATE TABLE src (id BIGINT) USING delta TBLPROPERTIES (
+          |  'delta.enableChangeDataFeed' = 'false',
+          |  'delta.enableRowTracking' = 'true',
+          |  'delta.enableDeletionVectors' = 'false'
+          |)""".stripMargin)
+      sql("INSERT INTO src VALUES (1)") // v1
+      sql("INSERT INTO src VALUES (2)") // v2
+      sql("INSERT INTO src VALUES (3)") // v3
+      sql("CREATE TABLE dst (id BIGINT) USING delta")
+
+      withSQLConf(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED.key -> "true") {
+        // Only version 2 is in range, so a wrong range would put more rows in dst.
+        validate { sql("INSERT INTO dst SELECT id FROM src CHANGES FROM VERSION 2 TO VERSION 2") }
+      }
+      checkAnswer(sql("SELECT id FROM dst"), Row(2L))
     }
   }
 
@@ -192,15 +214,15 @@ object DeltaV2CatalogTransactionSuite {
    * tests to inspect it. This mirrors Spark's `InMemoryRowLevelOperationTableCatalog`. Can be
    * registered via `spark.sql.catalog.spark_catalog`.
    */
-  class TestTransactionalDeltaCatalog extends DeltaV2TransactionalCatalog {
+  class DeltaV2TestTransactionalCatalog extends DeltaV2TransactionalCatalog {
     override def beginTransaction(info: TransactionInfo): Transaction = {
       val txn = super.beginTransaction(info)
-      TestTransactionalDeltaCatalog.lastTransaction = txn
+      DeltaV2TestTransactionalCatalog.lastTransaction = txn
       txn
     }
   }
 
-  object TestTransactionalDeltaCatalog {
+  object DeltaV2TestTransactionalCatalog {
     @volatile var lastTransaction: Transaction = _
   }
 }
