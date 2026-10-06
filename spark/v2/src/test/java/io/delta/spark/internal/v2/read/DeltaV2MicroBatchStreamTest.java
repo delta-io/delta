@@ -85,7 +85,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     String tableName = "test_unsupported_" + System.nanoTime();
     createEmptyTestTable(tablePath, tableName);
     Configuration hadoopConf = new Configuration();
-    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
     return createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
   }
 
@@ -116,7 +117,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // Create stream without startingVersion (emptyDeltaOptions)
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
@@ -155,7 +156,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
@@ -181,7 +182,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     DeltaOptions options = new DeltaOptions(scalaOptions, spark.sessionState().conf());
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
 
@@ -321,7 +322,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // DSv2
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
     Offset initialOffset = stream.initialOffset();
@@ -417,7 +418,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // Delta V2 micro-batch stream
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     Optional<DeltaSourceOffset> endOffsetOption = ScalaUtils.toJavaOptional(scalaEndOffset);
@@ -602,7 +603,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // Delta V2 micro-batch stream
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     // We need a separate AdmissionLimits object for DSv2 because the method is stateful.
@@ -785,7 +786,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // Test Delta V2 micro-batch stream
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     try (CloseableIterator<IndexedFile> kernelChanges =
@@ -841,7 +842,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
@@ -954,7 +955,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // Test Delta V2 micro-batch stream
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
@@ -1138,7 +1139,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // DSv2
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
     try (CloseableIterator<IndexedFile> kernelChanges =
@@ -1205,7 +1206,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // DSv2
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
 
@@ -1553,7 +1554,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // Now test with startingVersion=1
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
@@ -1621,7 +1622,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // dsv2
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     Offset v2EndOffset = stream.latestOffset(startOffset, readLimit);
@@ -1740,7 +1741,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // dsv2
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     List<Offset> dsv2Offsets =
@@ -1866,7 +1867,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // dsv2
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     Offset dsv2Offset = stream.latestOffset(startOffset, readLimit);
@@ -1957,7 +1958,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // dsv2 source
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     // Enable availableNow
@@ -2100,7 +2101,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     // DSv2: planInputPartitions + createReaderFactory
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     org.apache.spark.sql.delta.Snapshot deltaSnapshot = deltaLog.unsafeVolatileSnapshot();
     StructType dataSchema = deltaSnapshot.metadata().schema();
@@ -2279,7 +2280,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     // DSv2: planInputPartitions + createReaderFactory
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(testTablePath, createKernelContext());
     org.apache.spark.sql.delta.Snapshot deltaSnapshot = deltaLog.unsafeVolatileSnapshot();
     StructType fullSchema = deltaSnapshot.metadata().schema();
     StructType partitionSchema = deltaSnapshot.metadata().partitionSchema();
@@ -2567,7 +2568,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     // dsv2
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, new Configuration());
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(new Configuration()));
     DeltaV2MicroBatchStream dsv2Stream =
         createTestStreamWithDefaults(snapshotManager, new Configuration(), emptyDeltaOptions());
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
@@ -2697,7 +2698,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     // dsv2
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, new Configuration());
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(new Configuration()));
     DeltaV2MicroBatchStream dsv2Stream =
         createTestStreamWithDefaults(
             snapshotManager,
@@ -2788,7 +2789,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
       // dsv2
       PathBasedSnapshotManager snapshotManager =
-          new PathBasedSnapshotManager(testTablePath, new Configuration());
+          new PathBasedSnapshotManager(testTablePath, createKernelContext(new Configuration()));
       DeltaV2MicroBatchStream dsv2Stream =
           createTestStreamWithDefaults(
               snapshotManager,
@@ -2812,7 +2813,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     // dsv2
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, new Configuration());
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(new Configuration()));
     DeltaV2MicroBatchStream dsv2Stream =
         createTestStreamWithDefaults(
             snapshotManager,
@@ -2878,7 +2879,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       // Create Delta V2 micro-batch stream
       Configuration hadoopConf = new Configuration();
       PathBasedSnapshotManager snapshotManager =
-          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+          new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
@@ -2999,7 +3000,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       // Test Delta V2 micro-batch stream
       Configuration hadoopConf = new Configuration();
       PathBasedSnapshotManager snapshotManager =
-          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+          new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
       try (CloseableIterator<IndexedFile> kernelChanges =
@@ -3055,7 +3056,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       // Create Delta V2 micro-batch stream
       Configuration hadoopConf = new Configuration();
       PathBasedSnapshotManager snapshotManager =
-          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+          new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
@@ -3164,7 +3165,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       // Create Delta V2 micro-batch stream
       Configuration hadoopConf = new Configuration();
       PathBasedSnapshotManager snapshotManager =
-          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+          new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
@@ -3296,7 +3297,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // Test Delta V2 micro-batch stream
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     DeltaUnsupportedOperationException dsv2Exception =
@@ -3361,7 +3362,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
       Configuration hadoopConf = new Configuration();
       PathBasedSnapshotManager snapshotManager =
-          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+          new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
       String schemaTrackingLocation = new File(tempDir, "schema_tracking").getAbsolutePath();
       String checkpointLocation = new File(tempDir, "checkpoint").getAbsolutePath();
       java.util.Map<String, String> optionMap =
@@ -3498,7 +3499,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
       Configuration hadoopConf = new Configuration();
       PathBasedSnapshotManager snapshotManager =
-          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+          new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
       String schemaTrackingLocation = new File(tempDir, "schema_tracking").getAbsolutePath();
       String checkpointLocation = new File(tempDir, "checkpoint").getAbsolutePath();
       java.util.Map<String, String> optionMap =
@@ -3619,7 +3620,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     String schemaTrackingLocation = new File(tempDir, "schema_tracking").getAbsolutePath();
     String checkpointLocation = new File(tempDir, "checkpoint").getAbsolutePath();
     StructType schema =
@@ -3989,7 +3990,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // DSv2
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
     try (CloseableIterator<IndexedFile> dsv2Changes =
@@ -4052,7 +4053,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // DSv2: failOnDataLoss=true throws StartVersionNotFoundException with structured fields
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, defaultOptions);
     io.delta.kernel.exceptions.StartVersionNotFoundException dsv2Exception =
@@ -4098,7 +4099,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaOptions options = createDeltaOptions("failOnDataLoss", "false");
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
@@ -4563,7 +4564,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     // DSv2: Create DeltaV2MicroBatchStream and get starting version
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, new Configuration());
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(new Configuration()));
     DeltaV2MicroBatchStream dsv2Stream =
         createTestStreamWithDefaults(
             snapshotManager,
@@ -4919,7 +4920,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     try {

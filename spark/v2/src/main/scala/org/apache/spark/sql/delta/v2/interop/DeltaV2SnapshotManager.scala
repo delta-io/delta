@@ -23,6 +23,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.DeltaHistoryManager
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
+import io.delta.spark.internal.v2.kernel.KernelContext
 
 import org.apache.spark.sql.delta.Snapshot
 
@@ -155,12 +156,17 @@ object DeltaV2SnapshotManager {
    * Wraps a Kernel snapshot in the V1 [[Snapshot]] facade returned by manager load APIs.
    *
    * @param kernelSnapshot the Kernel snapshot to wrap
+   * @param kernelContext the context used to load and access the snapshot
    * @param tablePath table path used in construction-error messages
    * @return the V1 snapshot facade
    */
-  def wrapKernelSnapshot(kernelSnapshot: SnapshotImpl, tablePath: String): Snapshot = {
+  def wrapKernelSnapshot(
+      kernelSnapshot: SnapshotImpl,
+      kernelContext: KernelContext,
+      tablePath: String): Snapshot = {
     Objects.requireNonNull(kernelSnapshot, "kernelSnapshot is null")
+    Objects.requireNonNull(kernelContext, "kernelContext is null")
     Objects.requireNonNull(tablePath, "tablePath is null")
-    new DeltaV2Snapshot(kernelSnapshot)
+    new DeltaV2Snapshot(kernelSnapshot, kernelContext)
   }
 }

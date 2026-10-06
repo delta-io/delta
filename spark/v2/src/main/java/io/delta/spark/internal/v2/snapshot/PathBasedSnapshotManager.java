@@ -24,10 +24,9 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
-import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
+import io.delta.spark.internal.v2.kernel.KernelContext;
 import java.util.ArrayList;
 import java.util.Optional;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
@@ -38,17 +37,13 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager$;
 public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
 
   private final String tablePath;
+  private final KernelContext kernelContext;
   private final Engine kernelEngine;
 
-  public PathBasedSnapshotManager(String tablePath, Configuration hadoopConf) {
-    this(
-        tablePath,
-        KernelEngineFactory.createDefaultEngine(requireNonNull(hadoopConf, "hadoopConf is null")));
-  }
-
-  public PathBasedSnapshotManager(String tablePath, Engine kernelEngine) {
+  public PathBasedSnapshotManager(String tablePath, KernelContext kernelContext) {
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
-    this.kernelEngine = requireNonNull(kernelEngine, "kernelEngine is null");
+    this.kernelContext = requireNonNull(kernelContext, "kernelContext is null");
+    this.kernelEngine = kernelContext.getDefaultEngine();
   }
 
   /**
@@ -59,7 +54,7 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
   @Override
   public Snapshot loadLatestSnapshot() {
     return DeltaV2SnapshotManager$.MODULE$.wrapKernelSnapshot(
-        loadLatestKernelSnapshot(), tablePath);
+        loadLatestKernelSnapshot(), kernelContext, tablePath);
   }
 
   /**
@@ -71,7 +66,7 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
   @Override
   public Snapshot loadSnapshotAt(long version) {
     return DeltaV2SnapshotManager$.MODULE$.wrapKernelSnapshot(
-        loadKernelSnapshotAt(version), tablePath);
+        loadKernelSnapshotAt(version), kernelContext, tablePath);
   }
 
   private SnapshotImpl loadLatestKernelSnapshot() {

@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
+import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 import io.delta.storage.commit.Commit
 import org.apache.hadoop.conf.Configuration
@@ -63,19 +64,21 @@ import org.apache.spark.util.{Clock, SystemClock}
  */
 private[v2] class DeltaV2OptimisticTransaction(
     catalogTable: Option[CatalogTable],
-    // `deltaV2Snapshot` and `kernelEngine` are intentionally private, which is internal
+    // `deltaV2Snapshot` and `kernelContext` are intentionally private, which is internal
     // implementation details we do not expose in the public API.
     private val deltaV2Snapshot: DeltaV2Snapshot,
-    private val kernelEngine: KernelEngine)
+    private val kernelContext: KernelContext)
   extends OptimisticTransaction(
     null.asInstanceOf[DeltaLog],
     catalogTable,
     deltaV2Snapshot) {
 
+  private val kernelEngine: KernelEngine = kernelContext.getDefaultEngine()
+
   private lazy val deltaV2SnapshotManager: DeltaV2SnapshotManager =
     SnapshotManagerFactory.create(
       dataPath.toString,
-      kernelEngine,
+      kernelContext,
       catalogTable.toJava
     )
 
@@ -189,7 +192,7 @@ private[v2] class DeltaV2OptimisticTransaction(
       kernelPostCommitSnapshot.getVersion >= committedVersion,
       s"Kernel reload returned version ${kernelPostCommitSnapshot.getVersion}, older than the " +
         s"just-committed version $committedVersion")
-    new DeltaV2Snapshot(kernelPostCommitSnapshot)
+    new DeltaV2Snapshot(kernelPostCommitSnapshot, kernelContext)
   }
 
   /**

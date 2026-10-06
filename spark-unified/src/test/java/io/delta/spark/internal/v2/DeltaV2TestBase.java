@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2025-2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,14 @@
  */
 package io.delta.spark.internal.v2;
 
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.spark.internal.v2.kernel.KernelContext;
+import io.delta.spark.internal.v2.utils.ScalaUtils;
+import java.util.HashMap;
+import java.util.Map;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.delta.storage.LogStore;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 
@@ -25,6 +30,7 @@ public abstract class DeltaV2TestBase {
 
   protected static SparkSession spark;
   protected static Engine defaultEngine;
+  protected static KernelContext defaultKernelContext;
 
   @BeforeAll
   public static void setUpSparkAndEngine() {
@@ -39,7 +45,18 @@ public abstract class DeltaV2TestBase {
             .config("spark.sql.catalog.dsv2", "io.delta.spark.internal.v2.catalog.TestCatalog")
             .config("spark.sql.catalog.dsv2.base_path", System.getProperty("java.io.tmpdir"))
             .getOrCreate();
-    defaultEngine = DefaultEngine.create(spark.sessionState().newHadoopConf());
+    defaultKernelContext = createKernelContext();
+    defaultEngine = defaultKernelContext.getDefaultEngine();
+  }
+
+  protected static KernelContext createKernelContext() {
+    return createKernelContext(spark.sessionState().newHadoopConf());
+  }
+
+  protected static KernelContext createKernelContext(Configuration hadoopConf) {
+    Map<String, String> options = new HashMap<>();
+    hadoopConf.forEach(entry -> options.put(entry.getKey(), entry.getValue()));
+    return new KernelContext(ScalaUtils.toScalaMap(options), LogStore.apply(spark));
   }
 
   @AfterAll

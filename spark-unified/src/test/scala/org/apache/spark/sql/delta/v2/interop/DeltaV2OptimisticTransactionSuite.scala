@@ -21,8 +21,9 @@ import java.nio.file.{Files, StandardCopyOption}
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaOperations, OptimisticTransaction, OptimisticTransactionSuite}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, SetTransaction}
+import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.V2ForceTest
-import io.delta.spark.internal.v2.kernel.KernelEngineFactory
+import io.delta.spark.internal.v2.kernel.KernelContext
 import org.apache.hadoop.fs.Path
 import io.delta.kernel.{Table => KernelTable}
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshotImpl}
@@ -48,15 +49,14 @@ class DeltaV2OptimisticTransactionSuite
    * inherited V1 conflict test cases.
    */
   override protected def startTestTransaction(dataPath: Path): OptimisticTransaction = {
-    // scalastyle:off deltahadoopconfiguration
-    val kernelEngine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
-    // scalastyle:on deltahadoopconfiguration
+    val kernelContext = new KernelContext(Map.empty, LogStore(spark))
+    val kernelEngine = kernelContext.getDefaultEngine()
     val kernelSnap = KernelTable
       .forPath(kernelEngine, dataPath.toString)
       .getLatestSnapshot(kernelEngine)
       .asInstanceOf[KernelSnapshotImpl]
-    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap)
-    new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot, kernelEngine)
+    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap, kernelContext)
+    new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot, kernelContext)
   }
 
   override protected def testDefaultMetadata(): Metadata =
@@ -93,27 +93,24 @@ class DeltaV2OptimisticTransactionSuite
 
   /** Builds a Kernel-backed transaction over the latest snapshot of the table at `dir`. */
   private def startKernelTxn(dir: File): DeltaV2OptimisticTransaction = {
-    // scalastyle:off deltahadoopconfiguration
-    // No DeltaLog here (the snapshot is loaded via Kernel), so use the session Hadoop conf.
-    val kernelEngine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
-    // scalastyle:on deltahadoopconfiguration
+    val kernelContext = new KernelContext(Map.empty, LogStore(spark))
+    val kernelEngine = kernelContext.getDefaultEngine()
     val kernelSnap = KernelTable
       .forPath(kernelEngine, dir.getCanonicalPath)
       .getLatestSnapshot(kernelEngine)
       .asInstanceOf[KernelSnapshotImpl]
-    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap)
-    new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot, kernelEngine)
+    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap, kernelContext)
+    new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot, kernelContext)
   }
 
   private def latestKernelSnapshot(dir: File): DeltaV2Snapshot = {
-    // scalastyle:off deltahadoopconfiguration
-    val kernelEngine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
-    // scalastyle:on deltahadoopconfiguration
+    val kernelContext = new KernelContext(Map.empty, LogStore(spark))
+    val kernelEngine = kernelContext.getDefaultEngine()
     val kernelSnap = KernelTable
       .forPath(kernelEngine, dir.getCanonicalPath)
       .getLatestSnapshot(kernelEngine)
       .asInstanceOf[KernelSnapshotImpl]
-    new DeltaV2Snapshot(kernelSnap)
+    new DeltaV2Snapshot(kernelSnap, kernelContext)
   }
 
   /** Seeds a simple (unpartitioned) V1 Delta table at `dir`. */

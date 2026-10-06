@@ -30,9 +30,9 @@ import org.apache.spark.sql.SparkSession
  * settings and credentials are not retained by reusable connector state. Its LogStore and
  * lazily-created Engine remain stable across Spark sessions.
  */
-private[v2] final class KernelContext(
-    val sessionInvariantFsOptions: Map[String, String],
-    val logStore: LogStore) {
+final class KernelContext(
+    private[v2] val sessionInvariantFsOptions: Map[String, String],
+    private[v2] val logStore: LogStore) {
   require(sessionInvariantFsOptions != null, "sessionInvariantFsOptions must not be null")
   require(logStore != null, "logStore must not be null")
 
@@ -46,7 +46,8 @@ private[v2] final class KernelContext(
 
   private lazy val kernelDefaultEngine = createDefaultEngine()
 
-  private[v2] def getDefaultEngine(): KernelEngine = kernelDefaultEngine
+  // The snapshot facade lives in a separate internal package in the standalone connector.
+  def getDefaultEngine(): KernelEngine = kernelDefaultEngine
 }
 
 private[v2] object KernelContext {

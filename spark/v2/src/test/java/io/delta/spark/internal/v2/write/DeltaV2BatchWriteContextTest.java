@@ -23,10 +23,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.TableManager;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
+import io.delta.spark.internal.v2.kernel.KernelContext;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.io.File;
@@ -48,9 +48,10 @@ public class DeltaV2BatchWriteContextTest extends DeltaV2TestBase {
     String path = tempDir.getAbsolutePath();
     StructType tableSchema = tableSchema();
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    Engine engine = DefaultEngine.create(hadoopConf);
+    KernelContext kernelContext = createKernelContext(hadoopConf);
+    Engine engine = kernelContext.getDefaultEngine();
     createKernelTable(path, tableSchema, engine);
-    Snapshot snapshot = new PathBasedSnapshotManager(path, engine).loadLatestSnapshot();
+    Snapshot snapshot = new PathBasedSnapshotManager(path, kernelContext).loadLatestSnapshot();
 
     DeltaV2BatchWriteContext context =
         DeltaV2BatchWriteContext.create(

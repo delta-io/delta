@@ -27,10 +27,10 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import io.delta.kernel.Operation;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.Transaction;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
+import io.delta.spark.internal.v2.kernel.KernelContext;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
@@ -65,9 +65,10 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
     String path = tempDir.getAbsolutePath();
     StructType tableSchema = tableSchema();
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    Engine engine = DefaultEngine.create(hadoopConf);
+    KernelContext kernelContext = createKernelContext(hadoopConf);
+    Engine engine = kernelContext.getDefaultEngine();
     createKernelTable(path, tableSchema, engine);
-    Snapshot snapshot = new PathBasedSnapshotManager(path, engine).loadLatestSnapshot();
+    Snapshot snapshot = new PathBasedSnapshotManager(path, kernelContext).loadLatestSnapshot();
 
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
@@ -100,9 +101,10 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
     String path = tempDir.getAbsolutePath();
     StructType tableSchema = tableSchema();
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    Engine engine = DefaultEngine.create(hadoopConf);
+    KernelContext kernelContext = createKernelContext(hadoopConf);
+    Engine engine = kernelContext.getDefaultEngine();
     createKernelTable(path, tableSchema, engine);
-    Snapshot snapshot = new PathBasedSnapshotManager(path, engine).loadLatestSnapshot();
+    Snapshot snapshot = new PathBasedSnapshotManager(path, kernelContext).loadLatestSnapshot();
 
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
@@ -143,8 +145,9 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
     StructType partitionSchema = new StructType().add("part", DataTypes.StringType);
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    Engine engine = DefaultEngine.create(hadoopConf);
-    Snapshot snapshot = new PathBasedSnapshotManager(path, engine).loadLatestSnapshot();
+    KernelContext kernelContext = createKernelContext(hadoopConf);
+    Engine engine = kernelContext.getDefaultEngine();
+    Snapshot snapshot = new PathBasedSnapshotManager(path, kernelContext).loadLatestSnapshot();
 
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
@@ -179,8 +182,9 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
     StructType partitionSchema = new StructType().add("part", DataTypes.StringType);
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    Engine engine = DefaultEngine.create(hadoopConf);
-    Snapshot snapshot = new PathBasedSnapshotManager(path, engine).loadLatestSnapshot();
+    KernelContext kernelContext = createKernelContext(hadoopConf);
+    Engine engine = kernelContext.getDefaultEngine();
+    Snapshot snapshot = new PathBasedSnapshotManager(path, kernelContext).loadLatestSnapshot();
 
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
@@ -291,9 +295,10 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
   private DeltaV2WriteContext buildContext(File dir, StructType schema) throws Exception {
     String path = dir.getAbsolutePath();
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    Engine engine = DefaultEngine.create(hadoopConf);
+    KernelContext kernelContext = createKernelContext(hadoopConf);
+    Engine engine = kernelContext.getDefaultEngine();
     createKernelTable(path, schema, engine);
-    Snapshot snapshot = new PathBasedSnapshotManager(path, engine).loadLatestSnapshot();
+    Snapshot snapshot = new PathBasedSnapshotManager(path, kernelContext).loadLatestSnapshot();
     return DeltaV2WriteContext.create(
         engine,
         hadoopConf,

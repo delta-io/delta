@@ -106,8 +106,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
     StructType partitionSchema =
         DataTypes.createStructType(
             new StructField[] {DataTypes.createStructField("name", DataTypes.StringType, true)});
-    PathBasedSnapshotManager mgr =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(path, createKernelContext());
     DeltaV2Write write =
         new DeltaV2Write(
             defaultEngine,
@@ -153,8 +152,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
               DataTypes.createStructField("p1", DataTypes.StringType, true),
               DataTypes.createStructField("p2", DataTypes.IntegerType, true)
             });
-    PathBasedSnapshotManager mgr =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(path, createKernelContext());
     DeltaV2Write write =
         new DeltaV2Write(
             defaultEngine,
@@ -186,7 +184,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
 
   private DeltaV2Write newWrite(String path, CaseInsensitiveStringMap options) {
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(path, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     LogicalWriteInfo info = WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, options);
     return new DeltaV2Write(

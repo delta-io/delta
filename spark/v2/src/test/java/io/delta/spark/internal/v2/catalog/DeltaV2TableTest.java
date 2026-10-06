@@ -649,8 +649,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     TableIdentifier expectedIdentifier = catalogTable.identifier();
 
     Snapshot realSnapshot =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf())
-            .loadLatestSnapshot();
+        new PathBasedSnapshotManager(path, createKernelContext()).loadLatestSnapshot();
     AssertionError legacyApiError =
         new AssertionError("DeltaV2Table query used the legacy snapshot API");
     DeltaV2TableManagerCache$.MODULE$.clearCache();
@@ -992,7 +991,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
 
     // Capture v0 metadata BEFORE evolving the table.
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(tablePath, createKernelContext());
     SnapshotImpl snapshotV0 =
         DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
             snapshotManager.loadSnapshotAt(
