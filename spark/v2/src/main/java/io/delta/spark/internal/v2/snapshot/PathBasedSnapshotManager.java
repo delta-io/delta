@@ -38,12 +38,10 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
 
   private final String tablePath;
   private final KernelContext kernelContext;
-  private final Engine kernelEngine;
 
   public PathBasedSnapshotManager(String tablePath, KernelContext kernelContext) {
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.kernelContext = requireNonNull(kernelContext, "kernelContext is null");
-    this.kernelEngine = kernelContext.getDefaultEngine();
   }
 
   /**
@@ -70,12 +68,15 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
   }
 
   private SnapshotImpl loadLatestKernelSnapshot() {
-    return (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(kernelEngine);
+    return (SnapshotImpl)
+        TableManager.loadSnapshot(tablePath).build(kernelContext.getDefaultEngine());
   }
 
   private SnapshotImpl loadKernelSnapshotAt(long version) {
     return (SnapshotImpl)
-        TableManager.loadSnapshot(tablePath).atVersion(version).build(kernelEngine);
+        TableManager.loadSnapshot(tablePath)
+            .atVersion(version)
+            .build(kernelContext.getDefaultEngine());
   }
 
   /**
@@ -101,7 +102,7 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
       boolean canReturnEarliestCommit) {
     SnapshotImpl snapshot = loadLatestKernelSnapshot();
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
-        kernelEngine,
+        kernelContext.getDefaultEngine(),
         snapshot,
         snapshot.getLogPath(),
         timestampMillis,
@@ -128,11 +129,11 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
     long earliest =
         mustBeRecreatable
             ? DeltaHistoryManager.getEarliestRecreatableCommit(
-                kernelEngine,
+                kernelContext.getDefaultEngine(),
                 snapshot.getLogPath(),
                 Optional.empty() /*earliestRatifiedCommitVersion*/)
             : DeltaHistoryManager.getEarliestDeltaFile(
-                kernelEngine,
+                kernelContext.getDefaultEngine(),
                 snapshot.getLogPath(),
                 Optional.empty() /*earliestRatifiedCommitVersion*/);
 

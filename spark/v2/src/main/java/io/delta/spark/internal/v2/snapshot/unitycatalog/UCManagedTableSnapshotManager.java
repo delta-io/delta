@@ -44,7 +44,6 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
   private final String tableId;
   private final String tablePath;
   private final UCTableIdentifier tableIdentifier;
-  private final Engine engine;
   private final KernelContext kernelContext;
 
   /**
@@ -65,7 +64,6 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
     this.tablePath = tableInfo.getTablePath();
     this.tableIdentifier = tableInfo.getTableIdentifier();
     this.kernelContext = requireNonNull(kernelContext, "kernelContext is null");
-    this.engine = kernelContext.getDefaultEngine();
   }
 
   /**
@@ -88,7 +86,7 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
   private SnapshotImpl loadKernelSnapshot(Optional<Long> versionOpt) {
     return (SnapshotImpl)
         ucCatalogManagedClient.loadSnapshot(
-            engine,
+            kernelContext.getDefaultEngine(),
             tableId,
             tablePath,
             tableIdentifier,
@@ -120,7 +118,7 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
     SnapshotImpl snapshot = loadKernelSnapshot(Optional.empty());
     List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
-        engine,
+        kernelContext.getDefaultEngine(),
         snapshot,
         snapshot.getLogPath(),
         timestampMillis,
@@ -165,9 +163,13 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
     long earliestVersion =
         mustBeRecreatable
             ? DeltaHistoryManager.getEarliestRecreatableCommit(
-                engine, snapshot.getLogPath(), earliestCatalogCommitVersion)
+                kernelContext.getDefaultEngine(),
+                snapshot.getLogPath(),
+                earliestCatalogCommitVersion)
             : DeltaHistoryManager.getEarliestDeltaFile(
-                engine, snapshot.getLogPath(), earliestCatalogCommitVersion);
+                kernelContext.getDefaultEngine(),
+                snapshot.getLogPath(),
+                earliestCatalogCommitVersion);
 
     if (version < earliestVersion) {
       throw new VersionNotFoundException(version, earliestVersion, latestSnapshotVersion);

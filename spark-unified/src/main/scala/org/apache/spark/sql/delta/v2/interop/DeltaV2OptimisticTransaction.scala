@@ -73,7 +73,7 @@ private[v2] class DeltaV2OptimisticTransaction(
     catalogTable,
     deltaV2Snapshot) {
 
-  private val kernelEngine: KernelEngine = kernelContext.getDefaultEngine()
+  private def kernelEngine: KernelEngine = kernelContext.getDefaultEngine()
 
   private lazy val deltaV2SnapshotManager: DeltaV2SnapshotManager =
     SnapshotManagerFactory.create(

@@ -16,6 +16,11 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
+import java.net.URI
+import java.util.concurrent.{CopyOnWriteArrayList, FutureTask}
+
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -24,12 +29,14 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager
-import org.apache.hadoop.fs.Path
-import org.mockito.Mockito.{atLeastOnce, clearInvocations, spy, verify}
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus, FSDataInputStream, Path, RawLocalFileSystem}
+import org.mockito.Mockito.{atLeastOnce, clearInvocations, spy, verify, verifyNoInteractions}
 import io.delta.kernel.TableManager
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 
@@ -60,6 +67,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
 
       val context = spy(new KernelContext(Map.empty, LogStore(spark)))
       val manager = new PathBasedSnapshotManager(path, context)
+      verifyNoInteractions(context)
       val snapshots = Seq(manager.loadLatestSnapshot(), manager.loadSnapshotAt(0L))
 
       snapshots.foreach { snapshot =>
@@ -80,6 +88,64 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
         } finally {
           v2.uncache()
         }
+      }
+    }
+  }
+
+  test("snapshot filesystem access follows the active session and child thread") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      val appId = "snapshot-session-test"
+      spark.range(2).coalesce(1).write.format("delta")
+        .option("txnAppId", appId).option("txnVersion", 0).save(path)
+      val expectedFiles =
+        DeltaLog.forTable(spark, path).update().allFiles.collect().map(_.path).toSet
+      val invariantOptions = Map(
+        "fs.file.impl" -> classOf[SnapshotContextRecordingFileSystem].getName,
+        "fs.file.impl.disable.cache" -> "true",
+        SnapshotContextRecordingFileSystem.TableMarkerKey -> "table-option")
+      val context = new KernelContext(invariantOptions, LogStore(spark))
+      val manager = new PathBasedSnapshotManager(path, context)
+      val originalSession = SparkSession.active
+      val sessionA = spark.newSession()
+      val sessionB = spark.newSession()
+
+      def checkAccess(session: SparkSession, marker: String): Unit = {
+        assert(SparkSession.active eq session)
+        session.conf.set(SnapshotContextRecordingFileSystem.SessionMarkerKey, marker)
+        session.conf.set(SnapshotContextRecordingFileSystem.TableMarkerKey, "session-option")
+        SnapshotContextRecordingFileSystem.clear()
+        val snapshots = Seq(manager.loadLatestSnapshot(), manager.loadSnapshotAt(0L))
+        try {
+          snapshots.foreach { snapshot =>
+            val v2 = snapshot.asInstanceOf[DeltaV2Snapshot]
+            assert(v2.kernelContext eq context)
+            assert(v2.allFiles.collect().map(_.path).toSet === expectedFiles)
+            assert(v2.getLatestTransactionVersion(appId).getAsLong === 0L)
+          }
+          val observations = SnapshotContextRecordingFileSystem.observations
+          assert(observations.exists(_._1 == "listStatus"), observations.toString)
+          assert(observations.exists(_._1 == "open"), observations.toString)
+          assert(observations.forall { case (_, sessionMarker, tableMarker) =>
+            sessionMarker == marker && tableMarker == "table-option"
+          }, observations.toString)
+        } finally {
+          snapshots.foreach(_.uncache())
+        }
+      }
+
+      try {
+        Seq(sessionA -> "A", sessionB -> "B", sessionA -> "A-again").foreach {
+          case (session, marker) =>
+            SparkSession.setActiveSession(session)
+            checkAccess(session, marker)
+            val child = new FutureTask[Unit](() => checkAccess(session, s"$marker-child"))
+            new Thread(child, "snapshot-context-session-test").start()
+            child.get()
+        }
+      } finally {
+        SparkSession.setActiveSession(originalSession)
+        SnapshotContextRecordingFileSystem.clear()
       }
     }
   }
@@ -385,4 +451,36 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
     assert(error.getMessage === "snapshot is null")
   }
 
+}
+
+private[interop] object SnapshotContextRecordingFileSystem {
+  val SessionMarkerKey = "fs.snapshot-context-test.session"
+  val TableMarkerKey = "fs.snapshot-context-test.table"
+  private val accesses = new CopyOnWriteArrayList[(String, String, String)]()
+
+  def clear(): Unit = accesses.clear()
+  def observations: Seq[(String, String, String)] = accesses.asScala.toVector
+  def record(operation: String, sessionMarker: String, tableMarker: String): Unit =
+    accesses.add((operation, sessionMarker, tableMarker))
+}
+
+private[interop] class SnapshotContextRecordingFileSystem extends RawLocalFileSystem {
+  private var sessionMarker: String = _
+  private var tableMarker: String = _
+
+  override def initialize(uri: URI, conf: Configuration): Unit = {
+    sessionMarker = conf.get(SnapshotContextRecordingFileSystem.SessionMarkerKey)
+    tableMarker = conf.get(SnapshotContextRecordingFileSystem.TableMarkerKey)
+    super.initialize(uri, conf)
+  }
+
+  override def open(path: Path, bufferSize: Int): FSDataInputStream = {
+    SnapshotContextRecordingFileSystem.record("open", sessionMarker, tableMarker)
+    super.open(path, bufferSize)
+  }
+
+  override def listStatus(path: Path): Array[FileStatus] = {
+    SnapshotContextRecordingFileSystem.record("listStatus", sessionMarker, tableMarker)
+    super.listStatus(path)
+  }
 }
