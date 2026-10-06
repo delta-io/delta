@@ -17,9 +17,10 @@
 package io.delta.spark.internal.v2.read
 
 import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.execution.{FileSourceScanLike, SparkPlan}
+import org.apache.spark.sql.catalyst.expressions.DynamicPruningExpression
+import org.apache.spark.sql.execution.{FileSourceScanLike, QueryExecution, SparkPlan}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
-import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
+import org.apache.spark.sql.execution.datasources.v2.{BatchScanExec, MicroBatchScanExec}
 
 private[read] trait DeltaV2BatchScanAssertions {
   self: AdaptiveSparkPlanHelper =>
@@ -86,5 +87,35 @@ private[read] trait DeltaV2BatchScanAssertions {
       scans.nonEmpty && scans.forall(scan => !scan.description().contains("PushedLimit")),
       s"expected no Delta V2 BatchScan for $context to have PushedLimit, " +
         s"got ${scans.map(_.description()).mkString("[", ", ", "]")}:\n$plan")
+  }
+
+  protected final def assertDeltaV2BatchScanHasDynamicPruning(
+      df: DataFrame,
+      context: String): Unit = {
+    assertDeltaV2BatchScan(df, context)
+    val plan = df.queryExecution.executedPlan
+    val hasDynamicPruning = collect(plan) {
+      case scan: BatchScanExec if scan.scan.isInstanceOf[DeltaV2Scan] => scan
+    }.exists(_.runtimeFilters.exists(_.exists(_.isInstanceOf[DynamicPruningExpression])))
+    assert(
+      hasDynamicPruning,
+      s"expected a dynamic pruning runtime filter on a Delta V2 BatchScan for $context:\n$plan")
+  }
+
+  protected final def assertDeltaV2MicroBatchScan(
+      execution: QueryExecution,
+      context: String): Unit = {
+    val plan = execution.executedPlan
+    val scans = collect(plan) {
+      case scan: MicroBatchScanExec if scan.scan.isInstanceOf[DeltaV2Scan] => scan.scan
+    }
+    assert(scans.nonEmpty, s"expected a Delta V2 micro-batch scan for $context, got:\n$plan")
+    assert(
+      collect(plan) { case _: FileSourceScanLike => true }.isEmpty,
+      s"expected $context to stay off file-source execution, got:\n$plan")
+    assert(
+      scans.forall(scan => !scan.description().contains("PushedLimit")),
+      s"expected no pushed limit on the micro-batch scan for $context, " +
+        s"got ${scans.map(_.description()).mkString("[", ", ", "]")}")
   }
 }
