@@ -340,19 +340,53 @@ class SnapshotBuilderSuite extends AnyFunSuite
 
   test(
     "withMaxCatalogVersion: timestamp time-travel with matching latestSnapshot version is valid") {
-    val mockSnapshotAtVersion10 =
-      getMockSnapshot(dataPath, latestVersion = 10L, timestamp = 1000L)
+    val mockSnapshotAtVersion10 = getMockSnapshot(
+      dataPath,
+      latestVersion = 10L,
+      timestamp = 1000L,
+      protocol = protocolWithCatalogManagedSupport)
 
     // Input validation should not throw (but will throw later when trying to construct log segment)
     val exMsg = intercept[Exception] {
       TableManager.loadSnapshot(dataPath.toString)
-        .atTimestamp(500L, mockSnapshotAtVersion10)
+        .atTimestamp(0L, mockSnapshotAtVersion10)
         .withMaxCatalogVersion(10)
         .build(emptyMockEngine)
     }.getMessage
 
     // Should fail on log segment loading, not on validation
     assert(!exMsg.contains("latestSnapshot provided for timestamp-based time-travel"))
+    assert(!exMsg.contains("maxCatalogVersion"))
+  }
+
+  test("atTimestamp: catalogManaged latestSnapshot requires maxCatalogVersion") {
+    val mockCatalogManagedSnapshot = getMockSnapshot(
+      dataPath,
+      latestVersion = 10L,
+      timestamp = 1000L,
+      protocol = protocolWithCatalogManagedSupport)
+
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager.loadSnapshot(dataPath.toString)
+        .atTimestamp(0L, mockCatalogManagedSnapshot)
+        .build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg === "Must provide maxCatalogVersion for catalogManaged tables")
+  }
+
+  test("atTimestamp: file-system managed latestSnapshot cannot have maxCatalogVersion") {
+    val mockSnapshotAtVersion10 =
+      getMockSnapshot(dataPath, latestVersion = 10L, timestamp = 1000L)
+
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager.loadSnapshot(dataPath.toString)
+        .atTimestamp(0L, mockSnapshotAtVersion10)
+        .withMaxCatalogVersion(10)
+        .build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg === "Should not provide maxCatalogVersion for file-system managed tables")
   }
 
   test("withMaxCatalogVersion: without version, logData must end with maxCatalogVersion") {
@@ -420,13 +454,4 @@ class SnapshotBuilderSuite extends AnyFunSuite
       .withMaxCatalogVersion(10)
       .build(emptyMockEngine)
   }
-
-  test("version time travel with maxCatalogVersion skips protocol-presence validation") {
-    TableManager.loadSnapshot(dataPath.toString)
-      .atVersion(1)
-      .withProtocolAndMetadata(protocol, metadata)
-      .withMaxCatalogVersion(1)
-      .build(emptyMockEngine)
-  }
-
 }

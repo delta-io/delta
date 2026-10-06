@@ -133,6 +133,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
     LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
     validateMaxCatalogVersionCompatibleWithTimeTravelParams();
+    validateMaxCatalogVersionPresenceForTimestampQuery();
     validateLogTailEndsWithMaxCatalogVersionOrVersionToLoad();
   }
 
@@ -196,6 +197,17 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
                       "The latestSnapshot provided for timestamp-based time-travel queries "
                           + "must have version = maxCatalogVersion"));
         });
+  }
+
+  /**
+   * Timestamp queries supply the latest snapshot, so maxCatalogVersion presence can be validated
+   * against its protocol before resolving the timestamp.
+   */
+  private void validateMaxCatalogVersionPresenceForTimestampQuery() {
+    ctx.timestampQueryContextOpt.ifPresent(
+        queryContext ->
+            SnapshotFactory.validateMaxCatalogVersionPresenceAgainst(
+                queryContext._1.getProtocol(), ctx.maxCatalogVersion));
   }
 
   /**

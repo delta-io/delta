@@ -44,7 +44,8 @@ trait MockSnapshotUtils {
       latestVersion: Long,
       ictEnablementInfoOpt: Option[(Long, Long)] = None,
       timestamp: Long = 0L,
-      deltaFileAtEndVersion: Option[FileStatus] = None): SnapshotImpl = {
+      deltaFileAtEndVersion: Option[FileStatus] = None,
+      protocol: Protocol = new Protocol(1, 2)): SnapshotImpl = {
     val configuration = ictEnablementInfoOpt match {
       case Some((version, _)) if version == 0L =>
         Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true")
@@ -88,7 +89,7 @@ trait MockSnapshotUtils {
       logSegment.getVersion, /* version */
       new Lazy(() => logSegment), /* logSegment */
       null, /* logReplay */
-      new Protocol(1, 2), /* protocol */
+      protocol,
       metadata,
       DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
       snapshotQueryContext, /* snapshotContext */
