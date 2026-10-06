@@ -94,7 +94,8 @@ defaultRowCommitVersion | Long | First commit version in which an `add` action w
 > replace the two collection bullets for `add` and `remove` actions with the following bullets.***
 
 - A collection of `add` actions with unique `path` keys, corresponding to the newest `(path,
-  deletionVector.uniqueId, columnFileSetId)` tuple encountered for each path.
+  deletionVector.uniqueId, columnFileSetId)` tuple encountered for each path. See [Column File Set
+  Identity](#column-file-set-identity) for definition of `columnFileSetId`.
 - A collection of `remove` actions with unique `(path, deletionVector.uniqueId, columnFileSetId)`
   keys. The intersection of the primary keys in the `add` collection and `remove` collection must
   be empty. That means a logical file cannot exist in both the `remove` and `add` collections at
@@ -257,11 +258,18 @@ actions.
 
 ### `fileCommitVersion` and `defaultRowCommitVersion` handling
 
-Any write that includes a new `add` action (not a replacement `add`), must populate
-`fileCommitVersion` and `defaultRowCommitVersion` with the version that introduces this `add`
-action.
+Column files introduce writers being able to add new data for an `add` action without changing the
+base file's `path`. `defaultRowCommitVersion` is thus modified in a way where it still represents
+the commit version that last introduced new data. `fileCommitVersion` keeps track of which version
+originally introduced the base file. See [Row Tracking](#row-tracking).
 
-`remove` and replacement `add` actions must keep `fileCommitVersion` unchanged.
+New writes must handle these two fields as follows:
+
+Situation | `defaultRowCommitVersion` | `fileCommitVersion`
+-|-|-
+The first `add` with its `path` (i.e. not a replacement). | The current version. | The current version.
+A replacement `add` (replacing a previous `add` with the same `path`), while changing either the DV or `columnFiles`. | The current version. | Copied from the previous `add`.
+A metadata-only rewrite (i.e. `add` that doesn't change any of: `path`, DV, `columnFiles`) | Copied from the previous `add`. | Coped from the previous `add`.
 
 Even though `fileCommitVersion` is optional in the schema, when `columnFiles` are non-empty, this
 field is required. If a stale `add` does not contain a valid `fileCommitVersion`, it must be filled
@@ -269,20 +277,15 @@ using `defaultRowCommitVersion`.
 
 ## Statistics
 
-`add.stats` continues to contain correct stats.
+`add.stats` must describe the current logical contents of the file, including values supplied by
+column files.
 
-Readers continue to use `add.stats` to do file skipping. There is no notion of column file skipping
-at this point.
+Readers continue to use `add.stats` for file-level data skipping. Column files do not have
+independent skipping statistics, and readers do not perform skipping at column-file granularity.
 
-Writers recompute `add.stats` when doing new writes, including column files. Using base file
-values to calculate stats for columns that are shadowed by a column file is invalid.
-
-## `defaultRowCommitVersion` vs `fileCommitVersion`
-
-Column files introduce writers being able to add new data for an `add` action without changing the
-base file's `path`. `defaultRowCommitVersion` is thus modified in a way where it still represents
-the commit version that last introduced new data. `fileCommitVersion` keeps track of which version
-originally introduced the base file. See [Row Tracking](#row-tracking).
+When writing or replacing column files, writers must recompute `add.stats` using the current logical
+values. For a column supplied by a column file, statistics must be computed from the column-file
+values rather than the shadowed values in the base file.
 
 ## Column File Cleanup
 
