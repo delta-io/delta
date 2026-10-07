@@ -46,8 +46,8 @@ This design enables:
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the leaf-manifest entry this add supersedes in place, without a paired `remove` (e.g., a stats backfill). Null otherwise, including a DV update, where the backreference is on the paired `remove`. Contains `manifest` (String) and `pos` (Int). See [Backreferences](#backreferences).</ins> |
-| <ins>snapshotId</ins> | <ins>Long</ins> | <ins>Snapshot ID that started the current data-file lifecycle. If the file was live immediately before the commit and remains live, its existing value must be preserved; otherwise this is the current transaction's snapshot ID. See [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance).</ins> |
-| <ins>modifiedSnapshotId</ins> | <ins>Long</ins> | <ins>Snapshot ID in which the file's modification metadata last changed. The existing value must be preserved while the deletion vector and column files are unchanged, and set to the current transaction's snapshot ID when either is updated. See [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance).</ins> |
+| <ins>snapshotId</ins> | <ins>Long</ins> | <ins>Identifies the transaction that started the represented data-file lifecycle. See [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance).</ins> |
+| <ins>modifiedSnapshotId</ins> | <ins>Long</ins> | <ins>Identifies the most recent transaction that changed the file's deletion vector or column files. See [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance).</ins> |
 
 ### Remove File
 
@@ -61,8 +61,8 @@ This design enables:
 | <ins>extendedFileMetadata</ins> | <ins>Boolean</ins> | <ins>Must be true. `partitionValues` and `size` are always present on the `remove`.</ins> |
 | <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the file's entry in a leaf manifest. Null when the file has no leaf-manifest entry — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Int). See [Backreferences](#backreferences).</ins> |
 | <ins>stats</ins> | <ins>String</ins> | <ins>Must be present. Statistics of the removed file, with `numRecords` required at minimum; column statistics are included when recorded for the file. Copied from the matching `add.stats`, or converted from the file's tree entry (`record_count`, `content_stats`).</ins> |
-| <ins>snapshotId</ins> | <ins>Long</ins> | <ins>The current transaction's snapshot ID, identifying the snapshot in which the data-file entry was deleted or replaced. See [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance).</ins> |
-| <ins>modifiedSnapshotId</ins> | <ins>Long</ins> | <ins>The removed file's `modifiedSnapshotId`, or null if no modification has been recorded for the file. See [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance).</ins> |
+| <ins>snapshotId</ins> | <ins>Long</ins> | <ins>Identifies the transaction that writes the `remove`. See [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance).</ins> |
+| <ins>modifiedSnapshotId</ins> | <ins>Long</ins> | <ins>Copied verbatim from the `add` that the `remove` replaces. See [Snapshot ID Generation and Provenance](#snapshot-id-generation-and-provenance).</ins> |
 
 <ins>`remove` actions are transient. During log replay a `remove` cancels the matching `add` (or, via its `backReference`, marks the corresponding tree entry deleted) and is then discarded. Removes are **not** retained as tombstones in checkpoints or in the reconstructed table state. There is no timestamp-based tombstone expiration; physical file cleanup is driven by tree reachability (see [Metadata Cleanup](#metadata-cleanup)).</ins>
 
@@ -473,12 +473,10 @@ When `adaptiveMetadata` is enabled, each transaction must generate one non-negat
 
 File actions record snapshot provenance as follows:
 
-- `add.snapshotId` is the current transaction's snapshot ID when the action starts a new data-file lifecycle; otherwise it preserves the live file's value.
-- `add.modifiedSnapshotId` is the current transaction's snapshot ID when the deletion vector or column files change; otherwise it preserves the live file's value. It may be null if no modification has been recorded.
-- `remove.snapshotId` is the current transaction's snapshot ID.
+- `add.snapshotId` identifies the transaction that started the represented data-file lifecycle. An `add` that preserves the lifecycle must preserve this value.
+- `add.modifiedSnapshotId` identifies the most recent transaction that changed the file's deletion vector or column files. It must be preserved when neither changes, and may be null if no such modification has occurred.
+- `remove.snapshotId` identifies the transaction that writes the `remove`.
 - `remove.modifiedSnapshotId` is copied verbatim from the `add` that the `remove` replaces.
-
-When converting an `add` to a live DATA entry, writers map `add.snapshotId` to `tracking.snapshot_id` and `add.modifiedSnapshotId` to `tracking.modified_snapshot_id`. For a terminal DATA entry with status `DELETED` or `REPLACED`, writers map the corresponding fields from the `remove`. Conversely, readers reconstructing an `add` from a live DATA entry must copy the resolved `tracking.snapshot_id` and `tracking.modified_snapshot_id` values to the top-level action fields.
 
 ## Row Tracking Compatibility
 
