@@ -2370,6 +2370,45 @@ trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
     report.size("scanned").bytesCompressed === report.size("total").bytesCompressed
   }
 
+  test("data skipping recovers pruning for implicit-cast comparisons on string columns " +
+      "(delta-io/delta#7136)") {
+    withTable("t") {
+      sql("create table t (a STRING) using delta")
+      sql("insert into t values ('10')")
+      sql("insert into t values ('255')")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val snapshot = deltaLog.update()
+      assert(snapshot.numOfFiles == 2)
+
+      // Spark's implicit type coercion analyzes the unquoted numeric literal comparison as
+      // `CAST(a AS DOUBLE) = 999.0`, wrapping the column reference in a Cast. The primary data
+      // skipping path can't match stats through a Cast, so by default neither file is pruned
+      // even though neither file's value ("10" nor "255") can equal 999.
+      val predicates = parse(deltaLog, "a = 999")
+      val defaultScan = snapshot.filesForScan(predicates)
+      assert(defaultScan.unusedFilters.nonEmpty,
+        "Expected the implicit-cast filter to be ineligible for the primary data skipping path")
+      assert(defaultScan.files.size == 2, "Expected a full scan with the default configuration")
+
+      // Enabling (internal) partition-like data skipping, and relaxing it to run on
+      // non-clustered tables and non-clustering columns, recovers pruning for this filter: each
+      // file here has a single distinct value for `a`, so min == max and the rewritten
+      // `CAST(minValues.a AS DOUBLE) = 999.0` check is a sound skipping predicate.
+      withSQLConf(
+          DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD.key -> "0",
+          DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY.key ->
+            "false",
+          DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_REQUIRE_CLUSTERING.key ->
+            "false") {
+        assert(snapshot.filesForScan(predicates).files.isEmpty,
+          "Expected partition-like skipping to prune both files for a = 999")
+        assert(snapshot.filesForScan(parse(deltaLog, "a = 10")).files.size == 1)
+        assert(snapshot.filesForScan(parse(deltaLog, "a = 255")).files.size == 1)
+      }
+    }
+  }
+
 }
 
 /** Tests code paths within DataSkippingReader.scala */
