@@ -33,6 +33,7 @@ import org.apache.flink.table.catalog.GenericInMemoryCatalog;
 import org.apache.flink.table.catalog.ObjectPath;
 import org.apache.flink.table.types.AtomicDataType;
 import org.apache.flink.table.types.KeyValueDataType;
+import org.apache.flink.table.types.logical.ArrayType;
 import org.apache.flink.table.types.logical.MapType;
 import org.apache.flink.table.types.logical.NullType;
 import org.apache.flink.table.types.logical.SmallIntType;
@@ -130,6 +131,50 @@ class FlinkUnityCatalogTableTest {
         new SmallIntType(false),
         FlinkUnityCatalogTable.fromJson("{\"type\":\"short\",\"nullable\":false}")
             .getLogicalType());
+  }
+
+  @Test
+  void testArrayNullability() {
+    ArrayType nonNullableArray =
+        (ArrayType)
+            FlinkUnityCatalogTable.fromJson(
+                    "{\"type\":{\"type\":\"array\",\"elementType\":\"string\","
+                        + "\"containsNull\":true},\"nullable\":false}")
+                .getLogicalType();
+    assertFalse(nonNullableArray.isNullable());
+    assertTrue(nonNullableArray.getElementType().isNullable());
+
+    ArrayType nullableArray =
+        (ArrayType)
+            FlinkUnityCatalogTable.fromJson(
+                    "{\"type\":{\"type\":\"array\",\"elementType\":\"string\","
+                        + "\"containsNull\":false},\"nullable\":true}")
+                .getLogicalType();
+    assertTrue(nullableArray.isNullable());
+    assertFalse(nullableArray.getElementType().isNullable());
+  }
+
+  @Test
+  void testMapNullability() {
+    MapType nonNullableMap =
+        (MapType)
+            FlinkUnityCatalogTable.fromJson(
+                    "{\"type\":{\"type\":\"map\",\"keyType\":\"string\","
+                        + "\"valueType\":\"integer\",\"valueContainsNull\":true},"
+                        + "\"nullable\":false}")
+                .getLogicalType();
+    assertFalse(nonNullableMap.isNullable());
+    assertTrue(nonNullableMap.getValueType().isNullable());
+
+    MapType nullableMap =
+        (MapType)
+            FlinkUnityCatalogTable.fromJson(
+                    "{\"type\":{\"type\":\"map\",\"keyType\":\"string\","
+                        + "\"valueType\":\"integer\",\"valueContainsNull\":false},"
+                        + "\"nullable\":true}")
+                .getLogicalType();
+    assertTrue(nullableMap.isNullable());
+    assertFalse(nullableMap.getValueType().isNullable());
   }
 
   @Test
