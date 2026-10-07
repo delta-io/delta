@@ -157,6 +157,7 @@ private[v2] class DeltaV2OptimisticTransaction(
    */
   override protected def commitTableId: String = snapshot.metadata.id
 
+
   /**
    * Kernel validated the table's protocol when it loaded the snapshot; protocol-CHANGING commits
    * are an unsupported operation and must fail loudly.
@@ -272,7 +273,7 @@ private[v2] class DeltaV2OptimisticTransaction(
       attemptVersion: Long,
       jsonActions: Iterator[String],
       currentTransactionInfo: CurrentTransactionInfo)
-      : (Option[VersionChecksum], Commit, CurrentTransactionInfo) = {
+      : (Option[VersionChecksum], Commit, Option[CatalogTable]) = {
     val actions = currentTransactionInfo.finalActionsToCommit
     val addFiles = new ArrayBuffer[AddFile]()
     var rowTrackingHighWaterMark: Option[Long] = None
@@ -314,7 +315,7 @@ private[v2] class DeltaV2OptimisticTransaction(
       val fs = deltaFile.getFileSystem(newDeltaHadoopConf())
       val fileStatus = fs.getFileStatus(deltaFile)
       (None, new Commit(committedVersion, fileStatus, fileStatus.getModificationTime),
-        currentTransactionInfo)
+        currentTransactionInfo.catalogTable)
     } finally {
     }
   }

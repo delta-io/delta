@@ -2874,7 +2874,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
                   isolationLevel,
                   fsWriteStartNanoOpt = None,
                   prepMetrics = rebaseResult.prepMetrics,
-                  newChecksumOpt = None,
+                  newChecksumOpt =
+                    incrementallyDeriveChecksum(attemptVersion, currentTransactionInfo),
                   amtWriteResultOpt = rebaseResult.amtWriteResultForLastCheckpointOpt,
                   commitOpt = None,
                   isIdempotentRetry = true
@@ -3169,8 +3170,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val fsWriteStartNano = System.nanoTime()
     val jsonActions = actions.map(_.json)
 
-    val (newChecksumOpt, commit, committedTransactionInfo) =
-      writeCommitFile(attemptVersion, jsonActions.toIterator, txnInfoForCommit)
+    val (newChecksumOpt, commit, committedCatalogTable) =
+      writeCommitFile(
+        attemptVersion,
+        jsonActions.toIterator,
+        txnInfoForCommit)
+    val committedTransactionInfo =
+      txnInfoForCommit.copy(catalogTable = committedCatalogTable)
 
     performPostCommitActions(
       attemptVersion,
@@ -3366,8 +3372,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected def writeCommitFile(
       attemptVersion: Long,
       jsonActions: Iterator[String],
-      currentTransactionInfo: CurrentTransactionInfo)
-      : (Option[VersionChecksum], Commit, CurrentTransactionInfo) = {
+      currentTransactionInfo: CurrentTransactionInfo
+      ): (Option[VersionChecksum], Commit, Option[CatalogTable]) = {
     val commitCoordinatorClient = readSnapshotTableCommitCoordinatorClientOpt.getOrElse {
       TableCommitCoordinatorClient(
         new FileSystemBasedCommitCoordinatorClient(deltaLog),
@@ -3375,15 +3381,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
         snapshot.metadata.coordinatedCommitsTableConf
       )
     }
-    val (commitFile, committedTransactionInfo) = writeCommitFileImpl(
+    val (commitFile, committedCatalogTable) = writeCommitFileImpl(
       attemptVersion, jsonActions, commitCoordinatorClient, currentTransactionInfo)
-    // Derive the checksum from currentTransactionInfo, not committedTransactionInfo.
-    // The checksum uses Delta log inputs.
-    // Those inputs are actions, metadata, protocol, operation name, and txn id.
-    // committedTransactionInfo may carry a refreshed CatalogTable for UC commit metadata.
-    // CatalogTable is not a checksum input.
     val newChecksumOpt = incrementallyDeriveChecksum(attemptVersion, currentTransactionInfo)
-    (newChecksumOpt, commitFile, committedTransactionInfo)
+    (newChecksumOpt, commitFile, committedCatalogTable)
   }
 
   protected def writeCommitFileImpl(
@@ -3391,10 +3392,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
     jsonActions: Iterator[String],
     tableCommitCoordinatorClient: TableCommitCoordinatorClient,
     currentTransactionInfo: CurrentTransactionInfo
-  ): (Commit, CurrentTransactionInfo) = {
+  ): (Commit, Option[CatalogTable]) = {
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
-    val (commitResponse, committedTransactionInfo) =
+    val (commitResponse, committedCatalogTable) =
       TransactionExecutionObserver.withObserver(executionObserver) {
       (
         tableCommitCoordinatorClient.commit(
@@ -3406,7 +3407,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
             currentTransactionInfo.convertedIcebergMetadata.toJava,
             currentTransactionInfo.domainMetadata.map(dm => dm: AbstractDomainMetadata).asJava)
         ),
-        currentTransactionInfo
+        currentTransactionInfo.catalogTable
       )
     }
     if (attemptVersion == 0L) {
@@ -3417,7 +3418,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           s"$expectedPathForCommitZero but was written to $actualCommitPath")
       }
     }
-    (commitResponse.getCommit, committedTransactionInfo)
+    (commitResponse.getCommit, committedCatalogTable)
   }
 
 
