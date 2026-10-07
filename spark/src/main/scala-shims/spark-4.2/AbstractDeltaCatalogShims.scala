@@ -29,9 +29,11 @@ import org.apache.spark.sql.catalyst.catalog.{
   CatalogTableType,
   CatalogUtils
 }
-import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableInfo, V1Table}
+import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableInfo, TransactionalCatalogPlugin, V1Table}
 import org.apache.spark.sql.delta.{
   CatalogOwnedTableFeature,
+  DeltaErrors,
+  DeltaV2Mode,
   MaterializedRowCommitVersion,
   MaterializedRowId
 }
@@ -42,10 +44,11 @@ import org.apache.spark.sql.delta.coordinatedcommits.{
   CatalogOwnedTableUtils,
   CoordinatedCommitsUtils
 }
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 
 /**
- * Spark 4.2 routes CREATE TABLE LIKE through TableCatalog#createTableLike.
+ * Spark 4.2 routes CREATE TABLE LIKE through TableCatalog#createTableLike, and introduces the
+ * DSv2 Transaction API, whose configuration this catalog validates on initialization.
  */
 trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
 
@@ -198,6 +201,36 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
       case ("path", _) => false
       case ("option.path", _) => false
       case _ => true
+    }
+  }
+
+  /**
+   * Delta opts into v2 transactions by registering a transactional session catalog (a catalog
+   * that implements the `TransactionalCatalogPlugin`). `V2_TRANSACTIONS_ENABLED` is an internal
+   * config that gates v2 transactional functionality. The config and the registered catalog must
+   * agree.
+   *
+   * The flag is a declared intent that must match that reality in BOTH directions:
+   *  - flag enabled but the catalog is not transactional -> transactions silently never begin.
+   *  - flag disabled but the catalog is transactional -> transactions begin despite the flag.
+   *
+   * Either mismatch fails fast here with an actionable error.
+   */
+  protected def checkTransactionalCatalogConsistency(): Unit = {
+    val txnEnabled = spark.sessionState.conf.getConf(DeltaSQLConf.V2_TRANSACTIONS_ENABLED)
+    val isCatalogTransactional = this.isInstanceOf[TransactionalCatalogPlugin]
+    // The transactional config and the catalog's transactionality must
+    // agree: both true, or both false.
+    if (txnEnabled != isCatalogTransactional) {
+      throw DeltaErrors.deltaV2TransactionCatalogMismatch()
+    }
+    // A transactional session catalog only makes sense when the v2 connector is actually in use.
+    // Delta has no begin-site gate, so registering a transactional catalog begins a
+    // transaction for every write. If the mode does not serve v2 tables (not STRICT), those writes
+    // still route to the v1 path. Layering a v2 transaction over a v1 write is invalid.
+    val v2Enabled = new DeltaV2Mode(spark.sessionState.conf).shouldCatalogReturnV2Tables()
+    if (txnEnabled && !v2Enabled) {
+      throw DeltaErrors.deltaV2TransactionsRequireV2Connector()
     }
   }
 }
