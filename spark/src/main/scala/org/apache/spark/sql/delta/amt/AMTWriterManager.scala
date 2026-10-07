@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaTestBarrier
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
@@ -648,8 +649,7 @@ class AMTWriterManager(
             (new BaseSnapshotActionsProvider(readSnapshot), readSnapshot.version)
         }
       // The commits written after the old AMT, up to the last committed version.
-      val intermediateLogCommits = preCommitLogSegment.deltas
-        .filter(f => FileNames.getFileVersion(f) > oldAMTVersion)
+      val intermediateLogCommits = selectIntermediateLogCommits(preCommitLogSegment, oldAMTVersion)
       new IncrementalAMTWriter(spark, deltaLog).writeIncremental(
         oldAMTActionsProvider = baseActionsProvider,
         intermediateLogCommits = intermediateLogCommits,
@@ -668,6 +668,32 @@ class AMTWriterManager(
         postCommitMetadata = currentTransactionInfo.metadata,
         trigger = trigger)
     }
+  }
+
+  /**
+   * Selects the intermediate log commits after the old AMT version from the pre-commit log segment.
+   * Preserves compacted deltas when possible, falling back to individual commits when the AMT sits
+   * in the middle of a compacted delta range.
+   */
+  private[amt] def selectIntermediateLogCommits(
+      preCommitLogSegment: LogSegment,
+      oldAMTVersion: Long): Seq[FileStatus] = {
+    val nonCompactedDeltas = preCommitLogSegment.nonCompactedDeltasOpt.getOrElse {
+      AMTUtils.logAndThrowMissingNonCompactedDeltasInLogSegment(
+        deltaLog = deltaLog,
+        logSegment = preCommitLogSegment,
+        eventData = Map("oldAMTVersion" -> oldAMTVersion))
+      throw new IllegalStateException("should not reach here")
+    }
+    val deltasAndCompactedDeltas =
+      (preCommitLogSegment.deltas ++ nonCompactedDeltas).distinct.sortBy(_.getPath.getName)
+    val deltasAfterOldAMT =
+      nonCompactedDeltas.filter(FileNames.getFileVersion(_) > oldAMTVersion).toArray
+    deltaLog.useCompactedDeltasForLogSegment(
+      deltasAndCompactedDeltas = deltasAndCompactedDeltas,
+      deltasAfterCheckpoint = deltasAfterOldAMT,
+      latestCommitVersion = preCommitLogSegment.version,
+      checkpointVersionToUse = oldAMTVersion).toSeq
   }
 
   private def largeCommitActionsCountThresholdForInlineManifestCommit: Long =
