@@ -50,6 +50,10 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "17"
+      - name: Check all shim directories are referenced in the build
+        # Fails fast if a `*-shims/spark-*` directory exists on disk but is not wired into any
+        # SparkVersionSpec.additionalSourceDirs, i.e. its files would never be compiled.
+        run: build/sbt checkShimDirsReferenced
       - name: Generate Spark versions matrix
         id: generate
         run: |
