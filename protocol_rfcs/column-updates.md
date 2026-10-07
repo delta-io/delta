@@ -486,13 +486,13 @@ contain a backreference.
 column updates must keep these unchanged. This field corresponds to `fileCommitVersion` in a Delta
 file action.
 
-`latest_column_file_snapshot_id`s contain information about the snapshot that introduced the latest
-column file, column updates should rewrite them to new values.
+`modified_snapshot_id`s contain information about the snapshot that introduced the latest column
+file, column updates should rewrite them to new values.
 
 For example, a base file added in version 10 and updated through a column file in version 20 has
 `file_sequence_number = 10` and `sequence_number = 20`. DV-only updates and metadata-only rewrites
-must preserve all three tracking fields (`sequence_number`, `file_sequence_number`,
-`latest_column_file_snapshot_id`).
+must preserve `sequence_number` and `file_sequence_number`, while updating `modified_snapshot_id`
+in the same way that they previously updated `dv_snapshot_id`.
 
 This diverges from the AMT RFC saying that
 `file_sequence_number` and `sequence_number` always resolve to the same value, parallel to
@@ -537,11 +537,12 @@ Field ID | Field Name | Delta Type | Required | Description
 
 ##### Tracking
 
-AMT's [Tracking](./iceberg-v4-metadata.md#tracking) struct gains the following field:
+AMT's [Tracking](./iceberg-v4-metadata.md#tracking) struct replaces the `dv_snapshot_id` (field id
+5) with the following field:
 
 Field ID | Field Name | Delta Type | Required | Description
 -|-|-|-|-
-160 | `latest_column_file_snapshot_id` | Long | Optional | Snapshot ID where the latest column file was added. Inherited when null. Must be null when `column_files` is null.
+5 | `modified_snapshot_id` | Long | Optional | Snapshot ID where the data was last modified using DVs or column files. Null when no DV and no `column_files`.
 
 #### Metadata Cleanup
 
