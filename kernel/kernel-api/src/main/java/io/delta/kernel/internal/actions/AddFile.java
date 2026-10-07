@@ -119,6 +119,35 @@ public class AddFile extends RowBackedAction {
     checkArgument(path != null, "path is not nullable");
     checkArgument(partitionValues != null, "partitionValues is not nullable");
 
+    return createAddFileRowWithStatsJson(
+        path,
+        partitionValues,
+        size,
+        modificationTime,
+        dataChange,
+        deletionVector,
+        tags,
+        baseRowId,
+        defaultRowCommitVersion,
+        stats.map(stat -> stat.serializeAsJson(physicalSchema)));
+  }
+
+  /** Utility to generate an 'AddFile' row from fields with pre-serialized stats JSON. */
+  public static Row createAddFileRowWithStatsJson(
+      String path,
+      MapValue partitionValues,
+      long size,
+      long modificationTime,
+      boolean dataChange,
+      Optional<DeletionVectorDescriptor> deletionVector,
+      Optional<MapValue> tags,
+      Optional<Long> baseRowId,
+      Optional<Long> defaultRowCommitVersion,
+      Optional<String> statsJson) {
+
+    checkArgument(path != null, "path is not nullable");
+    checkArgument(partitionValues != null, "partitionValues is not nullable");
+
     Map<Integer, Object> fieldMap = new HashMap<>();
     fieldMap.put(FULL_SCHEMA.indexOf("path"), path);
     fieldMap.put(FULL_SCHEMA.indexOf("partitionValues"), partitionValues);
@@ -129,8 +158,7 @@ public class AddFile extends RowBackedAction {
     baseRowId.ifPresent(id -> fieldMap.put(FULL_SCHEMA.indexOf("baseRowId"), id));
     defaultRowCommitVersion.ifPresent(
         version -> fieldMap.put(FULL_SCHEMA.indexOf("defaultRowCommitVersion"), version));
-    stats.ifPresent(
-        stat -> fieldMap.put(FULL_SCHEMA.indexOf("stats"), stat.serializeAsJson(physicalSchema)));
+    statsJson.ifPresent(json -> fieldMap.put(FULL_SCHEMA.indexOf("stats"), json));
     deletionVector.ifPresent(
         dv -> {
           Row dvRow = dv.toRow();

@@ -213,29 +213,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def initialSnapshotTooLargeForStreaming(
-      snapshotVersion: Long,
-      numFiles: Long,
-      maxFiles: Int,
-      tablePath: String): Throwable = {
-    new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE",
-      messageParameters = Array(
-        tablePath,
-        snapshotVersion.toString,
-        numFiles.toString,
-        maxFiles.toString,
-        s"""To fix this issue, choose one of:
-           |
-           |  1. Increase spark.databricks.delta.streaming.initialSnapshotMaxFiles
-           |     (current: $maxFiles)
-           |
-           |  2. Use 'startingVersion' option to skip the initial snapshot and start
-           |     from a specific version""".stripMargin
-      )
-    )
-  }
-
   def deltaSourceIgnoreChangesError(
       version: Long,
       changeInfo: String,
@@ -2313,6 +2290,18 @@ trait DeltaErrorsBase
         "io.delta.sql.DeltaSparkSessionExtension",
         catalogImplConfig, "org.apache.spark.sql.delta.catalog.DeltaCatalog"),
       cause = originalException)
+  }
+
+  def deltaV2TransactionCatalogMismatch(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTAV2_TRANSACTIONS_INCONSISTENT_CONFIG.CATALOG_MISMATCH",
+      messageParameters = Array.empty)
+  }
+
+  def deltaV2TransactionsRequireV2Connector(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTAV2_TRANSACTIONS_INCONSISTENT_CONFIG.REQUIRES_V2_CONNECTOR",
+      messageParameters = Array.empty)
   }
 
   def duplicateColumnsOnUpdateTable(originalException: Throwable): Throwable = {

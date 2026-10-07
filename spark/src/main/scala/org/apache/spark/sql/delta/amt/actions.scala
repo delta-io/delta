@@ -939,7 +939,7 @@ object InheritableTracking {
 /**
  * Pointer to a deletion-vector blob, mirroring the Iceberg V4 `deletion_vector` struct.
  *
- * @param location Absolute path of the file holding the DV blob.
+ * @param location Path of the file holding the DV blob. Relative to table root if possible.
  * @param offset Byte offset where the DV content starts within that file.
  * @param size_in_bytes Total on-disk DV size = raw bitmap + length + checksum framing.
  * @param cardinality Number of positions the DV marks deleted.
@@ -958,8 +958,16 @@ object DeletionVector {
     val offset = dv.offset.getOrElse(
       throw new IllegalArgumentException(
         s"On-disk deletion vector is missing an offset: ${dv.pathOrInlineDv}."))
+    val location = dv.normalizedTableRelativeObjectFile(tableRoot) match {
+      case (DeletionVectorDescriptor.RELATIVE_DV_MARKER, relativePath) => relativePath
+      // A p-DV still has to be URL decoded.
+      case (DeletionVectorDescriptor.PATH_DV_MARKER, _) => dv.absolutePath(tableRoot).toString
+      case (other, _) =>
+        throw new IllegalArgumentException(
+          s"Unsupported on-disk deletion vector storage type: $other.")
+    }
     DeletionVector(
-      location = dv.absolutePath(tableRoot).toString,
+      location = location,
       offset = offset.toLong,
       size_in_bytes = DeletionVectorStore.getTotalSizeOfDVFieldsInFile(dv.sizeInBytes).toLong,
       cardinality = dv.cardinality)
@@ -971,19 +979,20 @@ object DeletionVector {
   def toDescriptor(dv: DeletionVector, tableRoot: Path): DeletionVectorDescriptor = {
     val rawSize = dv.size_in_bytes.toInt -
       DeletionVectorStore.getTotalSizeOfDVFieldsInFile(0)
-    // AMT stored paths are unencoded.
-    val absolutePath = DeletionVectorStore.unescapedStringToPath(dv.location)
-    require(absolutePath.isAbsolute)
-    val relativePath = AMTUtils.relativizeLocation(tableRoot.toString, absolutePath.toString)
-    if (AMTUtils.isAbsoluteLocation(relativePath)) {
+    if (AMTUtils.isAbsoluteLocation(dv.location)) {
+      // AMT stored paths are unencoded. In case it has to be read as a p-DV,
+      // it must be URL encoded.
+      val storedPath = DeletionVectorStore.unescapedStringToPath(dv.location)
+      require(storedPath.isAbsolute)
       DeletionVectorDescriptor.onDiskWithAbsolutePath(
-        path = DeletionVectorStore.pathToEscapedString(absolutePath),
+        path = DeletionVectorStore.pathToEscapedString(storedPath),
         sizeInBytes = rawSize,
         cardinality = dv.cardinality,
         offset = Some(dv.offset.toInt))
     } else {
+      // No encoding if read as an r-DV.
       DeletionVectorDescriptor.createRelativePathDVDescriptor(
-        relativePath = relativePath,
+        relativePath = dv.location,
         sizeInBytes = rawSize,
         cardinality = dv.cardinality,
         offset = Some(dv.offset.toInt))
@@ -1010,7 +1019,7 @@ object DeletionVector {
  * @param deleted_rows_count Rows across DELETED files.
  * @param replaced_rows_count Rows across REPLACED files.
  * @param modified_rows_count Rows across MODIFIED files.
- * @param min_sequence_number Minimum data sequence number across the manifest's entries.
+ * @param min_sequence_number Minimum data sequence number across the manifest's live entries.
  * @param dv Inline manifest deletion-vector bitmap over leaf row positions.
  * @param dv_cardinality Number of positions the inline manifest DV marks.
  */

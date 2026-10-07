@@ -30,6 +30,7 @@ import scala.util.matching.Regex
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -521,7 +522,8 @@ trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
       minSetTransactionRetentionTimestamp = None,
       tableRoot = deltaLog.dataPath,
       useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
-        snapshotForReplay.metadata, snapshotForReplay.protocol, spark))
+        snapshotForReplay.metadata, snapshotForReplay.protocol, spark),
+      retainFirstBackreference = AMTUtils.amtEnabled(snapshotForReplay))
     val hadoopConf = deltaLog.newDeltaHadoopConf()
     val catalogTable = tableName
       .map(name => spark.sessionState.catalog.getTableMetadata(new TableIdentifier(name)))

@@ -1,4 +1,24 @@
 {
+  "DELTAV2_TRANSACTIONS_INCONSISTENT_CONFIG" : {
+    "message" : [
+      "The v2 transactions configuration is inconsistent with the registered Delta session catalog."
+    ],
+    "subClass" : {
+      "CATALOG_MISMATCH" : {
+        "message" : [
+          "v2 transactions require the enablement config and the registered session catalog to agree.",
+          "To enable them, register a transactional catalog (e.g. 'org.apache.spark.sql.delta.catalog.v2.DeltaV2TransactionalCatalog').",
+          "To disable them, register a non-transactional catalog (e.g. 'org.apache.spark.sql.delta.catalog.DeltaCatalog')."
+        ]
+      },
+      "REQUIRES_V2_CONNECTOR" : {
+        "message" : [
+          "v2 transactions can only be enabled when the v2 Delta connector is fully enabled."
+        ]
+      }
+    },
+    "sqlState" : "56038"
+  },
   "DELTA_ACTIVE_SPARK_SESSION_NOT_FOUND" : {
     "message" : [
       "Could not find active SparkSession"
@@ -3011,13 +3031,6 @@
       "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>."
     ],
     "sqlState" : "42KD4"
-  },
-  "DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE" : {
-    "message" : [
-      "Initial snapshot for Delta streaming at table '<tablePath>' (version <snapshotVersion>) contains <numFiles> files, which exceeds the maximum allowed <maxFiles> files.",
-      "<suggestions>"
-    ],
-    "sqlState" : "54000"
   },
   "DELTA_STREAMING_METADATA_EVOLUTION" : {
     "message" : [

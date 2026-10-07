@@ -28,7 +28,8 @@ import scala.concurrent.duration._
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, InMemoryCommitCoordinator, InMemoryCommitCoordinatorBuilder, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -37,6 +38,7 @@ import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException, CommitResponse, TableDescriptor, UpdatedActions}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.mockito.Mockito.{mockingDetails, spy}
 
 import org.apache.spark.sql.{Row, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -307,6 +309,86 @@ class OptimisticTransactionSuite
     expectedErrorMessageParameters = None,
     exceptionClass = None,
     additionalSQLConfs = Seq.empty)
+
+  private def withRowTrackingTable(f: Path => Unit): Unit = withTempDir { dir =>
+    val dataPath = new Path(dir.getCanonicalPath)
+    withSQLConf("spark.databricks.delta.properties.defaults.enableRowTracking" -> "true") {
+      spark.range(0, 5).toDF("id").coalesce(1)
+        .write.format("delta").save(dataPath.toString)
+    }
+    f(dataPath)
+  }
+
+  private def rowTrackingAddFile(path: String, numRecords: Long): AddFile =
+    AddFile(
+      path = path,
+      partitionValues = Map.empty,
+      size = 1L,
+      modificationTime = 1L,
+      dataChange = true,
+      stats = s"""{"numRecords":$numRecords}""")
+
+  private def assertRowTrackingCommitActions(
+      txn: OptimisticTransaction,
+      expectedHighWaterMarks: Seq[Long]): Unit = {
+    val commitActions = mockingDetails(txn).getInvocations.asScala
+      .filter(_.getMethod.getName == "doCommit")
+      .map(_.getArgument[Seq[Action]](2)).toSeq
+    assert(commitActions.size === expectedHighWaterMarks.size)
+    commitActions.zip(expectedHighWaterMarks).foreach { case (actions, highWaterMark) =>
+      val rowTrackingActions = actions.collect {
+        case domain: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(domain) => domain
+      }
+      assert(rowTrackingActions === Seq(RowTrackingMetadataDomain(highWaterMark).toDomainMetadata))
+    }
+  }
+
+  test("row tracking high water mark advances with committed files") {
+    withRowTrackingTable { dataPath =>
+      val txn = spy(startTestTransaction(dataPath))
+      val initialHighWaterMark = txn.snapshot.getRowTrackingHighWaterMark().get
+      txn.commit(Seq(rowTrackingAddFile("row-tracking-file", numRecords = 3L)), ManualUpdate)
+      val expectedHighWaterMark = initialHighWaterMark + 3L
+      assertRowTrackingCommitActions(txn, Seq(expectedHighWaterMark))
+
+      val post = startTestTransaction(dataPath).snapshot
+      val committed = post.allFiles.collect().find(_.path == "row-tracking-file").get
+      assert(committed.baseRowId === Some(initialHighWaterMark + 1L))
+      assert(post.getRowTrackingHighWaterMark() === Some(expectedHighWaterMark))
+      assert(RowId.extractHighWatermark(post) === post.getRowTrackingHighWaterMark())
+    }
+  }
+
+  test("concurrent row tracking commits reassign row IDs and advance the high water mark") {
+    withRowTrackingTable { dataPath =>
+      val firstTxn = spy(startTestTransaction(dataPath))
+      val secondTxn = spy(startTestTransaction(dataPath))
+      val initialHighWaterMark = firstTxn.snapshot.getRowTrackingHighWaterMark().get
+      assert(secondTxn.readVersion === firstTxn.readVersion)
+
+      firstTxn.commit(
+        Seq(rowTrackingAddFile("first-row-tracking-file", numRecords = 2L)), ManualUpdate)
+      val firstExpectedHighWaterMark = initialHighWaterMark + 2L
+      assertRowTrackingCommitActions(firstTxn, Seq(firstExpectedHighWaterMark))
+      val afterFirst = startTestTransaction(dataPath).snapshot
+      assert(afterFirst.getRowTrackingHighWaterMark() === Some(firstExpectedHighWaterMark))
+
+      secondTxn.commit(
+        Seq(rowTrackingAddFile("second-row-tracking-file", numRecords = 3L)), ManualUpdate)
+      val secondExpectedHighWaterMark = initialHighWaterMark + 5L
+      assertRowTrackingCommitActions(
+        secondTxn, Seq(initialHighWaterMark + 3L, secondExpectedHighWaterMark))
+
+      val post = startTestTransaction(dataPath).snapshot
+      assert(post.version === firstTxn.readVersion + 2L)
+      val filesByPath = post.allFiles.collect().map(file => file.path -> file).toMap
+      assert(filesByPath("first-row-tracking-file").baseRowId ===
+        Some(initialHighWaterMark + 1L))
+      assert(filesByPath("second-row-tracking-file").baseRowId ===
+        Some(initialHighWaterMark + 3L))
+      assert(post.getRowTrackingHighWaterMark() === Some(secondExpectedHighWaterMark))
+    }
+  }
 
   override def beforeEach(): Unit = {
     super.beforeEach()
