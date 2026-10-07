@@ -122,7 +122,7 @@ class DeltaDataSource
     // DeltaV2Mode checks the parameters map for UC markers and returns true for
     // AUTO/STRICT modes with UC tables.
     if (schema.isDefined &&
-        new DeltaV2Mode(sqlContext.sparkSession.sessionState.conf)
+        DeltaV2Mode(sqlContext.sparkSession)
           .shouldBypassSchemaValidationForStreaming(parameters.asJava)) {
       // For a CDF read, surface the change-data columns so this relation is a valid CDF
       // source on its own, independent of the later ApplyV2Streaming rewrite to V2.
