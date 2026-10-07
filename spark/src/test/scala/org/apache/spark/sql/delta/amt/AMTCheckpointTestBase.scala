@@ -23,7 +23,7 @@ import scala.collection.immutable.ListMap
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CommitStats, DeltaLog, DeltaOperations, Snapshot}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, Metadata, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, AMTCheckpointAction, Checkpoint, ContentRoot, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -94,6 +94,18 @@ trait AMTCheckpointTestBase
       checkpointAction = checkpoint,
       leaves = Nil,
       tableRoot = new Path("file:/fake-table-root"))
+  }
+
+  /** Updates matching checkpoint actions, preserving entry order and unmatched envelopes. */
+  protected def updateCheckpointActions(
+      checkpoint: Checkpoint)(
+      update: PartialFunction[AMTCheckpointAction, AMTCheckpointAction]): Checkpoint = {
+    val getUpdatedActionOpt: AMTCheckpointAction => Option[AMTCheckpointAction] = update.lift
+    checkpoint.copy(actions = checkpoint.actions.map { wrappedAMTCheckpointSingleAction =>
+      getUpdatedActionOpt(wrappedAMTCheckpointSingleAction.unwrap)
+        .map(_.wrapAsAMTCheckpointSingleAction)
+        .getOrElse(wrappedAMTCheckpointSingleAction)
+    })
   }
 
   /**
