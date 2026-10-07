@@ -469,7 +469,7 @@ When folding a log `add` into a manifest, writers convert `add.stats` to `conten
 
 ## Snapshot ID Generation and Provenance
 
-When `adaptiveMetadata` is enabled, each transaction must generate one non-negative random 63-bit snapshot ID using [Iceberg's snapshot ID algorithm](https://github.com/apache/iceberg/blob/main/core/src/main/java/org/apache/iceberg/SnapshotIdGeneratorUtil.java). The ID is generated once and reused across conflict retries, file actions, and manifest tracking.
+When `adaptiveMetadata` is enabled, each transaction must generate one non-negative random 63-bit snapshot ID in the same way as [Iceberg](https://github.com/apache/iceberg/blob/main/core/src/main/java/org/apache/iceberg/SnapshotIdGeneratorUtil.java). The ID is generated once and reused across conflict retries, file actions, and manifest tracking.
 
 File actions record snapshot provenance as follows:
 
