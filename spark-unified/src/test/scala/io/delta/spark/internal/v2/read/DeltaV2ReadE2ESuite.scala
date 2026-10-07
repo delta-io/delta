@@ -16,6 +16,8 @@
 
 package io.delta.spark.internal.v2.read
 
+import java.io.File
+
 import org.apache.spark.sql.Row
 
 private[read] trait DeltaV2ReadE2ETests {
@@ -189,7 +191,6 @@ private[read] trait DeltaV2ReadE2ETests {
     }
   }
 
-  // V2ReadTest.testBatchReadPartitionColumnInMiddleWithPruning.
   test("partition column in the middle preserves pruned projections") {
     val table = "v2_scan_e2e_partition_middle_pruning"
     withPartitionColumnInMiddleTable(table) {
@@ -216,7 +217,6 @@ private[read] trait DeltaV2ReadE2ETests {
     }
   }
 
-  // V2ReadTest.testBatchReadPartitionColumnAtEnd.
   test("partition column at the end preserves DDL schema order") {
     val table = "v2_scan_e2e_partition_end"
     withTable(table) {
@@ -239,7 +239,6 @@ private[read] trait DeltaV2ReadE2ETests {
     }
   }
 
-  // V2ReadTest.testBatchReadMultiplePartitionColumns.
   test("multiple interleaved partition columns preserve DDL schema order") {
     val table = "v2_scan_e2e_multiple_partitions"
     withTable(table) {
@@ -267,7 +266,6 @@ private[read] trait DeltaV2ReadE2ETests {
     }
   }
 
-  // V2ReadTest.testBatchReadWithDeletionVectorAndPartitionColumnInMiddle.
   test("deletion vectors with a middle partition column preserve rows and DDL order") {
     val table = "v2_scan_e2e_dv_partition_middle"
     withTable(table) {
@@ -299,11 +297,135 @@ private[read] trait DeltaV2ReadE2ETests {
         "deletion-vector read with a middle partition column")
     }
   }
+
+  test("deletion vectors resolve against a table location containing a space") {
+    withTempDir { dir =>
+      val location = new File(dir, "my table").getCanonicalPath
+      val table = "v2_scan_e2e_dv_location_with_space"
+      withTable(table) {
+        withV1Mode {
+          sql(
+            s"CREATE TABLE $table (id LONG, value STRING) USING $tableProvider " +
+              s"LOCATION '$location' " +
+              "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')")
+          spark
+            .range(1000)
+            .selectExpr("id", "cast(id as string) as value")
+            .write
+            .mode("append")
+            .insertInto(table)
+          sql(s"DELETE FROM $table WHERE id % 2 = 0")
+        }
+
+        val query = s"SELECT id FROM $table"
+        assertAnySelectedFileHasDeletionVector(
+          sql(query),
+          "deletion-vector read from a location containing a space")
+        val df = sql(query)
+        checkAnswer(df, (1L until 1000L by 2L).map(Row(_)))
+        assertExpectedScan(df, "deletion-vector read from a location containing a space")
+      }
+    }
+  }
+
+  test("an empty table read preserves the table schema") {
+    val table = "v2_scan_e2e_empty"
+    withTable(table) {
+      withV1Mode {
+        sql(s"CREATE TABLE $table (id INT, name STRING, value DOUBLE) USING $tableProvider")
+      }
+
+      checkRead("empty table read")(sql(s"SELECT * FROM $table")) { df =>
+        assert(df.schema.fieldNames.toSeq == Seq("id", "name", "value"))
+        checkAnswer(df, Seq.empty)
+      }
+    }
+  }
+
+  test("a name-mode column-mapped table preserves logical names and rows") {
+    val table = "v2_scan_e2e_column_mapping_name"
+    withTable(table) {
+      withV1Mode {
+        sql(
+          s"CREATE TABLE $table (id INT, user_name STRING, amount DOUBLE) " +
+            s"USING $tableProvider " +
+            "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        sql(s"INSERT INTO $table VALUES (1, 'Alice', 100.0), (2, 'Bob', 200.0)")
+      }
+
+      checkRead("name-mode column-mapping read")(sql(s"SELECT * FROM $table ORDER BY id")) {
+        df =>
+          assert(df.schema.fieldNames.toSeq == Seq("id", "user_name", "amount"))
+          checkAnswer(df, Seq(Row(1, "Alice", 100.0), Row(2, "Bob", 200.0)))
+      }
+    }
+  }
+
+  test("an id-mode column-mapped middle partition column preserves DDL order") {
+    val table = "v2_scan_e2e_partition_middle_column_mapping_id"
+    withPartitionColumnInMiddleTable(
+        table,
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'id')") {
+      checkRead("id-mode column-mapping read")(sql(s"SELECT * FROM $table ORDER BY id")) {
+        df =>
+          assert(df.schema.fieldNames.toSeq == Seq("id", "part", "col3"))
+          checkAnswer(
+            df,
+            Seq(Row(1L, 10L, 100), Row(2L, 20L, 200), Row(3L, 30L, 300)))
+      }
+
+      checkRead("projected id-mode column-mapping read") {
+        sql(s"SELECT part, id FROM $table ORDER BY id")
+      } { df =>
+        assert(df.schema.fieldNames.toSeq == Seq("part", "id"))
+        checkAnswer(df, Seq(Row(10L, 1L), Row(20L, 2L), Row(30L, 3L)))
+      }
+    }
+  }
+
+  test("renamed column-mapped partition and data columns preserve rows") {
+    val table = "v2_scan_e2e_partition_middle_after_rename"
+    withTable(table) {
+      withV1Mode {
+        sql(
+          s"CREATE TABLE $table (id LONG, part LONG, original_col INT) " +
+            s"USING $tableProvider " +
+            "PARTITIONED BY (part) " +
+            "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        sql(s"INSERT INTO $table VALUES (1, 10, 100)")
+        sql(s"ALTER TABLE $table RENAME COLUMN original_col TO renamed_col")
+        sql(s"INSERT INTO $table VALUES (2, 20, 200)")
+        sql(s"ALTER TABLE $table RENAME COLUMN part TO renamed_part")
+        sql(s"INSERT INTO $table VALUES (3, 30, 300)")
+      }
+
+      checkRead("renamed name-mode column-mapping read") {
+        sql(s"SELECT * FROM $table ORDER BY id")
+      } { df =>
+        assert(df.schema.fieldNames.toSeq == Seq("id", "renamed_part", "renamed_col"))
+        checkAnswer(
+          df,
+          Seq(Row(1L, 10L, 100), Row(2L, 20L, 200), Row(3L, 30L, 300)))
+      }
+
+      checkRead("projected renamed column-mapping read") {
+        sql(s"SELECT renamed_part, id FROM $table ORDER BY id")
+      } { df =>
+        assert(df.schema.fieldNames.toSeq == Seq("renamed_part", "id"))
+        checkAnswer(df, Seq(Row(10L, 1L), Row(20L, 2L), Row(30L, 3L)))
+      }
+
+      checkRead("renamed partition-column filter") {
+        sql(s"SELECT id, renamed_col FROM $table WHERE renamed_part = 20")
+      } { df =>
+        checkAnswer(df, Seq(Row(2L, 200)))
+      }
+    }
+  }
 }
 
-
-/** Covers ordinary read, schema, and deletion-vector semantics shared across Delta V2 scan paths.
- * Path-specific fallback and gap cases are kept in their corresponding test traits.
+/** Covers read, schema, column-mapping, and deletion-vector semantics shared across Delta V2
+ * scan paths.
  */
 class DeltaV2ReadE2ESuite
   extends DeltaV2ScanE2ETestUtils
