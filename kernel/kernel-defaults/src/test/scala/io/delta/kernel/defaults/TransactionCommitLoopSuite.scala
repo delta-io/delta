@@ -253,7 +253,7 @@ trait AbstractTransactionCommitLoopSuite extends AnyFunSuite { self: AbstractWri
             writeAttempts match {
               case 1 =>
                 data.close()
-                // Attempt at v1 (pre-existing) — throw conflict to trigger pass 1.
+                // Attempt at v1 (pre-existing) - throw conflict to trigger pass 1.
                 throw new FileAlreadyExistsException(filePath)
               case 2 =>
                 data.close()
@@ -262,7 +262,7 @@ trait AbstractTransactionCommitLoopSuite extends AnyFunSuite { self: AbstractWri
                 appendData(engine, tablePath, data = Seq.empty)
                 throw new FileAlreadyExistsException(filePath)
               case _ =>
-                // Attempt at v3 — write successfully.
+                // Attempt at v3 - write successfully.
                 super.writeJsonFileAtomically(filePath, data, overwrite)
             }
           }
@@ -287,7 +287,7 @@ trait AbstractTransactionCommitLoopSuite extends AnyFunSuite { self: AbstractWri
       val lastListPath = conflictListPaths.last
       assert(
         !lastListPath.endsWith("001.json"),
-        s"Second conflict resolution listed from $lastListPath — expected 002.json")
+        s"Second conflict resolution listed from $lastListPath - expected 002.json")
     }
   }
 

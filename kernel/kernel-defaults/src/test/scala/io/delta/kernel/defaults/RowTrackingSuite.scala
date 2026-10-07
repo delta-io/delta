@@ -816,12 +816,12 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase
       // Create the losing transaction at v0 (watermark = MISSING).
       val losingTxn = getUpdateTxn(engine, tablePath, maxRetries = 5)
 
-      // v1: winning txn A adds 100 rows → watermark = 99, DomainMetadata written.
+      // v1: winning txn A adds 100 rows - watermark = 99, DomainMetadata written.
       val data100 = generateData(schema, Seq.empty, Map.empty, 100, 1)
       appendData(engine, tablePath, data = prepareDataForCommit(data100))
       verifyHighWatermark(engine, tablePath, 99)
 
-      // v2: empty commit — no DomainMetadata written.
+      // v2: empty commit - no DomainMetadata written.
       commitTransaction(getUpdateTxn(engine, tablePath), engine, emptyIterable())
       verifyHighWatermark(engine, tablePath, 99)
 
@@ -839,7 +839,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase
             writeAttempts match {
               case 1 =>
                 data.close()
-                // Attempt at v1 — already pre-committed; throw to trigger pass 1.
+                // Attempt at v1 - already pre-committed; throw to trigger pass 1.
                 throw new FileAlreadyExistsException(filePath)
               case 2 =>
                 data.close()
@@ -848,7 +848,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase
                 commitTransaction(getUpdateTxn(engine, tablePath), engine, emptyIterable())
                 throw new FileAlreadyExistsException(filePath)
               case _ =>
-                // Attempt at v4 — pass the real data through so AddFile actions are committed.
+                // Attempt at v4 - pass the real data through so AddFile actions are committed.
                 super.writeJsonFileAtomically(
                   filePath,
                   data,
