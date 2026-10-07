@@ -328,10 +328,10 @@ The root manifest contains entries of the following types:
 | 1 | `snapshot_id` | Long | Optional | Snapshot ID where entry was added or deleted. Inherited when null. |
 | 3 | `sequence_number` | Long | Optional | Data sequence number. Inherited when null and status=ADDED. |
 | 4 | `file_sequence_number` | Long | Optional | File sequence number (when file was physically added). Inherited when null and status=ADDED. |
-| 5 | `modified_snapshot_id` | Long | Optional | Snapshot ID where the tracked file was last modified. |
+| 5 | `modified_snapshot_id` | Long | Optional | Snapshot ID of the most recent deletion-vector or column-file modification. |
 | 142 | `first_row_id` | Long | Optional | Starting row ID for this file (DATA) or manifest (DATA_MANIFEST) |
-| 6 | `deleted_positions` | Binary | Optional | Bitmap of positions deleted in the `modified_snapshot_id` snapshot (DATA_MANIFEST only, for CDF) |
-| 7 | `replaced_positions` | Binary | Optional | Bitmap of positions replaced in the `modified_snapshot_id` snapshot (DATA_MANIFEST only, for CDF) |
+| 6 | `deleted_positions` | Binary | Optional | Bitmap of positions deleted in this commit (DATA_MANIFEST only, for CDF) |
+| 7 | `replaced_positions` | Binary | Optional | Bitmap of positions replaced in this commit (DATA_MANIFEST only, for CDF) |
 
 **Status values:** `status` is required and always materialized (never null). Each entry has exactly one status.
 
@@ -360,7 +360,7 @@ The fields that support inheritance:
 - **`sequence_number`**: Inherited when null and status is `ADDED`.
 - **`file_sequence_number`**: Inherited when null and status is `ADDED`.
 - **`first_row_id`**: Inherited when null.
-- **`modified_snapshot_id`**: Not inherited. Null means no modification has been recorded.
+- **`modified_snapshot_id`**: Not inherited. Null means no deletion-vector or column-file modification has been recorded.
 
 Root manifest entries must always have explicit (non-null) tracking values since there is nothing above them to inherit from.
 
