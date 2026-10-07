@@ -103,7 +103,7 @@ This design enables:
 
 <ins>When the `adaptiveMetadata` table feature is enabled, log compaction MUST preserve the source actions' `backReference` values.</ins>
 
-<ins>Log compaction files whose version ranges span the selected `contentRoot.version` may be discarded during log replay.</ins>
+<ins>A log compaction file whose version range includes the selected AMT content root's version must not be used for log replay from that content root.</ins>
 
 ### Deletion Vectors
 
