@@ -37,6 +37,7 @@ import io.delta.kernel.{CommitActions => KernelCommitActions}
 import io.delta.kernel.data.{ColumnarBatch => KernelColumnarBatch}
 import io.delta.kernel.data.{ColumnVector => KernelColumnVector}
 import io.delta.kernel.data.{MapValue => KernelMapValue}
+import io.delta.kernel.data.{Row => KernelRow}
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 import io.delta.kernel.internal.actions.{AddFile => KernelAddFile}
 import io.delta.kernel.internal.actions.{CommitInfo => KernelCommitInfo}
@@ -69,6 +70,34 @@ private[v2] object KernelActionUtils {
       actions.result()
     } finally {
       kernelActionsBatchIter.close()
+    }
+  }
+
+  /**
+   * Converts a Kernel action row into V1 [[Action]]s.
+   *
+   * @throws UnsupportedOperationException if the action is not supported.
+   */
+  def actionsFromKernelRow(kernelRow: KernelRow): Seq[Action] = {
+    val kernelSchema = kernelRow.getSchema
+    (0 until kernelSchema.length).filter(ordinal => !kernelRow.isNullAt(ordinal)).map { ordinal =>
+      val actionName = kernelSchema.at(ordinal).getName
+      val kernelActionRow = kernelRow.getStruct(ordinal)
+      KernelDeltaAction.values().find(_.colName == actionName) match {
+        case Some(KernelDeltaAction.ADD) =>
+          addFileFromKernel(new KernelAddFile(kernelActionRow))
+        case Some(KernelDeltaAction.REMOVE) =>
+          // scalastyle:off removeFile
+          removeFileFromKernel(new KernelRemoveFile(kernelActionRow))
+          // scalastyle:on removeFile
+        case Some(KernelDeltaAction.PROTOCOL) =>
+          protocolFromKernel(KernelProtocol.fromRow(kernelActionRow))
+        case Some(KernelDeltaAction.TXN) =>
+          setTransactionFromKernel(KernelSetTransaction.fromRow(kernelActionRow))
+        case _ =>
+          throw new UnsupportedOperationException(
+            s"Cannot construct action '$actionName' from a Kernel row")
+      }
     }
   }
 

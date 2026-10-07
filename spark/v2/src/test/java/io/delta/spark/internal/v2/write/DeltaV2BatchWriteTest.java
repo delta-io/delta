@@ -16,10 +16,13 @@
 package io.delta.spark.internal.v2.write;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.InternalRowTestUtils;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
@@ -30,9 +33,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.TableIdentifier;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.DataWriterFactory;
@@ -45,6 +51,8 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /** Unit tests for {@link DeltaV2BatchWrite}. */
 public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
@@ -57,8 +65,10 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
           });
 
   @Test
-  public void testCreateBatchWriterFactory_returnsDeltaV2DataWriterFactory(@TempDir File tempDir) {
-    DeltaV2BatchWrite write = newWrite(createTable(tempDir, "batch_factory_type"));
+  public void testCreateBatchWriterFactory_returnsDeltaV2DataWriterFactory(@TempDir File tempDir)
+      throws Exception {
+    String path = createTable(tempDir, "batch_factory_type");
+    DeltaV2BatchWrite write = newWrite(path, "batch_factory_type");
     assertTrue(
         write.createBatchWriterFactory(WriteTestUtils.physicalWriteInfo(1))
             instanceof DeltaV2DataWriterFactory);
@@ -67,7 +77,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
   @Test
   public void testCommit_appendsData(@TempDir File tempDir) throws Exception {
     String path = createTable(tempDir, "batch_commit");
-    DeltaV2BatchWrite write = newWrite(path);
+    DeltaV2BatchWrite write = newWrite(path, "batch_commit");
     WriterCommitMessage[] messages = {writeFile(write, 1, "Alice", 2, "Bob")};
 
     write.commit(messages);
@@ -81,7 +91,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
   @Test
   public void testCommit_multipleTasks_appendsAllData(@TempDir File tempDir) throws Exception {
     String path = createTable(tempDir, "batch_commit_multi");
-    DeltaV2BatchWrite write = newWrite(path);
+    DeltaV2BatchWrite write = newWrite(path, "batch_commit_multi");
     // Two tasks each write their own file; commit must flatten both tasks' AddFile actions into a
     // single Delta commit rather than dropping all but one.
     DataWriterFactory factory = write.createBatchWriterFactory(WriteTestUtils.physicalWriteInfo(2));
@@ -98,10 +108,68 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
     assertEquals("Carol", rows.get(2).getString(1));
   }
 
+  @ParameterizedTest(name = "unsupported action: {0}")
+  @CsvSource(
+      delimiter = '|',
+      value = {
+        "RemoveFile|{\"remove\":{\"path\":\"unused.parquet\",\"dataChange\":true}}",
+        "Protocol|{\"protocol\":{\"minReaderVersion\":1,\"minWriterVersion\":2}}",
+        "SetTransaction|{\"txn\":{\"appId\":\"test-app\",\"version\":1}}"
+      })
+  public void testCommit_rejectsUnsupportedActionBeforeCommitting(
+      String actionName, String actionJson, @TempDir File tempDir) throws Exception {
+    String tableName = "batch_unsupported_" + actionName;
+    String path = createTable(tempDir, tableName);
+    DeltaV2BatchWrite write = newWrite(path, tableName);
+    WriterCommitMessage addFileMessage = writeFile(write, 1, "Alice");
+    DeltaV2WriterCommitMessage unsupportedMessage =
+        new DeltaV2WriterCommitMessage(
+            List.of(
+                new SerializableKernelRowWrapper(
+                    JsonUtils.rowFromJson(actionJson, SingleAction.FULL_SCHEMA))));
+    long versionsBefore = spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count();
+
+    UnsupportedOperationException error =
+        assertThrows(
+            UnsupportedOperationException.class,
+            () -> write.commit(new WriterCommitMessage[] {addFileMessage, unsupportedMessage}));
+
+    assertEquals(
+        "DeltaV2BatchWrite does not support '" + actionName + "' actions", error.getMessage());
+    assertEquals(0L, spark.read().format("delta").load(path).count());
+    assertEquals(versionsBefore, spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count());
+  }
+
+  @Test
+  public void testCommit_rejectsRowWithMultipleActions(@TempDir File tempDir) throws Exception {
+    String path = createTable(tempDir, "batch_multiple_actions");
+    DeltaV2BatchWrite write = newWrite(path, "batch_multiple_actions");
+    String actionJson =
+        "{\"add\":{\"path\":\"f.parquet\",\"partitionValues\":{},\"size\":10,"
+            + "\"modificationTime\":123,\"dataChange\":true},"
+            + "\"remove\":{\"path\":\"old.parquet\",\"dataChange\":true}}";
+    DeltaV2WriterCommitMessage message =
+        new DeltaV2WriterCommitMessage(
+            List.of(
+                new SerializableKernelRowWrapper(
+                    JsonUtils.rowFromJson(actionJson, SingleAction.FULL_SCHEMA))));
+    long versionsBefore = spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count();
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> write.commit(new WriterCommitMessage[] {message}));
+
+    assertEquals(
+        "Expected exactly one action from writer commit message, but found 2 actions",
+        error.getMessage());
+    assertEquals(versionsBefore, spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count());
+  }
+
   @Test
   public void testAbort_doesNotCommit(@TempDir File tempDir) throws Exception {
     String path = createTable(tempDir, "batch_abort");
-    DeltaV2BatchWrite write = newWrite(path);
+    DeltaV2BatchWrite write = newWrite(path, "batch_abort");
     // Stage a real file (writeFile runs the executor writer and produces a non-empty commit
     // message) so the test exercises an abort that has data to discard, not a trivial no-op.
     WriterCommitMessage[] messages = {writeFile(write, 1, "Alice", 2, "Bob")};
@@ -121,16 +189,17 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
   @Test
   public void testAbort_hasNoSideEffectsOnSurroundingWrites(@TempDir File tempDir)
       throws Exception {
-    String path = createTable(tempDir, "batch_abort_no_side_effects");
+    String tableName = "batch_abort_no_side_effects";
+    String path = createTable(tempDir, tableName);
 
     // Commit before the abort.
-    DeltaV2BatchWrite before = newWrite(path);
+    DeltaV2BatchWrite before = newWrite(path, tableName);
     before.commit(new WriterCommitMessage[] {writeFile(before, 1, "Alice")});
     // Abort a write that staged real data.
-    DeltaV2BatchWrite aborted = newWrite(path);
+    DeltaV2BatchWrite aborted = newWrite(path, tableName);
     aborted.abort(new WriterCommitMessage[] {writeFile(aborted, 2, "Bob")});
     // Commit after the abort.
-    DeltaV2BatchWrite after = newWrite(path);
+    DeltaV2BatchWrite after = newWrite(path, tableName);
     after.commit(new WriterCommitMessage[] {writeFile(after, 3, "Carol")});
 
     // Only the surrounding commits survive; the aborted row must not leak.
@@ -409,6 +478,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                     spark.sessionState().newHadoopConf(),
                     path,
                     mgr.loadLatestSnapshot(),
+                    Optional.empty(),
                     mgr,
                     data,
                     part,
@@ -503,6 +573,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 spark.sessionState().newHadoopConf(),
                 path,
                 mgr.loadLatestSnapshot(),
+                Optional.empty(),
                 mgr,
                 data,
                 part,
@@ -546,6 +617,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 spark.sessionState().newHadoopConf(),
                 path,
                 mgr.loadLatestSnapshot(),
+                Optional.empty(),
                 mgr,
                 data,
                 part,
@@ -576,6 +648,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
             spark.sessionState().newHadoopConf(),
             path,
             snapshot,
+            Optional.empty(),
             snapshotManager,
             PARTITIONED_DATA_SCHEMA,
             PARTITIONED_PART_SCHEMA,
@@ -665,20 +738,26 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
     return path;
   }
 
-  private DeltaV2BatchWrite newWrite(String path) {
-    Snapshot snapshot =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf())
-            .loadLatestSnapshot();
+  private DeltaV2BatchWrite newWrite(String path, String tableName) throws Exception {
+    CatalogTable catalogTable =
+        spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tableName));
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
-    return new DeltaV2BatchWrite(
-        defaultEngine,
-        spark.sessionState().newHadoopConf(),
-        path,
-        snapshot,
-        TABLE_SCHEMA,
-        new StructType(),
-        info,
-        /* variantShreddingEnabled */ false);
+    return (DeltaV2BatchWrite)
+        new DeltaV2Write(
+                defaultEngine,
+                spark.sessionState().newHadoopConf(),
+                path,
+                snapshot,
+                Optional.of(catalogTable),
+                snapshotManager,
+                TABLE_SCHEMA,
+                new StructType(),
+                info,
+                /* variantShreddingEnabled */ false)
+            .toBatch();
   }
 }

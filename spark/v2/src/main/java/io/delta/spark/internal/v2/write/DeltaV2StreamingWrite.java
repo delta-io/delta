@@ -24,7 +24,6 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.utils.CloseableIterable;
-import java.util.function.Function;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.connector.write.streaming.StreamingDataWriterFactory;
@@ -66,7 +65,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
   private final Engine engine;
   private final DeltaV2SnapshotManager snapshotManager;
   private final String queryId;
-  private final DeltaV2DataWriterFactory dataWriterFactory;
+  private final DeltaV2WriteContext context;
   // The write state's schema/protocol baseline; the per-epoch guard fails if the table diverges.
   private final StructType writeSchema;
   private final Protocol writeProtocol;
@@ -79,47 +78,25 @@ class DeltaV2StreamingWrite implements StreamingWrite {
   private final boolean variantLayoutFollowsProperty;
 
   /**
-   * @param engine Kernel engine (driver-only)
-   * @param initialSnapshot the batch's planned snapshot; write-state source and guard baseline
    * @param snapshotManager reloads the latest snapshot per epoch (see {@link #commit})
-   * @param queryId streaming query id; the transaction application id for cross-restart idempotency
-   * @param variantShreddingEnabled the table's shredding property as the write state was built with
-   *     it; the per-epoch guard baseline
-   * @param variantLayoutFollowsProperty whether that property can actually change this write's
-   *     layout; when false the guard ignores a change to it
-   * @param dataWriterFactoryBuilder builds the executor write state; supplied by {@link
-   *     DeltaV2Write} to share construction with the batch path
+   * @param context shared write setup
    */
-  DeltaV2StreamingWrite(
-      Engine engine,
-      Snapshot initialSnapshot,
-      DeltaV2SnapshotManager snapshotManager,
-      String queryId,
-      boolean variantShreddingEnabled,
-      boolean variantLayoutFollowsProperty,
-      Function<Transaction, DeltaV2DataWriterFactory> dataWriterFactoryBuilder) {
-    this.engine = requireNonNull(engine, "engine is null");
-    requireNonNull(initialSnapshot, "initialSnapshot is null");
+  DeltaV2StreamingWrite(DeltaV2SnapshotManager snapshotManager, DeltaV2WriteContext context) {
+    this.context = requireNonNull(context, "context is null");
+    this.engine = requireNonNull(context.getEngine(), "engine is null");
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
-    this.queryId = requireNonNull(queryId, "queryId is null");
-    requireNonNull(dataWriterFactoryBuilder, "dataWriterFactoryBuilder is null");
+    this.queryId = requireNonNull(context.getWriteInfo().queryId(), "queryId is null");
+    Snapshot initialSnapshot =
+        requireNonNull(context.getInitialSnapshot(), "initialSnapshot is null");
     this.writeSchema = initialSnapshot.schema();
     this.writeProtocol = initialSnapshot.protocol();
-    this.writeVariantShreddingEnabled = variantShreddingEnabled;
-    this.variantLayoutFollowsProperty = variantLayoutFollowsProperty;
-    // We only need this transaction's serialized write context for the factory, not the commit
-    // (commit() builds its own per epoch).
-    Transaction stateTxn =
-        DeltaV2Snapshot$.MODULE$
-            .getKernelSnapshot(initialSnapshot)
-            .buildUpdateTableTransaction(DeltaV2Write.getEngineInfo(), Operation.STREAMING_UPDATE)
-            .build(engine);
-    this.dataWriterFactory = dataWriterFactoryBuilder.apply(stateTxn);
+    this.writeVariantShreddingEnabled = context.variantShreddingEnabled();
+    this.variantLayoutFollowsProperty = context.variantLayoutFollowsProperty();
   }
 
   @Override
   public StreamingDataWriterFactory createStreamingWriterFactory(PhysicalWriteInfo info) {
-    return dataWriterFactory;
+    return context.buildDataWriterFactory(Operation.STREAMING_UPDATE);
   }
 
   @Override

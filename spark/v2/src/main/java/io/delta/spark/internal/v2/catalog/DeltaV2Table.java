@@ -577,6 +577,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         tablePath,
         hadoopConf,
         initialSnapshot,
+        catalogTable,
         snapshotManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
