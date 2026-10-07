@@ -127,6 +127,13 @@ class DelegatingLogStoreSuite
       expClassName = DelegatingLogStore.defaultHDFSLogStoreClassName)
   }
 
+  test("native S3 LogStore requires an explicit scheme override") {
+    for (scheme <- DelegatingLogStore.s3Schemes) {
+      testDefaultSchemeResolution(scheme, "io.delta.storage.S3SingleDriverLogStore")
+      testCustomSchemeResolution(scheme, "io.delta.storage.S3LogStore", expAdaptor = true)
+    }
+  }
+
   test("DelegatingLogStore resolution using customized scheme confs") {
     val allTestSchemes = DelegatingLogStore.s3Schemes ++ DelegatingLogStore.azureSchemes +
       fakeSchemeWithNoDefault
