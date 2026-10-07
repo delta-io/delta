@@ -31,6 +31,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.{Checkpoint, Metadata}
 import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -1700,6 +1701,12 @@ trait SnapshotManagement { self: DeltaLog =>
       case Some(checkpointProvider) if checkpointProvider.version <= version =>
         // Prefer the last checkpoint provider hint, because it doesn't require any I/O to use.
         None -> Some(checkpointProvider)
+      // For AMT tables, we can avoid the blind backward listing to find the latest checkpoint,
+      // because we have the precise pointer to the last manifest commit as of the target version.
+      // We assume that there is no AMT upgrade/downgrade for now, and if the upper-bound snapshot
+      // is AMT-enabled, then the target version is also AMT-enabled.
+      case _ if AMTUtils.amtEnabled(upperBoundSnapshot) =>
+        computeLastCheckpointHintsForAMT(version, upperBoundSnapshot)
       case _ =>
         val lastCheckpointInfoForListing = lastCheckpointHint
             .filter(_.version <= version)
