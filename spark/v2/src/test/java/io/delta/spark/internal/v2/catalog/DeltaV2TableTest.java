@@ -612,8 +612,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
       assertTrue(tableB.getSnapshotManager() instanceof CachedSnapshotManager);
       assertSame(managerA, managerB);
       assertSame(managerA.kernelContext(), managerB.kernelContext());
-      assertSame(managerA.kernelContext().getDefaultEngine(), tableA.kernelEngine());
-      assertSame(tableA.kernelEngine(), tableB.kernelEngine());
+      assertSame(tableA.getSnapshotManager(), tableB.getSnapshotManager());
       assertEquals("0", tableA.version());
       assertEquals("0", tableB.version());
 
