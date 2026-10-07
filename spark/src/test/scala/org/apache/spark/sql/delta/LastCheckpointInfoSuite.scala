@@ -436,6 +436,73 @@ class LastCheckpointInfoSuite extends SharedSparkSession
       == ci.copy(amtCheckpoint = None, checkpointType = None))
   }
 
+  test("LastCheckpointInfo - amtCheckpoint.checkpoint serializes to the expected wire JSON") {
+    val ci = LastCheckpointInfo(
+      version = 1, size = -1, parts = Some(0), sizeInBytes = None,
+      numOfAddFiles = None, checkpointSchema = None,
+      checkpointType = Some(LastCheckpointInfo.CheckpointType.AMT),
+      amtCheckpoint = Some(LastAMTCheckpoint(
+        manifestCommitVersion = 4,
+        checkpoint = Some(sampleCheckpointAction(version = 1)),
+        // The promoted single-manifest root case has no leaf pointers, keeping this golden focused
+        // on the embedded `checkpoint` field.
+        leaves = Some(Seq.empty))))
+    val json = LastCheckpointInfo.serializeToJson(ci, addChecksum = false)
+
+    // Pins the embedded `checkpoint` wire shape. Re-parsing and pretty-printing keeps the golden
+    // human-readable while still asserting the exact field order and values of the compact JSON
+    // written to disk (`readTree` preserves object key order).
+    // NOTE (spec drift, intentional): the iceberg-v4 RFC models the checkpoint as an array of
+    // wrapped actions with singular `txn`/`sidecar`, whereas the implementation emits a single
+    // object with an inline `version` and plural `txns`/`sidecars` arrays; likewise `parts` here is
+    // the leaf count, not leaves+1. This test locks in the implementation's actual on-disk format
+    // so future changes to it are deliberate.
+    val prettyJson = JsonUtils.toPrettyJson(JsonUtils.mapper.readTree(json))
+    assert(prettyJson ===
+      """{
+        |  "version" : 1,
+        |  "size" : -1,
+        |  "parts" : 0,
+        |  "checkpointType" : "AdaptiveMetadataTree",
+        |  "amtCheckpoint" : {
+        |    "manifestCommitVersion" : 4,
+        |    "checkpoint" : {
+        |      "version" : 1,
+        |      "contentRoot" : {
+        |        "path" : "metadata/root-abc.parquet",
+        |        "sizeInBytes" : 4096,
+        |        "version" : 1
+        |      },
+        |      "protocol" : {
+        |        "minReaderVersion" : 3,
+        |        "minWriterVersion" : 7,
+        |        "readerFeatures" : [ ],
+        |        "writerFeatures" : [ ]
+        |      },
+        |      "metaData" : {
+        |        "id" : "metadata-id",
+        |        "name" : "t",
+        |        "format" : {
+        |          "provider" : "parquet",
+        |          "options" : { }
+        |        },
+        |        "partitionColumns" : [ ],
+        |        "configuration" : { }
+        |      },
+        |      "domainMetadata" : [ ],
+        |      "txns" : [ ],
+        |      "sidecars" : [ ]
+        |    },
+        |    "leaves" : [ ]
+        |  }
+        |}""".stripMargin)
+
+    // And the exact same JSON deserializes back to the embedded checkpoint and (empty) leaves.
+    val back = LastCheckpointInfo.deserializeFromJson(json, validate = false)
+    assert(back.amtCheckpoint.flatMap(_.checkpoint) === Some(sampleCheckpointAction(version = 1)))
+    assert(back.amtCheckpoint.flatMap(_.leaves) === Some(Seq.empty))
+  }
+
   test("LastCheckpointInfo - checkpointType serializes as a bare string") {
     val ci = LastCheckpointInfo(version = 1, size = -1, parts = None, sizeInBytes = None,
       numOfAddFiles = None, checkpointSchema = None,
