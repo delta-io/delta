@@ -78,7 +78,7 @@ public class ParquetStatsReader {
    * @param statsColumns the columns for which statistics should be collected
    * @return file/column level statistics as a {@link DataFileStatistics} instance
    */
-  public static DataFileStatistics extractDataFileStatistics(
+  private static DataFileStatistics extractDataFileStatistics(
       ParquetMetadata footer, StructType dataSchema, List<Column> statsColumns) {
     ImmutableMultimap.Builder<Column, ColumnChunkMetaData> metadataForColumn =
         ImmutableMultimap.builder();
@@ -118,7 +118,7 @@ public class ParquetStatsReader {
    * @param statsColumns the columns for which statistics should be collected
    * @return file/column level statistics as a {@link DataFileStatistics} instance
    */
-  public static DataFileStatistics extractDataFileStatisticsFromInMemoryFooter(
+  static DataFileStatistics extractDataFileStatisticsFromInMemoryFooter(
       ParquetMetadata footer, StructType dataSchema, List<Column> statsColumns) {
     try {
       ParquetMetadataConverter converter = new ParquetMetadataConverter();
