@@ -28,10 +28,17 @@ import org.apache.spark.SparkConf
 /**
  * UPDATE-specific setup for running the UPDATE test suites against AMT tables with the
  * [[AMTDMLTestUtils]] harness.
+ *
+ * The UPDATE AMT mixins must come after all other mixins of a suite, so their dimensions must be
+ * the last of every generator config they are used in. This is for 2 reasons:
+ * 1. Visibility: some mixins declare beforeAll public, and a later mixin overriding it as
+ *    protected (which AMTDMLTestUtils does) fails to compile.
+ * 2. Commit orders: some mixins perform extra commits (e.g. UpdateTableWithDVsMixin). To maintain
+ *    a stable commit order, we prefer to have AMT commits wrap them all.
  */
 trait UpdateAMTTestBase extends AMTDMLTestUtils {
 
-  override def sparkConf: SparkConf = super.sparkConf
+  override protected def sparkConf: SparkConf = super.sparkConf
     // The UPDATE suites default new tables to `delta.enableDeletionVectors = false`, which AMT
     // rejects at CREATE since it requires deletion vectors. Unset it instead of setting it to true:
     // AMT then enables deletion vectors on the table itself, while the tests, which read this
@@ -54,7 +61,7 @@ trait UpdateAMTMixin extends UpdateBaseMixin with UpdateAMTTestBase {
   // The base UPDATE suites assert rewrite semantics (copied rows, commit tags, file counts), so
   // keep UPDATE from writing deletion vectors on the DV-enabled AMT tables. Suites that mix in
   // DeletionVectorOnTestMixin turn them back on at runtime.
-  override def sparkConf: SparkConf = super.sparkConf
+  override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
 
   // These tests fail when row tracking or deletion vectors are enabled, and AMT tables always
@@ -141,7 +148,7 @@ trait RowTrackingUpdateAMTMixin extends RowTrackingUpdateSuiteBase with UpdateAM
   // The tests set `last_modified_version` to the version they expect the UPDATE to commit at and
   // check that it matches the rows' row commit versions. The full checkpoint shifts the UPDATE's
   // commit version, so pass the version it actually commits at instead.
-  override def executeUpdate(
+  override protected def executeUpdate(
       tableName: String,
       where: Option[String],
       newVersion: Long): Unit = {

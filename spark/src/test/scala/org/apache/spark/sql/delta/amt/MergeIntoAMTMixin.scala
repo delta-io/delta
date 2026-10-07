@@ -22,6 +22,14 @@ import org.apache.spark.sql.delta.MergeIntoSQLTestUtils
  * Generates AMT (`adaptiveMetadata-preview`) variants of the MERGE INTO test suites.
  *
  * Each MERGE is bracketed by the [[AMTDMLTestUtils]] checkpoints.
+ *
+ * The MERGE AMT mixin should come after all other mixins of a suite, so its dimension should be
+ * the last of every generator config it is used in. This is for 2 reasons:
+ * 1. Visibility: some mixins declare beforeAll public, and a later mixin overriding it as
+ *    protected (which AMTDMLTestUtils does) fails to compile. This is a latent issue for the MERGE
+ *    suites.
+ * 2. Commit orders: some mixins perform extra commits. To maintain a stable commit order, we
+ *    prefer to have AMT commits wrap them all.
  */
 trait MergeIntoAMTMixin
   extends AMTDMLTestUtils
