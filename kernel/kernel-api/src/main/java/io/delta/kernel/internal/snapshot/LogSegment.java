@@ -418,8 +418,23 @@ public class LogSegment {
 
   @Override
   public int hashCode() {
-    // TODO: support staged commits #4927
-    return Objects.hash(deltas, checkpoints, compactions);
+    return Objects.hash(
+        canonicalizeFileStatuses(deltas),
+        canonicalizeFileStatuses(checkpoints),
+        canonicalizeFileStatuses(compactions));
+  }
+
+  private static List<Object> canonicalizeFileStatuses(List<FileStatus> fileStatuses) {
+    return fileStatuses.stream()
+        .map(LogSegment::canonicalizeFileStatus)
+        .collect(Collectors.toList());
+  }
+
+  private static Object canonicalizeFileStatus(FileStatus fileStatus) {
+    if (FileNames.isCommitFile(fileStatus.getPath())) {
+      return FileNames.canonicalizeStagedDeltaFilePath(fileStatus.getPath());
+    }
+    return fileStatus;
   }
 
   //////////////////////////////
