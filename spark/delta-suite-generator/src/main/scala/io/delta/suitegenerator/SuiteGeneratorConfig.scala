@@ -146,6 +146,8 @@ object SuiteGeneratorConfig {
     val UPDATE_SQL = DimensionMixin("UpdateSQL", alias = Some("SQL"))
     val UPDATE_DVS = DimensionMixin("UpdateSQLWithDeletionVectors", alias = Some("DV"))
     val UPDATE_ROW_TRACKING_DV = DimensionMixin("RowTrackingUpdateDV")
+    val UPDATE_AMT = DimensionMixin("UpdateAMT", alias = Some("AMT"))
+    val ROW_TRACKING_UPDATE_AMT = DimensionMixin("RowTrackingUpdateAMT", alias = Some("AMT"))
     val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
     val DELETE_SQL = DimensionMixin("DeleteSQL", alias = Some("SQL"))
     val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors", alias = Some("DV"))
@@ -394,6 +396,24 @@ object SuiteGeneratorConfig {
             List(Dims.UPDATE_ROW_TRACKING_DV),
             List(Dims.UPDATE_ROW_TRACKING_DV, Dims.CDC, Dims.COLUMN_MAPPING.asOptional)
           )
+        )
+      )
+    ),
+    TestGroup(
+      packageName = "updateamt",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.amt._",
+        importer"org.apache.spark.sql.delta.rowid._"
+      ),
+      testConfigs = List(
+        TestConfig(
+          "UpdateSQLTests" :: Tests.UPDATE_BASE,
+          List(List(Dims.UPDATE_SQL, Dims.NAME_BASED, Dims.UPDATE_AMT))
+        ),
+        TestConfig(
+          List("RowTrackingUpdateCommonTests"),
+          List(List(Dims.ROW_TRACKING_UPDATE_AMT, Dims.UPDATE_ROW_TRACKING_DV.asOptional))
         )
       )
     ),

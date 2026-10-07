@@ -263,7 +263,7 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
     // Parse original JSON
     Map<String, Object> responseMap = mapper.readValue(originalJson, Map.class);
     
-    // Build storage-credentials structure (Iceberg 1.11.0 requires "prefix" field)
+    // Build storage-credentials structure (Iceberg REST requires "prefix" field)
     Map<String, Object> credWrapper = new HashMap<>();
     credWrapper.put("prefix", "*");
     credWrapper.put("config", new HashMap<>(credentials));

@@ -28,7 +28,7 @@ import scala.jdk.OptionConverters._
 
 import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, LogSegment, OptimisticTransaction, RowId, Snapshot, VersionChecksum}
 import org.apache.spark.sql.delta.WinningCommitSummary
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, CommitInfo, DomainMetadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, CommitInfo, Protocol}
 import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
@@ -275,10 +275,12 @@ private[v2] class DeltaV2OptimisticTransaction(
       : (Option[VersionChecksum], Commit, CurrentTransactionInfo) = {
     val actions = currentTransactionInfo.finalActionsToCommit
     val addFiles = new ArrayBuffer[AddFile]()
+    var rowTrackingHighWaterMark: Option[Long] = None
     actions.foreach {
       case a: AddFile => addFiles += a
       case _: CommitInfo => // Kernel generates its own; V1 operation provenance is an JNR gap.
-      case d: DomainMetadata if RowId.RowTrackingMetadataDomain.isSameDomain(d) =>
+      case RowId.RowTrackingMetadataDomain(domain) =>
+        rowTrackingHighWaterMark = Some(domain.rowIdHighWaterMark)
       case other =>
         throw new UnsupportedOperationException(
           "DeltaV2 unsupported operation: cannot commit action " +
@@ -298,6 +300,10 @@ private[v2] class DeltaV2OptimisticTransaction(
       .buildUpdateTableTransaction("DeltaV2OptimisticTransaction", KernelOperation.WRITE)
       .build(kernelEngine)
     try {
+      rowTrackingHighWaterMark.foreach { highWaterMark =>
+        val domainMetadata = RowId.RowTrackingMetadataDomain(highWaterMark).toDomainMetadata
+        kernelTxn.addDomainMetadata(domainMetadata.domain, domainMetadata.configuration)
+      }
       val kernelTxnState = kernelTxn.getTransactionState(kernelEngine)
       val kernelCommitResult = kernelTxn.commit(
         kernelEngine,

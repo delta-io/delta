@@ -50,7 +50,16 @@ import org.apache.iceberg.types.Types.StructType;
  * <p>Partition data is produced by transforming columns in a table. Each column transform is
  * represented by a named {@link PartitionField}.
  *
- * This class is directly copied from iceberg repo 1.11.0; The only change is this sets checkConflicts
+ * <p>Partition specs are created using a builder obtained from {@link #builderFor(Schema)}:
+ *
+ * <pre>{@code
+ * PartitionSpec spec = PartitionSpec.builderFor(schema)
+ *     .hour("ts")
+ *     .bucket("id", 10)
+ *     .build();
+ * }</pre>
+ *
+ * This class is directly copied from iceberg repo 1.12.0; The only change is this sets checkConflicts
  * to false by default for partition spec converted from Delta to honor the field id assigned by Delta
  */
 public class PartitionSpec implements Serializable {
@@ -133,15 +142,8 @@ public class PartitionSpec implements Serializable {
           List<Types.NestedField> structFields = Lists.newArrayListWithExpectedSize(fields.length);
 
           for (PartitionField field : fields) {
-            Type sourceType = schema.findType(field.sourceId());
-            Type resultType = field.transform().getResultType(sourceType);
-
-            // When the source field has been dropped we cannot determine the type
-            if (sourceType == null) {
-              resultType = Types.UnknownType.get();
-            }
-
-            structFields.add(Types.NestedField.optional(field.fieldId(), field.name(), resultType));
+            structFields.add(
+                Types.NestedField.optional(field.fieldId(), field.name(), resultType(field)));
           }
 
           this.lazyPartitionType = Types.StructType.of(structFields);
@@ -186,14 +188,7 @@ public class PartitionSpec implements Serializable {
             if (field.transform() instanceof UnknownTransform) {
               classes[i] = Object.class;
             } else {
-              Type sourceType = schema.findType(field.sourceId());
-              if (null == sourceType) {
-                // When the source field has been dropped we cannot determine the type
-                sourceType = Types.UnknownType.get();
-              }
-
-              Type result = field.transform().getResultType(sourceType);
-              classes[i] = result.typeId().javaClass();
+              classes[i] = resultType(field).typeId().javaClass();
             }
           }
 
@@ -203,6 +198,17 @@ public class PartitionSpec implements Serializable {
     }
 
     return lazyJavaClasses;
+  }
+
+  private Type resultType(PartitionField field) {
+    Type sourceType = schema.findType(field.sourceId());
+    if (sourceType == null) {
+      // When the source field has been dropped, the source type has been lost
+      // Transforms with a fixed result type still work, so use unknown for source
+      sourceType = Types.UnknownType.get();
+    }
+
+    return field.transform().getResultType(sourceType);
   }
 
   @SuppressWarnings("unchecked")

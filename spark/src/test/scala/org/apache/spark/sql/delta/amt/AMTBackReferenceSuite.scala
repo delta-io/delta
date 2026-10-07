@@ -16,16 +16,20 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeletionVectorsTestUtils, DeltaLog, DeltaOperations, IsolationLevel, OptimisticTransaction, Snapshot, WinningCommitMetrics}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, RemoveFile}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeletionVectorsTestUtils, DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, IsolationLevel, OptimisticTransaction, Snapshot, WinningCommitMetrics}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, InMemoryLogReplay, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.functions.col
 
-class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTestUtils {
+class AMTBackReferenceSuite
+  extends AMTCheckpointTestBase
+  with DeletionVectorsTestUtils
+  with DeltaMinorCompactionTestUtils {
 
   import testImplicits._
 
@@ -611,6 +615,178 @@ class AMTBackReferenceSuite extends AMTCheckpointTestBase with DeletionVectorsTe
       assert(ex.getMessage.contains("does not match the AMT"))
       assert(ex.getMessage.contains(leafRemove.path))
     }
+  }
+
+  test("InMemoryLogReplay preserves back references across the collapse") {
+    def add(path: String, br: Option[BackReference], modTime: Long): AddFile =
+      AddFile(
+        path = path, partitionValues = Map.empty, size = 1L, modificationTime = modTime,
+        dataChange = true, backReference = br)
+    def remove(path: String, br: Option[BackReference] = None): RemoveFile =
+      add(path, br, modTime = 1L).removeWithTimestamp(2L)
+    def newLogReplay: InMemoryLogReplay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = None,
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = new Path("/fake/table/root"),
+      useDeletionVectorObjectIdentity = true,
+      retainFirstBackreference = true)
+    def postReplayAddFiles(replay: InMemoryLogReplay): Map[String, AddFile] =
+      replay.checkpoint.collect { case a: AddFile => a.path -> a }.toMap
+    def postReplayRemoveFiles(replay: InMemoryLogReplay): Map[String, RemoveFile] =
+      replay.checkpoint.collect { case r: RemoveFile => r.path -> r }.toMap
+
+    val backRef = BackReference("leaf-0", 3)
+
+    // Re-added AddFiles are preserved across the collapse.
+    val reAdd = newLogReplay
+    reAdd.append(0L, Iterator(add("f", br = Some(backRef), modTime = 1L)))
+    assert(postReplayAddFiles(reAdd)("f").backReference.contains(backRef),
+      "the only add must preserve its own back reference.")
+    reAdd.append(1L, Iterator(add("f", br = None, modTime = 2L)))
+    assert(postReplayAddFiles(reAdd)("f").backReference.contains(backRef),
+      "the collapsed re-add must preserve the first add's back reference.")
+
+    // Cancelled RemoveFiles are preserved across the collapse.
+    val removeThenAdd = newLogReplay
+    removeThenAdd.append(0L, Iterator(remove("f", br = Some(backRef))))
+    assert(postReplayRemoveFiles(removeThenAdd)("f").backReference.contains(backRef),
+      "the only remove must preserve its own back reference.")
+    removeThenAdd.append(1L, Iterator(add("f", br = None, modTime = 2L)))
+    assert(!postReplayRemoveFiles(removeThenAdd).contains("f"),
+      "the first remove must be cancelled by the later add.")
+    assert(postReplayAddFiles(removeThenAdd)("f").backReference.contains(backRef),
+      "the collapsed re-add must preserve the remove's back reference.")
+
+    // Cancelled AddFiles are preserved across the collapse.
+    val addThenRemove = newLogReplay
+    addThenRemove.append(0L, Iterator(add("f", br = Some(backRef), modTime = 1L)))
+    addThenRemove.append(1L, Iterator(remove("f", br = None)))
+    assert(!postReplayAddFiles(addThenRemove).contains("f"),
+      "the first add must be cancelled by the later remove.")
+    assert(postReplayRemoveFiles(addThenRemove)("f").backReference.contains(backRef),
+      "the collapsed tombstone must preserve the add's back reference.")
+
+    // File actions with no back reference are preserved across the collapse.
+    val unstamped = newLogReplay
+    unstamped.append(0L, Iterator(
+      add("a", br = None, modTime = 1L),
+      remove("b", br = None),
+      add("c", br = None, modTime = 3L)))
+    unstamped.append(1L, Iterator(remove("c", br = None)))
+    assert(postReplayAddFiles(unstamped)("a").backReference.isEmpty,
+      "the only add must preserve its empty back reference.")
+    assert(postReplayRemoveFiles(unstamped)("b").backReference.isEmpty,
+      "the only remove must preserve its empty back reference.")
+    assert(postReplayRemoveFiles(unstamped)("c").backReference.isEmpty,
+      "the collapsed tombstone must preserve its empty back reference.")
+  }
+
+  test("minor-compaction preserves back-references") {
+    withTable("amt_minor_compaction_e2e") {
+      val name = "amt_minor_compaction_e2e"
+      val adds = emitStampedAddFiles(name)
+      val deltaLog = deltaLogForName(name)
+      assert(adds.size >= 3, "need at least three leaf-resident files for the scenarios.")
+
+      // Drive several scenarios through one compaction window, each on its own leaf-resident file
+      // carrying its own distinct back reference, plus a net-new file:
+      //   toAddThenAdd    -- re-added with back-reference, the later re-added without
+      //   toRemoveThenAdd -- removed with back-reference, then re-added without
+      //   toAddThenRemove -- re-added with back-reference, then removed without
+      //   toAddWithoutBr  -- brand-new file, stays unstamped.
+      val toAddThenAdd = adds(0)
+      val toRemoveThenAdd = adds(1)
+      val toAddThenRemove = adds(2)
+      val toAddWithoutBr = AddFile(
+        path = "add-without-br", partitionValues = Map.empty, size = 1L, modificationTime = 1L,
+        dataChange = false, stats = """{"numRecords":1}""", backReference = None)
+      val brAddThenAdd = toAddThenAdd.backReference.getOrElse(
+        fail("toAddThenAdd must be leaf-resident."))
+      val brRemoveThenAdd = toRemoveThenAdd.backReference.getOrElse(
+        fail("toRemoveThenAdd must be leaf-resident"))
+      val brAddThenRemove = toAddThenRemove.backReference.getOrElse(
+        fail("toAddThenRemove must be leaf-resident."))
+      assert(Set(brAddThenAdd, brRemoveThenAdd, brAddThenRemove).size == 3,
+        "the files must carry distinct back references.")
+
+      val startVersion = deltaLog.update().version + 1
+      // Commit A: each file's first action, all carrying back references except for the last one.
+      commitActions(name, Seq(
+        toAddThenAdd,
+        toRemoveThenAdd.removeWithTimestamp(dataChange = false),
+        toAddThenRemove,
+        toAddWithoutBr))
+      // Commit B: the later actions on the same files, all without back-references.
+      commitActions(name, Seq(
+        toAddThenAdd.copy(backReference = None),
+        toRemoveThenAdd.copy(backReference = None),
+        toAddThenRemove.removeWithTimestamp(dataChange = false).copy(backReference = None)))
+      val endVersion = deltaLog.update().version
+
+      // Compact the two commits above.
+      minorCompactDeltaLog(
+        tablePath = deltaLog.dataPath.toString,
+        startVersion = startVersion,
+        endVersion = endVersion,
+        tableName = Some(name))
+
+      val compactedDelta = FileNames.compactedDeltaFile(deltaLog.logPath, startVersion, endVersion)
+      val compactedActions = deltaLog.store
+        .readAsIterator(compactedDelta, deltaLog.newDeltaHadoopConf())
+        .map(Action.fromJson).toSeq
+      val compactedAdds = compactedActions.collect { case a: AddFile => a.path -> a }.toMap
+      val compactedRemoves = compactedActions.collect { case r: RemoveFile => r.path -> r }.toMap
+
+      // Post-compaction file actions must preserve their own back reference, or the lack thereof.
+      assert(compactedAdds(toAddThenAdd.path).backReference.contains(brAddThenAdd),
+        "re-added file must keep its leaf back reference through the collapse.")
+      assert(compactedAdds(toRemoveThenAdd.path).backReference.contains(brRemoveThenAdd),
+        "remove-then-re-added file must recover its leaf back reference.")
+      assert(compactedRemoves(toAddThenRemove.path).backReference.contains(brAddThenRemove),
+        "add-then-removed file must recover its leaf back reference.")
+      assert(compactedAdds(toAddWithoutBr.path).backReference.isEmpty,
+        "add-without-br file must stay unstamped.")
+
+      // No path leaks across the add / remove partition.
+      assert(!compactedAdds.contains(toAddThenRemove.path),
+        "a removed file must not also appear as a live add.")
+      assert(
+        !compactedRemoves.contains(toAddThenAdd.path) &&
+          !compactedRemoves.contains(toRemoveThenAdd.path),
+        "a re-added file must not also appear as a tombstone.")
+    }
+  }
+
+  // Snapshot selection is covered by AMTSnapshotDiscoverySuite and AMTLogSegmentTrimSuite.
+  testAcrossAMTCheckpointScenarios(
+      "minor compaction spanning a content root is allowed",
+      "amt_minor_compaction_spanning_root",
+      sqlConfs = Seq(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "true"))(
+      inlineCheckpointTriggerActionsOrSQL =
+        Some(name => Right(s"INSERT INTO $name VALUES (1)"))) { context =>
+    val deltaLog = context.postCheckpointSnapshot.deltaLog
+    val rootVersion = context.checkpoint.contentRoot.version
+    val manifestVersion = context.manifestCommitVersion
+
+    sql(s"INSERT INTO ${context.tableName} VALUES (2)")
+    val endSnapshot = deltaLog.update()
+
+    val startVersion = rootVersion - 1
+    val endVersion = endSnapshot.version
+    assert(startVersion <= manifestVersion)
+    assert(manifestVersion < endVersion)
+
+    val compactedDeltaPath = FileNames.compactedDeltaFile(
+      deltaLog.logPath, startVersion, endVersion)
+    val fs = compactedDeltaPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+    assert(!fs.exists(compactedDeltaPath))
+
+    minorCompactDeltaLog(
+      tablePath = deltaLog.dataPath.toString,
+      startVersion = startVersion,
+      endVersion = endVersion,
+      tableName = Some(context.tableName))
+    assert(fs.exists(compactedDeltaPath), "Compaction must allow a content root within the window.")
   }
 
   /**

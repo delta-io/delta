@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta;
 import java.util.Map;
 import java.util.Optional;
 
+import org.apache.spark.sql.RuntimeConfig;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf$;
 import org.apache.spark.sql.delta.util.CatalogTableUtils;
@@ -31,6 +32,8 @@ import org.apache.spark.sql.internal.SQLConf;
  * {@code spark.databricks.delta.v2.enableMode} so that the rest of the codebase doesn't need to
  * directly inspect configuration values.
  *
+ * <p>The mode is read once at construction. Create a new instance to read updated settings.
+ *
  * <p>Configuration modes:
  * <ul>
  *   <li>NONE (default): sparkV1 connector for all operations</li>
@@ -39,17 +42,20 @@ import org.apache.spark.sql.internal.SQLConf;
  * </ul>
  */
 public class DeltaV2Mode {
+  private static final String NONE = "NONE";
   private static final String STRICT = "STRICT";
   private static final String AUTO = "AUTO";
 
-  private final SQLConf sqlConf;
+  private final String mode;
 
+  /** Captures the mode from the supplied SQL configuration. */
   public DeltaV2Mode(SQLConf sqlConf) {
-    this.sqlConf = sqlConf;
+    this.mode = sqlConf.getConf(DeltaSQLConf$.MODULE$.V2_ENABLE_MODE());
   }
 
-  private String mode() {
-    return sqlConf.getConf(DeltaSQLConf$.MODULE$.V2_ENABLE_MODE());
+  /** Captures the mode from the supplied session configuration. */
+  public DeltaV2Mode(RuntimeConfig runtimeConfig) {
+    this.mode = runtimeConfig.get(DeltaSQLConf$.MODULE$.V2_ENABLE_MODE());
   }
 
   /**
@@ -59,7 +65,7 @@ public class DeltaV2Mode {
    * @return true if sparkV2 streaming reads should be used
    */
   public boolean isStreamingReadsEnabled(Optional<CatalogTable> catalogTable) {
-    switch (mode()) {
+    switch (mode) {
       case STRICT:
         // Always use sparkV2 connector for all catalog tables
         return true;
@@ -78,7 +84,7 @@ public class DeltaV2Mode {
    * @return true if catalog should return sparkV2 tables
    */
   public boolean shouldCatalogReturnV2Tables() {
-    switch (mode()) {
+    switch (mode) {
       case STRICT:
         // STRICT mode: always return sparkV2 tables
         return true;
@@ -96,7 +102,7 @@ public class DeltaV2Mode {
    * @return true if CHANGES reads should use the sparkV2 connector
    */
   public boolean shouldRouteChangelogToV2() {
-    switch (mode()) {
+    switch (mode) {
       case STRICT:
       case AUTO:
         return true;
@@ -104,6 +110,11 @@ public class DeltaV2Mode {
         // NONE or unknown: the V2 Auto-CDF path is not available.
         return false;
     }
+  }
+
+  /** Whether pre-resolution may apply Delta's V2 schema-evolution shims. */
+  public boolean allowsV2SchemaEvolutionShims() {
+    return !NONE.equals(mode);
   }
 
   /**
@@ -123,7 +134,7 @@ public class DeltaV2Mode {
    * @return true if provided schema should be used without validation
    */
   public boolean shouldBypassSchemaValidationForStreaming(Map<String, String> parameters) {
-    switch (mode()) {
+    switch (mode) {
       case STRICT:
       case AUTO:
         // In sparkV2 modes, trust the schema for Unity Catalog managed tables
@@ -135,9 +146,9 @@ public class DeltaV2Mode {
   }
 
   /**
-   * Gets the current mode string (for logging/debugging).
+   * Gets the captured mode string (for logging/debugging).
    */
   public String getMode() {
-    return mode();
+    return mode;
   }
 }

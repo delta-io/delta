@@ -16,14 +16,13 @@
 
 package io.delta.spark.internal.v2.read
 
-import scala.jdk.CollectionConverters._
-
 import org.apache.spark.sql.delta.DeltaTableProvider
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
+import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
 
@@ -105,7 +104,7 @@ private[read] trait DeltaV2ScanE2ETestUtils
       query: => DataFrame,
       context: String): Seq[Boolean] = {
     withDeltaV2ScanForSelectedFiles(query, context) { scan =>
-      scan.getSelectedFiles.asScala.map(_.getDeletionVector.isPresent).toSeq
+      scan.preparedScan().files.map(_.deletionVector != null)
     }
   }
 
@@ -160,10 +159,41 @@ private[read] trait DeltaV2ScanE2ETestUtils
   protected def assertExpectedNoPushedLimit(df: DataFrame, context: String): Unit =
     assertDeltaV2BatchScanHasNoPushedLimit(df, context)
 
+  protected def assertExpectedDynamicPruning(df: DataFrame, context: String): Unit =
+    assertDeltaV2BatchScanHasDynamicPruning(df, context)
+
+  protected def assertExpectedStreamingScan(execution: QueryExecution, context: String): Unit =
+    assertDeltaV2MicroBatchScan(execution, context)
+
   protected def assertRouteSpecificInputFileCount(
       df: DataFrame,
       expected: Int,
       context: String): Unit = {}
+
+  /** Runs `stream` into a memory sink until it is caught up. Returns the sink rows and the last
+   * micro-batch execution.
+   */
+  protected def runStreamToCompletion(
+      stream: DataFrame,
+      queryName: String): (Seq[Row], QueryExecution) = {
+    val query = stream.writeStream
+      .format("memory")
+      .queryName(queryName)
+      .outputMode("append")
+      .start()
+    try {
+      query.processAllAvailable()
+      // StreamingQueryWrapper moved packages across Spark versions, so resolve it reflectively.
+      val streamExecution = query.getClass.getMethod("streamingQuery").invoke(query)
+      val lastExecution = streamExecution.getClass
+        .getMethod("lastExecution")
+        .invoke(streamExecution)
+        .asInstanceOf[QueryExecution]
+      (spark.table(queryName).collect().toSeq, lastExecution)
+    } finally {
+      query.stop()
+    }
+  }
 
   protected def checkRead(context: String)(
       query: => DataFrame)(

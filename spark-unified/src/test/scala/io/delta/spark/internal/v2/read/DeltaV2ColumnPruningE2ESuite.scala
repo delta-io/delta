@@ -21,7 +21,6 @@ import org.apache.spark.sql.Row
 private[read] trait DeltaV2ColumnPruningE2ETests {
   self: DeltaV2ScanE2ETestUtils =>
 
-  // V2ScanColumnPruningIntegrationTest.testSelectSubsetPrunesDataColumns
   test("selecting a subset prunes unused data columns") {
     val table = "v2_scan_e2e_pruning_subset"
     withTable(table) {
@@ -40,7 +39,6 @@ private[read] trait DeltaV2ColumnPruningE2ETests {
     }
   }
 
-  // V2ScanColumnPruningIntegrationTest.testFilterPushdownLeavesOnlyProjectedColumns
   test("a residual filter retains its column and prunes unused columns") {
     val table = "v2_scan_e2e_pruning_filter"
     withTable(table) {
@@ -59,7 +57,6 @@ private[read] trait DeltaV2ColumnPruningE2ETests {
     }
   }
 
-  // V2ScanColumnPruningIntegrationTest.testAllColumnsUsedMeansNoPruning
   test("using every data column leaves the read schema unchanged") {
     val table = "v2_scan_e2e_pruning_all_columns"
     withTable(table) {
@@ -78,7 +75,6 @@ private[read] trait DeltaV2ColumnPruningE2ETests {
     }
   }
 
-  // V2ScanColumnPruningIntegrationTest.testPartitionOnlyQueryHasEmptyReadDataSchema
   test("a partition-only query has an empty data read schema") {
     val table = "v2_scan_e2e_pruning_partition_only"
     withTable(table) {
@@ -99,7 +95,6 @@ private[read] trait DeltaV2ColumnPruningE2ETests {
     }
   }
 
-  // V2ScanColumnPruningIntegrationTest.testSubqueryDecorrelation_prunesUnusedColumns
   test("subquery decorrelation prunes unused columns") {
     val orders = "v2_scan_e2e_pruning_orders"
     val vips = "v2_scan_e2e_pruning_vips"
@@ -131,7 +126,6 @@ private[read] trait DeltaV2ColumnPruningE2ETests {
     }
   }
 
-  // V2ScanColumnPruningIntegrationTest.testJoinPrunesUnreferencedColumns
   test("a join prunes unreferenced columns from both sides") {
     val left = "v2_scan_e2e_pruning_join_left"
     val right = "v2_scan_e2e_pruning_join_right"

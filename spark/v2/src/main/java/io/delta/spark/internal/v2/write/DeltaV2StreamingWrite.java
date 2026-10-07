@@ -18,14 +18,11 @@ package io.delta.spark.internal.v2.write;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Operation;
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import java.util.function.Function;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
@@ -33,8 +30,11 @@ import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.connector.write.streaming.StreamingDataWriterFactory;
 import org.apache.spark.sql.connector.write.streaming.StreamingWrite;
 import org.apache.spark.sql.delta.DeltaConfigs;
+import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -103,14 +103,15 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.queryId = requireNonNull(queryId, "queryId is null");
     requireNonNull(dataWriterFactoryBuilder, "dataWriterFactoryBuilder is null");
-    this.writeSchema = initialSnapshot.getSchema();
-    this.writeProtocol = ((SnapshotImpl) initialSnapshot).getProtocol();
+    this.writeSchema = initialSnapshot.schema();
+    this.writeProtocol = initialSnapshot.protocol();
     this.writeVariantShreddingEnabled = variantShreddingEnabled;
     this.variantLayoutFollowsProperty = variantLayoutFollowsProperty;
     // We only need this transaction's serialized write context for the factory, not the commit
     // (commit() builds its own per epoch).
     Transaction stateTxn =
-        initialSnapshot
+        DeltaV2Snapshot$.MODULE$
+            .getKernelSnapshot(initialSnapshot)
             .buildUpdateTableTransaction(DeltaV2Write.getEngineInfo(), Operation.STREAMING_UPDATE)
             .build(engine);
     this.dataWriterFactory = dataWriterFactoryBuilder.apply(stateTxn);
@@ -134,8 +135,8 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     // (TransactionBuilder) for the streaming commit, and
     // getLatestTransactionVersion for the epoch-skip check.
     // One reload, so the skip check, guards, and the transaction below all judge the same snapshot.
-    SnapshotImpl latestSnapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
+    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
+    SnapshotImpl kernelLatestSnapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(latestSnapshot);
 
     // Skip an already-committed epoch before any guard runs. StreamingWrite.commit may be called
     // more than once for one epoch and must be idempotent, so a repeated commit of a committed
@@ -144,7 +145,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     // files for this repeat are orphaned (VACUUM'd). The next uncommitted epoch still hits the
     // guards.
     long committedEpoch =
-        ((SnapshotImpl) latestSnapshot).getLatestTransactionVersion(engine, queryId).orElse(-1L);
+        kernelLatestSnapshot.getLatestTransactionVersion(engine, queryId).orElse(-1L);
     if (committedEpoch >= epochId) {
       logger.info("Skipping already committed epoch {} for query {}", epochId, queryId);
       return;
@@ -153,16 +154,14 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     // TODO(#7140): no implicit type cast and mergeSchema. Fail loudly on a concurrent
     // schema/protocol change.
     assertSchemaAndProtocolUnchanged(latestSnapshot);
-    assertVariantShreddingUnchanged(
-        DeltaV2WriteBuilder.isVariantShreddingEnabled(
-            latestSnapshot.getMetadata().getConfiguration()));
+    assertVariantShreddingUnchanged(DeltaV2WriteBuilder.isVariantShreddingEnabled(latestSnapshot));
 
     // TODO(#7140): no self-scan guard. A stream reading and writing the same table commits
     //  as a blind append, skipping the conflict check V1 gets via readWholeTable().
 
     try {
       Transaction txn =
-          latestSnapshot
+          kernelLatestSnapshot
               .buildUpdateTableTransaction(DeltaV2Write.getEngineInfo(), Operation.STREAMING_UPDATE)
               .withTransactionId(queryId, epochId)
               .build(engine);
@@ -181,14 +180,14 @@ class DeltaV2StreamingWrite implements StreamingWrite {
 
   /** Fails the epoch if the fresh snapshot's schema/protocol diverged from the write's baseline. */
   private void assertSchemaAndProtocolUnchanged(Snapshot latestSnapshot) {
-    if (!writeSchema.equals(latestSnapshot.getSchema())) {
+    if (!writeSchema.equals(latestSnapshot.schema())) {
       throw new IllegalStateException(
           "DSv2 streaming write to query "
               + queryId
               + " cannot continue: the table schema changed after the stream started. Restart the "
               + "query to pick up the new schema.");
     }
-    if (!writeProtocol.equals(((SnapshotImpl) latestSnapshot).getProtocol())) {
+    if (!writeProtocol.equals(latestSnapshot.protocol())) {
       throw new IllegalStateException(
           "DSv2 streaming write to query "
               + queryId

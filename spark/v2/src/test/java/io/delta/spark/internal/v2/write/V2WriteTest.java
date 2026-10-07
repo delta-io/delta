@@ -372,10 +372,10 @@ public class V2WriteTest extends V2TestBase {
   /**
    * The distinguishing state: the {@code variantShredding} feature is in the protocol while the
    * table property does not enable shredding. Shredding must follow the property, not the protocol
-   * feature, so neither connector may shred here. On DBR this state also arises after {@code REORG
-   * ... APPLY (UNSHRED VARIANT)}, but that syntax is not in the OSS SQL parser, so the state is
-   * built directly at creation via {@code delta.feature.variantShredding = supported} with the
-   * property explicitly disabled.
+   * feature, so neither connector may shred here. Engines whose SQL parser supports {@code REORG
+   * ... APPLY (UNSHRED VARIANT)} also reach this state through that command, but the syntax is not
+   * in the OSS SQL parser, so the state is built directly at creation via {@code
+   * delta.feature.variantShredding = supported} with the property explicitly disabled.
    */
   @Test
   public void variantWriteFollowsPropertyWhenFeaturePresentButDisabled(
