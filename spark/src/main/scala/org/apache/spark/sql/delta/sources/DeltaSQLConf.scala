@@ -3820,6 +3820,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(Set("AUTO", "NONE", "STRICT"))
       .createWithDefault("AUTO")
 
+  val V2_TRANSACTIONS_ENABLED =
+    buildConf("v2.transactions.enabled")
+      .internal()
+      .doc("When enabled, Delta utilises DSv2 Spark transactions in write operations. " +
+        "Disabled by default. This is a feature under development.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS =
     buildConf("dml.insert.dfByName.allowImplicitCasts")
       .internal()

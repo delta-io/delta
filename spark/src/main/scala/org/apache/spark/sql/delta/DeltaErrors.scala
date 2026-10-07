@@ -2292,6 +2292,18 @@ trait DeltaErrorsBase
       cause = originalException)
   }
 
+  def deltaV2TransactionCatalogMismatch(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTAV2_TRANSACTIONS_INCONSISTENT_CONFIG.CATALOG_MISMATCH",
+      messageParameters = Array.empty)
+  }
+
+  def deltaV2TransactionsRequireV2Connector(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTAV2_TRANSACTIONS_INCONSISTENT_CONFIG.REQUIRES_V2_CONNECTOR",
+      messageParameters = Array.empty)
+  }
+
   def duplicateColumnsOnUpdateTable(originalException: Throwable): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_DUPLICATE_COLUMNS_ON_UPDATE_TABLE",
