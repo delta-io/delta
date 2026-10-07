@@ -399,8 +399,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
           fileStatus.getPath,
           fileStatus.getSize,
           fileStatus.getModificationTime,
-          Optional.of(stats)
-        ).toTestRow(statsColumns)
+          Optional.of(stats)).toTestRow(statsColumns)
       }
 
       checkAnswer(statsFromFooter, statsFromFile)
