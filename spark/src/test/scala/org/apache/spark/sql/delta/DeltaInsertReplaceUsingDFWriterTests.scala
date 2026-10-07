@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, Row}
 import org.apache.spark.sql.functions.{col, concat, count, lit}
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
 
 /**
  * Common tests for replaceUsing option via DataFrame APIs (save(), insertInto(),
@@ -556,6 +557,51 @@ trait DeltaInsertReplaceUsingDFWriterTests
           Row(4, "a", "source") ::
           Row(3, "a", "target") ::
           Nil)
+    }
+  }
+
+  test("replaceUsing with RDD-backed source on partitioned table") {
+    Seq(false, true).foreach { useFileMetadataColumn =>
+      withTempDir { dir =>
+        val path = dir.getAbsolutePath
+        val schema = StructType(Seq(
+          StructField("country_code", StringType, nullable = false),
+          StructField("value", IntegerType, nullable = true)))
+        def createDataFrame(rows: Seq[Row]): DataFrame = {
+          spark.createDataFrame(spark.sparkContext.parallelize(rows, 1), schema)
+        }
+
+        createDataFrame(Seq(Row("DE", 1), Row("FR", 2), Row("IT", 3)))
+          .write.format("delta").partitionBy("country_code").save(path)
+
+        withSQLConf(
+            DeltaSQLConf.DELETE_USE_FILE_METADATA_COLUMN.key -> useFileMetadataColumn.toString) {
+          def replaceUsing(): Unit = writeReplaceUsingDF(
+            sourceDF = createDataFrame(Seq(Row("DE", 99))),
+            target = path,
+            replaceUsingCols = "country_code")
+
+          if (useFileMetadataColumn) {
+            replaceUsing()
+            checkAnswer(
+              spark.read.format("delta").load(path),
+              Row("DE", 99) :: Row("FR", 2) :: Row("IT", 3) :: Nil)
+          } else {
+            val error = intercept[DeltaIllegalStateException](replaceUsing())
+            val expectedTablePath = DeltaLog.forTable(spark, path).dataPath.toString
+            checkError(
+              exception = error,
+              condition = "DELTA_FILE_TO_OVERWRITE_NOT_FOUND",
+              sqlState = Some("42K03"),
+              parameters = Map("path" -> expectedTablePath, "pathList" -> "(?s).*"),
+              matchPVals = true)
+            Seq("DE", "FR", "IT").foreach { countryCode =>
+              assert(error.getMessageParameters.get("pathList")
+                .contains(s"country_code=$countryCode"))
+            }
+          }
+        }
+      }
     }
   }
 
