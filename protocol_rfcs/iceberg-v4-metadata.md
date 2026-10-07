@@ -33,34 +33,6 @@ This design enables:
 - Metadata changes proportional to operation size
 - Stable leaf manifests that can be cached effectively
 
-## Log compaction compatibility
-
-Log compaction can include manifest commits without adding manifest-based restrictions to compaction writers. A later manifest commit can publish a content root inside an existing compacted range, so consumers must select compaction files relative to the checkpoint and content root used for each target snapshot. Preserving source backreferences lets incremental metadata tree writers consume eligible compaction files with the same meaning as the original commits.
-
-These rules extend the existing `adaptiveMetadata` reader-writer feature; they add no field, table property, or feature name. The protocol versions and dependencies in [Table Feature Enablement](#table-feature-enablement) are unchanged.
-
-| Client or table | Compatibility of these log compaction rules |
-| - | - |
-| Reader without `adaptiveMetadata` support, table with the feature | Fails cleanly at the reader-feature check. |
-| Writer or checkpoint writer without `adaptiveMetadata` support, table with the feature | Fails cleanly at the table-feature check. |
-| Reader implementing these rules, table without `adaptiveMetadata` | Uses existing log-compaction and replay rules. |
-| Writer implementing these rules, table without `adaptiveMetadata` | Uses existing log-compaction and reconciliation rules. |
-| Existing table enabling `adaptiveMetadata`, including mixed old and new commits | Before the first content root, existing replay rules apply. Once a root is selected, compaction selection uses that root and the selected checkpoint. |
-| Client supporting only some required table features | Fails cleanly if any required reader or writer feature is unsupported. |
-| Earlier `adaptiveMetadata` preview clients and compaction files | Compaction producers and consumers must implement these rules before using affected compaction files. Files that lost source backreferences must be ignored or regenerated from retained individual commits. |
-
-| Feature or operation | Interaction with log compaction |
-| - | - |
-| Backreferences, deletion vectors, and action reconciliation | Preserve source `backReference` values and logical-file identity, including deletion-vector identity. Retain the removals needed to apply a compacted range to earlier state. |
-| Checkpoints and sidecars | Select a compaction only after the replay boundary. A standalone checkpoint may advance that boundary beyond its `contentRoot.version`; existing checkpoint and sidecar formats are unchanged. |
-| Version checksums, in-commit timestamps, and change data feed | Compaction does not preserve `commitInfo`. Existing CRC or original-commit reads supply manifest discovery and commit metadata; compaction does not replace per-commit change data feed reads. |
-| Metadata cleanup, VACUUM, CLONE, RESTORE, and feature removal | Compaction does not relax existing retention, reachability, or feature-removal rules. Each reconstructed snapshot uses its own selected root and checkpoint; an ineligible compaction cannot replace required individual commits. |
-| Row tracking and domain metadata | Reconcile the same actions and preserve existing row IDs, commit versions, and domain metadata semantics; log compaction does not rewrite data files. |
-| Column mapping, partitioning, clustering, statistics, and data skipping | No new file schema, field IDs, partition encoding, or statistics semantics; selection and backreference preservation apply to the existing file actions. |
-| Type widening, generated/default/identity columns, CHECK constraints, invariants, collations, variant, and other types | No new value encoding or expression semantics; the update governs metadata replay only. |
-| Iceberg compatibility and manifest compaction | Existing feature compatibility is unchanged. Log compaction does not rewrite manifests or rebase their backreferences; manifest writers must preserve the validity of actions after a deferred content root. |
-| Catalog-managed tables | Existing publication requirements still apply: compaction covers only commits published in `_delta_log`. Snapshot selection uses the same content-root and checkpoint boundaries. |
-
 --------
 
 # Changes to existing sections
@@ -123,38 +95,15 @@ These rules extend the existing `adaptiveMetadata` reader-writer feature; they a
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#action-reconciliation)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, `remove` actions are not retained in reconstructed snapshot state. A `remove` is applied during replay to cancel its matching `add` (or to mark the referenced tree entry deleted) and is then dropped. The reconstructed table state and any checkpoint produced from it contain only live entries; they do not retain removes. Scans never consumed tombstones, and tree-reachability cleanup replaces the VACUUM use of tombstones, so removes have no remaining role in reconciled state.</ins>
-
-<ins>Log compaction reconciles a range of commits rather than a complete snapshot. It MUST retain the `remove` actions needed to apply that range to earlier table state, including their source backreferences (see [Log Compaction Files](#log-compaction-files)).</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, `remove` actions are not carried through reconciliation. A `remove` is applied during replay to cancel its matching `add` (or to mark the referenced tree entry deleted) and is then dropped. The reconstructed table state and any checkpoint produced from it contain only live entries; they do not retain removes. Scans never consumed tombstones, and tree-reachability cleanup replaces the VACUUM use of tombstones, so removes have no remaining role in reconciled state.</ins>
 
 ### Log Compaction Files
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#log-compaction-files)***
 
-The existing writer permission, "Can optionally produce log compactions for any given commit range", also applies to `adaptiveMetadata` tables, subject to the following requirements.
+<ins>When the `adaptiveMetadata` table feature is enabled, log compaction MUST preserve the source actions' `backReference` values.</ins>
 
-<ins>When the `adaptiveMetadata` table feature is enabled, compaction writers MAY compact ranges containing manifest commits or spanning content roots. They MAY skip such ranges as an optimization, but excluding manifest commits is not a protocol requirement. Existing restrictions, including [publication requirements for catalog-managed tables](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#maintenance-operations-on-catalog-managed-tables), still apply.</ins>
-
-<ins>Compaction writers MUST preserve the original range's replay semantics for every eligible use of the compaction file. For every `add` or `remove` action retained by reconciliation, compaction writers MUST preserve the source action's `backReference`, including whether it is null. They MUST NOT discard a non-null backreference or rebase it against another metadata tree. A generated compaction file can therefore contain backreferences computed against different trees; its existence does not make it eligible for replay.</ins>
-
-<ins>Before selecting compaction files for a target snapshot version `V`, readers MUST discover the checkpoint and content root for that snapshot. If no manifest commit exists at or before `V`, existing log-compaction selection rules apply. Otherwise, let `R` be the selected `contentRoot.version` and `C` be the selected `checkpointMetadata.version`, where `R <= C <= V`. Log compaction files do not preserve `commitInfo`; readers obtain `lastManifestCommit` from the target version's [CRC or original commit file](#version-checksum-file).</ins>
-
-<ins>A reader MAY select a compaction file covering the inclusive range `[S, E]` only if `C < S < E <= V`, in addition to the existing log-compaction requirements. In particular, it MUST NOT select a range spanning the selected content root (`S <= R <= E`). A compaction file replaces its entire range; readers MUST NOT replay only its suffix after `R` or `C`. They MUST cover the required replay range using eligible compaction files or the individual commit files.</ins>
-
-<ins>Readers MUST determine eligibility for each target snapshot and selected checkpoint. A compaction that was eligible for an earlier snapshot can become ineligible after a later manifest commit publishes a content root inside its range. Writers consuming compacted deltas, including incremental metadata tree writers, MUST follow the same selection rules.</ins>
-
-#### Log compaction selection examples
-
-<ins>In these examples, a compaction file covers `[11, 20]`, all individual commits exist, and there are no standalone checkpoints, so `C = R`. Each manifest commit preserves the backreference compatibility required by [Backreferences](#backreferences). "May select" assumes the other replay requirements are met.</ins>
-
-| Manifest commit | Target version `V` | Selected root `R` | Replay choice |
-| - | - | - | - |
-| <ins>15 publishes root 8</ins> | <ins>20</ins> | <ins>8</ins> | <ins>May select `[11, 20]`, after replaying commits 9 and 10. The manifest commit is inside the range, but its root is before it.</ins> |
-| <ins>17 publishes root 15</ins> | <ins>20</ins> | <ins>15</ins> | <ins>Must skip `[11, 20]`; replay commits 16 through 20. The compacted range spans root 15 and may contain incompatible backreferences.</ins> |
-| <ins>30 publishes root 15; the preceding root is 5</ins> | <ins>22</ins> | <ins>5</ins> | <ins>May select `[11, 20]`, between commits 6 through 10 and commits 21 and 22. Manifest commit 30 is beyond the target snapshot.</ins> |
-| <ins>30 publishes root 15; the preceding root is 5</ins> | <ins>30</ins> | <ins>15</ins> | <ins>Must skip the same `[11, 20]` file; replay commits 16 through 30. The newly selected root is inside the range.</ins> |
-
-<ins>A standalone checkpoint can further restrict selection: with root `R = 8`, checkpoint `C = 12`, and target `V = 20`, the same `[11, 20]` compaction MUST be skipped because only commits 13 through 20 remain to be replayed.</ins>
+<ins>Log compaction files whose version ranges span the selected `contentRoot.version` may be discarded during log replay.</ins>
 
 ### Deletion Vectors
 
@@ -320,8 +269,6 @@ The action that invalidates the existing tree entry carries the backreference:
 An `add` thus carries a backreference only when it re-adds a file with no paired `remove`.
 
 A backreference is meaningful only relative to the tree it was computed from, identified by that tree's `contentRoot.version`. A commit's backreferences are valid only if they target the current `contentRoot.version`; if a concurrent manifest commit has advanced the tree (e.g., compaction moved entries between manifests), they are stale and must be recomputed against the new tree before the commit can proceed (see [Conflict Resolution](#conflict-resolution)).
-
-When a manifest commit at version `M` publishes a content root at version `R < M`, the manifest writer MUST ensure that file actions in commits `R + 1` through `M`, including their backreferences, remain replayable against the published tree. A source backreference computed against an older tree can remain valid if it still identifies the correct entry in the new tree. If that guarantee cannot hold, the writer MUST advance the content-root version to incorporate the incompatible actions before publishing the tree. This requirement also applies when those intervening commits are read through a log compaction file.
 
 Backreferences enable efficient [Manifest Deletion Vector (MDV)](#manifest-deletion-vectors-mdvs) creation during manifest commits: writers can directly construct MDVs from backreferences without scanning leaf manifests. The engine must propagate (manifest, position) metadata through the planning pipeline so it is available at commit time.
 
@@ -627,7 +574,7 @@ Manifest commits have the following characteristics:
    never stored in the metadata tree. A manifest commit's `checkpoint` action already carries the current `protocol`, `metaData`, `domainMetadata`, and `txn`s (see [Checkpoint Action](#checkpoint-action)), so a checkpoint-based reader needs nothing else to reconstruct the table state up to `checkpointMetadata.version`. When one of these values changes, the commit that changes it must write a *separate* top-level non-file action, following standard Delta commit semantics.
 
 3. **Incorporates preceding commits**: Manifest commits must
-   incorporate all preceding log commits through `checkpointMetadata.version` (since the last checkpoint) into the new metadata tree. When publishing a content root older than the manifest commit, writers MUST also preserve the replayability of subsequent actions as specified in [Backreferences](#backreferences).
+   incorporate all preceding log commits (since the last checkpoint) into the new metadata tree.
 
 ### Standalone Checkpoint
 
@@ -662,7 +609,6 @@ When `adaptiveMetadata` is supported and active, readers must:
 - Take the latest checkpoint to be the `checkpoint` action with the greatest `checkpointMetadata.version` (across manifest commits, standalone checkpoints, and `_last_checkpoint`), and use its `contentRoot` as the metadata tree. A later manifest commit that builds a newer tree supersedes an earlier standalone checkpoint that references an older tree.
 - Read the root manifest at `contentRoot.path` and skip leaf-manifest entries marked in `manifest_info.dv` (see [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
 - Reconstruct the current table state by applying the commits after `checkpointMetadata.version` on top of the tree, following [Action Reconciliation](#action-reconciliation).
-- Select log compaction files relative to the target snapshot's content root and checkpoint, following [Log Compaction Files](#log-compaction-files).
 - Read any `sidecar` entries referenced by the checkpoint to obtain the complete set of transaction identifiers and domain metadata (see [Checkpoint Action](#checkpoint-action)).
 
 ## Writer Requirements for Adaptive Metadata
@@ -677,7 +623,6 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
 - Include the `dataChange` field in the `commitInfo` action of every commit (see [Commit Provenance Information](#commit-provenance-information)).
-- Preserve source backreferences when producing log compaction files and apply the reader selection rules when consuming them, including during incremental tree construction (see [Log Compaction Files](#log-compaction-files)).
 
 ### Manifest Commit Procedure
 
