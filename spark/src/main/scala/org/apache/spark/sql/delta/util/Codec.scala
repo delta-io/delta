@@ -197,6 +197,7 @@ object Codec {
         sum += decodeInputChar(inputIndex + 2) * BASE_2ND_POWER
         sum += decodeInputChar(inputIndex + 3) * BASE
         sum += decodeInputChar(inputIndex + 4)
+        require(sum <= 0xFFFFFFFFL, s"Input is not valid Z85: $encoded")
         buffer.putInt(sum.toInt)
         inputIndex += 5
       }
