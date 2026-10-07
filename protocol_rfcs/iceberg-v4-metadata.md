@@ -41,7 +41,7 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, the `add` action supports the following fields. Writers must populate `snapshotId` on every `add` written while the feature is enabled. Writers must populate `modifiedSnapshotId` when the file has a deletion vector or column files, and must preserve a prior non-null value when writing an existing file:</ins>
+<ins>When `adaptiveMetadata` is enabled, `add` actions support the following fields:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
@@ -53,7 +53,7 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#remove-file)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, the `remove` action must include a `backReference` when the file's entry lives in a leaf manifest, set `extendedFileMetadata` to true, have a null `deletionTimestamp`, and include the following snapshot provenance fields. Writers must populate `snapshotId` on every `remove` written while the feature is enabled and preserve the removed file's `modifiedSnapshotId`:</ins>
+<ins>When `adaptiveMetadata` is enabled, `remove` actions have the following additional requirements and fields:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
@@ -469,15 +469,14 @@ When folding a log `add` into a manifest, writers convert `add.stats` to `conten
 
 ## Snapshot ID Generation and Provenance
 
-The `snapshot_id` field in tracking identifies the snapshot in which an entry was added, deleted, or replaced. The `modified_snapshot_id` field identifies the snapshot in which an entry's modification metadata, such as its deletion vector or column files, last changed.
+When `adaptiveMetadata` is enabled, each transaction must generate one non-negative random 63-bit snapshot ID using [Iceberg's snapshot ID algorithm](https://github.com/apache/iceberg/blob/main/core/src/main/java/org/apache/iceberg/SnapshotIdGeneratorUtil.java). The ID is generated once and reused across conflict retries, file actions, and manifest tracking.
 
-Writers must generate one non-negative random 63-bit snapshot ID for each transaction that writes a manifest or contains `add` or `remove` actions. The ID must be generated once per transaction and preserved across conflict retries. A transaction uses the same ID for its manifest tracking and for every data-file lifecycle or file-metadata modification that it starts or terminates.
+File actions record snapshot provenance as follows:
 
-The top-level `snapshotId` and `modifiedSnapshotId` fields on `add` and `remove` actions preserve this provenance across log commits until the actions are folded into a manifest:
-
-- A newly live file, including a file that was previously removed and is now re-added, starts a new data-file lifecycle. Its `add.snapshotId` is the current transaction's snapshot ID. If the file has a deletion vector or column files, its `add.modifiedSnapshotId` is also the current transaction's snapshot ID; otherwise `add.modifiedSnapshotId` may be null.
-- An `add` for a file that was already live preserves `snapshotId`. It also preserves `modifiedSnapshotId` when the deletion vector and column files are unchanged, and uses the current transaction's snapshot ID when either is updated. Thus, a metadata-only update preserves both IDs, while a deletion-vector or column-file update preserves only the data-file ID.
-- A `remove` uses the current transaction's snapshot ID as `remove.snapshotId`, identifying when the prior data-file entry was deleted or replaced. It preserves the removed file's `modifiedSnapshotId`, which may be null if no modification has been recorded.
+- `add.snapshotId` is the current transaction's snapshot ID when the action starts a new data-file lifecycle; otherwise it preserves the live file's value.
+- `add.modifiedSnapshotId` is the current transaction's snapshot ID when the deletion vector or column files change; otherwise it preserves the live file's value. It may be null if no modification has been recorded.
+- `remove.snapshotId` is the current transaction's snapshot ID.
+- `remove.modifiedSnapshotId` is copied verbatim from the `add` that the `remove` replaces.
 
 When converting an `add` to a live DATA entry, writers map `add.snapshotId` to `tracking.snapshot_id` and `add.modifiedSnapshotId` to `tracking.modified_snapshot_id`. For a terminal DATA entry with status `DELETED` or `REPLACED`, writers map the corresponding fields from the `remove`. Conversely, readers reconstructing an `add` from a live DATA entry must copy the resolved `tracking.snapshot_id` and `tracking.modified_snapshot_id` values to the top-level action fields.
 
