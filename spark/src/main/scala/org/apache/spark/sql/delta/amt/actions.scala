@@ -823,6 +823,12 @@ object Tracking {
      */
     val liveEntryStatuses: Set[Int] = Set(Existing, Added, Modified)
 
+    /**
+     * The complement of [[liveEntryStatuses]]: statuses that tombstone an entry (DELETED /
+     * REPLACED), for both entry kinds.
+     */
+    val tombstoneEntryStatuses: Set[Int] = all -- liveEntryStatuses
+
     /** The spec name of a `status` code, for error messages. */
     def nameOf(status: Int): String = status match {
       case Existing => "EXISTING"
