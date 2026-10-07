@@ -68,7 +68,8 @@ Field Name | Data Type | Description | optional/required
 fileCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table | optional
 columnFiles | Array[[ColumnFileDescriptor Struct](#column-file-descriptor-struct)] | The column files associated with this data file. See also [Column Updates](#column-updates). | optional
 
-> ***Replace the row with field name `defaultRowCommitVersion` in the schema of the `add` action.
+> ***Replace the row with field name `defaultRowCommitVersion` in the schema of the `add`
+> action.***
 
 Field Name | Data Type | Description | optional/required
 -|-|-|-
@@ -111,10 +112,32 @@ defaultRowCommitVersion | Long | First commit version in which an `add` action w
   columnFileSetId)` primary key. File actions (`add` or `remove`) reference logical files, and a log
   can contain any number of references to a single file.
 
+## Writer Requirements for Row Tracking
+
+> ***In the section [Writer Requirements for Row
+> Tracking](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-row-tracking)
+> replace the bullet group starting with `Writer must assign fresh Row Commit Versions` with the
+> following bullet group.***
+
+- Writers must assign fresh Row Commit Versions to all rows that they commit.
+    - Writers must set the `defaultRowCommitVersion` field in new `add` actions to the version number
+      of the log entry containing the `add` action.
+    - Writers must set the `defaultRowCommitVersion` field in recommitted and checkpointed `add`
+      actions that include changes to `columnFiles` to the version number of the log entry
+      containing the new replacement `add` action.
+    - Writers must set the `defaultRowCommitVersion` field in recommitted and checkpointed `add`
+      actions that do not include changes to `columnFiles` and `remove` actions to the
+      `defaultRowCommitVersion` of the last committed `add` action with the same `path`.
+    - Writers must set the `fileCommitVersion` field in new `add` actions to the version number of
+      the log entry containing the `add` action.
+    - Writers must set the `fileCommitVersion` field in recommitted and checkpointed `add` actions
+      and `remove` actions to the `fileCommitVersion` of the last committed `add` action with the
+      same `path`.
+
 ## Checkpoint Schema
 
 > ***In the appendix section for `Checkpoint Schema` add the following fields inside all references
-> to the `add` and `remove` structs.
+> to the `add` and `remove` structs.***
 
 ```
 |    |-- fileCommitVersion: long
@@ -150,8 +173,8 @@ To support this feature:
 - The feature `catalogManaged` must exist in the table protocol's `readerFeatures` and
   `writerFeatures`.
 - The feature `changeDataFeed` must not exist in the table protocol's `writerFeatures`.
-- The features `icebergCompatV1` and `icebergCompatV2` must both not exist in the table protocol's
-  `writerFeatures`.
+- The features `icebergCompatV1`, `icebergCompatV2`, and `icebergCompatV3` must all not exist in
+  the table protocol's `writerFeatures`.
 - The feature `icebergWriterCompatV1` must not exist in the table protocol's `writerFeatures`.
 
 Column Updates store values in [Column Files](#column-file-format) that are tracked in metadata
@@ -225,7 +248,7 @@ corresponding values for that column in the base file as invalid and read them f
 instead.
 
 The column file contains data for the same logical rows in the same order as the base file. Readers
-must align them positionally, ignoring row group boundaires.
+must align them positionally, ignoring row group boundaries.
 
 ## Writer Requirements for Column Updates
 
@@ -236,11 +259,8 @@ For each file the writer is free to choose one of the following ways to write an
 3. replace/attach a column file (keeping the existing DV);
 4. replace/attach a DV and replace/attach a column file.
 
-(3) and (4) -- the new ways added with Column Updates -- are forbidden if any of the following are
-true:
-
-- the write includes any partition column;
-- the write includes a `cdc` action.
+(3) and (4) -- the new ways added with Column Updates -- are forbidden if the write includes any
+partition column.
 
 The procedure for writing a column file (i.e. options (3) and (4) from the above list):
 
@@ -268,8 +288,8 @@ New writes must handle these two fields as follows:
 Situation | `defaultRowCommitVersion` | `fileCommitVersion`
 -|-|-
 The first `add` with its `path` (i.e. not a replacement). | The current version. | The current version.
-A replacement `add` (replacing a previous `add` with the same `path`), while changing either the DV or `columnFiles`. | The current version. | Copied from the previous `add`.
-A metadata-only rewrite (i.e. `add` that doesn't change any of: `path`, DV, `columnFiles`) | Copied from the previous `add`. | Coped from the previous `add`.
+A replacement `add` (replacing a previous `add` with the same `path`), while changing `columnFiles`. | The current version. | Copied from the previous `add`.
+A metadata-only rewrite (i.e. `add` that doesn't change either `path` or `columnFiles`) | Copied from the previous `add`. | Copied from the previous `add`.
 
 Even though `fileCommitVersion` is optional in the schema, when `columnFiles` are non-empty, this
 field is required. If a stale `add` does not contain a valid `fileCommitVersion`, it must be filled
@@ -501,10 +521,8 @@ This diverges from the AMT RFC saying that
 Iceberg requires more fields for column files than Delta keeps within `add` actions -- all extra
 fields are wired through `amtPassthrough`:
 
-- `format_version` -- Delta doesn't need to keep track of this version;
 - `file_format` -- Delta only supports Parquet;
 - `key_metadata` -- Delta doesn't support encryption;
-- `split_offsets` -- this is only for planning.
 
 Marking referenced files as `REPLACED`/`MODIFIED` in presence of Column Updates is handled the same
 way as for DVs -- a change in column files results in the old manifest entry becoming `REPLACED`,
@@ -517,7 +535,7 @@ field:
 
 Field ID | Field Name | Delta Type | Required | Applicable To | Description
 -|-|-|-|-|-
-158 | `column_files` | Array\<Struct([ColumnFileDescriptor](#column-file-descriptor))\> | Optional | DATA | Column files for the data file.
+158 | `column_files` | Array\<159: Struct([ColumnFileDescriptor](#column-file-descriptor))\> | Optional | DATA | Column files for the data file.
 
 ##### Column File Descriptor
 
@@ -526,12 +544,10 @@ struct:
 
 Field ID | Field Name | Delta Type | Required | Description
 -|-|-|-|-
-161 | `format_version` | Integer | Required | Iceberg writer format version; 4 for V4.
-162 | `field_ids` | Array\<Integer\> | Required | The field ids that this column file contains.
-164 | `location` | String | Required | Column file path relative to table root.
-165 | `file_format` | String | Required | File format name. Delta only supports `parquet`.
-166 | `file_size_in_bytes` | Long | Required | Total column file size in bytes.
-168 | `split_offsets` | Array\<Long\> | Optional | Row group split offsets.
+160 | `location` | String | Required | Column file path relative to table root.
+161 | `field_ids` | Array\<162: Integer\> | Required | The field ids that this column file contains.
+163 | `file_format` | String | Required | File format name. Delta only supports `parquet`.
+164 | `file_size_in_bytes` | Long | Required | Total column file size in bytes.
 
 `key_metadata` is not preserved because it is not supported in Delta.
 
