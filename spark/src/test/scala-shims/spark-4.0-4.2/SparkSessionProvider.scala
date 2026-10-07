@@ -38,62 +38,18 @@
 
 package org.apache.spark.sql
 
-// scalastyle:off funsuite
-import org.scalatest.funsuite.AnyFunSuite
-// scalastyle:on
-
 /**
- * TODO should be moved to sql/api
- *
- * base for fully sql/core independent tests, i.e. this trait could be moved to sql/api and then
- * used in sql/connect/client.
+ * A common trait for test suites that require a [[SparkSession]]. It abstracts over the
+ * different session types supported by Spark tests: Spark classic sessions, Hive sessions
+ * (backed by [[org.apache.spark.sql.hive.test.TestHiveContext]]), and Spark Connect sessions.
+ * Concrete implementations are responsible for managing the session lifecycle (creation,
+ * configuration, and teardown).
  */
-trait SessionQueryTestBase
-  extends AnyFunSuite
-    with SparkSessionProvider
-    with CheckAnswerHelper
-    with QueryCleanupHelper {
+trait SparkSessionProvider {
+  protected def spark: SparkSession
 
   /**
-   * Sets all configurations specified in `pairs`, calls `f`, and then restores all configurations.
-   *
-   * Use this instead of `withSQLConf` as [[internal.SQLConf SQLConf]] is not part of Spark's public
-   * API.
+   * Shorthand for running a query using the [[SparkSession]]
    */
-  protected def withConf[T](pairs: (String, String)*)(f: => T): T = {
-    val (keys, values) = pairs.unzip
-    val currentValues = keys.map { key =>
-      if (spark.conf.contains(key)) {
-        Some(spark.conf.get(key))
-      } else {
-        None
-      }
-    }
-    keys.lazyZip(values).foreach { (k, v) =>
-      spark.conf.set(k, v)
-    }
-    try f finally {
-      keys.zip(currentValues).foreach {
-        case (key, Some(value)) => spark.conf.set(key, value)
-        case (key, None) => spark.conf.unset(key)
-      }
-    }
-  }
-
-  /**
-   * Whether the bound session is a Spark Connect session (`false` for classic), so that tests can
-   * handle and document session-specific behaviour.
-   *
-   * {{{
-   *   test(...) {
-   *     val df = // query with connect-specific behaviour
-   *     if (isConnect) {
-   *       checkError(...)
-   *     } else {
-   *       checkAnswer(df, ...)
-   *     }
-   *   }
-   * }}}
-   */
-  def isConnect: Boolean
+  protected def sql(query: String): DataFrame = spark.sql(query)
 }

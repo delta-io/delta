@@ -38,7 +38,7 @@
 
 package org.apache.spark.sql
 
-import org.apache.spark.sql.catalyst.util.sideBySide
+import org.apache.spark.util.SparkStringUtils
 
 /**
  * Pure comparison helpers shared by [[CheckAnswerHelper]] and [[QueryTest]].
@@ -94,7 +94,7 @@ private[sql] object RowComparisonUtils {
     s"""
        |== Results ==
        |${
-      sideBySide(
+      SparkStringUtils.sideBySide(
         s"== Correct Answer - ${expectedAnswer.size} ==" +:
           getRowType(expectedAnswer.headOption) +:
           prepareAnswer(expectedAnswer, isSorted).map(_.toString()),
