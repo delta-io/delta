@@ -25,7 +25,6 @@ import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{KernelException, MaxCatalogVersionException, UnsupportedProtocolVersionException, UnsupportedTableFeatureException}
-import io.delta.kernel.internal.DeltaErrors
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData, ParsedPublishedDeltaData}
@@ -431,7 +430,6 @@ class SnapshotBuilderSuite extends AnyFunSuite
     }
 
     assert(error.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
-    assert(DeltaErrors.isMaxCatalogVersionError(error))
   }
 
   test(
@@ -446,6 +444,5 @@ class SnapshotBuilderSuite extends AnyFunSuite
 
     assert(error.getMessage ===
       "Should not provide maxCatalogVersion for file-system managed tables")
-    assert(DeltaErrors.isMaxCatalogVersionError(error))
   }
 }

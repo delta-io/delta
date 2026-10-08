@@ -23,7 +23,7 @@ import io.delta.kernel.CommitRangeBuilder.CommitBoundary
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.{KernelException, MaxCatalogVersionException}
-import io.delta.kernel.internal.{DeltaErrors, DeltaHistoryManager}
+import io.delta.kernel.internal.DeltaHistoryManager
 import io.delta.kernel.internal.commitrange.CommitRangeImpl
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
@@ -321,7 +321,6 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
           .build(defaultEngine)
       }
       assert(latestError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
-      assert(DeltaErrors.isMaxCatalogVersionError(latestError))
       // Without logData (and with time-travel-version)
       val versionError = intercept[MaxCatalogVersionException] {
         TableManager
@@ -330,7 +329,6 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
           .build(defaultEngine)
       }
       assert(versionError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
-      assert(DeltaErrors.isMaxCatalogVersionError(versionError))
     }
   }
 
@@ -347,7 +345,6 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
       }
       assert(error.getMessage ===
         "Should not provide maxCatalogVersion for file-system managed tables")
-      assert(DeltaErrors.isMaxCatalogVersionError(error))
     }
   }
 
