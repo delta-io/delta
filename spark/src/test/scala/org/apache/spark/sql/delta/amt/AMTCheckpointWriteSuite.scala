@@ -18,9 +18,9 @@ package org.apache.spark.sql.delta.amt
 
 import java.io.File
 
-import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaOperations, LastCheckpointInfo, RowId}
-import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot}
+import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DomainMetadata, SetTransaction}
 import org.apache.spark.sql.delta.coordinatedcommits.TrackingInMemoryCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
@@ -720,40 +720,144 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       .getOrElse(fail(s"No commit stats logged for version $version."))
   }
 
+  /** Commits one SetTransaction and one DomainMetadata so a later checkpoint carries both. */
+  private def commitSetTransactionAndDomainMetadata(name: String): Unit = {
+    deltaLogForName(name).startTransaction().commit(
+      Seq(
+        SetTransaction(appId = "amt-metrics-app", version = 1L, lastUpdated = Some(0L)),
+        DomainMetadata(domain = "amt.metrics.test", configuration = "{}", removed = false)),
+      DeltaOperations.ManualUpdate)
+  }
+
+  /** Extracts the single AMT write metrics logged in `events`, or fails. */
+  private def amtWriteMetricsFrom(events: Seq[UsageRecord]): SingleAMTWriteMetrics =
+    events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains(AMTUsageLogs.CONFLICT_RESOLUTION_ROUND))
+      .map(e => JsonUtils.fromJson[AMTMetrics](e.blob))
+      .flatMap(_.singleAMTWriteMetrics)
+      .headOption
+      .getOrElse(fail("No AMT write metrics were logged."))
+
+  /**
+   * Asserts `writeMetrics` describes the AMT tree reconstructed from `name`'s latest snapshot.
+   */
+  private def assertAMTWriteMetrics(
+      writeMetrics: SingleAMTWriteMetrics,
+      name: String,
+      expectedTrigger: AMTTriggerMode,
+      expectedIncremental: Boolean,
+      expectedNumVersionsSinceLastCheckpoint: Long,
+      expectedNumJsonsSinceLastCheckpoint: Long): Unit = {
+    val snapshot = deltaLogForName(name).update()
+    val provider = amtProvider(snapshot)
+      .getOrElse(fail("The checkpoint snapshot should expose an AMT checkpoint provider."))
+    assert(writeMetrics.trigger == expectedTrigger.name)
+    assert(writeMetrics.incremental == expectedIncremental)
+    assert(writeMetrics.materializeDurationMs >= 0L)
+    // Tree-shape fields must match the tree the provider reconstructs.
+    assert(writeMetrics.numLiveDataEntries == currentLiveDataEntries(snapshot),
+      "numLiveDataEntries must equal the live files the tree reconstructs.")
+    assert(writeMetrics.numLiveDataEntries > 0L)
+    assert(writeMetrics.numTombstoneDataEntries == 0L,
+      "an insert-only write produces no tombstones.")
+    assert(writeMetrics.numLeaves == provider.liveLeafManifestAbsolutePaths.size.toLong)
+    assert(writeMetrics.contentRootSizeInBytes == provider.checkpointAction.contentRoot.sizeInBytes)
+    assert(writeMetrics.contentRootSizeInBytes > 0L)
+    assert(writeMetrics.checkpointSizeInBytes == provider.effectiveCheckpointSizeInBytes())
+    assert(writeMetrics.checkpointSizeInBytes >= writeMetrics.contentRootSizeInBytes)
+    assert(writeMetrics.numSetTransactions == 1L)
+    // The committed DomainMetadata plus the row-tracking high-watermark domain AMT maintains.
+    assert(writeMetrics.numDomainMetadata == 2L)
+    // Log-segment context.
+    assert(writeMetrics.numVersionsSinceLastCheckpoint == expectedNumVersionsSinceLastCheckpoint)
+    assert(
+      writeMetrics.numJsonsInSnapshotSinceLastCheckpoint == expectedNumJsonsSinceLastCheckpoint)
+    if (expectedNumVersionsSinceLastCheckpoint < 0L) {
+      assert(writeMetrics.previousCheckpointSizeInBytes == -1L,
+        "the first AMT checkpoint has no previous tree.")
+    } else {
+      assert(writeMetrics.previousCheckpointSizeInBytes > 0L)
+    }
+  }
+
   test("the follow-up OPTIMIZE CHECKPOINT emits round and commit AMT metrics") {
     withTable("amt_commit_stats") {
       val name = "amt_commit_stats"
       createAMTTable(name, checkpointInterval = 2)
-      sql(s"INSERT INTO $name VALUES (1)") // v1: below the interval, no maintenance.
+      // v1: a SetTransaction and DomainMetadata (so the checkpointed tree carries both); below the
+      // interval, so no maintenance.
+      commitSetTransactionAndDomainMetadata(name)
 
       // v2 hits the interval boundary; the AMT is written by the follow-up commit at v3, so the
-      // AMT write metrics are emitted immediately by the v3 writer and summarized in its commit
-      // stats after that attempt commits successfully.
+      // AMT write metrics are emitted by the v3 writer and summarized in its commit stats after
+      // that attempt commits successfully.
       val events = Log4jUsageLogger.track {
-        sql(s"INSERT INTO $name VALUES (2)")
+        sql(s"INSERT INTO $name VALUES (1)")
       }
       val allStats = events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
           e.tags.get("opType").contains("delta.commit.stats"))
         .map(e => JsonUtils.fromJson[CommitStats](e.blob))
-
       val v2Stats = allStats.find(_.commitVersion == 2).getOrElse(fail("No stats for v2."))
       assert(v2Stats.amtCommitStats.isEmpty, "v2 defers the AMT; its stats carry no AMT metrics.")
-
       val v3Stats = allStats.find(_.commitVersion == 3).getOrElse(fail("No stats for v3."))
-      val metrics = events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
-          e.tags.get("opType").contains(AMTUsageLogs.CONFLICT_RESOLUTION_ROUND))
-        .map(e => JsonUtils.fromJson[AMTMetrics](e.blob))
-        .find(_.singleAMTWriteMetrics.nonEmpty)
-        .getOrElse(fail("The follow-up commit should emit AMT write metrics."))
-      assert(metrics.txnId.nonEmpty)
-      assert(metrics.roundId == 0)
-      assert(metrics.conflictResolutionMetrics.isEmpty)
-      // The first AMT has no prior tree to build on, so it is always a full rewrite.
-      val writeMetrics = metrics.singleAMTWriteMetrics.get
-      assert(writeMetrics.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
-      assert(writeMetrics.materializeDurationMs >= 0L)
+
+      val writeMetrics = amtWriteMetricsFrom(events)
       assert(v3Stats.amtCommitStats.map(_.lastAMTWriteMetrics).contains(writeMetrics),
         "the successful follow-up commit must retain its last AMT write metrics.")
+      // The first AMT has no prior tree to build on, so it is a full rewrite with no previous tree.
+      // It folds in the three commits before it (create, the action commit, the insert at v2).
+      assertAMTWriteMetrics(
+        writeMetrics, name,
+        expectedTrigger = AMTTriggerMode.CheckpointIntervalFull,
+        expectedIncremental = false,
+        expectedNumVersionsSinceLastCheckpoint = -1L,
+        expectedNumJsonsSinceLastCheckpoint = 3L)
+    }
+  }
+
+  test("an inline large-commit checkpoint emits round and commit AMT metrics") {
+    withTable("amt_inline_commit_stats") {
+      val name = "amt_inline_commit_stats"
+      // No interval-triggered checkpoints; we drive the first checkpoint explicitly.
+      createAMTTable(name, checkpointInterval = Int.MaxValue)
+      // A SetTransaction and DomainMetadata, carried into the bootstrap tree and then forward.
+      commitSetTransactionAndDomainMetadata(name) // v1
+      sql(s"INSERT INTO $name VALUES (1)") // v2
+      // Bootstrap a full AMT so the inline write below is an incremental on top of a previous tree.
+      commitCheckpoint(deltaLogForName(name), incremental = false) // v3
+      val inlineVersion = deltaLogForName(name).update().version + 1 // v4
+
+      // Lowering the large-commit threshold to one action forces the next commit to write its AMT
+      // inline, so the AMT write metrics are emitted during that same commit and summarized in its
+      // commit stats -- no follow-up OPTIMIZE CHECKPOINT.
+      val events = withSQLConf(
+          DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+            -> "1") {
+        Log4jUsageLogger.track {
+          sql(s"INSERT INTO $name VALUES (2)")
+        }
+      }
+      val inlineStats = events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+          e.tags.get("opType").contains("delta.commit.stats"))
+        .map(e => JsonUtils.fromJson[CommitStats](e.blob))
+        .find(_.commitVersion == inlineVersion)
+        .getOrElse(fail(s"No commit stats for the inline commit v$inlineVersion."))
+      assert(inlineStats.amtCommitStats.nonEmpty,
+        "an inline commit writes its AMT in the same commit, so its stats carry AMT metrics.")
+
+      val writeMetrics = amtWriteMetricsFrom(events)
+      assert(writeMetrics.incrementalWriteMetrics.isDefined,
+        "an incremental write records its detailed shape breakdown.")
+      assert(inlineStats.amtCommitStats.map(_.lastAMTWriteMetrics).contains(writeMetrics),
+        "the inline commit must retain its AMT write metrics in its commit stats.")
+      // An inline write builds on the bootstrap tree (which describes v2), so it is
+      // incremental: two table versions ahead, folding in the one commit since that tree.
+      assertAMTWriteMetrics(
+        writeMetrics, name,
+        expectedTrigger = AMTTriggerMode.InlineWithLargeCommitIncremental,
+        expectedIncremental = true,
+        expectedNumVersionsSinceLastCheckpoint = 2L,
+        expectedNumJsonsSinceLastCheckpoint = 1L)
     }
   }
 

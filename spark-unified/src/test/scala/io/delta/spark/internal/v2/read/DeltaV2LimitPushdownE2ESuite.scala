@@ -19,11 +19,11 @@ package io.delta.spark.internal.v2.read
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
 
 private[read] trait DeltaV2LimitPushdownE2ETests {
   self: DeltaV2ScanE2ETestUtils =>
 
-  // V2LimitPushdownTest.testLimitBasic.
   test("a basic LIMIT returns the requested rows and reaches the scan") {
     val table = "v2_scan_e2e_limit_basic"
     withTable(table) {
@@ -40,7 +40,6 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
-  // V2LimitPushdownTest.testLimitLargerThanTable.
   test("a LIMIT larger than the table returns every row and reaches the scan") {
     val table = "v2_scan_e2e_limit_larger_than_table"
     withTable(table) {
@@ -55,7 +54,6 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
-  // V2LimitPushdownTest.testLimit1.
   test("LIMIT one returns one row and reaches the scan") {
     val table = "v2_scan_e2e_limit_one"
     withTable(table) {
@@ -70,7 +68,23 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
-  // V2LimitPushdownTest.testLimitEmptyTable.
+  test("LIMIT zero returns no rows without planning a scan") {
+    val table = "v2_scan_e2e_limit_zero"
+    withTable(table) {
+      withV1Mode {
+        sql(s"CREATE TABLE $table (id INT) USING $tableProvider")
+        sql(s"INSERT INTO $table VALUES (1), (2), (3)")
+      }
+
+      val df = sql(s"SELECT * FROM $table LIMIT 0")
+      checkAnswer(df, Seq.empty)
+      val plan = df.queryExecution.optimizedPlan
+      assert(
+        plan.collect { case relation: DataSourceV2ScanRelation => relation }.isEmpty,
+        s"LIMIT 0 should be optimized away before scan planning, got:\n$plan")
+    }
+  }
+
   test("LIMIT on an empty table returns no rows and reaches the scan") {
     val table = "v2_scan_e2e_limit_empty"
     withTable(table) {
@@ -84,7 +98,6 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
-  // V2LimitPushdownTest.testLimitWithDeletionVectors.
   test("LIMIT with deletion vectors returns live rows and reaches the scan") {
     val table = "v2_scan_e2e_limit_dv"
     withTable(table) {
@@ -116,7 +129,6 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
-  // V2LimitPushdownTest.testLimitWithHeavyDVs.
   test("LIMIT with heavy deletion vectors spans enough live rows") {
     val table = "v2_scan_e2e_limit_heavy_dv"
     withTable(table) {
@@ -167,7 +179,6 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
-  // V2LimitPushdownTest.testLimitWithPartitionFilter.
   test("a partition filter with LIMIT returns matching rows") {
     val table = "v2_scan_e2e_limit_partition_filter"
     withTable(table) {
@@ -186,10 +197,15 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
       assert(
         rows.forall(_.getString(1) == "a"),
         s"Partition filter + LIMIT returned a non-matching row: ${rows.mkString(", ")}")
+      if (spark.version.startsWith("4.0")) {
+        // Spark 4.0 keeps the partition filter above the scan, which prevents LIMIT pushdown.
+        assertExpectedNoPushedLimit(df, "partition filter with LIMIT")
+      } else {
+        assertExpectedPushedLimit(df, 2, "partition filter with LIMIT")
+      }
     }
   }
 
-  // V2LimitPushdownTest.testLimitWithDataFilter.
   test("a data filter with LIMIT returns matching rows without pushdown") {
     val table = "v2_scan_e2e_limit_data_filter"
     withTable(table) {
@@ -210,7 +226,6 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
-  // V2LimitPushdownTest.testLimitWithColumnProjection.
   test("a projected LIMIT returns only the requested column and reaches the scan") {
     val table = "v2_scan_e2e_limit_projection"
     withTable(table) {
@@ -234,7 +249,6 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
-  // V2LimitPushdownTest.testLimitWithMultipleFiles.
   test("LIMIT over multiple files returns the requested rows and reaches the scan") {
     val table = "v2_scan_e2e_limit_multiple_files"
     withTable(table) {
@@ -259,7 +273,6 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
-  // DeltaV2ScanTest.testLimitPushdown_missingNumRecordsPlansAllFiles.
   test("LIMIT pushdown retains files without numRecords") {
     val table = "v2_scan_e2e_limit_missing_num_records"
     withTable(table) {
@@ -290,7 +303,6 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
-  // V2LimitPushdownTest.testLimitWithNonDeterministicFilterIsNotPushed.
   test("a non-deterministic filter prevents LIMIT pushdown") {
     val table = "v2_scan_e2e_limit_nondeterministic_filter"
     withTable(table) {
@@ -310,7 +322,6 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
-  // V2LimitPushdownTest.testLimitWithOffsetPushesCombinedRowRequirement.
   test("LIMIT with OFFSET pushes the combined row requirement") {
     val table = "v2_scan_e2e_limit_offset"
     withTable(table) {
@@ -325,7 +336,6 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
-  // V2LimitPushdownTest.testLimitOrderBy.
   test("ORDER BY with LIMIT returns ordered rows without pushdown") {
     val table = "v2_scan_e2e_limit_order_by"
     withTable(table) {
@@ -341,11 +351,89 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
       assertExpectedNoPushedLimit(df, "ORDER BY with LIMIT")
     }
   }
+
+  // Spark offers LIMIT only to batch scan builders; a streaming LIMIT stays a stateful operator.
+  test("a streaming LIMIT is applied above the micro-batch scan") {
+    val table = "v2_scan_e2e_limit_streaming"
+    val queryName = "v2_scan_e2e_limit_streaming_sink"
+    withTable(table) {
+      withV1Mode {
+        sql(s"CREATE TABLE $table (id INT) USING $tableProvider")
+        sql(s"INSERT INTO $table VALUES (1), (2), (3)")
+        sql(s"INSERT INTO $table VALUES (4), (5)")
+      }
+
+      val batch = sql(s"SELECT * FROM $table LIMIT 3")
+      assert(batch.count() == 3L, "batch LIMIT 3 should return exactly 3 rows")
+      assertExpectedPushedLimit(batch, 3, "batch LIMIT")
+      withTempView(queryName) {
+        val stream = spark.readStream.option("startingVersion", "1").table(table).limit(3)
+        val (sinkRows, execution) = runStreamToCompletion(stream, queryName)
+        val rows = sinkRows.map(_.getInt(0))
+        assert(rows.length == 3, s"streaming LIMIT 3 should emit 3 rows, got $rows")
+        assert(
+          rows.distinct.length == 3 && rows.forall((1 to 5).contains),
+          s"streaming LIMIT 3 emitted unexpected rows: $rows")
+        assertExpectedStreamingScan(execution, "streaming LIMIT read")
+      }
+    }
+  }
+
+  test("dynamic partition pruning prevents LIMIT pushdown") {
+    val fact = "v2_scan_e2e_limit_dpp_fact"
+    val dimension = "v2_scan_e2e_limit_dpp_dimension"
+    withTable(fact, dimension) {
+      withV1Mode {
+        sql(
+          s"CREATE TABLE $fact (id INT, part INT) USING $tableProvider " +
+            "PARTITIONED BY (part)")
+        sql(s"INSERT INTO $fact VALUES (1, 1), (2, 2), (3, 3)")
+        sql(s"CREATE TABLE $dimension (part INT, tag STRING) USING $tableProvider")
+        sql(
+          s"INSERT INTO $dimension VALUES " +
+            "(1, 'drop'), (2, 'keep'), (3, 'drop')")
+      }
+
+      val query =
+        s"SELECT fact.id FROM $fact fact " +
+          s"JOIN $dimension dimension ON fact.part = dimension.part " +
+          "WHERE dimension.tag = 'keep' LIMIT 1"
+      withSQLConf(
+          "spark.sql.adaptive.enabled" -> "false",
+          "spark.sql.optimizer.dynamicPartitionPruning.enabled" -> "true") {
+        val df = sql(query)
+        checkAnswer(df, Seq(Row(2)))
+        assertExpectedScanCount(df, 1, "DPP LIMIT read")
+        assertExpectedDynamicPruning(df, "DPP LIMIT read")
+        assertExpectedNoPushedLimit(df, "DPP LIMIT read")
+      }
+    }
+  }
+
+  test("LIMIT on a column-mapped table returns source rows and reaches the scan") {
+    val table = "v2_scan_e2e_limit_column_mapping"
+    withTable(table) {
+      withV1Mode {
+        sql(
+          s"CREATE TABLE $table (id INT, name STRING) USING $tableProvider " +
+            "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        sql(s"INSERT INTO $table VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+      }
+
+      val df = sql(s"SELECT * FROM $table LIMIT 2")
+      val rows = df.collect().toSeq
+      val expectedRows = Set(Row(1, "a"), Row(2, "b"), Row(3, "c"))
+      assert(rows.length == 2, s"expected two rows, got ${rows.length}")
+      assert(
+        rows.forall(row => !row.anyNull && expectedRows.contains(row)),
+        s"expected two non-null source rows, got ${rows.mkString(", ")}")
+      assertExpectedPushedLimit(df, 2, "LIMIT read with column mapping")
+    }
+  }
 }
 
-
-/** Covers LIMIT correctness and pushdown semantics shared across Delta V2 scan paths.
- * Path-specific DPP and column-mapping gaps are kept in their corresponding test traits.
+/** Covers LIMIT correctness and pushdown semantics shared across Delta V2 scan paths, including
+ * dynamic partition pruning, column mapping, and streaming reads.
  */
 class DeltaV2LimitPushdownE2ESuite
   extends DeltaV2ScanE2ETestUtils

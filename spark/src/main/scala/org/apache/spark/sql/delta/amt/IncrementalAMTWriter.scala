@@ -124,12 +124,11 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       Seq[Action](oldAMT.protocol, oldAMT.metadata) ++
         oldAMT.setTransactions ++ oldAMT.domainMetadatas
     // 1.b: the log commits / minor compactions committed after the old AMT, read in parallel (the
-    // MinorCompactionHook primitive). Each segment delta file becomes a SingleCommit keyed by its
-    // version (a compacted delta's version is its endVersion, via getFileVersion).
-    val windowCommits =
-      intermediateLogCommits.map(f => SingleCommit(deltaLog, FileNames.getFileVersion(f), f))
+    // MinorCompactionHook primitive). Each segment delta file becomes a RangedSingleCommit with its
+    // start and end version, so that compacted deltas can be replayed correctly.
+    val windowCommits = intermediateLogCommits.map(RangedSingleCommit(deltaLog, _))
     val actionsFromDeltas =
-      DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsSeq(spark, windowCommits)
+      DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsSeq(spark, windowCommits.map(_.commit))
     // 1.c: this commit attempt's own actions (actionsToCommit).
     val processedActions = new ProcessedActions(
       oldAMTVersion = oldAMTVersion,
@@ -257,11 +256,21 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       numLeavesModifiedStatus = leavesByStatus.getOrElse(Tracking.Status.Modified, 0),
       numLeavesDeletedStatus = leavesByStatus.getOrElse(Tracking.Status.Deleted, 0),
       numStaleDeletedLeavesDropped = numStaleDeletedLeavesDropped)
+    val numRootLiveDataEntries = Tracking.Status.liveEntryStatuses.toSeq
+      .map(status => rootEntriesByStatus.getOrElse(status, 0)).sum.toLong
+    val numRootTombstoneDataEntries = Tracking.Status.tombstoneEntryStatuses.toSeq
+      .map(status => rootEntriesByStatus.getOrElse(status, 0)).sum.toLong
     val metric = SingleAMTWriteMetrics(
       trigger = trigger,
       // This writer only ever produces an incremental tree.
-      incremental = "true",
+      incremental = true,
       materializeDurationMs = NANOSECONDS.toMillis(System.nanoTime() - startNanos),
+      contentRoot = checkpoint.contentRoot,
+      numRootLiveDataEntries = numRootLiveDataEntries,
+      numRootTombstoneDataEntries = numRootTombstoneDataEntries,
+      leaves = allLeafPointers,
+      numSetTransactions = checkpoint.txns.size.toLong,
+      numDomainMetadata = checkpoint.domainMetadata.size.toLong,
       incrementalWriteMetrics = Some(incrementalWriteMetrics))
     AMTWriteResult(
       contentRootVersion = contentTreeVersion,
@@ -487,11 +496,30 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
   }
 }
 
+/** A commit reader paired with the inclusive version range its actions cover. */
+private class RangedSingleCommit private (
+  val commit: SingleCommit,
+  val startVersion: Long,
+  val endVersion: Long)
+
+private object RangedSingleCommit {
+  def apply(deltaLog: DeltaLog, file: FileStatus): RangedSingleCommit = {
+    val (startVersion, endVersion) = file match {
+      case FileNames.CompactedDeltaFile(_, start, end) => (start, end)
+      case _ =>
+        val version = FileNames.deltaVersion(file)
+        (version, version)
+    }
+    val commit = SingleCommit(deltaLog, endVersion, file)
+    new RangedSingleCommit(commit, startVersion, endVersion)
+  }
+}
+
 private class ProcessedActions(
     oldAMTVersion: Long,
     oldRootAdds: Seq[AddFile],
     nonContentFromOldCheckpoint: Seq[Action],
-    windowCommits: Seq[SingleCommit],
+    windowCommits: Seq[RangedSingleCommit],
     windowCommitActions: Seq[Seq[Action]],
     attemptVersion: Long,
     actionsToCommit: Seq[Action],
@@ -511,7 +539,7 @@ private class ProcessedActions(
   // Log replay of part-1/2/3.
   replay.append(oldAMTVersion, oldRootAdds.iterator ++ nonContentFromOldCheckpoint.iterator)
   windowCommits.zip(windowCommitActions).foreach { case (commit, actions) =>
-    replay.append(commit.version, actions.iterator)
+    replay.append(commit.startVersion, commit.endVersion, actions.iterator)
   }
   // Keys of files live in the {old root + window}'s replay BEFORE this commit's actions; a
   // live add already here (or carrying a leaf back reference) is EXISTING, not ADDED.
