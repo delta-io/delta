@@ -5,8 +5,8 @@
 ## Overview
 
 This RFC proposes a writer-only table feature named `invisibleColumns`. An invisible column is a
-data column that may be stored in Delta data files and explicitly read by an engine that
-understands Invisible Columns. It is not part of the table's visible schema and should be excluded
+data column that MAY be stored in Delta data files and explicitly read by an engine that
+understands Invisible Columns. It is not part of the table's visible schema and SHOULD be excluded
 from default query output.
 
 The visible schema remains in `metaData.schemaString`. The complete invisible schema is stored in
@@ -40,19 +40,19 @@ Field Name | Data Type | Description | optional/required
 # Invisible Columns
 
 Invisible Columns allow data columns to be present in data files while remaining absent from the
-visible schema. They should be excluded from default reader output.
+visible schema. They SHOULD be excluded from default reader output.
 
 ## Enablement
 
-`invisibleColumns` is a writer-only feature and must not appear in `readerFeatures`. A table
+`invisibleColumns` is a writer-only feature and MUST NOT appear in `readerFeatures`. A table
 **supports** Invisible Columns when it uses Writer Version 7 and its `writerFeatures` contain
 `invisibleColumns`.
 
 Invisible Columns are **active** in a snapshot when the table supports the feature and the
 schema in `metaData.invisibleSchemaString` contains at least one invisible field as defined below.
 
-A writer may enable the feature and populate `metaData.invisibleSchemaString` in the same commit.
-A commit that writes a non-empty invisible schema must establish or preserve feature support.
+A writer MAY enable the feature and populate `metaData.invisibleSchemaString` in the same commit.
+A commit that writes a non-empty invisible schema MUST establish or preserve feature support.
 
 ## Invisible Columns Metadata
 
@@ -71,10 +71,10 @@ snapshot has no invisible columns.
 `null` is not a valid value for `invisibleSchemaString`.
 
 For an invisible `long` column named `source_sequence_number`, the `metaData` action contains the
-following field. These examples expand the JSON string in `invisibleSchemaString` for readability
-and omit the other metadata fields.
+following field. These schematic excerpts expand the JSON string in `invisibleSchemaString` for
+readability and use ellipses to omit other metadata fields. They are not literal JSON log records.
 
-```json
+```text
 {
   "metaData": {
     ...,
@@ -97,7 +97,7 @@ and omit the other metadata fields.
 An empty invisible schema is shown below and is equivalent to omitting the
 `invisibleSchemaString` field:
 
-```json
+```text
 {
   "metaData": {
     ...,
@@ -141,7 +141,7 @@ fields. `profile` remains visible; only `profile.internal_id` is invisible.
 An invisible column is a data column. Except for the visibility behavior and the
 [constraints below](#constraints-and-interactions-with-other-features), it has the same Delta
 Protocol semantics and guarantees as a visible column. Writers that support Invisible Columns,
-and readers that expose them, must apply every requirement that inspects, validates, reads, or
+and readers that expose them, MUST apply every requirement that inspects, validates, reads, or
 writes a data column to an invisible column in the same way as to a visible column.
 
 ## Reader Requirements
@@ -151,13 +151,13 @@ readers ignore the unrecognized `metaData.invisibleSchemaString` field under
 [Protocol Evolution](#protocol-evolution) and continue to expose and read the visible schema from
 `metaData.schemaString`.
 
-A reader that chooses to expose invisible columns should:
+A reader that chooses to expose invisible columns SHOULD:
 
 - Use `metaData.schemaString` as the default table schema.
 - Exclude invisible fields from default schema inspection and implicit column selection, including
   star expansion.
 
-When reading invisible columns, a reader must:
+When reading invisible columns, a reader MUST:
 
 - Resolve an explicitly requested invisible field against the invisible schema.
 - Read invisible columns using their schema definitions and the normal Delta column-resolution
@@ -168,14 +168,14 @@ invisible schemas from the requested snapshot.
 
 ## Writer Requirements
 
-A writer that supports Invisible Columns must apply all Delta Protocol writer requirements to the
+A writer that supports Invisible Columns MUST apply all Delta Protocol writer requirements to the
 complete data schema. Values for invisible columns are validated and written under the same
 protocol rules as values for visible columns.
 
 A writer that emits a `metaData` action MUST preserve both schemas except for intentional schema
-changes. Moving a column between the visible and invisible schemas must update both fields in the
+changes. Moving a column between the visible and invisible schemas MUST update both fields in the
 same `metaData` action. Changing only a column's visibility does not require rewriting data files.
-When Column Mapping is enabled, the column's physical name and ID must be preserved.
+When Column Mapping is enabled, the column's physical name and ID MUST be preserved.
 
 When rewriting an existing row, a writer MUST preserve its invisible-column values unless the
 write explicitly changes them.
@@ -204,9 +204,9 @@ write explicitly changes them.
 
 To remove `invisibleColumns` from the table's `writerFeatures`, a writer MUST ensure that every
 invisible field has been moved into the visible schema and the invisible schema is empty.
-These schema changes must be committed before or together with the protocol change.
+These schema changes MUST be committed before or together with the protocol change.
 
-After removal, writers that do not support Invisible Columns may write to the table, provided
+After removal, writers that do not support Invisible Columns MAY write to the table, provided
 they support the table's remaining protocol requirements.
 
 > ***Replace the requirements in
@@ -227,3 +227,14 @@ they support the table's remaining protocol requirements.
 Feature | Name | Readers or Writers?
 -|-|-
 [Invisible Columns](#invisible-columns) | `invisibleColumns` | Writers only
+
+> ***In [Checkpoint Schema](#checkpoint-schema), add `invisibleSchemaString` after `schemaString`
+> in the `metaData` struct of the example***
+
+```text
+|-- metaData: struct
+|    ...
+|    |-- schemaString: string
+|    |-- invisibleSchemaString: string
+|    ...
+```
