@@ -49,7 +49,7 @@ visible schema. They should be excluded from default reader output.
 `invisibleColumns`.
 
 Invisible Columns are **active** in a snapshot when the table supports the feature and the
-schema in `metaData.invisibleSchemaString` contains at least one field.
+schema in `metaData.invisibleSchemaString` contains at least one invisible field as defined below.
 
 A writer may enable the feature and populate `metaData.invisibleSchemaString` in the same commit.
 A commit that writes a non-empty invisible schema must establish or preserve feature support.
@@ -112,11 +112,31 @@ An empty invisible schema is shown below and is equivalent to omitting the
 
 ## Schema
 
-For a snapshot with active Invisible Columns:
+For a snapshot:
 
 - The **visible schema** is the struct in `metaData.schemaString`.
-- The **invisible schema** is the struct in `metaData.invisibleSchemaString`.
-- The **complete data schema** combines the visible and invisible schemas.
+- The **invisible schema** is the struct in `metaData.invisibleSchemaString`, or an empty struct
+  when the field is absent.
+- The **complete data schema** recursively merges the visible and invisible schemas.
+
+Invisible columns MAY occur at any nesting level, including within structs, arrays, and maps.
+The invisible schema MUST include the ancestor containers needed to describe a nested invisible
+field's [field path](#field-path). A field in the complete data schema is visible if its path is
+present in the visible schema; otherwise it is invisible. A shared ancestor remains visible;
+its presence in the invisible schema only provides the structure needed for its invisible fields.
+An invisible ancestor and all its descendants are absent from the visible schema.
+
+The merge combines struct fields at matching field paths, retaining fields present in only one
+schema. Shared structs are merged recursively; arrays and maps recursively merge their element,
+key, and value types. Shared definitions MUST agree except for the nested struct fields contributed
+by each schema. Their nullability and metadata, including column-mapping metadata, MUST match.
+A shared ancestor represents one column in the complete data schema, not two distinct columns.
+The complete data schema MUST satisfy the column-name uniqueness requirements of the
+[Schema Serialization Format](#schema-serialization-format).
+
+For example, `profile.name` in the visible schema and `profile.internal_id` in the invisible schema
+share the ancestor `profile`. The complete data schema contains one `profile` struct with both
+fields. `profile` remains visible; only `profile.internal_id` is invisible.
 
 An invisible column is a data column. Except for the visibility behavior and the
 [constraints below](#constraints-and-interactions-with-other-features), it has the same Delta
@@ -193,12 +213,12 @@ they support the table's remaining protocol requirements.
 > [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
 > with the following***
 
-- Any data file column that exists in the visible or invisible schema MUST have the same
+- Any data file column that exists in the complete data schema MUST have the same
   type as the corresponding schema column, except as allowed by the
   [Type Widening](#type-widening) table feature, if enabled.
 - Values for all partition columns present in the schema MUST be present for all files in the
   table.
-- Columns in the visible or invisible schema MAY be missing from data files. Readers SHOULD treat
+- Columns in the complete data schema MAY be missing from data files. Readers SHOULD treat
   the value of a missing column as `null`.
 
 > ***Add the following row to
