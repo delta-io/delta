@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 import scala.util.{Success, Try}
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, DomainMetadataUtils, IdentityColumn, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
@@ -136,6 +136,22 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           files.map(file => (file, file.path))
         }.toDF("tgtAddFile", "tgtPath")
 
+        val dvTableRoot = deltaLog.dataPath
+        // We only compare current and target snapshots for object identity decision.
+        // An AMT period in between should be always safe proteced by the blocking checkpoint
+        // at AMT downgrade.
+        val useDeletionVectorObjectIdentity =
+          FileAction.useDeletionVectorObjectIdentity(
+            snapshotToRestore.metadata,
+            snapshotToRestore.protocol,
+            spark
+          ) ||
+            FileAction.useDeletionVectorObjectIdentity(
+              latestSnapshot.metadata,
+              latestSnapshot.protocol,
+              spark
+            )
+
         def addDVsToNormalizedDF(
           mayHaveDVs: Boolean,
           dvIdColumnName: String,
@@ -144,7 +160,8 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           if (mayHaveDVs) {
             normalizedDf.withColumn(
               dvIdColumnName,
-              DeletionVectorDescriptor.legacyUniqueIdExpression(dvAccessColumn))
+              DeletionVectorDescriptor.uniqueIdExpression(
+                dvAccessColumn, dvTableRoot, useDeletionVectorObjectIdentity))
           } else {
             normalizedDf.withColumn(dvIdColumnName, lit(null))
           }

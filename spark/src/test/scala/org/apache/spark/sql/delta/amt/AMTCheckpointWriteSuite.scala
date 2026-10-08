@@ -18,11 +18,13 @@ package org.apache.spark.sql.delta.amt
 
 import java.io.File
 
-import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaOperations, LastCheckpointInfo}
-import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, RemoveFile}
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
+import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaOperations, LastCheckpointInfo, RowId}
+import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DomainMetadata, SetTransaction}
+import org.apache.spark.sql.delta.coordinatedcommits.TrackingInMemoryCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
+import io.delta.storage.commit.CoordinatedCommitsUtils.getBackfilledDeltaFilePath
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.Row
@@ -48,34 +50,6 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
         case dataType => Seq((field.name, dataType.sql, id))
       }
     }
-
-  /**
-   * Asserts the live AddFiles survive a deferred checkpoint's construction unchanged: the snapshot
-   * captured before the checkpoint is written must match the post-checkpoint snapshot. No-op for
-   * inline scenarios, whose data commit also writes the checkpoint, so `preCheckpointSnapshot` is
-   * still the pre-trigger state and has fewer files than the post-checkpoint snapshot.
-   */
-  private def assertLiveAddFilesRoundTrip(context: AMTCheckpointScenarioContext): Unit = {
-    if (!context.scenario.isInline) {
-      // The AddFiles constructed from pre-checkpoint snapshot might not match exactly the AddFiles
-      // constructed from the post-checkpoint snapshot. This is because the post-checkpoint AddFiles
-      // are reconstructed from the AMT thus going through DataEntry.toAddFile, and fields like
-      // backReference and amtPassthrough are set differently between the pre- and post-checkpoint
-      // AddFiles. Canonicalization is also needed because the stats are JSON strings, so it needs
-      // to be compared as a parsed tree (order-insensitive).
-      def canonical(add: AddFile) =
-        add.copy(
-          modificationTime = 0L,
-          stats = null,
-          backReference = None,
-          amtPassthrough = None) -> Option(add.stats).map(JsonUtils.mapper.readTree)
-      val original = context.preCheckpointSnapshot.allFiles.collect().map(canonical).toSet
-      val reconstructed = context.postCheckpointSnapshot.allFiles.collect().map(canonical).toSet
-      assert(reconstructed == original,
-        s"live AddFiles changed across AMT checkpoint construction\n" +
-          s"  before=$original\n  after=$reconstructed")
-    }
-  }
 
   test("interval boundary emits a follow-up OPTIMIZE CHECKPOINT commit carrying the Checkpoint") {
     withTable("amt_inline_emit") {
@@ -123,6 +97,49 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
   }
 
   testAcrossAMTCheckpointScenarios(
+      "checkpoint backfills preceding commits while its manifest commit remains staged",
+      "amt_checkpoint_backfill")(
+      beforeTableCreation = () => {
+        // Keep periodic coordinator backfill from publishing any of these commits.
+        clearBuilders()
+        registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(batchSize = 100))
+      },
+      setup = name => {
+        (2 to 3).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+        val deltaLog = deltaLogForName(name)
+        val snapshot = deltaLog.update()
+        assert(snapshot.version == 3L)
+        val commitFileProvider = DeltaCommitFileProvider(snapshot)
+        val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+        // The bootstrap manifest and both INSERTs must still need backfilling.
+        (1L to snapshot.version).foreach { version =>
+          val commitFile = commitFileProvider.deltaFile(version)
+          assert(FileNames.isUnbackfilledDeltaFile(commitFile))
+          assert(fs.exists(commitFile))
+          assert(!fs.exists(getBackfilledDeltaFilePath(deltaLog.logPath, version)),
+            s"v$version must not be backfilled before the tested checkpoint")
+        }
+      },
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (3)"))) { context =>
+    val snapshot = context.postCheckpointSnapshot
+    val deltaLog = snapshot.deltaLog
+    val manifestCommitVersion = context.manifestCommitVersion
+    val commitFileProvider = DeltaCommitFileProvider(snapshot)
+    val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+
+    (0L until manifestCommitVersion).foreach { version =>
+      assert(fs.exists(getBackfilledDeltaFilePath(deltaLog.logPath, version)),
+        s"v$version must be backfilled before manifest commit v$manifestCommitVersion")
+    }
+    val manifestCommitFile = commitFileProvider.deltaFile(manifestCommitVersion)
+    assert(FileNames.isUnbackfilledDeltaFile(manifestCommitFile))
+    assert(fs.exists(manifestCommitFile))
+    assert(!fs.exists(getBackfilledDeltaFilePath(deltaLog.logPath, manifestCommitVersion)),
+      s"Manifest commit v$manifestCommitVersion must remain unbackfilled")
+  }
+
+  testAcrossAMTCheckpointScenarios(
       "small full checkpoint promotes its single distributed manifest to the root",
       "amt_root_only",
       deferredScenarios = Seq(AMTCheckpointScenario.DeferredFull))(
@@ -138,7 +155,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     assert(rootDataEntries == 2L, "Both live files must be reachable as DATA entries in the root.")
 
     // The promoted root alone must reconstruct exactly the table's live files.
-    assertReconstructsLiveFileSet(context)
+    assertLiveAddFilesRoundTrip(context)
   }
 
   testAcrossAMTCheckpointScenarios(
@@ -159,20 +176,23 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
              |SELECT $cols
              |FROM range(${leafPackedFiles - 1}, $leafPackedFiles)""".stripMargin)
       }) { context =>
-    allowReadWithinDeltaLog {
-      val leafDf = spark.read.parquet(
-        context.provider.liveLeafManifestAbsolutePaths.map(_.toString): _*)
-      val partitionSchema = context.postCheckpointSnapshot.metadata.partitionSchema
-      val partition = leafDf.schema("partition")
-      assert(partition.nullable)
-      val expectedSchema = AMTPartitionValues.persistedSchema(partitionSchema)
-      assert(
-        fieldIdShape(partition.dataType.asInstanceOf[StructType]) == fieldIdShape(expectedSchema),
-        s"persisted partition schema did not match the expected typed shape\n" +
-          s"  actual=${partition.dataType}\n  expected=$expectedSchema")
-      assert(leafDf.select("partition.p_int").collect().map(_.getInt(0)).toSet ==
-        (0 until leafPackedFiles).toSet)
+    val manifests = context.provider.topLevelFiles.map(_.getPath.toString) ++
+      context.provider.liveLeafManifestAbsolutePaths.map(_.toString)
+    val partitionSchema = context.postCheckpointSnapshot.metadata.partitionSchema
+    val (partition, pIntValues) = allowReadWithinDeltaLog {
+      val manifestDf = spark.read.parquet(manifests: _*)
+      val dataValues = manifestDf
+        .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
+        .select("partition.p_int").collect().map(_.getInt(0)).toSet
+      (manifestDf.schema("partition"), dataValues)
     }
+    assert(partition.nullable)
+    val expectedSchema = AMTPartitionValues.persistedSchema(partitionSchema)
+    assert(
+      fieldIdShape(partition.dataType.asInstanceOf[StructType]) == fieldIdShape(expectedSchema),
+      s"persisted partition schema did not match the expected typed shape\n" +
+        s"  actual=${partition.dataType}\n  expected=$expectedSchema")
+    assert(pIntValues == (0 until leafPackedFiles).toSet)
 
     // Every physical-name -> string partition entry must come back exactly as the log recorded it;
     // a cast that disagrees with Delta's own serialization would corrupt these silently.
@@ -258,9 +278,18 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
         .where(col("content_type") === AMTSingleAction.ContentType.Type.DataManifest)
         .select("location").as[String].collect().toSeq
     }
-    assert(leafLocations.size == expectedLeafCount(leafPackedFiles),
-      s"$leafPackedFiles files at $entriesPerLeaf per leaf must yield "  +
-        s"${expectedLeafCount(leafPackedFiles)} leaf pointers; got $leafLocations")
+    // A full rewrite hash-distributes the files across ceil(numFiles / entriesPerLeaf) writer
+    // partitions and skips any empty ones, so the pointer count is a data-dependent upper bound
+    // for the full rewrite; the driver-side incremental spill packs into exactly that many.
+    if (context.scenario.isIncremental) {
+      assert(leafLocations.size == expectedLeafCount(leafPackedFiles),
+        s"$leafPackedFiles files at $entriesPerLeaf per leaf must yield "  +
+          s"${expectedLeafCount(leafPackedFiles)} leaf pointers; got $leafLocations")
+    } else {
+      assert(leafLocations.size <= expectedLeafCount(leafPackedFiles),
+        s"$leafPackedFiles files at $entriesPerLeaf per leaf must yield at most "  +
+          s"${expectedLeafCount(leafPackedFiles)} leaf pointers; got $leafLocations")
+    }
     leafLocations.foreach { loc =>
       assert(loc == s"${FileNames.AMT_METADATA_DIR_NAME}/${new File(loc).getName}",
         s"leaf pointer must be table-root-relative; got $loc")
@@ -277,7 +306,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     assert(provider.liveLeafManifestAbsolutePaths.forall(_.isAbsolute),
       "resolved leaf manifest paths must be absolute; got " +
         s"${provider.liveLeafManifestAbsolutePaths}")
-    assertReconstructsLiveFileSet(context)
+    assertLiveAddFilesRoundTrip(context)
     // `setup` writes one file per id, and the trigger adds the last one.
     checkAnswer(spark.table(name), (0 until leafPackedFiles).map(Row(_)))
   }
@@ -362,7 +391,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
           hadoopConf,
           useRename = false,
           outputSchema = Some(AMTSingleAction.persistedSchema(metadata, protocol)),
-          writeAsIcebergManifest = true)
+          format = new AMTParquetFileFormat)
         val relative = AMTUtils.relativizeLocation(dataPath.toString, file.toString)
         assert(relative == s"${FileNames.AMT_METADATA_DIR_NAME}/$fileName" &&
           !relative.contains("%20"),
@@ -375,10 +404,14 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       val (leafLoc, leafSize) = writeManifest(
         "leaf with space.parquet",
         Seq(AMTSingleAction.fromAddFile(dataAdd, addedTracking, dataPath)))
+      val parentTracking = addedTracking.copy(
+        sequence_number = Some(base.version),
+        file_sequence_number = Some(base.version),
+        first_row_id = Some(0L))
       val leafPointer = DataManifestEntry(
         location = leafLoc,
         file_format = AMTSingleAction.FileFormatParquet,
-        tracking = addedTracking,
+        tracking = parentTracking,
         record_count = 1L,
         file_size_in_bytes = leafSize,
         manifest_info = emptyManifestInfo.copy(added_files_count = 1))
@@ -480,7 +513,6 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       .toSet
     assert(reconstructedPaths == expectedDeltaPaths,
       s"Reconstructed AddFile paths must stay Delta-encoded; got $reconstructedPaths.")
-    assertReconstructsLiveFileSet(context)
   }
 
   test("no emission on a vanilla (non-AMT) table") {
@@ -498,6 +530,59 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
         "No AMT artifacts on a vanilla table.")
       assert(checkpointAt(deltaLog, 2).isEmpty, "No Checkpoint action on a vanilla table.")
       assert(amtProvider(deltaLog.update()).isEmpty)
+    }
+  }
+
+  /** Classic V1/V2 checkpoint parquet files under the table's `_delta_log`. */
+  private def classicCheckpointFiles(tableName: String): Seq[File] = {
+    val logDir = new File(tablePath(tableName), "_delta_log")
+    if (!logDir.exists()) Seq.empty
+    else Option(logDir.listFiles()).toSeq.flatten
+      .filter(f => f.getName.contains(".checkpoint") && f.getName.endsWith(".parquet"))
+  }
+
+  test("deltaLog.checkpoint emits an AMT instead of writing classic checkpoint files") {
+    withTable("amt_checkpoint_api") {
+      val name = "amt_checkpoint_api"
+      // Interval far away so no automatic emission fires; the explicit checkpoint() call below is
+      // the only thing that can emit.
+      createAMTTable(name, checkpointInterval = 100)
+      sql(s"INSERT INTO $name VALUES (1)") // v1.
+      sql(s"INSERT INTO $name VALUES (2)") // v2.
+
+      val deltaLog = deltaLogForName(name)
+      assert(amtProvider(deltaLog.update()).isEmpty, "No AMT should exist before checkpoint().")
+
+      // On an AMT table, DeltaLog.checkpoint rewrites the manifest tree via a follow-up OPTIMIZE
+      // CHECKPOINT commit rather than writing classic checkpoint files.
+      deltaLog.checkpoint(deltaLog.update())
+
+      val snapshot = deltaLog.update()
+      assert(snapshot.version == 3, "checkpoint() must emit a follow-up commit at v3.")
+      val v3Checkpoint = checkpointAt(deltaLog, 3).getOrElse(fail("Expected a Checkpoint at v3."))
+      assert(v3Checkpoint.version == 2,
+        s"The Checkpoint must describe state as of v2; got ${v3Checkpoint.version}.")
+      assert(amtProvider(snapshot).isDefined, "The snapshot must be AMT-backed after checkpoint().")
+      assert(classicCheckpointFiles(name).isEmpty,
+        "checkpoint() must not write classic checkpoint files on an AMT table.")
+    }
+  }
+
+  test("an AMT table gets no classic checkpoint across commits and commitLarge") {
+    withTable("amt_no_classic") {
+      val name = "amt_no_classic"
+      // Interval 2 so ordinary commits repeatedly cross the boundary and emit AMTs.
+      createAMTTable(name, checkpointInterval = 2)
+      // v1-v4, emitting an AMT at each interval boundary along the way.
+      (1 to 4).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+      sql(s"RESTORE TABLE $name TO VERSION AS OF 1") // commitLarge; emits its own full AMT.
+
+      // The point of this test is the absence of classic checkpoint files: the AMT manifests are on
+      // disk and no classic checkpoint is ever written.
+      assert((rootFiles(tablePath(name)) ++ leafFiles(tablePath(name))).nonEmpty,
+        "AMT manifests must be written.")
+      assert(classicCheckpointFiles(name).isEmpty,
+        "An AMT table must never accumulate a classic checkpoint file.")
     }
   }
 
@@ -524,8 +609,44 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
         s"INSERT INTO $name VALUES (20)"))) { context =>
     assert(context.postCheckpointSnapshot.allFiles.count() == 21,
       s"Expected 21 live files, got ${context.postCheckpointSnapshot.allFiles.count()}.")
-    assert(context.provider.leaves.size == 3,
-      s"21 files at entriesPerLeaf=7 must pack into 3 leaves; got ${context.provider.leaves.size}.")
+    // A full rewrite hash-distributes the 21 files across ceil(21/7)=3 writer partitions and
+    // skips any that come up empty, so its leaf count is a data-dependent upper bound. The
+    // driver-side incremental spill is deterministic and still packs into exactly 3.
+    if (context.scenario.isIncremental) {
+      assert(context.provider.leaves.size == 3,
+        s"21 files at entriesPerLeaf=7 must pack into 3 leaves; " +
+          s"got ${context.provider.leaves.size}.")
+    } else {
+      assert(context.provider.leaves.size <= 3,
+        s"21 files at entriesPerLeaf=7 must pack into at most 3 leaves; " +
+          s"got ${context.provider.leaves.size}.")
+    }
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "new leaf pointers carry manifest sequence numbers and the next unassigned row ID",
+      "amt_leaf_tracking",
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
+    val leaves = context.provider.leaves
+    assertLeafCount(leaves)
+    val expectedFirstRowId =
+      AMTWriteHelper.firstRowIdAfter(RowId.extractHighWatermark(context.postCheckpointSnapshot))
+    leaves.foreach { leaf =>
+      assert(leaf.tracking.sequence_number.contains(context.checkpoint.version))
+      assert(leaf.tracking.file_sequence_number.contains(context.checkpoint.version))
+      assert(leaf.tracking.first_row_id.contains(expectedFirstRowId))
+      val childFirstRowIds = withManifestDataEntries(
+        Seq(leaf.toFileStatus(context.provider.tableRoot).getPath.toString)) { entries =>
+        entries.select("tracking.first_row_id").collect().map { row =>
+          if (row.isNullAt(0)) None else Some(row.getLong(0))
+        }
+      }
+      assert(childFirstRowIds.forall(_.isDefined),
+        s"Every entry in ${leaf.location} must carry a first_row_id: $childFirstRowIds")
+    }
   }
 
   testAcrossAMTCheckpointScenarios(
@@ -542,7 +663,11 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
           startId = filesPerRowGroup * 2)
       }) { context =>
     val leaves = context.provider.leaves
-    assertLeafCount(leaves)
+    // A full rewrite hash-distributes the live files across ceil(numFiles / entriesPerLeaf)
+    // writer partitions and skips any empty ones, so the produced leaf count is an upper bound.
+    assert(leaves.size <= expectedLeafCount(leafPackedFiles),
+      s"$leafPackedFiles files at $entriesPerLeaf per leaf must pack into at most " +
+        s"${expectedLeafCount(leafPackedFiles)} leaves; got ${leaves.size}.")
     val totalLiveFiles = context.postCheckpointSnapshot.allFiles.count()
     val filesPerRowGroup = leafPackedFiles / 2
     val expectedTotalRows = filesPerRowGroup * 2 + filesPerRowGroup * 4
@@ -565,6 +690,15 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       assert(mi.added_files_count == 0 && mi.deleted_files_count == 0 &&
         mi.replaced_files_count == 0 && mi.modified_files_count == 0,
         s"A fresh full-rewrite leaf counts only existing files; got $mi.")
+      val dataSequenceNumbers = withManifestDataEntries(
+        Seq(leaf.toFileStatus(context.provider.tableRoot).getPath.toString)) { entries =>
+        entries.select("tracking.sequence_number").collect().map(_.getLong(0))
+      }
+      assert(dataSequenceNumbers.nonEmpty,
+        s"A full-rewrite leaf must contain at least one data sequence number; got $leaf.")
+      assert(mi.min_sequence_number == dataSequenceNumbers.min,
+        s"min_sequence_number must match the leaf's live entries; got $mi vs " +
+          s"${dataSequenceNumbers.toSeq}.")
     }
     // Conservation: the per-leaf counts account for every live file and row (a multi-leaf tree
     // keeps no root-resident data entries).
@@ -573,7 +707,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     assert(leaves.map(_.manifest_info.existing_rows_count).sum == expectedTotalRows,
       s"Leaf existing_rows_counts must sum to $expectedTotalRows; got " +
         s"${leaves.map(_.manifest_info.existing_rows_count)}.")
-    assertReconstructsLiveFileSet(context)
+    assertLiveAddFilesRoundTrip(context)
   }
 
   /** Parses the `delta.commit.stats` [[CommitStats]] logged for `version`, or fails. */
@@ -586,31 +720,144 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       .getOrElse(fail(s"No commit stats logged for version $version."))
   }
 
-  test("the follow-up OPTIMIZE CHECKPOINT commit stats carry AMT write metrics") {
+  /** Commits one SetTransaction and one DomainMetadata so a later checkpoint carries both. */
+  private def commitSetTransactionAndDomainMetadata(name: String): Unit = {
+    deltaLogForName(name).startTransaction().commit(
+      Seq(
+        SetTransaction(appId = "amt-metrics-app", version = 1L, lastUpdated = Some(0L)),
+        DomainMetadata(domain = "amt.metrics.test", configuration = "{}", removed = false)),
+      DeltaOperations.ManualUpdate)
+  }
+
+  /** Extracts the single AMT write metrics logged in `events`, or fails. */
+  private def amtWriteMetricsFrom(events: Seq[UsageRecord]): SingleAMTWriteMetrics =
+    events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains(AMTUsageLogs.CONFLICT_RESOLUTION_ROUND))
+      .map(e => JsonUtils.fromJson[AMTMetrics](e.blob))
+      .flatMap(_.singleAMTWriteMetrics)
+      .headOption
+      .getOrElse(fail("No AMT write metrics were logged."))
+
+  /**
+   * Asserts `writeMetrics` describes the AMT tree reconstructed from `name`'s latest snapshot.
+   */
+  private def assertAMTWriteMetrics(
+      writeMetrics: SingleAMTWriteMetrics,
+      name: String,
+      expectedTrigger: AMTTriggerMode,
+      expectedIncremental: Boolean,
+      expectedNumVersionsSinceLastCheckpoint: Long,
+      expectedNumJsonsSinceLastCheckpoint: Long): Unit = {
+    val snapshot = deltaLogForName(name).update()
+    val provider = amtProvider(snapshot)
+      .getOrElse(fail("The checkpoint snapshot should expose an AMT checkpoint provider."))
+    assert(writeMetrics.trigger == expectedTrigger.name)
+    assert(writeMetrics.incremental == expectedIncremental)
+    assert(writeMetrics.materializeDurationMs >= 0L)
+    // Tree-shape fields must match the tree the provider reconstructs.
+    assert(writeMetrics.numLiveDataEntries == currentLiveDataEntries(snapshot),
+      "numLiveDataEntries must equal the live files the tree reconstructs.")
+    assert(writeMetrics.numLiveDataEntries > 0L)
+    assert(writeMetrics.numTombstoneDataEntries == 0L,
+      "an insert-only write produces no tombstones.")
+    assert(writeMetrics.numLeaves == provider.liveLeafManifestAbsolutePaths.size.toLong)
+    assert(writeMetrics.contentRootSizeInBytes == provider.checkpointAction.contentRoot.sizeInBytes)
+    assert(writeMetrics.contentRootSizeInBytes > 0L)
+    assert(writeMetrics.checkpointSizeInBytes == provider.effectiveCheckpointSizeInBytes())
+    assert(writeMetrics.checkpointSizeInBytes >= writeMetrics.contentRootSizeInBytes)
+    assert(writeMetrics.numSetTransactions == 1L)
+    // The committed DomainMetadata plus the row-tracking high-watermark domain AMT maintains.
+    assert(writeMetrics.numDomainMetadata == 2L)
+    // Log-segment context.
+    assert(writeMetrics.numVersionsSinceLastCheckpoint == expectedNumVersionsSinceLastCheckpoint)
+    assert(
+      writeMetrics.numJsonsInSnapshotSinceLastCheckpoint == expectedNumJsonsSinceLastCheckpoint)
+    if (expectedNumVersionsSinceLastCheckpoint < 0L) {
+      assert(writeMetrics.previousCheckpointSizeInBytes == -1L,
+        "the first AMT checkpoint has no previous tree.")
+    } else {
+      assert(writeMetrics.previousCheckpointSizeInBytes > 0L)
+    }
+  }
+
+  test("the follow-up OPTIMIZE CHECKPOINT emits round and commit AMT metrics") {
     withTable("amt_commit_stats") {
       val name = "amt_commit_stats"
       createAMTTable(name, checkpointInterval = 2)
-      sql(s"INSERT INTO $name VALUES (1)") // v1: below the interval, no maintenance.
+      // v1: a SetTransaction and DomainMetadata (so the checkpointed tree carries both); below the
+      // interval, so no maintenance.
+      commitSetTransactionAndDomainMetadata(name)
 
       // v2 hits the interval boundary; the AMT is written by the follow-up commit at v3, so the
-      // AMT write metrics are recorded on v3's stats, not v2's.
-      val allStats = Log4jUsageLogger.track {
-        sql(s"INSERT INTO $name VALUES (2)")
-      }.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+      // AMT write metrics are emitted by the v3 writer and summarized in its commit stats after
+      // that attempt commits successfully.
+      val events = Log4jUsageLogger.track {
+        sql(s"INSERT INTO $name VALUES (1)")
+      }
+      val allStats = events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
           e.tags.get("opType").contains("delta.commit.stats"))
         .map(e => JsonUtils.fromJson[CommitStats](e.blob))
-
       val v2Stats = allStats.find(_.commitVersion == 2).getOrElse(fail("No stats for v2."))
-      assert(v2Stats.amtWriteMetrics.isEmpty, "v2 defers the AMT; its stats carry no AMT metrics.")
-
+      assert(v2Stats.amtCommitStats.isEmpty, "v2 defers the AMT; its stats carry no AMT metrics.")
       val v3Stats = allStats.find(_.commitVersion == 3).getOrElse(fail("No stats for v3."))
-      val metrics = v3Stats.amtWriteMetrics
-        .getOrElse(fail("The follow-up commit's stats should carry AMT write metrics."))
-      assert(metrics.writeAttempts.size == 1,
-        s"Expected one AMT write attempt, got ${metrics.writeAttempts}")
-      // The first AMT has no prior tree to build on, so it is always a full rewrite.
-      assert(metrics.writeAttempts.head.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
-      assert(metrics.writeAttempts.head.materializeDurationMs >= 0L)
+
+      val writeMetrics = amtWriteMetricsFrom(events)
+      assert(v3Stats.amtCommitStats.map(_.lastAMTWriteMetrics).contains(writeMetrics),
+        "the successful follow-up commit must retain its last AMT write metrics.")
+      // The first AMT has no prior tree to build on, so it is a full rewrite with no previous tree.
+      // It folds in the three commits before it (create, the action commit, the insert at v2).
+      assertAMTWriteMetrics(
+        writeMetrics, name,
+        expectedTrigger = AMTTriggerMode.CheckpointIntervalFull,
+        expectedIncremental = false,
+        expectedNumVersionsSinceLastCheckpoint = -1L,
+        expectedNumJsonsSinceLastCheckpoint = 3L)
+    }
+  }
+
+  test("an inline large-commit checkpoint emits round and commit AMT metrics") {
+    withTable("amt_inline_commit_stats") {
+      val name = "amt_inline_commit_stats"
+      // No interval-triggered checkpoints; we drive the first checkpoint explicitly.
+      createAMTTable(name, checkpointInterval = Int.MaxValue)
+      // A SetTransaction and DomainMetadata, carried into the bootstrap tree and then forward.
+      commitSetTransactionAndDomainMetadata(name) // v1
+      sql(s"INSERT INTO $name VALUES (1)") // v2
+      // Bootstrap a full AMT so the inline write below is an incremental on top of a previous tree.
+      commitCheckpoint(deltaLogForName(name), incremental = false) // v3
+      val inlineVersion = deltaLogForName(name).update().version + 1 // v4
+
+      // Lowering the large-commit threshold to one action forces the next commit to write its AMT
+      // inline, so the AMT write metrics are emitted during that same commit and summarized in its
+      // commit stats -- no follow-up OPTIMIZE CHECKPOINT.
+      val events = withSQLConf(
+          DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+            -> "1") {
+        Log4jUsageLogger.track {
+          sql(s"INSERT INTO $name VALUES (2)")
+        }
+      }
+      val inlineStats = events.filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+          e.tags.get("opType").contains("delta.commit.stats"))
+        .map(e => JsonUtils.fromJson[CommitStats](e.blob))
+        .find(_.commitVersion == inlineVersion)
+        .getOrElse(fail(s"No commit stats for the inline commit v$inlineVersion."))
+      assert(inlineStats.amtCommitStats.nonEmpty,
+        "an inline commit writes its AMT in the same commit, so its stats carry AMT metrics.")
+
+      val writeMetrics = amtWriteMetricsFrom(events)
+      assert(writeMetrics.incrementalWriteMetrics.isDefined,
+        "an incremental write records its detailed shape breakdown.")
+      assert(inlineStats.amtCommitStats.map(_.lastAMTWriteMetrics).contains(writeMetrics),
+        "the inline commit must retain its AMT write metrics in its commit stats.")
+      // An inline write builds on the bootstrap tree (which describes v2), so it is
+      // incremental: two table versions ahead, folding in the one commit since that tree.
+      assertAMTWriteMetrics(
+        writeMetrics, name,
+        expectedTrigger = AMTTriggerMode.InlineWithLargeCommitIncremental,
+        expectedIncremental = true,
+        expectedNumVersionsSinceLastCheckpoint = 2L,
+        expectedNumJsonsSinceLastCheckpoint = 1L)
     }
   }
 
@@ -621,7 +868,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
       val commitStats = commitStatsAt(sql(s"INSERT INTO $name VALUES (1)"), version = 1)
 
-      assert(commitStats.amtWriteMetrics.isEmpty,
+      assert(commitStats.amtCommitStats.isEmpty,
         "Commit stats must not carry AMT write metrics when no AMT is emitted.")
     }
   }

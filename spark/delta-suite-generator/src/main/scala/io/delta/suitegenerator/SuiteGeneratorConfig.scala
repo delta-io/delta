@@ -139,12 +139,15 @@ object SuiteGeneratorConfig {
     val ROW_TRACKING_ON = ROW_TRACKING.withValueAsDimension(_.last)
     val MERGE_PERSISTENT_DV_OFF = DimensionMixin("MergePersistentDV", suffix = "Disabled")
     val MERGE_ROW_TRACKING_DV = DimensionMixin("RowTrackingMergeDV")
+    val MERGE_AMT = DimensionMixin("MergeIntoAMT", alias = Some("AMT"))
     val COLUMN_MAPPING = DimensionWithMultipleValues(
       "DeltaColumnMappingEnable", List("IdMode", "NameMode"), alias = Some("ColMap"))
     val UPDATE_SCALA = DimensionMixin("UpdateScala", alias = Some("Scala"))
     val UPDATE_SQL = DimensionMixin("UpdateSQL", alias = Some("SQL"))
     val UPDATE_DVS = DimensionMixin("UpdateSQLWithDeletionVectors", alias = Some("DV"))
     val UPDATE_ROW_TRACKING_DV = DimensionMixin("RowTrackingUpdateDV")
+    val UPDATE_AMT = DimensionMixin("UpdateAMT", alias = Some("AMT"))
+    val ROW_TRACKING_UPDATE_AMT = DimensionMixin("RowTrackingUpdateAMT", alias = Some("AMT"))
     val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
     val DELETE_SQL = DimensionMixin("DeleteSQL", alias = Some("SQL"))
     val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors", alias = Some("DV"))
@@ -238,6 +241,14 @@ object SuiteGeneratorConfig {
             Dims.DATA_SKIP_CHECKPOINT_V2.alone,
             Dims.COLUMN_MAPPING.withValueAsDimension(_.last).alone
           )
+        ),
+        // AMT forces id column mapping and uses its own manifest checkpoint, so COLUMN_MAPPING and
+        // DATA_SKIP_CHECKPOINT_V2 are not used here.
+        TestConfig(
+          "DataSkippingDeltaV1AMTTests" :: Nil,
+          List(
+            Dims.NONE
+          )
         )
       )
     ),
@@ -319,6 +330,33 @@ object SuiteGeneratorConfig {
       )
     ),
     TestGroup(
+      packageName = "mergeamt",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.amt._",
+        importer"org.apache.spark.sql.delta.rowid._"
+      ),
+      testConfigs = List(
+        // The not-matched-by-source CDC suites enable change data feed on the table. Under AMT's
+        // mandatory column mapping, creating a CDF-enabled table with data is rejected by
+        // performCdcColumnMappingCheck (DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION), so they are
+        // not part of the AMT variants here.
+        TestConfig(
+          (Tests.MERGE_SQL ::: Tests.MERGE_BASE).filterNot(Set(
+            "MergeIntoNotMatchedBySourceCDCPart1Tests",
+            "MergeIntoNotMatchedBySourceCDCPart2Tests"
+          )) ::: List(
+            "MergeIntoNullTypeTests"
+          ),
+          List(List(Dims.MERGE_SQL, Dims.NAME_BASED, Dims.MERGE_AMT))
+        ),
+        TestConfig(
+          List("RowTrackingMergeCommonTests"),
+          List(List(Dims.NAME_BASED, Dims.MERGE_AMT, Dims.MERGE_ROW_TRACKING_DV.asOptional))
+        )
+      )
+    ),
+    TestGroup(
       packageName = "update",
       imports = List(
         importer"org.apache.spark.sql.delta._",
@@ -358,6 +396,24 @@ object SuiteGeneratorConfig {
             List(Dims.UPDATE_ROW_TRACKING_DV),
             List(Dims.UPDATE_ROW_TRACKING_DV, Dims.CDC, Dims.COLUMN_MAPPING.asOptional)
           )
+        )
+      )
+    ),
+    TestGroup(
+      packageName = "updateamt",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.amt._",
+        importer"org.apache.spark.sql.delta.rowid._"
+      ),
+      testConfigs = List(
+        TestConfig(
+          "UpdateSQLTests" :: Tests.UPDATE_BASE,
+          List(List(Dims.UPDATE_SQL, Dims.NAME_BASED, Dims.UPDATE_AMT))
+        ),
+        TestConfig(
+          List("RowTrackingUpdateCommonTests"),
+          List(List(Dims.ROW_TRACKING_UPDATE_AMT, Dims.UPDATE_ROW_TRACKING_DV.asOptional))
         )
       )
     ),

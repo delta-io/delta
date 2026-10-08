@@ -365,7 +365,8 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       cardinality = 3L,
       offset = Some(8))
     val amtDv = DeletionVector.fromDescriptor(dv, tableRoot)
-    assert(amtDv.location == dv.absolutePath(tableRoot).toString)
+    assert(amtDv.location ==
+      s"test%dv%prefix-/${DeletionVectorDescriptor.assembleDeletionVectorFileName(id)}")
     assert(amtDv.location.contains("test%dv%prefix-"))
     assert(amtDv.offset == 8L)
     assert(amtDv.cardinality == 3L)
@@ -376,6 +377,8 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(roundTripped.storageType == DeletionVectorDescriptor.RELATIVE_DV_MARKER)
     assert(roundTripped.pathOrInlineDv.contains("test%dv%prefix-"))
     assert(roundTripped.absolutePath(tableRoot) == dv.absolutePath(tableRoot))
+    assert(roundTripped.normalizedTableRelativeObjectId(tableRoot) ==
+      dv.normalizedTableRelativeObjectId(tableRoot))
   }
 
   test("DeletionVector round-trips an absolute-path DV outside the table root") {
@@ -442,6 +445,27 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(restored.file_format == AMTSingleAction.FileFormatParquet)
     assert(restored.spec_id.isEmpty)
     assert(restored.format_version == AMTSingleAction.FormatVersionV4)
+  }
+
+  test("fromAddFile maps defaultRowCommitVersion to both sequence numbers") {
+    val entry = DataEntry.fromAddFile(
+      sampleAddFile.copy(defaultRowCommitVersion = Some(10L)),
+      addedTracking,
+      tableRoot)
+    assert(entry.tracking.sequence_number.contains(10L))
+    assert(entry.tracking.file_sequence_number.contains(10L))
+  }
+
+  test("toAddFile maps file_sequence_number to defaultRowCommitVersion") {
+    val add = DataEntry(
+      location = "f.parquet",
+      file_format = AMTSingleAction.FileFormatParquet,
+      tracking = addedTracking.copy(
+        sequence_number = Some(20L),
+        file_sequence_number = Some(10L)),
+      record_count = 10L,
+      file_size_in_bytes = 100L).toAddFile(tableRoot)
+    assert(add.defaultRowCommitVersion.contains(10L))
   }
 
   private val sampleTags: Map[String, String] =
