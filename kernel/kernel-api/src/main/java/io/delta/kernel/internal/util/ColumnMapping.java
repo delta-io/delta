@@ -19,12 +19,10 @@ import static io.delta.kernel.internal.DeltaErrors.columnNotFoundInSchema;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
 
-import io.delta.kernel.data.Row;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdater;
 import io.delta.kernel.types.*;
 import java.util.*;
@@ -115,7 +113,15 @@ public class ColumnMapping {
         return prunedSchema;
       case ID: // fall through
       case NAME:
-        boolean includeFieldIds = columnMappingMode == ColumnMappingMode.ID;
+        // In ID mode, parquet.field.id must satisfy an all-or-none constraint across the schema:
+        // every field that has an id must also have ids on nested array-element / map-key-value
+        // positions. Those nested ids are only assigned under IcebergCompatV2. Without them,
+        // writing parquet.field.id on scalar siblings while omitting it from collection fields
+        // still violates the constraint. Fall back to name-mode (no field ids) when any top-level
+        // field is a collection without nested column ids.
+        boolean includeFieldIds =
+            columnMappingMode == ColumnMappingMode.ID
+                && !hasCollectionFieldWithoutNestedIds(fullSchema);
         return convertToPhysicalSchema(prunedSchema, fullSchema, includeFieldIds);
       default:
         throw new UnsupportedOperationException(
@@ -220,20 +226,6 @@ public class ColumnMapping {
     return convertColumnName(schema, physicalColumn, SchemaConversionDirection.PHYSICAL_TO_LOGICAL);
   }
 
-  /**
-   * Utility method to block writing into a table with column mapping enabled. Currently Kernel only
-   * supports the metadata updates on tables with column mapping enabled. Data writes into such
-   * tables using the data transformation APIs provided by the Kernel are not supported yet.
-   */
-  public static void blockIfColumnMappingEnabled(Row transactionState) {
-    ColumnMapping.ColumnMappingMode columnMappingMode =
-        TransactionStateRow.getColumnMappingMode(transactionState);
-    if (columnMappingMode != ColumnMapping.ColumnMappingMode.NONE) {
-      throw new UnsupportedOperationException(
-          "Writing into column mapping enabled table is not supported yet.");
-    }
-  }
-
   ////////////////////////////
   // Private Helper Methods //
   ////////////////////////////
@@ -311,6 +303,23 @@ public class ColumnMapping {
 
   static boolean hasPhysicalName(StructField field) {
     return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+  }
+
+  /**
+   * Returns true if the schema contains any top-level array or map field that lacks nested column
+   * ids. In that case, parquet.field.id cannot be written safely in id-mode without IcebergCompatV2
+   * because the Parquet writer enforces an all-or-none constraint: if any field has a field id, all
+   * sibling fields and their nested array-element / map-key-value positions must also have ids.
+   * Nested ids are only assigned under IcebergCompatV2.
+   */
+  private static boolean hasCollectionFieldWithoutNestedIds(StructType schema) {
+    for (StructField field : schema.fields()) {
+      DataType type = field.getDataType();
+      if ((type instanceof ArrayType || type instanceof MapType) && !hasNestedColumnIds(field)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
