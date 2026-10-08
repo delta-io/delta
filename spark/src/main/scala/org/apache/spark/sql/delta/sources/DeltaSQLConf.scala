@@ -2378,7 +2378,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .stringConf
       .transform(_.toUpperCase(Locale.ROOT))
       .checkValues(ValidateCheckConstraintsMode.values.map(_.toString))
-      .createWithDefault(ValidateCheckConstraintsMode.LOG_ONLY.toString)
+      .createWithDefault(ValidateCheckConstraintsMode.ASSERT.toString)
 
   val DELTA_CONVERT_ICEBERG_ENABLED =
     buildConf("convert.iceberg.enabled")
