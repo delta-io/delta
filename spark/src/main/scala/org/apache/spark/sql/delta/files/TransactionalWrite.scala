@@ -519,6 +519,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         case InnerInvariantViolationException(violationException) =>
           // Pull an InvariantViolationException up to the top level if it was the root cause.
           throw violationException
+        case e if EmptySchemaWriteException.isEmptySchemaWriteException(e) =>
+          EmptySchemaWriteException.throwEmptySchemaWriteException(e, metadata)
       }
       statsTrackers.foreach {
         case tracker: BasicWriteJobStatsTracker =>

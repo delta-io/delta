@@ -23,7 +23,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FINDING_TOUCHED_FILES_MSG}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase.totalBytesAndDistinctPartitionValues
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
@@ -121,7 +121,8 @@ case class DeleteCommand(
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
-  override val output: Seq[Attribute] = Seq(AttributeReference("num_affected_rows", LongType)())
+  override val output: Seq[Attribute] =
+    Seq(AttributeReference("num_affected_rows", LongType, nullable = false)())
 
   override lazy val metrics = createMetrics
 
@@ -352,8 +353,7 @@ case class DeleteCommand(
                 snapshot = txn.snapshot)
               val filterCond = Not(EqualNullSafe(cond, Literal.TrueLiteral))
               val rewrittenActions = rewriteFiles(txn, targetDF, filterCond, filesToRewrite.length)
-              val (changeFiles, rewrittenFiles) = rewrittenActions
-                .partition(_.isInstanceOf[AddCDCFile])
+              val (rewrittenFiles, changeFiles) = DMLUtils.partitionCDCFiles(rewrittenActions)
               numAddedFiles = rewrittenFiles.size
               val removedFiles = filesToRewrite.map(f =>
                 getTouchedFile(deltaLog.dataPath, f, nameToAddFileMap))
@@ -368,7 +368,7 @@ case class DeleteCommand(
                 numPartitionsAddedTo = Some(rewrittenPartitions)
               }
               numAddedChangeFiles = changeFiles.size
-              changeFileBytes = changeFiles.collect { case f: AddCDCFile => f.size }.sum
+              changeFileBytes = changeFiles.map(_.size).sum
               rewriteTimeMs =
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime) - scanTimeMs
               numDeletedRows = Some(metrics("numDeletedRows").value)

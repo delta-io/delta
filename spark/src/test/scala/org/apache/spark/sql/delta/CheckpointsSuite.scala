@@ -26,7 +26,8 @@ import scala.concurrent.duration._
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.amt.AMTPassthrough
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
@@ -45,7 +46,7 @@ import org.apache.hadoop.util.Progressable
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions.{col, lit, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
@@ -723,6 +724,48 @@ class CheckpointsSuite
     }
   }
 
+  test("non-AMT tables do not persist backReference or amtPassthrough in checkpoint or commit") {
+    withClassicCheckpointPolicyForCatalogOwned {
+      withTempDir { tempDir =>
+        val tablePath = tempDir.getAbsolutePath
+        spark.range(end = 10).write.format("delta").mode("overwrite").save(tablePath)
+        sql(s"DELETE FROM delta.`$tablePath` WHERE id < 5")
+
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        deltaLog.checkpoint()
+        val version = deltaLog.snapshot.version
+
+        // 1. The classic checkpoint parquet must carry neither backReference nor amtPassthrough.
+        val checkpointFile =
+          FileNames.checkpointFileSingular(deltaLog.logPath, version).toString
+        val checkpointSchema = spark.read.format("parquet").load(checkpointFile).schema
+        val addFields =
+          checkpointSchema("add").dataType.asInstanceOf[StructType].fieldNames.toSeq
+        val removeFields =
+          checkpointSchema("remove").dataType.asInstanceOf[StructType].fieldNames.toSeq
+        assert(!addFields.contains("backReference"),
+          s"checkpoint add struct must not contain backReference, got: $addFields")
+        assert(!removeFields.contains("backReference"),
+          s"checkpoint remove struct must not contain backReference, got: $removeFields")
+        assert(!addFields.contains("amtPassthrough"),
+          s"checkpoint add struct must not contain amtPassthrough, got: $addFields")
+
+        // 2. No commit JSON should mention backReference or amtPassthrough.
+        val commitProvider = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot)
+        val hadoopConf = deltaLog.newDeltaHadoopConf()
+        (0L to version).foreach { v =>
+          val deltaFile = commitProvider.deltaFile(v)
+          val content = deltaLog.store.read(deltaFile, hadoopConf)
+          assert(!content.exists(_.contains("backReference")),
+            s"commit JSON for version $v must not contain backReference: ${content.mkString("\n")}")
+          assert(!content.exists(_.contains("amtPassthrough")),
+            s"commit JSON for version $v must not contain amtPassthrough: " +
+              s"${content.mkString("\n")}")
+        }
+      }
+    }
+  }
+
   test("checkpoint with DVs") {
     for (v2Checkpoint <- Seq(true, false))
     withTempDir { tempDir =>
@@ -1049,6 +1092,14 @@ class CheckpointsSuite
 
     val actionsToWrite = Checkpoints
       .buildCheckpoint(actionsDS, snapshot)
+      // buildCheckpoint drops backReference (add/remove) and amtPassthrough (add only) from the
+      // on-disk shape, so we re-materialize them as null columns before .as[SingleAction].
+      .withColumn("add", when(col("add.path").isNotNull,
+        col("add")
+          .withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))
+          .withField("amtPassthrough", lit(null).cast(AMTPassthrough.STRUCT_TYPE))))
+      .withColumn("remove", when(col("remove.path").isNotNull,
+        col("remove").withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))))
       .as[SingleAction]
       .collect()
       .toSeq
@@ -1156,7 +1207,9 @@ class CheckpointsSuite
     }
   }
 
-  test("validate metadata cleanup is not called with createCheckpointAtVersion API") {
+  test(
+      "validate metadata cleanup is not called with createCheckpointAtVersion API",
+      CatalogManagedMaintenanceIncompatible) {
     withTempDir { dir =>
       val usageRecords1 = Log4jUsageLogger.track {
         spark.range(10).write.format("delta").save(dir.getAbsolutePath)

@@ -19,17 +19,21 @@ import java.util.Optional
 
 import scala.jdk.CollectionConverters._
 
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{KernelException, VersionToLoadAfterLatestCommitException}
 import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils, UCTableIdentifier}
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
+import org.scalatest.Outcome
 import org.scalatest.funsuite.AnyFunSuite
 
 /** Integration tests for [[UCManagedTableSnapshotManager]]. */
 class UCManagedTableSnapshotManagerSuite
     extends AnyFunSuite
     with UCCatalogManagedTestUtils {
+
+  override protected def withFixture(test: NoArgTest): Outcome =
+    spark.withActive(super.withFixture(test))
 
   private val testUcTableId = "testUcTableId"
   private val testTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
@@ -83,7 +87,7 @@ class UCManagedTableSnapshotManagerSuite
 
       val snapshot = manager.loadLatestSnapshot()
 
-      assert(snapshot.getVersion == maxRatifiedVersion)
+      assert(snapshot.version == maxRatifiedVersion)
       assert(ucClient.getLastGetCommitsTableIdentifier.getNamespace.toSeq == Seq("cat", "sch"))
       assert(ucClient.getLastGetCommitsTableIdentifier.getName == "tbl")
     }
@@ -112,11 +116,13 @@ class UCManagedTableSnapshotManagerSuite
     withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
       val manager = createManager(ucClient, tablePath)
 
-      assert(manager.loadSnapshotAt(0L).getVersion == 0L)
-      assert(manager.loadSnapshotAt(1L).getVersion == 1L)
+      assert(manager.loadSnapshotAt(0L).version == 0L)
+      assert(manager.loadSnapshotAt(1L).version == 1L)
 
       intercept[IllegalArgumentException] { manager.loadSnapshotAt(-1L) }
-      intercept[IllegalArgumentException] { manager.loadSnapshotAt(maxRatifiedVersion + 10) }
+      Seq(maxRatifiedVersion + 1, maxRatifiedVersion + 10).foreach { version =>
+        intercept[VersionToLoadAfterLatestCommitException] { manager.loadSnapshotAt(version) }
+      }
     }
   }
 
@@ -300,9 +306,20 @@ class UCManagedTableSnapshotManagerSuite
           maxRatifiedVersion,
           Optional.of(maxRatifiedVersion - 1))
       }
+    }
+  }
 
-      intercept[IllegalArgumentException] {
-        manager.getTableChanges(defaultEngine, maxRatifiedVersion + 5, Optional.empty())
+  test("getTableChanges: throws typed exceptions for future start and end versions") {
+    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
+      val manager = createManager(ucClient, tablePath)
+
+      Seq(maxRatifiedVersion + 1, maxRatifiedVersion + 5).foreach { version =>
+        intercept[VersionToLoadAfterLatestCommitException] {
+          manager.getTableChanges(defaultEngine, version, Optional.empty())
+        }
+        intercept[VersionToLoadAfterLatestCommitException] {
+          manager.getTableChanges(defaultEngine, 0L, Optional.of(version))
+        }
       }
     }
   }

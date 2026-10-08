@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.typewidening
 
+import org.apache.spark.sql.delta.DeltaDMLTestUtilsNameBased
+
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.types._
@@ -28,6 +30,7 @@ class TypeWideningAlterTableNestedSuite
   extends QueryTest
     with ParquetTest
     with TypeWideningTestMixin
+    with DeltaDMLTestUtilsNameBased
     with TypeWideningAlterTableNestedTests
 
 trait TypeWideningAlterTableNestedTests {
@@ -37,7 +40,7 @@ trait TypeWideningAlterTableNestedTests {
 
   /** Create a table with a struct, map and array for each test. */
   protected def createNestedTable(): Unit = {
-    sql(s"CREATE TABLE delta.`$tempPath` " +
+    sql(s"CREATE TABLE $tableSQLIdentifier " +
       "(s struct<a: byte>, m map<byte, short>, a array<short>) USING DELTA")
     append(Seq((1, 2, 3, 4))
       .toDF("a", "b", "c", "d")
@@ -46,7 +49,7 @@ trait TypeWideningAlterTableNestedTests {
         "map(cast(b as byte), cast(c as short)) as m",
         "array(cast(d as short)) as a"))
 
-    assert(readDeltaTable(tempPath).schema === new StructType()
+    assert(readDeltaTableByIdentifier().schema === new StructType()
       .add("s", new StructType().add("a", ByteType))
       .add("m", MapType(ByteType, ShortType))
       .add("a", ArrayType(ShortType)))
@@ -55,12 +58,12 @@ trait TypeWideningAlterTableNestedTests {
   test("unsupported ALTER TABLE CHANGE COLUMN on non-leaf fields") {
     createNestedTable()
     // Running ALTER TABLE CHANGE COLUMN on non-leaf fields is invalid.
-    var alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN s TYPE struct<a: short>"
+    var alterTableSql = s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN s TYPE struct<a: short>"
     checkError(
       intercept[AnalysisException] { sql(alterTableSql) },
       "CANNOT_UPDATE_FIELD.STRUCT_TYPE",
       parameters = Map(
-        "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
+        "table" -> qualifiedErrorTableName,
         "fieldName" -> "`s`"
       ),
       context = ExpectedContext(
@@ -69,12 +72,12 @@ trait TypeWideningAlterTableNestedTests {
         stop = alterTableSql.length - 1)
     )
 
-    alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN m TYPE map<int, int>"
+    alterTableSql = s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN m TYPE map<int, int>"
     checkError(
       intercept[AnalysisException] { sql(alterTableSql) },
       "CANNOT_UPDATE_FIELD.MAP_TYPE",
       parameters = Map(
-        "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
+        "table" -> qualifiedErrorTableName,
         "fieldName" -> "`m`"
       ),
       context = ExpectedContext(
@@ -83,12 +86,12 @@ trait TypeWideningAlterTableNestedTests {
         stop = alterTableSql.length - 1)
     )
 
-    alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE array<int>"
+    alterTableSql = s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN a TYPE array<int>"
     checkError(
       intercept[AnalysisException] { sql(alterTableSql) },
       "CANNOT_UPDATE_FIELD.ARRAY_TYPE",
       parameters = Map(
-        "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
+        "table" -> qualifiedErrorTableName,
         "fieldName" -> "`a`"
       ),
       context = ExpectedContext(
@@ -100,12 +103,12 @@ trait TypeWideningAlterTableNestedTests {
 
   test("type widening with ALTER TABLE on nested fields") {
     createNestedTable()
-    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN s.a TYPE short")
-    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN m.key TYPE int")
-    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN m.value TYPE int")
-    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a.element TYPE int")
+    sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN s.a TYPE short")
+    sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN m.key TYPE int")
+    sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN m.value TYPE int")
+    sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN a.element TYPE int")
 
-    assert(readDeltaTable(tempPath).schema === new StructType()
+    assert(readDeltaTableByIdentifier().schema === new StructType()
       .add("s", new StructType()
         .add("a", ShortType))
       .add("m", MapType(IntegerType, IntegerType))
@@ -116,7 +119,7 @@ trait TypeWideningAlterTableNestedTests {
         .selectExpr("named_struct('a', cast(a as short)) as s", "map(b, c) as m", "array(d) as a"))
 
     checkAnswer(
-      readDeltaTable(tempPath),
+      readDeltaTableByIdentifier(),
       Seq((1, 2, 3, 4), (5, 6, 7, 8))
         .toDF("a", "b", "c", "d")
         .selectExpr("named_struct('a', cast(a as short)) as s", "map(b, c) as m", "array(d) as a"))
@@ -124,9 +127,9 @@ trait TypeWideningAlterTableNestedTests {
 
   test("type widening using ALTER TABLE REPLACE COLUMNS on nested fields") {
     createNestedTable()
-    sql(s"ALTER TABLE delta.`$tempPath` REPLACE COLUMNS " +
+    sql(s"ALTER TABLE $tableSQLIdentifier REPLACE COLUMNS " +
       "(s struct<a: short>, m map<int, int>, a array<int>)")
-    assert(readDeltaTable(tempPath).schema === new StructType()
+    assert(readDeltaTableByIdentifier().schema === new StructType()
       .add("s", new StructType()
         .add("a", ShortType))
       .add("m", MapType(IntegerType, IntegerType))
@@ -137,7 +140,7 @@ trait TypeWideningAlterTableNestedTests {
         .selectExpr("named_struct('a', cast(a as short)) as s", "map(b, c) as m", "array(d) as a"))
 
     checkAnswer(
-      readDeltaTable(tempPath),
+      readDeltaTableByIdentifier(),
       Seq((1, 2, 3, 4), (5, 6, 7, 8))
         .toDF("a", "b", "c", "d")
         .selectExpr("named_struct('a', cast(a as short)) as s", "map(b, c) as m", "array(d) as a"))

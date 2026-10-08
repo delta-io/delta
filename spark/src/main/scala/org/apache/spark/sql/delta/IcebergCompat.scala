@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.shims.GeoTypesShim
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.internal.MDC
@@ -81,7 +82,7 @@ object IcebergCompatV2 extends IcebergCompatBase(
 )
 object CheckTypeInV3AllowList extends CheckTypeInAllowList {
   val v3OnlyTypes = Set[Class[_]](VariantType.getClass)
-  val v3GeoSpatialTypes = Set[Class[_]]()
+  val v3GeoSpatialTypes = GeoTypesShim.geoTypes
   override val allowTypes: Set[Class[_]] =
     CheckTypeInV2AllowList.allowTypes ++ v3OnlyTypes ++ v3GeoSpatialTypes
 }
@@ -426,7 +427,7 @@ case class IcebergCompatVersionBase(knownVersions: Set[IcebergCompatBase]) {
 }
 
 object IcebergCompat extends IcebergCompatVersionBase(
-    Set(IcebergCompatV1, IcebergCompatV2)
+    Set(IcebergCompatV1, IcebergCompatV2, IcebergCompatV3)
   ) with DeltaLogging
 
 
@@ -636,7 +637,9 @@ object CheckTypeInV2AllowList extends CheckTypeInAllowList {
 object CheckPartitionDataTypeInV2AllowList extends IcebergCompatCheck {
   private val allowedTypes = Set[Class[_]] (
     ByteType.getClass, ShortType.getClass, IntegerType.getClass, LongType.getClass,
-    FloatType.getClass, DoubleType.getClass, DecimalType.getClass,
+    // DecimalType is parameterized by precision and scale, so schema fields contain
+    // DecimalType instances rather than the companion object.
+    FloatType.getClass, DoubleType.getClass, classOf[DecimalType],
     StringType.getClass, BinaryType.getClass,
     BooleanType.getClass,
     TimestampType.getClass, TimestampNTZType.getClass, DateType.getClass

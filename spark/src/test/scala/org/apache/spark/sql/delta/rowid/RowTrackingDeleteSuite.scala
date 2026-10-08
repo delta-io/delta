@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions.{col, lit, struct}
 
 trait RowTrackingDeleteTestDimension
   extends QueryTest
@@ -49,8 +49,12 @@ trait RowTrackingDeleteTestDimension
       }
       val partitionColumnValue = (col("id") / numRowsPerPartition).cast("int")
 
+      val voidCol =
+        if (DeltaTestUtilsBase.nullTypeColumnsSupported) lit(null) else lit(null).cast("int")
       val df = spark.range(0, initialNumRows, 1, expectedNumFiles)
-                    .withColumn("part", partitionColumnValue)
+        .withColumn("void_col", voidCol)
+        .withColumn("struct_col", struct(col("void_col"), col("id")))
+        .withColumn("part", partitionColumnValue)
       if (isPartitioned) {
         df.repartition(numFilesPerPartition)
           .write
@@ -109,6 +113,7 @@ trait RowTrackingDeleteTestDimension
   override protected def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "false")
+      .set(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key, "false")
   }
 }
 
@@ -164,7 +169,9 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
         // Delete whole table.
         deleteAndValidateStableRowId(whereCondition = None)
 
-        spark.sql(s"INSERT INTO $testTableName VALUES (1, 0), (2, 0), (3, 0), (4, 0)")
+        spark.sql(s"INSERT INTO $testTableName VALUES " +
+          s"(1, null, (null, 1), 0), (2, null, (null, 2), 0), " +
+          s"(3, null, (null, 3), 0), (4, null, (null, 4), 0)")
 
         // The new rows should have new row IDs.
         val actualDF = spark.table(testTableName)
@@ -197,11 +204,14 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
             val expectedNumFiles = if (deletionVectorEnabled) {
               if (isPartitioned) 100 else 10
             } else {
-              if (isPartitioned) 53 else 1
+              if (isPartitioned) 52 else 1
             }
 
-            assert(currentNumFiles === expectedNumFiles,
-              s"The current num files $currentNumFiles is unexpected for optimized writes")
+            // The optimized-write file count is tuned to the exact (VOID) schema row size.
+            if (DeltaTestUtilsBase.nullTypeColumnsSupported) {
+              assert(currentNumFiles === expectedNumFiles,
+                s"The current num files $currentNumFiles is unexpected for optimized writes")
+            }
           }
         }
       }

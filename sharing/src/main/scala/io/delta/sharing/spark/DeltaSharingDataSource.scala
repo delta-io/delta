@@ -567,6 +567,14 @@ private[sharing] class DeltaSharingDataSource
       limitHint = None
     )
 
+    // Drop null type columns from the relation's schema if the flag is set.
+    val dropNullTypeColumnsFromSchema =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS)
+    val dataSchema = if (dropNullTypeColumnsFromSchema) {
+      SchemaUtils.dropNullTypeColumns(deltaSharingTableMetadata.metadata.schema)
+    } else {
+      deltaSharingTableMetadata.metadata.schema
+    }
     //  return HadoopFsRelation with the DeltaSharingFileIndex.
     HadoopFsRelation(
       location = fileIndex,
@@ -582,9 +590,7 @@ private[sharing] class DeltaSharingDataSource
       dataSchema = TahoeDeltaTableUtils.removeInternalDeltaMetadata(
         spark,
         TahoeDeltaTableUtils.removeInternalWriterMetadata(
-          spark,
-          SchemaUtils.dropNullTypeColumns(deltaSharingTableMetadata.metadata.schema)
-        )
+          spark, dataSchema)
       ),
       bucketSpec = None,
       // Handle column mapping metadata in schema.

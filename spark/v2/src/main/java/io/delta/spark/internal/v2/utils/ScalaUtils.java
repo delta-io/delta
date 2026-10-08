@@ -15,11 +15,14 @@
  */
 package io.delta.spark.internal.v2.utils;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import scala.Option;
 import scala.Tuple2;
+import scala.collection.JavaConverters;
 import scala.collection.immutable.Map$;
 import scala.collection.mutable.Builder;
 import scala.jdk.javaapi.CollectionConverters;
@@ -51,6 +54,10 @@ public final class ScalaUtils {
     return CollectionConverters.asJava(scalaMap);
   }
 
+  public static <T> scala.collection.immutable.List<T> toScalaList(T[] values) {
+    return JavaConverters.asScalaBuffer(Arrays.asList(values)).toList();
+  }
+
   /**
    * Converts a Java {@link Optional} to a Scala {@link Option}.
    *
@@ -71,5 +78,12 @@ public final class ScalaUtils {
    */
   public static <T> Optional<T> toJavaOptional(Option<T> option) {
     return option.isDefined() ? Optional.of(option.get()) : Optional.empty();
+  }
+
+  /** Converts a Scala {@link Option} containing a long to a Java {@link OptionalLong}. */
+  public static OptionalLong toJavaOptionalLong(Option<Object> option) {
+    return option.isDefined()
+        ? OptionalLong.of(((Number) option.get()).longValue())
+        : OptionalLong.empty();
   }
 }

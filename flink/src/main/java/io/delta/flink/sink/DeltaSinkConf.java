@@ -17,7 +17,8 @@
 package io.delta.flink.sink;
 
 import io.delta.flink.sink.mergestrategy.AppendOnly;
-import io.delta.flink.sink.mergestrategy.CoWUpsert;
+import io.delta.flink.sink.mergestrategy.MoRUpsert;
+import io.delta.flink.sink.mergestrategy.Upsert;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -296,10 +297,10 @@ public class DeltaSinkConf implements Serializable {
    * <p>Returns a new instance on every call — merge strategies hold per-checkpoint state and must
    * not be shared across {@link DeltaSinkWriter} instances.
    *
-   * @return {@link CoWUpsert} when in upsert mode; {@link AppendOnly} otherwise
+   * @return {@link Upsert} when in upsert mode; {@link AppendOnly} otherwise
    */
   public MergeStrategy createMergeStrategy() {
-    return isUpsert() ? new CoWUpsert() : new AppendOnly();
+    return isUpsert() ? new MoRUpsert() : new AppendOnly();
   }
 
   /**

@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.exceptions.{InvalidConfigurationValueException, KernelException}
@@ -121,5 +123,27 @@ class TableConfigSuite extends AnyFunSuite {
       Map("DELTA.PARQUET.COMPRESSION.CODEC" -> "snappy").asJava)
     assert(result.containsKey("delta.parquet.compression.codec"))
     assert(result.get("delta.parquet.compression.codec") === "snappy")
+  }
+
+  test("SET_TRANSACTION_RETENTION - is not settable from Kernel (unregistered property)") {
+    // The property is read-only from Kernel's perspective: it is not in VALID_PROPERTIES, so a
+    // Kernel writer attempting to set it is rejected. Reading it (below) is unaffected by this.
+    val e = intercept[KernelException] {
+      TableConfig.validateAndNormalizeDeltaProperties(
+        Map(TableConfig.SET_TRANSACTION_RETENTION.getKey -> "interval 1 week").asJava)
+    }
+    assert(e.getMessage.contains(TableConfig.SET_TRANSACTION_RETENTION.getKey))
+  }
+
+  test("SET_TRANSACTION_RETENTION - fromMetadata parses the interval to millis when present") {
+    val oneWeekMillis = 7L * 24 * 60 * 60 * 1000
+    val config = Map(TableConfig.SET_TRANSACTION_RETENTION.getKey -> "interval 1 week").asJava
+    assert(
+      TableConfig.SET_TRANSACTION_RETENTION.fromMetadata(config) === Optional.of(oneWeekMillis))
+  }
+
+  test("SET_TRANSACTION_RETENTION - fromMetadata is empty (opt-in) when the property is absent") {
+    val config = Map.empty[String, String].asJava
+    assert(TableConfig.SET_TRANSACTION_RETENTION.fromMetadata(config) === Optional.empty())
   }
 }

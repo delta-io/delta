@@ -1,4 +1,4 @@
-# Requirements for spark_python_test.yaml — Spark 4.1+ variant
+# Requirements for spark_python_test.yaml — Spark 4.1 variant
 # Python: 3.10
 #
 # To regenerate the lock file:
@@ -40,7 +40,7 @@ numpy==1.22.4
 # PySpark transitive dependency (installed via --no-deps, so we lock py4j here)
 py4j==0.10.9.9
 
-# gRPC / protobuf (Spark Connect — Spark 4.1+)
+# gRPC / protobuf (Spark Connect — Spark 4.1)
 # From https://github.com/apache/spark/blob/branch-4.1/dev/requirements.txt
 grpcio==1.76.0
 grpcio-status==1.76.0

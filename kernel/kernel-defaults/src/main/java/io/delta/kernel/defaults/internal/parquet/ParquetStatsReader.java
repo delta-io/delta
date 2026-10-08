@@ -36,8 +36,6 @@ import org.apache.hadoop.shaded.com.google.common.collect.Multimap;
 import org.apache.parquet.column.statistics.*;
 import org.apache.parquet.column.statistics.geospatial.BoundingBox;
 import org.apache.parquet.column.statistics.geospatial.GeospatialStatistics;
-import org.apache.parquet.format.converter.ParquetMetadataConverter;
-import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
@@ -57,11 +55,14 @@ public class ParquetStatsReader {
   public static DataFileStatistics readDataFileStatistics(
       InputFile kernelInputFile, StructType dataSchema, List<Column> statsColumns)
       throws IOException {
-    // Read the Parquet footer to compute the statistics
+    // Read the Parquet footer to compute the statistics. Pass the configuration explicitly so
+    // `parquet-mr` doesn't construct a fresh Hadoop Configuration here; see
+    // ParquetIOUtils#parquetConfiguration.
     org.apache.parquet.io.InputFile parquetFile =
         ParquetIOUtils.createParquetInputFile(kernelInputFile);
     ParquetMetadata footer =
-        ParquetFileReader.readFooter(parquetFile, ParquetMetadataConverter.NO_FILTER);
+        ParquetIOUtils.readFooter(
+            parquetFile, ParquetIOUtils.parquetConfiguration(kernelInputFile));
     ImmutableMultimap.Builder<Column, ColumnChunkMetaData> metadataForColumn =
         ImmutableMultimap.builder();
 

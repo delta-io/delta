@@ -139,11 +139,9 @@ trait DeltaTempViewStoredPlanRefreshTests
       withStoredPlanView(t) {
         (sparkVersionBucket, v2EnableMode) match {
           case ("4.2+", "STRICT") | ("4.1", "STRICT") | ("4.0", "STRICT") =>
-            // TODO: column mapping is not fully supported in V2 STRICT yet. A Kernel V2 scan of a
-            // column-mapping table with a pushed filter returns no rows, so the view is empty, and
-            // the V2 session catalog reads the table schema as empty, so the DROP COLUMN itself
-            // fails with FIELD_NOT_FOUND.
-            checkAnswer(spark.table("v"), Seq.empty)
+            // STRICT: the view reads the filtered [1, 100]. TODO: the V2 STRICT ALTER COLUMN path
+            // reports the column as missing rather than performing the DROP.
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             checkError(
               exception = intercept[SparkThrowable] {
                 writerSql(s"ALTER TABLE $t DROP COLUMN salary")
@@ -167,10 +165,9 @@ trait DeltaTempViewStoredPlanRefreshTests
       withStoredPlanView("t") {
         (sparkVersionBucket, v2EnableMode) match {
           case ("4.2+", "STRICT") | ("4.1", "STRICT") =>
-            // TODO: column mapping is not fully supported in V2 STRICT yet. The filter-pushdown gap
-            // makes the view empty, but the external column removal is still detected against the
-            // stored plan and rejected on read.
-            checkAnswer(spark.table("v"), Seq.empty)
+            // 4.2+/4.1 STRICT: the view starts as the filtered [1, 100] and the external
+            // column removal is detected against the stored plan and rejected on read.
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             externalDropColumn(path, "salary")
             checkError(
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
@@ -184,12 +181,10 @@ trait DeltaTempViewStoredPlanRefreshTests
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
               condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
           case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the view's snapshot, so the external removal is invisible; the
-            // filter-pushdown gap keeps the view empty. TODO: column mapping is not fully supported
-            // in V2 STRICT yet.
-            checkAnswer(spark.table("v"), Seq.empty)
+            // 4.0 STRICT pins the view's snapshot, so the external removal is invisible.
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             externalDropColumn(path, "salary")
-            checkAnswer(spark.table("v"), Seq.empty)
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }
@@ -250,9 +245,9 @@ trait DeltaTempViewStoredPlanRefreshTests
       withStoredPlanView(t) {
         (sparkVersionBucket, v2EnableMode) match {
           case ("4.2+", "STRICT") | ("4.1", "STRICT") =>
-            // TODO: column mapping is not fully supported in V2 STRICT yet (filter-pushdown gap),
-            // so the view is empty before and after the drop and recreate.
-            checkAnswer(spark.table("v"), Seq.empty)
+            // 4.2+/4.1 STRICT: the view starts as the filtered [1, 100] and after the drop and
+            // recreate it re-resolves to the new empty table.
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             writerSql(s"DROP TABLE $t")
             writerSql(
               s"CREATE TABLE $t (id INT, salary INT) USING delta " +
@@ -272,8 +267,8 @@ trait DeltaTempViewStoredPlanRefreshTests
           case ("4.0", "STRICT") =>
             // 4.0 STRICT pins the view to the dropped table's commit, whose files the session DROP
             // physically removed, so the read fails (raw Kernel exception whose message contains
-            // "does not exist"). TODO: column mapping is not fully supported in V2 STRICT yet.
-            checkAnswer(spark.table("v"), Seq.empty)
+            // "does not exist").
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             writerSql(s"DROP TABLE $t")
             writerSql(
               s"CREATE TABLE $t (id INT, salary INT) USING delta " +
@@ -296,10 +291,10 @@ trait DeltaTempViewStoredPlanRefreshTests
     withExternalTable(columnMapping = true) { path =>
       withStoredPlanView("t") {
         (sparkVersionBucket, v2EnableMode) match {
-          case ("4.2+", "STRICT") | ("4.1", "STRICT") | ("4.0", "STRICT") =>
-            // TODO: column mapping is not fully supported in V2 STRICT yet (filter-pushdown gap),
-            // so the view is empty before and after the external drop and recreate.
-            checkAnswer(spark.table("v"), Seq.empty)
+          case ("4.2+", "STRICT") | ("4.1", "STRICT") =>
+            // 4.2+/4.1 STRICT: the view starts as the filtered [1, 100] and re-resolves to the new
+            // empty table after the external drop and recreate.
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             externalDropAndRecreate(path)
             checkAnswer(spark.table("v"), Seq.empty)
           case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
@@ -307,6 +302,12 @@ trait DeltaTempViewStoredPlanRefreshTests
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             externalDropAndRecreate(path)
             checkAnswer(spark.table("v"), Seq.empty)
+          case ("4.0", "STRICT") =>
+            // 4.0 STRICT pins the view's snapshot (the external recreate keeps the old files), so
+            // the view still returns its original rows.
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
+            externalDropAndRecreate(path)
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }
@@ -317,10 +318,9 @@ trait DeltaTempViewStoredPlanRefreshTests
       withStoredPlanView(t) {
         (sparkVersionBucket, v2EnableMode) match {
           case ("4.2+", "STRICT") | ("4.1", "STRICT") | ("4.0", "STRICT") =>
-            // TODO: column mapping is not fully supported in V2 STRICT yet. The view is empty (the
-            // filter-pushdown gap) and the V2 session catalog reads the table schema as empty, so
-            // the DROP COLUMN fails with FIELD_NOT_FOUND before the column can be re-added.
-            checkAnswer(spark.table("v"), Seq.empty)
+            // STRICT: the view reads the filtered [1, 100]. TODO: the V2 STRICT ALTER COLUMN path
+            // reports the column as missing rather than performing the DROP.
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             checkError(
               exception = intercept[SparkThrowable] {
                 writerSql(s"ALTER TABLE $t DROP COLUMN salary")
@@ -344,11 +344,11 @@ trait DeltaTempViewStoredPlanRefreshTests
     withExternalTable(columnMapping = true) { path =>
       withStoredPlanView("t") {
         (sparkVersionBucket, v2EnableMode) match {
-          case ("4.2+", "STRICT") | ("4.1", "STRICT") | ("4.0", "STRICT") =>
-            // TODO: column mapping is not fully supported in V2 STRICT yet. The filter-pushdown gap
-            // makes the view empty; re-adding the column with the same name and type is not an
-            // incompatible change, so the view stays empty.
-            checkAnswer(spark.table("v"), Seq.empty)
+          case ("4.2+", "STRICT") | ("4.1", "STRICT") =>
+            // 4.2+/4.1 STRICT: the view starts as the filtered [1, 100]; re-adding the column is
+            // allowed but the fresh column id no longer matches the stored plan's filter, so the
+            // view reads empty afterward.
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             externalDropAndReAddColumn(path, "salary", IntegerType)
             checkAnswer(spark.table("v"), Seq.empty)
           case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
@@ -359,6 +359,11 @@ trait DeltaTempViewStoredPlanRefreshTests
             checkError(
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
               condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
+          case ("4.0", "STRICT") =>
+            // 4.0 STRICT pins the view's snapshot, so the external drop and re-add is invisible.
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
+            externalDropAndReAddColumn(path, "salary", IntegerType)
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }
@@ -369,10 +374,9 @@ trait DeltaTempViewStoredPlanRefreshTests
       withStoredPlanView(t) {
         (sparkVersionBucket, v2EnableMode) match {
           case ("4.2+", "STRICT") | ("4.1", "STRICT") | ("4.0", "STRICT") =>
-            // TODO: column mapping is not fully supported in V2 STRICT yet. The view is empty (the
-            // filter-pushdown gap) and the V2 session catalog reads the table schema as empty, so
-            // the DROP COLUMN fails with FIELD_NOT_FOUND before the column can be re-added.
-            checkAnswer(spark.table("v"), Seq.empty)
+            // STRICT: the view reads the filtered [1, 100]. TODO: the V2 STRICT ALTER COLUMN path
+            // reports the column as missing rather than performing the DROP.
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             checkError(
               exception = intercept[SparkThrowable] {
                 writerSql(s"ALTER TABLE $t DROP COLUMN salary")
@@ -397,10 +401,9 @@ trait DeltaTempViewStoredPlanRefreshTests
       withStoredPlanView("t") {
         (sparkVersionBucket, v2EnableMode) match {
           case ("4.2+", "STRICT") | ("4.1", "STRICT") =>
-            // TODO: column mapping is not fully supported in V2 STRICT yet. The filter-pushdown gap
-            // makes the view empty, but the external type change is still detected against the
-            // stored plan and rejected on read.
-            checkAnswer(spark.table("v"), Seq.empty)
+            // 4.2+/4.1 STRICT: the view starts as the filtered [1, 100] and the external type
+            // change is detected against the stored plan and rejected on read.
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             externalDropAndReAddColumn(path, "salary", StringType)
             checkError(
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
@@ -414,12 +417,10 @@ trait DeltaTempViewStoredPlanRefreshTests
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
               condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
           case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the view's snapshot, so the external type change is invisible; the
-            // filter-pushdown gap keeps the view empty. TODO: column mapping is not fully supported
-            // in V2 STRICT yet.
-            checkAnswer(spark.table("v"), Seq.empty)
+            // 4.0 STRICT pins the view's snapshot, so the external type change is invisible.
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             externalDropAndReAddColumn(path, "salary", StringType)
-            checkAnswer(spark.table("v"), Seq.empty)
+            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }

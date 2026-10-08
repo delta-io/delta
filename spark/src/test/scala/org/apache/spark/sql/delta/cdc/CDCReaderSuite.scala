@@ -22,7 +22,7 @@ import java.io.File
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Delete
-import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.DeltaTestUtils.{recordDataChangeInCommitInfo, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
@@ -103,8 +103,37 @@ class CDCReaderSuite
 
   def createCDFDF(start: Long, end: Long, commitVersion: Long, changeType: String): DataFrame = {
     spark.range(start, end)
+      .withColumn("v", lit(null))
       .withColumn(CDC_TYPE_COLUMN_NAME, lit(changeType))
       .withColumn(CDC_COMMIT_VERSION, lit(commitVersion))
+  }
+
+  test("a commit recording dataChange = false yields no CDC rows") {
+    // The CommitInfo and the file actions are made to disagree, which no write path produces. It
+    // is the only way to observe which of the two the reader consulted: from the commit's own
+    // summary it infers no change, from the file actions an insert per added file.
+    Seq(true, false).foreach { readFromCommitInfo =>
+      withSQLConf(
+          DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED.key ->
+            readFromCommitInfo.toString) {
+        withTempDir { dir =>
+          val path = dir.getAbsolutePath
+          val data = spark.range(10)
+          data.write.format("delta").save(path)
+          recordDataChangeInCommitInfo(
+            DeltaLog.forTable(spark, path), version = 0, dataChange = Some(false))
+
+          val log = DeltaLog.forTable(spark, path)
+          val inserted = if (readFromCommitInfo) spark.range(0) else data
+          checkCDCAnswer(
+            log,
+            CDCReader.changesToBatchDF(log, 0, 0, spark),
+            inserted
+              .withColumn(CDC_TYPE_COLUMN_NAME, lit("insert"))
+              .withColumn(CDC_COMMIT_VERSION, lit(0)))
+        }
+      }
+    }
   }
 
   test("simple CDC scan") {
@@ -421,12 +450,15 @@ class CDCReaderSuite
 
   for (cdfEnabled <- BOOLEAN_DOMAIN)
   test(s"Coarse-grained CDF, cdfEnabled=$cdfEnabled") {
+    // The test table has a NullType column (v) that is read back via CDF.
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> cdfEnabled.toString) {
       withTempDir { dir =>
         val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
 
         // commit 0: 2 inserts
         spark.range(start = 0, end = 2, step = 1, numPartitions = 1)
+          .withColumn("v", lit(null))
           .write.format("delta").save(dir.getAbsolutePath)
         var df = CDCReader.changesToBatchDF(
           log, 0, 1, spark, catalogTableOpt = None, useCoarseGrainedCDC = true)

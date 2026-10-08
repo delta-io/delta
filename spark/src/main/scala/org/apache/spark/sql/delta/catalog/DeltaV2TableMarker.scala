@@ -16,6 +16,11 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import java.util.Optional
+
+import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2RelationShim
 
@@ -23,7 +28,10 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2RelationShim
  * Trait allowing V1 code path to identify a V2 [[DeltaV2Table]] without taking a dependency on
  * that class that lives in a different target.
  */
-trait DeltaV2TableMarker
+trait DeltaV2TableMarker {
+  def getCatalogTable(): Optional[CatalogTable]
+  def getTablePath(): Path
+}
 
 object DeltaV2TableMarker {
 

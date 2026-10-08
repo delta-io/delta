@@ -48,6 +48,7 @@ import io.unitycatalog.client.delta.model.DeltaCreateStagingTableRequest;
 import io.unitycatalog.client.delta.model.DeltaCreateTableRequest;
 import io.unitycatalog.client.delta.model.DeltaDomainMetadataUpdates;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.client.delta.model.DeltaMaintenanceOperation;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
 import io.unitycatalog.client.delta.model.DeltaRemoveDomainMetadataUpdate;
 import io.unitycatalog.client.delta.model.DeltaRemovePropertiesUpdate;
@@ -88,6 +89,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -114,31 +116,37 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private final String baseUri;
   private final TokenProvider tokenProvider;
   private final Map<String, String> appVersions;
+  private final boolean credentialVendingEnabled;
   private final boolean credentialRenewalEnabled;
   private final boolean credentialScopedFsEnabled;
   private final Supplier<Configuration> hadoopConfSupplier;
 
-  public UCDeltaTokenBasedRestClient(
-      String baseUri,
-      TokenProvider tokenProvider,
-      Map<String, String> appVersions) {
-    this(baseUri, tokenProvider, appVersions, false, false, null);
-  }
-
   /**
+   * Creates an instance by parsing all configuration from a flat config map.
+   * Recognised keys:
+   * <ul>
+   *   <li>{@code uri} (required) -- the UC server endpoint.</li>
+   *   <li>{@code auth.*} / {@code token} (legacy) -- authentication parameters.</li>
+   *   <li>{@code appVersions.*} -- caller-supplied version entries.</li>
+   *   <li>{@code credentialVending.enabled} -- request temporary storage credentials while loading
+   *       or creating tables (default true).</li>
+   *   <li>{@code renewCredential.enabled} -- enable credential renewal (default true).</li>
+   *   <li>{@code credScopedFs.enabled} -- enable credential-scoped FS (default true).</li>
+   * </ul>
+   *
+   * @param ucConfig the unified configuration map with all keys.
    * @param hadoopConfSupplier called once per request so engine-level changes are picked up;
    *                           {@code null} defaults to {@code () -> new Configuration()}.
    */
   public UCDeltaTokenBasedRestClient(
-      String baseUri,
-      TokenProvider tokenProvider,
-      Map<String, String> appVersions,
-      boolean credentialRenewalEnabled,
-      boolean credentialScopedFsEnabled,
+      Map<String, String> ucConfig,
       Supplier<Configuration> hadoopConfSupplier) {
-    Objects.requireNonNull(baseUri, "baseUri must not be null");
-    Objects.requireNonNull(tokenProvider, "tokenProvider must not be null");
-    Objects.requireNonNull(appVersions, "appVersions must not be null");
+    Objects.requireNonNull(ucConfig, "ucConfig must not be null");
+
+    String baseUri = UCConfigUtils.extractUri(ucConfig);
+    TokenProvider tokenProvider =
+        TokenProvider.create(UCConfigUtils.extractAuthConfig(ucConfig));
+    Map<String, String> appVersions = UCConfigUtils.extractAppVersions(ucConfig);
 
     ApiClientBuilder builder = ApiClientBuilder.create()
         .uri(baseUri)
@@ -156,36 +164,10 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     this.baseUri = baseUri;
     this.tokenProvider = tokenProvider;
     this.appVersions = appVersions;
-    this.credentialRenewalEnabled = credentialRenewalEnabled;
-    this.credentialScopedFsEnabled = credentialScopedFsEnabled;
+    this.credentialVendingEnabled = UCConfigUtils.isCredentialVendingEnabled(ucConfig);
+    this.credentialRenewalEnabled = UCConfigUtils.isCredentialRenewalEnabled(ucConfig);
+    this.credentialScopedFsEnabled = UCConfigUtils.isCredentialScopedFsEnabled(ucConfig);
     this.hadoopConfSupplier = hadoopConfSupplier != null ? hadoopConfSupplier : Configuration::new;
-  }
-
-  /**
-   * Factory for callers that can't depend on {@code io.unitycatalog.client} directly: pass
-   * a flat {@code authConfigs} map ({@code type} + provider-specific keys) and the factory
-   * constructs the {@link TokenProvider} internally.
-   */
-  public static UCDeltaTokenBasedRestClient create(
-      String baseUri,
-      Map<String, String> authConfigs,
-      Map<String, String> appVersions,
-      boolean credentialRenewalEnabled,
-      boolean credentialScopedFsEnabled,
-      Supplier<Configuration> hadoopConfSupplier) {
-    Objects.requireNonNull(authConfigs, "authConfigs must not be null");
-    if (authConfigs.isEmpty()) {
-      throw new IllegalArgumentException(
-          "authConfigs must not be empty; expected at least a 'type' key plus the keys " +
-              "required by that TokenProvider type.");
-    }
-    return new UCDeltaTokenBasedRestClient(
-        baseUri,
-        TokenProvider.create(authConfigs),
-        appVersions,
-        credentialRenewalEnabled,
-        credentialScopedFsEnabled,
-        hadoopConfSupplier);
   }
 
   /** Fresh builder per call: scheme depends on the table's location, hadoopConf is live. */
@@ -401,22 +383,44 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       String schemaName,
       String storageLocation,
       List<ColumnDef> columns,
-      Map<String, String> properties) throws CommitFailedException {
+      AbstractProtocol protocol,
+      Map<String, String> properties,
+      long lastCommitTimestampMs,
+      List<AbstractDomainMetadata> domainMetadata) throws CommitFailedException {
     ensureOpen();
     Objects.requireNonNull(tableName, "tableName must not be null");
     Objects.requireNonNull(catalogName, "catalogName must not be null");
     Objects.requireNonNull(schemaName, "schemaName must not be null");
     Objects.requireNonNull(storageLocation, "storageLocation must not be null");
     Objects.requireNonNull(columns, "columns must not be null");
+    Objects.requireNonNull(protocol, "protocol must not be null");
     Objects.requireNonNull(properties, "properties must not be null");
+    Objects.requireNonNull(domainMetadata, "domainMetadata must not be null");
 
     DeltaCreateTableRequest sdkRequest = new DeltaCreateTableRequest()
         .name(tableName)
         .location(storageLocation)
-        .properties(properties);
+        .tableType(DeltaTableType.MANAGED)
+        .protocol(toSDKDeltaProtocol(protocol))
+        .properties(properties)
+        .lastCommitTimestampMs(lastCommitTimestampMs);
 
     if (!columns.isEmpty()) {
       sdkRequest.columns(UCDeltaSchemaConverter.toUCStructType(columns));
+    }
+
+    try {
+      DeltaDomainMetadataUpdates updates = toSDKDomainMetadataUpdates(domainMetadata);
+      if (updates != null) {
+        sdkRequest.domainMetadata(updates);
+      }
+    } catch (IOException e) {
+      throw new CommitFailedException(
+          false /* retryable */,
+          false /* conflict */,
+          String.format("Failed to convert domain metadata for table %s.%s.%s: %s",
+              catalogName, schemaName, tableName, e.getMessage()),
+          e);
     }
 
     try {
@@ -615,6 +619,24 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     AdaptedTableMetadata adapted = new AdaptedTableMetadata(name, m);
     Optional<UniformMetadata> uniformMetadata =
         toStorageUniformMetadata(response.getUniform());
+    List<DeltaMaintenanceOperation> responseMaintenanceOperations =
+        response.getAllowedMaintenanceOperations();
+    List<String> clientMaintenanceOperations =
+        responseMaintenanceOperations == null
+            ? Collections.emptyList()
+            : responseMaintenanceOperations.stream()
+                .map(DeltaMaintenanceOperation::getValue)
+                .collect(Collectors.toList());
+    if (!credentialVendingEnabled) {
+      return new TableInfo(
+          ucTableId,
+          tableType,
+          location,
+          adapted,
+          Collections.emptyMap(),
+          clientMaintenanceOperations,
+          uniformMetadata);
+    }
     Map<String, String> storageProps;
     try {
       storageProps = fetchTableCredentials(catalog, schema, name, location);
@@ -623,13 +645,26 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       // recover. The exception carries the catalog-side TableInfo (with empty storageProperties)
       // so the caller can still build a CatalogTable.
       TableInfo withoutCreds = new TableInfo(
-          ucTableId, tableType, location, adapted, Collections.emptyMap(), uniformMetadata);
+          ucTableId,
+          tableType,
+          location,
+          adapted,
+          Collections.emptyMap(),
+          clientMaintenanceOperations,
+          uniformMetadata);
       throw new CredentialFetchFailedException(
           String.format("Credential fetch failed for table %s.%s.%s (HTTP %s): %s",
               catalog, schema, name, e.getCode(), e.getResponseBody()),
           e, withoutCreds);
     }
-    return new TableInfo(ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
+    return new TableInfo(
+        ucTableId,
+        tableType,
+        location,
+        adapted,
+        storageProps,
+        clientMaintenanceOperations,
+        uniformMetadata);
   }
 
   private static Optional<UniformMetadata> toStorageUniformMetadata(
@@ -675,7 +710,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     String location = r.getLocation();
     UCDeltaModels.TableType tableType =
         UCDeltaModels.TableType.valueOf(r.getTableType().getValue());
-    Map<String, String> storageProps = fetchStagingCredentials(location, tableId.toString());
+    Map<String, String> storageProps = credentialVendingEnabled
+        ? fetchStagingCredentials(location, tableId.toString())
+        : Collections.emptyMap();
     return new UCDeltaModels.StagingTableInfo(
         tableId,
         tableType,
@@ -896,10 +933,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           .comment(newMetadata.getDescription()));
     }
 
-    Map<String, String> oldConfig = oldMetadata.getConfiguration() != null
-        ? oldMetadata.getConfiguration() : Collections.emptyMap();
-    Map<String, String> newConfig = newMetadata.getConfiguration() != null
-        ? newMetadata.getConfiguration() : Collections.emptyMap();
+    Map<String, String> oldConfig = oldMetadata.getConfiguration();
+    Map<String, String> newConfig = newMetadata.getConfiguration();
 
     if (!Objects.equals(oldConfig, newConfig)) {
       Map<String, String> toSet = new LinkedHashMap<>();

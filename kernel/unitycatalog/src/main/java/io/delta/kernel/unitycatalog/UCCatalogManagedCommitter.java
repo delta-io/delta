@@ -29,6 +29,7 @@ import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.unitycatalog.adapters.DomainMetadataAdapter;
 import io.delta.kernel.unitycatalog.adapters.MetadataAdapter;
 import io.delta.kernel.unitycatalog.adapters.ProtocolAdapter;
 import io.delta.kernel.unitycatalog.adapters.UniformAdapter;
@@ -41,12 +42,14 @@ import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaClient;
 import io.delta.storage.commit.uniform.UniformMetadata;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -328,9 +331,23 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
    */
   private void finalizeTableInCatalog(CommitMetadata commitMetadata) throws CommitFailedException {
     final UCTableIdentifier tableIdentifier = ucTableIdentifier.get();
-    final Map<String, String> ucProps = UnityCatalogUtils.getPropertiesForCreate(commitMetadata);
     final List<UCClient.ColumnDef> columns =
         UnityCatalogUtils.toColumnDefs(commitMetadata.getEffectiveMetadata().getSchema());
+
+    // The Delta-Tables API has structured fields for the last-commit timestamp and domain metadata
+    // (clustering, row tracking), so it takes metadata.configuration as properties.
+    final Map<String, String> ucTableProperties =
+        ucClient instanceof UCDeltaClient
+            ? commitMetadata.getEffectiveMetadata().getConfiguration()
+            : UnityCatalogUtils.getPropertiesForCreate(commitMetadata);
+    checkState(
+        commitMetadata.getCommitInfo().getInCommitTimestamp().isPresent(),
+        "InCommitTimestamp must be present for version 0 catalog-managed table creation");
+    final long lastCommitTimestampMs = commitMetadata.getCommitInfo().getInCommitTimestamp().get();
+    final List<AbstractDomainMetadata> domainMetadatas =
+        commitMetadata.getCommitDomainMetadatas().stream()
+            .map(DomainMetadataAdapter::new)
+            .collect(Collectors.toList());
 
     try {
       logger.info("[{}] Finalizing table creation in Unity Catalog", ucTableId);
@@ -340,7 +357,10 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
           tableIdentifier.getSchemaName(),
           tablePath.toUri().toString(),
           columns,
-          ucProps);
+          new ProtocolAdapter(commitMetadata.getEffectiveProtocol()),
+          ucTableProperties,
+          lastCommitTimestampMs,
+          domainMetadatas);
       logger.info(
           "[{}] Finalized table creation in Unity Catalog as {}.{}.{}",
           ucTableId,
@@ -450,6 +470,13 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                         });
               });
 
+          // UCClient ignores the old P&M and domain metadata; UCDeltaClient compares the old and
+          // new P&M to emit set-protocol/metadata updates and forwards domain-metadata updates.
+          final List<AbstractDomainMetadata> domainMetadatas =
+              commitMetadata.getCommitDomainMetadatas().stream()
+                  .map(DomainMetadataAdapter::new)
+                  .collect(Collectors.toList());
+
           try {
             ucClient.commit(
                 ucTableId,
@@ -459,11 +486,11 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                     .orElse(null),
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
                 commitMetadata.getMaxKnownPublishedDeltaVersion(),
-                Optional.empty() /* oldMetadata */,
+                commitMetadata.getReadMetadataOpt().map(MetadataAdapter::new),
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
-                Optional.empty() /* oldProtocol */,
+                commitMetadata.getReadProtocolOpt().map(ProtocolAdapter::new),
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
-                Collections.<AbstractDomainMetadata>emptyList(),
+                domainMetadatas,
                 uniformMetadataOpt);
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {

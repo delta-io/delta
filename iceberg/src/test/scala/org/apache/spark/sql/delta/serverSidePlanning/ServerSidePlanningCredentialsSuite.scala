@@ -313,7 +313,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
         val base = Map(
           "fs.gs.impl.disable.cache" -> "true",
           "fs.gs.auth.type" -> "ACCESS_TOKEN_PROVIDER",
-          "fs.gs.auth.access.token.provider.impl" ->
+          "fs.gs.auth.access.token.provider" ->
             "org.apache.spark.sql.delta.serverSidePlanning.FixedGcsAccessTokenProvider",
           "fs.gs.auth.access.token" -> token
         )

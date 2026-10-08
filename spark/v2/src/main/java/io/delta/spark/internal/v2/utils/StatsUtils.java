@@ -29,6 +29,8 @@ import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
+import org.apache.spark.sql.connector.read.colstats.Histogram;
+import org.apache.spark.sql.connector.read.colstats.HistogramBin;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -138,6 +140,8 @@ public final class StatsUtils {
           toJavaOptional(stat.maxLen())
               .map(v -> OptionalLong.of(((Number) v).longValue()))
               .orElse(OptionalLong.empty());
+      Optional<Histogram> histogram =
+          toJavaOptional(stat.histogram()).map(StatsUtils::toV2Histogram);
 
       ColumnStatistics v2ColStats =
           new ColumnStatistics() {
@@ -170,9 +174,55 @@ public final class StatsUtils {
             public OptionalLong maxLen() {
               return maxLen;
             }
+
+            @Override
+            public Optional<Histogram> histogram() {
+              return histogram;
+            }
           };
       result.put(ref, v2ColStats);
     }
     return Collections.unmodifiableMap(result);
+  }
+
+  private static Histogram toV2Histogram(
+      org.apache.spark.sql.catalyst.plans.logical.Histogram histogram) {
+    double height = histogram.height();
+    org.apache.spark.sql.catalyst.plans.logical.HistogramBin[] catalystBins = histogram.bins();
+    HistogramBin[] v2Bins = new HistogramBin[catalystBins.length];
+    for (int i = 0; i < catalystBins.length; i++) {
+      org.apache.spark.sql.catalyst.plans.logical.HistogramBin catalystBin = catalystBins[i];
+      double lo = catalystBin.lo();
+      double hi = catalystBin.hi();
+      long ndv = catalystBin.ndv();
+      v2Bins[i] =
+          new HistogramBin() {
+            @Override
+            public double lo() {
+              return lo;
+            }
+
+            @Override
+            public double hi() {
+              return hi;
+            }
+
+            @Override
+            public long ndv() {
+              return ndv;
+            }
+          };
+    }
+    return new Histogram() {
+      @Override
+      public double height() {
+        return height;
+      }
+
+      @Override
+      public HistogramBin[] bins() {
+        return v2Bins;
+      }
+    };
   }
 }

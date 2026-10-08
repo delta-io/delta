@@ -23,10 +23,11 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening, TypeWideningMode}
+import org.apache.spark.sql.delta.{DataTypeChangeViolation, DeltaAnalysisException, DeltaCannotChangeDataTypeException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening, TypeWideningMode}
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.v2.interop.AbstractProtocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -526,8 +527,7 @@ def normalizeColumnNamesInDataType(
       typeWideningMode: TypeWideningMode = TypeWideningMode.NoTypeWidening,
       newPartitionColumns: Seq[String] = Seq.empty,
       oldPartitionColumns: Seq[String] = Seq.empty,
-      caseSensitive: Boolean = true,
-      allowVoidTypeChange: Boolean = false): Boolean = {
+      caseSensitive: Boolean = true): Boolean = {
 
     def isNullabilityCompatible(existingNullable: Boolean, readNullable: Boolean): Boolean = {
       if (forbidTightenNullability) {
@@ -544,8 +544,7 @@ def normalizeColumnNamesInDataType(
             forbidTightenNullability,
             typeWideningMode = typeWideningMode,
             allowMissingColumns = allowMissingColumns,
-            caseSensitive = caseSensitive,
-            allowVoidTypeChange = allowVoidTypeChange
+            caseSensitive = caseSensitive
           )
         case (e: ArrayType, n: ArrayType) =>
           // if existing elements are non-nullable, so should be the new element
@@ -556,8 +555,7 @@ def normalizeColumnNamesInDataType(
           isNullabilityCompatible(e.valueContainsNull, n.valueContainsNull) &&
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
-        // This should only be true for dataframe by-name inserts.
-        case (_: NullType, _) if allowVoidTypeChange =>
+        case (_: NullType, _) =>
           true
         case (e: AtomicType, n: AtomicType)
           if typeWideningMode.shouldWidenTo(fromType = e, toType = n) => true
@@ -1120,15 +1118,16 @@ def normalizeColumnNamesInDataType(
       columnMappingMode: DeltaColumnMappingMode,
       columnPath: Seq[String] = Nil,
       failOnAmbiguousChanges: Boolean = false,
-      allowTypeWidening: Boolean = false): Option[String] = {
-    def verify(cond: Boolean, err: => String): Unit = {
+      allowTypeWidening: Boolean = false): Option[DataTypeChangeViolation] = {
+    def verify(cond: Boolean, violation: => DataTypeChangeViolation): Unit = {
       if (!cond) {
-        throw DeltaErrors.cannotChangeDataType(err)
+        throw DeltaErrors.cannotChangeDataType(violation)
       }
     }
 
     def verifyNullability(fn: Boolean, tn: Boolean, columnPath: Seq[String]): Unit = {
-      verify(tn || !fn, s"tightening nullability of ${UnresolvedAttribute(columnPath).name}")
+      verify(tn || !fn,
+        DataTypeChangeViolation.TightenNullability(UnresolvedAttribute(columnPath).name))
     }
 
     def check(fromDt: DataType, toDt: DataType, columnPath: Seq[String]): Unit = {
@@ -1157,8 +1156,8 @@ def normalizeColumnNamesInDataType(
               case None =>
                 addingColumns = true
                 verify(toField.nullable,
-                  "adding non-nullable column " +
-                  UnresolvedAttribute(columnPath :+ toField.name).name)
+                  DataTypeChangeViolation.AddNonNullableColumn(
+                    UnresolvedAttribute(columnPath :+ toField.name).name))
             }
           }
           val columnName = UnresolvedAttribute(columnPath).name
@@ -1167,19 +1166,21 @@ def normalizeColumnNamesInDataType(
           }
           if (columnMappingMode == NoMapping) {
             verify(remainingFields.isEmpty,
-              s"dropping column(s) [${remainingFields.map(_.name).mkString(", ")}]" +
-                (if (columnPath.nonEmpty) s" from $columnName" else ""))
+              DataTypeChangeViolation.DropColumns(
+                remainingFields.toSeq.map(field =>
+                  UnresolvedAttribute(columnPath :+ field.name).name)))
           }
 
+        case (_: NullType, _) => ()
         case (fromDataType: AtomicType, toDataType: AtomicType) if allowTypeWidening =>
           verify(TypeWidening.isTypeChangeSupported(fromDataType, toDataType),
-            s"changing data type of ${UnresolvedAttribute(columnPath).name} " +
-              s"from $fromDataType to $toDataType")
+            DataTypeChangeViolation.ChangeDataType(
+              UnresolvedAttribute(columnPath).name, fromDataType, toDataType))
 
         case (fromDataType, toDataType) =>
           verify(fromDataType == toDataType,
-            s"changing data type of ${UnresolvedAttribute(columnPath).name} " +
-              s"from $fromDataType to $toDataType")
+            DataTypeChangeViolation.ChangeDataType(
+              UnresolvedAttribute(columnPath).name, fromDataType, toDataType))
       }
     }
 
@@ -1187,8 +1188,8 @@ def normalizeColumnNamesInDataType(
       check(from, to, columnPath)
       None
     } catch {
-      case e: AnalysisException =>
-        Some(e.message)
+      case e: DeltaCannotChangeDataTypeException =>
+        Some(e.violation)
     }
   }
 
@@ -1656,7 +1657,7 @@ def normalizeColumnNamesInDataType(
   def findDependentGeneratedColumns(
       sparkSession: SparkSession,
       targetColumn: Seq[String],
-      protocol: Protocol,
+      protocol: AbstractProtocol,
       schema: StructType): Map[String, String] = {
     if (GeneratedColumn.satisfyGeneratedColumnProtocol(protocol) &&
         GeneratedColumn.hasGeneratedColumns(schema)) {

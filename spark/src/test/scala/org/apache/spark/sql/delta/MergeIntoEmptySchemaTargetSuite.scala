@@ -17,27 +17,26 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSessionQueryTest
 
-import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.SparkException
+import org.apache.spark.sql.{AnalysisException, Row}
 
 /**
  * Tests that MERGE INTO a Delta table with an empty schema produces a user-facing
  * [[DeltaAnalysisException]] (DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET) when schema
  * evolution is off, and succeeds by widening the target when schema evolution is on.
  */
-class MergeIntoEmptySchemaTargetSuite
-  extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
+class MergeIntoEmptySchemaTargetSuite extends DeltaSessionQueryTest {
 
   private val target = "empty_schema_target"
   private val source = "populated_source"
 
   private def withEmptyTargetAndSource(body: => Unit): Unit = {
     withTable(target, source) {
-      sql(s"CREATE TABLE $target USING delta")
-      sql(s"CREATE TABLE $source (id INT, name STRING) USING delta")
-      sql(s"INSERT INTO $source VALUES (1, 'a'), (2, 'b')")
+      spark.sql(s"CREATE TABLE $target USING delta")
+      spark.sql(s"CREATE TABLE $source (id INT, name STRING) USING delta")
+      spark.sql(s"INSERT INTO $source VALUES (1, 'a'), (2, 'b')")
       body
     }
   }
@@ -45,8 +44,8 @@ class MergeIntoEmptySchemaTargetSuite
   test("empty-schema target without schema evolution errors out") {
     withEmptyTargetAndSource {
       checkError(
-        intercept[DeltaAnalysisException] {
-          sql(
+        intercept[AnalysisException] {
+          spark.sql(
             s"""MERGE INTO $target USING $source AS s ON false
                |WHEN NOT MATCHED THEN INSERT *""".stripMargin)
         },
@@ -58,12 +57,12 @@ class MergeIntoEmptySchemaTargetSuite
 
   test("empty-schema target with schema evolution adopts the source schema and inserts rows") {
     withEmptyTargetAndSource {
-      withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
-        sql(
+      withConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
+        spark.sql(
           s"""MERGE WITH SCHEMA EVOLUTION INTO $target USING $source AS s ON false
              |WHEN NOT MATCHED THEN INSERT *""".stripMargin)
         assert(spark.table(target).schema === spark.table(source).schema)
-        checkAnswer(spark.table(target), spark.table(source))
+        checkAnswer(spark.table(target), Seq(Row(1, "a"), Row(2, "b")))
       }
     }
   }
@@ -75,10 +74,10 @@ class MergeIntoEmptySchemaTargetSuite
            |WHEN NOT MATCHED THEN INSERT *""".stripMargin
 
       // Flag on (default): the new user-facing analysis error is raised.
-      withSQLConf(
+      withConf(
           DeltaSQLConf.DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET_CHECK_ENABLED.key -> "true") {
         checkError(
-          intercept[DeltaAnalysisException](sql(mergeStmt)),
+          intercept[AnalysisException](spark.sql(mergeStmt)),
           "DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET",
           sqlState = "428GU",
           parameters = Map.empty[String, String])
@@ -86,13 +85,22 @@ class MergeIntoEmptySchemaTargetSuite
 
       // Flag off: the legacy code path runs and fails with an internal AssertionError
       // (wrapped by Spark's runCommand in a SparkException) instead of the friendly error.
-      withSQLConf(
+      withConf(
           DeltaSQLConf.DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET_CHECK_ENABLED.key -> "false") {
-        val thrown = intercept[Throwable](sql(mergeStmt))
-        def hasAssertionErrorCause(t: Throwable): Boolean =
-          t != null && (t.isInstanceOf[AssertionError] || hasAssertionErrorCause(t.getCause))
-        assert(hasAssertionErrorCause(thrown),
-          s"expected legacy AssertionError in cause chain, got: $thrown")
+        val thrown = intercept[SparkException](spark.sql(mergeStmt))
+        checkError(
+          thrown,
+          "INTERNAL_ERROR",
+          parameters = Map("message" -> ".*"),
+          matchPVals = true)
+        if (!isConnect) {
+          // Classic keeps the typed cause chain, so also assert it is specifically the legacy
+          // internal assertion rather than some other internal error.
+          def hasAssertionErrorCause(t: Throwable): Boolean =
+            t != null && (t.isInstanceOf[AssertionError] || hasAssertionErrorCause(t.getCause))
+          assert(hasAssertionErrorCause(thrown),
+            s"expected legacy AssertionError in cause chain, got: $thrown")
+        }
       }
     }
   }

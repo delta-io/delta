@@ -160,14 +160,15 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     metrics("executionTimeMs").set(0)
     metrics("scanTimeMs").set(0)
     metrics("rewriteTimeMs").set(0)
-    if (migratedSchema.isDefined) {
-      // Block writes of void columns in the Delta log. Currently void columns are not properly
-      // supported and are dropped on read, but this is not enough for merge command that is also
-      // reading the schema from the Delta log. Until proper support we prefer to fail merge
-      // queries that add void columns.
-      val newNullColumn = SchemaUtils.findNullTypeColumn(migratedSchema.get)
-      if (newNullColumn.isDefined) {
-        throw DeltaErrors.mergeAddVoidColumn(newNullColumn.get)
+    if (spark.conf.get(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS)) {
+      if (migratedSchema.isDefined) {
+        // Block writes of void columns in the Delta log if void columns are dropped on read. We
+        // prefer to fail merge queries that add void columns if proper support for it is disabled
+        // via the flag.
+        val newNullColumn = SchemaUtils.findNullTypeColumn(migratedSchema.get)
+        if (newNullColumn.isDefined) {
+          throw DeltaErrors.mergeAddVoidColumn(newNullColumn.get)
+        }
       }
     }
 
@@ -533,7 +534,8 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
           val info = IdentityColumn.getIdentityInfo(f)
           if (info.highWaterMark != gen.highWaterMarkOpt) {
             IdentityColumn.logTransactionAbort(deltaTxn.deltaLog)
-            throw DeltaErrors.metadataChangedException(conflictingCommit = None)
+            throw DeltaErrors.metadataChangedException(
+              table = deltaTxn.tableNameOrPath, conflictingCommit = None)
           }
 
         case (f, _) if ColumnWithDefaultExprUtils.isIdentityColumn(f) &&

@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -81,9 +82,9 @@ class UCTableInfoTest {
     authConfig.put("token", "tok");
 
     Map<String, String> optInFlags = new HashMap<>();
-    optInFlags.put(UCTableInfo.DELTA_REST_API_ENABLED_KEY, "true");
-    optInFlags.put(UCTableInfo.RENEW_CREDENTIAL_ENABLED_KEY, "true");
-    optInFlags.put(UCTableInfo.CRED_SCOPED_FS_ENABLED_KEY, "false");
+    optInFlags.put(UCConfigUtils.DELTA_REST_API_ENABLED_KEY, "true");
+    optInFlags.put(UCConfigUtils.RENEW_CREDENTIAL_ENABLED_KEY, "true");
+    optInFlags.put(UCConfigUtils.CRED_SCOPED_FS_ENABLED_KEY, "false");
 
     UCTableInfo info =
         new UCTableInfo(
@@ -98,9 +99,9 @@ class UCTableInfoTest {
     assertEquals("https://uc.example.net", ucConfig.get("uri"));
     assertEquals("static", ucConfig.get("auth.type"));
     assertEquals("tok", ucConfig.get("auth.token"));
-    assertEquals("true", ucConfig.get(UCTableInfo.DELTA_REST_API_ENABLED_KEY));
-    assertEquals("true", ucConfig.get(UCTableInfo.RENEW_CREDENTIAL_ENABLED_KEY));
-    assertEquals("false", ucConfig.get(UCTableInfo.CRED_SCOPED_FS_ENABLED_KEY));
+    assertEquals("true", ucConfig.get(UCConfigUtils.DELTA_REST_API_ENABLED_KEY));
+    assertEquals("true", ucConfig.get(UCConfigUtils.RENEW_CREDENTIAL_ENABLED_KEY));
+    assertEquals("false", ucConfig.get(UCConfigUtils.CRED_SCOPED_FS_ENABLED_KEY));
   }
 
   @Test
@@ -121,8 +122,8 @@ class UCTableInfoTest {
 
     assertEquals(true, info.getOptInFlags().isEmpty(), "Default optInFlags should be empty");
     Map<String, String> ucConfig = info.toUcConfig();
-    assertEquals(null, ucConfig.get(UCTableInfo.DELTA_REST_API_ENABLED_KEY));
-    assertEquals(null, ucConfig.get(UCTableInfo.RENEW_CREDENTIAL_ENABLED_KEY));
-    assertEquals(null, ucConfig.get(UCTableInfo.CRED_SCOPED_FS_ENABLED_KEY));
+    assertEquals(null, ucConfig.get(UCConfigUtils.DELTA_REST_API_ENABLED_KEY));
+    assertEquals(null, ucConfig.get(UCConfigUtils.RENEW_CREDENTIAL_ENABLED_KEY));
+    assertEquals(null, ucConfig.get(UCConfigUtils.CRED_SCOPED_FS_ENABLED_KEY));
   }
 }

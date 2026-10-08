@@ -17,7 +17,7 @@
 package io.sparkuctest;
 
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableMap;
+import io.sparkuctest.mock.MockOAuthBroker;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.VersionUtils;
@@ -33,7 +33,11 @@ import java.io.IOException;
 import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Properties;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.experimental.Accessors;
 import org.apache.commons.io.FileUtils;
 import org.apache.log4j.Logger;
 import org.junit.jupiter.api.AfterAll;
@@ -44,8 +48,11 @@ import org.junit.jupiter.api.TestInstance;
  * Abstract base class that provides Unity Catalog server integration for Delta tests.
  *
  * <p>Automatically starts a local Unity Catalog server before tests and stops it after. To use a
- * remote server instead, set {@code UC_REMOTE=true} and configure {@code UC_URI}, {@code UC_TOKEN},
- * {@code UC_CATALOG_NAME}, {@code UC_SCHEMA_NAME}, and {@code UC_BASE_TABLE_LOCATION}.
+ * remote server instead, set {@code UC_REMOTE=true} and configure {@code UC_URI}, {@code
+ * UC_CATALOG_NAME}, {@code UC_SCHEMA_NAME}, and {@code UC_BASE_TABLE_LOCATION}. Remote auth is
+ * selected by which env vars are set: set {@code UC_OAUTH_URI}, {@code UC_OAUTH_CLIENT_ID}, and
+ * {@code UC_OAUTH_CLIENT_SECRET} for client-credentials OAuth, or {@code UC_TOKEN} for a static
+ * bearer.
  *
  * <p>{@code unityCatalogInfo()} is the only API for subclasses, All other methods are internal
  * implementation details.
@@ -66,6 +73,9 @@ public abstract class UnityCatalogSupport {
 
   private static final Logger LOG = Logger.getLogger(UnityCatalogSupport.class);
 
+  @Getter
+  @Accessors(fluent = true)
+  @AllArgsConstructor
   protected static class UnityCatalogInfo {
 
     private final String serverUri;
@@ -73,51 +83,44 @@ public abstract class UnityCatalogSupport {
     private final String serverToken;
     private final String schemaName;
     private final String baseTableLocation;
+    // OAuth client-credentials config; null when the test authenticates with a static token.
+    private final String oauthTokenUri;
+    private final String oauthClientId;
+    private final String oauthClientSecret;
 
-    public UnityCatalogInfo(
-        String serverUri,
-        String catalogName,
-        String serverToken,
-        String schemaName,
-        String baseTableLocation) {
-      this.serverUri = serverUri;
-      this.catalogName = catalogName;
-      this.serverToken = serverToken;
-      this.schemaName = schemaName;
-      this.baseTableLocation = baseTableLocation;
-    }
-
-    public String serverUri() {
-      return serverUri;
-    }
-
-    public String catalogName() {
-      return catalogName;
-    }
-
-    public String serverToken() {
-      return serverToken;
-    }
-
-    public String schemaName() {
-      return schemaName;
-    }
-
-    public String baseTableLocation() {
-      return baseTableLocation;
-    }
-
-    /** Creates a configured Unity Catalog API client. */
+    /**
+     * Creates a configured Unity Catalog API client for test scaffolding (catalog/schema setup and
+     * assertions). Uses OAuth client-credentials when OAuth is configured, otherwise the static
+     * token, so the scaffolding authenticates the same way as the connector under test.
+     */
     public ApiClient createApiClient() {
+      Map<String, String> authConfig =
+          oauthTokenUri != null
+              ? Map.of(
+                  "type", "oauth",
+                  "oauth.uri", oauthTokenUri,
+                  "oauth.clientId", oauthClientId,
+                  "oauth.clientSecret", oauthClientSecret)
+              : Map.of("type", "static", "token", serverToken);
       return ApiClientBuilder.create()
           .uri(serverUri)
-          .tokenProvider(
-              TokenProvider.create(ImmutableMap.of("type", "static", "token", serverToken)))
+          .tokenProvider(TokenProvider.create(authConfig))
           .build();
     }
   }
 
   public static final String UC_STATIC_TOKEN = "static-token";
+
+  /** Authentication mode for the catalog under test. */
+  public enum AuthMode {
+    STATIC,
+    OAUTH
+  }
+
+  /** Client-credentials identity the local mock OAuth broker accepts. */
+  public static final String MOCK_OAUTH_CLIENT_ID = "test-client-id";
+
+  public static final String MOCK_OAUTH_CLIENT_SECRET = "test-client-secret";
 
   /** The fake S3 bucket name used for local integration tests. */
   static final String FAKE_S3_BUCKET = "fakeS3Bucket";
@@ -130,6 +133,12 @@ public abstract class UnityCatalogSupport {
   public static final String UC_SCHEMA_NAME = "UC_SCHEMA_NAME";
   public static final String UC_BASE_TABLE_LOCATION = "UC_BASE_TABLE_LOCATION";
 
+  // OAuth client-credentials config for a remote server (used when UC_REMOTE=true and
+  // UC_OAUTH_URI is set); point UC_OAUTH_URI at the real token endpoint (e.g. an OIDC provider).
+  public static final String UC_OAUTH_URI = "UC_OAUTH_URI";
+  public static final String UC_OAUTH_CLIENT_ID = "UC_OAUTH_CLIENT_ID";
+  public static final String UC_OAUTH_CLIENT_SECRET = "UC_OAUTH_CLIENT_SECRET";
+
   protected static boolean isUCRemoteConfigured() {
     String ucRemote = System.getenv(UC_REMOTE);
     return ucRemote != null && ucRemote.equalsIgnoreCase("true");
@@ -138,6 +147,40 @@ public abstract class UnityCatalogSupport {
   /** Subclasses can override to false for A/B comparison with the legacy path. */
   protected boolean useDeltaRestApiForTests() {
     return true;
+  }
+
+  /**
+   * Authentication mode for the LOCAL in-process server. Defaults to OAuth; subclasses override to
+   * {@link AuthMode#STATIC} to keep using a static token. OAUTH runs the full server-validating
+   * path: authorization is enabled and a {@link MockOAuthBroker} mints an id_token that UC
+   * exchanges for an internal token, which UC validates. STATIC uses a static bearer with auth
+   * disabled. This does not affect remote runs: a remote server's auth mode is selected by which
+   * env vars are set ({@code UC_OAUTH_*} vs {@code UC_TOKEN}), independent of this method.
+   */
+  protected AuthMode authMode() {
+    return AuthMode.OAUTH;
+  }
+
+  /**
+   * Maximum lifetime (seconds) the mock OAuth broker advertises in its {@code /token} response; any
+   * expires_in UC returns is capped at this value. The connector renews ~30s before expiry, so a
+   * value at or below that lead time makes it re-run the client-credentials grant (and thus
+   * re-exchange) on essentially every call; override low in a test to exercise token renewal.
+   */
+  protected long oauthTokenMaxLifetimeSeconds() {
+    return 3600;
+  }
+
+  /**
+   * Number of access tokens the local mock OAuth broker has issued. Only a local server in OAUTH
+   * mode runs the broker; remote runs authenticate against a real IdP, so there is none to count.
+   */
+  protected int oauthIssuedTokenCount() {
+    Preconditions.checkState(
+        mockOAuthBroker != null,
+        "oauthIssuedTokenCount() requires the local mock OAuth broker, which runs only for a "
+            + "local server in OAUTH mode");
+    return mockOAuthBroker.issuedTokenCount();
   }
 
   /** The Unity Catalog info instance for subclasses access */
@@ -154,6 +197,9 @@ public abstract class UnityCatalogSupport {
 
   /** The temporary directory for external table location */
   private File ucBaseTableLocation = null;
+
+  /** Mock OAuth broker (client-credentials front + OIDC IdP + exchange); started for OAUTH. */
+  private MockOAuthBroker mockOAuthBroker;
 
   /**
    * Returns the Unity Catalog configuration for use in tests.
@@ -177,16 +223,43 @@ public abstract class UnityCatalogSupport {
   private UnityCatalogInfo remoteUnityCatalogInfo() {
     String serverUri = System.getenv(UC_URI);
     String catalogName = System.getenv(UC_CATALOG_NAME);
-    String serverToken = System.getenv(UC_TOKEN);
     String schemaName = System.getenv(UC_SCHEMA_NAME);
     String baseTableLocation = System.getenv(UC_BASE_TABLE_LOCATION);
     Preconditions.checkNotNull(serverUri, "%s must be set when UC_REMOTE=true", UC_URI);
     Preconditions.checkNotNull(catalogName, "%s must be set when UC_REMOTE=true", UC_CATALOG_NAME);
-    Preconditions.checkNotNull(serverToken, "%s must be set when UC_REMOTE=true", UC_TOKEN);
     Preconditions.checkNotNull(schemaName, "%s must be set when UC_REMOTE=true", UC_SCHEMA_NAME);
     Preconditions.checkNotNull(
         baseTableLocation, "%s must be set when UC_REMOTE=true", UC_BASE_TABLE_LOCATION);
-    return new UnityCatalogInfo(serverUri, catalogName, serverToken, schemaName, baseTableLocation);
+
+    // The remote auth mode is chosen by which env vars are set, independent of authMode() (which
+    // governs only the local in-process server): set UC_OAUTH_* for client-credentials OAuth, or
+    // UC_TOKEN for a static bearer.
+    if (System.getenv(UC_OAUTH_URI) != null) {
+      // Real OAuth: the connector runs client-credentials against the configured token endpoint
+      // (e.g. an external OIDC provider) and the remote server validates the resulting bearer.
+      String oauthUri = System.getenv(UC_OAUTH_URI);
+      String oauthClientId = System.getenv(UC_OAUTH_CLIENT_ID);
+      String oauthClientSecret = System.getenv(UC_OAUTH_CLIENT_SECRET);
+      Preconditions.checkNotNull(
+          oauthClientId, "%s must be set when UC_OAUTH_URI is set", UC_OAUTH_CLIENT_ID);
+      Preconditions.checkNotNull(
+          oauthClientSecret, "%s must be set when UC_OAUTH_URI is set", UC_OAUTH_CLIENT_SECRET);
+      return new UnityCatalogInfo(
+          serverUri,
+          catalogName,
+          /* serverToken= */ null,
+          schemaName,
+          baseTableLocation,
+          oauthUri,
+          oauthClientId,
+          oauthClientSecret);
+    } else {
+      String serverToken = System.getenv(UC_TOKEN);
+      Preconditions.checkNotNull(serverToken, "%s must be set when UC_REMOTE=true", UC_TOKEN);
+      // Static-token path: no OAuth fields.
+      return new UnityCatalogInfo(
+          serverUri, catalogName, serverToken, schemaName, baseTableLocation, null, null, null);
+    }
   }
 
   private UnityCatalogInfo localUnityCatalogInfo() {
@@ -194,12 +267,28 @@ public abstract class UnityCatalogSupport {
     Preconditions.checkNotNull(
         ucBaseTableLocation, "Local Unity Catalog Temp Directory is not configured");
     // Use fake S3 bucket (backed by local filesystem via S3CredentialFileSystem).
+    // In OAUTH mode the broker was started in setUpLocalServer, so it must be present; its values
+    // drive both the Spark connector's auth config and the scaffolding client. STATIC leaves the
+    // OAuth fields null and uses the static token.
+    String oauthTokenUri = null;
+    String oauthClientId = null;
+    String oauthClientSecret = null;
+    if (authMode() == AuthMode.OAUTH) {
+      Preconditions.checkState(
+          mockOAuthBroker != null, "mock OAuth broker must be started for a local OAUTH server");
+      oauthTokenUri = mockOAuthBroker.tokenEndpoint();
+      oauthClientId = MOCK_OAUTH_CLIENT_ID;
+      oauthClientSecret = MOCK_OAUTH_CLIENT_SECRET;
+    }
     return new UnityCatalogInfo(
         String.format("http://localhost:%s/", ucServerPort),
         "unity",
         UC_STATIC_TOKEN,
         "default",
-        "s3://" + FAKE_S3_BUCKET + ucBaseTableLocation.getAbsolutePath());
+        "s3://" + FAKE_S3_BUCKET + ucBaseTableLocation.getAbsolutePath(),
+        oauthTokenUri,
+        oauthClientId,
+        oauthClientSecret);
   }
 
   /** Finds an available port for the UC server. */
@@ -207,6 +296,22 @@ public abstract class UnityCatalogSupport {
     try (ServerSocket socket = new ServerSocket(0)) {
       return socket.getLocalPort();
     }
+  }
+
+  /**
+   * Whether {@code t} (or anything in its cause chain) is an "address already in use" bind failure.
+   * The server's async bind surfaces it wrapped as a {@link
+   * java.util.concurrent.CompletionException} around a Netty {@code NativeIoException}, so we match
+   * by message across the chain.
+   */
+  private static boolean isAddressInUse(Throwable t) {
+    for (Throwable cause = t; cause != null; cause = cause.getCause()) {
+      final String message = cause.getMessage();
+      if (message != null && message.toLowerCase().contains("address already in use")) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -253,6 +358,13 @@ public abstract class UnityCatalogSupport {
     serverProps.setProperty("s3.accessKey.0", "fakeAccessKey");
     serverProps.setProperty("s3.secretKey.0", "fakeSecretKey");
     serverProps.setProperty("s3.sessionToken.0", "fakeSessionToken");
+    if (authMode() == AuthMode.OAUTH) {
+      // Server-validating OAuth: enable authorization, trust the broker's issuer, and require the
+      // audience it mints.
+      serverProps.setProperty("server.authorization", "enable");
+      serverProps.setProperty("server.allowed-issuers", mockOAuthBroker.issuer());
+      serverProps.setProperty("server.audiences", MockOAuthBroker.AUDIENCE);
+    }
     return serverProps;
   }
 
@@ -265,20 +377,48 @@ public abstract class UnityCatalogSupport {
     ucBaseTableLocation = Files.createTempDirectory("base-table-location-").toFile();
     ucBaseTableLocation.deleteOnExit();
 
-    // Find an available port
-    ucServerPort = findAvailablePort();
+    // Start the mock OAuth broker before building UnityCatalogInfo (and before serverProperties(),
+    // which reads the broker's issuer for the allowed-issuers config).
+    if (authMode() == AuthMode.OAUTH) {
+      mockOAuthBroker =
+          new MockOAuthBroker(
+              MOCK_OAUTH_CLIENT_ID, MOCK_OAUTH_CLIENT_SECRET, oauthTokenMaxLifetimeSeconds());
+      mockOAuthBroker.start();
+      LOG.info("Mock OAuth broker started at " + mockOAuthBroker.issuer());
+    }
 
-    // Start UC server with configuration
+    // Start UC server with configuration. findAvailablePort() picks a free port and releases it,
+    // so a concurrently-starting suite on the same runner can grab it before this server binds.
+    // Retry with a fresh port on "address already in use" rather than failing the suite.
     ServerProperties initServerProperties = new ServerProperties(serverProperties());
+    final int maxBindAttempts = 5;
+    for (int attempt = 1; ; attempt++) {
+      ucServerPort = findAvailablePort();
+      UnityCatalogServer server =
+          UnityCatalogServer.builder()
+              .port(ucServerPort)
+              .serverProperties(initServerProperties)
+              .build();
+      try {
+        server.start();
+        ucServer = server;
+        break;
+      } catch (Exception e) {
+        if (attempt < maxBindAttempts && isAddressInUse(e)) {
+          LOG.warn(
+              String.format(
+                  "UC server bind on port %d failed (address in use), retrying (attempt %d/%d)",
+                  ucServerPort, attempt, maxBindAttempts));
+          continue;
+        }
+        throw e;
+      }
+    }
 
-    UnityCatalogServer server =
-        UnityCatalogServer.builder()
-            .port(ucServerPort)
-            .serverProperties(initServerProperties)
-            .build();
-
-    server.start();
-    ucServer = server;
+    // Now that UC is up, let the OAuth broker reach the token-exchange endpoint.
+    if (mockOAuthBroker != null) {
+      mockOAuthBroker.setUcBaseUri(String.format("http://localhost:%s/", ucServerPort));
+    }
 
     // Poll for server readiness by checking if we can create an API client and query catalogs
     int maxRetries = 30;
@@ -333,6 +473,12 @@ public abstract class UnityCatalogSupport {
       ucServer.stop();
       LOG.info("Unity Catalog server stopped");
       ucServer = null;
+    }
+
+    if (mockOAuthBroker != null) {
+      mockOAuthBroker.stop();
+      LOG.info("Mock OAuth broker stopped");
+      mockOAuthBroker = null;
     }
 
     // Clean up uc server temporary directory

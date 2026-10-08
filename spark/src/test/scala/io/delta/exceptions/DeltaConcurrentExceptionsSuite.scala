@@ -45,15 +45,18 @@ class DeltaConcurrentExceptionsSuite extends SparkFunSuite with SharedSparkSessi
 
   test("test MetadataChangedException") {
     intercept[org.apache.spark.sql.delta.DeltaConcurrentModificationException] {
-      throw org.apache.spark.sql.delta.DeltaErrors.metadataChangedException(None)
+      throw org.apache.spark.sql.delta.DeltaErrors
+        .metadataChangedException("test_table", None)
     }
 
     intercept[io.delta.exceptions.DeltaConcurrentModificationException] {
-      throw org.apache.spark.sql.delta.DeltaErrors.metadataChangedException(None)
+      throw org.apache.spark.sql.delta.DeltaErrors
+        .metadataChangedException("test_table", None)
     }
 
     intercept[org.apache.spark.sql.delta.MetadataChangedException] {
-      throw org.apache.spark.sql.delta.DeltaErrors.metadataChangedException(None)
+      throw org.apache.spark.sql.delta.DeltaErrors
+        .metadataChangedException("test_table", None)
     }
 
     intercept[org.apache.spark.sql.delta.DeltaConcurrentModificationException] {

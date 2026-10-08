@@ -18,7 +18,10 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import scala.collection.JavaConverters._
 
-import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient}
+import io.delta.kernel.unitycatalog.UCTableIdentifier
+import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo
+import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCConfigUtils}
+import io.unitycatalog.client.auth.TokenProvider
 import org.mockito.{Mock, Mockito}
 import org.mockito.ArgumentMatchers.{any, eq => meq}
 import org.mockito.Mockito.{mock, never, times, verify, when}
@@ -424,8 +427,8 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       assert(ucConfig("token") == legacyToken)
 
       val catalogConfig = UCCatalogConfig(catalogName, ucConfig)
-      assert(catalogConfig.authConfig("type") == "static")
-      assert(catalogConfig.authConfig("token") == newToken)
+      assert(catalogConfig.authConfig.get("type") == "static")
+      assert(catalogConfig.authConfig.get("token") == newToken)
     }
   }
 
@@ -463,9 +466,9 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       "auth.type" -> "static",
       "auth.token" -> "new-token"
     )
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig.asJava)
-    assert(auth("type") == "static")
-    assert(auth("token") == "new-token")
+    val auth = UCConfigUtils.extractAuthConfig(ucConfig.asJava)
+    assert(auth.get("type") == "static")
+    assert(auth.get("token") == "new-token")
   }
 
   test("extractAuthConfig falls back to legacy token") {
@@ -473,9 +476,9 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       "uri" -> "https://test.com",
       "token" -> "legacy-token"
     )
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig.asJava)
-    assert(auth("type") == "static")
-    assert(auth("token") == "legacy-token")
+    val auth = UCConfigUtils.extractAuthConfig(ucConfig.asJava)
+    assert(auth.get("type") == "static")
+    assert(auth.get("token") == "legacy-token")
   }
 
   test("buildForCatalog with legacy token format") {
@@ -535,6 +538,89 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       UCCommitCoordinatorBuilder.buildForCatalog(spark, "non_existent_catalog")
     }
     assert(exception.getMessage.contains("not found"))
+  }
+
+  test("extractAuthConfig with OAuth preserves camelCase keys and produces valid TokenProvider") {
+    val ucConfig = new java.util.HashMap[String, String]()
+    ucConfig.put("auth.type", "oauth")
+    ucConfig.put("auth.oauth.clientId", "test-id")
+    ucConfig.put("auth.oauth.clientSecret", "test-secret")
+    ucConfig.put("auth.oauth.uri", "https://example.com/token")
+    ucConfig.put("uri", "https://uc.example.com")
+    val auth = UCConfigUtils.extractAuthConfig(ucConfig)
+    assert(auth.get("oauth.clientId") === "test-id")
+    assert(auth.get("oauth.clientSecret") === "test-secret")
+    val tp = TokenProvider.create(auth)
+    assert(tp != null)
+    assert(tp.configs().get("type") === "oauth")
+    assert(tp.configs().get("oauth.clientId") === "test-id")
+    assert(tp.configs().get("oauth.clientSecret") === "test-secret")
+  }
+
+  test("extractAuthConfig with static token produces valid TokenProvider") {
+    // Sub-case 1: legacy token key
+    val legacyConfig = Map("token" -> "my-token", "uri" -> "https://uc.example.com")
+    val legacyAuth = UCConfigUtils.extractAuthConfig(legacyConfig.asJava)
+    val tp1 = TokenProvider.create(legacyAuth)
+    assert(tp1.accessToken() === "my-token")
+
+    // Sub-case 2: explicit auth.type=static
+    val explicitConfig = Map(
+      "auth.type" -> "static",
+      "auth.token" -> "explicit-token"
+    ).asJava
+    val explicitAuth = UCConfigUtils.extractAuthConfig(explicitConfig)
+    val tp2 = TokenProvider.create(explicitAuth)
+    assert(tp2.accessToken() === "explicit-token")
+  }
+
+  test("extractAppVersions preserves key casing and includes defaults") {
+    val ucConfig = Map(
+      "appVersions.CustomEngine" -> "1.0",
+      "appVersions.MyLib" -> "2.0",
+      "uri" -> "https://uc.example.com"
+    ).asJava
+    val versions = UCTokenBasedRestClientFactory.extractAppVersions(ucConfig)
+    assert(versions("CustomEngine") === "1.0")
+    assert(versions("MyLib") === "2.0")
+    assert(versions("Delta") === io.delta.VERSION)
+    assert(versions("Spark") === org.apache.spark.SPARK_VERSION)
+    assert(versions("Scala") === scala.util.Properties.versionNumberString)
+    assert(versions("Java") === System.getProperty("java.version"))
+  }
+
+  test("OAuth round-trip through real UCTableInfo.toUcConfig produces valid TokenProvider") {
+    val originalConfig = new java.util.HashMap[String, String]()
+    originalConfig.put("uri", "https://uc.example.com")
+    originalConfig.put("auth.type", "oauth")
+    originalConfig.put("auth.oauth.clientId", "test-id")
+    originalConfig.put("auth.oauth.clientSecret", "test-secret")
+    originalConfig.put("auth.oauth.uri", "https://example.com/token")
+
+    val authMap = UCConfigUtils.extractAuthConfig(originalConfig)
+
+    val tableInfo = new UCTableInfo(
+      "table-id",
+      "/path",
+      new UCTableIdentifier("cat", "schema", "table"),
+      "https://uc.example.com",
+      authMap)
+    val roundTrippedConfig = tableInfo.toUcConfig()
+
+    val roundTrippedAuth = UCConfigUtils.extractAuthConfig(roundTrippedConfig)
+
+    // 5. Verify TokenProvider can be created (proves round-trip preserves values)
+    val tp = TokenProvider.create(roundTrippedAuth)
+    assert(tp != null)
+    assert(tp.configs().get("oauth.clientId") === "test-id")
+    assert(tp.configs().get("oauth.clientSecret") === "test-secret")
+    assert(tp.configs().get("oauth.uri") === "https://example.com/token")
+  }
+
+  test("extractAuthConfig returns empty map when no auth config present") {
+    val noAuthConfig = Map("uri" -> "https://uc.example.com")
+    val auth = UCConfigUtils.extractAuthConfig(noAuthConfig.asJava)
+    assert(auth.isEmpty)
   }
 
   private def getCommitCoordinatorClient(metastoreId: String) = {

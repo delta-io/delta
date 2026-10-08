@@ -1,0 +1,141 @@
+name: Prepare Spark environment
+description: >-
+  Install the JDK for a Spark version and, for a source-built Spark version, restore the
+  Spark Maven cache (building Spark from the metadata ref and saving the cache on a miss
+  when build-on-miss is set) so tests can run against it. For published Spark this only
+  installs the JDK. The calling job must run actions/checkout before invoking this action.
+
+inputs:
+  spark-version:
+    description: Spark version (short version or "master") for this matrix row.
+    required: true
+  use-spark-source-cache:
+    description: >-
+      When 'true', resolve and restore the source-built Spark Maven cache. Leave 'false'
+      for published Spark.
+    required: false
+    default: 'false'
+  build-on-miss:
+    description: >-
+      When 'true', build Spark and save the cache on a miss. Test shards explicitly
+      set this to 'false' so they restore/verify instead of rebuilding 8x.
+    required: false
+    default: 'true'
+  cache-key-suffix:
+    description: Optional suffix appended to the exact Spark Maven cache key.
+    required: false
+    default: ''
+  runner-label:
+    description: GitHub Actions runner label used in Spark Maven cache keys.
+    required: false
+    default: 'ubuntu-24.04'
+
+runs:
+  using: composite
+  steps:
+    - name: Get Spark version details
+      id: spark-details
+      shell: bash
+      run: |
+        # The script automatically generates spark-versions.json if needed.
+        JVM_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ inputs.spark-version }}" targetJvm | jq -r)
+        echo "jvm_version=$JVM_VERSION" >> "$GITHUB_OUTPUT"
+        echo "Using JVM version: $JVM_VERSION for Spark ${{ inputs.spark-version }}"
+
+    - name: install java
+      uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
+      with:
+        distribution: "zulu"
+        java-version: ${{ steps.spark-details.outputs.jvm_version }}
+
+    - name: Resolve Spark source build
+      if: inputs.use-spark-source-cache == 'true'
+      id: spark-source
+      shell: bash
+      run: |
+        # Resolves the Spark compatibility line, metadata-owned source ref, immutable Spark
+        # SHA, commit-qualified local Maven version, and the exact Maven cache_key.
+        python3 project/scripts/get_spark_version_info.py \
+          --resolve-source-build \
+          --spark-version "${{ inputs.spark-version }}" \
+          --runner-label "${{ inputs.runner-label }}"
+
+    - name: Select Spark Maven cache key
+      if: inputs.use-spark-source-cache == 'true'
+      id: spark-cache-key
+      shell: bash
+      env:
+        BASE_SPARK_CACHE_KEY: ${{ steps.spark-source.outputs.cache_key }}
+        SPARK_CACHE_KEY_SUFFIX: ${{ inputs.cache-key-suffix }}
+      run: |
+        cache_key="$BASE_SPARK_CACHE_KEY"
+        suffix="$SPARK_CACHE_KEY_SUFFIX"
+        if [[ -n "$suffix" ]]; then
+          cache_key="${cache_key}-${suffix}"
+        fi
+        echo "cache_key=$cache_key" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Spark Maven cache
+      if: inputs.use-spark-source-cache == 'true'
+      id: spark-source-cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/.m2/repository/org/apache/spark
+        # Exact-match cache only. Spark source builds must not fall back to a different
+        # SHA, artifact base version, or build_spark.sh hash.
+        key: ${{ steps.spark-cache-key.outputs.cache_key }}
+
+    - name: Build Spark source ref on cache miss
+      if: inputs.use-spark-source-cache == 'true' && inputs.build-on-miss == 'true' && steps.spark-source-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        SPARK_SOURCE_REF: ${{ steps.spark-source.outputs.source_ref }}
+        SPARK_VERSION: ${{ steps.spark-source.outputs.spark_version }}
+        SPARK_BASE_VERSION: ${{ steps.spark-source.outputs.artifact_base_version }}
+        SPARK_ARTIFACT_VERSION: ${{ steps.spark-source.outputs.spark_artifact_version }}
+      run: bash project/scripts/build_spark.sh
+
+    - name: Save Spark Maven cache on miss
+      if: inputs.use-spark-source-cache == 'true' && inputs.build-on-miss == 'true' && steps.spark-source-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/.m2/repository/org/apache/spark
+        # Save under the same exact key so the test shards hit instead of rebuilding.
+        key: ${{ steps.spark-cache-key.outputs.cache_key }}
+
+    - name: Verify Spark Maven artifacts
+      if: inputs.use-spark-source-cache == 'true'
+      shell: bash
+      env:
+        SPARK_SOURCE_REF: ${{ steps.spark-source.outputs.source_ref }}
+        SPARK_ARTIFACT_VERSION: ${{ steps.spark-source.outputs.spark_artifact_version }}
+      run: |
+        # Shards rely on the prepare-cache job; fail loudly on an unexpected miss.
+        if [[ "${{ steps.spark-source-cache.outputs.cache-hit }}" != "true" && "${{ inputs.build-on-miss }}" != "true" ]]; then
+          echo "::error::Prepared Spark Maven cache was not found for $SPARK_SOURCE_REF."
+          exit 1
+        fi
+        # Integrity check for both cache-hit and freshly-built cases.
+        missing=0
+        for module in spark-sql_2.13 spark-core_2.13 spark-catalyst_2.13 spark-hive_2.13; do
+          pom="$HOME/.m2/repository/org/apache/spark/$module/$SPARK_ARTIFACT_VERSION/$module-$SPARK_ARTIFACT_VERSION.pom"
+          if [[ ! -f "$pom" ]]; then
+            echo "::error::Missing Spark Maven artifact: $pom"
+            missing=1
+          fi
+        done
+        if [[ "$missing" != "0" ]]; then
+          echo "Spark Maven artifacts are not present after restore/build."
+          exit 1
+        fi
+        # Expose only the restored Spark artifacts as a Maven repo. Pointing sbt at the
+        # whole ~/.m2 tree can let unrelated stale/partial local artifacts shadow remotes.
+        spark_maven_local_repo="${RUNNER_TEMP:-$HOME}/source-built-spark-m2"
+        rm -rf "$spark_maven_local_repo/org/apache/spark"
+        mkdir -p "$spark_maven_local_repo/org/apache"
+        cp -R "$HOME/.m2/repository/org/apache/spark" "$spark_maven_local_repo/org/apache/"
+        # run-tests.py / build/sbt read these to resolve the commit-qualified Spark artifacts.
+        echo "SPARK_COMMIT=${{ steps.spark-source.outputs.spark_sha }}" >> "$GITHUB_ENV"
+        echo "SPARK_ARTIFACT_VERSION=$SPARK_ARTIFACT_VERSION" >> "$GITHUB_ENV"
+        echo "USE_MAVEN_LOCAL_FOR_SOURCE_SPARK=true" >> "$GITHUB_ENV"
+        echo "SPARK_MAVEN_LOCAL_REPO=$spark_maven_local_repo" >> "$GITHUB_ENV"

@@ -27,6 +27,7 @@ import io.delta.kernel.TableManager;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.VersionToLoadAfterLatestCommitException;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
@@ -88,8 +89,10 @@ public class UCCatalogManagedClient {
    *     mutually exclusive with timestampOpt.
    * @param timestampOpt The optional timestamp to time-travel to when loading the table. This must
    *     be mutually exclusive with versionOpt.
-   * @throws IllegalArgumentException if a negative version or timestamp is provided
+   * @throws IllegalArgumentException if a negative version is provided
    * @throws IllegalArgumentException if both versionOpt and timestampOpt are defined
+   * @throws VersionToLoadAfterLatestCommitException if the requested version is greater than the
+   *     latest version ratified by UC
    */
   public Snapshot loadSnapshot(
       Engine engine,
@@ -166,6 +169,7 @@ public class UCCatalogManagedClient {
                                             engine,
                                             ucTableId,
                                             tablePath,
+                                            ucTableIdentifier,
                                             logData,
                                             maxUcTableVersion));
                         snapshotBuilder =
@@ -174,7 +178,9 @@ public class UCCatalogManagedClient {
 
                       Snapshot snapshot =
                           snapshotBuilder
-                              .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
+                              .withCommitter(
+                                  createUCCommitter(
+                                      ucClient, ucTableId, tablePath, ucTableIdentifier))
                               .withLogData(logData)
                               .withMaxCatalogVersion(maxUcTableVersion)
                               .build(engine);
@@ -243,8 +249,7 @@ public class UCCatalogManagedClient {
     Objects.requireNonNull(ucTableIdentifier, "ucTableIdentifier is null");
 
     return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
-        .withCommitter(
-            new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier))
+        .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier))
         .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
   }
 
@@ -271,7 +276,7 @@ public class UCCatalogManagedClient {
    * @throws IllegalArgumentException if neither startVersionOpt nor startTimestampOpt is provided
    * @throws IllegalArgumentException if both startVersionOpt and startTimestampOpt are defined
    * @throws IllegalArgumentException if both endVersionOpt and endTimestampOpt are defined
-   * @throws IllegalArgumentException if either startVersionOpt or endVersionOpt is provided and is
+   * @throws VersionToLoadAfterLatestCommitException if either startVersionOpt or endVersionOpt is
    *     greater than the latest ratified version from UC
    */
   public CommitRange loadCommitRange(
@@ -334,7 +339,7 @@ public class UCCatalogManagedClient {
         new Lazy<>(
             () ->
                 loadLatestSnapshotForTimestampResolution(
-                    engine, ucTableId, tablePath, logData, ucTableVersion));
+                    engine, ucTableId, tablePath, ucTableIdentifier, logData, ucTableVersion));
 
     return timeUncheckedOperation(
         logger,
@@ -384,6 +389,17 @@ public class UCCatalogManagedClient {
    */
   protected Committer createUCCommitter(UCClient ucClient, String ucTableId, String tablePath) {
     return new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath);
+  }
+
+  /**
+   * Creates a UC committer that carries the three-part {@link UCTableIdentifier}.
+   *
+   * <p>The identifier is required by the UCDeltaClient, whose {@code commit} needs the {@code
+   * catalog.schema.table} name. The UCClient ignores it.
+   */
+  protected Committer createUCCommitter(
+      UCClient ucClient, String ucTableId, String tablePath, UCTableIdentifier ucTableIdentifier) {
+    return new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier);
   }
 
   ////////////////////
@@ -473,7 +489,7 @@ public class UCCatalogManagedClient {
   private void validateTimeTravelVersionNotPastMax(
       String ucTableId, long tableVersionToLoad, long maxRatifiedVersion) {
     if (tableVersionToLoad > maxRatifiedVersion) {
-      throw new IllegalArgumentException(
+      throw new VersionToLoadAfterLatestCommitException(
           String.format(
               "[%s] Cannot load table version %s as the latest version ratified by UC is %s",
               ucTableId, tableVersionToLoad, maxRatifiedVersion));
@@ -488,7 +504,7 @@ public class UCCatalogManagedClient {
     BiConsumer<Long, String> validateVersion =
         (version, type) -> {
           if (version > maxRatifiedVersion) {
-            throw new IllegalArgumentException(
+            throw new VersionToLoadAfterLatestCommitException(
                 String.format(
                     "[%s] Cannot load commit range with %s version %d as the latest version "
                         + "ratified by UC is %d",
@@ -555,6 +571,7 @@ public class UCCatalogManagedClient {
       Engine engine,
       String ucTableId,
       String tablePath,
+      UCTableIdentifier ucTableIdentifier,
       List<ParsedLogData> logData,
       long ucTableVersion) {
     // TODO: We can remove timeUncheckedOperation when the commitRange code integrates with metrics
@@ -564,7 +581,7 @@ public class UCCatalogManagedClient {
         ucTableId,
         () ->
             TableManager.loadSnapshot(tablePath)
-                .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+                .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier))
                 .withLogData(logData)
                 .withMaxCatalogVersion(ucTableVersion)
                 .build(engine));

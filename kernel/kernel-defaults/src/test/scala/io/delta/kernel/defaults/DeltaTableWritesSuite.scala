@@ -62,6 +62,8 @@ import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.tables.DeltaTable
 
+import org.apache.spark.sql.delta.DeltaLog
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaTableWritesSuite extends AbstractDeltaTableWritesSuite with WriteUtils
@@ -1298,6 +1300,68 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
       verifyCommitInfo(tblPath, version = 0, testPartitionColumns)
       verifyWrittenContent(tblPath, testPartitionSchema, expData)
+    }
+  }
+
+  test("insert into partitioned table - TIMESTAMP partition values use UTC ISO-8601") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val schema = new StructType()
+        .add("id", INTEGER)
+        .add("ts", TIMESTAMP)
+      val timestampPartitions = Seq(
+        1704103200123456L -> "2024-01-01T10:00:00.123456Z",
+        1704103200000000L -> "2024-01-01T10:00:00.000000Z",
+        1704103200000123L -> "2024-01-01T10:00:00.000123Z")
+      val partitionData = timestampPartitions.map { case (micros, _) =>
+        val partitionValues = Map("ts" -> ofTimestamp(micros))
+        val data =
+          generateData(schema, Seq("ts"), partitionValues, batchSize = 5, numBatches = 1)
+        partitionValues -> data
+      }
+
+      appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schema,
+        partCols = Seq("ts"),
+        data = partitionData)
+
+      val addFiles = DeltaLog.forTable(spark, tblPath).update().allFiles.collect()
+      assert(addFiles.length === timestampPartitions.length)
+      assert(
+        addFiles.map(_.partitionValues("ts")).toSet ===
+          timestampPartitions.map(_._2).toSet)
+
+      checkTable(tblPath, partitionData.flatMap(_._2).flatMap(_.toTestRows), engine = engine)
+    }
+  }
+
+  test("Spark reads Kernel-written TIMESTAMP partition values across time zones") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val schema = new StructType()
+        .add("id", INTEGER)
+        .add("ts", TIMESTAMP)
+      val partitionValues = Map("ts" -> ofTimestamp(1704103200123456L))
+      val data =
+        generateData(schema, Seq("ts"), partitionValues, batchSize = 5, numBatches = 1)
+
+      appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schema,
+        partCols = Seq("ts"),
+        data = Seq(partitionValues -> data))
+
+      val expectedRows = data.flatMap(_.toTestRows)
+      Seq("UTC", "GMT-8").foreach { timeZone =>
+        withSparkTimeZone(timeZone) {
+          val sparkRows =
+            spark.sql(s"SELECT * FROM delta.`$tblPath`").collect().map(TestRow(_))
+          checkAnswer(sparkRows, expectedRows)
+        }
+      }
     }
   }
 
