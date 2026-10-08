@@ -164,9 +164,14 @@ write explicitly changes them.
 
 - **Column mapping.** When [Column Mapping](#column-mapping) is enabled, invisible columns are
   assigned physical names and column IDs under the same requirements as visible columns.
+  Column IDs MUST be unique across the complete data schema, and the existing physical field path
+  uniqueness requirements apply across both schemas.
+  The table's `delta.columnMapping.maxColumnId` tracks the maximum ID assigned in either schema.
 - **CHECK constraints.** CHECK constraints involving invisible columns have the same support,
   validation, and enforcement requirements as those involving visible columns.
 - **Partitioning.** An invisible column MUST NOT be a partition column.
+- **Clustering.** An invisible column MAY be a clustering column, subject to the same
+  [Clustered Table](#clustered-table) requirements as a visible column.
 - **Identity columns.** An invisible column MUST NOT be an identity column.
 - **Generated columns and column defaults.** An invisible column MUST NOT be a generated column,
   and MUST NOT carry a column default.
@@ -188,9 +193,9 @@ they support the table's remaining protocol requirements.
 > [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
 > with the following***
 
-- Except where explicitly permitted elsewhere in this protocol, a column in a data file MUST be
-  present in `metaData.schemaString` or, when Invisible Columns are active, in the invisible
-  schema.
+- Any data file column that exists in the visible or invisible schema MUST have the same
+  type as the corresponding schema column, except as allowed by the
+  [Type Widening](#type-widening) table feature, if enabled.
 - Values for all partition columns present in the schema MUST be present for all files in the
   table.
 - Columns in the visible or invisible schema MAY be missing from data files. Readers SHOULD treat
