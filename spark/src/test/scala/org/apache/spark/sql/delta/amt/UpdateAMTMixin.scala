@@ -28,6 +28,13 @@ import org.apache.spark.SparkConf
 /**
  * UPDATE-specific setup for running the UPDATE test suites against AMT tables with the
  * [[AMTDMLTestUtils]] harness.
+ *
+ * The UPDATE AMT mixins must come after all other mixins of a suite, so their dimensions must be
+ * the last of every generator config they are used in. This is for 2 reasons:
+ * 1. Visibility: some mixins declare beforeAll public, and a later mixin overriding it as
+ *    protected (which AMTDMLTestUtils does) fails to compile.
+ * 2. Commit orders: some mixins perform extra commits (e.g. UpdateTableWithDVsMixin). To maintain
+ *    a stable commit order, we prefer to have AMT commits wrap them all.
  */
 trait UpdateAMTTestBase extends AMTDMLTestUtils {
 
@@ -38,6 +45,9 @@ trait UpdateAMTTestBase extends AMTDMLTestUtils {
     // default to predict whether UPDATE writes deletion vectors, keep seeing the command's
     // behavior. Whether UPDATE writes them is a command conf that the mixins below decide.
     .remove(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey)
+
+  // Override as public to pass compilation
+  override def beforeAll(): Unit = super.beforeAll()
 }
 
 /**
@@ -46,7 +56,7 @@ trait UpdateAMTTestBase extends AMTDMLTestUtils {
  *
  * Each UPDATE is bracketed by the [[AMTDMLTestUtils]] checkpoints.
  */
-trait UpdateAMTMixin extends UpdateAMTTestBase with UpdateBaseMixin {
+trait UpdateAMTMixin extends UpdateBaseMixin with UpdateAMTTestBase {
 
   // The base UPDATE suites assert rewrite semantics (copied rows, commit tags, file counts), so
   // keep UPDATE from writing deletion vectors on the DV-enabled AMT tables. Suites that mix in
@@ -124,7 +134,7 @@ trait UpdateAMTMixin extends UpdateAMTTestBase with UpdateBaseMixin {
  * row tracking checks around each UPDATE inspect the latest commit, which must be the UPDATE
  * itself.
  */
-trait RowTrackingUpdateAMTMixin extends UpdateAMTTestBase with RowTrackingUpdateSuiteBase {
+trait RowTrackingUpdateAMTMixin extends RowTrackingUpdateSuiteBase with UpdateAMTTestBase {
 
   override def excluded: Seq[String] = super.excluded ++ Seq(
     // These tests create the table with delta.enableRowTracking = false (one to assert row tracking

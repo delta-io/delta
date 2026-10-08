@@ -413,7 +413,7 @@ object SuiteGeneratorConfig {
         ),
         TestConfig(
           List("RowTrackingUpdateCommonTests"),
-          List(List(Dims.ROW_TRACKING_UPDATE_AMT, Dims.UPDATE_ROW_TRACKING_DV.asOptional))
+          List(List(Dims.UPDATE_ROW_TRACKING_DV.asOptional, Dims.ROW_TRACKING_UPDATE_AMT))
         )
       )
     ),
