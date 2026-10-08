@@ -21,16 +21,18 @@ import java.lang.{Long => JLong}
 import java.util.{Collections, List => JList, Optional}
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 import scala.jdk.OptionConverters._
 import scala.reflect.ClassTag
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalArgumentException, DeltaLog, LogSegment, Snapshot}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalArgumentException, DeltaLog, LogSegment, RowId, Snapshot}
 import org.apache.spark.sql.delta.CommitCoordinatorGetCommitsFailedException
 import org.apache.spark.sql.delta.DeltaConfigs.{COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{CommitInfo, DomainMetadata, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -54,7 +56,7 @@ import io.delta.storage.commit.uccommitcoordinator.{
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, LocalFileSystem, Path}
-import org.mockito.ArgumentMatchers.anyString
+import org.mockito.ArgumentMatchers.{any, anyString}
 import org.mockito.Mockito
 import org.mockito.Mockito.{mock, when}
 import org.scalatest.PrivateMethodTester
@@ -63,6 +65,7 @@ import org.scalatest.time.SpanSugar._
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SystemClock
 
 class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
@@ -176,6 +179,68 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
       assert(capturedDomainMetadata.asScala.map(_.getDomain) ===
         Seq("delta.clustering", "delta.rowTracking"))
       assert(capturedDomainMetadata.asScala.map(_.isRemoved) === Seq(false, true))
+    }
+  }
+
+  Seq(false, true).foreach { withConflict =>
+    test(s"commit sends prepared row tracking metadata, withConflict=$withConflict") {
+      withTempTableDir { tempDir =>
+        val log = DeltaLog.forTable(spark, tempDir.toString)
+        val watermarks = ArrayBuffer.empty[Long]
+        val capturingUCClient = new InMemoryUCClient(metastoreId.toString, ucCommitCoordinator) {
+          // scalastyle:off argcount
+          override def commit(
+              tableId: String,
+              tableUri: java.net.URI,
+              tableIdentifier: JTableIdentifier,
+              commit: Optional[JCommit],
+              lastKnownBackfilledVersion: Optional[JLong],
+              oldMetadata: Optional[AbstractMetadata],
+              newMetadata: Optional[AbstractMetadata],
+              oldProtocol: Optional[AbstractProtocol],
+              newProtocol: Optional[AbstractProtocol],
+              transactionDomainMetadata: JList[AbstractDomainMetadata],
+              uniform: Optional[UniformMetadata]): Unit = {
+            if (commit.isPresent) {
+              val stagedDomains = log.store.read(
+                commit.get().getFileStatus.getPath, log.newDeltaHadoopConf())
+                .map(Action.fromJson).collect { case dm: DomainMetadata => dm }
+              assert(transactionDomainMetadata.asScala.map { dm =>
+                (dm.getDomain, dm.getConfiguration, dm.isRemoved)
+              }.toSet === stagedDomains.map { dm =>
+                (dm.domain, dm.configuration, dm.removed)
+              }.toSet)
+              stagedDomains.collect { case RowId.RowTrackingMetadataDomain(domain) =>
+                watermarks += domain.rowIdHighWaterMark
+              }
+            }
+            super.commit(tableId, tableUri, tableIdentifier, commit, lastKnownBackfilledVersion,
+              oldMetadata, newMetadata, oldProtocol, newProtocol,
+              transactionDomainMetadata, uniform)
+          }
+          // scalastyle:on argcount
+        }
+        when(mockFactory.createUCClient(any[java.util.Map[String, String]]()))
+          .thenReturn(capturingUCClient)
+        val metadata = initMetadata()
+        log.startTransaction().commit(Seq(metadata.copy(
+          schemaString = new StructType().add("id", "long").json,
+          configuration = metadata.configuration +
+            (DeltaConfigs.ROW_TRACKING_ENABLED.key -> "true"))), ManualUpdate)
+
+        val txn = log.startTransaction()
+        if (withConflict) {
+          log.startTransaction().commit(
+            Seq(createTestAddFile(encodedPath = "winner", stats = """{"numRecords":3}""")),
+            ManualUpdate)
+        }
+        txn.commit(
+          Seq(createTestAddFile(encodedPath = "data", stats = """{"numRecords":3}""")),
+          ManualUpdate)
+
+        assert(watermarks.toSeq === (if (withConflict) Seq(2L, 2L, 5L) else Seq(2L)))
+        assert(RowId.extractHighWatermark(log.update()).contains(if (withConflict) 5L else 2L))
+      }
     }
   }
 
