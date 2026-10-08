@@ -102,6 +102,22 @@ class ExceptionSuite extends AnyFunSuite {
     assert(ex.getMessage.contains("no log files found"))
   }
 
+  test("isMaxCatalogVersionError classifies only the supplied exception") {
+    val message = "Must provide maxCatalogVersion for catalogManaged tables"
+    val error = DeltaErrors.maxCatalogVersionError(message)
+
+    assert(error.getMessage === message)
+    assert(DeltaErrors.isMaxCatalogVersionError(error))
+    assert(!DeltaErrors.isMaxCatalogVersionError(null))
+    assert(!DeltaErrors.isMaxCatalogVersionError(new KernelException("unrelated error")))
+    assert(!DeltaErrors.isMaxCatalogVersionError(new KernelException(message)))
+    assert(!DeltaErrors.isMaxCatalogVersionError(new KernelException("outer operation", error)))
+
+    val outer = new KernelException("outer operation")
+    outer.addSuppressed(error)
+    assert(!DeltaErrors.isMaxCatalogVersionError(outer))
+  }
+
   // KernelEngineException and KernelException are siblings (both extend RuntimeException), not
   // parent/child. Without an explicit catch clause, wrapEngineException's `catch (KernelException)`
   // fast-path doesn't match a KernelEngineException, so the outer call re-wraps an already-wrapped

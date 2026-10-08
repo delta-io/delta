@@ -157,6 +157,20 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static MaxCatalogVersionException maxCatalogVersionError(String message) {
+    return new MaxCatalogVersionException(message);
+  }
+
+  /**
+   * Returns whether the supplied exception represents a catalog-version presence mismatch.
+   *
+   * <p>Only the supplied exception is classified. Causes and suppressed exceptions can describe
+   * different operations and are not inspected. Returns {@code false} for {@code null}.
+   */
+  public static boolean isMaxCatalogVersionError(KernelException error) {
+    return error instanceof MaxCatalogVersionException;
+  }
+
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
   public static UnsupportedProtocolVersionException unsupportedReaderProtocol(
       String tablePath, int minReaderVersion, int minWriterVersion) {
