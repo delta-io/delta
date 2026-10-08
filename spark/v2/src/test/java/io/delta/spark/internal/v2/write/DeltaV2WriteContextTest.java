@@ -26,7 +26,6 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.delta.kernel.Operation;
 import io.delta.kernel.TableManager;
-import io.delta.kernel.Transaction;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterable;
@@ -46,7 +45,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.shims.VariantShreddingShims;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -54,9 +52,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Unit tests for {@link DeltaV2WriteContext}, the operation-independent base context shared by the
- * batch and streaming write paths. {@link DeltaV2BatchWriteContextTest} covers the batch subclass;
- * this exercises the base directly (the streaming path builds a bare {@code DeltaV2WriteContext}).
+ * Unit tests for {@link DeltaV2WriteContext}, the operation-independent context shared by batch and
+ * streaming write paths.
  */
 public class DeltaV2WriteContextTest extends DeltaV2TestBase {
 
@@ -115,15 +112,7 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
             new TestLogicalWriteInfo(tableSchema),
             /* variantShreddingEnabled */ false);
 
-    // The base is operation-independent: any transaction (here a WRITE txn off the snapshot) can be
-    // turned into the executor-side factory. A real factory with a serialized txn state proves the
-    // shared setup produced usable state.
-    Transaction txn =
-        DeltaV2Snapshot$.MODULE$
-            .getKernelSnapshot(snapshot)
-            .buildUpdateTableTransaction(DeltaV2WriteContext.getEngineInfo(), Operation.WRITE)
-            .build(engine);
-    DeltaV2DataWriterFactory factory = context.buildDataWriterFactory(txn);
+    DeltaV2DataWriterFactory factory = context.buildDataWriterFactory(Operation.WRITE);
     assertNotNull(factory);
   }
 
@@ -193,12 +182,7 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
             new TestLogicalWriteInfo(mixedCaseWriteSchema),
             /* variantShreddingEnabled */ false);
 
-    Transaction txn =
-        DeltaV2Snapshot$.MODULE$
-            .getKernelSnapshot(snapshot)
-            .buildUpdateTableTransaction(DeltaV2WriteContext.getEngineInfo(), Operation.WRITE)
-            .build(engine);
-    assertNotNull(context.buildDataWriterFactory(txn));
+    assertNotNull(context.buildDataWriterFactory(Operation.WRITE));
   }
 
   /**
