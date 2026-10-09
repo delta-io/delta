@@ -1391,7 +1391,9 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       outputSchema = Some(AMTSingleAction.persistedSchema(metadata, protocol)),
       format = new AMTParquetFileFormat)
     val size = rootFile.getFileSystem(hadoopConf).getFileStatus(rootFile).getLen
-    base.copy(contentRoot = ContentRoot(
-      path = rootFile.toString, sizeInBytes = size, version = base.version))
+    updateCheckpointActions(base) {
+      case _: ContentRoot =>
+        ContentRoot(path = rootFile.toString, sizeInBytes = size, version = base.version)
+    }
   }
 }

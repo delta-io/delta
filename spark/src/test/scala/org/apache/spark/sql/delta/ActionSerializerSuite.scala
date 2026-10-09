@@ -33,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{ArrayType, StructType}
 import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
@@ -714,6 +714,69 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
 
     Seq(f1, f2, f3).foreach { file =>
       assert(file === JsonUtils.fromJson[SingleAction](file.json).unwrap)
+    }
+  }
+
+  test("Checkpoint - Spark log schema stores an array of action structs") {
+    val elementSchema = Action.logSchema("checkpoint").dataType match {
+      case ArrayType(schema: StructType, _) => schema
+      case other => fail(s"Expected an array of checkpoint action structs, found $other")
+    }
+    // Compare Spark's inferred array element schema with AMTCheckpointSingleAction's fields.
+    // Keep the expected names explicit to catch accidental changes to the schema.
+    assert(elementSchema.fieldNames.toSeq === Seq(
+      "checkpointMetadata",
+      "contentRoot",
+      "protocol",
+      "metaData",
+      "domainMetadata",
+      "txn",
+      "sidecar"))
+    assert(elementSchema.fields.forall(_.dataType.isInstanceOf[StructType]))
+  }
+
+  // Snapshot replay can decode trailing commit JSON with Spark and call `SingleAction.unwrap`.
+  // A deferred Checkpoint must pass validation before replay ignores its pointer.
+  // Spark ignores Jackson's annotations and custom deserializer, so Jackson round-trip tests
+  // do not cover this path or guarantee that required sidecar types survive decoding.
+  Seq(false, true).foreach { withSidecars =>
+    test(s"Checkpoint - Spark decodes the action array with sidecars=$withSidecars") {
+      import testImplicits._
+
+      val sidecars = if (withSidecars) {
+        Seq(
+          SidecarFile(
+            path = "domain-metadata.parquet",
+            sizeInBytes = 100L,
+            modificationTime = 0L,
+            `type` = Some(SidecarType.Type.DomainMetadata)),
+          SidecarFile(
+            path = "transactions.parquet",
+            sizeInBytes = 2048L,
+            modificationTime = 0L,
+            `type` = Some(SidecarType.Type.Txn)))
+      } else {
+        Seq.empty
+      }
+      val checkpoint = Checkpoint(
+        version = 1L,
+        contentRoot = ContentRoot("metadata/root.parquet", sizeInBytes = 4096L, version = 1L),
+        protocol = Protocol(minReaderVersion = 3, minWriterVersion = 7),
+        metaData = Metadata(id = "metadata-id"),
+        domainMetadata = Seq(
+          DomainMetadata("domain-1", "{}", removed = false),
+          DomainMetadata("domain-2", "{}", removed = false)),
+        txns = Seq(
+          SetTransaction("app-1", 7L, Some(100L)),
+          SetTransaction("app-2", 8L, None)),
+        sidecars = sidecars)
+      val decoded = spark.read.schema(Action.logSchema)
+        .option("mode", "FAILFAST")
+        .json(Seq(checkpoint.json).toDS())
+        .as[SingleAction](SingleAction.encoder)
+        .collect().toSeq
+      assert(decoded === Seq(checkpoint.wrap))
+      assert(decoded.map(_.unwrap) === Seq(checkpoint))
     }
   }
 
