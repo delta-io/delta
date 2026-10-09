@@ -643,8 +643,6 @@ trait CDCReaderImpl extends CDCReaderBase {
   /**
    * Build a dataframe from the specified file index. We can't use a DataFrame scan directly on the
    * file names because that scan wouldn't include partition columns.
-   *
-   * It can optionally take a customReadSchema for the dataframe generated.
    */
   protected def scanIndex(
       spark: SparkSession,
