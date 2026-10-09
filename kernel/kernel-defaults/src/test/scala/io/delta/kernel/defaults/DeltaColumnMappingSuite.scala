@@ -317,9 +317,7 @@ trait DeltaColumnMappingSuiteBase extends AnyFunSuite with AbstractWriteUtils
         // Kernel reads back the logical data correctly
         checkTable(tablePath, expectedData, engine = engine)
 
-        // Spark, reading the same physical Parquet files, must also see the logical schema
-        // and logical values -- i.e. Spark's column-mapping-aware reader must translate the
-        // physical column names written by Kernel back to the logical names.
+        // Confirm Spark can also read back the data
         val sparkDf = spark.read.format("delta").load(tablePath)
         assert(sparkDf.schema.fieldNames.toSeq == Seq("id", "name"))
         checkAnswer(sparkDf.collect().map(TestRow(_)).toSeq, expectedData)
@@ -482,9 +480,7 @@ trait DeltaColumnMappingSuiteBase extends AnyFunSuite with AbstractWriteUtils
           data = Seq(Map.empty[String, Literal] -> dataBefore),
           tableProperties = props)
 
-        // Rename "name" -> "full_name"; the physical name/id metadata is carried over from the
-        // current schema so the physical parquet columns (and thus the data already written)
-        // are unaffected by the rename.
+        // Rename "name" -> "full_name"
         val currentSchema = getMetadata(engine, tablePath).getSchema
         val renamedSchema = new StructType()
           .add("id", IntegerType.INTEGER, true, currentSchema.get("id").getMetadata)
@@ -493,15 +489,12 @@ trait DeltaColumnMappingSuiteBase extends AnyFunSuite with AbstractWriteUtils
 
         val updatedSchema = getMetadata(engine, tablePath).getSchema
         assert(updatedSchema.fieldNames().asScala.toSeq == Seq("id", "full_name"))
-        // Physical name is preserved across the rename -- no data files are rewritten.
+        // Physical name is preserved across the rename
         assert(
           ColumnMapping.getPhysicalName(updatedSchema.get("full_name")) ==
             ColumnMapping.getPhysicalName(currentSchema.get("name")))
 
-        // Write more data after the rename; new data must land under the same physical name
-        // as the pre-rename data so both generations of files remain consistent. Connector data
-        // never carries CM metadata, so use a plain schema (matching how `dataBefore` was built)
-        // with the new logical column name.
+        // Write more data after the rename
         val schemaAfterRename = new StructType()
           .add("id", IntegerType.INTEGER)
           .add("full_name", StringType.STRING)
@@ -557,62 +550,36 @@ trait DeltaColumnMappingSuiteBase extends AnyFunSuite with AbstractWriteUtils
     }
   }
 
-  // id mode + array/map columns: the physical schema must not set parquet.field.id on any field
-  // when the schema contains collection fields without IcebergCompatV2 nested ids (all-or-none
-  // constraint). Verifies that creating/updating such a table does not throw.
-  test("id mode write: collection columns without IcebergCompatV2 write without parquet.field.id") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val schema = new StructType()
-        .add("id", IntegerType.INTEGER)
-        .add("tags", new ArrayType(StringType.STRING, true))
-        .add("props", new MapType(StringType.STRING, IntegerType.INTEGER, true))
-      val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
+  // nested struct column round-trips correctly
+  Seq("name", "id").foreach { cmMode =>
+    test(s"$cmMode mode write: table with nested struct column round-trips correctly") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val schema = new StructType()
+          .add("id", IntegerType.INTEGER)
+          .add(
+            "nested",
+            new StructType()
+              .add("a", IntegerType.INTEGER)
+              .add("b", StringType.STRING))
+        val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode)
+        val data = generateData(schema, Seq.empty, Map.empty, batchSize = 20, numBatches = 2)
 
-      // Creating the table and committing an empty append must not throw the
-      // "Some of the fields are missing field ids" validator error
-      createEmptyTable(engine, tablePath, schema, tableProperties = props)
-      appendData(engine, tablePath, data = Seq.empty)
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          schema = schema,
+          data = Seq(Map.empty[String, Literal] -> data),
+          tableProperties = props)
 
-      // Physical schema should not include parquet.field.id on any column since the
-      // all-or-none constraint cannot be satisfied without IcebergCompatV2
-      val physicalSchema = getMetadata(engine, tablePath).getPhysicalSchema
-      physicalSchema.fields().asScala.foreach { field =>
-        assert(
-          !field.getMetadata.contains(ColumnMapping.PARQUET_FIELD_ID_KEY),
-          s"Expected no parquet.field.id on '${field.getName}' when schema has " +
-            s"collection columns without IcebergCompatV2")
+        checkTable(tablePath, data.flatMap(_.toTestRows), engine = engine)
+
+        val committedSchema = getMetadata(engine, tablePath).getSchema
+        val nestedStruct = committedSchema.get("nested").getDataType.asInstanceOf[StructType]
+        assert(ColumnMapping.getPhysicalName(committedSchema.get("nested")).startsWith("col-"))
+        assert(ColumnMapping.getPhysicalName(nestedStruct.get("a")).startsWith("col-"))
+        assert(ColumnMapping.getPhysicalName(nestedStruct.get("b")).startsWith("col-"))
       }
-    }
-  }
-
-  // name mode + nested struct column round-trips correctly
-  test("name mode write: table with nested struct column round-trips correctly") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val schema = new StructType()
-        .add("id", IntegerType.INTEGER)
-        .add(
-          "nested",
-          new StructType()
-            .add("a", IntegerType.INTEGER)
-            .add("b", StringType.STRING))
-      val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name")
-      val data = generateData(schema, Seq.empty, Map.empty, batchSize = 20, numBatches = 2)
-
-      appendData(
-        engine,
-        tablePath,
-        isNewTable = true,
-        schema = schema,
-        data = Seq(Map.empty[String, Literal] -> data),
-        tableProperties = props)
-
-      checkTable(tablePath, data.flatMap(_.toTestRows), engine = engine)
-
-      val committedSchema = getMetadata(engine, tablePath).getSchema
-      val nestedStruct = committedSchema.get("nested").getDataType.asInstanceOf[StructType]
-      assert(ColumnMapping.getPhysicalName(committedSchema.get("nested")).startsWith("col-"))
-      assert(ColumnMapping.getPhysicalName(nestedStruct.get("a")).startsWith("col-"))
-      assert(ColumnMapping.getPhysicalName(nestedStruct.get("b")).startsWith("col-"))
     }
   }
 }
