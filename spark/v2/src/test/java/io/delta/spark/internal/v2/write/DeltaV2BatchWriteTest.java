@@ -45,6 +45,7 @@ import org.apache.spark.sql.connector.write.DataWriterFactory;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -483,7 +484,8 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                     data,
                     part,
                     WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
-                    /* variantShreddingEnabled */ false)
+                    /* variantShreddingEnabled */ false,
+                    DeltaV2QueryContext$.MODULE$.empty())
                 .toBatch();
 
     DataWriter<InternalRow> writer =
@@ -578,7 +580,8 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 data,
                 part,
                 WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
-                /* variantShreddingEnabled */ false)
+                /* variantShreddingEnabled */ false,
+                DeltaV2QueryContext$.MODULE$.empty())
             .toBatch();
   }
 
@@ -622,7 +625,8 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 data,
                 part,
                 WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
-                /* variantShreddingEnabled */ false)
+                /* variantShreddingEnabled */ false,
+                DeltaV2QueryContext$.MODULE$.empty())
             .toBatch();
   }
 
@@ -653,7 +657,8 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
             PARTITIONED_DATA_SCHEMA,
             PARTITIONED_PART_SCHEMA,
             info,
-            /* variantShreddingEnabled */ false);
+            /* variantShreddingEnabled */ false,
+            DeltaV2QueryContext$.MODULE$.empty());
     return (DeltaV2BatchWrite) write.toBatch();
   }
 
@@ -757,7 +762,8 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 TABLE_SCHEMA,
                 new StructType(),
                 info,
-                /* variantShreddingEnabled */ false)
+                /* variantShreddingEnabled */ false,
+                DeltaV2QueryContext$.MODULE$.empty())
             .toBatch();
   }
 }
