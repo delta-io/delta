@@ -99,7 +99,8 @@ trait ChangelogSupport extends TableCatalog {
       deltaV2Table: DeltaV2Table,
       range: org.apache.spark.sql.connector.catalog.ChangelogRange): (Long, Long) = {
     val snapshotManager = deltaV2Table.getSnapshotManager
-    val latestVersion = snapshotManager.loadLatestSnapshot().version
+    val queryContext = deltaV2Table.getQueryContext
+    val latestVersion = snapshotManager.loadLatestSnapshot(queryContext).version
     range match {
       case vr: VersionRange =>
         val rawStart = vr.startingVersion().toLong
@@ -114,7 +115,8 @@ trait ChangelogSupport extends TableCatalog {
             tr.startingTimestamp / 1000,
             /* canReturnLastCommit */ false,
             /* mustBeRecreatable */ true,
-            /* canReturnEarliestCommit */ false)
+            /* canReturnEarliestCommit */ false,
+            queryContext)
           .getVersion
         val rawEnd: Long = if (tr.endingTimestamp.isPresent) {
           snapshotManager
@@ -122,7 +124,8 @@ trait ChangelogSupport extends TableCatalog {
               tr.endingTimestamp.get / 1000,
               /* canReturnLastCommit */ true,
               /* mustBeRecreatable */ true,
-              /* canReturnEarliestCommit */ false)
+              /* canReturnEarliestCommit */ false,
+              queryContext)
             .getVersion
         } else {
           latestVersion

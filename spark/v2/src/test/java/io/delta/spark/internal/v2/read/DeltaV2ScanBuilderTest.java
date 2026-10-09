@@ -24,6 +24,7 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.TableManagerTestAdapter$;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Arrays;
@@ -547,7 +548,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
         snapshot,
         engine,
         Optional.empty(),
-        snapshotManager,
+        TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
         dataSchema,
         partitionSchema,
         tableSchema,

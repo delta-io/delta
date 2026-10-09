@@ -80,7 +80,6 @@ import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
@@ -125,7 +124,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
   private final Identifier identifier;
   private final String tablePath;
   private final Map<String, String> options;
-  private final DeltaV2SnapshotManager snapshotManager;
+  private final DeltaV2TableManager tableManager;
   private final DeltaV2QueryContext queryContext;
   /** Snapshot created during connector setup */
   private final Snapshot initialSnapshot;
@@ -248,18 +247,16 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
 
     SparkSession activeSession = SparkSession.active();
     this.hadoopConf = activeSession.sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    DeltaV2TableManager tableManager =
+    this.tableManager =
         DeltaV2TableManagerCache$.MODULE$.forTable(
             activeSession, tablePath, options, catalogTableOpt);
     this.kernelEngine = tableManager.kernelContext().getDefaultEngine();
-    this.snapshotManager = tableManager.snapshotManager(catalogTableOpt);
     try {
       if (timeTravelVersion.isPresent()) {
         this.initialSnapshot =
-            loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong());
+            loadSnapshotAtCheckedVersion(tableManager, timeTravelVersion.getAsLong());
       } else {
-        Supplier<Snapshot> loadLatestSnapshot =
-            () -> snapshotManager.loadLatestSnapshot(queryContext);
+        Supplier<Snapshot> loadLatestSnapshot = () -> tableManager.loadLatestSnapshot(queryContext);
         this.initialSnapshot = recordFrameProfileValue("snapshot.loadLatest", loadLatestSnapshot);
       }
     } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
@@ -279,7 +276,12 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
 
     Optional<PersistedMetadata> persistedMetadata =
         MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-            SparkSession.active(), initialSnapshot, options, snapshotManager, kernelEngine);
+            SparkSession.active(),
+            initialSnapshot,
+            options,
+            tableManager,
+            kernelEngine,
+            queryContext);
 
     StructType rawSchema;
     List<String> partitionColumnNames;
@@ -350,13 +352,18 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
     return options;
   }
 
+  /** Returns the immutable request context that resolved this table. */
+  public DeltaV2QueryContext getQueryContext() {
+    return queryContext;
+  }
+
   /**
-   * Returns the snapshot manager backing this table. Catalog-driven features such as read-time CDF
-   * (TableCatalog.loadChangelog) use this to resolve versions, timestamps, and snapshots without
-   * having to build their own snapshot manager.
+   * Returns the table manager for operations using query-scoped inputs. Catalog-driven features
+   * such as read-time CDF (TableCatalog.loadChangelog) use this to resolve versions, timestamps,
+   * and snapshots without building their own manager.
    */
-  public DeltaV2SnapshotManager getSnapshotManager() {
-    return snapshotManager;
+  public DeltaV2TableManager getTableManager() {
+    return tableManager;
   }
 
   /** The table protocol from the initial snapshot. */
@@ -391,7 +398,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
 
   /** Returns a copy of this table pinned to the snapshot active at {@code timestampMicros}. */
   public DeltaV2Table withTimestamp(long timestampMicros) {
-    return withVersion(resolveTimestampToVersion(snapshotManager, timestampMicros, queryContext));
+    return withVersion(resolveTimestampToVersion(tableManager, timestampMicros, queryContext));
   }
 
   /**
@@ -402,7 +409,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
    * share a singular load once the snapshot manager exposes it TODO(#5999).
    */
   private static long resolveTimestampToVersion(
-      DeltaV2SnapshotManager manager, long timestampMicros, DeltaV2QueryContext queryContext) {
+      DeltaV2TableManager manager, long timestampMicros, DeltaV2QueryContext queryContext) {
     long timeMillis = timestampMicros / 1000;
     DeltaHistoryManager.Commit commit =
         manager.getActiveCommitAtTime(
@@ -550,7 +557,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         initialSnapshot,
         kernelEngine,
         catalogTable,
-        snapshotManager,
+        tableManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
         schemaProvider.getRawSchema(),
@@ -561,7 +568,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
   /**
    * Validates that {@code version} exists in the Delta log, then loads the snapshot pinned to it.
    */
-  private Snapshot loadSnapshotAtCheckedVersion(DeltaV2SnapshotManager manager, long version) {
+  private Snapshot loadSnapshotAtCheckedVersion(DeltaV2TableManager manager, long version) {
     boolean mustBeRecreatable = true;
     boolean allowOutOfRange = false;
     manager.checkVersionExists(version, mustBeRecreatable, allowOutOfRange, queryContext);
@@ -578,10 +585,11 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         hadoopConf,
         initialSnapshot,
         catalogTable,
-        snapshotManager,
+        tableManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
-        info);
+        info,
+        queryContext);
   }
 
   /**

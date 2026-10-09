@@ -23,6 +23,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.InternalRowTestUtils;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.TableManagerTestAdapter$;
 import java.io.File;
 import java.util.Optional;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -30,6 +31,7 @@ import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -133,11 +135,12 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            snapshotManager,
+            TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
             TABLE_SCHEMA,
             new StructType(),
             info,
-            /* variantShreddingEnabled */ false);
+            /* variantShreddingEnabled */ false,
+            DeltaV2QueryContext$.MODULE$.empty());
     return (DeltaV2DataWriterFactory)
         write.toBatch().createBatchWriterFactory(WriteTestUtils.physicalWriteInfo(1));
   }

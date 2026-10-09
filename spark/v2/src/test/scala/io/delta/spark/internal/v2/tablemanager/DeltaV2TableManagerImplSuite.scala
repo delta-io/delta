@@ -16,9 +16,12 @@
 package io.delta.spark.internal.v2.tablemanager
 
 import java.io.File
-import java.util.Collections
+import java.util.{Collections, EnumSet, Optional}
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import io.delta.spark.internal.v2.exception.VersionNotFoundException
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
+import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
@@ -68,7 +71,7 @@ class DeltaV2TableManagerImplSuite
     }
   }
 
-  test("snapshotManager loads table history through path and catalog managers") {
+  test("query context APIs load table history through path and catalog managers") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       spark.range(0, 1, 1, 1).write.format("delta").save(path)
@@ -76,6 +79,7 @@ class DeltaV2TableManagerImplSuite
       spark.range(2, 3, 1, 1).write.format("delta").mode("append").save(path)
 
       forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
+        val queryContext = DeltaV2QueryContext(catalogTableOpt)
         val kernelEngine = manager.kernelContext.getDefaultEngine()
         val atVersionZeroManager = manager.snapshotManager(catalogTableOpt)
         val atVersionOneManager = manager.snapshotManager(catalogTableOpt)
@@ -85,17 +89,65 @@ class DeltaV2TableManagerImplSuite
         assert(atVersionOneManager eq latestManager)
         assert(manager.kernelContext.getDefaultEngine() eq kernelEngine)
 
-        val atVersionZero = atVersionZeroManager.loadSnapshotAt(0)
+        val atVersionZero = manager.loadSnapshotAt(0, queryContext)
         assert(atVersionZero.version == 0)
         assert(atVersionZero.allFiles.count() == 1)
 
-        val atVersionOne = atVersionOneManager.loadSnapshotAt(1)
+        val atVersionOne = manager.loadSnapshotAt(1, queryContext)
         assert(atVersionOne.version == 1)
         assert(atVersionOne.allFiles.count() == 2)
 
-        val latest = latestManager.loadLatestSnapshot()
+        val latest = manager.loadLatestSnapshot(queryContext)
         assert(latest.version == 2)
         assert(latest.allFiles.count() == 3)
+
+        val activeCommit = manager.getActiveCommitAtTime(
+          Long.MaxValue,
+          canReturnLastCommit = true,
+          mustBeRecreatable = true,
+          canReturnEarliestCommit = false,
+          queryContext = queryContext)
+        assert(activeCommit.getVersion == 2)
+
+        manager.checkVersionExists(1, true, false, queryContext)
+        intercept[VersionNotFoundException] {
+          manager.checkVersionExists(3, true, false, queryContext)
+        }
+        manager.checkVersionExists(3, true, true, queryContext)
+
+        val changes = manager.getTableChanges(
+          kernelEngine, 1, Optional.of(java.lang.Long.valueOf(1)), queryContext)
+        val commits = changes.getCommitActions(
+          kernelEngine, EnumSet.allOf(classOf[KernelDeltaAction]))
+        try {
+          assert(commits.hasNext)
+          val commit = commits.next()
+          try {
+            assert(commit.getVersion == 1)
+          } finally {
+            commit.close()
+          }
+          assert(!commits.hasNext)
+        } finally {
+          commits.close()
+        }
+      }
+    }
+  }
+
+  test("query context APIs reject null context") {
+    withTempDir { dir =>
+      val manager = DeltaV2TableManagerCache.forTable(
+        spark, dir.getCanonicalPath, Collections.emptyMap())
+      val operations = Seq[() => Any](
+        () => manager.loadLatestSnapshot(null),
+        () => manager.loadSnapshotAt(0, null),
+        () => manager.getActiveCommitAtTime(0, false, false, false, null),
+        () => manager.checkVersionExists(0, false, false, null),
+        () => manager.getTableChanges(null, 0, Optional.empty(), null))
+      operations.foreach { operation =>
+        val error = intercept[NullPointerException](operation())
+        assert(error.getMessage == "queryContext is null")
       }
     }
   }
