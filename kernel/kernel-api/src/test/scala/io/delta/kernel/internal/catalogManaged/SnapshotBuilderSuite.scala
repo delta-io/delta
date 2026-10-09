@@ -24,7 +24,7 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{KernelException, MaxCatalogVersionException, UnsupportedProtocolVersionException, UnsupportedTableFeatureException}
+import io.delta.kernel.exceptions.{KernelException, UnsupportedProtocolVersionException, UnsupportedTableFeatureException}
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData, ParsedPublishedDeltaData}
@@ -346,7 +346,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
     // Input validation should not throw (but will throw later when trying to construct log segment)
     val exMsg = intercept[Exception] {
       TableManager.loadSnapshot(dataPath.toString)
-        .atTimestamp(500L, mockSnapshotAtVersion10)
+        .atTimestamp(0L, mockSnapshotAtVersion10)
         .withMaxCatalogVersion(10)
         .build(emptyMockEngine)
     }.getMessage
@@ -419,30 +419,5 @@ class SnapshotBuilderSuite extends AnyFunSuite
       .withLogData(parsedRatifiedStagedCommits(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)).toList.asJava)
       .withMaxCatalogVersion(10)
       .build(emptyMockEngine)
-  }
-
-  test("validateMaxCatalogVersionPresence: catalogManaged table requires maxCatalogVersion") {
-    val error = intercept[MaxCatalogVersionException] {
-      TableManager.loadSnapshot(dataPath.toString)
-        .atVersion(1)
-        .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
-        .build(emptyMockEngine)
-    }
-
-    assert(error.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
-  }
-
-  test(
-    "validateMaxCatalogVersionPresence: non-catalogManaged table cannot have maxCatalogVersion") {
-    val error = intercept[MaxCatalogVersionException] {
-      TableManager.loadSnapshot(dataPath.toString)
-        .atVersion(1)
-        .withProtocolAndMetadata(protocol, metadata) // protocol without catalogManaged
-        .withMaxCatalogVersion(1)
-        .build(emptyMockEngine)
-    }
-
-    assert(error.getMessage ===
-      "Should not provide maxCatalogVersion for file-system managed tables")
   }
 }

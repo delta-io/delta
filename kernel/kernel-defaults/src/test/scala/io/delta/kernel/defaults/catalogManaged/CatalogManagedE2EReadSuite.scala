@@ -16,22 +16,29 @@
 
 package io.delta.kernel.defaults.catalogManaged
 
+import java.io.File
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.{Files, Paths}
+
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.{SnapshotBuilder, TableManager}
+import io.delta.kernel.{Operation, SnapshotBuilder, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
+import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.{KernelException, MaxCatalogVersionException}
-import io.delta.kernel.internal.DeltaHistoryManager
+import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl}
 import io.delta.kernel.internal.commitrange.CommitRangeImpl
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{isCatalogManagedSupported, CATALOG_MANAGED_RW_FEATURE, IN_COMMIT_TIMESTAMP_W_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import io.delta.kernel.utils.FileStatus
 
+import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -309,8 +316,6 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
     }
   }
 
-  // We test this in the unit tests as well, but since those use the withProtocolAndMetadata API
-  // we also test it here with a real table where we load the P&M from the log
   test("reading a catalogManaged table without providing maxCatalogVersion fails") {
     withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
       // With logData
@@ -321,14 +326,31 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
           .build(defaultEngine)
       }
       assert(latestError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
-      // Without logData (and with time-travel-version)
-      val versionError = intercept[MaxCatalogVersionException] {
+      // Without logData
+      val noLogDataError = intercept[MaxCatalogVersionException] {
+        TableManager
+          .loadSnapshot(tablePath)
+          .build(defaultEngine)
+      }
+      assert(
+        noLogDataError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
+      // With time-travel-version
+      val e1 = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .atVersion(0)
           .build(defaultEngine)
       }
-      assert(versionError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
+      assert(e1.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
+      // With time-travel-version and logData
+      val e2 = intercept[MaxCatalogVersionException] {
+        TableManager
+          .loadSnapshot(tablePath)
+          .atVersion(2)
+          .withLogData(parsedLogData.asJava)
+          .build(defaultEngine)
+      }
+      assert(e2.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
     }
   }
 
@@ -345,6 +367,179 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
       }
       assert(error.getMessage ===
         "Should not provide maxCatalogVersion for file-system managed tables")
+      // With time-travel-version
+      val e = intercept[MaxCatalogVersionException] {
+        TableManager
+          .loadSnapshot(tablePath)
+          .atVersion(0)
+          .withMaxCatalogVersion(0)
+          .build(engine)
+      }
+      assert(e.getMessage === "Should not provide maxCatalogVersion for file-system managed tables")
+    }
+  }
+
+  /**
+   * Creates a file-system managed table at version 0 and upgrades it to catalogManaged at version
+   * 1. When `publishUpgrade` is false, the upgrade commit is moved into _staged_commits and passed
+   * to `testFx` as ratified log data, simulating a catalog that has not yet published it.
+   */
+  private def withUpgradedToCatalogManagedTable(publishUpgrade: Boolean)(
+      testFx: (String, Long, List[ParsedLogData]) => Unit): Unit = {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      createEmptyTable(
+        tablePath = tablePath,
+        schema = testSchema,
+        tableProperties = Map("delta.enableInCommitTimestamps" -> "true"))
+      val v0Timestamp =
+        TableManager.loadSnapshot(tablePath).build(defaultEngine).getTimestamp(defaultEngine)
+
+      TableManager
+        .loadSnapshot(tablePath)
+        .withCommitter(customCatalogCommitter)
+        .build(defaultEngine)
+        .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
+        .withTablePropertiesAdded(
+          (customCatalogCommitter.getRequiredTableProperties.asScala ++
+            Map(CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported")).asJava)
+        .build(defaultEngine)
+        .commit(defaultEngine, emptyIterable[Row])
+
+      val parsedLogData = if (publishUpgrade) {
+        Nil
+      } else {
+        val logPath = new Path(tablePath, "_delta_log")
+        val stagedCommit = FileNames.stagedCommitFile(logPath, 1)
+        Files.createDirectories(Paths.get(FileNames.stagedCommitDirectory(logPath)))
+        Files.move(Paths.get(FileNames.deltaFile(logPath, 1)), Paths.get(stagedCommit))
+        val resolvedStagedCommit = defaultEngine.getFileSystemClient.resolvePath(stagedCommit)
+        List(ParsedLogData.forFileStatus(FileStatus.of(resolvedStagedCommit)))
+      }
+      testFx(tablePath, v0Timestamp, parsedLogData)
+    }
+  }
+
+  test("time travel across catalogManaged upgrade") {
+    withUpgradedToCatalogManagedTable(publishUpgrade = true) { (tablePath, v0Timestamp, _) =>
+      val latestSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .withMaxCatalogVersion(1)
+        .build(defaultEngine)
+      assert(isCatalogManagedSupported(latestSnapshot.asInstanceOf[SnapshotImpl].getProtocol))
+
+      val versionSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .atVersion(0)
+        .withMaxCatalogVersion(1)
+        .build(defaultEngine)
+      assert(versionSnapshot.getVersion === 0)
+
+      // Pre-upgrade versions are fully published file-system managed history, so version time
+      // travel to them does not load the latest protocol.
+      val pathBasedVersionSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .atVersion(0)
+        .build(defaultEngine)
+      assert(pathBasedVersionSnapshot.getVersion === 0)
+
+      val e1 = intercept[MaxCatalogVersionException] {
+        TableManager
+          .loadSnapshot(tablePath)
+          .atVersion(1)
+          .build(defaultEngine)
+      }
+      assert(e1.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
+
+      val timestampSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .atTimestamp(v0Timestamp, latestSnapshot)
+        .withMaxCatalogVersion(1)
+        .build(defaultEngine)
+      assert(timestampSnapshot.getVersion === 0)
+
+      val e2 = intercept[MaxCatalogVersionException] {
+        TableManager
+          .loadSnapshot(tablePath)
+          .atTimestamp(v0Timestamp, latestSnapshot)
+          .build(defaultEngine)
+      }
+      assert(e2.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
+    }
+  }
+
+  test("time travel across unpublished catalogManaged upgrade") {
+    withUpgradedToCatalogManagedTable(publishUpgrade = false) { (tablePath, _, parsedLogData) =>
+      val e = intercept[MaxCatalogVersionException] {
+        TableManager
+          .loadSnapshot(tablePath)
+          .atVersion(1)
+          .withLogData(parsedLogData.asJava)
+          .build(defaultEngine)
+      }
+      assert(e.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
+
+      val versionSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .atVersion(0)
+        .withLogData(parsedLogData.asJava)
+        .withMaxCatalogVersion(1)
+        .build(defaultEngine)
+      assert(versionSnapshot.getVersion === 0)
+    }
+  }
+
+  test("time travel across catalogManaged downgrade") {
+    withTempDir { tempDir =>
+      FileUtils.copyDirectory(new File(getTestResourceFilePath("catalog-owned-preview")), tempDir)
+      val tablePath = tempDir.getCanonicalPath
+
+      // inCommitTimestamp of the catalog-owned-preview table's version 0
+      val v0Timestamp = 1749830855993L
+      val downgradeCommit =
+        s"""{"commitInfo":{"inCommitTimestamp":${v0Timestamp + 1},""" +
+          s""""timestamp":${v0Timestamp + 1}}}""" + "\n" +
+          """{"protocol":{"minReaderVersion":3,"minWriterVersion":7,"readerFeatures":[],""" +
+          """"writerFeatures":["inCommitTimestamp","invariants","appendOnly",""" +
+          """"checkpointProtection"]}}""" + "\n"
+      Files.write(
+        Paths.get(FileNames.deltaFile(new Path(tablePath, "_delta_log"), 1)),
+        downgradeCommit.getBytes(UTF_8))
+
+      val versionSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .atVersion(0)
+        .build(defaultEngine)
+      assert(versionSnapshot.getVersion === 0)
+
+      val e1 = intercept[MaxCatalogVersionException] {
+        TableManager
+          .loadSnapshot(tablePath)
+          .atVersion(1)
+          .withMaxCatalogVersion(1)
+          .build(defaultEngine)
+      }
+      assert(
+        e1.getMessage === "Should not provide maxCatalogVersion for file-system managed tables")
+
+      val latestSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .build(defaultEngine)
+      val timestampSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .atTimestamp(v0Timestamp, latestSnapshot)
+        .build(defaultEngine)
+      assert(timestampSnapshot.getVersion === 0)
+
+      val e2 = intercept[MaxCatalogVersionException] {
+        TableManager
+          .loadSnapshot(tablePath)
+          .atTimestamp(v0Timestamp, latestSnapshot)
+          .withMaxCatalogVersion(1)
+          .build(defaultEngine)
+      }
+      assert(
+        e2.getMessage === "Should not provide maxCatalogVersion for file-system managed tables")
     }
   }
 
