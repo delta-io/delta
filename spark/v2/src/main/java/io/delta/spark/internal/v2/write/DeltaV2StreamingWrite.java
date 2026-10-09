@@ -31,6 +31,7 @@ import org.apache.spark.sql.connector.write.streaming.StreamingWrite;
 import org.apache.spark.sql.delta.DeltaConfigs;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.actions.Protocol;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.types.StructType;
@@ -64,6 +65,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
 
   private final Engine engine;
   private final DeltaV2SnapshotManager snapshotManager;
+  private final DeltaV2QueryContext queryContext;
   private final String queryId;
   private final DeltaV2WriteContext context;
   // The write state's schema/protocol baseline; the per-epoch guard fails if the table diverges.
@@ -81,10 +83,14 @@ class DeltaV2StreamingWrite implements StreamingWrite {
    * @param snapshotManager reloads the latest snapshot per epoch (see {@link #commit})
    * @param context shared write setup
    */
-  DeltaV2StreamingWrite(DeltaV2SnapshotManager snapshotManager, DeltaV2WriteContext context) {
+  DeltaV2StreamingWrite(
+      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2WriteContext context,
+      DeltaV2QueryContext queryContext) {
     this.context = requireNonNull(context, "context is null");
     this.engine = requireNonNull(context.getEngine(), "engine is null");
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
+    this.queryContext = requireNonNull(queryContext, "queryContext is null");
     this.queryId = requireNonNull(context.getWriteInfo().queryId(), "queryId is null");
     Snapshot initialSnapshot =
         requireNonNull(context.getInitialSnapshot(), "initialSnapshot is null");
@@ -112,7 +118,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     // (TransactionBuilder) for the streaming commit, and
     // getLatestTransactionVersion for the epoch-skip check.
     // One reload, so the skip check, guards, and the transaction below all judge the same snapshot.
-    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
+    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot(queryContext);
     SnapshotImpl kernelLatestSnapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(latestSnapshot);
 
     // Skip an already-committed epoch before any guard runs. StreamingWrite.commit may be called

@@ -38,6 +38,8 @@ import io.delta.spark.internal.v2.read.CDCDataFile;
 import java.io.IOException;
 import java.util.*;
 import org.apache.spark.annotation.Experimental;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 
 /**
@@ -223,6 +225,22 @@ public class StreamingHelper {
       DeltaV2SnapshotManager snapshotManager,
       Engine engine,
       String tablePath) {
+    return collectMetadataActionsFromRangeUnsafe(
+        startVersion,
+        endVersionOpt,
+        snapshotManager,
+        engine,
+        tablePath,
+        DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
+  }
+
+  public static Map<Long, Metadata> collectMetadataActionsFromRangeUnsafe(
+      long startVersion,
+      Optional<Long> endVersionOpt,
+      DeltaV2SnapshotManager snapshotManager,
+      Engine engine,
+      String tablePath,
+      DeltaV2QueryContext originalQueryContext) {
     return collectActionsFromRangeUnsafe(
         startVersion,
         endVersionOpt,
@@ -230,7 +248,8 @@ public class StreamingHelper {
         engine,
         tablePath,
         DeltaLogActionUtils.DeltaAction.METADATA,
-        StreamingHelper::getMetadata);
+        StreamingHelper::getMetadata,
+        originalQueryContext);
   }
 
   /**
@@ -259,6 +278,22 @@ public class StreamingHelper {
       DeltaV2SnapshotManager snapshotManager,
       Engine engine,
       String tablePath) {
+    return collectProtocolActionsFromRangeUnsafe(
+        startVersion,
+        endVersionOpt,
+        snapshotManager,
+        engine,
+        tablePath,
+        DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
+  }
+
+  public static Map<Long, Protocol> collectProtocolActionsFromRangeUnsafe(
+      long startVersion,
+      Optional<Long> endVersionOpt,
+      DeltaV2SnapshotManager snapshotManager,
+      Engine engine,
+      String tablePath,
+      DeltaV2QueryContext originalQueryContext) {
     return collectActionsFromRangeUnsafe(
         startVersion,
         endVersionOpt,
@@ -266,7 +301,8 @@ public class StreamingHelper {
         engine,
         tablePath,
         DeltaLogActionUtils.DeltaAction.PROTOCOL,
-        StreamingHelper::getProtocol);
+        StreamingHelper::getProtocol,
+        originalQueryContext);
   }
 
   /** Extracts an action of type {@code T} from a single row of a {@link ColumnarBatch}. */
@@ -287,9 +323,12 @@ public class StreamingHelper {
       Engine engine,
       String tablePath,
       DeltaLogActionUtils.DeltaAction actionType,
-      RowExtractor<T> extractor) {
+      RowExtractor<T> extractor,
+      DeltaV2QueryContext originalQueryContext) {
     CommitRangeImpl commitRange =
-        (CommitRangeImpl) snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
+        (CommitRangeImpl)
+            snapshotManager.getTableChanges(
+                engine, startVersion, endVersionOpt, originalQueryContext);
     // LinkedHashMap to preserve insertion order
     Map<Long, T> versionToAction = new LinkedHashMap<>();
 
