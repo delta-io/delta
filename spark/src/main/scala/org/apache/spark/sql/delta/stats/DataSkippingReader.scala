@@ -265,6 +265,7 @@ trait DataSkippingReaderBase
   with StatisticsCollection
   with ReadsMetadataFields
   with StateCache
+  with ConflictDataSkippingReader
   with DeltaLogging {
 
   import DataSkippingReader._
