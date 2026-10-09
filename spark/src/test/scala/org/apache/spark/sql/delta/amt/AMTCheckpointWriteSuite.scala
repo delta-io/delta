@@ -973,6 +973,5 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     replaced_rows_count = 0L,
     modified_rows_count = 0L,
     min_sequence_number = 0L,
-    dv = None,
-    dv_cardinality = None)
+    dv = None)
 }

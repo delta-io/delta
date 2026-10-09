@@ -263,9 +263,9 @@ class AMTIncrementalWriteCoreSuite extends AMTIncrementalWriteTestBase {
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(victim))
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(victim.remove))
         // The two removes share one (leaf, position), which the writer holds as a set, so the write
-        // reports a single MDV bit, matching what the leaf's bitmap actually gains. That
-        // agreement is what lets this go through the shared validator, whose second check
-        // derives the bits from the on-disk dv_cardinality delta.
+        // reports a single DV bit, matching what the leaf's bitmap actually gains. That
+        // agreement is what lets this go through the shared validator, which decodes the on-disk
+        // DV bitmap.
         createIncrementalAMTAndValidate(
           baselineDeltaLog,
           amtDeltaLog,

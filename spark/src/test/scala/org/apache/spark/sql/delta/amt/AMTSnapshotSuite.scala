@@ -1150,7 +1150,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     // Patch the first leaf's pointer with an MDV marking `deletedPos` deleted, then reconstruct.
     val patchedLeaves =
       leaf.copy(manifest_info =
-        leaf.manifest_info.copy(dv = Some(mdvBytesFor(deletedPos)), dv_cardinality = Some(1L))) +:
+        leaf.manifest_info.copy(dv = Some(mdvBytesFor(deletedPos)))) +:
         base.leaves.tail
     val provider = new AMTCheckpointProvider(
       base.manifestCommitVersion, base.checkpointAction, patchedLeaves, base.tableRoot)
@@ -1185,7 +1185,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     def withMdv(idx: Int, positions: Seq[Long]): DataManifestEntry = {
       val leaf = base.leaves(idx)
       leaf.copy(manifest_info = leaf.manifest_info.copy(
-        dv = Some(mdvBytesFor(positions: _*)), dv_cardinality = Some(positions.size.toLong)))
+        dv = Some(mdvBytesFor(positions: _*))))
     }
     // Exercise every MDV shape in one tree (positions are leaf-local row indices):
     //   - one leaf: drop a single position (pos 0),
@@ -1282,7 +1282,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     val patched = base.leaves.map { leaf =>
       if (leaf eq bLeafAndPos._1) {
         leaf.copy(manifest_info = leaf.manifest_info.copy(
-          dv = Some(mdvBytesFor(bLeafAndPos._2)), dv_cardinality = Some(1L)))
+          dv = Some(mdvBytesFor(bLeafAndPos._2))))
       } else leaf
     }
     val provider = new AMTCheckpointProvider(
@@ -1305,31 +1305,6 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       "The surviving entry must retain its deletion vector after MDV filtering.")
     assert(a.getString(2) == aStats,
       "The surviving entry's stats must be unchanged by MDV filtering.")
-  }
-
-  testAcrossAMTCheckpointScenarios(
-      "a manifest DV with only one of dv/dv_cardinality set is rejected",
-      "amt_mdv_malformed",
-      sqlConfs = leafPackingConfs)(
-      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
-      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
-    val base = context.provider
-
-    // `dv` set but `dv_cardinality` missing: the AMT spec requires both or neither.
-    val patched =
-      base.leaves.head.copy(manifest_info = base.leaves.head.manifest_info.copy(
-        dv = Some(mdvBytesFor(0L)), dv_cardinality = None)) +:
-        base.leaves.tail
-    val provider = new AMTCheckpointProvider(
-      base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
-
-    val e = intercept[IllegalStateException] {
-      provider.loadActionsForStateReconstruction(
-        spark, context.postCheckpointSnapshot.deltaLog)
-    }
-    assert(e.getMessage.contains("dv and dv_cardinality must both be set or both unset"),
-      s"Unexpected message: ${e.getMessage}")
   }
 
   /** Reconstructed live `add.path`s from the (possibly MDV-patched) provider. */

@@ -84,8 +84,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     replaced_rows_count = 0L,
     modified_rows_count = 7L,
     min_sequence_number = 3L,
-    dv = None,
-    dv_cardinality = None)
+    dv = None)
 
   test("encoder schema has the expected V4 column names in order") {
     assert(spark.emptyDataset[AMTSingleAction].schema.fieldNames.toSeq == Seq(
@@ -294,7 +293,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
           deleted_positions = Some(deletedPos), replaced_positions = Some(replacedPos)),
         record_count = 1L,
         file_size_in_bytes = 1L,
-        manifest_info = sampleManifestInfo.copy(dv = Some(manifestDv), dv_cardinality = Some(2L)),
+        manifest_info = sampleManifestInfo.copy(dv = Some(manifestDv)),
         key_metadata = Some(keyMeta)).wrap
       val path = new java.io.File(dir, "binary").getCanonicalPath
       spark.createDataset(Seq(entry)).write.parquet(path)
