@@ -248,7 +248,7 @@ class CachedSnapshotManagerSuite
               Identifier.of(Array("default"), laterTableName),
               laterCatalogTable,
               Collections.emptyMap[String, String]())
-            assert(originalTable.getSnapshotManager eq laterTable.getSnapshotManager)
+            assert(originalTable.getTableManager eq laterTable.getTableManager)
 
             val laterPublicationAtMs = System.currentTimeMillis()
             awaitClockAfter(laterPublicationAtMs)

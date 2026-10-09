@@ -7,6 +7,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.TableManagerTestAdapter$;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
 import java.lang.reflect.Field;
@@ -1038,9 +1039,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
   private static void setSnapshotManager(DeltaV2Scan scan, PathBasedSnapshotManager snapshotManager)
       throws Exception {
-    Field snapshotManagerField = DeltaV2Scan.class.getDeclaredField("snapshotManager");
-    snapshotManagerField.setAccessible(true);
-    snapshotManagerField.set(scan, snapshotManager);
+    Field tableManagerField = DeltaV2Scan.class.getDeclaredField("tableManager");
+    tableManagerField.setAccessible(true);
+    tableManagerField.set(scan, TableManagerTestAdapter$.MODULE$.apply(snapshotManager));
   }
 
   private static final class RecordingPathBasedSnapshotManager extends PathBasedSnapshotManager {

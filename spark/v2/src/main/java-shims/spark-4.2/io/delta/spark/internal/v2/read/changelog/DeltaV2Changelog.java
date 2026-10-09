@@ -63,7 +63,7 @@ public class DeltaV2Changelog implements Changelog {
     // each per-commit Metadata against this same end-version schema.
     Snapshot endSnapshot =
         deltaV2Table
-            .getSnapshotManager()
+            .getTableManager()
             .loadSnapshotAt(endVersion, deltaV2Table.getQueryContext());
     StructType endSchema = endSnapshot.schema();
     StructType cdcSchema =

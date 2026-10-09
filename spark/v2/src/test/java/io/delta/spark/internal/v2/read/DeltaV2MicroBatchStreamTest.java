@@ -23,6 +23,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.TableManagerTestAdapter$;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.io.File;
@@ -2108,7 +2109,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     DeltaV2MicroBatchStream stream =
         new DeltaV2MicroBatchStream(
-            snapshotManager,
+            TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
             snapshotManager.loadLatestSnapshot(),
             spark.sessionState().newHadoopConf(),
             spark,
@@ -2293,7 +2294,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     DeltaV2MicroBatchStream stream =
         new DeltaV2MicroBatchStream(
-            snapshotManager,
+            TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
             snapshotManager.loadLatestSnapshot(),
             spark.sessionState().newHadoopConf(),
             spark,
@@ -4343,7 +4344,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     String tablePath = snapshot.dataPath().toString();
     StructType tableSchema = snapshot.schema();
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
         snapshot,
         hadoopConf,
         spark,
@@ -4369,7 +4370,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       String metadataPath) {
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
         snapshot,
         hadoopConf,
         spark,

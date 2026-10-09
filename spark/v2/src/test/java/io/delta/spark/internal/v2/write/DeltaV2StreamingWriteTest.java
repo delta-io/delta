@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.InternalRowTestUtils;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.TableManagerTestAdapter$;
 import java.io.File;
 import java.util.List;
 import java.util.Optional;
@@ -147,7 +148,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
                     path,
                     snapshot,
                     Optional.empty(),
-                    snapshotManager,
+                    TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
                     TABLE_SCHEMA,
                     new StructType(),
                     info,
@@ -646,7 +647,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            snapshotManager,
+            TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
             TABLE_SCHEMA,
             new StructType(),
             info,
@@ -712,7 +713,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            snapshotManager,
+            TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
             VARIANT_TABLE_SCHEMA,
             new StructType(),
             info,
@@ -756,7 +757,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            snapshotManager,
+            TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
             PARTITIONED_DATA_SCHEMA,
             PARTITIONED_PART_SCHEMA,
             info,

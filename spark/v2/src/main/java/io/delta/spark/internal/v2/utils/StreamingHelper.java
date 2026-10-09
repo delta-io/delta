@@ -35,12 +35,12 @@ import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.read.CDCDataFile;
+import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManager;
 import java.io.IOException;
 import java.util.*;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 
 /**
  * Helper class providing utilities for working with Delta table data in streaming scenarios.
@@ -215,20 +215,20 @@ public class StreamingHelper {
    *
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
-   * @param snapshotManager snapshot manager backing the table
+   * @param tableManager snapshot manager backing the table
    * @param engine Delta kernel engine
    * @param tablePath path to the Delta table
    */
   public static Map<Long, Metadata> collectMetadataActionsFromRangeUnsafe(
       long startVersion,
       Optional<Long> endVersionOpt,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       String tablePath) {
     return collectMetadataActionsFromRangeUnsafe(
         startVersion,
         endVersionOpt,
-        snapshotManager,
+        tableManager,
         engine,
         tablePath,
         DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
@@ -237,14 +237,14 @@ public class StreamingHelper {
   public static Map<Long, Metadata> collectMetadataActionsFromRangeUnsafe(
       long startVersion,
       Optional<Long> endVersionOpt,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       String tablePath,
       DeltaV2QueryContext originalQueryContext) {
     return collectActionsFromRangeUnsafe(
         startVersion,
         endVersionOpt,
-        snapshotManager,
+        tableManager,
         engine,
         tablePath,
         DeltaLogActionUtils.DeltaAction.METADATA,
@@ -268,20 +268,20 @@ public class StreamingHelper {
    *
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
-   * @param snapshotManager snapshot manager backing the table
+   * @param tableManager snapshot manager backing the table
    * @param engine Delta kernel engine
    * @param tablePath path to the Delta table
    */
   public static Map<Long, Protocol> collectProtocolActionsFromRangeUnsafe(
       long startVersion,
       Optional<Long> endVersionOpt,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       String tablePath) {
     return collectProtocolActionsFromRangeUnsafe(
         startVersion,
         endVersionOpt,
-        snapshotManager,
+        tableManager,
         engine,
         tablePath,
         DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
@@ -290,14 +290,14 @@ public class StreamingHelper {
   public static Map<Long, Protocol> collectProtocolActionsFromRangeUnsafe(
       long startVersion,
       Optional<Long> endVersionOpt,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       String tablePath,
       DeltaV2QueryContext originalQueryContext) {
     return collectActionsFromRangeUnsafe(
         startVersion,
         endVersionOpt,
-        snapshotManager,
+        tableManager,
         engine,
         tablePath,
         DeltaLogActionUtils.DeltaAction.PROTOCOL,
@@ -319,7 +319,7 @@ public class StreamingHelper {
   private static <T> Map<Long, T> collectActionsFromRangeUnsafe(
       long startVersion,
       Optional<Long> endVersionOpt,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       String tablePath,
       DeltaLogActionUtils.DeltaAction actionType,
@@ -327,8 +327,7 @@ public class StreamingHelper {
       DeltaV2QueryContext originalQueryContext) {
     CommitRangeImpl commitRange =
         (CommitRangeImpl)
-            snapshotManager.getTableChanges(
-                engine, startVersion, endVersionOpt, originalQueryContext);
+            tableManager.getTableChanges(engine, startVersion, endVersionOpt, originalQueryContext);
     // LinkedHashMap to preserve insertion order
     Map<Long, T> versionToAction = new LinkedHashMap<>();
 

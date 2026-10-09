@@ -608,8 +608,6 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
           DeltaV2TableManagerCache$.MODULE$.forTable(
               sessionB, path, tableOptions, catalogTableOptB);
 
-      assertTrue(tableA.getSnapshotManager() instanceof CachedSnapshotManager);
-      assertTrue(tableB.getSnapshotManager() instanceof CachedSnapshotManager);
       assertSame(managerA, tableA.getTableManager());
       assertSame(managerB, tableB.getTableManager());
       assertSame(managerA, managerB);

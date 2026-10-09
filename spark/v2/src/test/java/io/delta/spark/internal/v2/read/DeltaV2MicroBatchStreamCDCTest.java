@@ -29,6 +29,7 @@ import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.TableManagerTestAdapter$;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.File;
@@ -1045,7 +1046,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
                 spark,
                 latestSnapshot,
                 javaOptions,
-                snapshotManager,
+                TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
                 engine,
                 Option.empty(),
                 /* mergeConsecutiveSchemaChanges= */ false)
@@ -1065,7 +1066,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
             seededSnapshot.getSchema());
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
         latestSnapshot,
         hadoopConf,
         spark,
@@ -1185,7 +1186,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     StructType tableSchema = snapshot.schema();
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
         snapshot,
         hadoopConf,
         spark,

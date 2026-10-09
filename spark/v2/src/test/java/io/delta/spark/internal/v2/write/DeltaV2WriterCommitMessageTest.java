@@ -23,6 +23,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.InternalRowTestUtils;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.TableManagerTestAdapter$;
 import java.io.File;
 import java.util.Optional;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -134,7 +135,7 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            snapshotManager,
+            TableManagerTestAdapter$.MODULE$.apply(snapshotManager),
             TABLE_SCHEMA,
             new StructType(),
             info,

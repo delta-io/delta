@@ -80,7 +80,6 @@ import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
@@ -126,7 +125,6 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
   private final String tablePath;
   private final Map<String, String> options;
   private final DeltaV2TableManager tableManager;
-  private final DeltaV2SnapshotManager snapshotManager;
   private final DeltaV2QueryContext queryContext;
   /** Snapshot created during connector setup */
   private final Snapshot initialSnapshot;
@@ -253,7 +251,6 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         DeltaV2TableManagerCache$.MODULE$.forTable(
             activeSession, tablePath, options, catalogTableOpt);
     this.kernelEngine = tableManager.kernelContext().getDefaultEngine();
-    this.snapshotManager = tableManager.snapshotManager(catalogTableOpt);
     try {
       if (timeTravelVersion.isPresent()) {
         this.initialSnapshot =
@@ -282,7 +279,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
             SparkSession.active(),
             initialSnapshot,
             options,
-            snapshotManager,
+            tableManager,
             kernelEngine,
             queryContext);
 
@@ -355,22 +352,17 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
     return options;
   }
 
-  /**
-   * Returns the snapshot manager backing this table. Catalog-driven features such as read-time CDF
-   * (TableCatalog.loadChangelog) use this to resolve versions, timestamps, and snapshots without
-   * having to build their own snapshot manager.
-   */
-  public DeltaV2SnapshotManager getSnapshotManager() {
-    return snapshotManager;
-  }
-
   /** Returns the immutable request context that resolved this table. */
   public DeltaV2QueryContext getQueryContext() {
     return queryContext;
   }
 
-  /** Returns the table manager for operations using query-scoped inputs. */
-  DeltaV2TableManager getTableManager() {
+  /**
+   * Returns the table manager for operations using query-scoped inputs. Catalog-driven features
+   * such as read-time CDF (TableCatalog.loadChangelog) use this to resolve versions, timestamps,
+   * and snapshots without building their own manager.
+   */
+  public DeltaV2TableManager getTableManager() {
     return tableManager;
   }
 
@@ -565,7 +557,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         initialSnapshot,
         kernelEngine,
         catalogTable,
-        snapshotManager,
+        tableManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
         schemaProvider.getRawSchema(),
@@ -593,7 +585,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         hadoopConf,
         initialSnapshot,
         catalogTable,
-        snapshotManager,
+        tableManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
         info,
