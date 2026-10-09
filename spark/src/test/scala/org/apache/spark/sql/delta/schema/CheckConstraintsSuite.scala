@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf.ValidateCheckConstraintsM
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
@@ -62,7 +63,7 @@ class CheckConstraintsSuite extends QueryTest
 
   test("can't add unparseable constraint") {
     withTestTable { table =>
-      val e = intercept[ParseException] {
+      val e = intercept[SparkThrowable] {
         sql(s"ALTER TABLE $table ADD CONSTRAINT lessThan5 CHECK (id <)")
       }
       // Make sure we're still getting a useful parse error, even though we do some complicated
@@ -84,7 +85,7 @@ class CheckConstraintsSuite extends QueryTest
         "id INT, event_date DATE",
         props = Map("delta.constraints.ch" -> "event_date < 2025-06-12")))
 
-      val e = intercept[AnalysisException] {
+      val e = intercept[SparkThrowable] {
         sql(s"INSERT INTO $tableName VALUES(1, '2025-06-11')")
       }
       checkError(
@@ -105,7 +106,7 @@ class CheckConstraintsSuite extends QueryTest
       val tableName = "test_create_invalid_constraint"
       withTable(tableName) {
         checkError(
-          exception = intercept[AnalysisException] {
+          exception = intercept[SparkThrowable] {
             sql(createTableSQL(
               tableName,
               "id INT, value STRING",
@@ -123,7 +124,7 @@ class CheckConstraintsSuite extends QueryTest
       val tableName = "test_create_non_boolean_constraint"
       withTable(tableName) {
         checkError(
-          exception = intercept[AnalysisException] {
+          exception = intercept[SparkThrowable] {
             sql(createTableSQL(
               tableName,
               "id INT, value STRING",
@@ -153,7 +154,7 @@ class CheckConstraintsSuite extends QueryTest
   test("constraint must be boolean") {
     withTestTable { table =>
       checkError(
-        exception = intercept[AnalysisException] {
+        exception = intercept[SparkThrowable] {
           sql(s"ALTER TABLE $table ADD CONSTRAINT integerVal CHECK (3)")
         },
         "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT",
@@ -168,7 +169,7 @@ class CheckConstraintsSuite extends QueryTest
   test("can't add constraint referencing non-existent columns") {
     withTestTable { table =>
       checkError(
-        intercept[AnalysisException] {
+        intercept[SparkThrowable] {
           sql(s"ALTER TABLE $table ADD CONSTRAINT c CHECK (does_not_exist)")
         },
         "UNRESOLVED_COLUMN.WITH_SUGGESTION",
@@ -183,7 +184,7 @@ class CheckConstraintsSuite extends QueryTest
   test("can't add constraint with duplicate name") {
     withTestTable { table =>
       sql(s"ALTER TABLE $table ADD CONSTRAINT trivial CHECK (true)")
-      val e = intercept[AnalysisException] {
+      val e = intercept[SparkThrowable] {
         sql(s"ALTER TABLE $table ADD CONSTRAINT trivial CHECK (true)")
       }
       checkError(
@@ -200,7 +201,7 @@ class CheckConstraintsSuite extends QueryTest
 
   test("can't add constraint with names that are reserved for internal usage") {
     withTestTable { table =>
-      val e = intercept[AnalysisException] {
+      val e = intercept[SparkThrowable] {
         sql(
           s"ALTER TABLE $table ADD CONSTRAINT ${CharVarcharConstraint.INVARIANT_NAME} CHECK (true)")
       }
@@ -216,7 +217,7 @@ class CheckConstraintsSuite extends QueryTest
   test("duplicate constraint check is case insensitive") {
     withTestTable { table =>
       sql(s"ALTER TABLE $table ADD CONSTRAINT trivial CHECK (true)")
-      val e = intercept[AnalysisException] {
+      val e = intercept[SparkThrowable] {
         sql(s"ALTER TABLE $table ADD CONSTRAINT TRIVIAL CHECK (true)")
       }
       checkError(
@@ -233,7 +234,7 @@ class CheckConstraintsSuite extends QueryTest
 
   testQuietly("can't add already violated constraint") {
     withTestTable { table =>
-      val e = intercept[AnalysisException] {
+      val e = intercept[SparkThrowable] {
         sql(s"ALTER TABLE $table ADD CONSTRAINT lessThan5 CHECK (num < 5 and text < 'd')")
       }
       checkError(
@@ -251,7 +252,7 @@ class CheckConstraintsSuite extends QueryTest
     withTestTable { table =>
       sql(s"ALTER TABLE $table ADD CONSTRAINT lessThan10 CHECK (num < 10 and text < 'g')")
       sql(s"INSERT INTO $table VALUES (5, 'a')")
-      val e = intercept[DeltaInvariantViolationException] {
+      val e = intercept[SparkThrowable] {
         sql(s"INSERT INTO $table VALUES (11, 'a')")
       }
       checkError(
@@ -272,14 +273,24 @@ class CheckConstraintsSuite extends QueryTest
 
   test("drop constraint that doesn't exist throws an exception") {
     withTestTable { table =>
-      intercept[AnalysisException] {
-        sql(s"ALTER TABLE $table DROP CONSTRAINT myConstraint")
-      }
+      checkError(
+        exception = intercept[SparkThrowable] {
+          sql(s"ALTER TABLE $table DROP CONSTRAINT myConstraint")
+        },
+        condition = "DELTA_CONSTRAINT_DOES_NOT_EXIST",
+        sqlState = Some("42704"),
+        parameters = Map(
+          "constraintName" -> "myConstraint",
+          "tableName" -> "`default`.`checkConstraintsTest`",
+          "config" -> "spark.databricks.delta.constraints.assumesDropIfExists.enabled",
+          "confValue" -> "true"
+        )
+      )
     }
 
     withSQLConf((DeltaSQLConf.DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS.key, "false")) {
       withTestTable { table =>
-        val e = intercept[AnalysisException] {
+        val e = intercept[SparkThrowable] {
           sql(s"ALTER TABLE $table DROP CONSTRAINT myConstraint")
         }
         checkError(
@@ -320,7 +331,7 @@ class CheckConstraintsSuite extends QueryTest
   testQuietly("add row violating constraint after it's dropped") {
     withTestTable { table =>
       sql(s"ALTER TABLE $table ADD CONSTRAINT lessThan10 CHECK (num < 10 and text < 'g')")
-      intercept[InvariantViolationException] {
+      intercept[SparkThrowable] {
         sql(s"INSERT INTO $table VALUES (11, 'a')")
       }
       sql(s"ALTER TABLE $table DROP CONSTRAINT lessThan10")
@@ -387,7 +398,7 @@ class CheckConstraintsSuite extends QueryTest
     withTestTable { table =>
       sql(s"ALTER TABLE $table ADD CONSTRAINT textSize CHECK (LENGTH(text) < 10)")
       sql(s"INSERT INTO $table VALUES (11, 'abcdefg')")
-      val e = intercept[DeltaInvariantViolationException] {
+      val e = intercept[SparkThrowable] {
         sql(s"INSERT INTO $table VALUES (12, 'abcdefghijklmnop')")
       }
       checkError(
@@ -404,7 +415,7 @@ class CheckConstraintsSuite extends QueryTest
   testQuietly("constraint with implicit casts") {
     withTestTable { table =>
       sql(s"ALTER TABLE $table ADD CONSTRAINT maxWithImplicitCast CHECK (num < '10')")
-      val e = intercept[DeltaInvariantViolationException] {
+      val e = intercept[SparkThrowable] {
         sql(s"INSERT INTO $table VALUES (11, 'data')")
       }
       checkError(
@@ -422,7 +433,7 @@ class CheckConstraintsSuite extends QueryTest
     withTestTable { table =>
       sql(s"ALTER TABLE $table ADD CONSTRAINT maxWithParens " +
         s"CHECK (( (num < '10') AND ((LENGTH(text)) < 100) ))")
-      val e = intercept[DeltaInvariantViolationException] {
+      val e = intercept[SparkThrowable] {
         sql(s"INSERT INTO $table VALUES (11, 'data')")
       }
       checkError(
@@ -453,7 +464,7 @@ class CheckConstraintsSuite extends QueryTest
         // nondeterministic expression.
         sql(s"ALTER TABLE $table ADD CONSTRAINT maxWithAnalyzerEval " +
           s"CHECK (num < $expression)")
-        val e = intercept[DeltaInvariantViolationException] {
+        val e = intercept[SparkThrowable] {
           sql(s"INSERT INTO $table VALUES (${Int.MaxValue}, 'data')")
         }
         checkError(
@@ -504,7 +515,7 @@ class CheckConstraintsSuite extends QueryTest
 
       // Constraints incompatible with a null value will of course fail, but they should fail with
       // the same clear error as normal.
-      val e = intercept[AnalysisException] {
+      val e = intercept[SparkThrowable] {
         sql("ALTER TABLE checkConstraintsTest ADD CONSTRAINT arrLessThan5 " +
           "CHECK (nested.arr[1] < 5)")
       }
@@ -536,7 +547,7 @@ class CheckConstraintsSuite extends QueryTest
         " - nested.arr : null")
 
       newRows.zip(expectedValuePatterns).foreach { case (r, expectedValuePattern) =>
-        val e = intercept[DeltaInvariantViolationException] {
+        val e = intercept[SparkThrowable] {
           spark.sql(s"INSERT INTO checkConstraintsTest VALUES ($r)")
         }
         checkError(
@@ -595,7 +606,7 @@ class CheckConstraintsSuite extends QueryTest
       sql("ALTER TABLE checkConstraintsTest ADD CONSTRAINT arrLen CHECK (SIZE(nested.arr) = 3)")
       sql("ALTER TABLE checkConstraintsTest ADD CONSTRAINT mapIntegrity " +
         "CHECK (nested.m[id] = id)")
-      val e = intercept[AnalysisException] {
+      val e = intercept[SparkThrowable] {
         sql(s"ALTER TABLE checkConstraintsTest ADD CONSTRAINT violated " +
           s"CHECK (nested.arr[0] < id)")
       }
@@ -620,8 +631,14 @@ class CheckConstraintsSuite extends QueryTest
       sql("INSERT INTO my_table VALUES (1);")
       val e = intercept[AnalysisException] {
         sql("ALTER TABLE my_table CHANGE COLUMN id SET NOT NULL;")
-      }.getMessage()
-      assert(e.contains("Cannot change nullable column to non-nullable"))
+      }
+      checkError(
+        exception = e,
+        condition = "_LEGACY_ERROR_TEMP_2330",
+        parameters = Map("fieldName" -> "id"),
+        queryContext =
+          Array(ExpectedContext("ALTER TABLE my_table CHANGE COLUMN id SET NOT NULL", 0, 49))
+      )
     }
   }
 
@@ -660,7 +677,7 @@ class CheckConstraintsSuite extends QueryTest
     withTable("table") {
       sql(createTableSQL("table", "id INT, value VARCHAR(12)"))
       sql("INSERT INTO table VALUES (1, 'short string')")
-      val exception = intercept[DeltaInvariantViolationException] {
+      val exception = intercept[SparkThrowable] {
         sql("INSERT INTO table VALUES (2, 'a very long string')")
       }
       checkError(
@@ -683,7 +700,7 @@ class CheckConstraintsSuite extends QueryTest
         sql("ALTER TABLE table ADD CONSTRAINT c1 CHECK (a > 0)")
         sql("ALTER TABLE table ADD CONSTRAINT c2 CHECK (b > 0)")
 
-        val error1 = intercept[AnalysisException] {
+        val error1 = intercept[SparkThrowable] {
           sql("ALTER TABLE table DROP FEATURE checkConstraints")
         }
         checkError(
@@ -697,7 +714,7 @@ class CheckConstraintsSuite extends QueryTest
         assert(featureNames1.contains("checkConstraints"))
 
         sql("ALTER TABLE table DROP CONSTRAINT c1")
-        val error2 = intercept[AnalysisException] {
+        val error2 = intercept[SparkThrowable] {
           sql("ALTER TABLE table DROP FEATURE checkConstraints")
         }
         checkError(
@@ -838,7 +855,7 @@ class CheckConstraintsSuite extends QueryTest
         sql(createTableSQL(testTable, "id INT",
           props = Map("delta.feature.checkConstraints" -> "supported")))
         checkError(
-          exception = intercept[AnalysisException] {
+          exception = intercept[SparkThrowable] {
             sql(s"ALTER TABLE $testTable ADD CONSTRAINT c1 " +
               s"CHECK (id > (SELECT max(id) FROM $testTable))")
           },
@@ -865,7 +882,7 @@ class CheckConstraintsSuite extends QueryTest
 
             if (isEnabled == ValidateCheckConstraintsMode.ASSERT) {
               checkError(
-                exception = intercept[AnalysisException] {
+                exception = intercept[SparkThrowable] {
                   sql(sqlText)
                 },
                 "DELTA_UDF_IN_CHECK_CONSTRAINT",
