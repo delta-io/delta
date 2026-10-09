@@ -62,12 +62,13 @@ import org.apache.spark.sql.delta.shims.StreamingRelationV2Shim
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttribute
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, TableCatalog, TableWritePrivilege}
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, TableCatalog, TableWritePrivilege, V1Table}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.command.CreateTableLikeCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.ShowPartitionsCommand
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
@@ -96,6 +97,30 @@ class DeltaAnalysis(protected val session: SparkSession)
         case UnresolvedPartitionSpec(spec, _) => spec
       }.getOrElse(Map.empty[String, String])
       ShowDeltaPartitionsCommand(r, partitionSpec)
+
+    // Managed Delta tables can resolve to a V1Table (e.g. when loaded through a delegating
+    // catalog) instead of directly to a DeltaTableV2. Intercept that shape too, mirroring
+    // DeltaTableV2.maybeExtractFrom.
+    case ShowPartitions(
+        r @ ResolvedTable(_, _, t: V1Table, _), partSpec, _)
+        if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
+      val partitionSpec = partSpec.collect {
+        case UnresolvedPartitionSpec(spec, _) => spec
+      }.getOrElse(Map.empty[String, String])
+      ShowDeltaPartitionsCommand(r, partitionSpec)
+
+    // Spark's ResolveSessionCatalog rule matches SHOW PARTITIONS on any V1Table resolved through
+    // the session catalog and eagerly rewrites it to the V1 ShowPartitionsCommand, before the
+    // ShowPartitions case above (also an extended resolution rule, applied after
+    // ResolveSessionCatalog in the same pass) ever sees it. Catch that shape here as well by
+    // re-resolving the table identifier and checking whether it refers to a Delta table.
+    case s: ShowPartitionsCommand =>
+      val resolvedTable = session.sessionState.analyzer.ResolveRelations(
+        UnresolvedTable(s.tableName.nameParts, "SHOW PARTITIONS"))
+      DeltaTableV2.maybeExtractFrom(resolvedTable) match {
+        case Some(_) => ShowDeltaPartitionsCommand(resolvedTable, s.spec.getOrElse(Map.empty))
+        case None => s
+      }
 
     // INSERT INTO by ordinal and df.insertInto()
     case a @ AppendDelta(r, d) if !a.isByName &&

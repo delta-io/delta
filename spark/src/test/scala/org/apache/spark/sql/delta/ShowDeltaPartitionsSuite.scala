@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import java.math.{BigDecimal => JBigDecimal}
 import java.sql.{Date, Timestamp}
 
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DummySessionCatalogInner}
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -432,6 +432,41 @@ class ShowDeltaPartitionsSuite extends QueryTest with SharedSparkSession with De
           Row("us")
         )
       )
+    }
+  }
+
+  test("SHOW PARTITIONS on managed Delta table resolved as V1Table by the catalog") {
+    // Some catalogs (e.g. Unity Catalog-style delegating catalogs) resolve managed tables to a
+    // V1Table rather than directly to a DeltaTableV2. Simulate that here by installing a
+    // spark_catalog implementation that always returns V1Table, and confirm SHOW PARTITIONS
+    // still resolves through ShowDeltaPartitionsCommand instead of falling back to Spark's
+    // built-in (unsupported) ShowPartitions.
+    // Create and populate the table under the default catalog first: creating a Delta table
+    // with an explicit schema through a bare TableCatalog plugin (i.e. without DeltaCatalog in
+    // the delegation chain) is rejected by Spark's V2SessionCatalog. Only the read path
+    // (loadTable) needs to go through the dummy catalog to simulate V1Table resolution.
+    withTable("delta_table") {
+      sql(
+        """
+          |CREATE TABLE delta_table (id INT, date STRING, value DOUBLE)
+          |USING delta
+          |PARTITIONED BY (date)
+        """.stripMargin)
+
+      sql("INSERT INTO delta_table VALUES (1, '2024-01-01', 100.0)")
+      sql("INSERT INTO delta_table VALUES (2, '2024-01-02', 200.0)")
+
+      spark.sessionState.catalogManager.reset()
+      withSQLConf("spark.sql.catalog.spark_catalog" -> classOf[DummySessionCatalogInner].getName) {
+        checkAnswer(
+          sql("SHOW PARTITIONS delta_table"),
+          Seq(
+            Row("2024-01-01"),
+            Row("2024-01-02")
+          )
+        )
+      }
+      spark.sessionState.catalogManager.reset()
     }
   }
 }
