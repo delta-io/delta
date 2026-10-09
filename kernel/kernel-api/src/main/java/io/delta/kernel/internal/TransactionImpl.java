@@ -87,9 +87,21 @@ public class TransactionImpl implements Transaction {
         TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetadata(
             TransactionStateRow.getConfiguration(transactionState));
 
-    // Get the list of partition columns to exclude
-    Set<String> partitionColumns =
-        new HashSet<>(TransactionStateRow.getPartitionColumnsList(transactionState));
+    // Build the set of physical partition column names to exclude from stats. When column mapping
+    // is enabled partition columns are written under their physical names, so we must exclude by
+    // physical name; otherwise the logical name would never match the physical schema field names.
+    StructType logicalSchema = TransactionStateRow.getLogicalSchema(transactionState);
+    List<String> partitionColNames = TransactionStateRow.getPartitionColumnsList(transactionState);
+    ColumnMapping.ColumnMappingMode columnMappingMode =
+        TransactionStateRow.getColumnMappingMode(transactionState);
+    Set<String> physicalPartitionColumns = new HashSet<>();
+    for (String logicalName : partitionColNames) {
+      if (ColumnMapping.isColumnMappingModeEnabled(columnMappingMode)) {
+        physicalPartitionColumns.add(ColumnMapping.getPhysicalName(logicalSchema.get(logicalName)));
+      } else {
+        physicalPartitionColumns.add(logicalName);
+      }
+    }
 
     // Collect the leaf-level columns for statistics calculation.
     // This call selects only the first 'numIndexedCols' leaf columns from the logical schema,
@@ -110,7 +122,9 @@ public class TransactionImpl implements Transaction {
     // would be: [col1, col2]. If 'col1' were a partition column, the returned list would be:
     // [col2, col3.a] (assuming col3.a is encountered before col3.b).
     return SchemaUtils.collectLeafColumns(
-        TransactionStateRow.getPhysicalSchema(transactionState), partitionColumns, numIndexedCols);
+        TransactionStateRow.getPhysicalSchema(transactionState),
+        physicalPartitionColumns,
+        numIndexedCols);
   }
 
   private static final Logger logger = LoggerFactory.getLogger(TransactionImpl.class);

@@ -334,24 +334,6 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
     }
   }
 
-  Seq("name", "id").foreach { cmMode =>
-    test(s"transformLogicalData: CM tables are blocked: cmMode=$cmMode") {
-      val txnState = testTxnState(new StructType(), cmMode = cmMode)
-      val engine = mockEngine()
-
-      val ex = intercept[UnsupportedOperationException] {
-        transformLogicalData(
-          engine,
-          txnState,
-          testData(includePartitionCols = false),
-          Map.empty[String, Literal].asJava /* partition values */ )
-          .forEachRemaining(_ => ()) // consume the iterator
-      }
-      assert(ex.getMessage.contains(
-        "Writing into column mapping enabled table is not supported yet."))
-    }
-  }
-
   test("transformLogicalData: Writing to tables with variant is blocked") {
     val txnState = testTxnState(new StructType().add("variant", VariantType.VARIANT))
     val engine = mockEngine()

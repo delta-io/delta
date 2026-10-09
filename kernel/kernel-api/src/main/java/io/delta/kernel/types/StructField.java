@@ -21,6 +21,7 @@ import static io.delta.kernel.types.MetadataColumnSpec.*;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.SchemaIterable;
 import java.util.*;
 
@@ -62,6 +63,20 @@ public class StructField {
   public static final String TO_TYPE_KEY = "toType";
   public static final String FIELD_PATH_KEY = "fieldPath";
   public static final String DELTA_TYPE_CHANGES_KEY = "delta.typeChanges";
+
+  /**
+   * Metadata keys ignored when checking write-compatibility. Column mapping keys are ignored
+   * because connector-supplied data never carries them, while the table schema always does once
+   * column mapping is enabled.
+   */
+  private static final Set<String> WRITE_COMPATIBILITY_IGNORED_METADATA_KEYS =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList(
+                  COLLATIONS_METADATA_KEY,
+                  ColumnMapping.COLUMN_MAPPING_ID_KEY,
+                  ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+                  ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)));
 
   /**
    * Creates a metadata column of the given {@code colSpec} with the given {@code name}.
@@ -230,8 +245,8 @@ public class StructField {
     return nullable == other.nullable
         && name.equals(other.name)
         && dataType.isWriteCompatible(other.dataType)
-        // Compare metadata while ignoring collation metadata differences
-        && metadata.equalsIgnoreKeys(other.metadata, Collections.singleton(COLLATIONS_METADATA_KEY))
+        // Compare metadata while ignoring collation and column-mapping metadata differences
+        && metadata.equalsIgnoreKeys(other.metadata, WRITE_COMPATIBILITY_IGNORED_METADATA_KEYS)
         && Objects.equals(typeChanges, other.typeChanges);
   }
 

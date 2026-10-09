@@ -15,17 +15,25 @@
  */
 package io.delta.kernel.defaults
 
+import java.io.File
+
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
-import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, TestRow, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.InvalidConfigurationValueException
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.TableConfig
+import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl, TableConfig}
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
-import io.delta.kernel.types.{FieldMetadata, IntegerType, StringType, StructField, StructType}
+import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, MapType, StringType, StructField, StructType}
 
+import org.apache.spark.sql.delta.DeltaLog
+
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
+import org.apache.parquet.format.converter.ParquetMetadataConverter
+import org.apache.parquet.hadoop.ParquetFileReader
 import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaColumnMappingTransactionBuilderV1Suite extends DeltaColumnMappingSuiteBase
@@ -245,17 +253,332 @@ trait DeltaColumnMappingSuiteBase extends AnyFunSuite with AbstractWriteUtils
     }
   }
 
-  Seq("name", "id").foreach { cmMode =>
-    test(s"test writing data into a column mapping enabled table is blocked: $cmMode") {
-      withTempDirAndEngine { (tablePath, engine) =>
-        val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode)
-        createEmptyTable(engine, tablePath, testSchema, tableProperties = props)
+  // ===========================================================================
+  // Data write tests
+  // ===========================================================================
 
-        val ex = intercept[UnsupportedOperationException] {
-          appendData(engine, tablePath, data = Seq(Map.empty[String, Literal] -> dataBatches1))
+  Seq("name", "id").foreach { cmMode =>
+    test(s"write data into unpartitioned column mapping table (mode=$cmMode) and read back") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val schema = new StructType()
+          .add("id", IntegerType.INTEGER)
+          .add("name", StringType.STRING)
+        val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode)
+        val data = generateData(schema, Seq.empty, Map.empty, batchSize = 50, numBatches = 2)
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          schema = schema,
+          data = Seq(Map.empty[String, Literal] -> data),
+          tableProperties = props)
+
+        // Read back via Kernel and verify logical data is intact
+        checkTable(tablePath, data.flatMap(_.toTestRows), engine = engine)
+
+        // Verify Parquet files are written under physical names (col-<uuid> for new tables)
+        val committedSchema = getMetadata(engine, tablePath).getSchema
+        val physicalNameId = ColumnMapping.getPhysicalName(committedSchema.get("id"))
+        val physicalNameName = ColumnMapping.getPhysicalName(committedSchema.get("name"))
+        assert(
+          physicalNameId.startsWith("col-"),
+          s"Expected physical name to start with 'col-' for id column, got: $physicalNameId")
+        assert(
+          physicalNameName.startsWith("col-"),
+          s"Expected physical name to start with 'col-' for name column, got: $physicalNameName")
+
+        val parquetFiles = new File(tablePath).listFiles()
+          .filter(_.getName.endsWith(".parquet"))
+        assert(parquetFiles.nonEmpty, "Expected at least one Parquet data file")
+      }
+    }
+  }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"write data into column mapping table (mode=$cmMode) is readable by Spark") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val schema = new StructType()
+          .add("id", IntegerType.INTEGER)
+          .add("name", StringType.STRING)
+        val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode)
+        val data = generateData(schema, Seq.empty, Map.empty, batchSize = 50, numBatches = 2)
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          schema = schema,
+          data = Seq(Map.empty[String, Literal] -> data),
+          tableProperties = props)
+
+        val expectedData = data.flatMap(_.toTestRows)
+
+        // Kernel reads back the logical data correctly
+        checkTable(tablePath, expectedData, engine = engine)
+
+        // Confirm Spark can also read back the data
+        val sparkDf = spark.read.format("delta").load(tablePath)
+        assert(sparkDf.schema.fieldNames.toSeq == Seq("id", "name"))
+        checkAnswer(sparkDf.collect().map(TestRow(_)).toSeq, expectedData)
+      }
+    }
+  }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"write data into partitioned column mapping table (mode=$cmMode) - " +
+      s"partition dirs and AddFile use physical names") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val schema = new StructType()
+          .add("value", IntegerType.INTEGER)
+          .add("part", IntegerType.INTEGER)
+        val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode)
+        val partitionValues = Map("part" -> Literal.ofInt(42))
+        val data = generateData(
+          schema,
+          Seq("part"),
+          partitionValues,
+          batchSize = 30,
+          numBatches = 2)
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          schema = schema,
+          partCols = Seq("part"),
+          data = Seq(partitionValues -> data),
+          tableProperties = props)
+
+        val committedSchema = getMetadata(engine, tablePath).getSchema
+        val physicalPartName = ColumnMapping.getPhysicalName(committedSchema.get("part"))
+        assert(
+          physicalPartName.startsWith("col-"),
+          s"Expected physical partition col name to start with 'col-', got: $physicalPartName")
+
+        // The partition directory on disk must use the physical column name
+        val partDir = new File(tablePath, s"$physicalPartName=42")
+        assert(
+          partDir.exists() && partDir.isDirectory,
+          s"Expected partition directory '$physicalPartName=42' to exist at $tablePath")
+
+        // AddFile.partitionValues keys must be physical names
+        val snapshot = Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+        val scanFiles = snapshot.getScanBuilder().build()
+          .asInstanceOf[ScanImpl]
+          .getScanFiles(engine, true)
+          .toSeq
+          .flatMap(_.getRows.toSeq)
+        assert(scanFiles.nonEmpty)
+        scanFiles.foreach { row =>
+          val partValues = InternalScanFileUtils.getPartitionValues(row).asScala
+          assert(
+            partValues.contains(physicalPartName),
+            s"Expected AddFile.partitionValues to be keyed by physical name '$physicalPartName'," +
+              s" got: ${partValues.keys.mkString(", ")}")
         }
-        assert(ex.getMessage.contains(
-          "Writing into column mapping enabled table is not supported yet."))
+
+        // Cross-engine check: Spark DeltaLog should also see physical partition names
+        val addFiles = DeltaLog.forTable(spark, tablePath).update().allFiles.collect()
+        assert(addFiles.nonEmpty)
+        addFiles.foreach { addFile =>
+          assert(
+            addFile.partitionValues.contains(physicalPartName),
+            s"Expected AddFile.partitionValues to be keyed by physical name '$physicalPartName'," +
+              s" got: ${addFile.partitionValues.keys.mkString(", ")}")
+        }
+
+        // Logical data round-trips correctly
+        checkTable(tablePath, data.flatMap(_.toTestRows), engine = engine)
+      }
+    }
+  }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"write multiple appends into column mapping table (mode=$cmMode) and read all back") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val schema = new StructType()
+          .add("id", IntegerType.INTEGER)
+        val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode)
+        val data1 = generateData(schema, Seq.empty, Map.empty, batchSize = 100, numBatches = 2)
+        val data2 = generateData(schema, Seq.empty, Map.empty, batchSize = 75, numBatches = 3)
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          schema = schema,
+          data = Seq(Map.empty[String, Literal] -> data1),
+          tableProperties = props)
+
+        appendData(
+          engine,
+          tablePath,
+          data = Seq(Map.empty[String, Literal] -> data2))
+
+        val expectedData = (data1 ++ data2).flatMap(_.toTestRows)
+        checkTable(tablePath, expectedData, engine = engine)
+      }
+    }
+  }
+
+  test("upgrade existing table none->name then write data, old and new files readable") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val schema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("name", StringType.STRING)
+
+      // Write data before enabling column mapping (physical names = logical names)
+      val dataBefore = generateData(schema, Seq.empty, Map.empty, batchSize = 20, numBatches = 1)
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema = schema,
+        data = Seq(Map.empty[String, Literal] -> dataBefore))
+
+      // Upgrade to name mode
+      updateTableMetadata(
+        engine,
+        tablePath,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
+
+      // Physical names after upgrade must reuse logical names (no rewrite of old files)
+      val upgradedSchema = getMetadata(engine, tablePath).getSchema
+      assert(ColumnMapping.getPhysicalName(upgradedSchema.get("id")) == "id")
+      assert(ColumnMapping.getPhysicalName(upgradedSchema.get("name")) == "name")
+
+      // Write more data after upgrade
+      val dataAfter = generateData(schema, Seq.empty, Map.empty, batchSize = 20, numBatches = 1)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataAfter))
+
+      // All rows from before and after upgrade must be readable
+      val expectedData = (dataBefore ++ dataAfter).flatMap(_.toTestRows)
+      checkTable(tablePath, expectedData, engine = engine)
+    }
+  }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"write, rename a column, then write again (mode=$cmMode) - " +
+      "old and new data readable by Kernel and Spark") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val schema = new StructType()
+          .add("id", IntegerType.INTEGER)
+          .add("name", StringType.STRING)
+        val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode)
+
+        // Write initial data under the original column names
+        val dataBefore = generateData(schema, Seq.empty, Map.empty, batchSize = 20, numBatches = 1)
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          schema = schema,
+          data = Seq(Map.empty[String, Literal] -> dataBefore),
+          tableProperties = props)
+
+        // Rename "name" -> "full_name"
+        val currentSchema = getMetadata(engine, tablePath).getSchema
+        val renamedSchema = new StructType()
+          .add("id", IntegerType.INTEGER, true, currentSchema.get("id").getMetadata)
+          .add("full_name", StringType.STRING, true, currentSchema.get("name").getMetadata)
+        updateTableMetadata(engine, tablePath, schema = renamedSchema)
+
+        val updatedSchema = getMetadata(engine, tablePath).getSchema
+        assert(updatedSchema.fieldNames().asScala.toSeq == Seq("id", "full_name"))
+        // Physical name is preserved across the rename
+        assert(
+          ColumnMapping.getPhysicalName(updatedSchema.get("full_name")) ==
+            ColumnMapping.getPhysicalName(currentSchema.get("name")))
+
+        // Write more data after the rename
+        val schemaAfterRename = new StructType()
+          .add("id", IntegerType.INTEGER)
+          .add("full_name", StringType.STRING)
+        val dataAfter =
+          generateData(schemaAfterRename, Seq.empty, Map.empty, batchSize = 20, numBatches = 1)
+        appendData(
+          engine,
+          tablePath,
+          data = Seq(Map.empty[String, Literal] -> dataAfter))
+
+        // All rows -- written both before and after the rename -- must be readable under the
+        // new logical column name via Kernel.
+        val expectedData = (dataBefore ++ dataAfter).flatMap(_.toTestRows)
+        checkTable(tablePath, expectedData, engine = engine)
+
+        // Spark must also see the renamed logical schema and be able to read all the data,
+        // including rows written before the column was renamed.
+        val sparkDf = spark.read.format("delta").load(tablePath)
+        assert(sparkDf.schema.fieldNames.toSeq == Seq("id", "full_name"))
+        checkAnswer(sparkDf.collect().map(TestRow(_)).toSeq, expectedData)
+      }
+    }
+  }
+
+  test("id mode write: parquet.field.id is present in Parquet file footer for scalar columns") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val schema = new StructType()
+        .add("x", IntegerType.INTEGER)
+        .add("y", StringType.STRING)
+      val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
+      val data = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
+
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema = schema,
+        data = Seq(Map.empty[String, Literal] -> data),
+        tableProperties = props)
+
+      val parquetFiles = new File(tablePath).listFiles()
+        .filter(_.getName.endsWith(".parquet"))
+      assert(parquetFiles.nonEmpty)
+      val footer = ParquetFileReader.readFooter(
+        new Configuration(),
+        new Path(parquetFiles.head.getAbsolutePath),
+        ParquetMetadataConverter.NO_FILTER)
+      footer.getFileMetaData.getSchema.getFields.asScala.foreach { field =>
+        assert(
+          field.getId != null,
+          s"Expected parquet.field.id on column '${field.getName}' in id-mode table")
+      }
+    }
+  }
+
+  // nested struct column round-trips correctly
+  Seq("name", "id").foreach { cmMode =>
+    test(s"$cmMode mode write: table with nested struct column round-trips correctly") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val schema = new StructType()
+          .add("id", IntegerType.INTEGER)
+          .add(
+            "nested",
+            new StructType()
+              .add("a", IntegerType.INTEGER)
+              .add("b", StringType.STRING))
+        val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode)
+        val data = generateData(schema, Seq.empty, Map.empty, batchSize = 20, numBatches = 2)
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          schema = schema,
+          data = Seq(Map.empty[String, Literal] -> data),
+          tableProperties = props)
+
+        checkTable(tablePath, data.flatMap(_.toTestRows), engine = engine)
+
+        val committedSchema = getMetadata(engine, tablePath).getSchema
+        val nestedStruct = committedSchema.get("nested").getDataType.asInstanceOf[StructType]
+        assert(ColumnMapping.getPhysicalName(committedSchema.get("nested")).startsWith("col-"))
+        assert(ColumnMapping.getPhysicalName(nestedStruct.get("a")).startsWith("col-"))
+        assert(ColumnMapping.getPhysicalName(nestedStruct.get("b")).startsWith("col-"))
       }
     }
   }
