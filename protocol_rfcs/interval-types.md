@@ -35,16 +35,16 @@ ANSI SQL also permits narrowed spellings that denote the same two families: for 
 
 Both the canonical names and all valid narrowed spellings listed above are permitted in `metaData.schemaString`. Readers must accept every permitted spelling, and writers must preserve the declared spelling (see [Writer Requirements](#writer-requirements)).
 
-Regardless of which spelling is used, the physical encoding is the same: every year-month spelling stores a signed count of months, and every day-second spelling stores a signed count of microseconds. The spelling does not change the encoding, but it does restrict which values are valid, as defined below.
+Regardless of which spelling is used, the stored value is the same: every year-month spelling stores a signed count of months, and every day-second spelling stores a signed count of microseconds. While the spelling does not change the encoding, it *does* restrict which values are valid, as defined below.
 
-The end field of an interval type is the last unit named in its spelling: `month` for `interval year to month`, `minute` for `interval hour to minute`. A single-field spelling such as `interval year` or `interval second` has the same start and end field. Stored values align to the end field as follows:
+The end field of an interval type is the last unit named in its spelling: `month` for `interval year to month`, or `minute` for `interval hour to minute`. A single-field spelling such as `interval year` or `interval second` has that single field as its end field. Stored values align to the end field as follows:
 
 For the year-month family:
 - end field `year`: a whole multiple of 12 months;
 - end field `month`: any whole number of months.
 
 For the day-second family:
-- end field `day`, `hour` or `minute`: a whole multiple of that unit in microseconds (86,400,000,000; 3,600,000,000; 60,000,000);
+- end field `day`, `hour` or `minute`: a whole multiple of that unit in microseconds (86,400,000,000; 3,600,000,000; 60,000,000 respectively);
 - end field `second` (including `interval second`): any number of microseconds. Fractional seconds are kept, e.g. 0.123456 seconds is stored as 123456 microseconds.
 
 Interval types are permitted anywhere a primitive type is permitted: as a top-level column, as a nested struct field, as an array element type, and as a map key or value type. For example:
@@ -70,18 +70,22 @@ Interval types are permitted anywhere a primitive type is permitted: as a top-le
 To support interval types, readers must:
 
 - Interpret every year-month spelling as a signed count of months, and every day-second spelling as a signed count of microseconds.
-- Accept every permitted spelling, and preserve the declared spelling when exposing the column's type to the engine or the user.
+- Accept every permitted spelling above.
 
 ### Writer Requirements
 
 To support interval types, writers must:
 
 - Serialize an interval field's type in `metaData.schemaString` using the spelling of the field's declared interval type: the canonical name or one of the permitted narrowed spellings, such as `interval year`. Writers must not rewrite a spelling into a different one.
-- Write only values aligned to the declared type's end field (see [Type Definitions](#type-definitions)). If a value is not aligned, the writer must truncate it toward zero to the nearest aligned value before writing it. This applies to values stored in data files and to values serialized as partition values. Example: inserting `INTERVAL '2-1' YEAR TO MONTH` (25 months) into an `interval year` column stores 24 months (`INTERVAL '2' YEAR`). Inserting `INTERVAL '-2-1' YEAR TO MONTH` (-25 months) stores -24 months (`INTERVAL '-2' YEAR`).
+- Write only values aligned to the declared type's end field (see [Type Definitions](#type-definitions)). If a value is not aligned, the writer must truncate it toward zero to the nearest aligned value before writing it. This applies to values stored in data files and to values serialized as partition values. Examples:
+  - Inserting `INTERVAL '2-1' YEAR TO MONTH` (25 months) or `INTERVAL '2-11' YEAR TO MONTH` (35 months) into an `interval year` column stores 24 months (`INTERVAL '2' YEAR`).
+  - Inserting `INTERVAL '-2-1' YEAR TO MONTH` (-25 months) or `INTERVAL '-2-11' YEAR TO MONTH` (-35 months) into an `interval year` column stores -24 months (`INTERVAL '-2' YEAR`). Truncation is toward zero, not toward negative infinity.
+  - Inserting `INTERVAL '1 12' DAY TO HOUR` (129,600,000,000 microseconds) into an `interval day` column stores 86,400,000,000 microseconds (`INTERVAL '1' DAY`).
+  - Inserting `INTERVAL '1 02:30:45.5' DAY TO SECOND` (95,445,500,000 microseconds) into an `interval hour to minute` column stores 95,400,000,000 microseconds (`INTERVAL '26:30' HOUR TO MINUTE`). Inserting the same value into an `interval day to second` or `interval second` column stores it unchanged.
 
 ## Partition Value Serialization
 
-Intervals can be a partition value, so we define Partition Value Serialization as the ANSI literal form of the column's declared interval type, as defined by the Spark SQL guide [1]. We provide an example below:
+Intervals can be a partition value, so we define Partition Value Serialization as the ANSI literal form of the column's declared interval type, as defined by the Spark SQL guide [1]. We provide examples below:
 
 ```
 interval year:            "INTERVAL '2' YEAR"
