@@ -112,6 +112,9 @@ case class CommitPrepMetrics(
  *        state never leaks into a later conflict check.
  * @param actionsToWriteInLogFile the final actions to persist, incl. the inline AMT checkpoint
  * @param amtWriteResultForLastCheckpointOpt the AMT write result, for the _last_checkpoint write
+ * @param amtCheckpointProviderForPostCommitSnapshot the latest AMT provider through this commit,
+ *        either written by this attempt or discovered before it, including during conflict
+ *        resolution
  * @param prepMetrics metrics gathered during preparation
  */
 case class PrepareCommitResult(
@@ -120,6 +123,7 @@ case class PrepareCommitResult(
     currentTransactionInfoBeforePreparedResult: CurrentTransactionInfo,
     actionsToWriteInLogFile: Seq[Action],
     amtWriteResultForLastCheckpointOpt: Option[AMTWriteResult],
+    amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider],
     prepMetrics: CommitPrepMetrics)
 
 /** Record metrics about a successful commit. */
@@ -2837,6 +2841,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
               prepareCommitResult.currentTransactionInfo,
               prepareCommitResult.actionsToWriteInLogFile,
               prepareCommitResult.amtWriteResultForLastCheckpointOpt,
+              prepareCommitResult.amtCheckpointProviderForPostCommitSnapshot,
               prepareCommitResult.prepMetrics,
               attemptNumber,
               isolationLevel)
@@ -2876,6 +2881,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
                   prepMetrics = rebaseResult.prepMetrics,
                   newChecksumOpt = None,
                   amtWriteResultOpt = rebaseResult.amtWriteResultForLastCheckpointOpt,
+                  amtCheckpointProviderForPostCommitSnapshot =
+                    rebaseResult.amtCheckpointProviderForPostCommitSnapshot,
                   commitOpt = None,
                   isIdempotentRetry = true
                 )
@@ -2897,6 +2904,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
               rebaseResult.currentTransactionInfo,
               rebaseResult.actionsToWriteInLogFile,
               rebaseResult.amtWriteResultForLastCheckpointOpt,
+              rebaseResult.amtCheckpointProviderForPostCommitSnapshot,
               rebaseResult.prepMetrics,
               attemptNumber,
               isolationLevel)
@@ -3069,12 +3077,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
           currentCommitAttemptAMTCheckpointOpt = Some(amtCheckpoint))
       case None => updatedCurrentTransactionInfo
     }
+    // If this commit writes an AMT, it becomes the latest AMT for the table.
+    // Otherwise, use the latest AMT identified before commit, including conflict checking.
+    val amtCheckpointProviderForPostCommitSnapshot = amtWriteResultOpt
+      .map(AMTCheckpointProvider.fromWriteResult(deltaLog, _, attemptVersion))
+      .orElse(amtWriterManager.preCommitLatestAMTCheckpointProviderOpt)
     PrepareCommitResult(
       commitVersion = attemptVersion,
       currentTransactionInfo = txnInfoForCommit,
       currentTransactionInfoBeforePreparedResult = currentTransactionInfo,
       actionsToWriteInLogFile = actions,
       amtWriteResultForLastCheckpointOpt = amtWriteResultOpt,
+      amtCheckpointProviderForPostCommitSnapshot = amtCheckpointProviderForPostCommitSnapshot,
       prepMetrics = CommitPrepMetrics(
         icebergMetadataGenerationDurationMsOpt = icebergMetadataGenerationDurationMsOpt))
   }
@@ -3144,6 +3158,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       txnInfoForCommit: CurrentTransactionInfo,
       actions: Seq[Action],
       amtWriteResultForLastCheckpointOpt: Option[AMTWriteResult],
+      amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider],
       prepMetrics: CommitPrepMetrics,
       attemptNumber: Int,
       isolationLevel: IsolationLevel): (Snapshot, CurrentTransactionInfo) = {
@@ -3182,6 +3197,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       prepMetrics,
       newChecksumOpt,
       amtWriteResultForLastCheckpointOpt,
+      amtCheckpointProviderForPostCommitSnapshot,
       commitOpt = Some(commit)
     )
   }
@@ -3197,6 +3213,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       prepMetrics: CommitPrepMetrics,
       newChecksumOpt: Option[VersionChecksum],
       amtWriteResultOpt: Option[AMTWriteResult],
+      amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider],
       commitOpt: Option[Commit],
       isIdempotentRetry: Boolean = false): (Snapshot, CurrentTransactionInfo) = {
     spark.sessionState.conf.setConf(
@@ -3212,7 +3229,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       commitOpt,
       newChecksumOpt,
       catalogTableForPostCommitSnapshot,
-      amtCheckpointWrittenInCommitOpt = amtWriteResultOpt.map(_.checkpoint),
+      amtCheckpointProviderForPostCommitSnapshot = amtCheckpointProviderForPostCommitSnapshot,
       isIdempotentRetry = isIdempotentRetry)
     val postCommitReconstructionTime = System.nanoTime()
     maintenanceOperation = if (
@@ -3652,11 +3669,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       commitOpt: Option[Commit],
       newChecksumOpt: Option[VersionChecksum],
       catalogTableOpt: Option[CatalogTable],
-      amtCheckpointWrittenInCommitOpt: Option[Checkpoint] = None,
+      amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider],
       isIdempotentRetry: Boolean = false): Snapshot =
     deltaLog.updateAfterCommit(
       committedVersion, commitOpt, newChecksumOpt, preCommitLogSegment, catalogTableOpt,
-      amtCheckpointWrittenInCommitOpt = amtCheckpointWrittenInCommitOpt,
+      amtCheckpointProviderForPostCommitSnapshot = amtCheckpointProviderForPostCommitSnapshot,
       isIdempotentRetry = isIdempotentRetry)
 
   /**

@@ -19,6 +19,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.MaxCatalogVersionException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.files.ParsedLogData;
@@ -125,8 +126,8 @@ public interface SnapshotBuilder {
    * respect the catalog's view of the table state.
    *
    * <p>Important: This method is required for catalog-managed tables and must not be used for
-   * file-system managed tables. An {@link IllegalArgumentException} will be thrown at build time if
-   * this constraint is violated.
+   * file-system managed tables. A {@link MaxCatalogVersionException} will be thrown at build time
+   * if this constraint is violated.
    *
    * <p>When specified, the following additional constraints are enforced:
    *
@@ -156,6 +157,8 @@ public interface SnapshotBuilder {
    *
    * @param engine the engine to use for filesystem operations
    * @return the resolved snapshot instance
+   * @throws MaxCatalogVersionException if a catalog-managed snapshot is loaded without a maximum
+   *     catalog version, or a filesystem-managed snapshot is loaded with one
    */
   Snapshot build(Engine engine);
 }
