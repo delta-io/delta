@@ -54,6 +54,9 @@ public final class Conf {
 
   public static String SINK_WRITER_NUM_CONCURRENT_FILE = "sink.writer.num_concurrent_file";
 
+  /** Max Delta tables kept open per dynamic-sink writer or committer LRU cache. */
+  public static String DYNAMIC_SINK_MAX_CACHED_TABLES = "sink.dynamic.max_cached_tables";
+
   public static String TABLE_THREAD_POOL_SIZE = "table.thread_pool_size";
 
   public static String TABLE_CACHE_ENABLE = "table.cache.enable";
@@ -97,6 +100,10 @@ public final class Conf {
 
   public int getSinkWriterNumConcurrentFiles() {
     return Integer.parseInt(getOrDefault(SINK_WRITER_NUM_CONCURRENT_FILE, "1000"));
+  }
+
+  public int getDynamicSinkMaxCachedTables() {
+    return Integer.parseInt(getOrDefault(DYNAMIC_SINK_MAX_CACHED_TABLES, "2048"));
   }
 
   public int getTableThreadPoolSize() {
