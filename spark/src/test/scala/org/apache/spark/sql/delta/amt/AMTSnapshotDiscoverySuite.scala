@@ -16,14 +16,15 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaMinorCompactionTestUtils, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, LastManifestCommit}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.commons.io.IOUtils
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
@@ -34,6 +35,30 @@ class AMTSnapshotDiscoverySuite
   /** Whether this suite runs with `.crc` files enabled, read from the effective conf. */
   protected def writeChecksumEnabled: Boolean =
     spark.conf.get(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)
+
+  test("[snapshot init] rejects an AMT checkpoint without deltaAtCheckpointVersionOpt") {
+    val name = "amt_missing_delta_at_checkpoint"
+    withTable(name) {
+      createAMTTable(name, checkpointInterval = 2)
+      (1 to 2).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+      val snapshot = deltaLogForName(name).update()
+      assert(amtProvider(snapshot).isDefined)
+      assert(snapshot.logSegment.deltaAtCheckpointVersionOpt.isDefined)
+      // Reuse the real checkpoint and remove only the required commit-file reference.
+      val incompleteSegment = snapshot.logSegment.copy(deltaAtCheckpointVersionOpt = None)
+      val error = intercept[IllegalStateException] {
+        new Snapshot(
+          path = snapshot.path,
+          version = snapshot.version,
+          logSegment = incompleteSegment,
+          deltaLog = snapshot.deltaLog,
+          checksumOpt = snapshot.checksumOpt
+        )
+      }
+      assert(error.getMessage.startsWith(
+        "An AMT-enabled snapshot must define deltaAtCheckpointVersionOpt, got None."))
+    }
+  }
 
   ////////////////////////////
   // Cold snapshot discovery
@@ -241,6 +266,23 @@ class AMTSnapshotDiscoverySuite
     assert(fs.delete(path, false), s"failed to delete $path")
   }
 
+  /** Replaces only the manifest reference in a commit's CommitInfo. */
+  protected def overwriteCommitInfoLastManifestCommit(
+      deltaLog: DeltaLog,
+      snapshot: Snapshot,
+      version: Long,
+      lastManifestCommitOpt: Option[LastManifestCommit]): Unit = {
+    val commitPath = DeltaCommitFileProvider(snapshot).deltaFile(version)
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+    val actions = deltaLog.store.read(commitPath, hadoopConf).map(Action.fromJson)
+    assert(actions.exists(_.isInstanceOf[CommitInfo]))
+    val rewritten = actions.map {
+      case ci: CommitInfo => ci.copy(lastManifestCommit = lastManifestCommitOpt).json
+      case action => action.json
+    }
+    deltaLog.store.write(commitPath, rewritten.iterator, overwrite = true, hadoopConf)
+  }
+
   test("[cold init] updates to the correct provider when _last_checkpoint is stale") {
     val name = "amt_stale_last_checkpoint"
     withTable(name) {
@@ -266,6 +308,37 @@ class AMTSnapshotDiscoverySuite
         trailingDeltas = Seq(5L),
         lastManifestCommit = Some(lmcAtV5))
     }
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "[cold init] rejects an AMT provider ahead of the last manifest reference",
+      "amt_ahead_reference")(
+      setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (2)"))) { context =>
+    val deltaLog = context.postCheckpointSnapshot.deltaLog
+    val version = context.manifestCommitVersion
+    val staleReference = context.postSetupSnapshot.lastManifestCommitOpt.get
+    assert(context.provider.version > staleReference.contentRootVersion)
+    // Read the recording version itself: M == V must not receive the time-travel exemption.
+    assert(context.postCheckpointSnapshot.version == version)
+    if (writeChecksumEnabled) {
+      val checksum = deltaLog.readChecksum(version).get
+      val corrupted = checksum.copy(lastManifestCommit = Some(staleReference))
+      deltaLog.store.write(
+        FileNames.checksumFile(deltaLog.logPath, version),
+        Iterator(JsonUtils.toJson(corrupted)),
+        overwrite = true,
+        deltaLog.newDeltaHadoopConf())
+    } else {
+      // The post-commit snapshot can retain a staged path after backfill. Resolve the file through
+      // a cold snapshot so we overwrite the same copy that the subsequent cold read will use.
+      val (coldLog, coldSnapshot) = coldLoad(context.tableName)
+      overwriteCommitInfoLastManifestCommit(coldLog, coldSnapshot, version, Some(staleReference))
+    }
+
+    val e = intercept[IllegalStateException](coldLoad(context.tableName))
+    assert(e.getMessage.contains("AMT checkpoint mismatch"), e.getMessage)
   }
 
   test("[cold init] builds the correct provider when _last_checkpoint is absent") {
@@ -621,6 +694,239 @@ class AMTSnapshotDiscoverySuite
   }
 
   ///////////////////////////
+  // Time travel
+  ///////////////////////////
+
+  /**
+   * The master oracle for `getSnapshotAt(version)` on an AMT table. It asserts the installed AMT
+   * checkpoint version, the trimmed trailing deltas, and the resolved last-manifest-commit
+   * reference.
+   *
+   * Callers invoke this during table buildup and after later checkpoints have committed, so
+   * discovery is checked against the checkpoints available at each stage.
+   */
+  private def assertGetSnapshotAt(
+      deltaLog: DeltaLog,
+      version: Long,
+      expectedProviderVersion: Option[Long],
+      expectedTrailingDeltas: Seq[Long],
+      expectedLmc: Option[LastManifestCommit]): Snapshot = {
+    val snapshot = deltaLog.getSnapshotAt(version)
+    assert(snapshot.version == version, s"v$version: got snapshot version ${snapshot.version}.")
+    assert(amtProvider(snapshot).map(_.version) == expectedProviderVersion,
+      s"v$version: provider ${amtProvider(snapshot).map(_.version)} != $expectedProviderVersion.")
+    assert(segmentDeltaVersions(snapshot) == expectedTrailingDeltas,
+      s"v$version: trailing deltas ${segmentDeltaVersions(snapshot)} != $expectedTrailingDeltas.")
+    assert(snapshot.lastManifestCommitOpt == expectedLmc,
+      s"v$version: lmc ${snapshot.lastManifestCommitOpt} != $expectedLmc.")
+    snapshot
+  }
+
+  /** Starts a checkpoint transaction, runs intervening writes, then commits the checkpoint. */
+  private def commitCheckpointAfterWrites(
+      deltaLog: DeltaLog,
+      expectedReadVersion: Long,
+      incremental: Boolean)(writes: => Unit): Unit = {
+    val txn = deltaLog.startTransaction()
+    assert(txn.readVersion == expectedReadVersion)
+    writes
+    val triggerName = if (incremental) {
+      AMTTriggerMode.CheckpointIntervalIncremental.name
+    } else {
+      AMTTriggerMode.CheckpointIntervalFull.name
+    }
+    txn.commit(
+      Seq.empty,
+      DeltaOperations.OptimizeCheckpoint(incremental = incremental, triggerName = triggerName))
+  }
+
+  test("[time travel] resolves the content root discoverable as of each target version: deferred") {
+    withTable("amt_tt_deferred") {
+      val name = "amt_tt_deferred"
+      createAMTTable(name, checkpointInterval = Int.MaxValue)
+      val deltaLog = deltaLogForName(name)
+      // Start each checkpoint transaction before intervening INSERTs to separate its content root
+      // from its manifest commit. Append-only winners let the checkpoint retain its original tree.
+      //   v0: CREATE
+      //   v1..v3: INSERTs; start the full checkpoint transaction at v3
+      //   v4: INSERT
+      //   v5: full OPTIMIZE CHECKPOINT (state@v3)
+      //   v6: INSERT; start the incremental checkpoint transaction at v6
+      //   v7..v8: INSERTs
+      //   v9: incremental OPTIMIZE CHECKPOINT (state@v6)
+
+      // Build the first deferred checkpoint at v5, describing content root 3. Check older versions
+      // before the second checkpoint exists.
+      (1 to 3).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+      commitCheckpointAfterWrites(deltaLog, expectedReadVersion = 3, incremental = false) {
+        sql(s"INSERT INTO $name VALUES (4)")
+      }
+      assert(deltaLog.update().version == 5)
+
+      // v1: before the first content root @v3.
+      // `computeLastCheckpointHintsForAMT` returns empty hints; reconstruct from version 0.
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 1,
+        expectedProviderVersion = None,
+        expectedTrailingDeltas = Seq(0L, 1L),
+        expectedLmc = None)
+
+      // v3: at the first content root @v3, but before its manifest commit v5.
+      // `computeLastCheckpointHintsForAMT` returns empty because no manifest has committed yet.
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 3,
+        expectedProviderVersion = None,
+        expectedTrailingDeltas = Seq(0L, 1L, 2L, 3L),
+        expectedLmc = None)
+
+      // v4: after the first content root @v3, but before its manifest commit v5.
+      // `computeLastCheckpointHintsForAMT` returns empty because no manifest has committed yet.
+      val beforeFullManifest = assertGetSnapshotAt(
+        deltaLog,
+        version = 4,
+        expectedProviderVersion = None,
+        expectedTrailingDeltas = Seq(0L, 1L, 2L, 3L, 4L),
+        expectedLmc = None)
+      checkAnswer(
+        deltaLog.createDataFrame(
+          beforeFullManifest, beforeFullManifest.allFilesViaStateReconstruction.collect().toSeq),
+        (1 to 4).map(i => Row(i)))
+
+      // v5: at the latest table version.
+      // Short-circuit to upper bound (latest) snapshot.
+      val lmcAtV5 = LastManifestCommit(version = 5, contentRootVersion = 3)
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 5,
+        expectedProviderVersion = Some(3L),
+        expectedTrailingDeltas = Seq(4L, 5L),
+        expectedLmc = Some(lmcAtV5))
+
+      // The next checkpoint retains content root 6 across two intervening INSERTs.
+      sql(s"INSERT INTO $name VALUES (6)")
+      commitCheckpointAfterWrites(deltaLog, expectedReadVersion = 6, incremental = true) {
+        (7 to 8).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+      }
+      assert(deltaLog.update().version == 9)
+
+      // After the second checkpoint, v1, v3 and v4 should behave identically, while v5 should start
+      // calling `computeLastCheckpointHintsForAMT` to discover the content root @v3.
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 1,
+        expectedProviderVersion = None,
+        expectedTrailingDeltas = Seq(0L, 1L),
+        expectedLmc = None)
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 3,
+        expectedProviderVersion = None,
+        expectedTrailingDeltas = Seq(0L, 1L, 2L, 3L),
+        expectedLmc = None)
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 4,
+        expectedProviderVersion = None,
+        expectedTrailingDeltas = Seq(0L, 1L, 2L, 3L, 4L),
+        expectedLmc = None)
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 5,
+        expectedProviderVersion = Some(3L),
+        expectedTrailingDeltas = Seq(4L, 5L),
+        expectedLmc = Some(lmcAtV5))
+
+      // v6 and v8: normal discovery follows the carried-forward LMC (5, 3) to provider @3.
+      // `computeLastCheckpointHintsForAMT` returns hints for content root @v3.
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 6,
+        expectedProviderVersion = Some(3L),
+        expectedTrailingDeltas = Seq(4L, 5L, 6L),
+        expectedLmc = Some(lmcAtV5))
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 8,
+        expectedProviderVersion = Some(3L),
+        expectedTrailingDeltas = Seq(4L, 5L, 6L, 7L, 8L),
+        expectedLmc = Some(lmcAtV5))
+
+      // v9: at the latest table version.
+      // Short-circuit to upper bound (latest) snapshot.
+      val lmcAtV9 = LastManifestCommit(version = 9, contentRootVersion = 6)
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 9,
+        expectedProviderVersion = Some(6L),
+        expectedTrailingDeltas = Seq(7L, 8L, 9L),
+        expectedLmc = Some(lmcAtV9))
+    }
+  }
+
+  testInline("[time travel] resolves the content root discoverable as of each target version") {
+    withTable("amt_tt_inline") {
+      val name = "amt_tt_inline"
+      createAMTTable(name, checkpointInterval = 2)
+      val deltaLog = deltaLogForName(name)
+      // Inline, interval 2 (see the inline cold test for the full lifecycle rationale):
+      //   v0: CREATE
+      //   v1: INSERT 1                       (no full AMT yet -> cannot inline)
+      //   v2: INSERT 2 (reaches boundary)    (the first AMT still cannot inline)
+      //   v3: OPTIMIZE CHECKPOINT (state@v2) (the first, full AMT; deferred)
+      //   v4: INSERT 3 + inline AMT (state@v4)
+      //   v5: INSERT 4 + inline AMT (state@v5)
+
+      // Build up to the first (deferred) AMT at v3.
+      (1 to 2).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+      assert(deltaLog.update().version == 3)
+
+      // v1: before the first manifest commit -> reconstruct from 0, no provider.
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 1,
+        expectedProviderVersion = None,
+        expectedTrailingDeltas = Seq(0L, 1L),
+        expectedLmc = None)
+
+      // v3: the deferred first AMT. lmc-at-3 = (3, 2): the content root is behind the recording
+      // version -> provider @2, trailing delta [3].
+      val lmcAtV3 = LastManifestCommit(version = 3, contentRootVersion = 2)
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 3,
+        expectedProviderVersion = Some(2L),
+        expectedTrailingDeltas = Seq(3L),
+        expectedLmc = Some(lmcAtV3))
+
+      // Advance so each subsequent business commit inlines its own manifest.
+      (3 to 4).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+      assert(deltaLog.update().version == 5)
+
+      // v4: an inline manifest commit -- version and content root coincide (4, 4) -> provider @4,
+      // no trailing deltas.
+      val lmcAtV4 = LastManifestCommit(version = 4, contentRootVersion = 4)
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 4,
+        expectedProviderVersion = Some(4L),
+        expectedTrailingDeltas = Seq.empty,
+        expectedLmc = Some(lmcAtV4))
+
+      // v5 == the latest version: getSnapshotAt short-circuits to the current snapshot, the inline
+      // manifest at (5, 5) -> provider @5, no trailing deltas.
+      val lmcAtV5 = LastManifestCommit(version = 5, contentRootVersion = 5)
+      assertGetSnapshotAt(
+        deltaLog,
+        version = 5,
+        expectedProviderVersion = Some(5L),
+        expectedTrailingDeltas = Seq.empty,
+        expectedLmc = Some(lmcAtV5))
+    }
+  }
+
+  ///////////////////////////
   // Post commit snapshot
   ///////////////////////////
 
@@ -704,7 +1010,8 @@ class AMTSnapshotDiscoverySuite
       minorCompactDeltaLog(
         tablePath = latestDeltaLogAtV8.dataPath.toString,
         startVersion = start,
-        endVersion = end)
+        endVersion = end,
+        tableName = Some(name))
     }
     overwriteLastCheckpoint(name, staleHintAtV2)
 
@@ -732,6 +1039,9 @@ class AMTSnapshotDiscoverySuite
     val actualNonCompactedDeltas = snapshot.logSegment.nonCompactedDeltasOpt
       .map(n => n.map(FileNames.deltaVersion))
     assert(actualNonCompactedDeltas.contains(expectedNonCompactedDeltas))
+    val actualDeltaAtCheckpointVersion = snapshot.logSegment.deltaAtCheckpointVersionOpt
+      .map(FileNames.deltaVersion)
+    assert(actualDeltaAtCheckpointVersion.contains(expectedAMTContentRootVersion))
     val reconstructedData = snapshot.deltaLog
       .createDataFrame(snapshot, snapshot.allFilesViaStateReconstruction.collect().toSeq)
       .collect().map(_.getInt(0)).toSet
@@ -798,19 +1108,22 @@ class AMTSnapshotDiscoverySuite
     }
   }
 
-  test("[minor compaction] an incremental checkpoint over a compacted pre-commit segment throws") {
+  test("[minor compaction] incremental checkpoint replays a compacted pre-commit segment") {
     val name = "amt_compaction_incremental"
     withTable(name) {
-      val (_, _, _) =
-        buildDeltaLogWithCompactedDeltasAndStaleLastCheckpointHint(name)
-      // With compacted deltas in the pre-commit segment, Incremental AMT writer appends
-      // non-contiguous versions to InMemoryLogReplay, which fails the contiguity assertion.
+      val (_, _, _) = buildDeltaLogWithCompactedDeltasAndStaleLastCheckpointHint(name)
       // Cold load the delta log to incorporate the compacted deltas into the snapshot.
       val (coldDeltaLog, _) = coldLoad(name)
-      val e = intercept[Throwable] {
-        commitCheckpoint(coldDeltaLog, incremental = true)
-      }
-      assert(e.getMessage().contains("Attempted to replay version"))
+      commitCheckpoint(coldDeltaLog, incremental = true)
+      val postCommitSnapshot = coldDeltaLog.unsafeVolatileSnapshot
+      assertSnapshotTrimmed(
+        postCommitSnapshot,
+        expectedVersion = 9L,
+        expectedAMTContentRootVersion = 8L,
+        expectedIndividualDeltas = Seq(9L),
+        expectedCompactedDeltas = Seq.empty,
+        expectedNonCompactedDeltas = Seq(9L),
+        expectedData = Set(1, 2, 3, 4, 5))
     }
   }
 }
@@ -833,16 +1146,9 @@ class AMTSnapshotDiscoveryWithoutCRCSuite extends AMTSnapshotDiscoverySuite {
 
       // Strip the reference from the recording commit's CommitInfo. With no CRC and no CommitInfo
       // reference, nothing corroborates the installed AMT provider, so the cold read is refused.
-      val deltaLog = deltaLogForName(name)
-      val commitPath = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(3)
-      val hadoopConf = deltaLog.newDeltaHadoopConf()
-      val stripped = deltaLog.store.readAsIterator(commitPath, hadoopConf).toList
-        .map(Action.fromJson)
-        .map {
-          case ci: CommitInfo => ci.copy(lastManifestCommit = None).json
-          case other => other.json
-        }
-      deltaLog.store.write(commitPath, stripped.toIterator, overwrite = true, hadoopConf)
+      val (deltaLog, snapshot) = coldLoad(name)
+      overwriteCommitInfoLastManifestCommit(
+        deltaLog, snapshot, version = 3, lastManifestCommitOpt = None)
 
       val e = intercept[IllegalStateException](coldLoad(name))
       assert(e.getMessage.contains("no lastManifestCommit is available from either the CRC"),
@@ -882,4 +1188,20 @@ class AMTSnapshotDiscoveryWithoutCRCSuite extends AMTSnapshotDiscoverySuite {
       }
     }
   }
+}
+
+/**
+ * With batch size 1, all commits are backfilled to a standard NNN.json immediately.
+ */
+class AMTSnapshotDiscoveryBackfillBatch1Suite extends AMTSnapshotDiscoverySuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+/**
+ * With a large backfill batch size, no commits are automatically backfilled. Only before an AMT
+ * checkpoint lands in a manifest commit, the previous commits are backfilled. This suite exercises
+ * that code path and ensures AMT snapshot discovery works correctly.
+ */
+class AMTSnapshotDiscoveryBackfillBatch100Suite extends AMTSnapshotDiscoverySuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

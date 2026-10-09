@@ -30,7 +30,9 @@ import scala.util.matching.Regex
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -66,6 +68,33 @@ object DeltaTestUtilsBase {
    * Used to gate NullType tests so they run on Spark 4.1+ and are skipped on Spark 4.0.
    */
   def nullTypeColumnsSupported: Boolean = !org.apache.spark.SPARK_VERSION.startsWith("4.0")
+
+  /**
+   * Collects `t` and every throwable in its cause chain (cycle-guarded) and asserts that at
+   * least one of them satisfies `f`.
+   */
+  def assertThrowableInCauseChain(t: Throwable)(f: Throwable => Boolean): Unit = {
+    val throwables = scala.collection.mutable.ArrayBuffer.empty[Throwable]
+    var current: Throwable = t
+    while (current != null && !throwables.contains(current)) {
+      throwables += current
+      current = current.getCause
+    }
+    assert(throwables.exists(f),
+      s"No throwable in the cause chain matched the predicate. Chain: " +
+        throwables.map(_.getClass.getName).mkString("[", ", ", "]"))
+  }
+
+  /**
+   * Asserts that at least one throwable in `t`'s cause chain is a `SparkThrowable` whose error
+   * condition equals `condition`.
+   */
+  def assertThrowableWithConditionInCauseChain(t: Throwable, condition: String): Unit = {
+    assertThrowableInCauseChain(t) {
+      case st: org.apache.spark.SparkThrowable => st.getCondition == condition
+      case _ => false
+    }
+  }
 }
 
 trait CDCTestMixin {
@@ -484,7 +513,8 @@ trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
   protected def minorCompactDeltaLog(
       tablePath: String,
       startVersion: Long,
-      endVersion: Long): Unit = {
+      endVersion: Long,
+      tableName: Option[String] = None): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     val snapshotForReplay = deltaLog.update()
     val logReplay = new InMemoryLogReplay(
@@ -492,8 +522,21 @@ trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
       minSetTransactionRetentionTimestamp = None,
       tableRoot = deltaLog.dataPath,
       useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
-        snapshotForReplay.metadata, snapshotForReplay.protocol, spark))
+        snapshotForReplay.metadata, snapshotForReplay.protocol, spark),
+      retainFirstBackreference = AMTUtils.amtEnabled(snapshotForReplay))
     val hadoopConf = deltaLog.newDeltaHadoopConf()
+    val catalogTable = tableName
+      .map(name => spark.sessionState.catalog.getTableMetadata(new TableIdentifier(name)))
+    CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        spark, catalogTable, snapshotForReplay).foreach {
+      tableCommitCoordinatorClient =>
+        CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
+          version = endVersion,
+          deltaLog = deltaLog,
+          tableCommitCoordinatorClient = tableCommitCoordinatorClient,
+          deltaCommitFileProvider = DeltaCommitFileProvider(snapshotForReplay),
+          catalogTableOpt = catalogTable)
+    }
 
     (startVersion to endVersion).foreach { versionToRead =>
       val file = FileNames.unsafeDeltaFile(deltaLog.logPath, versionToRead)

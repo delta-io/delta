@@ -81,8 +81,8 @@ class DeltaV2TableManagerImplSuite
         val atVersionOneManager = manager.snapshotManager(catalogTableOpt)
         val latestManager = manager.snapshotManager(catalogTableOpt)
 
-        assert(atVersionZeroManager ne atVersionOneManager)
-        assert(atVersionOneManager ne latestManager)
+        assert(atVersionZeroManager eq atVersionOneManager)
+        assert(atVersionOneManager eq latestManager)
         assert(manager.kernelContext.getDefaultEngine() eq kernelEngine)
 
         val atVersionZero = atVersionZeroManager.loadSnapshotAt(0)

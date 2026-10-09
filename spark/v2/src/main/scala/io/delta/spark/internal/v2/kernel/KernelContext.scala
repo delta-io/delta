@@ -36,7 +36,7 @@ private[v2] final class KernelContext(
   require(sessionInvariantFsOptions != null, "sessionInvariantFsOptions must not be null")
   require(logStore != null, "logStore must not be null")
 
-  private[kernel] def materializeHadoopConf() =
+  private[v2] def materializeHadoopConf() =
     SparkSession.active.sessionState.newHadoopConfWithOptions(sessionInvariantFsOptions)
 
   private def createDefaultEngine(): KernelEngine = {

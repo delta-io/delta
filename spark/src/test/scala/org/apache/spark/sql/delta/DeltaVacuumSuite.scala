@@ -1565,6 +1565,23 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
   }
 }
 
+
+// Runs the full DeltaVacuumSuite with the protection-set tombstones sourced from commit traversal
+// instead of the reconstructed checkpoint state (as they are for AMT / Delta on Iceberg V4 tables).
+class DeltaVacuumTombstonesFromCommitsSuite extends DeltaVacuumSuite {
+  override def sparkConf: SparkConf = {
+    super.sparkConf.set(
+      DeltaSQLConf.VACUUM_PROTECTION_SET_TOMBSTONES_FROM_COMMITS_ENABLED.key, "true")
+  }
+}
+
+class DeltaVacuumLiteTombstonesFromCommitsSuite extends DeltaLiteVacuumSuite {
+  override def sparkConf: SparkConf = {
+    super.sparkConf.set(
+      DeltaSQLConf.VACUUM_PROTECTION_SET_TOMBSTONES_FROM_COMMITS_ENABLED.key, "true")
+  }
+}
+
 class DeltaLiteVacuumSuite
   extends DeltaVacuumSuite {
   override def isLiteVacuum: Boolean = true

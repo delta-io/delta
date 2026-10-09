@@ -23,7 +23,6 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.internal.v2.exception.NoRecreatableHistoryException;
 import io.delta.spark.internal.v2.exception.TableNotFoundException;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
@@ -79,7 +78,8 @@ import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.util.DeltaFileSystemOptions;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
@@ -126,6 +126,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
   private final String tablePath;
   private final Map<String, String> options;
   private final DeltaV2SnapshotManager snapshotManager;
+  private final DeltaV2QueryContext queryContext;
   /** Snapshot created during connector setup */
   private final Snapshot initialSnapshot;
 
@@ -233,6 +234,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.catalogTable = catalogTable;
+    this.queryContext = DeltaV2QueryContext$.MODULE$.apply(catalogTable);
     Option<CatalogTable> catalogTableOpt = toScalaOption(catalogTable);
     // Merge options: file system options from catalog + user options (user takes precedence)
     // This follows the same pattern as DeltaTableV2 in delta-spark
@@ -256,8 +258,9 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         this.initialSnapshot =
             loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong());
       } else {
-        this.initialSnapshot =
-            recordFrameProfileValue("snapshot.loadLatest", snapshotManager::loadLatestSnapshot);
+        Supplier<Snapshot> loadLatestSnapshot =
+            () -> snapshotManager.loadLatestSnapshot(queryContext);
+        this.initialSnapshot = recordFrameProfileValue("snapshot.loadLatest", loadLatestSnapshot);
       }
     } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
       // Rethrow as the Delta-module wrapper so catalog/interop layer never names a Kernel type.
@@ -371,8 +374,8 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
     return kernelEngine;
   }
 
-  protected SnapshotImpl initialSnapshot() {
-    return DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot);
+  protected Snapshot initialSnapshot() {
+    return initialSnapshot;
   }
 
   protected Optional<CatalogTable> catalogTable() {
@@ -388,7 +391,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
 
   /** Returns a copy of this table pinned to the snapshot active at {@code timestampMicros}. */
   public DeltaV2Table withTimestamp(long timestampMicros) {
-    return withVersion(resolveTimestampToVersion(snapshotManager, timestampMicros));
+    return withVersion(resolveTimestampToVersion(snapshotManager, timestampMicros, queryContext));
   }
 
   /**
@@ -399,15 +402,16 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
    * share a singular load once the snapshot manager exposes it TODO(#5999).
    */
   private static long resolveTimestampToVersion(
-      DeltaV2SnapshotManager manager, long timestampMicros) {
+      DeltaV2SnapshotManager manager, long timestampMicros, DeltaV2QueryContext queryContext) {
     long timeMillis = timestampMicros / 1000;
     DeltaHistoryManager.Commit commit =
         manager.getActiveCommitAtTime(
             timeMillis,
             /* canReturnLastCommit = */ true,
             /* mustBeRecreatable = */ true,
-            /* canReturnEarliestCommit = */ true);
-    long latestVersion = manager.loadLatestSnapshot().version();
+            /* canReturnEarliestCommit = */ true,
+            queryContext);
+    long latestVersion = manager.loadLatestSnapshot(queryContext).version();
     if (commit.getTimestamp() > timeMillis) {
       // The earliest available commit is younger than the requested time.
       throw new TimestampOutOfRangeException(timeMillis, commit.getTimestamp(), false);
@@ -558,9 +562,10 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
    * Validates that {@code version} exists in the Delta log, then loads the snapshot pinned to it.
    */
   private Snapshot loadSnapshotAtCheckedVersion(DeltaV2SnapshotManager manager, long version) {
-    manager.checkVersionExists(
-        version, /* mustBeRecreatable = */ true, /* allowOutOfRange = */ false);
-    final Supplier<Snapshot> loadSnapshot = () -> manager.loadSnapshotAt(version);
+    boolean mustBeRecreatable = true;
+    boolean allowOutOfRange = false;
+    manager.checkVersionExists(version, mustBeRecreatable, allowOutOfRange, queryContext);
+    final Supplier<Snapshot> loadSnapshot = () -> manager.loadSnapshotAt(version, queryContext);
     return recordFrameProfileValue("snapshot.loadAtVersion", loadSnapshot);
   }
 
@@ -572,6 +577,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
         tablePath,
         hadoopConf,
         initialSnapshot,
+        catalogTable,
         snapshotManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
@@ -586,12 +592,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
   @Override
   public RowLevelOperationBuilder newRowLevelOperationBuilder(RowLevelOperationInfo info) {
     requireNonNull(info, "row-level operation info is null");
-    return new DeltaRowLevelOperationBuilder(
-        this,
-        kernelEngine,
-        hadoopConf,
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
-        info);
+    return new DeltaRowLevelOperationBuilder(this, kernelEngine, hadoopConf, initialSnapshot, info);
   }
 
   @Override

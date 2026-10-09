@@ -145,7 +145,13 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           // This is to avoid returning `update_preimage` and `update_postimage` in separate
           // batches.
           if (admissionControl.admit(filteredFiles)) {
-            filteredFiles.toIterator
+            // Emit the BEGIN/END index markers with the CDC files (as the AddFile/RemoveFile
+            // branch does) so buildOffsetFromIndexedFile rolls the offset to (version + 1,
+            // BASE_INDEX); an AddCDCFile window-top would otherwise park and stall the stream.
+            fileActions
+              .filter(f => f.cdc != null || hasNoFileActionAndStartOrEndIndex(f))
+              .filter(isValidIndexedFile(_, fromVersion, fromIndex, endOffset))
+              .toIterator
           } else {
             Iterator()
           }
@@ -252,7 +258,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         lastExpectedVersion, maxVersionSeen)
     }
     logInfo(log"Getting CDC dataFrame for delta_log_path=" +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
       log"startVersion=${MDC(DeltaLogKeys.START_VERSION, startVersion)}, " +
       log"startIndex=${MDC(DeltaLogKeys.START_INDEX, startIndex)}, " +
       log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)}, " +
@@ -373,7 +379,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     }
 
     logInfo(log"Getting CDC file changes for delta_log_path=" +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
       log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, fromIndex=" +
       log"${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
       log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} took timeMs=" +

@@ -25,7 +25,6 @@ import io.delta.kernel.TransactionCommitResult;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.GenerateIcebergCompatActionUtils;
 import io.delta.kernel.internal.actions.SingleAction;
@@ -35,8 +34,10 @@ import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.ArrayList;
 import java.util.List;
@@ -66,7 +67,7 @@ public final class DeltaMetadataOnlyDeleteExecutor {
   /** Selects and removes every file whose rows match {@code predicates}. */
   public static void deleteWhere(
       Engine engine,
-      SnapshotImpl initialSnapshot,
+      Snapshot initialSnapshot,
       Optional<CatalogTable> catalogTable,
       Predicate[] predicates) {
     requireNonNull(engine, "engine is null");
@@ -87,12 +88,11 @@ public final class DeltaMetadataOnlyDeleteExecutor {
 
   private static List<AddFile> selectFilesToRemove(
       Engine engine,
-      SnapshotImpl initialSnapshot,
+      Snapshot initialSnapshot,
       Optional<CatalogTable> catalogTable,
       Predicate[] predicates) {
     DeltaV2Snapshot snapshot =
-        new DeltaV2Snapshot(initialSnapshot);
-
+        (DeltaV2Snapshot) initialSnapshot;
     List<Expression> catalystFilters = new ArrayList<>(predicates.length);
     for (Predicate predicate : predicates) {
       if (!(predicate instanceof AlwaysTrue)) {
@@ -119,18 +119,16 @@ public final class DeltaMetadataOnlyDeleteExecutor {
   }
 
   private static void deleteFiles(
-      Engine engine, SnapshotImpl initialSnapshot, List<AddFile> filesToRemove) {
+      Engine engine, Snapshot initialSnapshot, List<AddFile> filesToRemove) {
     // The operation is committed as WRITE, not DELETE as Kernel Transactions don't support it.
     Transaction transaction =
-        initialSnapshot
-            .buildUpdateTableTransaction(DeltaV2BatchWrite.getEngineInfo(), Operation.WRITE)
+        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot)
+            .buildUpdateTableTransaction(DeltaV2Write.getEngineInfo(), Operation.WRITE)
             .build(engine);
 
-    org.apache.spark.sql.types.StructType sparkSchema =
-        SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
     StructType physicalSchema =
         SchemaUtils.convertSparkSchemaToKernelSchema(
-            DeltaColumnMapping.renameColumns(sparkSchema));
+            DeltaColumnMapping.renameColumns(initialSnapshot.schema()));
     long removeTimestamp = System.currentTimeMillis();
 
     List<Row> removeActionRows = new ArrayList<>(filesToRemove.size());

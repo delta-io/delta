@@ -263,6 +263,23 @@ class AddFileSuite extends AnyFunSuite with Matchers {
     assert(addFile1.hashCode === addFile1.hashCode)
   }
 
+  test("createAddFileRowWithStatsJson preserves serialized stats") {
+    val statsJson = "{\"numRecords\":42,\"minValues\":{\"id\":1},\"tightBounds\":false}"
+    val row = AddFile.createAddFileRowWithStatsJson(
+      "some/file.parquet",
+      stringStringMapValue(Map.empty[String, String].asJava),
+      1024L,
+      500L,
+      true,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      Optional.of(statsJson))
+
+    assert(new AddFile(row).getStatsJson === Optional.of(statsJson))
+  }
+
   // Tests for toRemoveFileRow
   test("toRemoveFileRow: handles AddFile with all required fields") {
     val addFile = new AddFile(generateTestAddFileRow(

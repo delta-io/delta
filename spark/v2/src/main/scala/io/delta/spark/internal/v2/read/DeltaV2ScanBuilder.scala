@@ -201,11 +201,9 @@ private[read] class DeltaV2ScanBuilder(
         }
       }
 
-      val kernelSnapshot =
-        DeltaV2Snapshot.getKernelSnapshot(initialSnapshot)
       val scan = new DeltaV2Scan(
         snapshotManager,
-        kernelSnapshot,
+        initialSnapshot,
         tableSchema,
         dataSchema,
         partitionSchema,
