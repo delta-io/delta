@@ -16,9 +16,13 @@
 package io.delta.kernel.defaults.internal.parquet
 
 import java.lang.{Double => DoubleJ, Float => FloatJ}
+import java.util.Optional
+
+import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, ExpressionTestUtils, TestRow}
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
@@ -356,6 +360,49 @@ class ParquetFileWriterSuite extends AnyFunSuite
           assert(getStats("col_0") === expFltStats)
           assert(getStats("col_1") === expDblStats)
         }
+    }
+  }
+
+  /**
+   * Stats returned by the writer are computed from the in-memory Parquet footer
+   * ([[ParquetStatsReader#extractDataFileStatisticsFromInMemoryFooter]]) rather than by
+   * re-reading the file from storage. This test verifies that path produces the exact same
+   * statistics as independently re-reading the written file's footer from storage
+   * ([[ParquetStatsReader#readDataFileStatistics]])
+   */
+  test("in-memory footer stats match stats re-read from the written file") {
+    withTempDir { tempPath =>
+      val targetDir = tempPath.getAbsolutePath
+      val inputLocation = goldenTablePath("parquet-all-types")
+      val schema = tableSchema(inputLocation)
+      val statsColumns = leafLevelPrimitiveColumns(Seq.empty, schema)
+
+      val dataToWrite =
+        readParquetUsingKernelAsColumnarBatches(inputLocation, schema)
+          .map(_.toFiltered)
+
+      // Use a tiny target file size so the write produces multiple files, exercising
+      // the per-file footer-vs-file read parity.
+      val writeOutput =
+        writeToParquetUsingKernel(dataToWrite, targetDir, targetFileSize = 200, statsColumns)
+
+      assert(writeOutput.nonEmpty)
+
+      val statsFromFooter = writeOutput.map(_.toTestRow(statsColumns))
+
+      val statsFromFile = writeOutput.map { fileStatus =>
+        val inputFile =
+          new HadoopFileIO(configuration).newInputFile(fileStatus.getPath, fileStatus.getSize)
+        val stats =
+          ParquetStatsReader.readDataFileStatistics(inputFile, schema, statsColumns.asJava)
+        new DataFileStatus(
+          fileStatus.getPath,
+          fileStatus.getSize,
+          fileStatus.getModificationTime,
+          Optional.of(stats)).toTestRow(statsColumns)
+      }
+
+      checkAnswer(statsFromFooter, statsFromFile)
     }
   }
 
