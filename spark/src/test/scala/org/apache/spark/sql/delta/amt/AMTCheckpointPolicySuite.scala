@@ -283,7 +283,7 @@ class AMTCheckpointPolicySuite extends AMTCheckpointTestBase {
         val v4Metrics = amtWriteMetricsAt(sql(s"INSERT INTO $name VALUES (3)"))
         assert(v4Metrics.trigger == AMTTriggerMode.InlineWithLargeCommitIncremental.name,
           s"Once a full AMT exists, a large commit inlines its AMT; got ${v4Metrics.trigger}")
-        assert(v4Metrics.incremental == "true",
+        assert(v4Metrics.incremental,
           "The usage log must report incremental=true for the inline AMT write.")
         assert(requireCheckpointAt(deltaLog, 4).contentRoot.isIncremental.contains(true),
           "The inline AMT is incremental.")

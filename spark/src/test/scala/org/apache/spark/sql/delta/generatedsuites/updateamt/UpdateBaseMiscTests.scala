@@ -26,14 +26,14 @@
 // ***********************************************************************************
 
 // scalastyle:off line.size.limit
-package org.apache.spark.sql.delta.generatedsuites.mergeamt
+package org.apache.spark.sql.delta.generatedsuites.updateamt
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.amt._
 import org.apache.spark.sql.delta.rowid._
 
-class MergeIntoSQLNondeterministicOrderSQLNameBasedAMTSuite
-  extends MergeIntoSQLNondeterministicOrderTests
-  with MergeIntoSQLMixin
+class UpdateBaseMiscSQLNameBasedAMTSuite
+  extends UpdateBaseMiscTests
+  with UpdateSQLMixin
   with DeltaDMLTestUtilsNameBased
-  with MergeIntoAMTMixin
+  with UpdateAMTMixin

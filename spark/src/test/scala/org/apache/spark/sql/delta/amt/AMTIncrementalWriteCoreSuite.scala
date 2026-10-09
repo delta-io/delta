@@ -65,7 +65,7 @@ class AMTIncrementalWriteCoreSuite extends AMTIncrementalWriteTestBase {
         attemptVersion))
       assert(result.includeActionsInCommitJson)
       assert(result.leaves.isEmpty)
-      assert(metric.incremental === "true")
+      assert(metric.incremental)
       val incrementalMetrics = metric.incrementalWriteMetrics.getOrElse(
         fail("The snapshot bootstrap must report incremental-write metrics."))
       assert(incrementalMetrics.numIntermediateCommits === 0)

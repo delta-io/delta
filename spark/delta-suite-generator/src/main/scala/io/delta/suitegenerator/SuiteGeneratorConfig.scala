@@ -146,6 +146,8 @@ object SuiteGeneratorConfig {
     val UPDATE_SQL = DimensionMixin("UpdateSQL", alias = Some("SQL"))
     val UPDATE_DVS = DimensionMixin("UpdateSQLWithDeletionVectors", alias = Some("DV"))
     val UPDATE_ROW_TRACKING_DV = DimensionMixin("RowTrackingUpdateDV")
+    val UPDATE_AMT = DimensionMixin("UpdateAMT", alias = Some("AMT"))
+    val ROW_TRACKING_UPDATE_AMT = DimensionMixin("RowTrackingUpdateAMT", alias = Some("AMT"))
     val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
     val DELETE_SQL = DimensionMixin("DeleteSQL", alias = Some("SQL"))
     val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors", alias = Some("DV"))
@@ -335,12 +337,9 @@ object SuiteGeneratorConfig {
         importer"org.apache.spark.sql.delta.rowid._"
       ),
       testConfigs = List(
-        // The not-matched-by-source CDC suites enable change data feed on the table. Under AMT's
-        // mandatory column mapping, creating a CDF-enabled table with data is rejected by
-        // performCdcColumnMappingCheck (DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION), so they are
-        // not part of the AMT variants here.
         TestConfig(
-          (Tests.MERGE_SQL ::: Tests.MERGE_BASE).filterNot(Set(
+          Tests.MERGE_BASE.filterNot(Set(
+            "MergeIntoTempViewsTests",
             "MergeIntoNotMatchedBySourceCDCPart1Tests",
             "MergeIntoNotMatchedBySourceCDCPart2Tests"
           )) ::: List(
@@ -394,6 +393,24 @@ object SuiteGeneratorConfig {
             List(Dims.UPDATE_ROW_TRACKING_DV),
             List(Dims.UPDATE_ROW_TRACKING_DV, Dims.CDC, Dims.COLUMN_MAPPING.asOptional)
           )
+        )
+      )
+    ),
+    TestGroup(
+      packageName = "updateamt",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.amt._",
+        importer"org.apache.spark.sql.delta.rowid._"
+      ),
+      testConfigs = List(
+        TestConfig(
+          List("UpdateBaseMiscTests"),
+          List(List(Dims.UPDATE_SQL, Dims.NAME_BASED, Dims.UPDATE_AMT))
+        ),
+        TestConfig(
+          List("RowTrackingUpdateCommonTests"),
+          List(List(Dims.UPDATE_ROW_TRACKING_DV.asOptional, Dims.ROW_TRACKING_UPDATE_AMT))
         )
       )
     ),

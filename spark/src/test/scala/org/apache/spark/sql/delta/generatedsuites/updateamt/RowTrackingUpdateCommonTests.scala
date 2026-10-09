@@ -26,14 +26,17 @@
 // ***********************************************************************************
 
 // scalastyle:off line.size.limit
-package org.apache.spark.sql.delta.generatedsuites.mergeamt
+package org.apache.spark.sql.delta.generatedsuites.updateamt
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.amt._
 import org.apache.spark.sql.delta.rowid._
 
-class MergeIntoTempViewsSQLNameBasedAMTSuite
-  extends MergeIntoTempViewsTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsNameBased
-  with MergeIntoAMTMixin
+class RowTrackingUpdateCommonAMTSuite
+  extends RowTrackingUpdateCommonTests
+  with RowTrackingUpdateAMTMixin
+
+class RowTrackingUpdateCommonRowTrackingUpdateDVAMTSuite
+  extends RowTrackingUpdateCommonTests
+  with RowTrackingUpdateDVMixin
+  with RowTrackingUpdateAMTMixin

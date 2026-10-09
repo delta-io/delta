@@ -344,7 +344,17 @@ class DeltaV2OptimisticTransactionSuite
     }
   }
 
-  /** Checks the append with typed partition values. */
+  /**
+   * Seeds a table partitioned by a single column `p` of `partitionType`, inserts one row with
+   * `partitionValueSql`, then commits a synthetic [[AddFile]] through Kernel reusing the seeded
+   * row's serialized partition values. Asserts the commit advances the version and preserves
+   * the physical partition keys and values when column mapping is enabled.
+   *
+   * This exercises the partition-value typing in `kernelAppendActionsIterable`: Kernel's
+   * `getWriteContext` validates each literal's type against the partition schema with exact
+   * type-equality, so a non-string partition column would fail if values were still typed as
+   * strings.
+   */
   private def checkTypedPartitionAppend(
       partitionType: String,
       partitionValueSql: String,
@@ -411,9 +421,12 @@ class DeltaV2OptimisticTransactionSuite
     checkTypedPartitionAppend("STRING", "'foo'")
   }
 
-  Seq("name", "id").foreach { mappingMode =>
-    test(s"append with column mapping(mode: $mappingMode) is enabled") {
-      checkTypedPartitionAppend("INT", "5", Some(mappingMode))
+  for {
+    mappingMode <- Seq("name", "id")
+    partitionValueSql <- Seq("5", "NULL")
+  } {
+    test(s"append with column mapping $mappingMode preserves INT partition $partitionValueSql") {
+      checkTypedPartitionAppend("INT", partitionValueSql, Some(mappingMode))
     }
   }
 

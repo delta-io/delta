@@ -21,12 +21,13 @@ import java.util.concurrent.TimeUnit
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, FullAMTWriteFailedWithConflict, LogSegment, MaintenanceOperation, Snapshot, WinningCommitMetrics}
-import org.apache.spark.sql.delta.actions.{Action, Checkpoint, FileAction}
+import org.apache.spark.sql.delta.actions.{Action, Checkpoint, ContentRoot, FileAction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaTestBarrier
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
@@ -177,11 +178,69 @@ object BackRefRebaseMetrics {
 
 /** Metrics for a single AMT write attempt (one per commit attempt that materializes a tree). */
 case class SingleAMTWriteMetrics(
+    // The maintenance trigger that scheduled this write (an [[AMTTriggerMode]] name).
     trigger: String,
-    incremental: String,
+    // Whether the tree was built incrementally (true) or fully re-materialized (false).
+    incremental: Boolean,
+    // Wall-clock time to materialize the manifest tree, in milliseconds.
     materializeDurationMs: Long,
+    // Size of the root manifest file, in bytes.
+    contentRootSizeInBytes: Long,
+    // Effective checkpoint size: the root manifest plus the live leaf manifest files, in bytes.
+    checkpointSizeInBytes: Long,
+    // Number of live (non-tombstoned) leaf-pointer manifests in the tree.
+    numLeaves: Long,
+    // Live data files in the tree (root-resident plus leaf-summarized), minus any masked by a
+    // leaf's deletion vector; equals the table's live file count.
+    numLiveDataEntries: Long,
+    // Tombstoned data files: DELETED/REPLACED entries plus deletion-vector-masked ones.
+    numTombstoneDataEntries: Long,
+    // Number of SetTransaction entries carried in the tree.
+    numSetTransactions: Long,
+    // Number of DomainMetadata entries carried in the tree.
+    numDomainMetadata: Long,
+    // Effective size of the previous AMT tree this write built on; -1 if none (the first
+    // checkpoint).
+    previousCheckpointSizeInBytes: Long = -1L,
+    // Table versions elapsed since the previous AMT tree's content version; -1 if none.
+    numVersionsSinceLastCheckpoint: Long = -1L,
+    // Number of json delta files in the pre-commit log segment folded into this checkpoint.
+    numJsonsInSnapshotSinceLastCheckpoint: Long = -1L,
     // Detailed shape breakdown of an incremental write; None for a full rewrite.
     incrementalWriteMetrics: Option[IncrementalAMTWriteMetrics] = None)
+
+object SingleAMTWriteMetrics {
+  def apply(
+      trigger: String,
+      incremental: Boolean,
+      materializeDurationMs: Long,
+      contentRoot: ContentRoot,
+      numRootLiveDataEntries: Long,
+      numRootTombstoneDataEntries: Long,
+      leaves: Seq[DataManifestEntry],
+      numSetTransactions: Long,
+      numDomainMetadata: Long,
+      incrementalWriteMetrics: Option[IncrementalAMTWriteMetrics]): SingleAMTWriteMetrics = {
+    val liveLeaves =
+      leaves.filter(leaf => Tracking.Status.liveEntryStatuses.contains(leaf.tracking.status))
+    def maskedEntries(leaf: DataManifestEntry): Long =
+      leaf.manifest_info.dv_cardinality.getOrElse(0L)
+    SingleAMTWriteMetrics(
+      trigger = trigger,
+      incremental = incremental,
+      materializeDurationMs = materializeDurationMs,
+      contentRootSizeInBytes = contentRoot.sizeInBytes,
+      checkpointSizeInBytes = contentRoot.sizeInBytes + liveLeaves.map(_.file_size_in_bytes).sum,
+      numLeaves = liveLeaves.size.toLong,
+      numLiveDataEntries = numRootLiveDataEntries +
+        liveLeaves.map(l => l.manifest_info.liveFilesCount - maskedEntries(l)).sum,
+      numTombstoneDataEntries = numRootTombstoneDataEntries +
+        liveLeaves.map(l => l.manifest_info.tombstoneFilesCount + maskedEntries(l)).sum,
+      numSetTransactions = numSetTransactions,
+      numDomainMetadata = numDomainMetadata,
+      incrementalWriteMetrics = incrementalWriteMetrics)
+  }
+}
 
 case class IncrementalAMTWriteMetrics(
     numIntermediateCommits: Int,
@@ -637,7 +696,7 @@ class AMTWriterManager(
       s"Cached AMT provider ${amtProviderOpt.map(_.checkpointAction.version)} is out of sync " +
         "with preCommitLatestAMTCheckpointOpt " +
         s"${currentTransactionInfo.preCommitLatestAMTCheckpointOpt.map(_.version)}.")
-    if (incremental) {
+    val result = if (incremental) {
       // A retry may have advanced to a winning AMT. Prefer that tree over snapshot bootstrap.
       val (baseActionsProvider, oldAMTVersion): (BaseAMTActionsProvider, Long) =
         amtProviderOpt match {
@@ -648,8 +707,7 @@ class AMTWriterManager(
             (new BaseSnapshotActionsProvider(readSnapshot), readSnapshot.version)
         }
       // The commits written after the old AMT, up to the last committed version.
-      val intermediateLogCommits = preCommitLogSegment.deltas
-        .filter(f => FileNames.getFileVersion(f) > oldAMTVersion)
+      val intermediateLogCommits = selectIntermediateLogCommits(preCommitLogSegment, oldAMTVersion)
       new IncrementalAMTWriter(spark, deltaLog).writeIncremental(
         oldAMTActionsProvider = baseActionsProvider,
         intermediateLogCommits = intermediateLogCommits,
@@ -668,6 +726,39 @@ class AMTWriterManager(
         postCommitMetadata = currentTransactionInfo.metadata,
         trigger = trigger)
     }
+    // Enrich the writer's metrics with log-segment context.
+    result.copy(amtWriteMetrics = result.amtWriteMetrics.copy(
+      previousCheckpointSizeInBytes =
+        amtProviderOpt.map(_.effectiveCheckpointSizeInBytes()).getOrElse(-1L),
+      numVersionsSinceLastCheckpoint = amtProviderOpt
+        .map(result.contentRootVersion - _.checkpointAction.contentRoot.version).getOrElse(-1L),
+      numJsonsInSnapshotSinceLastCheckpoint = preCommitLogSegment.deltas.size.toLong))
+  }
+
+  /**
+   * Selects the intermediate log commits after the old AMT version from the pre-commit log segment.
+   * Preserves compacted deltas when possible, falling back to individual commits when the AMT sits
+   * in the middle of a compacted delta range.
+   */
+  private[amt] def selectIntermediateLogCommits(
+      preCommitLogSegment: LogSegment,
+      oldAMTVersion: Long): Seq[FileStatus] = {
+    val nonCompactedDeltas = preCommitLogSegment.nonCompactedDeltasOpt.getOrElse {
+      AMTUtils.logAndThrowMissingNonCompactedDeltasInLogSegment(
+        deltaLog = deltaLog,
+        logSegment = preCommitLogSegment,
+        eventData = Map("oldAMTVersion" -> oldAMTVersion))
+      throw new IllegalStateException("should not reach here")
+    }
+    val deltasAndCompactedDeltas =
+      (preCommitLogSegment.deltas ++ nonCompactedDeltas).distinct.sortBy(_.getPath.getName)
+    val deltasAfterOldAMT =
+      nonCompactedDeltas.filter(FileNames.getFileVersion(_) > oldAMTVersion).toArray
+    deltaLog.useCompactedDeltasForLogSegment(
+      deltasAndCompactedDeltas = deltasAndCompactedDeltas,
+      deltasAfterCheckpoint = deltasAfterOldAMT,
+      latestCommitVersion = preCommitLogSegment.version,
+      checkpointVersionToUse = oldAMTVersion).toSeq
   }
 
   private def largeCommitActionsCountThresholdForInlineManifestCommit: Long =

@@ -853,6 +853,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val VACUUM_PROTECTION_SET_TOMBSTONES_FROM_COMMITS_ENABLED =
+    buildConf("vacuum.protectionSet.tombstonesFromCommits.enabled")
+      .internal()
+      .doc("When enabled, Vacuum derives the 'files removed within the retention window' part " +
+        "of its protection set by commit traversal instead of reading tombstones inline from " +
+        "the reconstructed checkpoint state. This removes Vacuum's dependency on checkpoints " +
+        "carrying tombstones. Defaults to off.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_VACUUM_PARALLEL_DELETE_PARALLELISM =
     buildConf("vacuum.parallelDelete.parallelism")
       .doc("Sets the number of partitions to use for parallel deletes. If not set, defaults to " +
@@ -3809,6 +3819,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .stringConf
       .checkValues(Set("AUTO", "NONE", "STRICT"))
       .createWithDefault("AUTO")
+
+  val V2_TRANSACTIONS_ENABLED =
+    buildConf("v2.transactions.enabled")
+      .internal()
+      .doc("When enabled, Delta utilises DSv2 Spark transactions in write operations. " +
+        "Disabled by default. This is a feature under development.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS =
     buildConf("dml.insert.dfByName.allowImplicitCasts")

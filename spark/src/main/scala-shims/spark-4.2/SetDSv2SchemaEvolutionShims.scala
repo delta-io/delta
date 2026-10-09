@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, InsertIntoStatement, LogicalPlan, MergeIntoTable, OverwriteByExpression, OverwritePartitionsDynamic}
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -37,7 +35,7 @@ class SetDSv2SchemaEvolutionShims(session: SparkSession) extends Rule[LogicalPla
     new DeltaOptions(writeOptions, session.sessionState.conf).canMergeSchema
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
-    if (session.sessionState.conf.getConf(DeltaSQLConf.V2_ENABLE_MODE) == "NONE") return plan
+    if (!DeltaV2Mode(session).allowsV2SchemaEvolutionShims()) return plan
 
     // This rule runs during pre-resolution so it cannot identify the target table type. It applies
     // to all DSv2 tables that declare AUTOMATIC_SCHEMA_EVOLUTION when a Delta-specific config is

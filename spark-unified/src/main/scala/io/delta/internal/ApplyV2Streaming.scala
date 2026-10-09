@@ -21,8 +21,6 @@ import scala.jdk.OptionConverters._
 
 import io.delta.spark.internal.v2.catalog.DeltaV2Table
 import io.delta.spark.internal.v2.utils.ScalaUtils
-import org.apache.spark.sql.delta.DeltaV2Mode
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -30,7 +28,9 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.delta.DeltaV2Mode
 import org.apache.spark.sql.delta.Relocated.StreamingRelation
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -67,7 +67,7 @@ class ApplyV2Streaming(
       return false
     }
 
-    val deltaV2Mode = new DeltaV2Mode(session.sessionState.conf)
+    val deltaV2Mode = DeltaV2Mode(session)
     deltaV2Mode.isStreamingReadsEnabled(s.dataSource.catalogTable.toJava)
   }
 
