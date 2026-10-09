@@ -20,9 +20,30 @@ import org.apache.spark.sql.delta.AdaptiveMetadataTableFeature
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.test.SharedSparkSession
 
-class AMTUtilsSuite extends SparkFunSuite {
+class AMTUtilsSuite extends QueryTest with SharedSparkSession {
+
+  test("invariantCheckWithLogging: succeeds when the invariant holds") {
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = true,
+      opTypeSuffix = AMTUsageLogs.ALERT_MIXED_LEAF_CONTENT,
+      message = "valid AMT invariant")
+  }
+
+
+  test("invariantCheckWithLogging: evaluates the check once") {
+    var checkCount = 0
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = {
+        checkCount += 1
+        true
+      },
+      opTypeSuffix = AMTUsageLogs.ALERT_MIXED_LEAF_CONTENT,
+      message = "valid AMT invariant")
+    assert(checkCount === 1)
+  }
 
   test("hasScheme: follows URI scheme grammar") {
     assert(AMTUtils.hasScheme("s3://bucket/path"))

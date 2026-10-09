@@ -27,7 +27,7 @@ import io.delta.kernel.CommitRangeBuilder.CommitBoundary
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs, WriteUtilsWithV2Builders}
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{KernelException, MaxCatalogVersionException}
 import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl}
 import io.delta.kernel.internal.commitrange.CommitRangeImpl
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
@@ -319,20 +319,23 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
   test("reading a catalogManaged table without providing maxCatalogVersion fails") {
     withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
       // With logData
-      intercept[IllegalArgumentException] {
+      val latestError = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .withLogData(parsedLogData.asJava)
           .build(defaultEngine)
       }
+      assert(latestError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
       // Without logData
-      intercept[IllegalArgumentException] {
+      val noLogDataError = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .build(defaultEngine)
       }
+      assert(
+        noLogDataError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
       // With time-travel-version
-      val e1 = intercept[IllegalArgumentException] {
+      val e1 = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .atVersion(0)
@@ -340,7 +343,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
       }
       assert(e1.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
       // With time-travel-version and logData
-      val e2 = intercept[IllegalArgumentException] {
+      val e2 = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .atVersion(2)
@@ -356,14 +359,16 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
       // Create a basic file-system managed table
       createEmptyTable(tablePath = tablePath, schema = testSchema)
       // Try to read it and provide the maxCatalogVersion
-      intercept[IllegalArgumentException] {
+      val error = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .withMaxCatalogVersion(0)
           .build(engine)
       }
+      assert(error.getMessage ===
+        "Should not provide maxCatalogVersion for file-system managed tables")
       // With time-travel-version
-      val e = intercept[IllegalArgumentException] {
+      val e = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .atVersion(0)
@@ -438,7 +443,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         .build(defaultEngine)
       assert(pathBasedVersionSnapshot.getVersion === 0)
 
-      val e1 = intercept[IllegalArgumentException] {
+      val e1 = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .atVersion(1)
@@ -453,7 +458,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         .build(defaultEngine)
       assert(timestampSnapshot.getVersion === 0)
 
-      val e2 = intercept[IllegalArgumentException] {
+      val e2 = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .atTimestamp(v0Timestamp, latestSnapshot)
@@ -465,7 +470,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
 
   test("time travel across unpublished catalogManaged upgrade") {
     withUpgradedToCatalogManagedTable(publishUpgrade = false) { (tablePath, _, parsedLogData) =>
-      val e = intercept[IllegalArgumentException] {
+      val e = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .atVersion(1)
@@ -507,7 +512,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         .build(defaultEngine)
       assert(versionSnapshot.getVersion === 0)
 
-      val e1 = intercept[IllegalArgumentException] {
+      val e1 = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .atVersion(1)
@@ -526,7 +531,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         .build(defaultEngine)
       assert(timestampSnapshot.getVersion === 0)
 
-      val e2 = intercept[IllegalArgumentException] {
+      val e2 = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .atTimestamp(v0Timestamp, latestSnapshot)

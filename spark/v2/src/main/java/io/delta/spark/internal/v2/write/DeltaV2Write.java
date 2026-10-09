@@ -18,12 +18,14 @@ package io.delta.spark.internal.v2.write;
 import static java.util.Objects.requireNonNull;
 
 import com.google.common.annotations.VisibleForTesting;
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.distributions.Distribution;
 import org.apache.spark.sql.connector.distributions.Distributions;
 import org.apache.spark.sql.connector.expressions.Expressions;
@@ -35,6 +37,9 @@ import org.apache.spark.sql.connector.write.RequiresDistributionAndOrdering;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.streaming.StreamingWrite;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2OptimisticTransaction;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -42,9 +47,9 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 /**
  * The DSv2 {@link Write} for Delta. Holds the table-level write context (engine, Hadoop conf, table
  * path, snapshot, data schema, write info) and dispatches to a mode-specific implementation: {@link
- * #toBatch} builds a {@link DeltaV2BatchWrite} (which owns its own driver-side context and
- * single-transaction commit off {@code initialSnapshot}), and {@link #toStreaming} builds a {@link
- * DeltaV2StreamingWrite} (per-epoch commit off a reloaded snapshot).
+ * #toBatch} builds an optimistic transaction and passes it to a {@link DeltaV2BatchWrite}, and
+ * {@link #toStreaming} builds a {@link DeltaV2StreamingWrite} (per-epoch commit off a reloaded
+ * snapshot).
  *
  * <p>Both modes obtain their executor-side write state -- a {@link DeltaV2DataWriterFactory} --
  * from the shared {@link DeltaV2WriteContext#buildDataWriterFactory}, which keeps the
@@ -80,15 +85,23 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
   private final Configuration hadoopConf;
   private final String tablePath;
   private final Snapshot initialSnapshot;
+  private final Optional<CatalogTable> catalogTable;
   private final DeltaV2SnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
-  private final String queryId;
+  /**
+   * Whether the table opted into shredded variant writes. Resolved by the write builder, which
+   * holds the snapshot facade that exposes Delta metadata, and carried here so both write modes
+   * configure the Parquet writer identically.
+   */
+  private final boolean variantShreddingEnabled;
+
   private final LogicalWriteInfo writeInfo;
 
   /**
    * @param initialSnapshot the batch's planned snapshot the write state is built from (and the
    *     streaming guard's schema/protocol baseline)
+   * @param catalogTable the catalog table containing table metadata
    * @param snapshotManager reloads the latest snapshot per epoch on the streaming path; unused by
    *     the batch path (a single commit off {@code initialSnapshot})
    * @param dataSchema the non-partition columns (the Parquet file body)
@@ -99,19 +112,22 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
       Configuration hadoopConf,
       String tablePath,
       Snapshot initialSnapshot,
+      Optional<CatalogTable> catalogTable,
       DeltaV2SnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
-      LogicalWriteInfo writeInfo) {
+      LogicalWriteInfo writeInfo,
+      boolean variantShreddingEnabled) {
     this.engine = requireNonNull(engine, "engine is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
+    this.catalogTable = requireNonNull(catalogTable, "catalogTable is null");
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
     this.writeInfo = requireNonNull(writeInfo, "writeInfo is null");
-    this.queryId = requireNonNull(writeInfo.queryId(), "queryId is null");
+    this.variantShreddingEnabled = variantShreddingEnabled;
   }
 
   /**
@@ -124,23 +140,41 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
 
   @Override
   public BatchWrite toBatch() {
-    // The batch path builds its own driver-side context (DeltaV2BatchWriteContext) and commits a
-    // single transaction off initialSnapshot.
-    return new DeltaV2BatchWrite(
-        engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
+    DeltaV2OptimisticTransaction optimisticTransaction =
+        new DeltaV2OptimisticTransaction(
+            ScalaUtils.toScalaOption(catalogTable), (DeltaV2Snapshot) initialSnapshot, engine);
+    DeltaV2WriteContext context =
+        DeltaV2WriteContext.create(
+            engine,
+            hadoopConf,
+            tablePath,
+            initialSnapshot,
+            dataSchema,
+            partitionSchema,
+            writeInfo,
+            variantShreddingEnabled);
+    return new DeltaV2BatchWrite(optimisticTransaction, context);
   }
 
   @Override
   public StreamingWrite toStreaming() {
     rejectUnsupportedStreamingOptions();
-    // Build the operation-independent write context once; the streaming write drives its own
-    // per-epoch transactions (Operation.STREAMING_UPDATE) and reuses buildDataWriterFactory to
-    // produce the executor write state -- the same setup the batch path uses, no duplication.
+    // Build the write context once and reuse buildDataWriterFactory for each epoch. That freezes
+    // the layout it derives from initialSnapshot -- including variant shredding -- which does not
+    // advance while the query runs, so the streaming commit re-reads the shredding property off
+    // the reloaded snapshot and fails the epoch on divergence, as it already does for schema and
+    // protocol.
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
-            engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
-    return new DeltaV2StreamingWrite(
-        engine, initialSnapshot, snapshotManager, queryId, context::buildDataWriterFactory);
+            engine,
+            hadoopConf,
+            tablePath,
+            initialSnapshot,
+            dataSchema,
+            partitionSchema,
+            writeInfo,
+            variantShreddingEnabled);
+    return new DeltaV2StreamingWrite(snapshotManager, context);
   }
 
   /**

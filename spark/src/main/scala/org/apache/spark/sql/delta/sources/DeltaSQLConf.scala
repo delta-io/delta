@@ -93,6 +93,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createOptional
 
+  val TEST_BARRIER_ENABLED =
+    buildConf("testBarrier.enabled")
+      .internal()
+      .doc("If true, tests are allowed to use TestBarrier via DeltaTestBarrier. " +
+        "This allows test to pause and release a Delta code path deterministically.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_COLLECT_STATS =
     buildConf("stats.collect")
       .internal()
@@ -200,6 +208,13 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(n => n >= 0, "must not be negative.")
       .createWithDefault(2)
 
+  val DELTA_SNAPSHOT_FILESYSTEM_LISTING_FILTER_STAGED_COMMITS_ENABLED =
+    buildConf("snapshot.filesystemListing.filterStagedCommits.enabled")
+      .internal()
+      .doc("When true, raw filesystem listings accept only backfilled Delta commit files.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES =
     buildConf("commit.inconsistentList.maxRetries")
       .internal()
@@ -227,6 +242,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .longConf
       .checkValue(_ >= 0, "must be non-negative")
       .createWithDefault(500000L)
+
+  val DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT =
+    buildConf("logSegment.deltasToStringLimit")
+      .internal()
+      .doc("Maximum number of delta files rendered when a LogSegment is turned into a string " +
+        "for logging or error messages. A LogSegment can hold a very large number of delta " +
+        "files, and rendering all of them can materialize a huge string and OOM the driver, so " +
+        "the remainder is elided once this limit is exceeded. Set to -1 to disable truncation.")
+      .longConf
+      .checkValue(_ >= -1, "must be -1 (truncation disabled) or non-negative")
+      .createWithDefault(5000L)
 
   val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
     buildConf("partitionColumnValidity.enabled")
@@ -456,6 +482,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(1000000)
 
+  val DELTA_CONVERT_REBALANCE_FILE_LISTING =
+    buildConf("convert.rebalanceFileListing")
+      .internal()
+      .doc("When true, CONVERT TO DELTA rebalances the recursively-listed files " +
+        "across tasks (by file count) before reading Parquet footers for schema inference. " +
+        "Files are processed in path order for deterministic schema merging. " +
+        "recursiveListDirs otherwise parcels files by top-level directory, so a single large " +
+        "partition directory becomes one skewed task that reads all its footers alone.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CONVERT_METADATA_CHECK_ENABLED =
     buildConf("convert.metadataCheck.enabled")
       .doc(
@@ -621,6 +658,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "multiplier * checkpoint interval.")
       .intConf
       .checkValue(_ > 0, "fullRewriteCheckpointIntervalMultiplier must be positive.")
+      .createWithDefault(5)
+
+  val AMT_CONFLICT_CHECKING_MAX_FULL_REGENERATE_RETRIES =
+    buildConf("amt.conflictChecking.maxFullRegenerateRetries")
+      .internal()
+      .doc("Maximum number of times the AMT checkpoint path regenerates a losing full AMT " +
+        "OPTIMIZE checkpoint against a refreshed snapshot after a concurrent winner invalidated " +
+        "its base tree, before surfacing the conflict.")
+      .intConf
+      .checkValue(_ >= 0, "maxFullRegenerateRetries must be non-negative.")
       .createWithDefault(5)
 
   val AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED =
@@ -803,6 +850,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("Enables parallelizing the deletion of files during a vacuum command. Enabling " +
         "may result hitting rate limits on some storage backends. When enabled, parallelization " +
         "is controlled 'spark.databricks.delta.vacuum.parallelDelete.parallelism'.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val VACUUM_PROTECTION_SET_TOMBSTONES_FROM_COMMITS_ENABLED =
+    buildConf("vacuum.protectionSet.tombstonesFromCommits.enabled")
+      .internal()
+      .doc("When enabled, Vacuum derives the 'files removed within the retention window' part " +
+        "of its protection set by commit traversal instead of reading tombstones inline from " +
+        "the reconstructed checkpoint state. This removes Vacuum's dependency on checkpoints " +
+        "carrying tombstones. Defaults to off.")
       .booleanConf
       .createWithDefault(false)
 
@@ -1633,6 +1690,22 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_READ_SET_TRANSACTIONS_FROM_CRC =
+    buildConf("setTransactionsInCrc.useForReads")
+      .internal()
+      .doc("When enabled, Delta will use the setTransactions from CRC (if available) to speed up" +
+        " Snapshot.setTransactions API.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val FAST_QUERY_PATH_ENABLED =
+    buildConf("fastQueryPath.enabled")
+      .doc("If enabled, analysis and data skipping on Delta tables will go through a fast path " +
+        "that does minimal amount of work. " +
+        "Many snapshot fields are retrieved from the checksum if available.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_MAX_SET_TRANSACTIONS_IN_CRC =
     buildConf("setTransactionsInCrc.maxAllowed")
       .internal()
@@ -1701,17 +1774,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("If enabled, delta log snapshot will read the protocol, metadata, and ICT " +
         "(if applicable) from the checksum file and use those to avoid a spark job over the " +
         "checkpoint for the two rows of protocol and metadata")
-      .booleanConf
-      .createWithDefault(true)
-
-  val USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED =
-    buildConf("readSnapshotStateFromChecksum.enabled")
-      .internal()
-      .doc("If enabled, snapshot state fields (file/record counts, set transactions, domain " +
-        "metadata, and histograms) are read from the checksum file when it contains them, " +
-        "avoiding a spark job aggregating over the state reconstruction. Fields the checksum " +
-        "does not carry, and snapshots without a checksum file, fall back to state " +
-        "reconstruction.")
       .booleanConf
       .createWithDefault(true)
 
@@ -1937,6 +1999,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
              |does not support colons in file paths due to ambiguity, but some file systems like
              |S3 allow them.
              |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val REPLACEWHERE_LITERAL_STRING_PREDICATES_ENABLED =
+    buildConf("replaceWhere.literalStringPredicates.enabled")
+      .internal()
+      .doc("When enabled, Delta overwrite filters preserve literal string operands. " +
+        "When disabled, startsWith, endsWith, and contains use the legacy LIKE translation.")
       .booleanConf
       .createWithDefault(true)
 
@@ -2226,23 +2296,26 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(GeneratedColumnValidateOnWriteMode.values.map(_.toString))
       .createWithDefault(GeneratedColumnValidateOnWriteMode.LOG_ONLY.toString)
 
-  sealed abstract class ConsistentDataChangeValidationMode(val name: String) {
+  sealed abstract class DataChangeValidationMode(val name: String) {
     override def toString: String = name
   }
-  object ConsistentDataChangeValidationMode {
+  object DataChangeValidationMode {
     /** Skip the validation entirely. */
-    case object OFF extends ConsistentDataChangeValidationMode("off")
+    case object OFF extends DataChangeValidationMode("off")
     /** Record a Delta event on violation but do not throw. */
-    case object LOG extends ConsistentDataChangeValidationMode("log")
+    case object LOG extends DataChangeValidationMode("log")
     /** Throw an exception on violation. */
-    case object FATAL extends ConsistentDataChangeValidationMode("fatal")
+    case object FATAL extends DataChangeValidationMode("fatal")
 
-    val values: Seq[ConsistentDataChangeValidationMode] = Seq(OFF, LOG, FATAL)
-    private val byName: Map[String, ConsistentDataChangeValidationMode] =
+    val values: Seq[DataChangeValidationMode] = Seq(OFF, LOG, FATAL)
+    private val byName: Map[String, DataChangeValidationMode] =
       values.map(m => m.name -> m).toMap
 
-    def fromConf(conf: SQLConf): ConsistentDataChangeValidationMode =
+    def consistentDataChangeMode(conf: SQLConf): DataChangeValidationMode =
       byName(conf.getConf(DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE))
+
+    def expectedDataChangeMode(conf: SQLConf): DataChangeValidationMode =
+      byName(conf.getConf(DELTA_COMMIT_VALIDATE_EXPECTED_DATA_CHANGE_MODE))
   }
 
   val DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE =
@@ -2257,8 +2330,35 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
              |""".stripMargin)
       .stringConf
       .transform(_.toLowerCase(Locale.ROOT))
-      .checkValues(ConsistentDataChangeValidationMode.values.map(_.name).toSet)
-      .createWithDefault(ConsistentDataChangeValidationMode.LOG.name)
+      .checkValues(DataChangeValidationMode.values.map(_.name).toSet)
+      .createWithDefault(DataChangeValidationMode.LOG.name)
+
+  val DELTA_COMMIT_VALIDATE_EXPECTED_DATA_CHANGE_MODE =
+    buildConf("commitValidation.expectedDataChange.mode")
+      .internal()
+      .doc("""
+             |Controls validation that every FileAction an operation commits carries the dataChange
+             |value the operation declares via DeltaOperations.Operation.expectedFileDataChange
+             |(operations that leave it unset are not validated).
+             | - off:   Skip the validation entirely.
+             | - log:   Record a Delta event on violation but do not throw.
+             | - fatal: Throw an exception on violation.
+             |""".stripMargin)
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(DataChangeValidationMode.values.map(_.name).toSet)
+      .createWithDefault(DataChangeValidationMode.LOG.name)
+
+  val DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED =
+    buildConf("commitInfo.dataChange.read.enabled")
+      .internal()
+      .doc("""
+             |When enabled, readers that need to know whether a commit changed data read the
+             |commit-level dataChange recorded in its CommitInfo instead of scanning the commit's
+             |file actions.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 
   object ValidateCheckConstraintsMode extends Enumeration {
     val OFF, LOG_ONLY, ASSERT = Value
@@ -2527,6 +2627,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |This is a safety switch - we should only set this to false if the fix introduces some
           |regression.
           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_DROP_STATS_COLUMNS_ESCAPE_NAMES =
+    buildConf("stats.dropStatsColumns.escapeNames")
+      .internal()
+      .doc("Whether to properly escape surviving data skipping stats column names after dropping " +
+        "a column.")
       .booleanConf
       .createWithDefault(true)
 
@@ -3712,6 +3820,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(Set("AUTO", "NONE", "STRICT"))
       .createWithDefault("AUTO")
 
+  val V2_TRANSACTIONS_ENABLED =
+    buildConf("v2.transactions.enabled")
+      .internal()
+      .doc("When enabled, Delta utilises DSv2 Spark transactions in write operations. " +
+        "Disabled by default. This is a feature under development.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS =
     buildConf("dml.insert.dfByName.allowImplicitCasts")
       .internal()
@@ -3725,13 +3841,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |'spark.sql.storeAssignmentPolicy'.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
-
-  val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
-    buildConf("streaming.initialSnapshotMaxFiles")
-      .internal()
-      .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
-      .intConf
-      .createWithDefault(100000)
 
   val DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT =
     buildConf("streaming.distributedInitialSnapshot")

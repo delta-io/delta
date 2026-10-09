@@ -19,7 +19,7 @@ import java.util.Optional
 
 import scala.jdk.CollectionConverters._
 
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{KernelException, VersionToLoadAfterLatestCommitException}
 import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils, UCTableIdentifier}
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
@@ -120,7 +120,9 @@ class UCManagedTableSnapshotManagerSuite
       assert(manager.loadSnapshotAt(1L).version == 1L)
 
       intercept[IllegalArgumentException] { manager.loadSnapshotAt(-1L) }
-      intercept[IllegalArgumentException] { manager.loadSnapshotAt(maxRatifiedVersion + 10) }
+      Seq(maxRatifiedVersion + 1, maxRatifiedVersion + 10).foreach { version =>
+        intercept[VersionToLoadAfterLatestCommitException] { manager.loadSnapshotAt(version) }
+      }
     }
   }
 
@@ -304,9 +306,20 @@ class UCManagedTableSnapshotManagerSuite
           maxRatifiedVersion,
           Optional.of(maxRatifiedVersion - 1))
       }
+    }
+  }
 
-      intercept[IllegalArgumentException] {
-        manager.getTableChanges(defaultEngine, maxRatifiedVersion + 5, Optional.empty())
+  test("getTableChanges: throws typed exceptions for future start and end versions") {
+    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
+      val manager = createManager(ucClient, tablePath)
+
+      Seq(maxRatifiedVersion + 1, maxRatifiedVersion + 5).foreach { version =>
+        intercept[VersionToLoadAfterLatestCommitException] {
+          manager.getTableChanges(defaultEngine, version, Optional.empty())
+        }
+        intercept[VersionToLoadAfterLatestCommitException] {
+          manager.getTableChanges(defaultEngine, 0L, Optional.of(version))
+        }
       }
     }
   }

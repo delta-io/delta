@@ -360,7 +360,7 @@ class IcebergRESTCatalogPlanningClient(
 
     // Request planning for current snapshot. snapshotId = 0 means "use current snapshot"
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
-    val builder = new PlanTableScanRequest.Builder()
+    val builder = PlanTableScanRequest.builder()
       .withSnapshotId(CURRENT_SNAPSHOT_ID)
       // Set caseSensitive=false (defaults to true in spec) to match Spark's case-insensitive
       // column handling. Server should validate and block requests with caseSensitive=true.
@@ -378,18 +378,11 @@ class IcebergRESTCatalogPlanningClient(
       builder.withSelect(columnNames.asJava)
     }
 
-    val request = builder.build()
-
-    // Iceberg 1.11 adds withMinRowsRequested() support. For now, manually inject the field.
-    val requestJson = sparkLimitOption match {
-      case Some(limit) =>
-        implicit val formats: Formats = DefaultFormats
-        val jsonAst = parse(PlanTableScanRequestParser.toJson(request))
-        val modifiedJson = jsonAst merge JObject("min-rows-requested" -> JLong(limit.toLong))
-        compact(render(modifiedJson))
-      case None =>
-        PlanTableScanRequestParser.toJson(request)
+    sparkLimitOption.foreach { limit =>
+      builder.withMinRowsRequested(limit.toLong)
     }
+
+    val requestJson = PlanTableScanRequestParser.toJson(builder.build())
     val httpPost = new HttpPost(planTableScanUri)
     httpPost.setEntity(new StringEntity(requestJson, ContentType.APPLICATION_JSON))
     val httpResponse = httpClient.execute(httpPost)

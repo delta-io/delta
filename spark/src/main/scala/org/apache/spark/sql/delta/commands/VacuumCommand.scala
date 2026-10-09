@@ -28,6 +28,7 @@ import scala.math.min
 import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -210,6 +211,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         .getOrElse(spark.sessionState.conf.numShufflePartitions)
       val startTimeToIdentifyEligibleFiles = System.currentTimeMillis()
 
+      val sourceTombstonesFromCommits = spark.sessionState.conf.getConf(
+        DeltaSQLConf.VACUUM_PROTECTION_SET_TOMBSTONES_FROM_COMMITS_ENABLED)
+
 
       val validFilesResult =
         getValidFilesFromSnapshot(
@@ -223,7 +227,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             checkAbsolutePathOnly = false,
             performRetentionSafetyCheck = true,
             relativizeIgnoreError = None,
-            dvDiscoveryDisabled = None
+            dvDiscoveryDisabled = None,
+            sourceTombstonesFromCommits = sourceTombstonesFromCommits
           )
         )
 
@@ -231,7 +236,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
-      val shouldIcebergMetadataDirBeHidden = UniversalFormat.icebergEnabled(snapshot.metadata)
+      val isAdaptiveMetadataTable = AMTUtils.amtEnabled(snapshot)
+      val shouldIcebergMetadataDirBeHidden =
+         isAdaptiveMetadataTable || UniversalFormat.icebergEnabled(snapshot.metadata)
       val latestCommitVersionOutsideOfRetentionWindowOpt: Option[Long] =
         if (vacuumType == VacuumType.LITE) {
           try {
@@ -780,12 +787,18 @@ trait VacuumCommandImpl extends DeltaCommand {
    * @param performRetentionSafetyCheck If true, validates retention period is safe
    * @param relativizeIgnoreError If None, reads from config; if Some(value), uses that value
    * @param dvDiscoveryDisabled If None, reads from config+test; if Some(value), uses that value
+   * @param sourceTombstonesFromCommits When true, RemoveFile tombstones are NOT emitted from the
+   *                                    reconstructed snapshot state; the "files removed within the
+   *                                    retention window" part of the protection set is instead
+   *                                    sourced from commit traversal, removing Vacuum's dependency
+   *                                    on checkpoints carrying tombstones.
    */
   case class ValidFilesConfig(
     checkAbsolutePathOnly: Boolean,
     performRetentionSafetyCheck: Boolean,
     relativizeIgnoreError: Option[Boolean],
-    dvDiscoveryDisabled: Option[Boolean]
+    dvDiscoveryDisabled: Option[Boolean],
+    sourceTombstonesFromCommits: Boolean
   )
 
   /**
@@ -802,38 +815,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       eligibleEndCommitVersion: Long,
       relativizeIgnoreError: Option[Boolean]): Dataset[SerializableFileStatus] = {
     import org.apache.spark.sql.delta.implicits._
-    // When coordinated commits are enabled, commit files could be found in _delta_log directory
-    // as well as in commit directory. We get the delta log files outside of the retention window
-    // from both the places.
-    val prefix = listingPrefix(deltaLog.logPath, eligibleStartCommitVersion)
-    val eligibleDeltaLogFilesFromDeltaLogDirectory =
-      deltaLog.store.listFrom(prefix, deltaLog.newDeltaHadoopConf)
-        .collect { case DeltaFile(f, deltaFileVersion) => (f, deltaFileVersion) }
-        .takeWhile(_._2 <= eligibleEndCommitVersion)
-        .toSeq
-
-    val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
-    val commitDirPath = FileNames.commitDirPath(deltaLog.logPath)
-    val updatedStartCommitVersion =
-      eligibleDeltaLogFilesFromDeltaLogDirectory.lastOption.map(_._2)
-        .getOrElse(eligibleStartCommitVersion)
-    val eligibleDeltaLogFilesFromCommitDirectory = if (fs.exists(commitDirPath)) {
-      deltaLog.store
-        .listFrom(listingPrefix(commitDirPath, updatedStartCommitVersion),
-          deltaLog.newDeltaHadoopConf)
-        .collect { case UnbackfilledDeltaFile(f, deltaFileVersion, _) => (f, deltaFileVersion) }
-        .takeWhile(_._2 <= eligibleEndCommitVersion)
-        .toSeq
-    } else {
-      Seq.empty
-    }
-
-    val allDeltaLogFilesOutsideTheRetentionWindow = eligibleDeltaLogFilesFromDeltaLogDirectory ++
-      eligibleDeltaLogFilesFromCommitDirectory
-    val deltaLogFileIndex = DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT,
-      allDeltaLogFilesOutsideTheRetentionWindow.map(_._1)).get
-
-    val allActions = deltaLog.loadIndex(deltaLogFileIndex).as[SingleAction]
+    val allActions = new DeltaHistoryManager(deltaLog)
+      .getAllStagedAndCommittedFileActions(eligibleStartCommitVersion, eligibleEndCommitVersion)
     val nonCDFFiles = allActions
       .where("remove IS NOT NULL")
       .select(col("remove")
@@ -967,11 +950,22 @@ trait VacuumCommandImpl extends DeltaCommand {
     val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
 
 
+    // Source the "removed within retention" protection files from commit traversal
+    // rather than the reconstructed checkpoint state when either the conf opts in, or the table
+    // has the Adaptive Metadata Tree (AMT / Delta on Iceberg V4) feature enabled -- V4 checkpoints
+    // do not carry tombstones, so the checkpoint state cannot supply them. Evaluated per snapshot
+    // so the base table and each clone independently pick the right source for their own protocol.
+    val sourceTombstonesFromCommits = config.sourceTombstonesFromCommits ||
+      AMTUtils.amtEnabled(snapshot)
+
     val files = snapshot.stateDS.mapPartitions { actions =>
       val reservoirBase = new Path(basePath)
       val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
       actions.flatMap {
         _.unwrap match {
+          // When tombstones are sourced from commit traversal instead of checkpoint state,
+          // do not emit any RemoveFile-derived paths from the reconstructed state here.
+          case _: RemoveFile if sourceTombstonesFromCommits => Nil
           // Existing tables may not store canonicalized paths, so we check both the canonicalized
           // and non-canonicalized paths to ensure we don't accidentally delete wrong files.
           case fa: FileAction if config.checkAbsolutePathOnly &&
@@ -990,11 +984,106 @@ trait VacuumCommandImpl extends DeltaCommand {
       }
     }
 
-    val validFiles = files
+    val validFilesFromSnapshot = files
     .toDF("path")
+    // When tombstones are excluded from the reconstructed state above, source the
+    // "files removed within the retention window" part of the protection set by
+    // traversing this snapshot's own commits in [ECV .. snapshot.version], where ECV is the
+    // earliest commit within the retention window. This makes the protection set independent of
+    // checkpoints carrying tombstones, and applies uniformly to the base table and to each
+    // clone snapshot (each uses its own deltaLog and retention window).
+    // Note: We don't have to protect tombstones part of a commit exactly at deleteBeforeTimestamp
+    // as time-travel to that version doesn't need to access those tombstones files as they are
+    // no longer part of table snapshot at that version.
+    val validFiles = if (sourceTombstonesFromCommits) {
+      val cloneOrBaseDeltaLog = snapshot.deltaLog
+      val tombstoneStartVersion =
+        try {
+          val commit = new DeltaHistoryManager(cloneOrBaseDeltaLog).getActiveCommitAtTime(
+            new Timestamp(deleteBeforeTimestamp),
+            catalogTableOpt = None,
+            canReturnLastCommit = true,
+            mustBeRecreatable = false)
+          commit.version + 1
+        } catch {
+          case _: DeltaErrors.TimestampEarlierThanCommitRetentionException =>
+            DeltaHistoryManager.getEarliestDeltaFile(cloneOrBaseDeltaLog)
+        }
+      validFilesFromSnapshot
+        .union(getTombstoneProtectionFromCommits(
+          cloneOrBaseDeltaLog, basePath, hadoopConf,
+          startVersion = tombstoneStartVersion,
+          endVersion = snapshot.version,
+          deleteBeforeTimestamp = deleteBeforeTimestamp,
+          relativizeIgnoreErrorValue = relativizeIgnoreErrorValue,
+          dvDiscoveryDisabledValue = dvDiscoveryDisabledValue
+          , checkAbsolutePathOnly = config.checkAbsolutePathOnly))
+    } else {
+      validFilesFromSnapshot
+    }
     VacuumCommand.ValidFilesResult(
       validFiles
       )
+  }
+
+  /**
+   * Returns the protection-set paths for files removed within the retention window, sourced via
+   * [[DeltaHistoryManager.getRemoveFileActions]] rather than from the reconstructed checkpoint
+   * state. Used when
+   * [[DeltaSQLConf.VACUUM_PROTECTION_SET_TOMBSTONES_FROM_COMMITS_ENABLED]] is set.
+   *
+   * @param checkAbsolutePathOnly When true (clone snapshots), tombstones whose paths are not under
+   *                              the base path are ignored rather than relativized, matching the
+   *                              reconstructed-state path in [[getValidFilesFromSnapshot]].
+   * @return a DataFrame with a single `path` column of url-encoded, table-relative paths.
+   */
+  // scalastyle:off argcount
+  protected def getTombstoneProtectionFromCommits(
+      deltaLog: DeltaLog,
+      basePath: String,
+      hadoopConf: Broadcast[SerializableConfiguration],
+      startVersion: Long,
+      endVersion: Long,
+      deleteBeforeTimestamp: Long,
+      relativizeIgnoreErrorValue: Boolean,
+      dvDiscoveryDisabledValue: Boolean
+      , checkAbsolutePathOnly: Boolean): DataFrame = {
+    // scalastyle:on argcount
+    import org.apache.spark.sql.delta.implicits._
+
+    if (startVersion > endVersion) {
+      // Empty retention range: no commits to source tombstones from.
+      return SparkSession.active.emptyDataset[String].toDF("path")
+    }
+
+    // For clone snapshots (checkAbsolutePathOnly), drop tombstones whose paths are not under the
+    // table base path -- these point at another filesystem (e.g. a cross-bucket shallow clone) and
+    // must be ignored rather than relativized, matching the reconstructed-state path in
+    // getValidFilesFromSnapshot. Existing tables may not store canonicalized paths, so check both.
+    val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
+
+    val tombstones =
+      new DeltaHistoryManager(deltaLog).getRemoveFileActions(startVersion, endVersion)
+        .filter(_.delTimestamp >= deleteBeforeTimestamp)
+
+    tombstones.mapPartitions { removes =>
+      val reservoirBase = new Path(basePath)
+      val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
+      removes.flatMap { remove =>
+        if (checkAbsolutePathOnly &&
+            !remove.path.contains(basePath) && !remove.path.contains(canonicalizedBasePath)) {
+          Nil
+        } else {
+          getValidRelativePathsAndSubdirs(
+            remove,
+            fs,
+            reservoirBase,
+            relativizeIgnoreErrorValue,
+            dvDiscoveryDisabledValue
+          )
+        }
+      }
+    }.toDF("path")
   }
 
   /**

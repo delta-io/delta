@@ -331,7 +331,7 @@ trait DeltaSourceBase extends Source
             lastExpectedVersion, maxVersionSeen)
         }
         logInfo(log"Getting dataFrame for delta_log_path=" +
-          log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+          log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
           log"startVersion=${MDC(DeltaLogKeys.START_VERSION, startVersion)}, " +
           log"startIndex=${MDC(DeltaLogKeys.START_INDEX, startIndex)}, " +
           log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)}, " +
@@ -867,7 +867,7 @@ case class DeltaSource(
       iter
     }
     logInfo(log"Getting file changes for delta_log_path=" +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
       log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, " +
       log"fromIndex=${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
       log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} " +
@@ -1105,13 +1105,13 @@ case class DeltaSource(
         throw DeltaErrors.deltaSourceIgnoreChangesError(
           version,
           if (operation.nonEmpty) operation.get else removeFileActionPath.get,
-          deltaLog.dataPath.toString
+          snapshotAtSourceInit.dataPath.toString
         )
       } else if (!seenFileAdd && !shouldAllowDeletes) {
         throw DeltaErrors.deltaSourceIgnoreDeleteError(
           version,
           removeFileActionPath.get,
-          deltaLog.dataPath.toString
+          snapshotAtSourceInit.dataPath.toString
         )
       }
     }
@@ -1192,24 +1192,10 @@ case class DeltaSource(
       startOffsetOption: Option[DeltaSourceOffset],
       endOffset: DeltaSourceOffset): (Long, Long, Boolean) = {
     val (startVersion, startIndex, isInitialSnapshot) = if (startOffsetOption.isEmpty) {
-      getStartingVersion match {
-        case Some(v) =>
-          (v, DeltaSourceOffset.BASE_INDEX, false)
-
-        case None =>
-          if (endOffset.isInitialSnapshot) {
-            (endOffset.reservoirVersion, DeltaSourceOffset.BASE_INDEX, true)
-          } else {
-            assert(
-              endOffset.reservoirVersion > 0, s"invalid reservoirVersion in endOffset: $endOffset")
-            // Load from snapshot `endOffset.reservoirVersion - 1L` so that `index` in `endOffset`
-            // is still valid.
-            // It's OK to use the previous version as the updated initial snapshot, even if the
-            // initial snapshot might have been different from the last time when this starting
-            // offset was computed.
-            (endOffset.reservoirVersion - 1L, DeltaSourceOffset.BASE_INDEX, true)
-          }
-      }
+      val startingVersion = getStartingVersion
+      (DeltaStreamUtils.resolveFirstBatchStartVersion(endOffset, startingVersion),
+        DeltaSourceOffset.BASE_INDEX,
+        startingVersion.isEmpty)
     } else {
       val startOffset = startOffsetOption.get
       if (!startOffset.isInitialSnapshot) {
@@ -1271,7 +1257,7 @@ case class DeltaSource(
     updateMetadataTrackingLogAndFailTheStreamIfNeeded(end)
   }
 
-  override def toString(): String = s"DeltaSource[${deltaLog.dataPath}]"
+  override def toString(): String = s"DeltaSource[${snapshotAtSourceInit.dataPath}]"
 
   /**
    * Extracts whether users provided the option to time travel a relation. If a query restarts from
@@ -1592,4 +1578,3 @@ object DeltaSource extends DeltaLogging {
     offset
   }
 }
-

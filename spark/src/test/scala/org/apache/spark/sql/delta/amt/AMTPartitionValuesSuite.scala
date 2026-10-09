@@ -74,7 +74,9 @@ class AMTPartitionValuesSuite extends AMTCheckpointTestBase {
   }
 
   test("forWrite persists partition values as the typed struct, keyed by logical name") {
-    withAllTypesTable("amt_partition_write", numFiles = 1) { deltaLog =>
+    withAllTypesTable("amt_partition_write") { deltaLog =>
+      appendRowsAsSeparateFiles(
+        "amt_partition_write", numFiles = 1, columnExprs = allTypesTableColumnExprs)
       val snapshot = deltaLog.update()
       val partitionSchema = snapshot.metadata.partitionSchema
       val add = liveAddFiles(snapshot).head
@@ -107,7 +109,10 @@ class AMTPartitionValuesSuite extends AMTCheckpointTestBase {
   }
 
   test("forRead reproduces the partition values the delta log holds, for every type") {
-    withAllTypesTable("amt_partition_roundtrip", numFiles = leafPackedFiles) { deltaLog =>
+    withAllTypesTable("amt_partition_roundtrip") { deltaLog =>
+      appendRowsAsSeparateFiles(
+        "amt_partition_roundtrip", numFiles = leafPackedFiles,
+        columnExprs = allTypesTableColumnExprs)
       commitCheckpoint(deltaLog, incremental = false)
       val snapshot = deltaLog.update()
       val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))

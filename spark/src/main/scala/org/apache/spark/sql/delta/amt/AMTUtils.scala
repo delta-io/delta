@@ -16,9 +16,10 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, LogSegment, Snapshot, SnapshotDescriptor, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.hadoop.fs.Path
 
 /**
@@ -29,7 +30,7 @@ import org.apache.hadoop.fs.Path
  * file lives under it and resolved back by string concatenation (`tableRoot + "/" + relative`).
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
-object AMTUtils {
+object AMTUtils extends DeltaLogging {
   /**
    * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
    * `metadata`.
@@ -40,6 +41,27 @@ object AMTUtils {
   /** Whether AMT writes are enabled for `snapshot`. */
   def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
     amtEnabled(snapshot.metadata, snapshot.protocol)
+
+  /** Logs and throws an [[IllegalStateException]] when an AMT invariant does not hold. */
+  def invariantCheckWithLogging(
+      checkInvariant: => Boolean,
+      opTypeSuffix: String,
+      message: String,
+      deltaLog: DeltaLog = null,
+      data: Map[String, Any] = Map.empty): Unit = {
+    if (!checkInvariant) {
+      val stackTrace = Thread.currentThread().getStackTrace.drop(2).take(10).mkString("\n\t")
+      deltaAssertAndThrow(
+        check = false,
+        name = opTypeSuffix,
+        msg = message,
+        throwable = new DeltaIllegalStateException(
+          errorClass = "INTERNAL_ERROR",
+          messageParameters = Array(message)),
+        deltaLog = deltaLog,
+        data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
+    }
+  }
 
   private val PathSeparator = "/"
 
@@ -160,4 +182,18 @@ object AMTUtils {
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
   private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
     ManifestBitmap.fromSerializedByteArray(bytes)
+
+  /** Logs and throws when non-compacted deltas are absent in the log segment. */
+  def logAndThrowMissingNonCompactedDeltasInLogSegment(
+      deltaLog: DeltaLog,
+      logSegment: LogSegment,
+      eventData: Map[String, Any] = Map.empty): Unit = {
+    invariantCheckWithLogging(
+      checkInvariant = false,
+      opTypeSuffix = AMTUsageLogs.ALERT_MISSING_NON_COMPACTED_DELTAS,
+      message = s"nonCompactedDeltas are absent in an AMT log segment:\n${logSegment.toString}",
+      deltaLog = deltaLog,
+      data = Map("logSegmentVersion" -> logSegment.version) ++ eventData
+    )
+  }
 }

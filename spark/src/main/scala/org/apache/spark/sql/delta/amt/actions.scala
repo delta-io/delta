@@ -517,7 +517,8 @@ object DataEntry {
       // rowTracking-enabled table can reconstruct them on read.
       tracking = tracking.copy(
         first_row_id = add.baseRowId,
-        file_sequence_number = add.defaultRowCommitVersion),
+        sequence_number = add.defaultRowCommitVersion,
+        file_sequence_number = add.effectiveFileSequenceNumber),
       // Iceberg field 103 is the physical record count of the file, not the live/logical
       // count after deletes; throw rather than guess when the AddFile carries no stats.
       record_count = add.numPhysicalRecords.getOrElse(
@@ -733,16 +734,22 @@ case class DataManifestEntry(
    * populated pair is malformed and rejected.
    */
   @JsonIgnore
-  def manifestDV: Option[(Array[Byte], Long)] =
-    (manifest_info.dv, manifest_info.dv_cardinality) match {
-      case (Some(dvBytes), Some(cardinality)) => Some((dvBytes, cardinality))
-      case (None, None) => None
-      case _ =>
-        throw new IllegalStateException(
-          s"Malformed manifest DV on leaf $location: dv and dv_cardinality must both be set or " +
-            s"both unset (dv.isDefined=${manifest_info.dv.isDefined}, " +
-            s"dv_cardinality=${manifest_info.dv_cardinality}).")
+  def manifestDV: Option[(Array[Byte], Long)] = {
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = manifest_info.dv.isDefined == manifest_info.dv_cardinality.isDefined,
+      opTypeSuffix = AMTUsageLogs.ALERT_MALFORMED_MANIFEST_DV,
+      message =
+        s"Malformed manifest DV on leaf $location: dv and dv_cardinality must both be set or " +
+          s"both unset (dv.isDefined=${manifest_info.dv.isDefined}, " +
+          s"dv_cardinality=${manifest_info.dv_cardinality}).",
+      data = Map(
+        "leafLocation" -> location,
+        "dvIsDefined" -> manifest_info.dv.isDefined,
+        "dvCardinalityIsDefined" -> manifest_info.dv_cardinality.isDefined))
+    manifest_info.dv.flatMap { dv =>
+      manifest_info.dv_cardinality.map(cardinality => (dv, cardinality))
     }
+  }
 }
 
 /**
@@ -782,14 +789,14 @@ case class Tracking(
  * Every `status` named below is the child [[DataEntry]]'s status, not the parent
  * `DATA_MANIFEST` entry's status. The inheritable fields are:
  *
+ *  - `sequence_number` (3): inherited when null and the status is `ADDED`.
  *  - `file_sequence_number` (4): inherited when null and the status is `ADDED`.
- *  - `first_row_id` (142): inherited when null, whatever the status, but not by simply copying the
- *    parent's value down. An entry takes the parent's `first_row_id` plus the summed
- *    `record_count` of the entries physically before it in the same leaf that were themselves
- *    null.
+ *  - `first_row_id` (142): inherited when null and the status is `ADDED`, but not by simply
+ *    copying the parent's value down. An entry takes the parent's `first_row_id` plus the summed
+ *    `record_count` of the preceding `ADDED` entries in the same leaf that were themselves null.
  *
- * The `ADDED` restriction keeps the file sequence number correct. Leaf entries with `EXISTING`
- * status must have an explicit `file_sequence_number` instead of inheriting.
+ * The `ADDED` restriction keeps the inherited fields correct. Leaf entries with any other status
+ * must materialize all three values instead of inheriting them.
  */
 object Tracking {
   /**
@@ -816,6 +823,12 @@ object Tracking {
      */
     val liveEntryStatuses: Set[Int] = Set(Existing, Added, Modified)
 
+    /**
+     * The complement of [[liveEntryStatuses]]: statuses that tombstone an entry (DELETED /
+     * REPLACED), for both entry kinds.
+     */
+    val tombstoneEntryStatuses: Set[Int] = all -- liveEntryStatuses
+
     /** The spec name of a `status` code, for error messages. */
     def nameOf(status: Int): String = status match {
       case Existing => "EXISTING"
@@ -833,47 +846,58 @@ object Tracking {
    *
    * @param childTracking The leaf entry's tracking, as read off disk.
    * @param parentTracking The inheritable values of the root entry referencing this leaf.
+   * @param prefixSumRecordCountForNullFirstRowId The summed `record_count` of the entries that
+   *                                              physically precede this one in the same leaf and
+   *                                              also carry a null `first_row_id`.
    * @param childEntryLocationForLogging The child entry's `location`, used only to describe a
    *                                     malformed entry.
    */
   def resolve(
       childTracking: Tracking,
       parentTracking: InheritableTracking,
-      childEntryLocationForLogging: String): Tracking = {
-    if (parentTracking.isEmpty) {
-      childTracking
-    } else {
-      val parentFileSequenceNumber = parentTracking.file_sequence_number.getOrElse(
-        throw new IllegalStateException(
-          "tracking.file_sequence_number must not be null in AMT root DATA_MANIFEST entries."))
-      childTracking.copy(
-        file_sequence_number = inheritFileSequenceNumberOnAdded(
-          fieldValueInChild = childTracking.file_sequence_number,
-          parentFileSequenceNumber = parentFileSequenceNumber,
-          dataEntryStatus = childTracking.status,
-          childEntryLocationForLogging = childEntryLocationForLogging))
-    }
-  }
+      prefixSumRecordCountForNullFirstRowId: Long,
+      childEntryLocationForLogging: String): Tracking =
+    childTracking.copy(
+      sequence_number = inheritTrackingValueOnAdded(
+        fieldName = "sequence_number",
+        fieldValueInChild = childTracking.sequence_number,
+        inheritedFieldValue = parentTracking.sequence_number,
+        dataEntryStatus = childTracking.status,
+        childEntryLocationForLogging = childEntryLocationForLogging),
+      file_sequence_number = inheritTrackingValueOnAdded(
+        fieldName = "file_sequence_number",
+        fieldValueInChild = childTracking.file_sequence_number,
+        inheritedFieldValue = parentTracking.file_sequence_number,
+        dataEntryStatus = childTracking.status,
+        childEntryLocationForLogging = childEntryLocationForLogging),
+      first_row_id = inheritTrackingValueOnAdded(
+        fieldName = "first_row_id",
+        fieldValueInChild = childTracking.first_row_id,
+        inheritedFieldValue =
+          parentTracking.first_row_id + prefixSumRecordCountForNullFirstRowId,
+        dataEntryStatus = childTracking.status,
+        childEntryLocationForLogging = childEntryLocationForLogging))
 
   /**
-   * Resolves `file_sequence_number`, which the child leaf entry inherits when its own status is
-   * `ADDED`.
+   * Resolves an inheritable tracking field. Only an `ADDED` child may inherit a missing value;
+   * every other status must materialize the field in the leaf.
    */
-  private def inheritFileSequenceNumberOnAdded(
+  private def inheritTrackingValueOnAdded(
+      fieldName: String,
       fieldValueInChild: Option[Long],
-      parentFileSequenceNumber: Long,
+      inheritedFieldValue: Long,
       dataEntryStatus: Int,
       childEntryLocationForLogging: String): Option[Long] =
     fieldValueInChild.orElse {
       if (dataEntryStatus == Status.Added) {
-        Some(parentFileSequenceNumber)
+        Some(inheritedFieldValue)
       } else {
         throw new IllegalStateException(
           s"Malformed AMT data entry '$childEntryLocationForLogging': " +
-            "tracking.file_sequence_number is null " +
+            s"tracking.$fieldName is null " +
             s"but the entry's status is ${Status.nameOf(dataEntryStatus)}. Only ADDED entries " +
-            "inherit a file sequence number from the root DATA_MANIFEST entry; every other " +
-            "status must materialize it.")
+            s"inherit $fieldName from the root DATA_MANIFEST entry; every other status must " +
+            "materialize it.")
       }
     }
 }
@@ -885,27 +909,43 @@ object Tracking {
  * Projecting the parent down to these values keeps the per-leaf parent map small enough
  * to capture in a scan closure.
  *
- * @param file_sequence_number Parent's file sequence number.
+ * @param sequence_number Parent's required data sequence number.
+ * @param file_sequence_number Parent's required file sequence number.
+ * @param first_row_id Required row id where the leaf's row-id assignment starts.
  */
-case class InheritableTracking(file_sequence_number: Option[Long]) {
-
-  /** True when the parent declares no value that any child could inherit. */
-  def isEmpty: Boolean = file_sequence_number.isEmpty
-}
+case class InheritableTracking(
+    sequence_number: Long,
+    file_sequence_number: Long,
+    first_row_id: Long)
 
 object InheritableTracking {
-  /** A parent that supplies nothing. */
-  val none: InheritableTracking = InheritableTracking(None)
+  /** Projects the required inheritable fields of a root `DATA_MANIFEST` entry. */
+  def apply(parent: DataManifestEntry): InheritableTracking = InheritableTracking(
+    sequence_number = requiredParentValue(parent, "sequence_number",
+      parent.tracking.sequence_number),
+    file_sequence_number = requiredParentValue(parent, "file_sequence_number",
+      parent.tracking.file_sequence_number),
+    first_row_id = requiredParentValue(parent, "first_row_id", parent.tracking.first_row_id))
 
-  /** The inheritable projection of a root `DATA_MANIFEST` entry. */
-  def apply(parent: DataManifestEntry): InheritableTracking =
-    InheritableTracking(file_sequence_number = parent.tracking.file_sequence_number)
+  private def requiredParentValue(
+      parent: DataManifestEntry,
+      fieldName: String,
+      fieldValue: Option[Long]): Long = {
+    val message =
+      s"tracking.$fieldName must not be null in AMT root DATA_MANIFEST entries."
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = fieldValue.isDefined,
+      opTypeSuffix = "amt.malformedDataManifestTracking",
+      message = message,
+      data = Map("leafLocation" -> parent.location, "fieldName" -> fieldName))
+    fieldValue.get
+  }
 }
 
 /**
  * Pointer to a deletion-vector blob, mirroring the Iceberg V4 `deletion_vector` struct.
  *
- * @param location Absolute path of the file holding the DV blob.
+ * @param location Path of the file holding the DV blob. Relative to table root if possible.
  * @param offset Byte offset where the DV content starts within that file.
  * @param size_in_bytes Total on-disk DV size = raw bitmap + length + checksum framing.
  * @param cardinality Number of positions the DV marks deleted.
@@ -924,8 +964,16 @@ object DeletionVector {
     val offset = dv.offset.getOrElse(
       throw new IllegalArgumentException(
         s"On-disk deletion vector is missing an offset: ${dv.pathOrInlineDv}."))
+    val location = dv.normalizedTableRelativeObjectFile(tableRoot) match {
+      case (DeletionVectorDescriptor.RELATIVE_DV_MARKER, relativePath) => relativePath
+      // A p-DV still has to be URL decoded.
+      case (DeletionVectorDescriptor.PATH_DV_MARKER, _) => dv.absolutePath(tableRoot).toString
+      case (other, _) =>
+        throw new IllegalArgumentException(
+          s"Unsupported on-disk deletion vector storage type: $other.")
+    }
     DeletionVector(
-      location = dv.absolutePath(tableRoot).toString,
+      location = location,
       offset = offset.toLong,
       size_in_bytes = DeletionVectorStore.getTotalSizeOfDVFieldsInFile(dv.sizeInBytes).toLong,
       cardinality = dv.cardinality)
@@ -937,19 +985,20 @@ object DeletionVector {
   def toDescriptor(dv: DeletionVector, tableRoot: Path): DeletionVectorDescriptor = {
     val rawSize = dv.size_in_bytes.toInt -
       DeletionVectorStore.getTotalSizeOfDVFieldsInFile(0)
-    // AMT stored paths are unencoded.
-    val absolutePath = DeletionVectorStore.unescapedStringToPath(dv.location)
-    require(absolutePath.isAbsolute)
-    val relativePath = AMTUtils.relativizeLocation(tableRoot.toString, absolutePath.toString)
-    if (AMTUtils.isAbsoluteLocation(relativePath)) {
+    if (AMTUtils.isAbsoluteLocation(dv.location)) {
+      // AMT stored paths are unencoded. In case it has to be read as a p-DV,
+      // it must be URL encoded.
+      val storedPath = DeletionVectorStore.unescapedStringToPath(dv.location)
+      require(storedPath.isAbsolute)
       DeletionVectorDescriptor.onDiskWithAbsolutePath(
-        path = DeletionVectorStore.pathToEscapedString(absolutePath),
+        path = DeletionVectorStore.pathToEscapedString(storedPath),
         sizeInBytes = rawSize,
         cardinality = dv.cardinality,
         offset = Some(dv.offset.toInt))
     } else {
+      // No encoding if read as an r-DV.
       DeletionVectorDescriptor.createRelativePathDVDescriptor(
-        relativePath = relativePath,
+        relativePath = dv.location,
         sizeInBytes = rawSize,
         cardinality = dv.cardinality,
         offset = Some(dv.offset.toInt))
@@ -976,7 +1025,7 @@ object DeletionVector {
  * @param deleted_rows_count Rows across DELETED files.
  * @param replaced_rows_count Rows across REPLACED files.
  * @param modified_rows_count Rows across MODIFIED files.
- * @param min_sequence_number Minimum data sequence number across the manifest's entries.
+ * @param min_sequence_number Minimum data sequence number across the manifest's live entries.
  * @param dv Inline manifest deletion-vector bitmap over leaf row positions.
  * @param dv_cardinality Number of positions the inline manifest DV marks.
  */

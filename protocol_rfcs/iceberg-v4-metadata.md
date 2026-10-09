@@ -119,6 +119,47 @@ This design enables:
 
 <ins>Files not in the reachable set may be deleted once past the retention period. Reachability is derived from the live tree, not from `remove` tombstones, so no tombstone tracking is required (see [Remove File](#remove-file)).</ins>
 
+### Commit Provenance Information
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#commit-provenance-information)***
+
+<ins>When the `adaptiveMetadata` table feature is enabled, writers must include a `commitInfo` action in every commit.</ins>
+
+<ins>The `commitInfo` action supports a `dataChange` field that summarizes, at the commit level, whether the commit changed the data of the table:</ins>
+
+| Field Name | Data Type | Description |
+| - | - | - |
+| <ins>dataChange</ins> | <ins>Boolean</ins> | <ins>Whether the commit changes the logical records of the table. This must be `false` when the commit only rearranges existing data or adds new statistics without changing the table's logical records; it must be `true` otherwise. **Required when the `adaptiveMetadata` table feature is enabled**; optional otherwise, in which case readers fall back to the `dataChange` flags of the individual [file actions](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file) when it is absent.</ins> |
+
+<ins>When the `adaptiveMetadata` table feature is enabled, writers must include the `dataChange` field in the `commitInfo` action of every commit, and readers must treat it as the source of truth for whether the commit changed data.</ins>
+
+<ins>The `commitInfo` action also carries a `lastManifestCommit` field pointing at the most recent [manifest commit](#manifest-commit) as of that version:</ins>
+
+| Field Name | Data Type | Description |
+| - | - | - |
+| <ins>lastManifestCommit</ins> | <ins>Struct</ins> | <ins>Required from the table's first manifest commit onward; absent beforehand. Identifies the latest manifest commit up to this version. Fields below.</ins> |
+
+<ins>The `lastManifestCommit` struct has these fields:</ins>
+
+| Field Name | Data Type | Description |
+| - | - | - |
+| <ins>version</ins> | <ins>Long</ins> | <ins>The version of the manifest commit that emitted the latest [`checkpoint` action](#checkpoint-action).</ins> |
+| <ins>contentRootVersion</ins> | <ins>Long</ins> | <ins>The `contentRoot.version` of that `checkpoint` action. Not newer than `version`.</ins> |
+
+<ins>When the `adaptiveMetadata` table feature is enabled, each log commit must carry `lastManifestCommit` forward from the prior commit, including its absence before the first manifest commit. A manifest commit must set `version` to its own commit version and `contentRootVersion` to the `contentRoot.version` of its emitted `checkpoint` action.</ins>
+
+### Version Checksum File
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#version-checksum-file-schema)***
+
+<ins>When the `adaptiveMetadata` table feature is enabled, the Version Checksum (CRC) file also records `lastManifestCommit` as a top-level field:</ins>
+
+| Field Name | Data Type | Description | Optional/Required |
+| - | - | - | - |
+| <ins>lastManifestCommit</ins> | <ins>Struct</ins> | <ins>The latest manifest commit up to this version. Uses the same schema as `commitInfo.lastManifestCommit` and must match its value at the CRC's version.</ins> | <ins>Required from the first manifest commit onward; absent otherwise.</ins> |
+
+<ins>CRC files remain optional. Readers may obtain `lastManifestCommit` from the CRC at the target snapshot version. If that CRC is unavailable, readers must read `commitInfo` from the original JSON commit file at that version. If that CRC is available, its `lastManifestCommit` must be identical to the counterpart from the `commitInfo` of the corresponding version.</ins>
+
 --------
 
 > ***Add a new section at the [Table Features](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#table-features) section***
@@ -175,7 +216,7 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
 {
   "checkpoint": [
     { "checkpointMetadata": { "version": 42 } },
-    { "contentRoot": { "path": "metadata/a3d1f7e2-v42.parquet", "sizeInBytes": 1024, "version": 42 } },
+    { "contentRoot": { "path": "metadata/a3d1f7e2-v42.parquet", "sizeInBytes": 1024, "version": 42, "tags": {} } },
     { "protocol": { "minReaderVersion": 3, "minWriterVersion": 7, "readerFeatures": ["columnMapping", "deletionVectors", "adaptiveMetadata"], "writerFeatures": ["columnMapping", "deletionVectors", "domainMetadata", "rowTracking", "adaptiveMetadata"] } },
     { "metaData": { "id": "af23c9d7-fff1-4a5a-a2c8-55c59bd782aa", "name": "my_table", "schemaString": "{...}", "partitionColumns": [], "configuration": {}, "createdTime": 1234567890000 } },
     { "domainMetadata": { "domain": "delta.rowTracking", "configuration": "{\"rowIdHighWaterMark\": 1000000}", "removed": false } },
@@ -194,7 +235,7 @@ The `checkpoint` action is an array of action entries. Each entry is one of:
 | Action | Description |
 |--------|-------------|
 | `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log. |
-| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, and `version` — the table version the root reflects. `version` must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). |
+| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). `tags` allow writers to record additional optional metadata about the manifest tree. |
 | `protocol` | The Protocol action at this checkpoint version. |
 | `metaData` | The Metadata action at this checkpoint version. |
 | `domainMetadata` | A DomainMetadata action. System domains (keys prefixed with `delta.`) must appear here; user domains may appear here or in a sidecar. |
@@ -377,7 +418,7 @@ Summary information for `content_type` = DATA_MANIFEST entries. Includes file/ro
 | 513 | `existing_rows_count` | Long | Required | Number of rows in existing files |
 | 514 | `deleted_rows_count` | Long | Required | Number of rows in deleted files |
 | 521 | `replaced_rows_count` | Long | Required | Number of rows in replaced files |
-| 516 | `min_sequence_number` | Long | Required | Minimum sequence number of files in this manifest |
+| 516 | `min_sequence_number` | Long | Required | Minimum data sequence number of all live entries in the manifest |
 | 522 | `dv` | Binary | Optional | MDV bitmap marking deleted positions in leaf manifest. Must be non-null if and only if `dv_cardinality` is non-null. |
 | 523 | `dv_cardinality` | Long | Optional | Number of entries marked as deleted in the MDV. Must be non-null if and only if `dv` is non-null. |
 
@@ -573,6 +614,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
+- Include the `dataChange` field in the `commitInfo` action of every commit (see [Commit Provenance Information](#commit-provenance-information)).
 
 ### Manifest Commit Procedure
 
