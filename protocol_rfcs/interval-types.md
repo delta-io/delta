@@ -70,7 +70,7 @@ Interval types are permitted anywhere a primitive type is permitted: as a top-le
 To support interval types, readers must:
 
 - Interpret every year-month spelling as a signed count of months, and every day-second spelling as a signed count of microseconds.
-- Accept every permitted spelling, and preserve the declared spelling when exposing the column's type to the engine or the user. A reader may share storage and decoding logic within a family, but must not report a narrowed column as the canonical type.
+- Accept every permitted spelling, and preserve the declared spelling when exposing the column's type to the engine or the user.
 
 ### Writer Requirements
 
