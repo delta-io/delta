@@ -71,9 +71,8 @@ class CheckConstraintsSuite extends QueryTest
         exception = e,
         condition = "PARSE_SYNTAX_ERROR",
         sqlState = Some("42601"),
-        parameters = Map(
-          "hint" -> "",
-          "error" -> "')'"))
+        parameters = Map("hint" -> "", "error" -> "end of input")
+      )
     }
   }
 
@@ -291,7 +290,7 @@ class CheckConstraintsSuite extends QueryTest
             "confValue" -> "true",
             "constraintName" -> "myConstraint",
             "config" -> "spark.databricks.delta.constraints.assumesDropIfExists.enabled",
-            "tableName" -> "`spark_catalog`.`default`.`checkconstraintstest`"
+            "tableName" -> "`default`.`checkConstraintsTest`"
           )
         )
       }
@@ -515,7 +514,7 @@ class CheckConstraintsSuite extends QueryTest
         sqlState = Some("23512"),
         parameters = Map(
           "numRows" -> "10",
-          "checkConstraint" -> "nested.arr[1] < 5",
+          "checkConstraint" -> "nested . arr [ 1 ] < 5",
           "tableName" -> "spark_catalog.default.checkconstraintstest"
         )
       )
@@ -606,7 +605,7 @@ class CheckConstraintsSuite extends QueryTest
         sqlState = Some("23512"),
         parameters = Map(
           "numRows" -> "10",
-          "checkConstraint" -> "nested.arr[0] < id",
+          "checkConstraint" -> "nested . arr [ 0 ] < id",
           "tableName" -> "spark_catalog.default.checkconstraintstest"
         )
       )
