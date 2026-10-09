@@ -16,10 +16,13 @@
 
 package org.apache.spark.sql.delta.commands
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.{MaterializedRowCommitVersion, MaterializedRowId, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -109,6 +112,10 @@ trait ReorgTableHelper extends Serializable {
 
     val serializedConf = new SerializableConfiguration(snapshot.deltaLog.newDeltaHadoopConf())
     val dataPath = new Path(snapshot.dataPath.toString)
+    val footerReadParallelism =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_PARALLELISM)
+    val footerScanBatchSize =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_BATCH_SIZE)
 
     import org.apache.spark.sql.delta.implicits._
 
@@ -116,12 +123,32 @@ trait ReorgTableHelper extends Serializable {
       // Runs on executors, where no SparkSession is active; SQLConf.get returns the task's
       // read-only conf propagated from the driver.
       val sqlConf = SQLConf.get
-      filterParquetFiles(
-        sqlConf,
-        iter.toList,
-        dataPath,
-        serializedConf.value,
-        ignoreCorruptFiles)(filterFileFn).toIterator
+      // A positive batch size limits the decoded AddFiles, candidate-file map and Parquet footers
+      // materialized for the current batch. The input UnsafeRows and the partition-wide collision
+      // set remain retained for the task. A zero batch size restores whole-partition
+      // materialization.
+      if (footerScanBatchSize > 0) {
+        val seenAbsolutePaths = mutable.HashSet.empty[String]
+        iter.grouped(footerScanBatchSize).flatMap { batch =>
+          filterParquetFiles(
+            sqlConf,
+            batch,
+            dataPath,
+            serializedConf.value,
+            ignoreCorruptFiles,
+            footerReadParallelism,
+            Some(seenAbsolutePaths))(filterFileFn)
+        }
+      } else {
+        filterParquetFiles(
+          sqlConf,
+          iter.toList,
+          dataPath,
+          serializedConf.value,
+          ignoreCorruptFiles,
+          footerReadParallelism,
+          None)(filterFileFn).toIterator
+      }
     }.collect()
   }
 
@@ -132,7 +159,28 @@ trait ReorgTableHelper extends Serializable {
       configuration: Configuration,
       ignoreCorruptFiles: Boolean)(
       filterFileFn: StructType => Boolean): Seq[AddFile] = {
-    val nameToAddFileMap = generateCandidateFileMap(dataPath, files)
+    filterParquetFiles(
+      sqlConf,
+      files,
+      dataPath,
+      configuration,
+      ignoreCorruptFiles,
+      DeltaFileOperations.DEFAULT_PARQUET_FOOTER_READ_PARALLELISM,
+      None)(filterFileFn)
+  }
+
+  protected def filterParquetFiles(
+      sqlConf: SQLConf,
+      files: Seq[AddFile],
+      dataPath: Path,
+      configuration: Configuration,
+      ignoreCorruptFiles: Boolean,
+      footerReadParallelism: Int,
+      seenAbsolutePaths: Option[mutable.Set[String]])(
+      filterFileFn: StructType => Boolean): Seq[AddFile] = {
+    val nameToAddFileMap = seenAbsolutePaths.map { seenPaths =>
+      generateCandidateFileMap(dataPath, files, seenPaths)
+    }.getOrElse(generateCandidateFileMap(dataPath, files))
 
     val fileStatuses = nameToAddFileMap.map { case (absPath, addFile) =>
       new FileStatus(
@@ -148,7 +196,8 @@ trait ReorgTableHelper extends Serializable {
     val footers = DeltaFileOperations.readParquetFootersInParallel(
       configuration,
       fileStatuses.toList,
-      ignoreCorruptFiles)
+      ignoreCorruptFiles,
+      footerReadParallelism)
 
     // Spark 4.0.1 changed the primary ctor signature (added a param), which breaks binary
     // compatibility for code compiled against Spark 4.0.0. Use the stable SQLConf-based ctor

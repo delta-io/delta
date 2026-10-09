@@ -16,14 +16,19 @@
 
 package org.apache.spark.sql.delta.optimize
 
+import java.util.concurrent.{Callable, Executors, TimeUnit}
+
 import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMapping, DeltaLog, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.commands.DeltaPurgeOperation
 import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import io.delta.tables.DeltaTable
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.logging.log4j.Level
 import org.apache.parquet.hadoop.Footer
 
 import org.apache.spark.sql.{QueryTest, SparkSession}
@@ -255,6 +260,144 @@ class DeltaReorgSuite extends QueryTest
         val fields = footer.getParquetMetadata.getFileMetaData.getSchema.getFields
         assert(fields.size == 1)
         assert(!fields.toArray.map { _.toString }.contains("optional int64 id_dropped"))
+      }
+    }
+  }
+
+  test("REORG PURGE footer scan honors batching and parallelism") {
+    val targetDf = spark.range(0, 100, 1, numPartitions = 5)
+      .withColumn("id_dropped", col("id") % 4)
+      .toDF()
+    withTempDeltaTable(targetDf) { (_, log) =>
+      val path = log.dataPath.toString
+      sql(s"ALTER TABLE delta.`$path` SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+      sql(s"ALTER TABLE delta.`$path` DROP COLUMN id_dropped")
+      // Files appended after the drop never had `id_dropped`, so only the original files qualify.
+      spark.range(100, 160, 1, numPartitions = 3).toDF()
+        .write.format("delta").mode("append").save(path)
+
+      val snapshot = log.update()
+      val files = snapshot.allFiles.collect().toSeq
+      val purge = new DeltaPurgeOperation()
+
+      def select(batchSize: Int, parallelism: Int): Set[String] = {
+        withSQLConf(
+            DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_BATCH_SIZE.key -> batchSize.toString,
+            DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_PARALLELISM.key -> parallelism.toString,
+            "spark.sql.leafNodeDefaultParallelism" -> "1") {
+          purge.filterFilesToReorg(spark, snapshot, files).map(_.path).toSet
+        }
+      }
+
+      val expected = select(files.size + 5, parallelism = 1)
+      assert(expected.nonEmpty && expected.size < files.size,
+        s"PURGE should select a strict, non-empty subset of ${files.size} files")
+      Seq(0, 1, 2, files.size - 1).foreach { batchSize =>
+        Seq(1, 3).foreach { parallelism =>
+          assert(select(batchSize, parallelism) === expected,
+            s"batchSize=$batchSize parallelism=$parallelism changed selection")
+        }
+      }
+
+      val footerLogs = new LogAppender("REORG footer scan parallelism", maxEvents = 1000)
+      footerLogs.setThreshold(Level.INFO)
+      val footerLogger = DeltaFileOperations.getClass.getName.stripSuffix("$")
+      withLogAppender(
+          footerLogs,
+          loggerNames = Seq(footerLogger),
+          level = Some(Level.INFO)) {
+        select(batchSize = 3, parallelism = 3)
+        select(batchSize = 0, parallelism = 7)
+      }
+      val messages = footerLogs.loggingEvents.map(_.getMessage.getFormattedMessage)
+      val details = messages.mkString(" | ")
+      val readLog = """Reading (\d+) Parquet footers with parallelism (\d+)""".r
+      val observedBatchSizes = messages.collect {
+        case readLog(size, "3") => size.toInt
+      }.sorted
+      val expectedBatchSizes = files.grouped(3).map(_.size).toSeq.sorted
+      assert(observedBatchSizes === expectedBatchSizes,
+        s"footer reader observed batches $observedBatchSizes instead of $expectedBatchSizes " +
+          s"at parallelism=3 in $details")
+      val observedUnbatchedSizes = messages.collect {
+        case readLog(size, "7") => size.toInt
+      }
+      assert(observedUnbatchedSizes === Seq(files.size),
+        s"footer reader observed unbatched calls $observedUnbatchedSizes instead of " +
+          s"${Seq(files.size)} at parallelism=7 in $details")
+    }
+  }
+
+  test("footer scan propagates fatal errors") {
+    val fatal = new OutOfMemoryError("test fatal error")
+    val status = new FileStatus() {
+      override def getPath: Path = throw fatal
+    }
+    // scalastyle:off sparkThreadPools
+    val executor = Executors.newSingleThreadExecutor()
+    // scalastyle:on sparkThreadPools
+    val result = executor.submit(new Callable[Throwable] {
+      override def call(): Throwable = {
+        try {
+          DeltaFileOperations.readParquetFootersInParallel(
+            new Configuration(false), Seq(status), ignoreCorruptFiles = false, parallelism = 1)
+          null
+        } catch {
+          case t: Throwable => t
+        }
+      }
+    })
+    try {
+      assert(result.get(10, TimeUnit.SECONDS) eq fatal)
+    } finally {
+      result.cancel(true)
+      executor.shutdownNow()
+    }
+  }
+
+  test("REORG footer scan batch size has a memory-bounded default") {
+    assert(DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_BATCH_SIZE.defaultValue.contains(500))
+  }
+
+  test("REORG footer scan parallelism matches ForkJoinPool bounds") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_PARALLELISM.key -> Short.MaxValue.toString) {
+      assert(spark.sessionState.conf
+        .getConf(DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_PARALLELISM) === Short.MaxValue.toInt)
+    }
+
+    val error = intercept[IllegalArgumentException] {
+      spark.conf.set(
+        DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_PARALLELISM.key,
+        (Short.MaxValue + 1).toString)
+    }
+    assert(error.getMessage.contains("must be between 1 and 32767"))
+  }
+
+  test("REORG PURGE rejects candidate path collisions across batches") {
+    withTempDeltaTable(spark.range(0, 1, 1, numPartitions = 1).toDF()) { (_, log) =>
+      val snapshot = log.update()
+      val addFile = snapshot.allFiles.as[AddFile].head()
+      val duplicateFiles = Seq(addFile, addFile)
+
+      def assertCollision(block: => Unit): Unit = {
+        val error = intercept[Exception](block)
+        val causes = Iterator.iterate[Throwable](error)(_.getCause).takeWhile(_ != null).toSeq
+        val classes = causes.map(_.getClass).mkString(" -> ")
+        assert(causes.exists(_.isInstanceOf[AssertionError]),
+          s"expected AssertionError, found $classes")
+      }
+
+      withSQLConf("spark.sql.leafNodeDefaultParallelism" -> "1") {
+        Seq(0, 1).foreach { batchSize =>
+          withSQLConf(
+              DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_BATCH_SIZE.key -> batchSize.toString) {
+            assertCollision {
+              new DeltaPurgeOperation().filterFilesToReorg(spark, snapshot, duplicateFiles)
+              ()
+            }
+          }
+        }
       }
     }
   }
