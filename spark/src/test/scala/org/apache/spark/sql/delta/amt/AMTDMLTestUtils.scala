@@ -138,7 +138,7 @@ trait AMTDMLTestUtils extends AMTCheckpointTestBase {
       target: AMTTarget,
       triggerMode: AMTTriggerMode): AMTCheckpointProvider = {
     val snapshotBefore = target.snapshot
-      target.deltaLog.checkpoint(snapshotBefore, Some(target.catalogTable), Some(triggerMode))
+    target.deltaLog.checkpoint(snapshotBefore, Some(target.catalogTable), Some(triggerMode))
     val snapshotAfter = target.snapshot
     assert(snapshotAfter.version == snapshotBefore.version + 1,
       s"Expected the $triggerMode checkpoint of v${snapshotBefore.version} to commit " +

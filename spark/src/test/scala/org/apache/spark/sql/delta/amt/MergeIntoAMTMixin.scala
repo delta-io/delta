@@ -22,17 +22,20 @@ import org.apache.spark.sql.delta.MergeIntoSQLTestUtils
  * Generates AMT (`adaptiveMetadata-preview`) variants of the MERGE INTO test suites.
  *
  * Each MERGE is bracketed by the [[AMTDMLTestUtils]] checkpoints.
+ *
+ * The MERGE AMT mixin should come after all other mixins of a suite, so its dimension should be
+ * the last of every generator config it is used in. This is for 2 reasons:
+ * 1. Visibility: some mixins declare beforeAll public, and a later mixin overriding it as
+ *    protected (which AMTDMLTestUtils does) fails to compile. This is a latent issue for the MERGE
+ *    suites.
+ * 2. Commit orders: some mixins perform extra commits. To maintain a stable commit order, we
+ *    prefer to have AMT commits wrap them all.
  */
 trait MergeIntoAMTMixin
   extends AMTDMLTestUtils
   with MergeIntoSQLTestUtils {
 
   override def excluded: Seq[String] = super.excluded ++ Seq(
-    // scalastyle:off line.size.limit
-    // AMT tables are always catalog-managed, so the path-based (catalogManaged=false) analysis-
-    // snapshot-reuse variants are not applicable.
-    "merge SQL command reuses analysis snapshot in SQL environments (catalogManaged=false)",
-    "merge SQL command does not reuse analysis snapshot when config is disabled (catalogManaged=false)",
     // This test strips record-count stats from the target files (AddFile.stats = null) to exercise
     // Delta's graceful missing-stats handling. AMT cannot represent such files: its manifest
     // requires a per-file physical record count (DataEntry.fromAddFile throws on a stats-less
@@ -44,7 +47,6 @@ trait MergeIntoAMTMixin
     // ENABLED. Structural AMT invariant (row tracking cannot be disabled), not a MERGE bug.
     "Row tracking marked as not preserved when row tracking disabled",
     "MERGE preserves Row Tracking on tables enabled using backfill"
-    // scalastyle:on line.size.limit
   )
 
   abstract override def executeMerge(

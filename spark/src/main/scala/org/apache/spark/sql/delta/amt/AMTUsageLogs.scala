@@ -27,6 +27,10 @@ object AMTUsageLogs {
   val LAST_MANIFEST_COMMIT_READ_FROM_COMMIT_INFO =
     s"$PREFIX.lastManifestCommit.readFromCommitInfo"
 
+  /** Usage log emitted when an AMT provider reads the root manifest for its leaf pointers. */
+  val CHECKPOINT_PROVIDER_INITIALIZE_FROM_CHECKPOINT_ACTION =
+    s"$PREFIX.checkpointProvider.initializeFromCheckpointAction"
+
   /** Usage log emitted when a losing full AMT OPTIMIZE checkpoint is retried. */
   val CHECKPOINT_FULL_REGENERATE_RETRY = s"$PREFIX.checkpoint.fullRegenerateRetry"
 

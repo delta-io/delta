@@ -28,7 +28,7 @@ import scala.jdk.OptionConverters._
 
 import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, LogSegment, OptimisticTransaction, RowId, Snapshot, VersionChecksum}
 import org.apache.spark.sql.delta.WinningCommitSummary
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, CommitInfo, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Protocol}
 import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
@@ -176,7 +176,7 @@ private[v2] class DeltaV2OptimisticTransaction(
       commitOpt: Option[Commit],
       newChecksumOpt: Option[VersionChecksum],
       catalogTableOpt: Option[CatalogTable],
-      amtCheckpointWrittenInCommitOpt: Option[Checkpoint],
+      amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider],
       isIdempotentRetry: Boolean): Snapshot = {
     // TODO: Use Kernel's incremental snapshot load API to build the post-commit snapshot from the
     // pre-commit snapshot plus this commit, instead of a full reload that replays the log. It is

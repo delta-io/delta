@@ -313,8 +313,15 @@ class LastCheckpointInfoSuite extends SharedSparkSession
 
   private val sampleAMTWriteMetrics = SingleAMTWriteMetrics(
     trigger = "TEST",
-    incremental = "false",
-    materializeDurationMs = 0L)
+    incremental = false,
+    materializeDurationMs = 0L,
+    contentRootSizeInBytes = 0L,
+    checkpointSizeInBytes = 0L,
+    numLeaves = 0L,
+    numLiveDataEntries = 0L,
+    numTombstoneDataEntries = 0L,
+    numSetTransactions = 0L,
+    numDomainMetadata = 0L)
 
   /** Reads `_last_checkpoint` back as raw json. */
   private def readLastCheckpointFileAsJson(log: DeltaLog): String = {

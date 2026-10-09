@@ -24,8 +24,10 @@ import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.InternalRowTestUtils;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
+import java.util.Optional;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.write.DataWriter;
+import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.types.DataTypes;
@@ -119,21 +121,25 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
   }
 
   private DeltaV2DataWriterFactory dataWriterFactory(String path) {
-    Snapshot snapshot =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf())
-            .loadLatestSnapshot();
-    DeltaV2BatchWrite write =
-        new DeltaV2BatchWrite(
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    LogicalWriteInfo info =
+        WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
+    DeltaV2Write write =
+        new DeltaV2Write(
             defaultEngine,
             spark.sessionState().newHadoopConf(),
             path,
             snapshot,
+            Optional.empty(),
+            snapshotManager,
             TABLE_SCHEMA,
             new StructType(),
-            WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()),
+            info,
             /* variantShreddingEnabled */ false);
     return (DeltaV2DataWriterFactory)
-        write.createBatchWriterFactory(WriteTestUtils.physicalWriteInfo(1));
+        write.toBatch().createBatchWriterFactory(WriteTestUtils.physicalWriteInfo(1));
   }
 
   private String createTable(File tempDir, String tableName) {

@@ -256,11 +256,21 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       numLeavesModifiedStatus = leavesByStatus.getOrElse(Tracking.Status.Modified, 0),
       numLeavesDeletedStatus = leavesByStatus.getOrElse(Tracking.Status.Deleted, 0),
       numStaleDeletedLeavesDropped = numStaleDeletedLeavesDropped)
+    val numRootLiveDataEntries = Tracking.Status.liveEntryStatuses.toSeq
+      .map(status => rootEntriesByStatus.getOrElse(status, 0)).sum.toLong
+    val numRootTombstoneDataEntries = Tracking.Status.tombstoneEntryStatuses.toSeq
+      .map(status => rootEntriesByStatus.getOrElse(status, 0)).sum.toLong
     val metric = SingleAMTWriteMetrics(
       trigger = trigger,
       // This writer only ever produces an incremental tree.
-      incremental = "true",
+      incremental = true,
       materializeDurationMs = NANOSECONDS.toMillis(System.nanoTime() - startNanos),
+      contentRoot = checkpoint.contentRoot,
+      numRootLiveDataEntries = numRootLiveDataEntries,
+      numRootTombstoneDataEntries = numRootTombstoneDataEntries,
+      leaves = allLeafPointers,
+      numSetTransactions = checkpoint.txns.size.toLong,
+      numDomainMetadata = checkpoint.domainMetadata.size.toLong,
       incrementalWriteMetrics = Some(incrementalWriteMetrics))
     AMTWriteResult(
       contentRootVersion = contentTreeVersion,
