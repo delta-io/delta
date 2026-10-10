@@ -720,6 +720,40 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     assert(firstRow.getString(1) === "NULL")
   }
 
+  test("min-max - DateType stats column with java8API enabled") {
+    val tableName = "TestDateStatsJava8API"
+    withTable(tableName) {
+      spark.sql(s"CREATE TABLE $tableName (DateColumn DATE, Data INT) USING DELTA")
+      spark.sql(s"INSERT INTO $tableName VALUES (CAST('2020-01-01' AS DATE), 1);")
+      spark.sql(s"INSERT INTO $tableName VALUES (CAST('2023-12-31' AS DATE), 2);")
+      spark.sql(s"INSERT INTO $tableName VALUES (NULL, 3);")
+
+      withSQLConf("spark.sql.datetime.java8API.enabled" -> "true") {
+        checkResultsAndOptimizedPlan(
+          s"SELECT COUNT(*), MIN(DateColumn), MAX(DateColumn) FROM $tableName",
+          "LocalRelation [none#0L, none#1, none#2]")
+      }
+    }
+  }
+
+  test("min-max - partitioned DateType column with java8API enabled") {
+    val tableName = "TestDatePartitionedJava8API"
+    withTable(tableName) {
+      spark.sql(
+        s"CREATE TABLE $tableName (Data INT, DateColumn DATE)" +
+        " USING DELTA PARTITIONED BY (DateColumn)")
+      spark.sql(s"INSERT INTO $tableName VALUES (1, CAST('2020-01-01' AS DATE));")
+      spark.sql(s"INSERT INTO $tableName VALUES (2, CAST('2023-12-31' AS DATE));")
+      spark.sql(s"INSERT INTO $tableName VALUES (3, NULL);")
+
+      withSQLConf("spark.sql.datetime.java8API.enabled" -> "true") {
+        checkResultsAndOptimizedPlan(
+          s"SELECT COUNT(*), MIN(DateColumn), MAX(DateColumn) FROM $tableName",
+          "LocalRelation [none#0L, none#1, none#2]")
+      }
+    }
+  }
+
   test("count - dv-enabled") {
     withTempDir { dir =>
       val tempPath = dir.getCanonicalPath
