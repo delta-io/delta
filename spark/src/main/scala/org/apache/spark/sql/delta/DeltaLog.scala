@@ -49,8 +49,10 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.{FileSourceOptions, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogStatistics, CatalogTable}
-import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
+import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, CommonExpressionRef}
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, With}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
+import org.apache.spark.sql.catalyst.trees.TreePattern.{COMMON_EXPR_REF, WITH_EXPRESSION}
 import org.apache.spark.sql.catalyst.util.FailFastMode
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.expressions.UserDefinedFunction
@@ -1371,6 +1373,7 @@ object DeltaLogUtils extends DeltaLogging {
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
     partitionFilters
+      .map(inlineCommonExpressions)
       .map(_.transformUp {
       case a: Attribute =>
         // If we have a special column name, e.g. `a.a`, then an UnresolvedAttribute returns
@@ -1391,4 +1394,13 @@ object DeltaLogUtils extends DeltaLogging {
         }
     })
   }
+
+  private def inlineCommonExpressions(filter: Expression): Expression =
+    filter.transformUpWithPruning(_.containsPattern(WITH_EXPRESSION)) {
+      case With(child, defs) =>
+        val defsById = defs.map(d => d.id -> d.child).toMap
+        child.transformWithPruning(_.containsPattern(COMMON_EXPR_REF)) {
+          case ref: CommonExpressionRef if defsById.contains(ref.id) => defsById(ref.id)
+        }
+    }
 }
