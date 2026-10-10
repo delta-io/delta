@@ -22,6 +22,11 @@ public class PathLock {
     /** Release the lock for the path after writing. */
     public void release(Path resolvedPath) {
         final Object lock = pathLock.remove(resolvedPath);
+        // The path may have no entry if `acquire` never succeeded for it (e.g. it was interrupted
+        // while waiting). In that case there is nothing to release and no waiters to notify.
+        if (lock == null) {
+            return;
+        }
         synchronized(lock) {
             lock.notifyAll();
         }
