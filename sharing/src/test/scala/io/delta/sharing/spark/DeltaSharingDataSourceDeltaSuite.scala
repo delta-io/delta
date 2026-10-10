@@ -1637,6 +1637,59 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     }
   }
 
+  test("DeltaSharingDataSource applies deletion vectors when writing to a DSv2 sink") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_dv_v2_sink"
+      withTable(deltaTableName) {
+        spark
+          .range(start = 0, end = 100)
+          .withColumn("partition", col("id").divide(10).cast("int"))
+          .write
+          .partitionBy("partition")
+          .format("delta")
+          .saveAsTable(deltaTableName)
+        spark.sql(
+          s"ALTER TABLE $deltaTableName SET TBLPROPERTIES('delta.enableDeletionVectors' = true)"
+        )
+        // Delete 2 rows per partition, so every file carries a deletion vector.
+        sql(s"""DELETE FROM $deltaTableName where mod(id, 10) < 2""")
+
+        val sharedTableName = "shared_table_dv_v2_sink"
+        prepareMockedClientAndFileSystemResult(
+          deltaTable = deltaTableName,
+          sharedTable = sharedTableName,
+          assertMultipleDvsInOneFile = true
+        )
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        val additionalConfigs = Map(
+          "spark.sql.catalog.v2sink" ->
+            "org.apache.spark.sql.connector.catalog.InMemoryTableCatalog"
+        )
+        withSQLConf((getDeltaSharingClassesSQLConf ++ additionalConfigs).toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          val tablePath = s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName"
+          val sharingDf =
+            spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+          val deltaDf = spark.read.format("delta").table(deltaTableName)
+
+          // A plain read already honors the deletion vectors.
+          checkAnswer(sharingDf, deltaDf)
+          assert(sharingDf.count() === 80)
+
+          // Writing the same DataFrame into a DataSourceV2 sink must honor them too. A non-Delta
+          // V2 sink is never re-planned through Delta's V1 fallback, so if PrepareDeltaSharingScan
+          // skips the write plan the DeltaSharingFileIndex survives into planning and the deleted
+          // rows are silently returned. See delta-io/delta#6719.
+          sql("CREATE TABLE v2sink.ns.dv_target (id LONG, partition INT) USING foo")
+          sharingDf.writeTo("v2sink.ns.dv_target").append()
+          checkAnswer(spark.table("v2sink.ns.dv_target"), deltaDf)
+          assert(spark.table("v2sink.ns.dv_target").count() === 80)
+        }
+      }
+    }
+  }
+
   test("DeltaSharingDataSource able to read data for dv and cdf") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_dv_cdf"
