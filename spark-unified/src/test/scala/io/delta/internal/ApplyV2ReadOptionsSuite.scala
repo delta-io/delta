@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceMetadataTrackingLog, Delta
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import io.delta.spark.internal.v2.catalog.DeltaV2Table
+import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
@@ -270,7 +271,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
   private def seedSchemaLogWithExtraColumn(tablePath: String, schemaLogPath: String): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     val snapshotManager =
-      new PathBasedSnapshotManager(tablePath, deltaLog.newDeltaHadoopConf())
+      new PathBasedSnapshotManager(tablePath, new KernelContext(deltaLog.options, deltaLog.store))
     val tableId = snapshotManager.loadLatestSnapshot.metadata.getId
     val trackingLog = DeltaSourceMetadataTrackingLog.create(
       spark, schemaLogPath, tableId, tablePath, parameters = Map.empty[String, String])

@@ -77,7 +77,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("DELETE FROM %s WHERE id = 1", tableName));
 
           DeltaV2SnapshotManager snapshotManager =
-              SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
+              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Optional.empty());
           StructType dataSchema = spark.table(tableName).schema();
           long latestVersion = snapshotManager.loadLatestSnapshot().version();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
@@ -149,7 +149,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("INSERT INTO %s VALUES (1)", tableName));
 
           DeltaV2SnapshotManager snapshotManager =
-              SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
+              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Optional.empty());
           StructType dataSchema = spark.table(tableName).schema();
           long latestVersion = snapshotManager.loadLatestSnapshot().version();
 
@@ -200,7 +200,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("UPDATE %s SET name = 'AliceX' WHERE id = 1", tableName));
 
           DeltaV2SnapshotManager snapshotManager =
-              SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
+              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Optional.empty());
           StructType dataSchema = spark.table(tableName).schema();
           long latestVersion = snapshotManager.loadLatestSnapshot().version();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
@@ -273,7 +273,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("INSERT INTO %s VALUES (3, 'Charlie')", tableName));
 
           DeltaV2SnapshotManager snapshotManager =
-              SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
+              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Optional.empty());
           StructType dataSchema = spark.table(tableName).schema();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
@@ -342,7 +342,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
 
           DeltaV2SnapshotManager snapshotManager =
-              SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
+              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Optional.empty());
           long latestVersion = snapshotManager.loadLatestSnapshot().version();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
@@ -407,7 +407,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
 
           DeltaV2SnapshotManager snapshotManager =
-              SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
+              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Optional.empty());
           long latestVersion = snapshotManager.loadLatestSnapshot().version();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 

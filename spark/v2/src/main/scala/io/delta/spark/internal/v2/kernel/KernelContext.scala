@@ -25,14 +25,13 @@ import org.apache.spark.sql.SparkSession
 /**
  * Table-scoped owner of Kernel resources and deferred Hadoop configuration materialization.
  *
- * It retains session-invariant filesystem options and the table manager's LogStore. When
- * filesystem I/O begins, it binds those options to the active Spark session so session-derived
- * settings and credentials are not retained by reusable connector state. Its LogStore and
- * lazily-created Engine remain stable across Spark sessions.
+ * It retains session-invariant filesystem options and the table manager's LogStore. Hadoop
+ * configuration materialization combines those options with the active Spark session's settings.
+ * Callers look up an engine when an operation needs it instead of retaining their own engine.
  */
-private[v2] final class KernelContext(
-    val sessionInvariantFsOptions: Map[String, String],
-    val logStore: LogStore) {
+final class KernelContext(
+    private[v2] val sessionInvariantFsOptions: Map[String, String],
+    private[v2] val logStore: LogStore) {
   require(sessionInvariantFsOptions != null, "sessionInvariantFsOptions must not be null")
   require(logStore != null, "logStore must not be null")
 
@@ -44,9 +43,11 @@ private[v2] final class KernelContext(
     KernelDefaultEngine.create(hadoopConf)
   }
 
-  private lazy val kernelDefaultEngine = createDefaultEngine()
 
-  private[v2] def getDefaultEngine(): KernelEngine = kernelDefaultEngine
+  // The snapshot facade lives in a separate internal package in the standalone connector.
+  def getDefaultEngine(): KernelEngine = {
+    createDefaultEngine()
+  }
 }
 
 private[v2] object KernelContext {

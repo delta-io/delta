@@ -197,7 +197,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
   private HandlerWithLog buildHandlerWithRealTable(
       String tablePath, long initVersion, boolean seedLogWithInitEntry) {
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(tablePath, createKernelContext());
     SnapshotImpl snapshot =
         DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(initVersion));
     Metadata tableMetadata = snapshot.getMetadata();
@@ -997,7 +997,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
     createEmptyTestTable(tablePath, tableName);
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(tablePath, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
         spark,
@@ -1137,7 +1137,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
     createEmptyTestTable(tablePath, tableName);
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(tablePath, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
         spark, snapshot, options, snapshotManager, defaultEngine);
@@ -1159,7 +1159,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
     createEmptyTestTable(tablePath, tableName);
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(tablePath, createKernelContext());
     Snapshot dsv1Snapshot = snapshotManager.loadLatestSnapshot();
     SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(dsv1Snapshot);
 
@@ -1214,7 +1214,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
     createEmptyTestTable(tablePath, tableName);
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(tablePath, createKernelContext());
     return DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
   }
 
@@ -1444,7 +1444,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     }
 
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(tablePath, createKernelContext());
     PersistedMetadata current = buildCurrentMetadataAtV0(tablePath, snapshotManager);
 
     Option<PersistedMetadata> result =
@@ -1500,7 +1500,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     spark.sql(String.format("UPDATE %s SET c3 = 10 WHERE id = 1", tableName)); // v4
 
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(tablePath, createKernelContext());
 
     // current = v2 (the ALTER ADD COLUMN). Merger walks forward from here.
     SnapshotImpl v2Snapshot =

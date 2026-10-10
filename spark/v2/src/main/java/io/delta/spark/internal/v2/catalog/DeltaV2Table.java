@@ -26,6 +26,7 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.spark.internal.v2.exception.NoRecreatableHistoryException;
 import io.delta.spark.internal.v2.exception.TableNotFoundException;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
+import io.delta.spark.internal.v2.kernel.KernelContext;
 import io.delta.spark.internal.v2.read.DeltaV2ScanUtils;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
@@ -131,7 +132,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
   private final Snapshot initialSnapshot;
 
   private final Configuration hadoopConf;
-  private final Engine kernelEngine;
+  private final KernelContext kernelContext;
 
   private final SchemaProvider schemaProvider;
   private final Optional<CatalogTable> catalogTable;
@@ -251,7 +252,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
     DeltaV2TableManager tableManager =
         DeltaV2TableManagerCache$.MODULE$.forTable(
             activeSession, tablePath, options, catalogTableOpt);
-    this.kernelEngine = tableManager.kernelContext().getDefaultEngine();
+    this.kernelContext = tableManager.kernelContext();
     this.snapshotManager = tableManager.snapshotManager(catalogTableOpt);
     try {
       if (timeTravelVersion.isPresent()) {
@@ -279,7 +280,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
 
     Optional<PersistedMetadata> persistedMetadata =
         MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-            SparkSession.active(), initialSnapshot, options, snapshotManager, kernelEngine);
+            SparkSession.active(), initialSnapshot, options, snapshotManager, kernelEngine());
 
     StructType rawSchema;
     List<String> partitionColumnNames;
@@ -371,7 +372,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
 
   /** Inputs exposed to the Spark-version shim for metadata-only DELETE. */
   protected Engine kernelEngine() {
-    return kernelEngine;
+    return kernelContext.getDefaultEngine();
   }
 
   protected Snapshot initialSnapshot() {
@@ -548,7 +549,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
     return DeltaV2ScanUtils.newScanBuilder(
         name(),
         initialSnapshot,
-        kernelEngine,
+        kernelEngine(),
         catalogTable,
         snapshotManager,
         schemaProvider.getDataSchema(),
@@ -573,7 +574,7 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     requireNonNull(info, "write info is null");
     return new DeltaV2WriteBuilder(
-        kernelEngine,
+        kernelEngine(),
         tablePath,
         hadoopConf,
         initialSnapshot,
@@ -592,7 +593,8 @@ public class DeltaV2Table extends DeltaV2TableShimsWithLogging
   @Override
   public RowLevelOperationBuilder newRowLevelOperationBuilder(RowLevelOperationInfo info) {
     requireNonNull(info, "row-level operation info is null");
-    return new DeltaRowLevelOperationBuilder(this, kernelEngine, hadoopConf, initialSnapshot, info);
+    return new DeltaRowLevelOperationBuilder(
+        this, kernelEngine(), hadoopConf, initialSnapshot, info);
   }
 
   @Override

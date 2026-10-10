@@ -76,14 +76,14 @@ class DeltaV2TableManagerImplSuite
       spark.range(2, 3, 1, 1).write.format("delta").mode("append").save(path)
 
       forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
-        val kernelEngine = manager.kernelContext.getDefaultEngine()
+        val kernelContext = manager.kernelContext
         val atVersionZeroManager = manager.snapshotManager(catalogTableOpt)
         val atVersionOneManager = manager.snapshotManager(catalogTableOpt)
         val latestManager = manager.snapshotManager(catalogTableOpt)
 
         assert(atVersionZeroManager eq atVersionOneManager)
         assert(atVersionOneManager eq latestManager)
-        assert(manager.kernelContext.getDefaultEngine() eq kernelEngine)
+        assert(manager.kernelContext eq kernelContext)
 
         val atVersionZero = atVersionZeroManager.loadSnapshotAt(0)
         assert(atVersionZero.version == 0)
@@ -100,7 +100,7 @@ class DeltaV2TableManagerImplSuite
     }
   }
 
-  test("cached composite reuses the table manager and Kernel Engine") {
+  test("cached composite reuses the table manager and KernelContext") {
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {
       withTempDir { dir =>
         val first = DeltaV2TableManagerCache
@@ -117,7 +117,7 @@ class DeltaV2TableManagerImplSuite
           .asInstanceOf[DeltaV2TableManagerImpl]
 
         assert(first eq second)
-        assert(first.kernelContext.getDefaultEngine() eq second.kernelContext.getDefaultEngine())
+        assert(first.kernelContext eq second.kernelContext)
       }
     }
   }
