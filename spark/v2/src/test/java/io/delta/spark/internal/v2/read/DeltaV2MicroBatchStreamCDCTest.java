@@ -23,6 +23,7 @@ import io.delta.kernel.CommitRange;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.VersionToLoadAfterLatestCommitException;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
@@ -161,6 +162,38 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     // startingVersion=latest resolves to latest+1, which is not materialized. The KernelException
     // is swallowed and the validator returns without throwing.
+    assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(latestVersion + 1));
+  }
+
+  @Test
+  public void testValidateCDFEnabled_swallowsForUnmaterializedStartVersionOnCatalogManagedTable(
+      @TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdf_future_version_uc_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
+    sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    // Mimics UCManagedTableSnapshotManager, which rejects versions past the latest ratified one.
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, hadoopConf) {
+          @Override
+          public Snapshot loadSnapshotAt(long version) {
+            long latest = loadLatestSnapshot().version();
+            if (version > latest) {
+              throw new VersionToLoadAfterLatestCommitException(
+                  String.format(
+                      "Cannot load table version %s as the latest version ratified by UC is %s",
+                      version, latest));
+            }
+            return super.loadSnapshotAt(version);
+          }
+        };
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    long latestVersion = snapshotManager.loadLatestSnapshot().version();
+    // startingVersion=latest resolves to latest+1
     assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(latestVersion + 1));
   }
 
