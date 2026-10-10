@@ -57,6 +57,25 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
       }
     }
 
+  /**
+   * A CloseableIterator that delegates to `delegate` but records whether `close` was called. Used
+   * to assert that the retry logic closes every iterator it opens, including the ones it discards
+   * while replaying.
+   */
+  private class TrackingCloseableIterator(delegate: CloseableIterator[String])
+      extends CloseableIterator[String] {
+    var closed = false
+
+    override def close(): Unit = {
+      closed = true
+      delegate.close()
+    }
+
+    override def hasNext: Boolean = delegate.hasNext
+
+    override def next(): String = delegate.next()
+  }
+
   test("simple case - internally keeps track of the correct index") {
     val testIter = new RetryableCloseableIterator(() => getIter(0 to 100))
     assert(testIter.getLastSuccessfullIndex == -1)
@@ -128,6 +147,43 @@ class RetryableCloseableIteratorSuite extends AnyFunSuite {
     val testIter2 =
       new RetryableCloseableIterator(getFailingIterSupplier(0 to 100, Seq(50, 70, 5)))
     assert(testIter2.asScala.toList.map(_.toInt) == (0 to 100).toList)
+  }
+
+  test("closes every iterator it opens while retrying the replay (no leak)") {
+    val openedIters = scala.collection.mutable.ArrayBuffer.empty[TrackingCloseableIterator]
+
+    // Fails at index 50, then the replay itself fails at 30 and again at 20 before succeeding.
+    // Each failed replay forces another retry-loop iteration, and each iteration opens a new
+    // underlying iterator via the supplier.
+    val failIndices = Seq(50, 30, 20)
+    val supplier = new ThrowingSupplier[CloseableIterator[String], IOException] {
+      var numGetCalls = 0
+
+      override def get(): CloseableIterator[String] = {
+        val delegate =
+          if (numGetCalls < failIndices.length) getIter(0 to 100, Some(failIndices(numGetCalls)))
+          else getIter(0 to 100)
+        numGetCalls = numGetCalls + 1
+        val tracking = new TrackingCloseableIterator(delegate)
+        openedIters += tracking
+        tracking
+      }
+    }
+
+    val testIter = new RetryableCloseableIterator(supplier)
+    assert(testIter.asScala.toList.map(_.toInt) == (0 to 100).toList)
+    testIter.close()
+
+    // initial iterator + one per retry (3 retries)
+    assert(openedIters.size == 4)
+    // Every opened iterator must be closed: the ones discarded across the failed replays by the
+    // retry loop, and the final live one by close() above. Before the fix, the iterators opened
+    // during the failed replays were overwritten without being closed, leaking their streams.
+    assert(
+      openedIters.forall(_.closed),
+      s"expected all opened iterators to be closed, but only " +
+        s"${openedIters.count(_.closed)} of ${openedIters.size} were closed"
+    )
   }
 
   test("throws after maxRetries exceptions") {
