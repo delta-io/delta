@@ -131,6 +131,9 @@ lazy val commonSettings = Seq(
   crossScalaVersions := all_scala_versions,
   fork := true,
   scalacOptions ++= Seq("-Ywarn-unused:imports"),
+  scalacOptions ++= {
+    if (javaVersion.startsWith("1.8")) Seq.empty else Seq(s"-release:${targetJvm.value}")
+  },
   javacOptions ++= {
     if (javaVersion.startsWith("1.8")) {
       Seq.empty // `--release` is supported since JDK 9 and the minimum supported JDK is 8
