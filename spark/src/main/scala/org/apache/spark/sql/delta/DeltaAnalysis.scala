@@ -38,6 +38,7 @@ import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, Co
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.delta.util.AnalysisHelper
@@ -125,6 +126,21 @@ class DeltaAnalysis(protected val session: SparkSession)
       } else {
         a
       }
+
+    // Spark normalizes the columns of PARTITIONED BY against the table schema, but not the
+    // columns of Delta's CLUSTER BY transform.
+    case create: V2CreateTablePlan if create.childrenResolved =>
+      val resolver = session.sessionState.conf.resolver
+      val partitioning = create.partitioning.map {
+        case TempClusterByTransform(columnNames) =>
+          TempClusterByTransform(columnNames.map { column =>
+            create.tableSchema.findNestedField(column.fieldNames.toSeq, resolver = resolver)
+              .map { case (path, field) => FieldReference(path :+ field.name) }
+              .getOrElse(column)
+          })
+        case transform => transform
+      }
+      if (partitioning == create.partitioning) create else create.withPartitioning(partitioning)
 
     /**
      * Handling create table like when a delta target (provider)
