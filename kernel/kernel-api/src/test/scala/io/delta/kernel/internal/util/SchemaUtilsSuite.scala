@@ -358,12 +358,22 @@ class SchemaUtilsSuite extends AnyFunSuite {
         }
 
         if (char != '\n') {
-          // with column mapping disabled this should be a valid name
+          // with column mapping enabled only a new line is rejected, so this is a valid name
           validateSchema(
             schema,
             isColumnMappingEnabled = true,
             isColumnDefaultEnabled = false,
             isIcebergCompatV3Enabled = false)
+        } else {
+          // with column mapping enabled a new line in the name must still be rejected
+          val cmError = intercept[KernelException] {
+            validateSchema(
+              schema,
+              isColumnMappingEnabled = true,
+              isColumnDefaultEnabled = false,
+              isIcebergCompatV3Enabled = false)
+          }
+          assert(cmError.getMessage.contains("contains one of the unsupported"))
         }
 
         assert(e.getMessage.contains("contains one of the unsupported"))
