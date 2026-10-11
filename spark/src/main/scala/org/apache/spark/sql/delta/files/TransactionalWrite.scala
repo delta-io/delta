@@ -23,7 +23,6 @@ import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, DeltaInvariantCheckerExec}
-import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.perf.DeltaOptimizedWriterExec
@@ -33,6 +32,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA
 import org.apache.spark.sql.delta.stats.{
   DeltaJobStatisticsTracker,
+  DeltaWriteStatsUtils,
   StatisticsCollection,
   StatsCollectionUtils
 }
@@ -40,7 +40,7 @@ import org.apache.spark.sql.delta.util.TableParquetVersionOption
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -301,26 +301,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   protected def getStatsSchema(
     dataFrameOutput: Seq[Attribute],
     partitionSchema: StructType): (Seq[Attribute], Seq[Attribute]) = {
-    val partitionColNames = partitionSchema.map(_.name).toSet
-
-    // The outputStatsCollectionSchema comes from DataFrame output
-    // schema should be normalized, therefore we can do an equality check
-    val outputStatsCollectionSchema = dataFrameOutput
-      .filterNot(c => partitionColNames.contains(c.name))
-
-    // The tableStatsCollectionSchema comes from table schema
-    val statsTableSchema = toAttributes(metadata.schema)
-    val mappedStatsTableSchema = if (metadata.columnMappingMode == NoMapping) {
-      statsTableSchema
-    } else {
-      mapColumnAttributes(statsTableSchema, metadata.columnMappingMode)
-    }
-
-    // It's important to first do the column mapping and then drop the partition columns
-    val tableStatsCollectionSchema = mappedStatsTableSchema
-      .filterNot(c => partitionColNames.contains(c.name))
-
-    (outputStatsCollectionSchema, tableStatsCollectionSchema)
+    DeltaWriteStatsUtils.getStatsSchema(dataFrameOutput, partitionSchema, metadata)
   }
 
   /**
@@ -330,16 +311,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   protected def getStatsColExpr(
       statsDataSchema: Seq[Attribute],
       statsCollection: StatisticsCollection): (Expression, Seq[Attribute]) = {
-    val resolvedPlan = DataFrameUtils.ofRows(spark, LocalRelation(statsDataSchema))
-      .select(to_json(Column(
-        EncodeNestedVariantAsZ85String(statsCollection.statsCollector.expr))))
-      .queryExecution.analyzed
-
-    // We have to use the new attributes with regenerated attribute IDs, because the Analyzer
-    // doesn't guarantee that attributes IDs will stay the same
-    val newStatsDataSchema = resolvedPlan.children.head.output
-
-    resolvedPlan.expressions.head -> newStatsDataSchema
+    DeltaWriteStatsUtils.getStatsColExpr(spark, statsDataSchema, statsCollection)
   }
 
 
