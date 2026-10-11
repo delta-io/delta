@@ -79,7 +79,7 @@ public class SnapshotManager {
     snapshotContext.setResolvedVersion(logSegment.getVersion());
     snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
 
-    return createSnapshot(logSegment, engine, snapshotContext);
+    return createSnapshotWithCheckpointFallback(logSegment, engine, snapshotContext);
   }
 
   /**
@@ -184,6 +184,76 @@ public class SnapshotManager {
     return snapshot;
   }
 
+  private SnapshotImpl createSnapshotWithCheckpointFallback(
+      LogSegment initSegment, Engine engine, SnapshotQueryContext snapshotContext) {
+    try {
+      return createSnapshot(initSegment, engine, snapshotContext);
+    } catch (RuntimeException ex) {
+      final Optional<Long> corruptedCheckpointVersionOpt =
+          getRetryableCorruptedCheckpointVersion(initSegment, ex);
+      if (!corruptedCheckpointVersionOpt.isPresent()) {
+        throw ex;
+      }
+
+      final long corruptedCheckpointVersion = corruptedCheckpointVersionOpt.get();
+      logger.warn(
+          "{}: Failed to build latest snapshot using checkpoint version {}. "
+              + "Falling back to an earlier checkpoint.",
+          tablePath,
+          corruptedCheckpointVersion,
+          ex);
+
+      final Optional<Long> fallbackCheckpointVersionOpt =
+          findFallbackCheckpointVersion(engine, corruptedCheckpointVersion);
+      final Optional<LogSegment> fallbackLogSegmentOpt =
+          buildLogSegmentFromStartCheckpointVersion(
+              engine,
+              fallbackCheckpointVersionOpt,
+              Optional.empty() /* versionToLoadOpt */,
+              Collections.emptyList() /* parsedLogDatas */,
+              Optional.of(corruptedCheckpointVersion - 1));
+
+      if (!fallbackLogSegmentOpt.isPresent()) {
+        throw ex;
+      }
+
+      final LogSegment fallbackLogSegment = fallbackLogSegmentOpt.get();
+      snapshotContext.setResolvedVersion(fallbackLogSegment.getVersion());
+      snapshotContext.setCheckpointVersion(fallbackLogSegment.getCheckpointVersionOpt());
+
+      logger.info(
+          "{}: Retrying latest snapshot construction with checkpoint version {} after "
+              + "ignoring corrupted checkpoint version {}.",
+          tablePath,
+          fallbackLogSegment.getCheckpointVersionOpt().map(String::valueOf).orElse("none"),
+          corruptedCheckpointVersion);
+
+      return createSnapshot(fallbackLogSegment, engine, snapshotContext);
+    }
+  }
+
+  private Optional<Long> getRetryableCorruptedCheckpointVersion(
+      LogSegment logSegment, Throwable throwable) {
+    final Optional<Long> checkpointVersionOpt = logSegment.getCheckpointVersionOpt();
+    if (!checkpointVersionOpt.isPresent()) {
+      return Optional.empty();
+    }
+
+    Throwable current = throwable;
+    while (current != null) {
+      final String message = current.getMessage();
+      if (message != null
+          && (message.contains("is not a Parquet file")
+              || message.contains("Could not read footer")
+              || message.contains("Expected magic number at tail"))) {
+        return checkpointVersionOpt;
+      }
+      current = current.getCause();
+    }
+
+    return Optional.empty();
+  }
+
   /**
    * Generates a {@link LogSegment} for the given `versionToLoadOpt`. If no `versionToLoadOpt` is
    * provided, generates a {@code LogSegment} for the latest version of the table.
@@ -241,7 +311,11 @@ public class SnapshotManager {
     // Primary attempt to build the log segment
     Optional<LogSegment> result =
         buildLogSegmentFromStartCheckpointVersion(
-            engine, startCheckpointVersionOpt, versionToLoadOpt, parsedLogDatas);
+            engine,
+            startCheckpointVersionOpt,
+            versionToLoadOpt,
+            parsedLogDatas,
+            Optional.empty() /* maxCheckpointVersionOpt */);
     if (result.isPresent()) {
       logger.info(
           "Successfully constructed LogSegment at version {}, took {}ms",
@@ -262,7 +336,11 @@ public class SnapshotManager {
       try {
         Optional<LogSegment> fallbackResult =
             buildLogSegmentFromStartCheckpointVersion(
-                engine, fallbackStart, versionToLoadOpt, parsedLogDatas);
+                engine,
+                fallbackStart,
+                versionToLoadOpt,
+                parsedLogDatas,
+                Optional.empty() /* maxCheckpointVersionOpt */);
         if (fallbackResult.isPresent()) {
           logger.info(
               "{}: Fallback successfully constructed LogSegment at version {} "
@@ -314,7 +392,8 @@ public class SnapshotManager {
       Engine engine,
       Optional<Long> startCheckpointVersionOpt,
       Optional<Long> versionToLoadOpt,
-      List<ParsedLogData> parsedLogDatas) {
+      List<ParsedLogData> parsedLogDatas,
+      Optional<Long> maxCheckpointVersionOpt) {
 
     final long versionToLoad = versionToLoadOpt.orElse(Long.MAX_VALUE);
 
@@ -424,8 +503,12 @@ public class SnapshotManager {
             .map(f -> new CheckpointInstance(f.getPath()))
             .collect(Collectors.toList());
 
+    final long maxCheckpointVersion =
+        maxCheckpointVersionOpt.orElse(versionToLoadOpt.orElse(Long.MAX_VALUE));
     final CheckpointInstance notLaterThanCheckpoint =
-        versionToLoadOpt.map(CheckpointInstance::new).orElse(CheckpointInstance.MAX_VALUE);
+        maxCheckpointVersion == Long.MAX_VALUE
+            ? CheckpointInstance.MAX_VALUE
+            : new CheckpointInstance(maxCheckpointVersion);
 
     final Optional<CheckpointInstance> latestCompleteCheckpointOpt =
         Checkpointer.getLatestCompleteCheckpointFromList(
