@@ -209,7 +209,8 @@ class MockReadICTFileJsonHandler(
             mapTypeVector(Seq(Map("operationParameter" -> ""))), /* operationParameters */
             booleanVector(Seq(false)), /* isBlindAppend */
             stringVector(Seq("txnId")), /* txnId */
-            mapTypeVector(Seq(Map("operationMetrics" -> ""))) /* operationMetrics */
+            mapTypeVector(Seq(Map("operationMetrics" -> ""))), /* operationMetrics */
+            mapTypeVector(Seq(Map.empty[String, String])) /* tags */
           )
           ordinal match {
             case 0 => new ColumnVector {

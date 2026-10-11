@@ -48,6 +48,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
   private Optional<DataLayoutSpec> dataLayoutSpec = Optional.empty();
   private Optional<Integer> userProvidedMaxRetries = Optional.empty();
   private Optional<Committer> userProvidedCommitter = Optional.empty();
+  private Map<String, String> commitTags = Collections.emptyMap();
 
   public CreateTableTransactionBuilderImpl(String tablePath, StructType schema, String engineInfo) {
     this.unresolvedPath = requireNonNull(tablePath, "tablePath is null");
@@ -110,6 +111,12 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
     return this;
   }
 
+  @Override
+  public CreateTableTransactionBuilder withCommitTags(Map<String, String> tags) {
+    this.commitTags = Collections.unmodifiableMap(requireNonNull(tags, "tags is null"));
+    return this;
+  }
+
   @VisibleForTesting
   public CreateTableTransactionBuilder withClock(Clock clock) {
     this.clock = requireNonNull(clock, "clock cannot be null");
@@ -155,7 +162,8 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
         txnMetadata.physicalNewClusteringColumns,
         userProvidedMaxRetries,
         0, // logCompactionInterval - no compaction for new table
-        clock);
+        clock,
+        commitTags);
   }
 
   @VisibleForTesting
