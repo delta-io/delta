@@ -22,9 +22,11 @@ import java.sql.Timestamp
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+import scala.annotation.meta.getter
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+import scala.reflect.ClassTag
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinition
@@ -218,6 +220,11 @@ sealed trait Action {
   def json: String = JsonUtils.toJson(wrap)
 }
 
+/** An action that can be included in an AMT [[Checkpoint]]. */
+sealed trait AMTCheckpointAction {
+  def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction
+}
+
 /**
  * Used to block older clients from reading or writing the log when backwards incompatible changes
  * are made to the protocol. Readers and writers are responsible for checking that they meet the
@@ -238,6 +245,7 @@ case class Protocol private (
     @JsonInclude(Include.NON_ABSENT)
     writerFeatures: Option[Set[String]])
   extends Action
+  with AMTCheckpointAction
   with SparkAbstractProtocol
   with StorageAbstractProtocol
   with TableFeatureSupport {
@@ -257,6 +265,9 @@ case class Protocol private (
   }
 
   override def wrap: SingleAction = SingleAction(protocol = this)
+
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(protocol = this)
 
   /**
    * Return a reader-friendly string representation of this Protocol.
@@ -677,8 +688,10 @@ case class SetTransaction(
     appId: String,
     version: Long,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    lastUpdated: Option[Long]) extends Action {
+    lastUpdated: Option[Long]) extends Action with AMTCheckpointAction {
   override def wrap: SingleAction = SingleAction(txn = this)
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(txn = this)
 }
 
 /**
@@ -694,8 +707,15 @@ case class SetTransaction(
 case class DomainMetadata(
     domain: String,
     configuration: String,
-    removed: Boolean) extends Action with StorageAbstractDomainMetadata {
+    removed: Boolean)
+  extends Action
+  with AMTCheckpointAction
+  with StorageAbstractDomainMetadata {
+
   override def wrap: SingleAction = SingleAction(domainMetadata = this)
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(domainMetadata = this)
+
   override def getDomain: String = domain
   override def getConfiguration: String = configuration
   override def isRemoved: Boolean = removed
@@ -1342,7 +1362,10 @@ case class Metadata(
     configuration: Map[String, String] = Map.empty,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     createdTime: Option[Long] = None)
-  extends Action with SparkAbstractMetadata with StorageAbstractMetadata {
+  extends Action
+  with AMTCheckpointAction
+  with SparkAbstractMetadata
+  with StorageAbstractMetadata {
 
   // The `schema` and `partitionSchema` methods should be vals or lazy vals, NOT
   // defs, because parsing StructTypes from JSON is extremely expensive and has
@@ -1433,6 +1456,9 @@ case class Metadata(
     DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.fromMetaData(this)
 
   override def wrap: SingleAction = SingleAction(metaData = this)
+
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(metaData = this)
 
   override def getId: String = id
 
@@ -1738,7 +1764,10 @@ case class ContentRoot(
     path: String,
     sizeInBytes: Long,
     version: Long,
-    tags: Map[String, String] = null) {
+    tags: Map[String, String] = null) extends AMTCheckpointAction {
+
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(contentRoot = this)
 
   private def tag(key: ContentRoot.Tags.KeyType): Option[String] =
     Option(tags).flatMap(_.get(key.name))
@@ -1808,7 +1837,7 @@ object ContentRoot {
 }
 
 /**
- * Closed set of values for [[SidecarFile.sidecarType]] under the `adaptiveMetadata-preview`
+ * Closed set of values for the `type` field on [[SidecarFile]] under `adaptiveMetadata-preview`.
  * feature. Tells a reader which slice of the checkpoint's non-content metadata a sidecar
  * carries.
  *
@@ -1834,48 +1863,130 @@ object SidecarType {
 
 /**
  * Top-level Delta action emitted by a commit which also writes AMT.
- * Embeds the full checkpoint state -- `contentRoot` plus the non-content metadata snapshot
- * (protocol, metadata, domain metadata, txns, sidecars) -- that a reader needs to
- * reconstruct the table at the recorded version without replaying earlier commits. Distinct
- * from [[CheckpointMetadata]], which describes V2 checkpoint sidecars.
+ * Contains the actions needed to reconstruct the table at the version recorded by
+ * [[CheckpointMetadata]]: the content root, protocol, metadata, domain metadata, transaction
+ * identifiers, and sidecar references. Entries can appear in any order.
+ *
+ * Exactly one [[CheckpointMetadata]], [[ContentRoot]], [[Protocol]], and [[Metadata]] must be
+ * present. The checkpoint version may lag the enclosing commit, and the content root version
+ * must be less than or equal to the checkpoint version.
  *
  * For domain metadata and transaction identifiers, the data can be carried inline, in
  * sidecars, or split across both (e.g., small changes inline with the bulk in a sidecar).
  * A given entry must not be duplicated across inline and sidecar.
  *
- * @param version        version at which this checkpoint is valid. May belong to a previous
- *                       commit (the checkpoint can lag the enclosing commit).
- * @param contentRoot    pointer to the Iceberg v4 root manifest. `contentRoot.version` is
- *                       the table version the tree reflects.
- * @param protocol       protocol snapshot at `version`. Must be non null.
- * @param metaData       metadata snapshot at `version`. Must be non null.
- * @param domainMetadata all [[DomainMetadata]] entries carried inline. An empty list means
- *                       there are no domain metadata entries inline (they may still be
- *                       carried via sidecars).
- * @param txns           transaction identifiers carried inline. An empty list means there are
- *                       no transaction identifiers inline (they may still be carried via
- *                       sidecars).
- * @param sidecars       sidecars that carry the long tail of non-content metadata (transaction
- *                       ids, domain metadata, ...). Empty when all non-content metadata is
- *                       inline.
+ * @param actions wrapped actions comprising this checkpoint.
  */
+@JsonDeserialize(using = classOf[Checkpoint.Deserializer])
 case class Checkpoint(
-    version: Long,
-    contentRoot: ContentRoot,
-    protocol: Protocol,
-    metaData: Metadata,
-    domainMetadata: Seq[DomainMetadata],
-    txns: Seq[SetTransaction],
-    sidecars: Seq[SidecarFile]) extends Action {
+    // The AMT RFC requires a bare action array. JsonValue on the getter makes Jackson serialize
+    // this array directly, without an {"actions": ...} wrapper.
+    @(JsonValue @getter)
+    actions: Seq[AMTCheckpointSingleAction]) extends Action {
+
+  require(actions != null, "Checkpoint actions must not be null.")
+  require(actions.forall(_ != null), "Checkpoint actions must not contain null entries.")
+
+  @JsonIgnore
+  private val unwrappedActions: Seq[AMTCheckpointAction] = actions.map(_.unwrap)
+
+  @JsonIgnore
+  val checkpointMetadata: CheckpointMetadata = getRequiredAction[CheckpointMetadata]
+
+  /**
+   * Version at which this checkpoint is valid. May belong to a previous commit (the checkpoint
+   * can lag the enclosing commit).
+   */
+  @JsonIgnore
+  def version: Long = checkpointMetadata.version
+
+  /**
+   * Pointer to the Iceberg v4 root manifest. `contentRoot.version` is the table version the tree
+   * reflects.
+   */
+  @JsonIgnore
+  val contentRoot: ContentRoot = getRequiredAction[ContentRoot]
+
+  /** Protocol snapshot at `version`. Must be non null. */
+  @JsonIgnore
+  val protocol: Protocol = getRequiredAction[Protocol]
+
+  /** Metadata snapshot at `version`. Must be non null. */
+  @JsonIgnore
+  val metaData: Metadata = getRequiredAction[Metadata]
+
+  /**
+   * All [[DomainMetadata]] entries carried inline. An empty list means there are no domain
+   * metadata entries inline (they may still be carried via sidecars).
+   */
+  @JsonIgnore
+  lazy val domainMetadata: Seq[DomainMetadata] = unwrappedActions.collect {
+    case action: DomainMetadata => action
+  }
+
+  /**
+   * Transaction identifiers carried inline. An empty list means there are no transaction
+   * identifiers inline (they may still be carried via sidecars).
+   */
+  @JsonIgnore
+  lazy val txns: Seq[SetTransaction] = unwrappedActions.collect {
+    case action: SetTransaction => action
+  }
+
+  /**
+   * Sidecars that carry the long tail of non-content metadata (transaction ids, domain metadata,
+   * ...). Empty when all non-content metadata is inline.
+   */
+  @JsonIgnore
+  lazy val sidecars: Seq[SidecarFile] = unwrappedActions.collect {
+    case action: SidecarFile => action
+  }
 
   // AMT checkpoint sidecars must always declare their type.
-  require(sidecars.forall(_.sidecarType.isDefined),
-    "All sidecars in a Checkpoint must have a sidecarType.")
+  require(sidecars.forall(_.`type`.isDefined),
+    "All sidecars in a Checkpoint must have a type.")
   require(
     contentRoot.version <= version,
     s"contentRoot.version (${contentRoot.version}) must be <= checkpoint version ($version).")
 
-  override def wrap: SingleAction = SingleAction(checkpoint = this)
+  override def wrap: SingleAction = SingleAction(checkpoint = actions)
+
+  private def getRequiredAction[T <: AMTCheckpointAction : ClassTag]: T = {
+    // ClassTag makes this pattern check T's runtime class instead of its erased upper bound.
+    val matchedActions = unwrappedActions.collect { case action: T => action }
+    lazy val actionName = implicitly[ClassTag[T]].runtimeClass.getSimpleName
+    require(matchedActions.size == 1,
+      s"A Checkpoint must contain exactly one $actionName action, found ${matchedActions.size}.")
+    matchedActions.head
+  }
+}
+
+object Checkpoint {
+  /** Builds a checkpoint from its individual fields. */
+  def apply(
+      version: Long,
+      contentRoot: ContentRoot,
+      protocol: Protocol,
+      metaData: Metadata,
+      domainMetadata: Seq[DomainMetadata],
+      txns: Seq[SetTransaction],
+      sidecars: Seq[SidecarFile]): Checkpoint = {
+    val flattenedActions = Seq(CheckpointMetadata(version), contentRoot, protocol, metaData) ++
+      domainMetadata ++ txns ++ sidecars
+    fromActions(flattenedActions)
+  }
+
+  /** Wraps the actions comprising a checkpoint, preserving their order. */
+  def fromActions(actions: Seq[AMTCheckpointAction]): Checkpoint =
+    Checkpoint(actions.map(_.wrapAsAMTCheckpointSingleAction))
+
+  /** Reads the bare action array used when a Checkpoint is serialized directly. */
+  class Deserializer extends JsonDeserializer[Checkpoint] {
+    override def deserialize(p: JsonParser, ctxt: DeserializationContext): Checkpoint = {
+      val actions = ctxt.readValue(p, classOf[Array[AMTCheckpointSingleAction]])
+      Checkpoint(actions.toSeq)
+    }
+  }
 }
 
 /**
@@ -1905,16 +2016,18 @@ case class SidecarFile(
     modificationTime: Long,
     tags: Map[String, String] = null,
     // Applicable only for AMT checkpoint sidecars.
-    // Sidecars corresponding to V2Checkpoints do not have concept of sidecarType.
-    @JsonProperty("type")
+    // Sidecars corresponding to V2Checkpoints do not have concept of type.
     @JsonInclude(Include.NON_ABSENT)
-    sidecarType: Option[String] = None)
-  extends CheckpointOnlyAction {
+    `type`: Option[String] = None)
+  extends CheckpointOnlyAction with AMTCheckpointAction {
 
-  // Either no sidecarType is supplied, or it must be one of the known [[SidecarType]] values.
-  sidecarType.foreach(SidecarType.validate)
+  // Either no type is supplied, or it must be one of the known [[SidecarType]] values.
+  `type`.foreach(SidecarType.validate)
 
   override def wrap: SingleAction = SingleAction(sidecar = this)
+
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(sidecar = this)
 
   def toFileStatus(logPath: Path): FileStatus = {
     val partFilePath = new Path(FileNames.sidecarDirPath(logPath), path)
@@ -1933,7 +2046,8 @@ object SidecarFile {
 }
 
 /**
- * Holds information about the Delta Checkpoint. This action will only be part of checkpoints.
+ * Holds information about the Delta Checkpoint. This action will only be part of checkpoints,
+ * including an AMT [[Checkpoint]]
  *
  * @param version version of the checkpoint
  * @param tags    attributes of the checkpoint, defaults to null (which is semantically same as an
@@ -1943,9 +2057,12 @@ object SidecarFile {
 case class CheckpointMetadata(
     version: Long,
     tags: Map[String, String] = null)
-  extends CheckpointOnlyAction {
+  extends CheckpointOnlyAction with AMTCheckpointAction {
 
   override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
+
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(checkpointMetadata = this)
 
   import CheckpointMetadata.Tags
 
@@ -2014,7 +2131,9 @@ case class SingleAction(
     sidecar: SidecarFile = null,
     domainMetadata: DomainMetadata = null,
     commitInfo: CommitInfo = null,
-    checkpoint: Checkpoint = null) {
+    // Use a Seq so Spark infers the action array required by the AMT RFC. Spark ignores JsonValue;
+    // using Checkpoint here would infer a struct with an extra "actions" field.
+    checkpoint: Seq[AMTCheckpointSingleAction] = null) {
 
   def unwrap: Action = {
     if (add != null) {
@@ -2038,7 +2157,7 @@ case class SingleAction(
     } else if (commitInfo != null) {
       commitInfo
     } else if (checkpoint != null) {
-      checkpoint
+      Checkpoint(checkpoint)
     } else {
       null
     }
@@ -2060,6 +2179,38 @@ object SingleAction extends Logging {
 
   lazy val nullLitForMetadataAction: Column =
     Column(Literal(null, ScalaReflection.schemaFor[Metadata].dataType))
+}
+
+/** A serialization helper for a single action within an AMT [[Checkpoint]]. */
+case class AMTCheckpointSingleAction(
+    checkpointMetadata: CheckpointMetadata = null,
+    contentRoot: ContentRoot = null,
+    protocol: Protocol = null,
+    metaData: Metadata = null,
+    domainMetadata: DomainMetadata = null,
+    txn: SetTransaction = null,
+    sidecar: SidecarFile = null) {
+
+  /** Returns the enclosed action, or null when no recognized action is present. */
+  def unwrap: AMTCheckpointAction = {
+    if (checkpointMetadata != null) {
+      checkpointMetadata
+    } else if (contentRoot != null) {
+      contentRoot
+    } else if (protocol != null) {
+      protocol
+    } else if (metaData != null) {
+      metaData
+    } else if (domainMetadata != null) {
+      domainMetadata
+    } else if (txn != null) {
+      txn
+    } else if (sidecar != null) {
+      sidecar
+    } else {
+      null
+    }
+  }
 }
 
 /** Serializes Maps containing JSON strings without extra escaping. */

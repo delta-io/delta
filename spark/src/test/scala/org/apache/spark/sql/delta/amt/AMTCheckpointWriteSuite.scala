@@ -20,7 +20,7 @@ import java.io.File
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaOperations, LastCheckpointInfo, RowId}
-import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DomainMetadata, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, DomainMetadata, SetTransaction, SingleAction}
 import org.apache.spark.sql.delta.coordinatedcommits.TrackingInMemoryCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
@@ -94,6 +94,44 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       assert((rootFiles(path) ++ leafFiles(path)).exists(_.getName == rootName),
         s"contentRoot must reference an on-disk manifest; got $rootName")
     }
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "manifest commit checkpoint round-trips through Jackson and Spark",
+      "amt_manifest_commit_serde")(
+      setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+      inlineCheckpointTriggerActionsOrSQL = Some { _ =>
+        Left((Seq(
+          DomainMetadata("serialization-test", """{"value":1}""", removed = false),
+          SetTransaction("serialization-app", 7L, lastUpdated = None)),
+          DeltaOperations.ManualUpdate))
+      }) { context =>
+    val expectedCheckpoint = context.checkpoint
+    assert(expectedCheckpoint.domainMetadata.contains(
+      DomainMetadata("serialization-test", """{"value":1}""", removed = false)))
+    assert(expectedCheckpoint.txns == Seq(
+      SetTransaction("serialization-app", 7L, lastUpdated = None)))
+
+    val snapshot = context.postCheckpointSnapshot
+    val deltaLog = snapshot.deltaLog
+    // A deferred checkpoint is published in the commit after the version it describes.
+    val commitPath = DeltaCommitFileProvider(snapshot).deltaFile(context.manifestCommitVersion)
+    val jacksonCheckpoints = deltaLog.store
+      .read(commitPath, deltaLog.newDeltaHadoopConf())
+      .map(Action.fromJson)
+      .collect { case checkpoint: Checkpoint => checkpoint }
+    val sparkCheckpoints = allowReadWithinDeltaLog {
+      spark.read.schema(Action.logSchema)
+        .option("mode", "FAILFAST")
+        .json(commitPath.toString)
+        .as[SingleAction](SingleAction.encoder)
+        .collect().toSeq
+        .map(_.unwrap)
+        .collect { case checkpoint: Checkpoint => checkpoint }
+    }
+
+    assert(jacksonCheckpoints == Seq(expectedCheckpoint))
+    assert(sparkCheckpoints == Seq(expectedCheckpoint))
   }
 
   testAcrossAMTCheckpointScenarios(
@@ -416,8 +454,10 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
         file_size_in_bytes = leafSize,
         manifest_info = emptyManifestInfo.copy(added_files_count = 1))
       val (rootLoc, rootSize) = writeManifest("root with space.parquet", Seq(leafPointer.wrap))
-      val checkpoint = base.copy(
-        contentRoot = ContentRoot(path = rootLoc, sizeInBytes = rootSize, version = base.version))
+      val checkpoint = updateCheckpointActions(base) {
+        case _: ContentRoot =>
+          ContentRoot(path = rootLoc, sizeInBytes = rootSize, version = base.version)
+      }
 
       // The synthesized pointers really do carry spaces and are not URL-encoded.
       assert(rootLoc.contains("root with space.parquet") && !rootLoc.contains("%20"))

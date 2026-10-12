@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{ContentRoot, Metadata}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -89,7 +89,9 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
       provider: AMTCheckpointProvider, deltaLog: DeltaLog, metadata: Metadata): DataFrame =
     new AMTCheckpointProvider(
         manifestCommitVersion = provider.manifestCommitVersion,
-        checkpointAction = provider.checkpointAction.copy(metaData = metadata),
+        checkpointAction = updateCheckpointActions(provider.checkpointAction) {
+          case _: Metadata => metadata
+        },
         leaves = provider.leaves,
         tableRoot = provider.tableRoot)
       .loadActionsForStateReconstruction(spark, deltaLog)
@@ -502,10 +504,11 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
           // Reading the rewritten root through the production path recovers every leaf pointer
           // unchanged: `manifest_info` is resolved by its Iceberg field id, not its name. (If it
           // were not, the DATA_MANIFEST rows would unwrap with a missing `manifest_info`.)
-          val rewrittenCheckpoint = checkpoint.copy(
-            contentRoot = checkpoint.contentRoot.copy(
+          val rewrittenCheckpoint = updateCheckpointActions(checkpoint) {
+            case root: ContentRoot => root.copy(
               path = rewrittenFile.getAbsolutePath,
-              sizeInBytes = rewrittenFile.length()))
+              sizeInBytes = rewrittenFile.length())
+          }
           val rewrittenProvider = AMTCheckpointProvider.fromCheckpoint(
             deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
           assertLeavesEqual(rewrittenProvider.leaves, provider.leaves)
