@@ -38,7 +38,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.{col, current_timestamp, floor, lit, rand, unix_timestamp}
+import org.apache.spark.sql.functions.{col, current_timestamp, floor, lit, rand, udf, unix_timestamp}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQueryException
 import org.apache.spark.sql.test.SharedSparkSession
@@ -930,8 +930,7 @@ abstract class DeltaCDCSuiteBase
   }
 }
 
-trait CDFNondeterministicFilterTests extends QueryTest with CDCTestMixin {
-  self: DeltaEdgeTestMixin =>
+trait CDFNondeterministicFilterTests extends QueryTest with DeltaSQLTestUtils with CDCTestMixin {
 
   private val cdfFilterTestNumRows: Int = 1000
 
@@ -953,10 +952,11 @@ trait CDFNondeterministicFilterTests extends QueryTest with CDCTestMixin {
     test(s"CDF evaluates a nondeterministic predicate once - $caseName") {
       withCDFForFilterTest { cdf =>
         val calls = spark.sparkContext.longAccumulator("cdfPredicateCalls")
-        val predicate = TrustedFunctions.trustedUdf((id: Long) => {
-          calls.add(1L)
-          keepRow(id)
-        }).asNondeterministic()
+        val predicate =
+          udf((id: Long) => {
+            calls.add(1L)
+            keepRow(id)
+          }).asNondeterministic()
 
         // checkAnswer executes additional actions, so collect once before checking the calls.
         // Leave id out of the output to check it is retained for the residual predicate.
@@ -973,10 +973,11 @@ trait CDFNondeterministicFilterTests extends QueryTest with CDCTestMixin {
       DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED.key -> "true") {
       withCDFForFilterTest { cdf =>
         val calls = spark.sparkContext.longAccumulator("cdfPredicateCalls")
-        val predicate = TrustedFunctions.trustedUdf((_: Long) => {
-          calls.add(1L)
-          true
-        }).asNondeterministic()
+        val predicate =
+          udf((_: Long) => {
+            calls.add(1L)
+            true
+          }).asNondeterministic()
         val rows = cdf.filter(predicate(col("id"))).select("id").collect().toSeq
 
         assert(rows.sortBy(_.getLong(0)) ===
@@ -989,10 +990,11 @@ trait CDFNondeterministicFilterTests extends QueryTest with CDCTestMixin {
   test("CDF combines deterministic filters with a nondeterministic predicate") {
     withCDFForFilterTest { cdf =>
       val calls = spark.sparkContext.longAccumulator("cdfPredicateCalls")
-      val predicate = TrustedFunctions.trustedUdf((_: Long) => {
-        calls.add(1L)
-        true
-      }).asNondeterministic()
+      val predicate =
+        udf((_: Long) => {
+          calls.add(1L)
+          true
+        }).asNondeterministic()
       val rows = cdf.filter(
         col("id") < lit(250L) && col("_commit_version") === lit(0L) && predicate(col("id")))
         .select("id", "_change_type", "_commit_version").collect().toSeq
