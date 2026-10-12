@@ -1305,21 +1305,21 @@ class DeltaTableBuilder(object):
 
     Example 1 to create a Delta table with separate columns, using the table name::
 
-        deltaTable = DeltaTable.create(sparkSession)
+        deltaTable = (DeltaTable.create(sparkSession)
             .tableName("testTable")
             .addColumn("c1", dataType = "INT", nullable = False)
             .addColumn("c2", dataType = IntegerType(), generatedAlwaysAs = "c1 + 1")
             .partitionedBy("c1")
-            .execute()
+            .execute())
 
-    Example 2 to replace a Delta table with existing columns, using the location::
+    Example 2 to replace a Delta table with existing columns, using the table name::
 
         df = spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
 
-        deltaTable = DeltaTable.replace(sparkSession)
+        deltaTable = (DeltaTable.replace(sparkSession)
             .tableName("testTable")
             .addColumns(df.schema)
-            .execute()
+            .execute())
 
     .. versionadded:: 1.0
 
