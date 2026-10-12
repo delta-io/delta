@@ -177,7 +177,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
       file_format = AMTSingleAction.FileFormatParquet,
       tracking = Tracking(
         status = Tracking.Status.Existing,
-        snapshot_id = None, dv_snapshot_id = None, sequence_number = None,
+        snapshot_id = None, modified_snapshot_id = None, sequence_number = None,
         file_sequence_number = None, first_row_id = None,
         deleted_positions = None, replaced_positions = None),
       record_count =

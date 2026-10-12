@@ -168,15 +168,30 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     assert(Action.fromJson(emptyPassthrough.json) === emptyPassthrough)
   }
 
-  test("AddFile amtPassthrough propagates to copy but not to removeWithTimestamp") {
+  test("AddFile snapshot IDs serialize and transition to RemoveFile") {
     val passthrough = Some(AMTPassthrough(spec_id = Some(7)))
-    val add = AddFile("a", Map.empty, 1, 2, dataChange = true, amtPassthrough = passthrough)
+    val add = AddFile(
+      "a",
+      Map.empty,
+      1,
+      2,
+      dataChange = true,
+      amtPassthrough = passthrough,
+      snapshotId = Some(11L),
+      modifiedSnapshotId = Some(12L))
+    assert(add.json.contains("\"snapshotId\":11"))
+    assert(add.json.contains("\"modifiedSnapshotId\":12"))
+    assert(Action.fromJson(add.json) === add)
+
     // copy (the mechanism the superseding AddFile of removeRows relies on) preserves it.
-    assert(add.copy(dataChange = false).amtPassthrough == passthrough)
-    // Unlike backReference, RemoveFile has no amtPassthrough field: the tombstone drops it. The
-    // surviving AddFile is what carries the AMT-native state forward.
-    assert(add.removeWithTimestamp().json.contains("\"remove\""))
-    assert(!add.removeWithTimestamp().json.contains("amtPassthrough"))
+    val copied = add.copy(dataChange = false)
+    assert(copied.snapshotId.contains(11L))
+    assert(copied.modifiedSnapshotId.contains(12L))
+    val remove = add.removeWithTimestamp()
+    assert(!remove.json.contains("amtPassthrough"))
+    assert(remove.snapshotId.isEmpty)
+    assert(remove.modifiedSnapshotId.contains(12L))
+    assert(Action.fromJson(remove.json) === remove)
   }
 
   // This is the same test as "removefile" in OSS, but due to a Jackson library upgrade the behavior

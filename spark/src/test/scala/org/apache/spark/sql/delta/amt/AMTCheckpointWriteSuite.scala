@@ -953,7 +953,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
   private def addedTracking: Tracking = Tracking(
     status = Tracking.Status.Added,
     snapshot_id = None,
-    dv_snapshot_id = None,
+    modified_snapshot_id = None,
     sequence_number = None,
     file_sequence_number = None,
     first_row_id = None,

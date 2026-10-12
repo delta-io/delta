@@ -807,20 +807,30 @@ class AMTBackReferenceSuite
       // table directory (see the naming note in `testAcrossAMTCheckpointScenarios`).
       val tgt = s"${src}_clone_tgt"
       val srcBackRefByPath = stampedBackRefs(context.postCheckpointSnapshot)
+      val srcSnapshotIds = liveAddFiles(context.postCheckpointSnapshot).flatMap(_.snapshotId).toSet
 
       withTable(tgt) {
         clone(src, tgt)
 
         val tgtLog = deltaLogForName(tgt)
         val latest = tgtLog.update().version
-        val clonedAdds = (0L to latest)
+        val addsBySnapshotId = (0L to latest)
           .flatMap(v => actionsAt(tgtLog, v))
-          .collect { case a: AddFile => a }
-        assert(clonedAdds.size >= srcBackRefByPath.size,
-          s"the clone must add the ${srcBackRefByPath.size} source files to the target.")
-        clonedAdds.foreach { a =>
+          .collect { case add: AddFile => add }
+          .groupBy(_.snapshotId)
+        val cloneGroups = addsBySnapshotId.collect {
+          case (Some(snapshotId), adds) if adds.size >= srcBackRefByPath.size => snapshotId -> adds
+        }
+        assert(cloneGroups.size == 1,
+          s"expected one CLONE snapshot with at least ${srcBackRefByPath.size} files, " +
+            s"got ${cloneGroups.map { case (id, adds) => id -> adds.size }}.")
+        val (cloneSnapshotId, clonedSourceAdds) = cloneGroups.head
+        clonedSourceAdds.foreach { a =>
           assert(a.backReference.isEmpty,
             s"Cloned AddFile ${a.path} must not carry the source table's back reference.")
+          assert(!srcSnapshotIds.contains(cloneSnapshotId),
+            s"Cloned AddFile ${a.path} must start a new snapshot lifecycle.")
+          assert(a.modifiedSnapshotId.isEmpty)
         }
       }
     }
@@ -844,6 +854,10 @@ class AMTBackReferenceSuite
     val name = context.tableName
     // The version RESTORE returns to, where every seeded file is stamped from a leaf.
     val restoredToByPath = stampedBackRefs(context.postCheckpointSnapshot)
+    val restoredToFiles = liveAddFiles(context.postCheckpointSnapshot)
+    assert(restoredToFiles.forall(_.snapshotId.isDefined),
+      "precondition: every restored-to file must have snapshot provenance.")
+    val restoredToSnapshotIds = restoredToFiles.flatMap(_.snapshotId).toSet
     val deltaLog = deltaLogForName(name)
     val restoreTarget = context.checkpoint.version
 
@@ -884,6 +898,16 @@ class AMTBackReferenceSuite
     }
     assert(readded.size == restoredToByPath.size,
       s"RESTORE must re-add all ${restoredToByPath.size} restored-to files, saw ${readded.size}.")
+    val restoreSnapshotIds = readded.map(_.snapshotId).toSet
+    assert(restoreSnapshotIds.size == 1 && restoreSnapshotIds.head.isDefined,
+      s"RESTORE must assign one new random snapshot ID; got $restoreSnapshotIds.")
+    val restoreSnapshotId = restoreSnapshotIds.head.get
+    assert(!restoredToSnapshotIds.contains(restoreSnapshotId),
+      s"RESTORE snapshot ID $restoreSnapshotId must differ from restored file IDs " +
+        s"$restoredToSnapshotIds.")
+    readded.foreach { add =>
+      assert(add.modifiedSnapshotId.isEmpty)
+    }
     /*
     // RESTORE's needs to recompute the back references for the re-added files, so we cannot simply
     // assert their emptiness directly.

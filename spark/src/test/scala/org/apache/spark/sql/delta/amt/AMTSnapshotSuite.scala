@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTestUtils, DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot}
+import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
@@ -56,18 +56,137 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   }
 
   testAcrossAMTCheckpointScenarios(
-      "plain AMT tables reconstruct AddFiles with no amtPassthrough",
+      "plain AMT tables reconstruct AddFiles with snapshot provenance",
       "amt_passthrough_roundtrip")(
       setup = name => sql(s"INSERT INTO $name VALUES (1)"),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (2)"))) { context =>
-    // These are plain parquet/v4 files with no Iceberg passthrough, so `toAddFile` carries
-    // nothing (avoids per-file overhead).
+    // Both INSERTs create plain data files. Reconstruction must retain each file's creation SID,
+    // while modifiedSnapshotId stays empty because neither file has modification metadata.
     val files = context.postCheckpointSnapshot.allFiles.collect()
     assert(files.nonEmpty)
-    assert(files.forall(_.amtPassthrough.isEmpty),
-      s"plain AMT files must carry no passthrough; got " +
-        s"${files.map(_.amtPassthrough).mkString(", ")}")
+    assert(files.forall(_.snapshotId.isDefined),
+      s"every AMT file must carry snapshot provenance; got " +
+        s"${files.map(file => (file.snapshotId, file.modifiedSnapshotId)).mkString(", ")}")
+    assert(files.forall(_.modifiedSnapshotId.isEmpty))
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "snapshot provenance tracks the first DV update",
+      "amt_snapshot_id_first_dv")(
+      setup = name =>
+        Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(name),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"DELETE FROM $name WHERE id = 1"))) { context =>
+    // The first DELETE terminates the no-DV tuple and adds a DV to the same data file. The old
+    // tuple's removal and the new DV are created in the same snapshot.
+    val actions = actionsAt(
+      context.postCheckpointSnapshot.deltaLog,
+      context.checkpoint.version)
+    val add = actions.collectFirst {
+      case action: AddFile if action.deletionVector != null => action
+    }.getOrElse(fail("expected a superseding AddFile with a deletion vector."))
+    val remove = actions.collectFirst {
+      case action: RemoveFile if action.path == add.path => action
+    }.getOrElse(fail("expected a paired RemoveFile for the DV update."))
+
+    assert(add.snapshotId.isDefined)
+    assert(remove.snapshotId.isDefined)
+    assert(add.modifiedSnapshotId == remove.snapshotId)
+    assert(remove.modifiedSnapshotId.isEmpty)
+
+    // Verify that the top-level IDs survive the AddFile -> DataEntry -> AddFile round-trip.
+    val reconstructed = context.postCheckpointSnapshot.allFiles.collect()
+      .find(_.path == add.path)
+      .getOrElse(fail("the DV-bearing AddFile must reconstruct from the AMT."))
+    assert(reconstructed.snapshotId == add.snapshotId)
+    assert(reconstructed.modifiedSnapshotId == add.modifiedSnapshotId)
+    assert(reconstructed.amtPassthrough == add.amtPassthrough)
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "snapshot provenance tracks a repeated DV update",
+      "amt_snapshot_id_repeated_dv")(
+      setup = name =>
+        Seq(1, 2, 3).toDF("id").coalesce(1).write.mode("append").insertInto(name),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"DELETE FROM $name WHERE id = 1"))) { context =>
+    val deltaLog = context.postCheckpointSnapshot.deltaLog
+    val priorAdd = context.postCheckpointSnapshot.allFiles.collect()
+      .find(_.deletionVector != null)
+      .getOrElse(fail("expected the first DELETE to produce a deletion vector."))
+    assert(priorAdd.snapshotId.isDefined)
+    assert(priorAdd.modifiedSnapshotId.isDefined)
+
+    // A second DELETE preserves the data-file lifecycle, retires the old DV, and creates a new DV.
+    val versionBefore = deltaLog.update().version
+    sql(s"DELETE FROM ${context.tableName} WHERE id = 2")
+    val versionAfter = deltaLog.update().version
+    assert(versionAfter == versionBefore + 1)
+    val actions = actionsAt(deltaLog, versionAfter)
+    val add = actions.collectFirst {
+      case action: AddFile if action.path == priorAdd.path => action
+    }.getOrElse(fail("expected a superseding AddFile for the repeated DV update."))
+    val remove = actions.collectFirst {
+      case action: RemoveFile if action.path == priorAdd.path => action
+    }.getOrElse(fail("expected a paired RemoveFile for the repeated DV update."))
+
+    // The AddFile keeps the data-file SID. The RemoveFile keeps the old modification SID, while
+    // its removal SID becomes the new AddFile's modification SID.
+    assert(add.snapshotId == priorAdd.snapshotId)
+    assert(remove.modifiedSnapshotId == priorAdd.modifiedSnapshotId)
+    assert(remove.snapshotId.isDefined)
+    assert(add.modifiedSnapshotId == remove.snapshotId)
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "metadata-only re-add assigns missing snapshot IDs without emitting CDF",
+      "amt_snapshot_id_metadata_readd")(
+      setup = name =>
+        Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(name),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"DELETE FROM $name WHERE id = 1"))) { context =>
+    val deltaLog = context.postCheckpointSnapshot.deltaLog
+    val current = context.postCheckpointSnapshot.allFiles.collect()
+      .find(_.deletionVector != null)
+      .getOrElse(fail("expected the first DELETE to produce a deletion vector."))
+    val versionBefore = deltaLog.update().version
+
+    // Simulate a metadata-only re-add of an upgraded file whose provenance was not materialized.
+    // The file and DV tuple remain unchanged, so this should only fill missing provenance.
+    withSQLConf(
+        DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key ->
+          "1") {
+      deltaLog.startTransaction().commit(
+        Seq(current.copy(dataChange = false, snapshotId = None, modifiedSnapshotId = None)),
+        DeltaOperations.ComputeStats(predicate = Nil))
+    }
+
+    val committed = actionsAt(deltaLog, versionBefore + 1).collectFirst {
+      case add: AddFile if add.path == current.path => add
+    }.getOrElse(fail("expected the metadata-only AddFile."))
+    assert(committed.snapshotId.isDefined)
+    assert(committed.modifiedSnapshotId == committed.snapshotId)
+
+    val snapshot = deltaLog.update()
+    val provider = amtProvider(snapshot).getOrElse(fail("expected an inline AMT checkpoint."))
+    val root = provider.checkpointAction.contentRoot.getAbsolutePath(deltaLog.dataPath).toString
+    withManifestDataEntries(Seq(root)) { entries =>
+      // Since the file and DV tuple did not change, the manifest entry remains EXISTING and does
+      // not carry deletion or replacement positions.
+      val tracking = entries.select(
+        col("tracking.status"),
+        col("tracking.snapshot_id"),
+        col("tracking.modified_snapshot_id"),
+        col("tracking.deleted_positions"),
+        col("tracking.replaced_positions")).collect()
+      assert(tracking.length == 1)
+      assert(tracking.head.getInt(0) == Tracking.Status.Existing)
+      assert(tracking.head.getLong(1) == committed.snapshotId.get)
+      assert(tracking.head.getLong(2) == committed.modifiedSnapshotId.get)
+      assert(tracking.head.isNullAt(3))
+      assert(tracking.head.isNullAt(4))
+    }
   }
 
   testAcrossAMTCheckpointScenarios(
@@ -1359,7 +1478,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   private def addedTracking: Tracking = Tracking(
     status = Tracking.Status.Added,
     snapshot_id = None,
-    dv_snapshot_id = None,
+    modified_snapshot_id = None,
     sequence_number = None,
     file_sequence_number = None,
     first_row_id = None,

@@ -952,7 +952,11 @@ case class AddFile(
     defaultRowCommitVersion: Option[Long] = None,
     clusteringProvider: Option[String] = None,
     backReference: Option[BackReference] = None,
-    amtPassthrough: Option[AMTPassthrough] = None
+    amtPassthrough: Option[AMTPassthrough] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    snapshotId: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    modifiedSnapshotId: Option[Long] = None
 ) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 
@@ -979,7 +983,10 @@ case class AddFile(
       baseRowId = baseRowId,
       defaultRowCommitVersion = defaultRowCommitVersion,
       stats = stats,
-      backReference = backReference
+      backReference = backReference,
+      // Set snapshotId to None so OptimisticTransaction stamps it during commit.
+      snapshotId = None,
+      modifiedSnapshotId = modifiedSnapshotId
     )
     // scalastyle:on
   }
@@ -1009,7 +1016,10 @@ case class AddFile(
     var addFileWithNewDv = this.copy(
       deletionVector = dvDescriptorWithoutMaxRowIndex,
       dataChange = dataChange,
-      backReference = None)
+      backReference = None,
+      // Reset modifiedSnapshotId to None, so that it is stamped back to the current
+      // txn's snapshot id by OptimisticTransaction.
+      modifiedSnapshotId = None)
     if (updateStats) {
       addFileWithNewDv = addFileWithNewDv.withoutTightBoundStats
     }
@@ -1240,7 +1250,11 @@ case class RemoveFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
     override val stats: String = null,
-    backReference: Option[BackReference] = None
+    backReference: Option[BackReference] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    snapshotId: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    modifiedSnapshotId: Option[Long] = None
 ) extends FileAction with HasNumRecords {
   override def wrap: SingleAction = SingleAction(remove = this)
 
