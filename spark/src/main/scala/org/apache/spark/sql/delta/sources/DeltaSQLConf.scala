@@ -2703,6 +2703,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .createWithDefault(false)
   }
 
+  val DELTA_CDF_SKIP_NONDETERMINISTIC_FILTER_PUSHDOWN =
+    buildConf("changeDataFeed.skipNondeterministicFilterPushdown.enabled")
+      .internal()
+      .doc("When true, V1 CDF scans leave nondeterministic predicates to Spark's outer filter. " +
+        "When false, they also evaluate these predicates internally, restoring the previous " +
+        "behavior.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES =
     buildConf("streaming.unsafeReadOnIncompatibleColumnMappingSchemaChanges.enabled")
       .doc(
