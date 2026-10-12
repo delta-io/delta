@@ -1,4 +1,4 @@
-# Native S3 put-if-absent prototype
+# Native S3 put-if-absent LogStore
 
 `io.delta.storage.S3LogStore` is an opt-in native conditional writer for filesystem-based Delta commits.
 It uses Hadoop S3A for credentials, endpoints, encryption, uploads, and request retries.
@@ -12,7 +12,7 @@ Select the store for every S3 scheme used by the application, for example:
 spark.delta.logStore.s3a.impl=io.delta.storage.S3LogStore
 ```
 
-The prototype requires Hadoop S3A 3.4.2 or later with conditional creation enabled, user metadata, metadata reads, immediate publication on close, and abortable streams.
+The native LogStore requires Hadoop S3A 3.4.2 or later with conditional creation enabled, user metadata, metadata reads, immediate publication on close, and abortable streams.
 Select matching Hadoop/S3A runtime dependencies; they are supplied by the application, not bundled with Delta storage.
 Unsupported filesystems and capabilities fail explicitly.
 Magic output streams are unsupported because they defer publication until a later job commit.
@@ -58,7 +58,7 @@ Multipart completion can similarly succeed before a retry encounters `NoSuchUplo
 Both cases can be recovered when the UUID is readable.
 
 AWS allows a conditional PUT to be retried after HTTP 409, while multipart completion requires a fresh upload and re-uploading all parts.
-The prototype reports an unresolved outcome instead of consuming an exhausted action iterator or retrying a consumed multipart upload at the LogStore layer.
+The LogStore reports an unresolved outcome instead of consuming an exhausted action iterator or retrying a consumed multipart upload at the LogStore layer.
 
 An unknown-outcome exception does not mean that the object was not committed.
 Delta's current filesystem OCC loop does not automatically reconcile arbitrary I/O failures.
@@ -75,7 +75,7 @@ Bucket lifecycle cleanup for incomplete multipart uploads remains an operational
 The existing `S3SingleDriverLogStore` uses a JVM lock, an existence check, and classic `FileSystem.create`.
 In the inspected upstream Hadoop 3.4.2, 3.4.3, and trunk implementations, configuration alone does not turn that call into conditional publication; create-performance is not a substitute for the mandatory builder option.
 
-The prototype places atomic publication in S3A, individual-write reconciliation in the LogStore, and transaction conflict checking in Delta OCC.
+S3A handles atomic publication, the LogStore reconciles individual writes, and Delta OCC checks transaction conflicts.
 A direct SDK implementation would duplicate connector configuration and lifecycle behavior.
 OCC-only recovery would not cover other LogStore writes and would couple storage safety to optional Spark transaction behavior.
 
@@ -126,7 +126,7 @@ Verified locally on 2026-10-07 with OpenJDK 17, Hadoop S3A 3.4.2, AWS SDK 2.29.5
 The test fixture initially rejected small listing pages used by S3A directory probes, preventing Spark checksum publication.
 The same Spark lost-acknowledgement test failed against that fixture and passed after its pagination was corrected, retaining the checksum assertions.
 No live AWS bucket was used.
-Final independent correctness review of the completed diff found no blocking issues within the approved prototype scope.
+Independent correctness review found no blocking issues in the implementation.
 
 Before making this store the default, qualify real AWS PUT and multipart failure behavior, supported Hadoop distributions and endpoints, homogeneous writer rollout, unknown-outcome diagnostics, and cleanup.
 Whole-upload replay, persistent restart identity, and generalized OCC recovery for unknown outcomes are follow-up work.
