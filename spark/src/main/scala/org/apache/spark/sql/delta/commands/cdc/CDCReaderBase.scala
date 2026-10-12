@@ -118,7 +118,7 @@ abstract class DeltaCDFRelationBase(
     val projections =
       requiredColumns.map(a => Column(outputMap(a.name)))
     lazy val skipNondeterministicFilters =
-      sqlContext.sparkSession.sessionState.conf.getConfAndRecordEffectiveFeature(
+      sqlContext.sparkSession.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_CDF_SKIP_NONDETERMINISTIC_FILTER_PUSHDOWN)
     val filter = Column(
       filters
