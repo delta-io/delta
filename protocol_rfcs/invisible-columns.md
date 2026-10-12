@@ -13,9 +13,9 @@ preserve when rows are rewritten.
 ## Feature summary
 
 This RFC proposes a writer-only table feature named `invisibleColumns`. An invisible column is a
-data column that MAY be stored in Delta data files and explicitly read by an engine that
-understands Invisible Columns. It is not part of the table's visible schema and SHOULD be excluded
-from default query output.
+data column that is absent from the table's visible schema. Its values are stored in Delta data
+files under the same rules as visible data columns. It can be explicitly read by an engine that
+understands Invisible Columns and SHOULD be excluded from default query output.
 
 The visible schema remains in `metaData.schemaString`. The complete invisible schema is stored in
 `metaData.invisibleSchemaString` in the same `metaData` action. Together, the two schemas describe
