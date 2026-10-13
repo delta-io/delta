@@ -75,24 +75,25 @@ This design enables:
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>checkpointType</ins> | <ins>String</ins> | <ins>Optional. `AdaptiveMetadataTree` if the latest checkpoint is a [`checkpoint` action](#checkpoint-action); absent for classic/multi-part/V2 checkpoints. Unrecognized values are ignored (reader falls back to log replay).</ins> |
-| <ins>amtCheckpoint</ins> | <ins>Struct</ins> | <ins>Present iff `checkpointType` is `AdaptiveMetadataTree`. Describes the latest [`checkpoint` action](#checkpoint-action); fields below.</ins> |
+| <ins>checkpointType</ins> | <ins>String</ins> | <ins>Optional. `AdaptiveMetadataTree` if the latest checkpoint is an AMT checkpoint, whether from a manifest commit or a [standalone checkpoint](#standalone-checkpoint); absent for classic/multi-part/V2 checkpoints. Unrecognized values are ignored (reader falls back to log replay).</ins> |
+| <ins>amtCheckpoint</ins> | <ins>Struct</ins> | <ins>Present iff `checkpointType` is `AdaptiveMetadataTree`. Describes the latest AMT checkpoint; fields below.</ins> |
 
 <ins>The `amtCheckpoint` struct has these fields:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>manifestCommitVersion</ins> | <ins>Long</ins> | <ins>The version of the commit that emitted the latest [`checkpoint` action](#checkpoint-action). Distinct from the checkpoint's `contentRoot.version`.</ins> |
-| <ins>checkpoint</ins> | <ins>Struct</ins> | <ins>Optional. The embedded [`checkpoint` action](#checkpoint-action) for that manifest commit, for prefetch. May be omitted (see below).</ins> |
-| <ins>leaves</ins> | <ins>Array</ins> | <ins>Optional. The checkpoint's embedded [content entries](#content-entry-schema), prefetched alongside `checkpoint`.</ins> |
+| <ins>manifestCommitVersion</ins> | <ins>Long</ins> | <ins>Optional overall; required for a manifest checkpoint and absent for a standalone checkpoint. The version of the commit containing the referenced [`checkpoint` action](#checkpoint-action). Its presence identifies a manifest checkpoint; its absence identifies a standalone checkpoint at `_last_checkpoint.version`.</ins> |
+| <ins>contentRootVersion</ins> | <ins>Long</ins> | <ins>Required. The referenced checkpoint's `contentRoot.version`, which provides the listing floor even when `checkpoint` is omitted. May differ from `_last_checkpoint.version`.</ins> |
+| <ins>checkpoint</ins> | <ins>Array</ins> | <ins>Optional. The checkpoint contents encoded as an array of single-action objects. For a manifest checkpoint, this is the [`checkpoint` action](#checkpoint-action)'s value. For a standalone checkpoint, this contains the checkpoint file's actions, including inline `add` and `remove` actions.</ins> |
+| <ins>leaves</ins> | <ins>Array</ins> | <ins>Optional. The complete list of leaf descriptors (`DATA_MANIFEST` [content entries](#content-entry-schema)) from the referenced root manifest, including their tracking information, manifest deletion vectors, and any recorded statistics. An empty array means the root references no leaf manifests.</ins> |
 
-<ins>An `adaptiveMetadata` checkpoint writes the existing required fields in `_last_checkpoint` file such that `version` holds `contentRoot.version`, `size` holds `-1`, and `parts` holds the `<number of leaves> + 1`, respectively.</ins>
+<ins>For an `adaptiveMetadata` checkpoint, `_last_checkpoint.version` holds `checkpointMetadata.version`, `size` holds `-1` to indicate that the total checkpoint action count is not reported, and `parts` holds the `<number of leaves> + 1`.</ins>
 
 <ins>`amtCheckpoint` and `v2Checkpoint` are mutually exclusive, as are the `adaptiveMetadata` and `v2Checkpoint` features.</ins>
 
-<ins>The embedded optional fields `checkpoint` and `leaves` are a prefetch optimization only; readers must not require them. When absent, the reader reads the `checkpoint` action from the commit file at `manifestCommitVersion`, and derives the `leaves` from the `checkpoint` action.</ins>
+<ins>The optional fields `checkpoint` and `leaves` cache checkpoint contents and leaf descriptors for direct reuse; readers MUST NOT require them. When `checkpoint` is absent, readers obtain it from the commit file at `manifestCommitVersion` if that field is present, or from the standalone checkpoint file at `_last_checkpoint.version` otherwise. When `leaves` is absent, readers obtain the leaf descriptors by reading the root manifest referenced by the resolved checkpoint. Cached leaf descriptors avoid that discovery step; they do not contain the leaf files' contents.</ins>
 
-<ins>If the size of `amtCheckpoint` is very large, writing it to `_last_checkpoint` file could take a long time in some object stores, resulting in concurrent readers seeing an empty `_last_checkpoint` file. Thus, writers should bound the size of `amtCheckpoint` by omitting `checkpoint` and `leaves` when their sizes exceed some threshold. `checkpointType` and `manifestCommitVersion` should still be written.</ins>
+<ins>Writers SHOULD bound the serialized size of `_last_checkpoint` using an implementation-defined byte limit. If including `checkpoint` and `leaves` would exceed that limit, writers MUST omit both optional fields rather than truncate their contents. Writers MUST retain `checkpointType`, `amtCheckpoint.contentRootVersion`, and the other required fields, including `amtCheckpoint.manifestCommitVersion` for a manifest checkpoint.</ins>
 
 ### Checkpoints
 
@@ -241,7 +242,7 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
 }
 ```
 
-The array wrapper is used only when the checkpoint is embedded inline in a commit's Delta log entry. In a [standalone checkpoint](#standalone-checkpoint), these same actions are stored as separate rows (one action per row) with no enclosing `checkpoint` array — the checkpoint file itself is the grouping.
+The array encoding is used when the checkpoint is embedded inline in a commit's Delta log entry or in `amtCheckpoint.checkpoint` in the [last checkpoint file](#last-checkpoint-file). In a [standalone checkpoint](#standalone-checkpoint) file, the actions are stored as separate rows (one action per row) with no enclosing `checkpoint` array — the checkpoint file itself is the grouping.
 
 ### Checkpoint Action Contents
 
@@ -250,7 +251,7 @@ The `checkpoint` action is an array of action entries. Each entry is one of:
 | Action | Description |
 |--------|-------------|
 | `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log. |
-| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). `tags` allow writers to record additional optional metadata about the manifest tree. |
+| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and the root version may be less in a standalone checkpoint (the gap is covered by inline file actions). `tags` allow writers to record additional optional metadata about the manifest tree. |
 | `protocol` | The Protocol action at this checkpoint version. |
 | `metaData` | The Metadata action at this checkpoint version. |
 | `domainMetadata` | A DomainMetadata action. System domains (keys prefixed with `delta.`) must appear here; user domains may appear here or in a sidecar. |
@@ -615,7 +616,7 @@ When reading a leaf manifest, readers must check the `DATA_MANIFEST` entry for a
 When `adaptiveMetadata` is supported and active, readers must:
 - Take the latest checkpoint to be the `checkpoint` action with the greatest `checkpointMetadata.version` (across manifest commits, standalone checkpoints, and `_last_checkpoint`), and use its `contentRoot` as the metadata tree. A later manifest commit that builds a newer tree supersedes an earlier standalone checkpoint that references an older tree.
 - Read the root manifest at `contentRoot.path` and skip leaf-manifest entries marked in `manifest_info.dv` (see [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
-- Reconstruct the current table state by applying the commits after `checkpointMetadata.version` on top of the tree, following [Action Reconciliation](#action-reconciliation).
+- For a standalone checkpoint, apply its inline file actions to the tree to reconstruct the state at `checkpointMetadata.version`. Reconstruct the current table state by then applying the commits after `checkpointMetadata.version`, following [Action Reconciliation](#action-reconciliation).
 - Read any `sidecar` entries referenced by the checkpoint to obtain the complete set of transaction identifiers and domain metadata (see [Checkpoint Action](#checkpoint-action)).
 
 ## Writer Requirements for Adaptive Metadata
