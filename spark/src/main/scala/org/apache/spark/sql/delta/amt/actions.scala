@@ -38,7 +38,6 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
  * of entry (data file or data-manifest pointer).
  *
  * @param content_type Entry-kind discriminator (0=DATA, 3=DATA_MANIFEST).
- * @param format_version Iceberg writer format version; 4 for V4.
  * @param location Path of the file relative to the table root, or an absolute URI.
  * @param file_format Physical format of `location` (currently always "parquet").
  * @param tracking Lineage envelope: status plus snapshot/sequence numbers and DV positions.
@@ -60,7 +59,6 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
  */
 case class AMTSingleAction(
     content_type: Int,                          // ID: 134, required.
-    format_version: Int,                        // ID: 157, required.
     location: String,                           // ID: 100, required.
     file_format: String,                        // ID: 101, required ("parquet" for now).
     tracking: Tracking,                         // ID: 147, required.
@@ -98,8 +96,7 @@ case class AMTSingleAction(
         content_stats = content_stats,
         key_metadata = key_metadata,
         split_offsets = split_offsets,
-        tags = tags,
-        format_version = format_version)
+        tags = tags)
     case AMTSingleAction.ContentType.Type.DataManifest =>
       DataManifestEntry(
         location = location,
@@ -112,8 +109,7 @@ case class AMTSingleAction(
         spec_id = spec_id,
         content_stats = content_stats,
         key_metadata = key_metadata,
-        split_offsets = split_offsets,
-        format_version = format_version)
+        split_offsets = split_offsets)
     case other =>
       throw new IllegalStateException(s"Unsupported content_type: $other.")
   }
@@ -220,7 +216,6 @@ object AMTSingleAction {
   /** Iceberg V4 field specs for the top-level [[AMTSingleAction]] fields. */
   private val topLevelFields: Seq[AMTFieldSpec] = Seq(
     required(134L, "content_type"),
-    required(157L, "format_version"),
     required(100L, "location"),
     required(101L, "file_format"),
     required(147L, "tracking"),
@@ -256,6 +251,7 @@ object AMTSingleAction {
 
   /** Iceberg V4 field specs for the scalar fields of the nested [[ManifestInfo]] struct. */
   private val manifestInfoFields: Seq[AMTFieldSpec] = Seq(
+    required(521L, "format_version"),
     required(504L, "added_files_count"),
     required(505L, "existing_files_count"),
     required(506L, "deleted_files_count"),
@@ -447,7 +443,6 @@ sealed trait AMTAction {
  *                      consume these, but the field is kept in the schema to carry it forward
  *                      for tables written by both Delta and Iceberg.
  * @param tags Delta [[AddFile]] tags, preserved verbatim across the manifest round trip.
- * @param format_version Iceberg writer format version; 4 for V4.
  */
 case class DataEntry(
     location: String,
@@ -462,15 +457,13 @@ case class DataEntry(
     content_stats: Option[String] = None,
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
-    tags: Option[Map[String, String]] = None,
-    format_version: Int = AMTSingleAction.FormatVersionV4)
+    tags: Option[Map[String, String]] = None)
   extends AMTAction {
 
   override protected def content_type: Int = AMTSingleAction.ContentType.Type.Data
 
   override def wrap: AMTSingleAction = AMTSingleAction(
     content_type = content_type,
-    format_version = format_version,
     location = location,
     file_format = file_format,
     tracking = tracking,
@@ -669,10 +662,8 @@ object AMTPassthrough {
    */
   def fromDataEntry(entry: DataEntry): Option[AMTPassthrough] = {
     require(
-      entry.file_format == AMTSingleAction.FileFormatParquet &&
-        entry.format_version == AMTSingleAction.FormatVersionV4,
-      s"amtPassthrough only supports parquet/v4. got " +
-        s"${entry.file_format}/${entry.format_version}.")
+      entry.file_format == AMTSingleAction.FileFormatParquet,
+      s"amtPassthrough only supports parquet. got ${entry.file_format}.")
     val passthrough = AMTPassthrough(
       spec_id = entry.spec_id,
       sort_order_id = entry.sort_order_id,
@@ -760,7 +751,6 @@ object AMTSnapshotId {
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
  *                      for tables written by both Delta and Iceberg.
- * @param format_version Iceberg writer format version; 4 for V4.
  */
 case class DataManifestEntry(
     location: String,
@@ -773,15 +763,13 @@ case class DataManifestEntry(
     spec_id: Option[Int] = None,
     content_stats: Option[String] = None,
     key_metadata: Option[Array[Byte]] = None,
-    split_offsets: Option[Seq[Long]] = None,
-    format_version: Int = AMTSingleAction.FormatVersionV4)
+    split_offsets: Option[Seq[Long]] = None)
   extends AMTAction {
 
   override protected def content_type: Int = AMTSingleAction.ContentType.Type.DataManifest
 
   override def wrap: AMTSingleAction = AMTSingleAction(
     content_type = content_type,
-    format_version = format_version,
     location = location,
     file_format = file_format,
     tracking = tracking,
@@ -1085,6 +1073,7 @@ object DeletionVector {
  * `dv` carries the inline manifest deletion-vector bitmap over leaf row
  * positions; its cardinality is derived on demand via [[ManifestInfo.dvCardinality]]
  *
+ * @param format_version Format version of the referenced manifest (0=PRE-V4, 4=V4).
  * @param added_files_count Count of ADDED file entries in the referenced manifest.
  * @param existing_files_count Count of EXISTING file entries.
  * @param deleted_files_count Count of DELETED file entries.
@@ -1099,6 +1088,7 @@ object DeletionVector {
  * @param dv Inline manifest deletion-vector bitmap over leaf row positions.
  */
 case class ManifestInfo(
+    format_version: Int,              // ID: 521, required.
     added_files_count: Int,           // ID: 504, required.
     existing_files_count: Int,        // ID: 505, required.
     deleted_files_count: Int,         // ID: 506, required.

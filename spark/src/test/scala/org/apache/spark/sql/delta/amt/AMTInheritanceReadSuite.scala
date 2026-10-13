@@ -175,6 +175,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       record_count = leaf.entries.size.toLong,
       file_size_in_bytes = leaf.sizeInBytes,
       manifest_info = ManifestInfo(
+        format_version = AMTSingleAction.FormatVersionV4,
         added_files_count = leaf.entries.size,
         existing_files_count = 0,
         deleted_files_count = 0,

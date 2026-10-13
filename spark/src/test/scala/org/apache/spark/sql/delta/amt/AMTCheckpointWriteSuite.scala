@@ -1002,6 +1002,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
   /** A zeroed [[ManifestInfo]]; tests set only the counts they assert on via `copy`. */
   private def emptyManifestInfo: ManifestInfo = ManifestInfo(
+    format_version = AMTSingleAction.FormatVersionV4,
     added_files_count = 0,
     existing_files_count = 0,
     deleted_files_count = 0,

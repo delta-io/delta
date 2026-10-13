@@ -66,6 +66,7 @@ class AMTInheritanceSuite extends SparkFunSuite {
     record_count = 1L,
     file_size_in_bytes = 1L,
     manifest_info = ManifestInfo(
+      format_version = AMTSingleAction.FormatVersionV4,
       added_files_count = 1,
       existing_files_count = 0,
       deleted_files_count = 0,

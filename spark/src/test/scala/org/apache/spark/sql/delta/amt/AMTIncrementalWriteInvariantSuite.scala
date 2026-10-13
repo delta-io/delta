@@ -184,6 +184,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
         (addedFiles + existingFiles + deletedFiles + replacedFiles + modifiedFiles).toLong,
       file_size_in_bytes = 100L,
       manifest_info = ManifestInfo(
+        format_version = AMTSingleAction.FormatVersionV4,
         added_files_count = addedFiles, existing_files_count = existingFiles,
         deleted_files_count = deletedFiles, replaced_files_count = replacedFiles,
         modified_files_count = modifiedFiles,

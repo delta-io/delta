@@ -296,6 +296,7 @@ class LastCheckpointInfoSuite extends SharedSparkSession
     record_count = recordCount,
     file_size_in_bytes = sizeInBytes,
     manifest_info = ManifestInfo(
+      format_version = AMTSingleAction.FormatVersionV4,
       added_files_count = recordCount.toInt,
       existing_files_count = 2,
       deleted_files_count = 3,
