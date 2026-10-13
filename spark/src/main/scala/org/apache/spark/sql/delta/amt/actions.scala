@@ -16,8 +16,10 @@
 
 package org.apache.spark.sql.delta.amt
 
+import java.util.UUID
+
 import org.apache.spark.sql.delta.DeltaColumnMapping
-import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.core.JsonParser
@@ -240,7 +242,7 @@ object AMTSingleAction {
     optional(1L, "snapshot_id"),
     optional(3L, "sequence_number"),
     optional(4L, "file_sequence_number"),
-    optional(5L, "dv_snapshot_id"),
+    optional(5L, "modified_snapshot_id"),
     optional(142L, "first_row_id"),
     optional(6L, "deleted_positions"),
     optional(7L, "replaced_positions"))
@@ -499,6 +501,8 @@ case class DataEntry(
       deletionVector = dv,
       baseRowId = tracking.first_row_id,
       defaultRowCommitVersion = tracking.file_sequence_number,
+      snapshotId = tracking.snapshot_id,
+      modifiedSnapshotId = tracking.modified_snapshot_id,
       tags = tags.orNull,
       amtPassthrough = AMTPassthrough.fromDataEntry(this))
   }
@@ -508,6 +512,7 @@ object DataEntry {
   /** Creates [[DataEntry]] from AddFile. */
   def fromAddFile(add: AddFile, tracking: Tracking, tableRoot: Path): DataEntry = {
     val passthrough = add.amtPassthrough
+    val deletionVector = Option(add.deletionVector).map(DeletionVector.fromDescriptor(_, tableRoot))
     DataEntry(
       // RFC-2396 to Iceberg raw path conversion.
       location = AMTUtils.relativizeLocation(
@@ -516,6 +521,8 @@ object DataEntry {
       // Round-trip the AddFile's row-tracking fields through the Iceberg tracking envelope so a
       // rowTracking-enabled table can reconstruct them on read.
       tracking = tracking.copy(
+        snapshot_id = add.snapshotId,
+        modified_snapshot_id = add.modifiedSnapshotId,
         first_row_id = add.baseRowId,
         sequence_number = add.defaultRowCommitVersion,
         file_sequence_number = add.effectiveFileSequenceNumber),
@@ -526,8 +533,7 @@ object DataEntry {
           s"Cannot build AMT entry: AddFile has no record count (missing stats): ${add.path}.")),
       file_size_in_bytes = add.size,
       partition = Option(add.partitionValues).filter(_.nonEmpty),
-      deletion_vector =
-        Option(add.deletionVector).map(DeletionVector.fromDescriptor(_, tableRoot)),
+      deletion_vector = deletionVector,
       spec_id = passthrough.flatMap(_.spec_id),
       sort_order_id = passthrough.flatMap(_.sort_order_id),
       key_metadata = passthrough.flatMap(_.key_metadata),
@@ -535,6 +541,26 @@ object DataEntry {
       tags = Option(add.tags).map(_.toMap).filter(_.nonEmpty),
       content_stats = AMTContentStats.fromStatsJson(add.stats))
   }
+
+  /**
+   * Creates a terminal [[DataEntry]] using the prior AddFile's complete content metadata and the
+   * RemoveFile's snapshot provenance.
+   */
+  // scalastyle:off removeFile // This is a DataEntry factory, not a RemoveFile constructor.
+  def fromRemoveFile(
+      priorAdd: AddFile,
+      remove: RemoveFile,
+      tracking: Tracking,
+      tableRoot: Path): DataEntry = {
+    require(
+      tracking.status == Tracking.Status.Deleted ||
+        tracking.status == Tracking.Status.Replaced,
+      s"Removed data entry must be DELETED or REPLACED, got ${tracking.status}.")
+    fromAddFile(priorAdd.copy(
+      snapshotId = remove.snapshotId,
+      modifiedSnapshotId = remove.modifiedSnapshotId), tracking, tableRoot)
+  }
+  // scalastyle:on removeFile
 }
 
 /**
@@ -658,6 +684,68 @@ object AMTPassthrough {
 }
 
 /**
+ * Assigns AMT snapshot provenance at the commit-attempt boundary.
+ *
+ * Commands preserve an ID when the corresponding lifecycle is unchanged and clear it to request
+ * a new ID.
+ */
+object AMTSnapshotId {
+
+  // scalastyle:off line.size.limit
+  /**
+   * Generates a non-negative random ID using the same algorithm as Apache Iceberg:
+   * https://github.com/apache/iceberg/blob/main/core/src/main/java/org/apache/iceberg/SnapshotIdGeneratorUtil.java
+   */
+  // scalastyle:on line.size.limit
+  def generate(): Long = {
+    val uuid = UUID.randomUUID()
+    (uuid.getMostSignificantBits ^ uuid.getLeastSignificantBits) & Long.MaxValue
+  }
+
+  private def hasModificationMetadata(add: AddFile): Boolean = {
+    val hasDeletionVector = add.deletionVector != null
+    hasDeletionVector
+  }
+
+  private def hasModificationMetadata(remove: RemoveFile): Boolean = {
+    val hasDeletionVector = remove.deletionVector != null
+    hasDeletionVector
+  }
+
+  def assignIfMissing(
+      metadata: Metadata,
+      protocol: Protocol,
+      actions: Iterator[Action],
+      snapshotId: Long): Iterator[Action] = {
+    require(snapshotId >= 0L, s"AMT snapshot ID must be non-negative: $snapshotId.")
+    if (!AMTUtils.amtEnabled(metadata, protocol)) {
+      return actions
+    }
+
+    actions.map {
+      case add: AddFile =>
+        // If an AddFile carries modification metadata (for example, a DV or column updates) and
+        // both snapshot IDs are missing, initialize both to the current snapshotId. This can happen
+        // in RESTORE / CLONE when a file is introduced with an existing DV or column file.
+        add.copy(
+          snapshotId = add.snapshotId.orElse(Some(snapshotId)),
+          modifiedSnapshotId =
+            add.modifiedSnapshotId.orElse(
+              if (hasModificationMetadata(add)) Some(snapshotId) else None))
+
+      case remove: RemoveFile =>
+        remove.copy(
+          snapshotId = remove.snapshotId.orElse(Some(snapshotId)),
+          modifiedSnapshotId =
+            remove.modifiedSnapshotId.orElse(
+              if (hasModificationMetadata(remove)) Some(snapshotId) else None))
+
+      case action => action
+    }
+  }
+}
+
+/**
  * A pointer from the root to a leaf data manifest (`content_type = 3`).
  *
  * @param location Path of the leaf data manifest relative to the table root, or an absolute URI.
@@ -758,17 +846,17 @@ case class DataManifestEntry(
  *
  * @param status Entry status (0=existing, 1=added, 2=deleted, 3=replaced, 4=modified).
  * @param snapshot_id Snapshot the file was added/deleted/replaced in; inherited from root.
- * @param dv_snapshot_id Snapshot the DV was added in; null when the entry has no DV.
+ * @param modified_snapshot_id Snapshot where the file's modification metadata last changed.
  * @param sequence_number Data sequence number of the file.
  * @param file_sequence_number File sequence number (when the file was added).
  * @param first_row_id Id of the first row in the data file.
- * @param deleted_positions Bitmap of positions deleted in this snapshot.
- * @param replaced_positions Bitmap of positions replaced in this snapshot.
+ * @param deleted_positions Bitmap of positions deleted in the `modified_snapshot_id` snapshot.
+ * @param replaced_positions Bitmap of positions replaced in the `modified_snapshot_id` snapshot.
  */
 case class Tracking(
     status: Int,                            // ID: 0, required.
     snapshot_id: Option[Long],              // ID: 1, optional.
-    dv_snapshot_id: Option[Long],           // ID: 5, optional.
+    modified_snapshot_id: Option[Long],     // ID: 5, optional.
     sequence_number: Option[Long],          // ID: 3, optional.
     file_sequence_number: Option[Long],     // ID: 4, optional.
     first_row_id: Option[Long],             // ID: 142, optional.

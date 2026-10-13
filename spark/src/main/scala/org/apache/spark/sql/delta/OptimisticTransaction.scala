@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTUtils, AMTWriteResult, AMTWriterManager}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUtils, AMTWriteResult, AMTWriterManager}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -439,6 +439,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /** The transaction start time. */
   private val txnStartNano = System.nanoTime()
+
+  /** The snapshot ID assigned to AMT changes made by this transaction. */
+  private val amtSnapshotId: Long = AMTSnapshotId.generate()
 
   override val snapshotToScan: Snapshot = snapshot
 
@@ -2214,6 +2217,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions, op)
       allActions = DefaultRowCommitVersion.assignIfMissing(
         spark, protocol, snapshot, allActions, getFirstAttemptVersion)
+      allActions = AMTSnapshotId.assignIfMissing(
+        metadata, protocol, allActions, amtSnapshotId)
       val (allActions3, icebergTrackedInfo) = generateIcebergMetadataForCommitLarge(
         allActions, catalogTable, attemptVersion, commitInfo)
       // Capture the committed DomainMetadata (e.g. clustering columns) for ALL tables so a
@@ -3003,9 +3008,24 @@ trait OptimisticTransactionImpl extends TransactionHelper
       deltaLog,
       currentTransactionInfo.op,
       callerContext = "doCommit").foreach(_ => ())
+    // DefaultRowCommitVersion is assigned while building CurrentTransactionInfo and updated by
+    // ConflictChecker when a winning commit advances the target version.
+    // AMT snapshot IDs are assigned here and preserved across retries.
+    val transactionInfoWithSnapshotIds: CurrentTransactionInfo = {
+        val actionsWithSnapshotIds = AMTSnapshotId.assignIfMissing(
+          currentTransactionInfo.metadata,
+          currentTransactionInfo.protocol,
+          currentTransactionInfo.actions.iterator,
+          amtSnapshotId).toSeq
+        if (actionsWithSnapshotIds == currentTransactionInfo.actions) {
+          currentTransactionInfo
+        } else {
+          currentTransactionInfo.copy(actions = actionsWithSnapshotIds)
+        }
+    }
     val amtWriteResultOpt = amtWriterManager.writeAMT(
       nextAttemptVersion = attemptVersion,
-      currentTransactionInfo = currentTransactionInfo,
+      currentTransactionInfo = transactionInfoWithSnapshotIds,
       preCommitLogSegment = preCommitLogSegment,
       winningCommitMetricsForConflictedRange = winningCommitMetrics)
 
@@ -3021,7 +3041,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
             spark,
             this,
             attemptVersion,
-            currentTransactionInfo
+            transactionInfoWithSnapshotIds
             , table
           )
         if (isConversionPerformed) {
@@ -3029,7 +3049,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
             NANOSECONDS.toMillis(System.nanoTime() - startNanos))
         }
         updatedInfo
-      }.getOrElse(currentTransactionInfo)
+      }.getOrElse(transactionInfoWithSnapshotIds)
 
     val baseActions = updatedCurrentTransactionInfo.finalActionsToCommit
     val actions = amtWriteResultOpt match {

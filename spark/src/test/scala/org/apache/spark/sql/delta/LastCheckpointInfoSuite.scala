@@ -287,7 +287,7 @@ class LastCheckpointInfoSuite extends SharedSparkSession
     tracking = Tracking(
       status = Tracking.Status.Added,
       snapshot_id = Some(11L),
-      dv_snapshot_id = Some(12L),
+      modified_snapshot_id = Some(12L),
       sequence_number = Some(13L),
       file_sequence_number = Some(14L),
       first_row_id = Some(15L),

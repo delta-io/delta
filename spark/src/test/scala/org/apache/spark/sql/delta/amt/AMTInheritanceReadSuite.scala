@@ -131,7 +131,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
   private def unassignedTracking(status: Int = Tracking.Status.Added): Tracking = Tracking(
     status = status,
     snapshot_id = None,
-    dv_snapshot_id = None,
+    modified_snapshot_id = None,
     sequence_number = None,
     file_sequence_number = None,
     first_row_id = None,
