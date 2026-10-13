@@ -337,12 +337,9 @@ object SuiteGeneratorConfig {
         importer"org.apache.spark.sql.delta.rowid._"
       ),
       testConfigs = List(
-        // The not-matched-by-source CDC suites enable change data feed on the table. Under AMT's
-        // mandatory column mapping, creating a CDF-enabled table with data is rejected by
-        // performCdcColumnMappingCheck (DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION), so they are
-        // not part of the AMT variants here.
         TestConfig(
-          (Tests.MERGE_SQL ::: Tests.MERGE_BASE).filterNot(Set(
+          Tests.MERGE_BASE.filterNot(Set(
+            "MergeIntoTempViewsTests",
             "MergeIntoNotMatchedBySourceCDCPart1Tests",
             "MergeIntoNotMatchedBySourceCDCPart2Tests"
           )) ::: List(
@@ -408,7 +405,7 @@ object SuiteGeneratorConfig {
       ),
       testConfigs = List(
         TestConfig(
-          "UpdateSQLTests" :: Tests.UPDATE_BASE,
+          List("UpdateBaseMiscTests"),
           List(List(Dims.UPDATE_SQL, Dims.NAME_BASED, Dims.UPDATE_AMT))
         ),
         TestConfig(

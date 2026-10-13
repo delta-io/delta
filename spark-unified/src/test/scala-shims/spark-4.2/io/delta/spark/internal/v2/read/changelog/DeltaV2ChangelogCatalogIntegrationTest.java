@@ -107,7 +107,7 @@ class DeltaV2ChangelogCatalogIntegrationTest extends DeltaV2ChangelogTestBase {
     // Reads through the kernel snapshot manager, so it works inside the STRICT block the test body
     // runs in. tableLocation is resolved by withHistoryTable before STRICT is set.
     DeltaV2SnapshotManager snapshotManager =
-        SnapshotManagerFactory.create(tableLocation, defaultEngine, Optional.empty());
+        SnapshotManagerFactory.create(tableLocation, defaultKernelContext, Optional.empty());
     long millis = snapshotManager.loadSnapshotAt(version).timestamp();
     return new java.sql.Timestamp(millis);
   }

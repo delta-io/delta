@@ -35,7 +35,7 @@ class AMTInheritanceSuite extends SparkFunSuite {
   private def childTracking(
       status: Int = Tracking.Status.Added,
       snapshotId: Option[Long] = None,
-      dvSnapshotId: Option[Long] = None,
+      modifiedSnapshotId: Option[Long] = None,
       sequenceNumber: Option[Long] = None,
       fileSequenceNumber: Option[Long] = None,
       firstRowId: Option[Long] = None,
@@ -43,7 +43,7 @@ class AMTInheritanceSuite extends SparkFunSuite {
       replacedPositions: Option[Array[Byte]] = None): Tracking = Tracking(
     status = status,
     snapshot_id = snapshotId,
-    dv_snapshot_id = dvSnapshotId,
+    modified_snapshot_id = modifiedSnapshotId,
     sequence_number = sequenceNumber,
     file_sequence_number = fileSequenceNumber,
     first_row_id = firstRowId,
@@ -232,7 +232,7 @@ class AMTInheritanceSuite extends SparkFunSuite {
     val parent = parentPointer(Tracking(
       status = Tracking.Status.Existing,
       snapshot_id = Some(7L),
-      dv_snapshot_id = Some(8L),
+      modified_snapshot_id = Some(8L),
       sequence_number = Some(42L),
       file_sequence_number = Some(43L),
       first_row_id = Some(1000L),

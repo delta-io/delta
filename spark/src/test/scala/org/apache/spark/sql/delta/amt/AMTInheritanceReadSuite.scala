@@ -90,9 +90,10 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       val metadataDir = FileNames.amtMetadataDirPath(deltaLog.dataPath)
       val (location, sizeInBytes) =
         writeManifest(FileNames.newAMTRootManifestFile(metadataDir), rootEntries)
-      val checkpoint =
-        base.copy(contentRoot =
-          ContentRoot(path = location, sizeInBytes = sizeInBytes, version = base.version))
+      val checkpoint = updateCheckpointActions(base) {
+        case _: ContentRoot =>
+          ContentRoot(path = location, sizeInBytes = sizeInBytes, version = base.version)
+      }
       val provider = AMTCheckpointProvider.fromCheckpoint(
         deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
       provider.loadActionsForStateReconstruction(spark, deltaLog)
@@ -130,7 +131,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
   private def unassignedTracking(status: Int = Tracking.Status.Added): Tracking = Tracking(
     status = status,
     snapshot_id = None,
-    dv_snapshot_id = None,
+    modified_snapshot_id = None,
     sequence_number = None,
     file_sequence_number = None,
     first_row_id = None,

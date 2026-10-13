@@ -15,7 +15,6 @@
  */
 package io.delta.spark.internal.v2.read.changelog;
 
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.BeforeAll;
@@ -57,6 +56,7 @@ abstract class DeltaV2ChangelogTestBase extends DeltaV2TestBase {
             .config("spark.sql.catalog.dsv2.base_path", System.getProperty("java.io.tmpdir"))
             .config("spark.databricks.delta.changelogV2.enabled", "true")
             .getOrCreate();
-    defaultEngine = DefaultEngine.create(spark.sessionState().newHadoopConf());
+    defaultKernelContext = createKernelContext();
+    defaultEngine = defaultKernelContext.getDefaultEngine();
   }
 }

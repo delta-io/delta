@@ -76,25 +76,7 @@ trait UpdateAMTMixin extends UpdateBaseMixin with UpdateAMTTestBase {
     "schema pruning on finding files to update",
     "nested schema pruning on finding files to update",
     "Deletion vectors are cleaned up with subquery",
-    "update logs error if number of records are missing in stats",
-    // These are exclueded due to same reason as in UpdateWithRowTrackingOverrides.
-    "test update on temp view - view with too many internal aliases - Dataset TempView",
-    "test update on temp view - view with too many internal aliases - SQL TempView",
-    "test update on temp view - view with too many internal aliases " +
-      "with write amplification reduction - Dataset TempView",
-    "test update on temp view - view with too many internal aliases " +
-      "with write amplification reduction - SQL TempView",
-    "test update on temp view - basic - Partition=true - SQL TempView",
-    "test update on temp view - basic - Partition=false - SQL TempView",
-    "test update on temp view - superset cols - Dataset TempView",
-    "test update on temp view - superset cols - SQL TempView",
-    "test update on temp view - nontrivial projection - Dataset TempView",
-    "test update on temp view - nontrivial projection - SQL TempView",
-    "test update on temp view - nontrivial projection " +
-      "with write amplification reduction - Dataset TempView",
-    "test update on temp view - nontrivial projection " +
-      "with write amplification reduction - SQL TempView",
-    "update a SQL temp view"
+    "update logs error if number of records are missing in stats"
   )
 
   // Dropping a catalog-managed table leaves it in the in-memory commit coordinator, which keys

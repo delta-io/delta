@@ -123,7 +123,7 @@ public final class DeltaMetadataOnlyDeleteExecutor {
     // The operation is committed as WRITE, not DELETE as Kernel Transactions don't support it.
     Transaction transaction =
         DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot)
-            .buildUpdateTableTransaction(DeltaV2BatchWrite.getEngineInfo(), Operation.WRITE)
+            .buildUpdateTableTransaction(DeltaV2Write.getEngineInfo(), Operation.WRITE)
             .build(engine);
 
     StructType physicalSchema =

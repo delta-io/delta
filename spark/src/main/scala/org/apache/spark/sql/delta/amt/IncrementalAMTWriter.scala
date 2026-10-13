@@ -433,7 +433,9 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       val tracking =
         if (commitAddedPaths.contains(r.path)) AMTWriteHelper.replacedTrackingForDataEntry()
         else AMTWriteHelper.removedTrackingForDataEntry()
-      DataEntry.fromAddFile(priorAddFile, tracking, tableRoot)
+      // scalastyle:off removeFile // This calls a DataEntry factory, not a RemoveFile constructor.
+      DataEntry.fromRemoveFile(priorAddFile, r, tracking, tableRoot)
+      // scalastyle:on removeFile
     }
   }
 

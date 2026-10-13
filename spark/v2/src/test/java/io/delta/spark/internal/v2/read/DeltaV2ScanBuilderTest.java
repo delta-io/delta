@@ -539,7 +539,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
       StructType partitionSchema,
       StructType tableSchema) {
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(path, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     Engine engine = DefaultEngine.create(spark.sessionState().newHadoopConf());
     return new DeltaV2ScanBuilder(
