@@ -247,9 +247,10 @@ no additional metadata-cleanup or data-file-retention requirements.
 
 ## Removing the feature
 
-To remove `invisibleColumns` from the table's `writerFeatures`, a writer MUST ensure that every
-invisible field has been moved into the visible schema and the invisible schema is empty.
-These schema changes MUST be committed before or together with the protocol change.
+To remove `invisibleColumns` from the table's `writerFeatures`, a writer MUST ensure that the
+invisible schema is empty. Each invisible field MUST either be moved into the visible schema or
+explicitly dropped under the normal column-drop requirements. These schema changes MUST be
+committed before or together with the protocol change.
 
 After removal, writers that do not support Invisible Columns MAY write to the table, provided
 they support the table's remaining protocol requirements.
@@ -366,6 +367,16 @@ are:
   table.
 - Columns in the complete data schema MAY be missing from data files. Readers SHOULD treat
   the value of a missing column as `null`.
+
+> ***Add the following requirement to
+> [Writer Requirements for IcebergCompatV1](#writer-requirements-for-icebergcompatv1) and
+> [Writer Requirements for IcebergCompatV2](#writer-requirements-for-icebergcompatv2).
+> Apply the same addition to
+> [Writer Requirements for IcebergCompatV3](iceberg-compat-v3.md#writer-requirements-for-icebergcompatv3)
+> in the proposed IcebergCompatV3 RFC.***
+
+- When enabling this feature or writing to a table where it is enabled, writers MUST reject a
+  schema containing [invisible columns](#invisible-columns).
 
 ## Appendix changes
 
