@@ -41,7 +41,7 @@ data files.
 
 | Case | Outcome |
 |-|-|
-| Old reader, table with this feature | Reads the visible schema normally and ignores the unknown metadata field and unrequested data fields, under [Protocol Evolution](#protocol-evolution). It cannot expose invisible columns through this feature. |
+| Old reader, table with this feature | Ignores the unrecognized `metaData.invisibleSchemaString` field under [Protocol Evolution](#protocol-evolution). Reads the visible schema from `metaData.schemaString` using normal column-resolution rules and does not request invisible fields from data files. It cannot expose invisible columns through this feature. |
 | Old writer, table with this feature | Rejected by the existing protocol-version or writer-feature checks, even if the invisible schema is empty. |
 | New reader, table without this feature | Reads normally. An absent invisible schema is treated as an empty struct. |
 | New writer, table without this feature | Writes normally. It must establish feature support before or in the commit that first writes a non-empty invisible schema. |
@@ -113,7 +113,8 @@ Invisible Columns are **active** in a snapshot when the table supports the featu
 schema in `metaData.invisibleSchemaString` contains at least one invisible field as defined below.
 
 A writer MAY enable the feature and populate `metaData.invisibleSchemaString` in the same commit.
-A commit that writes a non-empty invisible schema MUST establish or preserve feature support.
+A snapshot with a non-empty invisible schema MUST include `invisibleColumns` in
+`protocol.writerFeatures`.
 
 ## Schema
 
@@ -203,6 +204,10 @@ values. Unrecognized fields remain subject to [Protocol Evolution](#protocol-evo
 A writer that supports Invisible Columns MUST apply all Delta Protocol writer requirements to the
 complete data schema. Values for invisible columns are validated and written under the same
 protocol rules as values for visible columns.
+
+A writer that supports Invisible Columns MUST reject a write if `metaData.invisibleSchemaString`
+is malformed or the snapshot violates the [schema requirements](#schema) or
+[feature-support requirements](#enablement).
 
 A writer that emits a `metaData` action MUST preserve both schemas except for intentional schema
 changes. Moving a column between the visible and invisible schemas MUST update both fields in the
