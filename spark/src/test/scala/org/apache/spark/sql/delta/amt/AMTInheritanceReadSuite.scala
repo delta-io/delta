@@ -175,6 +175,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       record_count = leaf.entries.size.toLong,
       file_size_in_bytes = leaf.sizeInBytes,
       manifest_info = ManifestInfo(
+        format_version = AMTSingleAction.FormatVersionV4,
         added_files_count = leaf.entries.size,
         existing_files_count = 0,
         deleted_files_count = 0,
@@ -187,8 +188,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
         modified_rows_count = 0L,
         min_sequence_number = 0L,
         dv = mdv.map(positions =>
-          AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions.map(_.toInt)))),
-        dv_cardinality = mdv.map(_.size.toLong)))
+          AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions.map(_.toInt))))))
   }
 
   /** The messages of `error` and of every exception it wraps. */
