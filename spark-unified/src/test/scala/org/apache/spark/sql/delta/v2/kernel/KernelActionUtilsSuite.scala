@@ -20,7 +20,7 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, DomainMetadata}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, DeletionVectorDescriptor, DomainMetadata}
 import io.delta.kernel.{CommitActions => KernelCommitActions}
 import io.delta.kernel.data.{ColumnarBatch => KernelColumnarBatch}
 import io.delta.kernel.data.{ColumnVector => KernelColumnVector}
@@ -28,6 +28,7 @@ import io.delta.kernel.data.{Row => KernelRow}
 import io.delta.kernel.data.MapValue
 import io.delta.kernel.defaults.internal.json.{JsonUtils => KernelJsonUtils}
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
+import io.delta.kernel.internal.actions.{AddCDCFile => KernelAddCDCFile}
 import io.delta.kernel.internal.actions.{AddFile => KernelAddFile}
 import io.delta.kernel.internal.actions.{CommitInfo => KernelCommitInfo}
 import io.delta.kernel.internal.actions.{
@@ -514,15 +515,26 @@ class KernelActionUtilsSuite extends SparkFunSuite {
       DomainMetadata("test.userDomain", "{}", removed = true)))
   }
 
-  test("readActions fails loud on an action type with no decoder (hand-built commit batch)") {
-    val presentColumn = new GenericColumnVector(
-      java.util.Collections.singletonList("present"), StringType.STRING)
-    val action = KernelDeltaAction.CDC
-    val e = intercept[UnsupportedOperationException] {
-      KernelActionUtils.readActions(singleColumnCommitActions(action.colName, presentColumn))
+  test("readActions decodes CDC files with and without tags") {
+    val testCases = Seq(
+      """{"path":"_change_data/no-tags.parquet","partitionValues":{"p":"1"},"size":10}""" ->
+        AddCDCFile("_change_data/no-tags.parquet", Map("p" -> "1"), 10L),
+      """{"path":"_change_data/with-tags.parquet","partitionValues":{"p":"2"},"size":20,
+        |"tags":{"tag-a":"value-a"}}""".stripMargin ->
+        AddCDCFile(
+          "_change_data/with-tags.parquet",
+          Map("p" -> "2"),
+          20L,
+          tags = Map("tag-a" -> "value-a")))
+
+    testCases.foreach { case (json, expected) =>
+      val kernelRow = KernelJsonUtils.rowFromJson(json, KernelAddCDCFile.FULL_SCHEMA)
+      val kernelColumn = new GenericColumnVector(
+        java.util.Collections.singletonList(kernelRow), KernelAddCDCFile.FULL_SCHEMA)
+
+      assert(KernelActionUtils.readActions(
+        singleColumnCommitActions(KernelDeltaAction.CDC.colName, kernelColumn)) === Seq(expected))
     }
-    assert(e.getMessage.contains("No V1 action from Kernel decoder"))
-    assert(e.getMessage.contains(action.colName))
   }
 
 }
