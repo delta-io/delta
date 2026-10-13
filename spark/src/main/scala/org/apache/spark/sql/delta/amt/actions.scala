@@ -1110,6 +1110,8 @@ case class ManifestInfo(
 
   /**
    * Cardinality of the inline manifest DV, derived by decoding `dv` (0 when absent).
+   *
+   * TODO: A follow-on may deserialize MDVs more selectively, possibly eliminating this function.
    */
   @JsonIgnore
   def dvCardinality: Long = dv.map(AMTUtils.deserializeMdv(_).cardinality).getOrElse(0L)
