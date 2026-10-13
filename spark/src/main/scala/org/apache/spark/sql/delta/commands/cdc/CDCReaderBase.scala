@@ -117,8 +117,13 @@ abstract class DeltaCDFRelationBase(
     val outputMap = df.queryExecution.analyzed.output.map(a => a.name -> a).toMap
     val projections =
       requiredColumns.map(a => Column(outputMap(a.name)))
+    lazy val skipNondeterministicFilters =
+      sqlContext.sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_CDF_SKIP_NONDETERMINISTIC_FILTER_PUSHDOWN)
     val filter = Column(
       filters
+        // Spark evaluates nondeterministic predicates in a filter above the CDF scan.
+        .filter(predicate => predicate.deterministic || !skipNondeterministicFilters)
         .map(_.transform { case a: Attribute => outputMap(a.name) })
         .reduceOption(And)
         .getOrElse(Literal.TrueLiteral)
