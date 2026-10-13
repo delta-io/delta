@@ -865,6 +865,17 @@ object FileAction {
       spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT)
 
   /**
+   * The same as the `(metadata, protocol, spark)` overload, for the metadata and protocol of
+   * `snapshot`.
+   *
+   * @param snapshot the table snapshot.
+   */
+  def useDeletionVectorObjectIdentity(
+      snapshot: SnapshotDescriptor,
+      spark: SparkSession): Boolean =
+    useDeletionVectorObjectIdentity(snapshot.metadata, snapshot.protocol, spark)
+
+  /**
    * The unique tuple `(parquet file, deletion vector id)` of a file action, as a method on
    * [[AddFile]] / [[RemoveFile]]. See [[DeletionVectorDescriptor.uniqueId]] for the
    * `useObjectIdentity` semantics.

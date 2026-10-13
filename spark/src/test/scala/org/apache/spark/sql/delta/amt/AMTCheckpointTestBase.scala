@@ -632,7 +632,7 @@ trait AMTCheckpointTestBase
         Option(add.stats).map(JsonUtils.mapper.readTree),
         Option(add.deletionVector).map { dv =>
           val physical =
-            if (dv.storageType == "i") dv.uniqueFileId
+            if (dv.storageType == "i") dv.uniqueFileId(tableLocation, useObjectIdentity = true)
             else dv.absolutePath(tableLocation).toString
           (physical, dv.offset, dv.sizeInBytes, dv.cardinality, dv.maxRowIndex)
         })
