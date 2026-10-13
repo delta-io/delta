@@ -425,7 +425,7 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
 
   /**
    * Performs following validations on the underlying AMT (from latest snapshot):
-   *   - each leaf pointer's DV cardinality is within its physical entry count, and every DV
+   *   - each leaf pointer's MDV cardinality is within its physical entry count, and every MDV
    *     position is in range of that leaf's physical entry count (no stale / out-of-range mask);
    *   - conservation: the reader's live count equals root-resident live adds plus, over every leaf,
    *     (physical leaf entries - MDV cardinality)
@@ -457,18 +457,18 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
         val livePhysicalEntries = statusToCountMapForLeaf
           .filter { case (status, _) => Tracking.Status.liveEntryStatuses.contains(status) }
           .values.sum
+        val mdvDeclaredCardinality = leaf.manifest_info.dvCardinality
         val decoded = leaf.manifest_info.dv.map(ManifestBitmap.fromSerializedByteArray)
           .getOrElse(ManifestBitmap.fromPositions(Seq.empty))
-        val dvCardinality = decoded.cardinality
-        assert(dvCardinality <= physicalEntries,
-          s"Leaf ${leaf.location}: DV cardinality ($dvCardinality) exceeds physical " +
+        assert(mdvDeclaredCardinality <= physicalEntries,
+          s"Leaf ${leaf.location}: MDV cardinality ($mdvDeclaredCardinality) exceeds physical " +
             s"entries " +
             s"($physicalEntries).")
         decoded.toArrayForTesting.foreach { pos =>
           assert(pos >= 0 && pos < physicalEntries,
-            s"Leaf ${leaf.location}: DV position $pos is out of range [0, $physicalEntries).")
+            s"Leaf ${leaf.location}: MDV position $pos is out of range [0, $physicalEntries).")
         }
-        livePhysicalEntries - dvCardinality
+        livePhysicalEntries - mdvDeclaredCardinality
       }.sum
 
     val reconstructed = provider.loadActionsForStateReconstruction(spark, amtDeltaLog)
