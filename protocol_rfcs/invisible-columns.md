@@ -166,6 +166,12 @@ A shared ancestor represents one column in the complete data schema, not two dis
 The complete data schema MUST satisfy the column-name uniqueness requirements of the
 [Schema Serialization Format](#schema-serialization-format).
 
+At each struct level, including the schema root, the complete data schema MUST contain fields from
+the visible schema in their original order, followed by invisible-only fields in their original order
+from the invisible schema. Shared fields retain their position from the visible schema. This rule
+applies recursively, including to structs within arrays and map keys or values. A struct present in
+only one schema retains that schema's field order.
+
 An invisible column is a data column. Except for the visibility behavior and the
 [constraints below](#constraints-and-interactions-with-other-features), it has the same Delta
 Protocol semantics and guarantees as a visible column. Writers that support Invisible Columns,
@@ -297,9 +303,18 @@ An empty invisible schema is shown below and is equivalent to omitting the
 }
 ```
 
-For example, `profile.name` in the visible schema and `profile.internal_id` in the invisible schema
-share the ancestor `profile`. The complete data schema contains one `profile` struct with both
-fields. `profile` remains visible; only `profile.internal_id` is invisible.
+These schematic schemas illustrate shared ancestors and recursive field ordering. Braces denote
+nested structs; only field names are shown:
+
+```text
+Visible:   profile { address { city }, name }, age
+Invisible: profile { address { geo_id }, internal_id }, source_id
+Merged:    profile { address { city, geo_id }, name, internal_id }, age, source_id
+```
+
+`profile` and `profile.address` each occur once in the complete data schema and remain visible.
+Invisible `profile.address.geo_id` precedes visible `profile.name` because the ordering rule applies
+within each struct, not to all leaf fields globally.
 
 The following two actions form a complete initial commit, `_delta_log/00000000000000000000.json`,
 for an empty, unpartitioned table with a visible `id` column and an invisible
