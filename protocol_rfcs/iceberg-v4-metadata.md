@@ -242,7 +242,7 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
 }
 ```
 
-The array encoding is used when the checkpoint is embedded inline in a commit's Delta log entry or in `amtCheckpoint.checkpoint` in the [last checkpoint file](#last-checkpoint-file). In a [standalone checkpoint](#standalone-checkpoint) file, the actions are stored as separate rows (one action per row) with no enclosing `checkpoint` array — the checkpoint file itself is the grouping.
+The array wrapper is used only when the checkpoint is embedded inline in a commit's Delta log entry or in [last checkpoint file](#last-checkpoint-file)'s `amtCheckpoint` field. In a [standalone checkpoint](#standalone-checkpoint), these same actions are stored as separate rows (one action per row) with no enclosing `checkpoint` array — the checkpoint file itself is the grouping.
 
 ### Checkpoint Action Contents
 
@@ -251,7 +251,7 @@ The `checkpoint` action is an array of action entries. Each entry is one of:
 | Action | Description |
 |--------|-------------|
 | `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log. |
-| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and the root version may be less in a standalone checkpoint (the gap is covered by inline file actions). `tags` allow writers to record additional optional metadata about the manifest tree. |
+| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). `tags` allow writers to record additional optional metadata about the manifest tree. |
 | `protocol` | The Protocol action at this checkpoint version. |
 | `metaData` | The Metadata action at this checkpoint version. |
 | `domainMetadata` | A DomainMetadata action. System domains (keys prefixed with `delta.`) must appear here; user domains may appear here or in a sidecar. |
