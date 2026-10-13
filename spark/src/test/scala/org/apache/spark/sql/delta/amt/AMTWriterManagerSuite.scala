@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, CurrentTransactionInfo, DeltaIllegalStateException, DeltaOperations, FullAMTWriteFailedWithConflict, LogSegment, Snapshot, SnapshotManagement, WinningCommitMetrics, WinningCommitSummary}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, CheckpointMetadata, ContentRoot, RemoveFile}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -202,7 +202,9 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       // longer hard-fails on this -- it writes no tree; re-deriving the file actions' back
       // references against the winner tree happens in doCommit's rebaseBackReferences, exercised
       // end-to-end in AMTConflictResolutionSuite.
-      val winnerTree = baseTree.copy(version = baseTree.version + 1)
+      val winnerTree = updateCheckpointActions(baseTree) {
+        case metadata: CheckpointMetadata => metadata.copy(version = baseTree.version + 1)
+      }
       val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
       val result = manager.writeAMT(
         nextAttemptVersion = snapshot.version + 2,
@@ -238,7 +240,9 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
         // A concurrent winner installed its own full-rewrite tree at the target version. That tree
         // already provides an up-to-date AMT, so this losing full checkpoint is redundant and
         // skips.
-        val fullWinner = fullResult.checkpoint.copy(version = snapshot.version + 1)
+        val fullWinner = updateCheckpointActions(fullResult.checkpoint) {
+          case metadata: CheckpointMetadata => metadata.copy(version = snapshot.version + 1)
+        }
         val fullWinnerMetric = anyWinner.copy(checkpointAction = Some(fullWinner))
         val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
         val ex = intercept[ConcurrentAMTCheckpointLandedException] {
@@ -283,7 +287,9 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
 
         // A concurrent winner installed a newer tree. Any winner tree supersedes a losing
         // incremental checkpoint, so it is redundant and skips.
-        val winnerTree = baseTree.copy(version = baseTree.version + 1)
+        val winnerTree = updateCheckpointActions(baseTree) {
+          case metadata: CheckpointMetadata => metadata.copy(version = baseTree.version + 1)
+        }
         val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
         intercept[ConcurrentAMTCheckpointLandedException] {
           manager.writeAMT(
@@ -324,8 +330,10 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
           isIncremental = true,
           lastManifestCommitWithFullRewrite = 0L,
           numLeaves = fullResult.checkpoint.contentRoot.numLeaves.getOrElse(0L))
-        val incrementalWinner =
-          fullResult.checkpoint.copy(version = snapshot.version + 1, contentRoot = incrementalRoot)
+        val incrementalWinner = updateCheckpointActions(fullResult.checkpoint) {
+          case metadata: CheckpointMetadata => metadata.copy(version = snapshot.version + 1)
+          case _: ContentRoot => incrementalRoot
+        }
         val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
         val ex = intercept[FullAMTWriteFailedWithConflict] {
           manager.writeAMT(

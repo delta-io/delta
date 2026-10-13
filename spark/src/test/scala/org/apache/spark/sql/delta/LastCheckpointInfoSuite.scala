@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.actions.{Checkpoint, ContentRoot, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Checkpoint, ContentRoot, DomainMetadata, Metadata, Protocol, SetTransaction, SidecarFile, SidecarType}
 import org.apache.spark.sql.delta.amt.{AMTLeafComparisons, AMTSingleAction, AMTWriteResult, DataManifestEntry, ManifestInfo, SingleAMTWriteMetrics, Tracking}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -236,7 +236,7 @@ class LastCheckpointInfoSuite extends SharedSparkSession
       === LastCheckpointInfo.serializeToJson(ci2, addChecksum = true))
   }
 
-  /** A [[Checkpoint]] action describing `version`, with a root manifest at `rootPath`. */
+  /** A [[Checkpoint]] at `version`, with a root at `rootPath` and every supported action type. */
   private def sampleCheckpointAction(
       version: Long = 1L,
       rootPath: String = "metadata/root-abc.parquet",
@@ -245,9 +245,23 @@ class LastCheckpointInfoSuite extends SharedSparkSession
     contentRoot = ContentRoot(path = rootPath, sizeInBytes = rootSizeInBytes, version = version),
     protocol = Protocol(minReaderVersion = 3, minWriterVersion = 7),
     metaData = Metadata(id = "metadata-id", name = "t"),
-    domainMetadata = Nil,
-    txns = Nil,
-    sidecars = Nil)
+    domainMetadata = Seq(
+      DomainMetadata(domain = "user.tag", configuration = """{"k":"v"}""", removed = false),
+      DomainMetadata(domain = "user.other", configuration = "{}", removed = false)),
+    txns = Seq(
+      SetTransaction(appId = "app-1", version = 7L, lastUpdated = Some(100L)),
+      SetTransaction(appId = "app-2", version = 8L, lastUpdated = None)),
+    sidecars = Seq(
+      SidecarFile(
+        path = "domain-metadata.parquet",
+        sizeInBytes = 1024L,
+        modificationTime = 100L,
+        `type` = Some(SidecarType.Type.DomainMetadata)),
+      SidecarFile(
+        path = "transactions.parquet",
+        sizeInBytes = 2048L,
+        modificationTime = 200L,
+        `type` = Some(SidecarType.Type.Txn))))
 
   private def sampleAMTCheckpoint(
       version: Long = 1L,
@@ -431,6 +445,8 @@ class LastCheckpointInfoSuite extends SharedSparkSession
       checkpointType = Some(LastCheckpointInfo.CheckpointType.AMT),
       amtCheckpoint = Some(sampleAMTCheckpoint()))
     val json = LastCheckpointInfo.serializeToJson(ci, addChecksum = true)
+    val checkpointJson = JsonUtils.mapper.readTree(json).path("amtCheckpoint").path("checkpoint")
+    assert(checkpointJson.isArray)
     val deserialized = LastCheckpointInfo.deserializeFromJson(json, validate = true)
     val amt = deserialized.amtCheckpoint.getOrElse(fail("round-trip dropped the amtCheckpoint."))
     val expectedAmt = ci.amtCheckpoint.get
