@@ -160,6 +160,10 @@ present in the visible schema; otherwise it is invisible. A shared ancestor rema
 its presence in the invisible schema only provides the structure needed for its invisible fields.
 An invisible ancestor and all its descendants are absent from the visible schema.
 
+Field-path matching during the merge MUST be case-sensitive. Shared ancestors MUST have identical
+names, including casing, in both schemas. At each struct being merged, field names that differ only
+in casing MUST cause the merge to fail, rather than being merged or retained as separate columns.
+
 The merge combines struct fields at matching field paths, retaining fields present in only one
 schema. Shared structs are merged recursively; arrays and maps recursively merge their element,
 key, and value types. Shared definitions MUST agree except for the nested struct fields contributed
@@ -326,6 +330,14 @@ Merged:    profile { address { city, geo_id }, name, internal_id }, age, source_
 `profile` and `profile.address` each occur once in the complete data schema and remain visible.
 Invisible `profile.address.geo_id` precedes visible `profile.name` because the ordering rule applies
 within each struct, not to all leaf fields globally.
+
+The following schemas cannot be merged because `profile` and `Profile` differ only in casing.
+The merge MUST fail rather than produce two separate columns:
+
+```text
+Visible:   profile { name }
+Invisible: Profile { internal_id }
+```
 
 The following two actions form a complete initial commit, `_delta_log/00000000000000000000.json`,
 for an empty, unpartitioned table with a visible `id` column and an invisible
