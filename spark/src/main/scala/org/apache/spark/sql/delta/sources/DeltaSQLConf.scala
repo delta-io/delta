@@ -2546,6 +2546,55 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         .checkValue(_ > 0, "batchSize has to be positive")
         .createOptional
 
+  val DELTA_REORG_FOOTER_SCAN_PARALLELISM =
+    buildConf("reorg.footerScan.parallelism")
+      .internal()
+      .doc(
+        """
+          |Number of Parquet footers read concurrently per task while REORG / PURGE scans file
+          | schemas (DeltaFileOperations.readParquetFootersInParallel). Each concurrent footer read
+          | holds a file input stream and its read buffers on the executor heap, so a high value can
+          | drive GC-overhead OOMs on small executors when the scan covers a very large number of
+          | files. Lowering it trades footer-scan throughput for lower peak heap pressure. It does
+          | not affect the file-rewrite stage.
+          |""".stripMargin)
+      .intConf
+      .checkValue(
+        value => value > 0 && value <= Short.MaxValue,
+        s"'reorg.footerScan.parallelism' must be between 1 and ${Short.MaxValue}.")
+      .createWithDefault(8)
+
+  val DELTA_REORG_FOOTER_SCAN_BATCH_SIZE =
+    buildConf("reorg.footerScan.batchSize")
+      .internal()
+      .doc(
+        """
+          |Maximum number of files whose decoded AddFile entries, candidate-file map and read
+          | Parquet footers a REORG / PURGE task materializes for one batch. Each task releases that
+          | batch-local working set before reading the next batch. The complete input partition's
+          | UnsafeRows and the partition-wide collision set remain retained independently, so this
+          | value does not bound total task heap. Lowering it reduces the incremental footer-scan
+          | working set; it does not add a shuffle or change stage parallelism, and it does not
+          | affect the file-rewrite stage. Read parallelism within a batch is bounded separately by
+          | 'reorg.footerScan.parallelism'. Set to 0 to disable batching entirely and scan each
+          | partition's files in a single pass (the pre-batching behavior) -- a kill switch that
+          | restores the previous unbounded per-task heap use.
+          |
+          | The default of 500 is based on retained-heap measurements through this footer-read
+          | path. A representative deeply nested schema with 4 KiB AddFile stats retained about
+          | 150 KiB per file. Adding conservative allowances of 64 KiB for per-file-unique footer
+          | metadata and 66 KiB for per-file-unique stats gives a 280 KiB per-file envelope. At the
+          | default, this is about 137 MiB of batch-local retained heap per task. The 150 KiB
+          | measurement already includes 4 KiB stats; not subtracting that overlap from the
+          | 66 KiB term is deliberately conservative.
+          | Executor-level retention scales with the number of concurrent REORG tasks. These
+          | estimates exclude the partition input, collision set, executor baseline and filesystem
+          | buffers.
+          |""".stripMargin)
+      .intConf
+      .checkValue(_ >= 0, "'reorg.footerScan.batchSize' must be >= 0 (0 disables batching).")
+      .createWithDefault(500)
+
   val DELTA_OPTIMIZE_REPARTITION_ENABLED =
     buildConf("optimize.repartition.enabled")
       .internal()

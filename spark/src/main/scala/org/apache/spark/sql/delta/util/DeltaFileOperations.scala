@@ -40,7 +40,7 @@ import org.apache.spark.{SparkEnv, SparkException, TaskContext}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
+import org.apache.spark.util.{SerializableConfiguration, SparkFatalException, ThreadUtils}
 
 /**
  * Some utility methods on files, directories, and paths.
@@ -390,6 +390,10 @@ object DeltaFileOperations extends DeltaLogging {
     }
   }
 
+  /** Historical default footer-read concurrency, kept as the default so non-REORG callers are
+   * unchanged. REORG / PURGE override it via DELTA_REORG_FOOTER_SCAN_PARALLELISM. */
+  val DEFAULT_PARQUET_FOOTER_READ_PARALLELISM = 8
+
   /**
    * Reads Parquet footers in multi-threaded manner.
    * If the config "spark.sql.files.ignoreCorruptFiles" is set to true, we will ignore the corrupted
@@ -399,7 +403,19 @@ object DeltaFileOperations extends DeltaLogging {
       conf: Configuration,
       partFiles: Seq[FileStatus],
       ignoreCorruptFiles: Boolean): Seq[Footer] = {
-    ThreadUtils.parmap(partFiles, "readingParquetFooters", 8) { currentFile =>
+    readParquetFootersInParallel(
+      conf, partFiles, ignoreCorruptFiles, DEFAULT_PARQUET_FOOTER_READ_PARALLELISM)
+  }
+
+  /** Reads Parquet footers with the requested concurrency. */
+  def readParquetFootersInParallel(
+      conf: Configuration,
+      partFiles: Seq[FileStatus],
+      ignoreCorruptFiles: Boolean,
+      parallelism: Int): Seq[Footer] = {
+    logInfo(log"Reading ${MDC(DeltaLogKeys.NUM_FILES, partFiles.size.toLong)} Parquet footers " +
+      log"with parallelism ${MDC(DeltaLogKeys.NUM_THREADS, parallelism.toLong)}")
+    ThreadUtils.parmap(partFiles, "readingParquetFooters", parallelism) { currentFile =>
       try {
         // Skips row group information since we only need the schema.
         // ParquetFileReader.readFooter throws RuntimeException, instead of IOException,
@@ -407,14 +423,19 @@ object DeltaFileOperations extends DeltaLogging {
         Some(new Footer(currentFile.getPath(),
           ParquetFileReader.readFooter(
             conf, currentFile, SKIP_ROW_GROUPS)))
-      } catch { case e: RuntimeException =>
-        if (ignoreCorruptFiles) {
-          logWarning(log"Skipped the footer in the corrupted file: " +
-            log"${MDC(DeltaLogKeys.FILE_STATUS, currentFile)}", e)
-          None
-        } else {
-          throw DeltaErrors.failedReadFileFooter(currentFile.toString, e)
-        }
+      } catch {
+        case e: RuntimeException =>
+          if (ignoreCorruptFiles) {
+            logWarning(log"Skipped the footer in the corrupted file: " +
+              log"${MDC(DeltaLogKeys.FILE_STATUS, currentFile)}", e)
+            None
+          } else {
+            throw DeltaErrors.failedReadFileFooter(currentFile.toString, e)
+          }
+        // Scala Future does not complete its Promise for fatal throwables. Wrap them in a
+        // non-fatal exception so ThreadUtils.awaitResult can rethrow the original throwable.
+        case fatal: Throwable if !NonFatal(fatal) =>
+          throw new SparkFatalException(fatal)
       }
     }.flatten
   }
