@@ -266,6 +266,27 @@ private[read] trait DeltaV2ReadE2ETests {
     }
   }
 
+  test("partition names with spaces and backticks under column mapping prune on V2") {
+    val table = "v2_scan_e2e_spaced_partitions"
+    withTable(table) {
+      withV1Mode {
+        sql(
+          s"CREATE TABLE $table (id LONG, `order date` STRING, `a``b` STRING) " +
+            s"USING $tableProvider PARTITIONED BY (`order date`, `a``b`) " +
+            "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        Seq("(1, 'd1', 'x')", "(2, 'd2', 'x')", "(3, 'd1', 'y')").foreach { values =>
+          sql(s"INSERT INTO $table VALUES $values")
+        }
+      }
+      checkPartitionPrunedReadMatchesV1(
+        s"SELECT id, `order date`, `a``b` FROM $table " +
+          "WHERE `order date` = 'd1' AND `a``b` = 'y'",
+        expectedRows = Seq(Row(3L, "d1", "y")),
+        expectedSelectedFiles = 1,
+        context = "space and backtick partition-column filter")
+    }
+  }
+
   test("deletion vectors with a middle partition column preserve rows and DDL order") {
     val table = "v2_scan_e2e_dv_partition_middle"
     withTable(table) {
@@ -420,6 +441,25 @@ private[read] trait DeltaV2ReadE2ETests {
       } { df =>
         checkAnswer(df, Seq(Row(2L, 200)))
       }
+    }
+  }
+
+  private def checkPartitionPrunedReadMatchesV1(
+      query: String,
+      expectedRows: Seq[Row],
+      expectedSelectedFiles: Int,
+      context: String): Unit = {
+    withV1Mode {
+      checkAnswer(sql(query), expectedRows)
+    }
+    checkRead(context)(sql(query)) { df =>
+      checkAnswer(df, expectedRows)
+    }
+    withDeltaV2ScanForSelectedFiles(sql(query), context) { scan =>
+      val numSelectedFiles = scan.preparedScan().files.size
+      assert(
+        numSelectedFiles == expectedSelectedFiles,
+        s"expected $expectedSelectedFiles selected files for $context, got $numSelectedFiles")
     }
   }
 }

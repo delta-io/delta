@@ -91,7 +91,7 @@ import org.apache.spark.sql.connector.catalog.{
   Table,
   TableCapability
 }
-import org.apache.spark.sql.connector.expressions.{Expressions, Transform}
+import org.apache.spark.sql.connector.expressions.{FieldReference, LogicalExpressions, Transform}
 import org.apache.spark.sql.connector.read.{ScanBuilder, Statistics}
 import org.apache.spark.sql.connector.write.{
   LogicalWriteInfo,
@@ -653,9 +653,13 @@ private[catalog] object DeltaV2Table {
       dataSchema = new StructType(dataFields.toArray(new Array[StructField](0)))
       partitionSchema = new StructType(partitionFields.toArray(new Array[StructField](0)))
 
+      // Each partition column is a single top-level field whose name may contain dots, spaces, or
+      // backticks, so reference it as one exact name part rather than re-parsing it as a SQL
+      // multipart identifier (e.g. "a.b" must not become [a, b]).
       partitionTransforms = partColNames
         .stream()
-        .map[Transform](partColName => Expressions.identity(partColName))
+        .map[Transform](partColName =>
+          LogicalExpressions.identity(FieldReference.column(partColName)))
         .toArray[Transform](length => new Array[Transform](length))
 
       initialized = true
