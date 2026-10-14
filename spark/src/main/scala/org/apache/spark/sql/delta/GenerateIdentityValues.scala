@@ -25,7 +25,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, LeafExpression, Nondeterministic}
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGenerator, ExprCode, FalseLiteral}
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
-import org.apache.spark.sql.delta.cic.IdentitySequenceClient
+import org.apache.spark.sql.delta.cic.{IdentitySequenceClient, IdRange}
 import org.apache.spark.sql.types.{DataType, LongType}
 import org.apache.spark.util.{Clock, SystemClock}
 
@@ -80,7 +80,8 @@ object GenerateIdentityValues {
  * The reserve-more config a CIC service-backed [[PartitionIdentityValueGenerator]] uses to reserve
  * from the driver when its range is exhausted (via
  * [[org.apache.spark.sql.delta.cic.IdentitySequenceClient]]). The executor does not
- * choose the size: it reports `(lastCount, elapsedMs)` and the driver's controller sizes the grant.
+ * choose the size: it reports the current grant size and its estimated total drain time, and the
+ * driver's controller sizes the next grant.
  * The sizing knobs are read on the driver, so they are neither read here nor carried on requests.
  *
  * @param sequenceId the CIC service sequence this column reserves from.
@@ -132,13 +133,15 @@ case class PartitionIdentityValueGenerator(
   // so the reserved-range checks compare by direction without branching on the step sign.
   private lazy val stepOrdering: Ordering[Long] =
     if (step > 0L) Ordering.Long else Ordering.Long.reverse
+  // The task coordinates (stage / attempt) reported on reserve requests and reserve observability.
+  private var reservationMetadata: ReservationMetadata = ReservationMetadata(-1, -1L)
+  // Clock for the reserve-gap timing. Transient + lazy because Clock is not Serializable and this
+  // generator ships to executors, so it is rebuilt per JVM rather than carried.
+  @transient protected lazy val clock: Clock = new SystemClock()
   // Reserve sizing feedback: last granted size + when it landed, so the next reserve reports
   // (lastCount, elapsedMs). Both 0 until the first reserve completes -> first reports (0, 0).
   private var lastReserveGranted: Long = 0L
   private var lastReserveTimestampMs: Long = 0L
-  // Clock for the reserve-gap timing. Transient + lazy because Clock is not Serializable and this
-  // generator ships to executors, so it is rebuilt per JVM rather than carried.
-  @transient protected lazy val clock: Clock = new SystemClock()
 
   def initialize(partitionIndex: Int): Unit = {
     if (this.partitionIndex < 0) {
@@ -154,6 +157,8 @@ case class PartitionIdentityValueGenerator(
         // currentReservedEndOpt starts None; the first next() sees the empty bound and reserves
         // this task's initial range before emitting.
         this.currentReservedEndOpt = None
+        // Read the task coordinates once here on the task thread.
+        this.reservationMetadata = getReservationMetadata()
       } else {
         this.nextValue = try {
           Math.addExact(base, Math.multiplyExact(partitionIndex, step))
@@ -217,6 +222,18 @@ case class PartitionIdentityValueGenerator(
       stepOrdering.gt(value, reservedEnd)
     }
 
+  private case class ReservationMetadata(stageId: Int, taskAttemptId: Long)
+
+  /**
+   * Helper to retrieve reservation metadata.
+   */
+  private def getReservationMetadata(): ReservationMetadata = {
+    val taskContext = TaskContext.get()
+    val stageId = if (taskContext != null) taskContext.stageId() else -1
+    val taskAttemptId = if (taskContext != null) taskContext.taskAttemptId() else -1L
+    ReservationMetadata(stageId, taskAttemptId)
+  }
+
   /**
    * Reserve a fresh contiguous range from the driver and continue from it. The range is
    * service-guaranteed non-overlapping and private to this task. Blocks on the RPC; a failure
@@ -224,18 +241,23 @@ case class PartitionIdentityValueGenerator(
    * permitted gap).
    */
   private def reserveNextRange(cfg: CicReserveConfig): Unit = {
-    val taskContext = TaskContext.get()
-    val stageId = if (taskContext != null) taskContext.stageId() else -1
-    val taskAttemptId = if (taskContext != null) taskContext.taskAttemptId() else -1L
+    val ReservationMetadata(stageId, taskAttemptId) = reservationMetadata
     // Report the previous reserve (lastCount, elapsedMs). Measuring the gap from range-in-hand
     // (stamped after the RPC below), not the last reserve's start, keeps this RPC's latency and any
     // park-wait out of the gap, so a slow backend never looks like a fast drain.
     val lastCount = lastReserveGranted
     val elapsedMs =
       if (lastReserveTimestampMs <= 0L) 0L else clock.getTimeMillis() - lastReserveTimestampMs
-    val range = IdentitySequenceClient.requestIds(
+    installRange(cfg, IdentitySequenceClient.requestIds(
       cfg.sequenceId, cfg.tableId, lastCount, elapsedMs, step,
-      stageId, partitionIndex, taskAttemptId)
+      stageId, partitionIndex, taskAttemptId))
+  }
+
+  /**
+   * Install a freshly reserved range and continue emitting from it. The range is guaranteed
+   * to be disjoint with other ranges and private to this task.
+   */
+  private def installRange(cfg: CicReserveConfig, range: IdRange): Unit = {
     // Defend against a backend returning a range with a drifted step: emitting
     // `rangeStart + i*step` from a range whose step disagrees with this column's step would
     // produce colliding values.

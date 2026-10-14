@@ -3713,9 +3713,12 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     buildConf("identityColumn.concurrent.dropFeatureWithoutService")
       .internal()
       .doc("Escape hatch for ALTER TABLE ... DROP FEATURE of Concurrent Identity Columns when " +
-        "the identity-sequence service is unavailable. When true, the downgrade derives the " +
-        "stock high-water mark by scanning the data (max/min), like SYNC IDENTITY, instead of " +
-        "reserving from the service, so a table can leave the feature while the service is down.")
+        "the identity-sequence service is unavailable. When true, if reserving the stock " +
+        "high-water mark from the service fails, the downgrade falls back to scanning the data " +
+        "(max/min), like SYNC IDENTITY, so a table can leave the feature while the service is " +
+        "down. Off by default: the data scan can land below ids the service already handed " +
+        "out (e.g. after a DELETE), so it is a manual override, not an automatic retry. A " +
+        "service that is administratively disabled always falls back, without this conf.")
       .booleanConf
       .createWithDefault(false)
 
