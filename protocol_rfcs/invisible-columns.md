@@ -151,6 +151,8 @@ For a snapshot:
   when the field is absent.
 - The **complete data schema** recursively merges the visible and invisible schemas.
 
+See [Examples](#examples) for schema representations and recursive merging.
+
 Invisible columns MAY occur at any nesting level, including within structs, arrays, and maps.
 The invisible schema MUST include the ancestor containers needed to describe a nested invisible
 field's [field path](#field-path). A field in the complete data schema is visible if its path is
@@ -221,7 +223,8 @@ same `metaData` action. Changing only a column's visibility does not require rew
 When Column Mapping is enabled, the column's physical name and ID MUST be preserved.
 
 When rewriting an existing row, a writer MUST preserve its invisible-column values unless the
-write explicitly changes them.
+write explicitly changes them or changes are required to satisfy
+[Generated Columns](#generated-columns) requirements.
 
 These requirements apply to table creation, appends, row updates and deletions, data-file
 rewrites and maintenance, and operations that copy or restore table snapshots. Writers MUST also
@@ -246,9 +249,14 @@ no additional metadata-cleanup or data-file-retention requirements.
 - **Statistics.** Invisible columns MAY be explicitly selected for statistics collection under the
   same eligibility rules as visible columns. Writers MUST resolve named statistics-column selections
   against the complete data schema.
-- **Identity columns.** An invisible column MUST NOT be an identity column.
-- **Generated columns and column defaults.** An invisible column MUST NOT be a generated column,
-  and MUST NOT carry a column default.
+- **Identity columns.** An invisible column MAY be an identity column, subject to the same
+  [Identity Columns](#identity-columns) requirements as a visible column.
+- **Generated columns.** An invisible column MAY be a generated column, subject to the same
+  [Generated Columns](#generated-columns) requirements as a visible column. Generation expressions
+  MAY reference invisible columns under the same rules as visible columns. Writers MUST resolve
+  these references against the complete data schema.
+- **Column defaults.** An invisible column MAY carry a column default, subject to the same
+  [Default Columns](#default-columns) requirements as a visible column.
 - **Type widening.** Invisible columns support [Type Widening](#type-widening) under the same
   protocol requirements as visible columns.
 - **IcebergCompat.** When any of `icebergCompatV1`, `icebergCompatV2`, or `icebergCompatV3` is
