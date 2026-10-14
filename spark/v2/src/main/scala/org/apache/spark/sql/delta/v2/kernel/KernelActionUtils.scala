@@ -23,6 +23,7 @@ import scala.jdk.OptionConverters._
 
 import org.apache.spark.sql.delta.actions.{
   Action,
+  AddCDCFile,
   AddFile,
   CommitInfo,
   DeletionVectorDescriptor,
@@ -143,6 +144,8 @@ private[v2] object KernelActionUtils {
     case KernelDeltaAction.COMMITINFO =>
       commitInfoFromKernel(
         KernelCommitInfo.fromColumnVector(columnVector, rowId))
+    case KernelDeltaAction.CDC =>
+      addCDCFileFromKernel(KernelStructRow.fromStructVector(columnVector, rowId))
     case KernelDeltaAction.TXN =>
       setTransactionFromKernel(
         KernelSetTransaction.fromColumnVector(columnVector, rowId))
@@ -160,7 +163,7 @@ private[v2] object KernelActionUtils {
   def addFileFromKernel(addFile: KernelAddFile): AddFile = {
     AddFile(
       path = addFile.getPath,
-      partitionValues = partitionValuesFromKernel(addFile.getPartitionValues),
+      partitionValues = stringMapFromKernel(addFile.getPartitionValues),
       size = addFile.getSize,
       modificationTime = addFile.getModificationTime,
       dataChange = addFile.getDataChange,
@@ -212,7 +215,7 @@ private[v2] object KernelActionUtils {
       deletionTimestamp = removeFile.getDeletionTimestamp.toScala.map(_.longValue()),
       dataChange = removeFile.getDataChange,
       extendedFileMetadata = removeFile.getExtendedFileMetadata.toScala.map(_.booleanValue()),
-      partitionValues = removeFile.getPartitionValues.toScala.map(partitionValuesFromKernel).orNull,
+      partitionValues = removeFile.getPartitionValues.toScala.map(stringMapFromKernel).orNull,
       size = removeFile.getSize.toScala.map(_.longValue()),
       tags = tagsFromKernel(removeFile.getTags),
       deletionVector = deletionVectorFromKernel(removeFile.getDeletionVector),
@@ -220,6 +223,23 @@ private[v2] object KernelActionUtils {
       defaultRowCommitVersion = removeFile.getDefaultRowCommitVersion.toScala.map(_.longValue()),
       stats = removeFile.getStatsJson.toScala.orNull)
     // scalastyle:on removeFile
+  }
+
+  /**
+   * Converts a Kernel CDC action row into a V1 [[AddCDCFile]].
+   */
+  private def addCDCFileFromKernel(kernelRow: KernelRow): AddCDCFile = {
+    // Kernel exposes the CDC schema without an action wrapper, so read its fields by name.
+    val kernelSchema = kernelRow.getSchema
+    val tagsOrdinal = kernelSchema.indexOf("tags")
+    AddCDCFile(
+      path = kernelRow.getString(kernelSchema.indexOf("path")),
+      partitionValues = stringMapFromKernel(
+        kernelRow.getMap(kernelSchema.indexOf("partitionValues"))),
+      size = kernelRow.getLong(kernelSchema.indexOf("size")),
+      tags =
+        if (kernelRow.isNullAt(tagsOrdinal)) null
+        else stringMapFromKernel(kernelRow.getMap(tagsOrdinal)))
   }
 
   /**
@@ -318,16 +338,16 @@ private[v2] object KernelActionUtils {
         cardinality = dv.getCardinality)
     }.orNull
 
-  private def partitionValuesFromKernel(partitionValues: KernelMapValue): Map[String, String] = {
-    if (partitionValues == null) return Map.empty
-    val keys = partitionValues.getKeys
-    val values = partitionValues.getValues
-    (0 until partitionValues.getSize).map { index =>
+  private def stringMapFromKernel(kernelMap: KernelMapValue): Map[String, String] = {
+    if (kernelMap == null) return Map.empty
+    val keys = kernelMap.getKeys
+    val values = kernelMap.getValues
+    (0 until kernelMap.getSize).map { index =>
       val value = if (values.isNullAt(index)) null else values.getString(index)
       keys.getString(index) -> value
     }.toMap
   }
 
   private def tagsFromKernel(tags: java.util.Optional[KernelMapValue]): Map[String, String] =
-    tags.toScala.map(partitionValuesFromKernel).orNull
+    tags.toScala.map(stringMapFromKernel).orNull
 }
