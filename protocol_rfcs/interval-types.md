@@ -35,19 +35,9 @@ ANSI SQL also permits narrowed spellings that denote the same two families: for 
 
 Both the canonical names and all valid narrowed spellings listed above are permitted in `metaData.schemaString`. Readers must accept every permitted spelling, and writers must preserve the declared spelling (see [Writer Requirements](#writer-requirements)).
 
-Every year-month spelling is the `interval year to month` logical type, and every day-second spelling is the `interval day to second` logical type. Wherever this document states a rule for a canonical interval type name, the rule applies equally to every spelling of that family. The spelling affects only which values are valid (see the end field below), the partition value literal (see [Partition Value Serialization](#partition-value-serialization)), and that writers preserve it.
+Every year-month spelling belongs to the `interval year to month` logical type, and every day-second spelling to the `interval day to second` logical type; the spelling remains part of each field's declared type. Wherever this document states a rule for a canonical interval type name, the rule applies equally to every spelling of that family. The spelling affects only the partition value literal (see [Partition Value Serialization](#partition-value-serialization)) and that writers preserve it; it does not change the stored value.
 
-Regardless of which spelling is used, the stored value is the same: every year-month spelling stores a signed count of months, and every day-second spelling stores a signed count of microseconds. While the spelling does not change the encoding, it *does* restrict which values are valid, as defined below.
-
-The end field of an interval type is the last unit named in its spelling: `month` for `interval year to month`, or `minute` for `interval hour to minute`. A single-field spelling such as `interval year` or `interval second` has that single field as its end field. Stored values align to the end field as follows:
-
-For the year-month family:
-- end field `year`: a whole multiple of 12 months;
-- end field `month`: any whole number of months.
-
-For the day-second family:
-- end field `day`, `hour` or `minute`: a whole multiple of that unit in microseconds (86,400,000,000; 3,600,000,000; 60,000,000 respectively);
-- end field `second` (including `interval second`): any number of microseconds. Fractional seconds are kept, e.g. 0.123456 seconds is stored as 123456 microseconds.
+Regardless of which spelling is used, the stored value is the same: every year-month spelling stores a signed count of months, and every day-second spelling stores a signed count of microseconds.
 
 Interval types are permitted anywhere a primitive type is permitted: as a top-level column, as a nested struct field, as an array element type, and as a map key or value type.
 
@@ -75,23 +65,16 @@ To support interval types, readers must:
 
 - Interpret every year-month spelling as a signed count of months, and every day-second spelling as a signed count of microseconds.
 - Accept every permitted spelling above.
+- Accept any stored value within the signed `int32` range (year-month) or signed `int64` range (day-second), for every spelling.
 
 ### Writer Requirements
 
 To support interval types, writers must:
 
 - Serialize the type of every interval field in `metaData.schemaString` using the spelling of that field's declared interval type: the canonical name or one of the permitted narrowed spellings, such as `interval year`. Writers must not rewrite a spelling into a different one.
-- Apply the following steps, in order, to every value assigned to an interval field:
-  1. **NULL.** If the value is NULL, steps 2 and 3 do not apply: a NULL is never range-checked or truncated, and it is written as NULL. In a data file it is a Parquet null; as a partition value it is a JSON `null` in `partitionValues`.
-  2. **Range check.** Represent the value as a signed count of the column family's storage unit: months for year-month, microseconds for day-second. If that value is outside the signed `int32` range (year-month) or signed `int64` range (day-second), the writer must reject the write (see [Error Conditions](#error-conditions)). The check applies to this value before any alignment, so a value that would fit only after truncation must still be rejected.
-  3. **Alignment.** If the value from step 2 is not aligned to the declared type's end field (see [Type Definitions](#type-definitions)), the writer must truncate it toward zero to the nearest aligned value. Truncation toward zero never increases the magnitude, so this step cannot overflow.
-  4. **Use of the result.** The value from step 3 is the value that CHECK constraints and column invariants are evaluated against, that generation expressions read from this field, and that is written to data files and partition values.
-
-  Alignment examples:
-  - Inserting `INTERVAL '2-1' YEAR TO MONTH` (25 months) or `INTERVAL '2-11' YEAR TO MONTH` (35 months) into an `interval year` column stores 24 months (`INTERVAL '2' YEAR`).
-  - Inserting `INTERVAL '-2-1' YEAR TO MONTH` (-25 months) or `INTERVAL '-2-11' YEAR TO MONTH` (-35 months) into an `interval year` column stores -24 months (`INTERVAL '-2' YEAR`). Truncation is toward zero, not toward negative infinity.
-  - Inserting `INTERVAL '1 12' DAY TO HOUR` (129,600,000,000 microseconds) into an `interval day` column stores 86,400,000,000 microseconds (`INTERVAL '1' DAY`).
-  - Inserting `INTERVAL '1 02:30:45.5' DAY TO SECOND` (95,445,500,000 microseconds) into an `interval hour to minute` column stores 95,400,000,000 microseconds (`INTERVAL '26:30' HOUR TO MINUTE`). Inserting the same value into an `interval day to second` or `interval second` column stores it unchanged.
+- Write each value assigned to an interval field as its signed count of months (year-month) or microseconds (day-second), as received. Writers are not required to align a value to the declared spelling.
+- Write a NULL as NULL: in a data file it is a Parquet null; as a partition value it is serialized as a null partition value, as for every other type (see [Partition Value Serialization](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#partition-value-serialization)).
+- Reject any value whose count is outside the signed `int32` range (year-month) or signed `int64` range (day-second) (see [Error Conditions](#error-conditions)).
 
 ## Partition Value Serialization
 
@@ -127,13 +110,13 @@ Because interval types are not gated by a table feature, clients that do not rec
 
 ## Schema Evolution and Type Changes
 
-Interval fields do not participate in type changes. Because interval values are materialized as raw `int32`/`int64` counts with no logical-type annotation (see [Parquet Format](#parquet-format)), and because neither interval family has a wider type it could be promoted to, there is no meaningful widening for an interval. A writer must not change an interval field to any other type, and must not change any other type to an interval type. Interval type changes are therefore never permitted, and the [Type Widening](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#type-widening) table feature does not apply to interval fields.
+Interval fields do not participate in type changes. Because interval values are materialized as raw `int32`/`int64` counts with no logical-type annotation (see [Parquet Format](#parquet-format)), and because neither interval family has a wider type it could be promoted to, there is no meaningful widening for an interval. A writer must not change an interval field to any other type, and must not change any other type to an interval type. This includes changing an interval field from one spelling to another, even within the same family (for example, from `interval year` to `interval year to month`, or the reverse): the spelling is part of the field's declared type, so a spelling change is a type change. Interval type changes are therefore never permitted, and the [Type Widening](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#type-widening) table feature does not apply to interval fields.
 
 ## Error Conditions
 
 - **Unrecognized type-name strings.** Type-name matching is case-sensitive. A reader that encounters an interval type-name string that is not one of the recognized canonical or narrowed spellings, including a multi-family spelling such as `interval month to second`, or a case variant such as `INTERVAL Year To Month`, must reject the schema with an error rather than silently coercing it to a supported type.
-- **Value overflow on write.** An `interval year to month` value is stored as a signed `int32` count of months, so it must lie in the inclusive range `INTERVAL '-178956970-8' YEAR TO MONTH` to `INTERVAL '178956970-7' YEAR TO MONTH` (roughly ±179 million years). An `interval day to second` value is stored as a signed `int64` count of microseconds, so it must lie in the inclusive range `INTERVAL '-106751991 04:00:54.775808' DAY TO SECOND` to `INTERVAL '106751991 04:00:54.775807' DAY TO SECOND` (roughly ±106,751,991 days, or about 292 thousand years). A writer must reject any value that falls outside these bounds, wherever the interval field appears in the schema; the check is step 2 of [Writer Requirements](#writer-requirements) and applies before alignment.
-- **Malformed or out-of-range partition values.** When reading, a partition value that is not a valid ANSI interval literal, whose qualifier does not match the column's declared type, or whose decoded value does not fit the column's underlying `int32`/`int64` range, must be rejected with an error.
+- **Value overflow on write.** An `interval year to month` value is stored as a signed `int32` count of months, so it must lie in the inclusive range `INTERVAL '-178956970-8' YEAR TO MONTH` to `INTERVAL '178956970-7' YEAR TO MONTH` (roughly ±179 million years). An `interval day to second` value is stored as a signed `int64` count of microseconds, so it must lie in the inclusive range `INTERVAL '-106751991 04:00:54.775808' DAY TO SECOND` to `INTERVAL '106751991 04:00:54.775807' DAY TO SECOND` (roughly ±106,751,991 days, or about 292 thousand years). A writer must reject any value that falls outside these bounds, wherever the interval field appears in the schema.
+- **Malformed or out-of-range partition values.** When reading, a partition value that is not a valid ANSI interval literal, whose qualifier does not match the column's declared type, or whose decoded value does not fit the column's underlying `int32`/`int64` range, must be rejected with an error. A null partition value, including an empty string, is NULL: it is not an interval literal and is not subject to literal, qualifier or range validation.
 - **IcebergCompat incompatibility.** Apache Iceberg has no interval type. When any of the `icebergCompatV1`, `icebergCompatV2`, or `icebergCompatV3` features is enabled, a writer must reject any schema containing an interval type.
 
 > ***Add new rows to the [Primitive Types](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types) table.***
