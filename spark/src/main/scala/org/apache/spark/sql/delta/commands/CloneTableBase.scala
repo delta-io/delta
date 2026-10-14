@@ -315,6 +315,9 @@ abstract class CloneTableBase(
     val filteredConfiguration = clonedMetadata.configuration
       // Coordinated Commit configurations are never copied over to the target table.
       .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_))
+      // ICT enablement provenance info refers to the source's log. The commit re-derives it for
+      // the target (see InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo).
+      .filterKeys(!InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS.contains(_))
       // Catalog-Owned enabled table's UC table ID property is never copied over to the
       // target table.
       .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
