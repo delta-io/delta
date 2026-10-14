@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, D
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
-import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import org.apache.commons.io.FileUtils
@@ -37,14 +37,13 @@ import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.{DataFrame, QueryTest, RuntimeConfig, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit}
-import org.apache.spark.sql.test.SharedSparkSession
 
-trait MergePersistentDVDisabled extends SharedSparkSession {
+trait MergePersistentDVDisabled extends DeltaSQLCommandTest {
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
 }
 
-trait PersistentDVDisabled extends SharedSparkSession {
+trait PersistentDVDisabled extends DeltaSQLCommandTest {
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
 }
@@ -56,14 +55,14 @@ trait PersistentDVEnabled extends DeletionVectorsTestUtils {
   }
 }
 
-trait PredicatePushdownDisabled extends SharedSparkSession {
+trait PredicatePushdownDisabled extends DeltaSQLCommandTest {
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 }
 
-trait PredicatePushdownEnabled extends SharedSparkSession {
+trait PredicatePushdownEnabled extends DeltaSQLCommandTest {
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
@@ -71,7 +70,7 @@ trait PredicatePushdownEnabled extends SharedSparkSession {
 }
 
 /** Collection of test utilities related with persistent Deletion Vectors. */
-trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with DeltaSQLTestUtils {
+trait DeletionVectorsTestUtils extends QueryTest with DeltaSQLCommandTest with DeltaSQLTestUtils {
 
   def enableDeletionVectors(
       spark: SparkSession,
@@ -131,7 +130,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
   /** Run a thunk with Deletion Vectors enabled/disabled. */
   def withDeletionVectorsEnabled(enabled: Boolean = true)(thunk: => Unit): Unit = {
     val enabledStr = enabled.toString
-    withSQLConf(
+    withConf(
       DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> enabledStr,
       DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> enabledStr,
       DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> enabledStr,
@@ -160,7 +159,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
     def createTable(tableNameOpt: Option[String], tablePathOpt: Option[Path]): Unit = {
       assert((tableNameOpt.isDefined && tablePathOpt.isEmpty) ||
         (tableNameOpt.isEmpty && tablePathOpt.isDefined))
-      withSQLConf(conf: _*) {
+      withConf(conf: _*) {
         val df = dataDF.write
           .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, enableDVs.toString)
           .partitionBy(partitionBy: _*)
@@ -406,7 +405,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
     var numFiles: Option[Int] = None
     // This is needed to make the manual commit work correctly, since we are not actually
     // running a command that produces metrics.
-    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false") {
+    withConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false") {
       val txn = log.startTransaction()
       val allAddFiles = txn.snapshot.allFiles.collect()
       numFiles = Some(allAddFiles.length)
