@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{DeleteBaseMixin, DeltaConfigs}
+import org.apache.spark.sql.delta.DeleteBaseMixin
 import org.apache.spark.sql.delta.rowid.RowTrackingDeleteTestDimension
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -35,21 +35,6 @@ import org.apache.spark.SparkConf
  */
 trait DeleteAMTTestBase extends AMTDMLTestUtils {
 
-  // Some DELETE suites default new tables to `delta.enableDeletionVectors = false`, which AMT
-  // rejects at CREATE since it requires deletion vectors. Unset it instead of setting it to true:
-  // AMT then enables deletion vectors on the table itself, while the tests, which read this default
-  // to predict whether DELETE writes deletion vectors, keep seeing it off. Keep DELETE from writing
-  // them to match, so it still rewrites files as those tests assert (e.g. the row tracking suites
-  // without deletion vectors).
-  override protected def sparkConf: SparkConf = {
-    val conf = super.sparkConf
-    val dvsInNewTablesKey = DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey
-    if (conf.getOption(dvsInNewTablesKey).contains("false")) {
-      conf.set(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
-    }
-    conf.remove(dvsInNewTablesKey)
-  }
-
   // Override as public to pass compilation
   override def beforeAll(): Unit = super.beforeAll()
 }
@@ -64,7 +49,7 @@ trait DeleteAMTMixin extends DeleteBaseMixin with DeleteAMTTestBase {
 
   // The base DELETE suites assert rewrite semantics (copied rows, commit tags, file counts), so
   // keep DELETE from writing deletion vectors on the DV-enabled AMT tables. Unlike
-  // DeleteAMTTestBase, do this whatever the suite's default, since not every build of the base
+  // AMTDMLTestUtils, do this whatever the suite's default, since not every build of the base
   // suites sets one. Suites that mix in DeleteDvMixin turn them back on at runtime.
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
@@ -85,11 +70,7 @@ trait DeleteAMTMixin extends DeleteBaseMixin with DeleteAMTTestBase {
     "SortMergeJoin does not preserve order without AQE",
     "partition pruning",
     "Deletion vectors are cleaned up with subquery.",
-    "delete logs error if number of records are missing in stats",
-    // In some builds these tests check the first scan the DELETE's plans capture, which is the
-    // AMT checkpoint's read of the tree.
-    "schema pruning on data condition",
-    "nested schema pruning on data condition"
+    "delete logs error if number of records are missing in stats"
   )
 
   abstract override protected def executeDelete(target: String, where: String): Unit = {
