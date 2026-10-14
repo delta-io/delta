@@ -744,7 +744,7 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
 }
 
 trait DeltaTestUtilsForTempViews
-  extends SharedSparkSession
+  extends DeltaSQLCommandTest
   with DeltaTestUtilsBase {
 
   def testWithTempView(testName: String)(testFun: Boolean => Any): Unit = {
