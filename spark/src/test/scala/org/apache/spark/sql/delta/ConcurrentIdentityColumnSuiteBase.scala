@@ -146,7 +146,9 @@ trait ConcurrentIdentityColumnSuiteBase extends QueryTest
 
   protected def createTargetTableStatement(
       columns: Seq[String],
-      catalogManaged: Boolean = true): String = {
+      catalogManaged: Boolean = true,
+      tableClauses: Seq[String] = Nil,
+      additionalTableProperties: Seq[String] = Nil): String = {
     def feature(f: TableFeature, value: String): String =
       s"${TableFeatureProtocolUtils.propertyKey(f)} = '$value'"
     val properties =
@@ -154,12 +156,14 @@ trait ConcurrentIdentityColumnSuiteBase extends QueryTest
         Seq(
           feature(ConcurrentIdentityColumnsTableFeature, "enabled"),
           feature(DomainMetadataTableFeature, "enabled"),
-          feature(IdentityColumnsTableFeature, "enabled"))
+          feature(IdentityColumnsTableFeature, "enabled")) ++
+        additionalTableProperties
     s"""
        |CREATE TABLE target (
        |${columns.mkString(", ")})
        |USING DELTA
        |LOCATION '$tempPath'
+       |${tableClauses.mkString("\n")}
        |tblproperties(${properties.mkString(", ")})
        |""".stripMargin
   }
