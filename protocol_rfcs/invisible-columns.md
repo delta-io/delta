@@ -243,6 +243,9 @@ no additional metadata-cleanup or data-file-retention requirements.
 - **Partitioning.** An invisible column MUST NOT be a partition column.
 - **Clustering.** An invisible column MAY be a clustering column, subject to the same
   [Clustered Table](#clustered-table) requirements as a visible column.
+- **Statistics.** Invisible columns MAY be explicitly selected for statistics collection under the
+  same eligibility rules as visible columns. Writers MUST resolve named statistics-column selections
+  against the complete data schema.
 - **Identity columns.** An invisible column MUST NOT be an identity column.
 - **Generated columns and column defaults.** An invisible column MUST NOT be a generated column,
   and MUST NOT carry a column default.
