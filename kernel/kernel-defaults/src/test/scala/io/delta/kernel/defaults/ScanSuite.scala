@@ -2084,7 +2084,88 @@ class ScanSuite extends AnyFunSuite with TestUtils
               new Predicate(
                 ">",
                 ofString("y"),
-                col("c2"))) -> 0)
+                col("c2"))) -> 0,
+            // Data skipping: STARTS_WITH on non-partition column c1
+            // Files have c1 values: "a", "c", "e" (one per file)
+            new Predicate(
+              "STARTS_WITH",
+              col("c1"),
+              ofString("f")) -> 0,
+            new Predicate(
+              "STARTS_WITH",
+              col("c1"),
+              ofString("c")) -> 2,
+            new Predicate(
+              "STARTS_WITH",
+              col("c1"),
+              ofString("a")) -> totalFiles,
+            // STARTS_WITH with literal carrying c2's collation
+            new Predicate(
+              "STARTS_WITH",
+              col("c1"),
+              ofString("f", c2Collation)) -> 0,
+            new Predicate(
+              "STARTS_WITH",
+              col("c1"),
+              ofString("c", c2Collation)) -> 2,
+            // STARTS_WITH with explicit SPARK.UTF8_BINARY collation
+            new Predicate(
+              "STARTS_WITH",
+              col("c1"),
+              ofString("f"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+            new Predicate(
+              "STARTS_WITH",
+              col("c1"),
+              ofString("c"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 2,
+            new Predicate(
+              "STARTS_WITH",
+              col("c1"),
+              ofString("c", c2Collation),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 2,
+            // NOT STARTS_WITH
+            new Predicate(
+              "NOT",
+              new Predicate(
+                "STARTS_WITH",
+                col("c1"),
+                ofString("c"))) -> 2,
+            new Predicate(
+              "NOT",
+              new Predicate(
+                "STARTS_WITH",
+                col("c1"),
+                ofString("z"))) -> totalFiles,
+            // NOT STARTS_WITH with literal carrying c2's collation
+            new Predicate(
+              "NOT",
+              new Predicate(
+                "STARTS_WITH",
+                col("c1"),
+                ofString("c", c2Collation))) -> 2,
+            // NOT STARTS_WITH with explicit SPARK.UTF8_BINARY collation
+            new Predicate(
+              "NOT",
+              new Predicate(
+                "STARTS_WITH",
+                col("c1"),
+                ofString("c"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+            new Predicate(
+              "NOT",
+              new Predicate(
+                "STARTS_WITH",
+                col("c1"),
+                ofString("z"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> totalFiles,
+            new Predicate(
+              "NOT",
+              new Predicate(
+                "STARTS_WITH",
+                col("c1"),
+                ofString("c", c2Collation),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 2)
           checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
         }
       }
