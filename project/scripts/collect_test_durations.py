@@ -52,18 +52,22 @@ def run_gh(args):
 
 
 def get_run_ids(last_n):
-    """Find the latest N successful workflow run IDs on master."""
+    """Find the latest N completed workflow run IDs on master.
+
+    Runs are not filtered by overall conclusion: a run can be marked failed even when every test
+    shard passed (e.g. a non-test job failed). Failed shards are skipped in collect_from_run.
+    """
     runs_json = run_gh([
         "run", "list", "--repo", REPO,
         "--branch", "master",
         "--workflow", "spark_test.yaml",
-        "--status", "success",
+        "--status", "completed",
         "--limit", str(last_n),
         "--json", "databaseId,headSha,createdAt"
     ])
     runs = json.loads(runs_json)
     if not runs:
-        print("No successful runs found on master", file=sys.stderr)
+        print("No completed runs found on master", file=sys.stderr)
         sys.exit(1)
 
     for run in runs:
@@ -95,6 +99,24 @@ def list_artifacts(run_id):
 
     artifacts.sort(key=lambda a: (a["spark_version"], a["shard"]))
     return artifacts
+
+
+def list_successful_shards(run_id):
+    """Return the set of (spark_version, shard) test jobs that succeeded in a workflow run."""
+    jobs_json = run_gh([
+        "api", f"repos/{REPO}/actions/runs/{run_id}/jobs?per_page=100",
+        "--paginate", "--jq", ".jobs[]"
+    ])
+
+    shards = set()
+    for line in jobs_json.strip().split('\n'):
+        if not line.strip():
+            continue
+        job = json.loads(line)
+        match = re.search(r"Spark ([\d.]+),.*Shard (\d+)", job["name"])
+        if match and job["conclusion"] == "success":
+            shards.add((match.group(1), int(match.group(2))))
+    return shards
 
 
 def download_and_extract(artifact_id, dest_dir):
@@ -148,8 +170,13 @@ def collect_from_run(run_id, tmpdir):
         print(f"  No artifacts in run {run_id}", file=sys.stderr)
         return {}
 
+    successful_shards = list_successful_shards(run_id)
     run_durations = {}
     for art in artifacts:
+        if (art["spark_version"], art["shard"]) not in successful_shards:
+            print(f"    Spark {art['spark_version']}, Shard {art['shard']}: job did not succeed, "
+                  "skipping")
+            continue
         print(f"    Spark {art['spark_version']}, Shard {art['shard']}...")
         artifact_dir = download_and_extract(art["id"], tmpdir)
         for name, dur in parse_junit_xmls(artifact_dir).items():
@@ -173,7 +200,7 @@ def main():
     args = parser.parse_args()
 
     # Fetch run IDs
-    print("Finding recent successful runs on master...")
+    print("Finding recent completed runs on master...")
     run_ids = get_run_ids(args.last_n_runs)
 
     deadline = time.monotonic() + args.max_minutes * 60 if args.max_minutes > 0 else None
@@ -194,7 +221,9 @@ def main():
         name: round(sum(durs) / len(durs), 2)
         for name, durs in all_durations.items()
     }
-    sorted_suites = sorted(averaged.items(), key=lambda x: -x[1])[:args.top_n]
+    all_sorted_suites = sorted(averaged.items(), key=lambda x: -x[1])
+    sorted_suites = all_sorted_suites[:args.top_n]
+    remaining_suites = all_sorted_suites[args.top_n:]
 
     if not sorted_suites:
         print("\nNo test-report artifacts found. Has the JUnit XML upload been enabled on master?")
@@ -211,6 +240,11 @@ def main():
     print(f"Total duration: {sum(d for _, d in sorted_suites):.1f} min")
     print(f"Slowest: {sorted_suites[0][0]} ({sorted_suites[0][1]} min)")
     print(f"Fastest included: {sorted_suites[-1][0]} ({sorted_suites[-1][1]} min)")
+    if remaining_suites:
+        avg_remaining = sum(d for _, d in remaining_suites) / len(remaining_suites)
+        print(f"Average duration of the {len(remaining_suites)} remaining suites: "
+              f"{avg_remaining:.2f} min (update AVG_TEST_SUITE_DURATION_EXCLUDING_TOP_N in "
+              "project/TestParallelization.scala)")
 
 
 if __name__ == "__main__":
