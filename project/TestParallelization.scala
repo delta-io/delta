@@ -206,7 +206,7 @@ object TestParallelization {
 
     val NUM_SHARDS = numShardsOpt.getOrElse(1)
 
-    val AVG_TEST_SUITE_DURATION_EXCLUDING_TOP_N = 1.62
+    val AVG_TEST_SUITE_DURATION_EXCLUDING_TOP_N = 0.83
 
     /**
      * High-duration test suites loaded from project/test-durations.csv.
