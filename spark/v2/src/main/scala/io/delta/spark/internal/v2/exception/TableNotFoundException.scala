@@ -13,19 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.internal.v2.exception;
+
+package io.delta.spark.internal.v2.exception
 
 /** Exception thrown when no Delta table exists at the requested path. */
-public class TableNotFoundException extends RuntimeException {
+class TableNotFoundException(path: String)
+    extends RuntimeException(String.format("Delta table does not exist at path: %s.", path)) {
 
-  private final String tablePath;
+  // Preserve Java initialization order: getTablePath returns null during super construction.
+  private[this] val tablePath: String = path
 
-  public TableNotFoundException(String tablePath) {
-    super(String.format("Delta table does not exist at path: %s.", tablePath));
-    this.tablePath = tablePath;
-  }
-
-  public String getTablePath() {
-    return tablePath;
-  }
+  def getTablePath: String = tablePath
 }
