@@ -34,6 +34,31 @@ import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructT
  */
 class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
 
+  test("CommitInfo accepts non-string operation metrics from other writers") {
+    val json =
+      """{"commitInfo":{"timestamp":123,"operation":"OPTIMIZE","operationMetrics":{""" +
+        """"numFilesAdded":4,"preserveInsertionOrder":true,"filesAdded":{"avg":5.5,"max":10},""" +
+        """"fileSizes":[1,2],"source":"delta-rs","unknown":null}}}"""
+
+    val parsed = Action.fromJson(json).asInstanceOf[CommitInfo]
+    val metrics = parsed.operationMetrics.get
+    assert(metrics("numFilesAdded") == "4")
+    assert(metrics("preserveInsertionOrder") == "true")
+    assert(metrics("source") == "delta-rs")
+    assert(metrics("unknown") == "null")
+    assert(JsonUtils.mapper.readTree(metrics("filesAdded")) ==
+      JsonUtils.mapper.readTree("""{"avg":5.5,"max":10}"""))
+    assert(metrics("fileSizes") == "[1,2]")
+
+    val sparkMetrics = createEmptyCommitInfo().copy(
+      operationMetrics = Some(Map("numFilesAdded" -> "4", "source" -> "delta-rs")))
+    val roundTripped = Action.fromJson(sparkMetrics.json).asInstanceOf[CommitInfo]
+    assert(roundTripped.operationMetrics == sparkMetrics.operationMetrics)
+    assert(Action.fromJson(createEmptyCommitInfo().json)
+      .asInstanceOf[CommitInfo].operationMetrics.isEmpty)
+  }
+
+
   def testOperationSerialization(operation: DeltaOperations.Operation): Unit = {
     val commitInfo = CommitInfo(
       time = 123L,

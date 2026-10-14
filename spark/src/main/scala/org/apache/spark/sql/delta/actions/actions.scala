@@ -1557,6 +1557,7 @@ case class CommitInfo(
     isolationLevel: Option[String],
     isBlindAppend: Option[Boolean],
     dataChange: Option[Boolean],
+    @JsonDeserialize(using = classOf[JsonMetricsDeserializer])
     operationMetrics: Option[Map[String, String]],
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
@@ -2255,6 +2256,19 @@ class JsonMapSerializer extends JsonSerializer[Map[String, String]] {
       }
     }
     jgen.writeEndObject()
+  }
+}
+
+/** Allows commit metrics from other Delta writers to contain JSON values. */
+class JsonMetricsDeserializer extends JsonDeserializer[Option[Map[String, String]]] {
+  override def deserialize(
+      jp: JsonParser,
+      ctxt: DeserializationContext): Option[Map[String, String]] = {
+    val metrics = ctxt.readValue(jp, classOf[Map[String, Any]])
+    Option(metrics).map(_.map {
+      case (key, value: String) => key -> value
+      case (key, value) => key -> JsonUtils.toJson(value)
+    })
   }
 }
 
