@@ -108,6 +108,14 @@ Because no Parquet logical type is written, an interval field is physically indi
 
 Because interval types are not gated by a table feature, clients that do not recognize them may fail or otherwise behave unexpectedly when reading a table with intervals in its `metaData.schemaString`.
 
+## Adaptive Metadata
+
+When the `adaptiveMetadata` table feature [3] is enabled, interval fields appear in the manifests of the metadata tree as follows:
+
+- **Partition values.** The field of an interval partition column in the `partition` struct (field ID 102) is typed as a signed `int32` count of months (year-month) or a signed `int64` count of microseconds (day-second), as in [Parquet Format](#parquet-format). Writers obtain it by parsing the file's partition value as described in [Partition Value Serialization](#partition-value-serialization), and write a null partition value as null. Writers must include this field for every interval partition column; a null field means a null partition value. When converting a manifest entry back into Delta actions, readers serialize a non-null field as the ANSI literal of the column's declared interval type.
+- **Partition pruning.** Readers must not eliminate files or manifests based on an interval field of the `partition` struct.
+- **Content stats.** Writers must not record `lower_bound` or `upper_bound` for an interval field in `content_stats` (field ID 146), either on content entries or in the manifest-level stats of root `DATA_MANIFEST` entries, and readers must not perform data skipping over interval fields. Other statistics follow the existing conversion and aggregation rules unchanged: `numRecords` maps to `record_count` and `nullCount` to `null_value_count`, as for any other column.
+
 ## Schema Evolution and Type Changes
 
 Interval fields do not participate in type changes. Because interval values are materialized as raw `int32`/`int64` counts with no logical-type annotation (see [Parquet Format](#parquet-format)), and because neither interval family has a wider type it could be promoted to, there is no meaningful widening for an interval. A writer must not change an interval field to any other type, and must not change any other type to an interval type. This includes changing an interval field from one spelling to another, even within the same family (for example, from `interval year` to `interval year to month`, or the reverse): the spelling is part of the field's declared type, so a spelling change is a type change. Interval type changes are therefore never permitted, and the [Type Widening](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#type-widening) table feature does not apply to interval fields.
@@ -150,3 +158,5 @@ Note that interval fields, at any nesting depth, are stored using a raw Parquet 
 [1] https://spark.apache.org/docs/latest/sql-ref-literals.html#interval-literal
 
 [2] https://github.com/delta-io/delta/issues/7077
+
+[3] https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md
