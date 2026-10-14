@@ -22,13 +22,16 @@ import java.util.Locale
 import scala.collection.JavaConverters._
 import scala.collection.immutable.NumericRange
 
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.catalyst.util.ResolveDefaultColumnsUtils.CURRENT_DEFAULT_COLUMN_METADATA_KEY
+import org.apache.spark.sql.functions.{lit, min}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{MetadataBuilder, StructType}
 
@@ -393,6 +396,88 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
     }
   }
 
+  test("CREATE TABLE LIKE a CIC table stamps a fresh sequence id instead of reusing the source's") {
+    withTempDir { likeDir =>
+      withTable("target", "like_target") {
+        withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
+          spark.sql(createTargetTableStatement(Seq(
+            "ids BIGINT GENERATED ALWAYS AS IDENTITY",
+            "values INT")))
+          spark.sql(s"INSERT INTO delta.`$tempPath` (values) VALUES (10), (20)")
+          val sourceSeqId = ConcurrentIdentityColumnSchema
+            .getSequenceId(deltaLog.update().metadata.schema("ids")).get
+          val createsBeforeLike = localService.createSequenceCount
+
+          // The service keys a sequence by (metastore, sequenceId), so registering the copied
+          // source id for the new table would fail; LIKE must mint its own sequence.
+          // CIC requires a catalog-managed target, and LIKE does not inherit CatalogOwned from the
+          // source, so declare it explicitly. The catalog-owned-by-default test mode is off in
+          // compatible mode, so relying on it would leave the target non-catalog-managed there.
+          spark.sql(
+            s"""
+               |CREATE TABLE like_target LIKE target
+               |LOCATION '${likeDir.getCanonicalPath}'
+               |TBLPROPERTIES (
+               |${TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature)} = 'supported',
+               |${TableFeatureProtocolUtils.propertyKey(ConcurrentIdentityColumnsTableFeature)} =
+               |  'supported')
+               |""".stripMargin)
+          val likeLog = DeltaLog.forTable(spark, likeDir.getCanonicalPath)
+          assert(
+            likeLog.update().protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature))
+          val likeSeqId = ConcurrentIdentityColumnSchema
+            .getSequenceId(likeLog.update().metadata.schema("ids"))
+          assert(likeSeqId.isDefined, "CREATE TABLE LIKE must stamp the identity column.")
+          assert(likeSeqId.get != sourceSeqId,
+            s"CREATE TABLE LIKE must not reuse the source sequence id $sourceSeqId.")
+          assert(localService.createSequenceCount === createsBeforeLike + 1L,
+            "CREATE TABLE LIKE must register exactly one new sequence.")
+
+          // The copy starts its own counter at `start`, and the source's counter keeps advancing
+          // past its existing values.
+          spark.sql("INSERT INTO like_target (values) VALUES (30), (40)")
+          assertCorrectIdentityColumn(
+            spark.table("like_target").select("ids"), expectedSize = 2, expectedMin = 1)
+          assert(spark.table("like_target").agg(min("ids")).head().getLong(0) === 1L,
+            "CREATE TABLE LIKE must start a fresh counter at the declared start.")
+          spark.sql(s"INSERT INTO delta.`$tempPath` (values) VALUES (50)")
+          assertCorrectIdentityColumn(readDeltaTable(tempPath).select("ids"), expectedSize = 3)
+        }
+      }
+    }
+  }
+
+  test("CREATE TABLE LIKE a CIC table does not carry over the CIC feature by default") {
+    // Like catalogManaged, the CIC feature is only enabled on a LIKE target that declares it in
+    // TBLPROPERTIES; otherwise the copied identity column falls back to the stock identity path.
+    withTempDir { likeDir =>
+      withTable("target", "like_target") {
+        withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
+          spark.sql(createTargetTableStatement(Seq(
+            "ids BIGINT GENERATED ALWAYS AS IDENTITY",
+            "values INT")))
+          spark.sql(s"INSERT INTO delta.`$tempPath` (values) VALUES (10), (20)")
+          val createsBeforeLike = localService.createSequenceCount
+
+          spark.sql(
+            s"CREATE TABLE like_target LIKE target LOCATION '${likeDir.getCanonicalPath}'")
+          val likeSnapshot = DeltaLog.forTable(spark, likeDir.getCanonicalPath).update()
+          assert(!likeSnapshot.protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature),
+            "CREATE TABLE LIKE must not inherit the CIC feature from the source.")
+          assert(ConcurrentIdentityColumnSchema
+            .getSequenceId(likeSnapshot.metadata.schema("ids")).isEmpty,
+            "CREATE TABLE LIKE without the CIC feature must not stamp a sequence id.")
+          assert(localService.createSequenceCount === createsBeforeLike,
+            "CREATE TABLE LIKE without the CIC feature must not register a sequence.")
+
+          spark.sql("INSERT INTO like_target (values) VALUES (30), (40)")
+          assertCorrectIdentityColumn(
+            spark.table("like_target").select("ids"), expectedSize = 2)
+        }
+      }
+    }
+  }
+
   test("CREATE OR REPLACE that retains the CIC feature but omits it from TBLPROPERTIES " +
       "re-stamps the identity column") {
     // A REPLACE cannot drop a table feature, so a table that supports
@@ -524,6 +609,137 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
         spark.sql(s"INSERT INTO delta.`$tempPath` (ids, values) VALUES (5, 10)")
         checkAnswer(readDeltaTable(tempPath).select("ids", "values"), Row(5L, 10))
       }
+    }
+  }
+
+  test("CIC coexists with generated columns and column defaults") {
+    withTable("target") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
+        spark.sql(createTargetTableStatement(
+          columns = Seq(
+            "ids BIGINT GENERATED ALWAYS AS IDENTITY",
+            "base INT",
+            "generated_value BIGINT GENERATED ALWAYS AS (ids * 2)",
+            "default_value INT DEFAULT 7"),
+          additionalTableProperties = Seq(
+            s"${TableFeatureProtocolUtils.propertyKey(AllowColumnDefaultsTableFeature)} " +
+              "= 'supported'")))
+
+        spark.sql(s"INSERT INTO delta.`$tempPath` (base) VALUES (3), (5)")
+
+        val rows = readDeltaTable(tempPath)
+          .select("ids", "base", "generated_value", "default_value")
+          .collect().toSeq
+        assert(rows.map(_.getLong(0)).distinct.size === 2)
+        assert(rows.map(_.getInt(1)).toSet === Set(3, 5))
+        rows.foreach { row =>
+          assert(row.getLong(2) === row.getLong(0) * 2)
+          assert(row.getInt(3) === 7)
+        }
+      }
+    }
+  }
+
+  test("CIC identity column can be a liquid clustering column") {
+    withTable("target") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
+        spark.sql(createTargetTableStatement(
+          columns = Seq(
+            "ids BIGINT GENERATED ALWAYS AS IDENTITY",
+            "value INT"),
+          tableClauses = Seq("CLUSTER BY (ids)")))
+
+        spark.sql(s"INSERT INTO delta.`$tempPath` (value) VALUES (10), (20), (30)")
+        assert(ClusteringColumnInfo.extractLogicalNames(deltaLog.update()) === Seq("ids"))
+        val rowsBeforeOptimize = readDeltaTable(tempPath).select("ids", "value").collect().toSeq
+        assert(rowsBeforeOptimize.map(_.getLong(0)).distinct.size === 3)
+        assert(rowsBeforeOptimize.map(_.getInt(1)).toSet === Set(10, 20, 30))
+        val optimizeMetrics = withSQLConf(
+          DeltaSQLConf.DELTA_LIQUID_LAZY_CLUSTERING_NODE_SIZE_THRESHOLD.key -> "0",
+          DeltaSQLConf.DELTA_LIQUID_LAZY_CLUSTERING_MAX_ITERATIONS.key -> "1",
+          DeltaSQLConf.DELTA_LIQUID_LAZY_CLUSTERING_FORCE_OPTIMIZE.key -> "true") {
+          spark.sql(s"OPTIMIZE delta.`$tempPath`")
+            .select("metrics.*").as[OptimizeMetrics].collect()
+        }
+        assert(optimizeMetrics.exists(_.numFilesAdded > 0))
+        val clusteredFiles = deltaLog.update().allFiles.collect()
+        assert(clusteredFiles.nonEmpty)
+        assert(clusteredFiles.forall(ClusteredTableUtils.isClusteredFile))
+        assert(ClusteringColumnInfo.extractLogicalNames(deltaLog.update()) === Seq("ids"))
+        checkAnswer(
+          readDeltaTable(tempPath).select("ids", "value"),
+          rowsBeforeOptimize)
+      }
+    }
+  }
+
+  test("CIC identity column cannot be a partition column") {
+    withTable("target") {
+      val createsBefore = localService.createSequenceCount
+      withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
+        val ex = intercept[DeltaAnalysisException] {
+          spark.sql(createTargetTableStatement(
+            columns = Seq(
+              "ids BIGINT GENERATED ALWAYS AS IDENTITY",
+              "value INT"),
+            tableClauses = Seq("PARTITIONED BY (ids)")))
+        }
+        checkError(
+          ex,
+          condition = "DELTA_IDENTITY_COLUMNS_PARTITION_NOT_SUPPORTED",
+          sqlState = "42601",
+          parameters = Map("colName" -> "ids"))
+      }
+      assert(localService.createSequenceCount === createsBefore,
+        "Rejected table creation must not create a service sequence.")
+    }
+  }
+
+  test("CIC identity column can be a non-partition column of a partitioned table") {
+    withTable("target") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
+        spark.sql(createTargetTableStatement(
+          columns = Seq(
+            "ids BIGINT GENERATED ALWAYS AS IDENTITY",
+            "value INT"),
+          tableClauses = Seq("PARTITIONED BY (value)")))
+
+        spark.sql(s"INSERT INTO delta.`$tempPath` (value) VALUES (10), (20)")
+
+        assert(deltaLog.update().metadata.partitionColumns === Seq("value"))
+        val filePartitions = deltaLog.update().allFiles.collect().map(_.partitionValues).toSet
+        assert(filePartitions === Set(Map("value" -> "10"), Map("value" -> "20")))
+        val rows = readDeltaTable(tempPath).select("ids", "value").collect().toSeq
+        assert(rows.map(_.getLong(0)).distinct.size === 2)
+        assert(rows.map(_.getInt(1)).toSet === Set(10, 20))
+      }
+    }
+  }
+
+  test("CIC identity column can also declare a column default") {
+    // CREATE accepts this combination even though ALTER COLUMN SET DEFAULT rejects it.
+    // Omitting the column must still allocate IDs rather than insert the column default.
+    withTable("target") {
+      val createsBefore = localService.createSequenceCount
+      withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
+        spark.sql(createTargetTableStatement(
+          columns = Seq(
+            "ids BIGINT GENERATED ALWAYS AS IDENTITY DEFAULT -1",
+            "value INT"),
+          additionalTableProperties = Seq(
+            s"${TableFeatureProtocolUtils.propertyKey(AllowColumnDefaultsTableFeature)} " +
+              "= 'supported'")))
+
+        val idField = deltaLog.update().metadata.schema("ids")
+        assert(ColumnWithDefaultExprUtils.isIdentityColumn(idField))
+        assert(idField.metadata.getString(CURRENT_DEFAULT_COLUMN_METADATA_KEY) === "-1")
+        spark.sql(s"INSERT INTO delta.`$tempPath` (value) VALUES (10), (20)")
+        val ids = readDeltaTable(tempPath).select("ids").collect().map(_.getLong(0))
+        assert(ids.length === 2)
+        assert(ids.distinct.length === 2)
+        assert(ids.forall(_ > 0))
+      }
+      assert(localService.createSequenceCount === createsBefore + 1)
     }
   }
 
