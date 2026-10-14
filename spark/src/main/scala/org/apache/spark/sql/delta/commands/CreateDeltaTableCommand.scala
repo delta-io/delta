@@ -36,6 +36,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+import org.apache.spark.sql.delta.cic.IdentitySequenceServices
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -269,6 +270,28 @@ case class CreateDeltaTableCommand(
       didNotChangeMetadata,
       createTableFunc)
 
+    // Register each sequenceId with the service. Runs AFTER updateCatalog (the UC-backed service
+    // authorizes against the catalog entry) and skips CLONE (which would copy the source's
+    // sequenceId). createSequence is idempotent, so a commit retry is safe.
+    val isCloneCommand = query.exists(_.isInstanceOf[CloneTableCommand])
+    if (!isCloneCommand &&
+        ConcurrentIdentityColumnSchema.hasConcurrentSequenceMetadata(
+          postCommitSnapshot.metadata.schema)) {
+      ConcurrentIdentityColumnCreateTableHook.createSequencesForCommittedSchema(
+        postCommitSnapshot, IdentitySequenceServices.resolve(sparkSession))
+    }
+    // REPLACE re-mints sequence ids (the old stamps were stripped and re-stamped pre-commit), so
+    // retire the replaced table's now-unreferenced sequences. Post-commit and best-effort so a
+    // failed drop only leaves a harmless orphaned sequence.
+    if (!isCloneCommand && isReplace &&
+        ConcurrentIdentityColumnSchema.hasConcurrentSequenceMetadata(
+          txnUsedForCommit.snapshot.metadata.schema)) {
+      ConcurrentIdentityColumnCreateTableHook.dropReplacedSequences(
+        txnUsedForCommit.snapshot,
+        postCommitSnapshot,
+        IdentitySequenceServices.resolve(sparkSession))
+    }
+
     runPostTableCreationUpdates(
       sparkSession, txnUsedForCommit, deltaLog, postCommitSnapshot, tableWithLocation)
   }
@@ -449,6 +472,13 @@ case class CreateDeltaTableCommand(
             txn.snapshot
           ))
 
+        // Stamp the CIC sequence id into the schema pre-commit. The matching service-side
+        // createSequence call happens post-commit in runPostTableCreationUpdates, once the table
+        // is committed and its service tableId resolves -- the UC table id for a catalog-owned
+        // table; the Delta metadata.id only as a TEST-ONLY fallback (see
+        // ConcurrentIdentityColumnSchema.sequenceServiceTableId).
+        newMetadata = ConcurrentIdentityColumnCreateTableHook.maybeStampSequenceMetadata(
+          sparkSession, newMetadata)
         txn.updateMetadataForNewTable(newMetadata)
         // Remove 'EXISTS_DEFAULT' because it is not required for tables created with CREATE TABLE.
         txn.removeExistsDefaultFromSchema()
@@ -523,6 +553,10 @@ case class CreateDeltaTableCommand(
         actionsToCommit
     }
 
+    // CIC requires a catalog-managed table. We enforce it here, after changes to the active
+    // features are finished (e.g. REPLACE ignoring the session default on coordinated-commits).
+    ConcurrentIdentityColumnCreateTableHook.assertCatalogManagedIfCic(
+      txn.protocol, ConcurrentIdentityColumnSchema.sequenceServiceTableId(txn.metadata))
     // Validate check constraints for CREATE/REPLACE TABLE
     val checkConstraints = Constraints.getAll(txn.metadata, sparkSession)
     Constraints.validateCheckConstraints(
@@ -834,6 +868,25 @@ case class CreateDeltaTableCommand(
         // Preserve the existing Delta metadata id across REPLACE. This is distinct from the
         // Unity Catalog table id stored in `io.unitycatalog.tableId`.
         newMetadata = newMetadata.copy(id = txn.snapshot.metadata.id)
+      }
+      // Prevent leaking a concurrent sequence from an old schema on REPLACE:
+      // strip stale stamping, then re-stamp under the fresh UC table id. The
+      // matching service-side createSequence for the freshly stamped id runs
+      // post-commit in runPostCommitUpdates.
+      // A REPLACE that omits the CIC feature normally cannot drop it, so re-add it to the new
+      // metadata and let the stamping below re-stamp. The exception is
+      // REPLACE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED. Here the carryOverCicFeatureOnReplace
+      // refuses that case (DROP FEATURE is the only supported way to remove CIC) and an error is
+      // thrown.
+      newMetadata = ConcurrentIdentityColumnCreateTableHook.carryOverCicFeatureOnReplace(
+        txn.snapshot,
+        newMetadata,
+        sparkSession.conf.get(DeltaSQLConf.REPLACE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED))
+      if (ConcurrentIdentityColumnCreateTableHook.shouldStamp(sparkSession, newMetadata)) {
+        newMetadata =
+          ConcurrentIdentityColumnSchema.stripConcurrentSequenceMetadata(newMetadata)
+        newMetadata = ConcurrentIdentityColumnCreateTableHook.maybeStampSequenceMetadata(
+          sparkSession, newMetadata)
       }
 
       // Carry over table and column comments from the old table when the new DDL
