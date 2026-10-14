@@ -127,6 +127,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_STATS_WIDEN_BOUNDS_PRESERVE_NUMERIC_PRECISION_ENABLED =
+    buildConf("stats.widenBounds.preserveNumericPrecision.enabled")
+      .internal()
+      .doc(
+        """When enabled, AddFile.withoutTightBoundStats preserves numeric precision when
+          |updating file statistics to set tightBounds to false. When disabled, the legacy
+          |JSON update can round decimal bounds through Double and cause incorrect data
+          |skipping.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")
       .doc("Arbitrary user-defined metadata to include in CommitInfo.")
