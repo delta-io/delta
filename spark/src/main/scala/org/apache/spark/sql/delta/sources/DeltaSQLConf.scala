@@ -127,6 +127,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_STATS_WIDEN_BOUNDS_PRESERVE_NUMERIC_PRECISION_ENABLED =
+    buildConf("stats.widenBounds.preserveNumericPrecision.enabled")
+      .internal()
+      .doc(
+        """When enabled, AddFile.withoutTightBoundStats preserves numeric precision when
+          |updating file statistics to set tightBounds to false. When disabled, the legacy
+          |JSON update can round decimal bounds through Double and cause incorrect data
+          |skipping.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")
       .doc("Arbitrary user-defined metadata to include in CommitInfo.")
@@ -3595,6 +3606,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val CONCURRENT_IDENTITY_COLUMN_MAX_COLUMNS_PER_TABLE =
+    buildConf("identityColumn.concurrent.maxColumnsPerTable")
+      .internal()
+      .doc("Maximum number of concurrent (service-backed) identity columns allowed on a single " +
+        "table. Enforced when the table opts into the feature: CREATE/REPLACE with the CIC " +
+        "feature and the feature opt-in conversion reject a table whose identity-column count " +
+        "exceeds this, before any sequence is minted.")
+      .intConf
+      .checkValue(_ > 0, "maxColumnsPerTable must be positive")
+      .createWithDefault(50)
 
   //////////////////
   // GeoSpatial
