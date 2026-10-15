@@ -1,0 +1,74 @@
+name: Run Delta Spark tests
+description: >-
+  Run one Delta Spark test shard: restore the SBT cache, publish the pinned Unity Catalog
+  build, run the structured-logging style check, and run the sharded Scala/Java tests.
+  Assumes prepare-spark-env already ran (JDK installed; source-build Spark env exported via
+  GITHUB_ENV when applicable). The calling job must run actions/checkout first.
+
+inputs:
+  spark-version:
+    description: Spark version (short version or "master") for this matrix row.
+    required: true
+  scala:
+    description: Scala version for this matrix row.
+    required: true
+  shard:
+    description: Test shard index for this matrix row.
+    required: true
+  num-shards:
+    description: Total number of shards (must match the shard list length in the matrix).
+    required: false
+    default: '8'
+
+runs:
+  using: composite
+  steps:
+    - name: Restore SBT cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ~/.sbt
+          ~/.ivy2
+          ~/.cache/coursier
+        key: delta-sbt-cache-spark${{ inputs.spark-version }}-scala${{ inputs.scala }}
+
+    # Delta's sparkUnityCatalog module (part of sparkGroup) depends on APIs that are only in
+    # unreleased UC. Publish the pinned UC build locally before sbt tries to resolve it.
+    - name: Set up pinned Unity Catalog
+      uses: ./.github/actions/setup-unitycatalog
+
+    - name: Scala structured logging style check
+      shell: bash
+      run: |
+        if [ -f ./dev/spark_structured_logging_style.py ]; then
+            python3 ./dev/spark_structured_logging_style.py
+        fi
+
+    - name: Run Scala/Java tests
+      shell: bash
+      env:
+        SCALA_VERSION: ${{ inputs.scala }}
+        SPARK_VERSION: ${{ inputs.spark-version }}
+        NUM_SHARDS: ${{ inputs.num-shards }}
+        # SPARK_COMMIT / SPARK_ARTIFACT_VERSION are inherited from GITHUB_ENV (set by
+        # prepare-spark-env for source-build rows; unset for published rows).
+      run: |
+        TEST_PARALLELISM_COUNT=4 python3 run-tests.py --group spark --shard ${{ inputs.shard }} --spark-version ${{ inputs.spark-version }}
+
+    - name: Upload test reports
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: test-reports-spark${{ inputs.spark-version }}-shard${{ inputs.shard }}
+        path: "**/target/test-reports/*.xml"
+        retention-days: 7
+
+    - name: Save SBT cache
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ~/.sbt
+          ~/.ivy2
+          ~/.cache/coursier
+        key: delta-sbt-cache-spark${{ inputs.spark-version }}-scala${{ inputs.scala }}

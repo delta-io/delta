@@ -33,11 +33,8 @@ import org.apache.spark.sql.types._
  * [[DeltaInsertIntoTest]] for a list of these INSERT operations covered.
  */
 trait DeltaInsertIntoImplicitCastBase extends DeltaInsertIntoTest {
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
-    // Enable the null expansion fix by preserving NULL source structs in INSERT operations.
-    // Without this fix, NULL source structs are incorrectly expanded to structs with NULL fields.
-    spark.conf.set(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS.key, "true")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 

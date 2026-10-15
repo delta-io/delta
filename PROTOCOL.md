@@ -110,6 +110,7 @@
   - [Generated Columns](#generated-columns)
   - [Default Columns](#default-columns)
   - [Identity Columns](#identity-columns)
+  - [Materialize Partition Columns](#materialize-partition-columns)
   - [Writer Version Requirements](#writer-version-requirements)
 - [Requirements for Readers](#requirements-for-readers)
   - [Reader Version Requirements](#reader-version-requirements)
@@ -123,6 +124,7 @@
   - [Partition Value Serialization](#partition-value-serialization)
   - [Schema Serialization Format](#schema-serialization-format)
     - [Primitive Types](#primitive-types)
+      - [Void Type](#void-type)
     - [Struct Type](#struct-type)
     - [Struct Field](#struct-field)
     - [Array Type](#array-type)
@@ -620,7 +622,7 @@ Field Name | Data Type | Description | optional/required
 path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path. | required
 deletionTimestamp | Option[Long] | The time the deletion occurred, represented as milliseconds since the epoch | optional
 dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version | required
-extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present | optional
+extendedFileMetadata | Boolean | When `true` the fields `partitionValues` and `size` are present | optional
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization) | optional
 size| Long | The size of this data file in bytes | optional
 stats | [Statistics Struct](#Per-file-Statistics) | Contains statistics (e.g., count, min/max values for columns) about the data in this logical file | optional
@@ -1835,7 +1837,7 @@ The following is an example for the `domainMetadata` action definition of a tabl
 {
   "domainMetadata": {
     "domain": "delta.clustering",
-    "configuration": "{\"clusteringColumns\":[\"col-daadafd7-7c20-4697-98f8-bff70199b1f9\", \"col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e\"]}",
+    "configuration": "{\"clusteringColumns\":[[\"col-daadafd7-7c20-4697-98f8-bff70199b1f9\"], [\"col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e\"]]}",
     "removed": false
   }
 }
@@ -1844,11 +1846,12 @@ The example above converts `configuration` field into JSON format, including esc
 ```json
 {
   "clusteringColumns": [
-    "col-daadafd7-7c20-4697-98f8-bff70199b1f9",
-    "col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e"
+    ["col-daadafd7-7c20-4697-98f8-bff70199b1f9"],
+    ["col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e"]
   ]
 }
 ```
+Each entry in `clusteringColumns` is the name path of a clustering column: a single segment for a top-level column, and multiple segments for a nested column (for example, `["user", "address", "city"]`). If [Column Mapping](#column-mapping) is enabled, physical names are used for each segment.
 
 
 # Variant Data Type
@@ -2025,6 +2028,8 @@ The supported type changes are:
   - `Decimal(p, s)` -> `Decimal(p + k1, s + k2)` where `k1 >= k2 >= 0`.
   - `Byte`, `Short` or `Int` -> `Decimal(10 + k1, k2)` where `k1 >= k2 >= 0`.
   - `Long` -> `Decimal(20 + k1, k2)` where `k1 >= k2 >= 0`.
+
+Note: changing a `void` column to another type does not require the Type Widening feature; see [Void Type](#void-type).
 
 To support this feature:
 - The table must be on Reader version 3 and Writer Version 7.
@@ -2487,6 +2492,34 @@ When `delta.identity.allowExplicitInsert` is false, writers should meet the foll
 - Overflow when calculating generated Identity values should be detected and such writes should not be allowed.
 - `delta.identity.highWaterMark` should be updated to the new highest value when the write operation commits.
 
+## Materialize Partition Columns
+
+When this feature is supported, partition columns are physically written to Parquet files alongside the data columns. To support this feature:
+ - The table must be on Writer Version 7, and a feature name `materializePartitionColumns` must exist in the table `protocol`'s `writerFeatures`.
+
+Unlike most writer features, `materializePartitionColumns` has no associated `delta.enable*` table property and defines no additional metadata requirements. It is therefore [active](#active-features) whenever it is [supported](#supported-features): its presence in the `protocol`'s `writerFeatures` alone forces the writer requirements below. Hence, for this feature, the terms *supported*, *enabled*, and *active* (including in the decision matrix below) all refer to the same state.
+
+When supported:
+ - When the writer feature `materializePartitionColumns` is set in the protocol, writers must materialize partition columns into every newly added Parquet data file referenced by an `AddFile` action. Each materialized partition column value must equal the corresponding logical partition value recorded in that file's `AddFile` `partitionValues`. This mimics the same partition column materialization requirement from [IcebergCompatV1](#iceberg-compatibility-v1) and [IcebergCompatV2](#iceberg-compatibility-v2). As such, the `materializePartitionColumns` feature can be seen as a subset of the requirements imposed by those features, providing the partition column materialization guarantee independently without requiring full Iceberg compatibility.
+ - When the writer feature `materializePartitionColumns` is not set in the table protocol, writers are not required to write partition columns to data files. Note that other features might still require materialization of partition values, such as [IcebergCompatV1](#iceberg-compatibility-v1).
+
+When [Column Mapping](#column-mapping) is enabled, materialized partition columns are written to the Parquet data file using their assigned physical column names and field IDs, the same as data columns.
+
+This feature does not impose any requirements on readers. All Delta readers must be able to read the table regardless of whether partition columns are materialized in the data files. If partition values are present in both parquet and AddFile metadata, Delta readers should continue to read partition values from AddFile metadata. Also, [file-level statistics](#per-file-statistics) should not be written for the partition column as it would repeat information already present in an AddFile's `partitionValues`.
+
+Note that this table feature, as well as [IcebergCompatV1](#iceberg-compatibility-v1) (and related table features that require partition column materialization), if enabled, take priority over the `delta.writePartitionColumnsToParquet` table property. In other words, if a table feature is enabled that requires materialization of partition columns, and table metadata contains a `false` value for `delta.writePartitionColumnsToParquet`, partition columns must be materialized.
+
+| Table feature enablement | Value of `delta.writePartitionColumnsToParquet` table property | Writer requirement |
+| ------------------------ | -------------------------------------------------------------- | ------------------ |
+| A writer feature requiring partition column materialization (eg. `materializePartitionColumns`) is *enabled* | `false` | Partition columns *must* be materialized in parquet data files |
+| A writer feature requiring partition column materialization (eg. `materializePartitionColumns`) is *enabled* | `true` | Partition columns *must* be materialized in parquet data files |
+| A writer feature requiring partition column materialization (eg. `materializePartitionColumns`) is *enabled* | unset | Partition columns *must* be materialized in parquet data files |
+| No writer feature requiring partition column materialization is enabled | `false` | Partition columns *should not* be materialized in parquet data files |
+| No writer feature requiring partition column materialization is enabled | `true` | Partition columns *should* be materialized in parquet data files |
+| No writer feature requiring partition column materialization is enabled | unset | No requirement on partition column materialization |
+
+The value of having both the table feature `materializePartitionColumns` and the table property `delta.writePartitionColumnsToParquet` supported is that not every table is going to need the heightened requirement of only allowing writes from writers that understand `materializePartitionColumns`. In other words, `materializePartitionColumns` imposes a writer compatibility edge that `delta.writePartitionColumnsToParquet` does not.
+
 ## Writer Version Requirements
 
 The requirements of the writers according to the protocol versions are summarized in the table below. Each row inherits the requirements from the preceding row.
@@ -2522,6 +2555,7 @@ Property | Description | Details
 `delta.parquet.compression.codec` | Compression codec writers SHOULD use for new Parquet data and checkpoint files. Changing this property does not affect existing files; a table may contain files written with different codecs, which is a normal and expected state. | Widely supported values (matched case-insensitively): `uncompressed`/`none` (no compression), `snappy`, `gzip`, `lz4` (deprecated, Hadoop framing), `lz4_raw` ([LZ4 block format](https://parquet.apache.org/docs/file-format/data-pages/compression/#lz4_raw)), `zstd`.<br><br>When absent, writers SHOULD default to `zstd`. If a writer does not support or recognize the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.<br><br>Readers SHOULD support all codecs listed above regardless of the current property value. Parquet files written with other [parquet-supported codecs](https://parquet.apache.org/docs/file-format/data-pages/compression/) may also exist; readers MAY support reading these files.
 `delta.parquet.format.version` | Parquet data page format writers SHOULD use for new data and checkpoint files. This property is a directive to writers only; readers do not need to consult it, as Parquet pages are self-describing via the `PageType` field in each page header. Changing this property does not affect existing files; a table MAY contain files written with different data page versions, which is a normal and expected state. | Valid values: `1.0.0` (DataPageV1) and `2.x.x` (DataPageV2, where `x.x` is any minor.patch version). Recommended values are `1.0.0` and `2.12.0`.<br><br>When absent, writers SHOULD default to `1.0.0`. Writers SHOULD validate this property and abort if the value does not match `1.0.0` or `2.MINOR.PATCH`.<br><br>Readers SHOULD support both DataPageV1 and DataPageV2 pages regardless of this property's value. Tables intended for access by engines beyond the Delta Lake connectors SHOULD use `1.0.0`, as DataPageV2 support varies across the broader Parquet ecosystem.
 `delta.enableVariantShredding` | When `true`, writers could write variant data to parquet files in [shredded](#variant-shredding) format. | Valid values: `true` (shredding allowed) and `false` (shredding not allowed).<br><br>When enabled, writers must ensure that the `variantShredding` table feature is present in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+`delta.writePartitionColumnsToParquet` | Controls whether writers SHOULD write partition columns in newly written data parquet files, in the absence of any writer features that necessitate writing of partition columns (eg. `IcebergCompatV1`). In other words, if no writer feature is enabled that requires materialization of partition columns, writers should read this property to decide whether to materialize partition columns in data parquet files or not. Writer features requirements take precedence over this property's value. Readers should continue to read partition values off of AddFile actions, regardless of the presence of partition values in data files. File-level statistics should not be present for partition columns in partitioned tables in any case. This setting does not apply to writers of files of any other file format. | Boolean field, with valid values `false` and `true`.
 
 # Appendix
 
@@ -2548,6 +2582,7 @@ Feature | Name | Readers or Writers?
 [Clustered Table](#clustered-table) | `clustering` | Writers only
 [VACUUM Protocol Check](#vacuum-protocol-check) | `vacuumProtocolCheck` | Readers and Writers
 [In-Commit Timestamps](#in-commit-timestamps) | `inCommitTimestamp` | Writers only
+[Materialize Partition Columns](#materialize-partition-columns) | `materializePartitionColumns` | Writers only
 
 ## Deletion Vector Format
 
@@ -2743,10 +2778,26 @@ binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
 timestamp| Microsecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `true`.
 timestamp without time zone | Microsecond precision timestamp in a local timezone elapsed since the Unix epoch, 1970-01-01 00:00:00. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNtz)](#timestamp-without-timezone-timestampNtz) for more information.
+void| A column that contains only `null` values and is never materialized in data files. See section [Void Type](#void-type) for more information.
 
 See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp) for more details about timestamp and `isAdjustedToUTC`.
 
-Note: Existing tables may have `void` data type columns. Behavior is undefined for `void` data type columns but it is recommended to drop any `void` data type columns on reads (as is implemented by the Spark connector).
+#### Void Type
+
+_Note: `void` was never deliberately designed as a Delta feature; the Spark connector has produced such columns for a long time without it being specified here. This section documents that pre-existing behavior post-facto, rather than introducing it through the usual RFC process. Because such columns already exist in tables written by earlier clients, `void` is not gated by any table feature and applies to all tables._
+
+`void` is a primitive type and can appear both as a top-level column and nested inside complex types.
+
+On write, writers MUST omit `void` columns from data files; they do not appear in the data file's schema. On read, readers MUST reconstruct them as all-`null` columns, consistent with the [rule](#consistency-between-table-metadata-and-data-files) that columns present in the table schema but missing from a data file are read as `null`.
+
+Because `void` is never written to data files, writers MUST reject operations that **would write new data files** when the table's schema contains any of the following shapes:
+- a `void` type inside an `array` or `map` at any nesting level;
+- a `struct` (at any nesting level) whose fields are all `void`; or
+- a table whose columns are all `void`.
+
+These restrictions are stated in terms of the **table schema**, not the schema of any individual data file. A table with such a schema can still be created, altered through metadata-only operations, and read. In particular, a table covered by these restrictions can be made writable by evolving its schema - for example, by changing a `void` column to another type.
+
+A `void` column may be changed to any other data type through supported schema-evolution operations; this does not require the [Type Widening](#type-widening) table feature.
 
 ### Struct Type
 
@@ -3108,3 +3159,5 @@ binary| `binary` |
 array| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists) for further details | `LIST`
 map| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps) for further details | `MAP`
 struct| `group` |
+
+Note that `void` columns are not stored in Parquet files. See section [Void Type](#void-type).

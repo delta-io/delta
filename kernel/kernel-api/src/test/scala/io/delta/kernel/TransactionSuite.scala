@@ -21,6 +21,7 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.PartitionKeyType
 import io.delta.kernel.Transaction.{generateAppendActions, getWriteContext, transformLogicalData}
 import io.delta.kernel.data._
 import io.delta.kernel.exceptions.KernelException
@@ -31,12 +32,13 @@ import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
+import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.test.{MockEngineUtils, VectorTestUtils}
-import io.delta.kernel.types.{DoubleType, FloatType, IntegerType, LongType, StringType, StructField, StructType, TimestampType, VariantType}
+import io.delta.kernel.types.{DoubleType, FieldMetadata, FloatType, IntegerType, LongType, StringType, StructField, StructType, TimestampType, VariantType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -125,6 +127,101 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
       // when MaterializePartitionColumns feature is disabled, partition columns are filtered out
       assert(batch.getSchema === testSchema)
     }
+  }
+
+  test("getWriteContext: non-column-mapped partitioned table uses logical partition names") {
+    val ctx = getWriteContext(
+      mockEngine(),
+      testTxnState(testSchemaWithPartitions, testPartitionColNames),
+      Map("state" -> Literal.ofString("CA"), "country" -> Literal.ofString("USA")).asJava)
+    // Directory keeps logical names when not using column mapping.
+    assert(ctx.getTargetDirectory.endsWith("/state=CA/country=USA"))
+    val partitionKeys =
+      ctx.asInstanceOf[DataWriteContextImpl].getPartitionValues.keySet().asScala
+    assert(partitionKeys === Set("state", "country"))
+  }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"getWriteContext: partitioned column-mapped table uses physical names: cmMode=$cmMode") {
+      // Connector-passed logical partition-value keys must come back keyed by the physical names.
+      val ctx = getWriteContext(
+        mockEngine(),
+        testTxnState(columnMappedPartitionSchema, testPartitionColNames, cmMode = cmMode),
+        Map("state" -> Literal.ofString("CA"), "country" -> Literal.ofString("USA")).asJava)
+
+      // Directory uses physical names.
+      assert(ctx.getTargetDirectory.endsWith("/col-state=CA/col-country=USA"))
+
+      // AddFile partition-value keys use physical names.
+      val partitionKeys =
+        ctx.asInstanceOf[DataWriteContextImpl].getPartitionValues.keySet().asScala
+      assert(partitionKeys === Set("col-state", "col-country"))
+    }
+  }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"getWriteContext: PHYSICAL keys used as-is on column-mapped table: cmMode=$cmMode") {
+      // Physical keys are used as-is: same physical target dir and keys as the LOGICAL path.
+      val ctx = getWriteContext(
+        mockEngine(),
+        testTxnState(columnMappedPartitionSchema, testPartitionColNames, cmMode = cmMode),
+        Map(
+          "col-state" -> Literal.ofString("CA"),
+          "col-country" -> Literal.ofString("USA")).asJava,
+        PartitionKeyType.PHYSICAL)
+
+      assert(ctx.getTargetDirectory.endsWith("/col-state=CA/col-country=USA"))
+      val partitionKeys =
+        ctx.asInstanceOf[DataWriteContextImpl].getPartitionValues.keySet().asScala
+      assert(partitionKeys === Set("col-state", "col-country"))
+    }
+  }
+
+  test("getWriteContext: PHYSICAL rejects a value whose type mismatches the column") {
+    val e = intercept[IllegalArgumentException] {
+      getWriteContext(
+        mockEngine(),
+        testTxnState(columnMappedPartitionSchema, testPartitionColNames, cmMode = "name"),
+        Map(
+          "col-state" -> Literal.ofInt(5), // state is StringType
+          "col-country" -> Literal.ofString("USA")).asJava,
+        PartitionKeyType.PHYSICAL)
+    }
+    assert(
+      e.getMessage ===
+        "Partition column col-state is of type string but the value provided is of type integer")
+  }
+
+  test("getWriteContext: PHYSICAL rejects an unknown physical partition column") {
+    val e = intercept[IllegalArgumentException] {
+      getWriteContext(
+        mockEngine(),
+        testTxnState(columnMappedPartitionSchema, testPartitionColNames, cmMode = "name"),
+        Map(
+          "col-bogus" -> Literal.ofString("CA"),
+          "col-country" -> Literal.ofString("USA")).asJava,
+        PartitionKeyType.PHYSICAL)
+    }
+    assert(
+      e.getMessage ===
+        "Partition values provided are not matching the partition columns. " +
+        "Partition columns: [col-state, col-country], " +
+        "Partition values: {col-bogus=CA, col-country=USA}")
+  }
+
+  test("getWriteContext: PHYSICAL rejects a missing partition column") {
+    val e = intercept[IllegalArgumentException] {
+      getWriteContext(
+        mockEngine(),
+        testTxnState(columnMappedPartitionSchema, testPartitionColNames, cmMode = "name"),
+        Map("col-state" -> Literal.ofString("CA")).asJava, // missing col-country
+        PartitionKeyType.PHYSICAL)
+    }
+    assert(
+      e.getMessage ===
+        "Partition values provided are not matching the partition columns. " +
+        "Partition columns: [col-state, col-country], " +
+        "Partition values: {col-state=CA}")
   }
 
   withIcebergCompatVersions("generateAppendActions: iceberg comaptibily checks") {
@@ -326,6 +423,23 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
     .add("country", StringType.STRING) // partition column
 
   val testPartitionColNames = Seq("state", "country")
+
+  /** Column-mapping metadata for a logical field. */
+  private def columnMappingMetadata(physicalName: String, columnId: Long): FieldMetadata =
+    FieldMetadata.builder()
+      .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
+      .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, columnId)
+      .build()
+
+  /**
+   * A partitioned schema where every column carries column-mapping metadata.
+   */
+  val columnMappedPartitionSchema: StructType = new StructType()
+    .add("name", StringType.STRING, true, columnMappingMetadata("col-name", 1))
+    .add("id", LongType.LONG, true, columnMappingMetadata("col-id", 2))
+    .add("city", StringType.STRING, true, columnMappingMetadata("col-city", 3))
+    .add("state", StringType.STRING, true, columnMappingMetadata("col-state", 4))
+    .add("country", StringType.STRING, true, columnMappingMetadata("col-country", 5))
 
   def columnarBatch(schema: StructType, vectors: Seq[ColumnVector]): ColumnarBatch = {
     new ColumnarBatch {

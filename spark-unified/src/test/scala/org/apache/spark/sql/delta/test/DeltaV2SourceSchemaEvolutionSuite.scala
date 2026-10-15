@@ -26,12 +26,8 @@ import org.apache.spark.sql.delta.{
 }
 
 /**
- * Test suite that runs DeltaSourceSchemaEvolutionSuite using the V2 connector
- * (V2_ENABLE_MODE=STRICT).
- */
-
-/**
- * Base trait for V2 schema evolution streaming tests.
+ * Base trait for V2 schema evolution streaming tests, running
+ * DeltaSourceSchemaEvolutionSuite using the V2 connector (V2_ENABLE_MODE=STRICT).
  * Provides common overrides shared by all V2 schema evolution suites.
  */
 trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {

@@ -398,6 +398,7 @@ object TableFeature {
       VariantTypeTableFeature,
       VariantShreddingPreviewTableFeature,
       VariantShreddingTableFeature,
+      FileTypePreviewTableFeature,
       CatalogOwnedTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
@@ -874,6 +875,38 @@ object VariantShreddingTableFeature
   override def requiredFeatures: Set[TableFeature] = Set(VariantTypeTableFeature)
 }
 
+/**
+ * Preview feature for the `file` data type (a reference to a range of bytes, inline or in an
+ * external file; maps to the Parquet `FILE` logical type). See the RFC at
+ * `protocol_rfcs/file-type.md` (discussion issue delta-io/delta#7147).
+ *
+ * This registers the `fileType-preview` table feature so it is recognized and can be gated while
+ * the type is developed behind the preview name (no forward-compatibility guarantee). Automatic
+ * enablement when a `file` column is present in the schema is added together with the type
+ * implementation (schema serialization / read / write / stats).
+ *
+ * The feature is removable so that it can be dropped once a table no longer contains `file`
+ * columns (for example after a `REPLACE` with a schema that has none). There is no `file` type in
+ * the schema yet, so nothing can currently reference the feature: the "feature in use" checks
+ * below return "not used" and must be tightened to detect `file` columns when the type support
+ * lands, otherwise `DROP FEATURE` would be allowed to remove the feature while `file` data exists.
+ */
+object FileTypePreviewTableFeature extends ReaderWriterFeature(name = "fileType-preview")
+  with RemovableFeature {
+
+  // TODO(file-type impl): return false once a `file` column is present in the schema, so the
+  // feature cannot be dropped while it is still in use.
+  override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = true
+
+  // TODO(file-type impl): return true for actions that reference a `file` column, so historical
+  // uses of the feature are detected during removal (this is a reader-writer feature, so removal
+  // scans history via this method).
+  override def actionUsesFeature(action: Action): Boolean = false
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    FileTypePreDowngradeCommand(table)
+}
+
 object DeletionVectorsTableFeature
   extends ReaderWriterFeature(name = "deletionVectors")
   with RemovableFeature
@@ -920,11 +953,30 @@ object DeletionVectorsTableFeature
 }
 
 object AdaptiveMetadataTableFeature
-  extends ReaderWriterFeature(name = "adaptiveMetadata-preview") {
+  extends ReaderWriterFeature(name = "adaptiveMetadata-preview")
+  with RemovableFeature {
 
-  // Iceberg v4 manifests reference columns by field ID, so column mapping must be supported on
-  // any table that enables this feature.
-  override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
+  // The [[AdaptiveMetadataTableFeature]] relies on the following features:
+  //  - catalogManaged: adaptive metadata tables are catalog managed (CCv2) only.
+  //  - rowTracking: stable row identity is required by the adaptive metadata layout.
+  //  - domainMetadata: listed explicitly even though rowTracking already requires it.
+  //  - deletionVectors: deletes are expressed as DVs rather than file rewrites.
+  //  - columnMapping: Iceberg v4 manifests reference columns by field ID, so column mapping
+  //    must be present. Note that presence alone is not enough; `id` mode is enforced separately
+  //    in [[OptimisticTransaction.scala]].
+  override def requiredFeatures: Set[TableFeature] = Set(
+    CatalogOwnedTableFeature,
+    RowTrackingFeature,
+    DomainMetadataTableFeature,
+    DeletionVectorsTableFeature,
+    ColumnMappingTableFeature)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    AdaptiveMetadataPreDowngradeCommand(table)
+
+  override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = true
+
+  override def actionUsesFeature(action: Action): Boolean = false
 }
 
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")
@@ -1475,13 +1527,11 @@ object CheckpointProtectionTableFeature
       catalogTableOpt: Option[CatalogTable],
       toVersion: Long): Boolean = {
     deltaLog
-      .getChangeLogFiles(
+      .getChangesIterator(
         startVersion = 0,
         endVersion = toVersion,
         catalogTableOpt = catalogTableOpt,
         failOnDataLoss = false)
-      .map { case (_, file) => file }
-      .filter(FileNames.isDeltaFile)
       .take(1).isEmpty
   }
 

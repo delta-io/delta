@@ -359,10 +359,12 @@ class PartitionUtilsSuite extends AnyFunSuite {
     ofDate(4234) -> ("1981-08-05", "1981-08-05"),
     ofNull(DateType.DATE) -> (null, nullFileName),
     ofTimestamp(2342342342232L) ->
-      ("1970-01-28 02:39:02.342232", "1970-01-28 02%3A39%3A02.342232"),
+      ("1970-01-28T02:39:02.342232Z", "1970-01-28T02%3A39%3A02.342232Z"),
+    ofTimestamp(-2342342342L) ->
+      ("1969-12-31T23:20:57.657658Z", "1969-12-31T23%3A20%3A57.657658Z"),
     ofNull(TimestampType.TIMESTAMP) -> (null, nullFileName),
     ofTimestampNtz(-2342342342L) ->
-      ("1969-12-31 23:20:58.657658", "1969-12-31 23%3A20%3A58.657658"),
+      ("1969-12-31 23:20:57.657658", "1969-12-31 23%3A20%3A57.657658"),
     ofNull(TimestampNTZType.TIMESTAMP_NTZ) -> (null, nullFileName)).foreach {
     case (literal, (expSerializedValue, expFileName)) =>
       test(s"serialize partition value literal as string: ${literal.getDataType}($literal)") {
@@ -387,7 +389,7 @@ class PartitionUtilsSuite extends AnyFunSuite {
         "part1" -> ofInt(12),
         "part3" -> ofTimestamp(234234234L),
         "part2" -> ofString("sss")).asJava)
-    assert(result === "/tmp/root/part1=12/part2=sss/part3=1970-01-01 00%3A03%3A54.234234")
+    assert(result === "/tmp/root/part1=12/part2=sss/part3=1970-01-01T00%3A03%3A54.234234Z")
   }
 
   // Test cases for verifying if timestamp can be parsed correctly.
@@ -408,11 +410,34 @@ class PartitionUtilsSuite extends AnyFunSuite {
     assert(result == 1735689600123456L)
   }
 
+  Seq(2342342342232L, -2342342342L, 1704103200000000L, -1000000L, -1L, 0L).foreach { micros =>
+    test(s"serialize->parse round-trips TIMESTAMP micros=$micros") {
+      val serialized = serializePartitionValue(ofTimestamp(micros))
+      assert(PartitionUtils.tryParseTimestamp(serialized) === micros)
+    }
+
+    test(s"serialize->parse round-trips TIMESTAMP_NTZ micros=$micros") {
+      val serialized = serializePartitionValue(ofTimestampNtz(micros))
+      val parsed = literalForPartitionValue(TimestampNTZType.TIMESTAMP_NTZ, serialized)
+      assert(parsed.getValue === micros)
+    }
+  }
+
   test("throw on invalid timestamp") {
     val thrown = intercept[IllegalStateException] {
       PartitionUtils.tryParseTimestamp("not-a-timestamp")
     }
     assert(thrown.getMessage.contains("Invalid timestamp format for value"))
+  }
+
+  Seq(
+    "1970-01-01 00:00:00.123456Z",
+    "2024-01-01T10:00:00").foreach { badValue =>
+    test(s"tryParseTimestamp rejects mixed-format input: $badValue") {
+      intercept[IllegalStateException] {
+        PartitionUtils.tryParseTimestamp(badValue)
+      }
+    }
   }
 
   private def col(names: String*): Column = {

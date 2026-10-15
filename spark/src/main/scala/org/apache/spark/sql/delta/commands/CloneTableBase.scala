@@ -228,8 +228,11 @@ abstract class CloneTableBase(
       var actions: Iterator[Action] =
         addFileIter.map { fileToCopy =>
           val copiedFile = fileToCopy.copy(dataChange = dataChangeInFileAction)
-          // CLONE does not preserve Row IDs and Commit Versions
-          copiedFile.copy(baseRowId = None, defaultRowCommitVersion = None)
+          // CLONE does not preserve Row IDs and Commit Versions, nor the source
+          // table's AMT back reference, snapshot IDs and passthrough.
+          copiedFile.copy(
+            baseRowId = None, defaultRowCommitVersion = None, backReference = None,
+            amtPassthrough = None, snapshotId = None, modifiedSnapshotId = None)
         }
       sourceTable.snapshot.foreach { sourceSnapshot =>
         // Handle DomainMetadata for cloning a table.
@@ -257,6 +260,11 @@ abstract class CloneTableBase(
         }
       }
 
+      // Every file action above is stamped with `dataChangeInFileAction`, so the commit changes
+      // data exactly when that is true and there is at least one file action.
+      val fileActionCount = addedFileCount
+      val commitDataChange = dataChangeInFileAction && fileActionCount > 0
+
       recordDeltaOperation(
         destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
         txn.commitLarge(
@@ -265,7 +273,8 @@ abstract class CloneTableBase(
           Some(newProtocol),
           deltaOperation,
           context,
-          commitOpMetrics.mapValues(_.toString()).toMap)
+          commitOpMetrics.mapValues(_.toString()).toMap,
+          dataChange = Some(commitDataChange))
       }
 
       val cloneLogData = getOperationMetricsForEventRecord(opMetrics) ++ Map(
@@ -306,6 +315,9 @@ abstract class CloneTableBase(
     val filteredConfiguration = clonedMetadata.configuration
       // Coordinated Commit configurations are never copied over to the target table.
       .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_))
+      // ICT enablement provenance info refers to the source's log. The commit re-derives it for
+      // the target (see InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo).
+      .filterKeys(!InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS.contains(_))
       // Catalog-Owned enabled table's UC table ID property is never copied over to the
       // target table.
       .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY)

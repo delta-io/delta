@@ -21,6 +21,7 @@ import java.util.Locale
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources
 import org.apache.spark.sql.sources.Filter
 
@@ -94,14 +95,29 @@ object DeltaSourceUtils {
     case sources.Or(filter1, filter2) =>
       expressions.Or(translateFilters(Array(filter1)), translateFilters(Array(filter2)))
     case sources.StringStartsWith(attribute, value) =>
-      new expressions.Like(
-        UnresolvedAttribute(attribute), expressions.Literal.create(s"${value}%"))
+      if (SQLConf.get.getConf(DeltaSQLConf.REPLACEWHERE_LITERAL_STRING_PREDICATES_ENABLED)) {
+        expressions.StartsWith(
+          UnresolvedAttribute(attribute), expressions.Literal.create(value))
+      } else {
+        new expressions.Like(
+          UnresolvedAttribute(attribute), expressions.Literal.create(s"${value}%"))
+      }
     case sources.StringEndsWith(attribute, value) =>
-      new expressions.Like(
-        UnresolvedAttribute(attribute), expressions.Literal.create(s"%${value}"))
+      if (SQLConf.get.getConf(DeltaSQLConf.REPLACEWHERE_LITERAL_STRING_PREDICATES_ENABLED)) {
+        expressions.EndsWith(
+          UnresolvedAttribute(attribute), expressions.Literal.create(value))
+      } else {
+        new expressions.Like(
+          UnresolvedAttribute(attribute), expressions.Literal.create(s"%${value}"))
+      }
     case sources.StringContains(attribute, value) =>
-      new expressions.Like(
-        UnresolvedAttribute(attribute), expressions.Literal.create(s"%${value}%"))
+      if (SQLConf.get.getConf(DeltaSQLConf.REPLACEWHERE_LITERAL_STRING_PREDICATES_ENABLED)) {
+        expressions.Contains(
+          UnresolvedAttribute(attribute), expressions.Literal.create(value))
+      } else {
+        new expressions.Like(
+          UnresolvedAttribute(attribute), expressions.Literal.create(s"%${value}%"))
+      }
     case sources.AlwaysTrue() => expressions.Literal.TrueLiteral
     case sources.AlwaysFalse() => expressions.Literal.FalseLiteral
   }.reduceOption(expressions.And).getOrElse(expressions.Literal.TrueLiteral)

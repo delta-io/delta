@@ -119,7 +119,7 @@ public class SerializableReadOnlySnapshot implements Serializable {
    * returned {@code Scan} only exposes {@code getScanFiles()} — no write-path or commit APIs.
    */
   public Scan toScan(Configuration hadoopConfOverride) {
-    return buildScan(hadoopConfOverride);
+    return buildScan(DefaultEngine.create(hadoopConfOverride));
   }
 
   /**
@@ -127,22 +127,26 @@ public class SerializableReadOnlySnapshot implements Serializable {
    * no conf override is needed.
    */
   public Scan toScan() {
-    return buildScan(hadoopConf.value());
+    return buildScan(DefaultEngine.create(hadoopConf.value()));
+  }
+
+  /** Reconstructs a read-only scan using the caller-owned imperative engine. */
+  public Scan toScan(Engine engine) {
+    return buildScan(engine);
   }
 
   public long getVersion() {
     return version;
   }
 
-  /** Returns the serialized Hadoop configuration for creating an Engine on the executor. */
+  /** Returns the serialized Hadoop configuration for creating an Engine on the Spark executor. */
   public Configuration getHadoopConf() {
     return hadoopConf.value();
   }
 
   // ---- internal reconstruction ----
 
-  private Scan buildScan(Configuration conf) {
-    Engine engine = DefaultEngine.create(conf);
+  private Scan buildScan(Engine engine) {
     io.delta.kernel.internal.fs.Path kernelDataPath =
         new io.delta.kernel.internal.fs.Path(dataPath);
     io.delta.kernel.internal.fs.Path kernelLogPath = new io.delta.kernel.internal.fs.Path(logPath);

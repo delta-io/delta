@@ -46,6 +46,9 @@ object GeoTypesShim {
    */
   val geoExpressions: Set[Class[_]] = Set.empty[Class[_]]
 
+  /** Geospatial Catalyst type classes; empty on Spark 4.0 where these types do not exist. */
+  val geoTypes: Seq[Class[_]] = Seq.empty[Class[_]]
+
   /** Returns the CRS of a `GeometryType`. Only valid when `isGeometryType(dt)` is true. */
   def geometryCrs(dt: DataType): String =
     throw new IllegalArgumentException(s"Not a geometry type: $dt")

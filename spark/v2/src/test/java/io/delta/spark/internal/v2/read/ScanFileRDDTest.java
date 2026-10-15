@@ -28,6 +28,7 @@ import java.util.List;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -41,8 +42,9 @@ public class ScanFileRDDTest extends DeltaV2TestBase {
     spark.range(100).repartition(5).write().format("delta").save(tablePath);
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SnapshotImpl snapshot = (SnapshotImpl) mgr.loadLatestSnapshot();
+    PathBasedSnapshotManager mgr =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
+    SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot());
 
     SerializableReadOnlySnapshot serializable =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
@@ -66,8 +68,9 @@ public class ScanFileRDDTest extends DeltaV2TestBase {
     spark.range(50).repartition(3).write().format("delta").save(tablePath);
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SnapshotImpl snapshot = (SnapshotImpl) mgr.loadLatestSnapshot();
+    PathBasedSnapshotManager mgr =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
+    SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot());
 
     SerializableReadOnlySnapshot serializable =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);

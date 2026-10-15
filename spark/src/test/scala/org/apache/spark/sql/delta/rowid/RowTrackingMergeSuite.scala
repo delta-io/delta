@@ -43,7 +43,7 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
       .write.format("delta").saveAsTable(tableName)
   }
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, value = "true")
 

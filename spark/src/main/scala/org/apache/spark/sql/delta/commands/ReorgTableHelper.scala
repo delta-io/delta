@@ -113,7 +113,9 @@ trait ReorgTableHelper extends Serializable {
     import org.apache.spark.sql.delta.implicits._
 
     files.toDF(spark).as[AddFile].mapPartitions { iter =>
-      val sqlConf = SparkSession.active.sessionState.conf
+      // Runs on executors, where no SparkSession is active; SQLConf.get returns the task's
+      // read-only conf propagated from the driver.
+      val sqlConf = SQLConf.get
       filterParquetFiles(
         sqlConf,
         iter.toList,

@@ -19,11 +19,14 @@ import java.util.Optional
 
 import scala.jdk.CollectionConverters._
 
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{KernelException, VersionToLoadAfterLatestCommitException}
 import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils, UCTableIdentifier}
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
+import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
+import org.apache.spark.sql.delta.storage.LogStore
+import org.scalatest.Outcome
 import org.scalatest.funsuite.AnyFunSuite
 
 /** Integration tests for [[UCManagedTableSnapshotManager]]. */
@@ -31,11 +34,16 @@ class UCManagedTableSnapshotManagerSuite
     extends AnyFunSuite
     with UCCatalogManagedTestUtils {
 
+  override protected def withFixture(test: NoArgTest): Outcome =
+    spark.withActive(super.withFixture(test))
+
   private val testUcTableId = "testUcTableId"
   private val testTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
   private val testUcUri = "https://test-uc.example.com"
   private val testUcToken = "test-token"
   private val testUcAuthConfig = Map("token" -> testUcToken).asJava
+
+  private def kernelContext = new KernelContext(Map.empty, LogStore(spark))
 
   private def createManager(
       ucClient: InMemoryUCClient,
@@ -43,7 +51,7 @@ class UCManagedTableSnapshotManagerSuite
     val client = new UCCatalogManagedClient(ucClient)
     val tableInfo =
       new UCTableInfo(testUcTableId, tablePath, testTableIdentifier, testUcUri, testUcAuthConfig)
-    new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
+    new UCManagedTableSnapshotManager(client, tableInfo, kernelContext)
   }
 
   // ==================== Constructor ====================
@@ -60,19 +68,19 @@ class UCManagedTableSnapshotManagerSuite
         testUcAuthConfig)
 
     val ex1 = intercept[NullPointerException] {
-      new UCManagedTableSnapshotManager(null, tableInfo, defaultEngine)
+      new UCManagedTableSnapshotManager(null, tableInfo, kernelContext)
     }
     assert(ex1.getMessage == "ucCatalogManagedClient is null")
 
     val ex2 = intercept[NullPointerException] {
-      new UCManagedTableSnapshotManager(client, null, defaultEngine)
+      new UCManagedTableSnapshotManager(client, null, kernelContext)
     }
     assert(ex2.getMessage == "tableInfo is null")
 
     val ex3 = intercept[NullPointerException] {
       new UCManagedTableSnapshotManager(client, tableInfo, null)
     }
-    assert(ex3.getMessage == "engine is null")
+    assert(ex3.getMessage == "kernelContext is null")
   }
 
   // ==================== loadLatestSnapshot ====================
@@ -83,7 +91,7 @@ class UCManagedTableSnapshotManagerSuite
 
       val snapshot = manager.loadLatestSnapshot()
 
-      assert(snapshot.getVersion == maxRatifiedVersion)
+      assert(snapshot.version == maxRatifiedVersion)
       assert(ucClient.getLastGetCommitsTableIdentifier.getNamespace.toSeq == Seq("cat", "sch"))
       assert(ucClient.getLastGetCommitsTableIdentifier.getName == "tbl")
     }
@@ -98,7 +106,7 @@ class UCManagedTableSnapshotManagerSuite
       testUcUri,
       testUcAuthConfig)
     val client = new UCCatalogManagedClient(ucClient)
-    val manager = new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
+    val manager = new UCManagedTableSnapshotManager(client, tableInfo, kernelContext)
 
     val ex = intercept[RuntimeException] {
       manager.loadLatestSnapshot()
@@ -112,11 +120,13 @@ class UCManagedTableSnapshotManagerSuite
     withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
       val manager = createManager(ucClient, tablePath)
 
-      assert(manager.loadSnapshotAt(0L).getVersion == 0L)
-      assert(manager.loadSnapshotAt(1L).getVersion == 1L)
+      assert(manager.loadSnapshotAt(0L).version == 0L)
+      assert(manager.loadSnapshotAt(1L).version == 1L)
 
       intercept[IllegalArgumentException] { manager.loadSnapshotAt(-1L) }
-      intercept[IllegalArgumentException] { manager.loadSnapshotAt(maxRatifiedVersion + 10) }
+      Seq(maxRatifiedVersion + 1, maxRatifiedVersion + 10).foreach { version =>
+        intercept[VersionToLoadAfterLatestCommitException] { manager.loadSnapshotAt(version) }
+      }
     }
   }
 
@@ -300,9 +310,20 @@ class UCManagedTableSnapshotManagerSuite
           maxRatifiedVersion,
           Optional.of(maxRatifiedVersion - 1))
       }
+    }
+  }
 
-      intercept[IllegalArgumentException] {
-        manager.getTableChanges(defaultEngine, maxRatifiedVersion + 5, Optional.empty())
+  test("getTableChanges: throws typed exceptions for future start and end versions") {
+    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
+      val manager = createManager(ucClient, tablePath)
+
+      Seq(maxRatifiedVersion + 1, maxRatifiedVersion + 5).foreach { version =>
+        intercept[VersionToLoadAfterLatestCommitException] {
+          manager.getTableChanges(defaultEngine, version, Optional.empty())
+        }
+        intercept[VersionToLoadAfterLatestCommitException] {
+          manager.getTableChanges(defaultEngine, 0L, Optional.of(version))
+        }
       }
     }
   }
@@ -318,7 +339,7 @@ class UCManagedTableSnapshotManagerSuite
       testUcUri,
       testUcAuthConfig)
     val client = new UCCatalogManagedClient(ucClient)
-    val manager = new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
+    val manager = new UCManagedTableSnapshotManager(client, tableInfo, kernelContext)
 
     val ex1 = intercept[RuntimeException] { manager.loadLatestSnapshot() }
     assert(ex1.getCause.isInstanceOf[InvalidTargetTableException])

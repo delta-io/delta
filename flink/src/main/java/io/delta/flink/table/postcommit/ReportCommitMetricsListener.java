@@ -17,21 +17,20 @@
 package io.delta.flink.table.postcommit;
 
 import io.delta.flink.table.*;
-import io.delta.flink.table.postcommit.po.CommitReport;
-import io.delta.flink.table.postcommit.po.DeltaMetricsApi;
-import io.delta.flink.table.postcommit.po.ReportDeltaMetricsRequest;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.metrics.FileSizeHistogramResult;
 import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.metrics.TransactionReport;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Post-commit listener that reports commit metrics to Unity Catalog via {@link DeltaMetricsApi}.
+ * Post-commit listener that reports commit metrics to Unity Catalog via the Delta-Tables API.
  *
  * <p>This listener is best-effort: failures are logged as warnings but never propagated to the
  * caller, so a metrics delivery failure cannot break the commit path.
@@ -42,8 +41,6 @@ import org.slf4j.LoggerFactory;
 public class ReportCommitMetricsListener implements TableEventListener {
 
   private static final Logger LOG = LoggerFactory.getLogger(ReportCommitMetricsListener.class);
-
-  private transient DeltaMetricsApi metricsApi;
 
   @Override
   public void onPostCommit(
@@ -59,10 +56,11 @@ public class ReportCommitMetricsListener implements TableEventListener {
     }
 
     try {
-      DeltaMetricsApi api = getOrCreateApi((UnityCatalog) catalog);
-      ReportDeltaMetricsRequest request = buildRequest(tableUUID, report);
-
-      source.executeWithTiming("postcommit.reportmetrics", () -> api.reportMetrics(request));
+      UCDeltaModels.CommitReport commitReport = buildReport(report);
+      UnityCatalog uc = (UnityCatalog) catalog;
+      source.executeWithTiming(
+          "postcommit.reportmetrics",
+          () -> uc.reportMetrics(source.getId(), tableUUID, commitReport));
 
       LOG.info(
           "Reported commit metrics for table {} version {}", source.getId(), snapshot.getVersion());
@@ -72,40 +70,30 @@ public class ReportCommitMetricsListener implements TableEventListener {
     }
   }
 
-  private DeltaMetricsApi getOrCreateApi(UnityCatalog catalog) {
-    if (metricsApi == null) {
-      metricsApi = new DeltaMetricsApi(catalog.getApiClient());
-    }
-    return metricsApi;
-  }
-
-  private ReportDeltaMetricsRequest buildRequest(String tableUUID, TransactionReport txnReport) {
+  private UCDeltaModels.CommitReport buildReport(TransactionReport txnReport) {
     TransactionMetricsResult metrics = txnReport.getTransactionMetrics();
-
-    CommitReport report =
-        new CommitReport()
-            .numFilesAdded(metrics.getNumAddFiles())
-            .numFilesRemoved(metrics.getNumRemoveFiles())
-            .numBytesAdded(metrics.getTotalAddFilesSizeInBytes())
-            .numBytesRemoved(metrics.getTotalRemoveFilesSizeInBytes());
-
-    metrics
-        .getTableFileSizeHistogram()
-        .ifPresent(
-            histogram ->
-                report.fileSizeHistogram(
-                    toFileSizeHistogram(histogram, txnReport.getCommittedVersion().orElse(null))));
-
-    return ReportDeltaMetricsRequest.of(tableUUID, report);
+    Optional<UCDeltaModels.FileSizeHistogram> histogram =
+        metrics
+            .getTableFileSizeHistogram()
+            .map(h -> toFileSizeHistogram(h, txnReport.getCommittedVersion().orElse(-1L)));
+    return new UCDeltaModels.CommitReport(
+        metrics.getNumAddFiles(),
+        metrics.getNumRemoveFiles(),
+        metrics.getTotalAddFilesSizeInBytes(),
+        metrics.getTotalRemoveFilesSizeInBytes(),
+        Optional.empty() /* numRowsInserted */,
+        Optional.empty() /* numRowsRemoved */,
+        Optional.empty() /* numRowsUpdated */,
+        histogram);
   }
 
-  private static CommitReport.FileSizeHistogram toFileSizeHistogram(
-      FileSizeHistogramResult result, Long commitVersion) {
-    return new CommitReport.FileSizeHistogram()
-        .sortedBinBoundaries(toLongList(result.getSortedBinBoundaries()))
-        .fileCounts(toLongList(result.getFileCounts()))
-        .totalBytes(toLongList(result.getTotalBytes()))
-        .commitVersion(commitVersion);
+  private static UCDeltaModels.FileSizeHistogram toFileSizeHistogram(
+      FileSizeHistogramResult result, long commitVersion) {
+    return new UCDeltaModels.FileSizeHistogram(
+        toLongList(result.getSortedBinBoundaries()),
+        toLongList(result.getFileCounts()),
+        toLongList(result.getTotalBytes()),
+        commitVersion);
   }
 
   private static List<Long> toLongList(long[] array) {

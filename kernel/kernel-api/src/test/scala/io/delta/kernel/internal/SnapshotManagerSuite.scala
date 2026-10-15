@@ -34,7 +34,7 @@ import io.delta.kernel.test.BaseMockParquetHandler
 import io.delta.kernel.test.MockFileSystemClientUtils
 import io.delta.kernel.test.MockListFromFileSystemClient
 import io.delta.kernel.test.VectorTestUtils
-import io.delta.kernel.types.{DataType, StructType}
+import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -1168,24 +1168,11 @@ class MockReadLastCheckpointFileJsonHandler(
         override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
         override def getColumnVector(ordinal: Int): ColumnVector = {
-          // READ_SCHEMA: version, size, parts, sizeInBytes, numOfAddFiles, v2Checkpoint, checksum,
-          // tags. This classic pointer only sets version/size/parts; the rest are null/empty.
           ordinal match {
             case 0 => longVector(Seq(lastCheckpointVersion)) /* version */
             case 1 => longVector(Seq(100)) /* size */
             case 2 => longVector(Seq(1)) /* parts */
-            case 3 => longVector(Seq(null.asInstanceOf[JLong])) /* sizeInBytes */
-            case 4 => longVector(Seq(null.asInstanceOf[JLong])) /* numOfAddFiles */
-            case 5 => // v2Checkpoint: an all-null struct vector
-              new ColumnVector {
-                override def getDataType: DataType =
-                  CheckpointMetaData.READ_SCHEMA.at(5).getDataType
-                override def getSize: Int = 1
-                override def close(): Unit = {}
-                override def isNullAt(rowId: Int): Boolean = true
-              }
-            case 6 => stringVector(Seq(null)) /* checksum */
-            case 7 => mapTypeVector(Seq(Map.empty[String, String])) /* tags */
+            case 3 => mapTypeVector(Seq(Map.empty[String, String]))
           }
         }
 

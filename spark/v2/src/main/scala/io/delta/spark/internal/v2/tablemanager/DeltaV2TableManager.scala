@@ -1,0 +1,40 @@
+/*
+ * Copyright (2026) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.delta.spark.internal.v2.tablemanager
+
+import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import io.delta.spark.internal.v2.kernel.KernelContext
+
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+
+/**
+ * Contract for a Delta table manager used by the DSv2 connector.
+ */
+private[v2] trait DeltaV2TableManager {
+
+  /** Returns the table-scoped Kernel context. */
+  private[v2] def kernelContext: KernelContext
+
+  /** Returns the table-scoped log store. */
+  private[v2] def logStore: LogStore
+
+  /** Returns a snapshot manager using the caller's current catalog metadata. */
+  private[v2] def snapshotManager(catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager
+
+  /** Retires this manager and releases any resources it owns. */
+  def retire(): Unit = {}
+}

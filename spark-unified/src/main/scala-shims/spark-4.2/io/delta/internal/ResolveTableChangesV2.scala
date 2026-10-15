@@ -19,10 +19,10 @@ package io.delta.internal
 import io.delta.spark.internal.v2.catalog.DeltaV2Table
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.analysis.ChangelogInfoUtils
+import org.apache.spark.sql.catalyst.analysis.ChangelogContextUtils
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.connector.catalog.{ChangelogInfo, Identifier}
+import org.apache.spark.sql.connector.catalog.{ChangelogContext, Identifier}
 import org.apache.spark.sql.delta.{DeltaErrors, TableChanges}
 import org.apache.spark.sql.delta.catalog.{ChangelogSupport, DeltaV2TableMarker}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -58,10 +58,12 @@ class ResolveTableChangesV2(session: SparkSession) extends Rule[LogicalPlan] {
         }
 
       // `.option("readChangeFeed", "true").table(name)` where the catalog returned DeltaV2Table
-      // (no `TableChanges` wrapper -- the relation flows straight into the query).
-      case DataSourceV2RelationShim(_: DeltaV2Table,
-      _, Some(catalog: ChangelogSupport), Some(ident), options)
+      // (no `TableChanges` wrapper -- the relation flows straight into the query). Check for a
+      // `timeTravelSpec` to see if this is a time travel query.
+      case DataSourceV2Relation(_: DeltaV2Table,
+      _, Some(catalog: ChangelogSupport), Some(ident), options, timeTravelSpec)
         if CDCReader.isCDCRead(options) =>
+        rejectTimeTravelWithCDF(timeTravelSpec.isDefined)
         buildChangelogRelation(catalog, ident, options)
     }
   }
@@ -74,23 +76,23 @@ class ResolveTableChangesV2(session: SparkSession) extends Rule[LogicalPlan] {
       ident: Identifier,
       options: CaseInsensitiveStringMap): LogicalPlan = {
     rejectUnsupportedOptions(options)
-    // We can use [[ChangelogInfoUtils.fromOptions]] directly here because Spark's CDC options
-    // match Delta's CDF options, e.p. startingVersion, endingVersion.
-    val baseInfo = ChangelogInfoUtils.fromOptions(
+    // We can use [[ChangelogContextUtils.fromOptions]] directly here because Spark's CDC options
+    // match Delta's CDF options, e.g. startingVersion, endingVersion.
+    val baseContext = ChangelogContextUtils.fromOptions(
       options,
       session.sessionState.conf.sessionLocalTimeZone)
-    val info = new ChangelogInfo(
-      baseInfo.range(),
-      ChangelogInfo.DeduplicationMode.DROP_CARRYOVERS,
+    val context = new ChangelogContext(
+      baseContext.range(),
+      ChangelogContext.DeduplicationMode.DROP_CARRYOVERS,
       /* computeUpdates = */ true)
-    val changelog = catalog.loadChangelog(ident, info)
+    val changelog = catalog.loadChangelog(ident, context, options)
     DataSourceV2Relation.create(
-      ChangelogTable(changelog, info), Some(catalog), Some(ident), options)
+      ChangelogTable(changelog, context), Some(catalog), Some(ident), options)
   }
 
   /**
-   * Rejects options that aren't supposed to be supported with Delta CDF, even though Spark's CDC
-   * implementation can support these modes.
+   * Rejects Spark processing options that conflict with the fixed semantics of Delta's existing
+   * CDF APIs. Spark's native CHANGES APIs bypass this bridge and retain support for these options.
    */
   private def rejectUnsupportedOptions(options: CaseInsensitiveStringMap): Unit = {
     val unsupportedOptions = Seq(
@@ -100,6 +102,15 @@ class ResolveTableChangesV2(session: SparkSession) extends Rule[LogicalPlan] {
       "endingBoundInclusive")
     unsupportedOptions.foreach { key =>
       if (options.containsKey(key)) throw DeltaErrors.changelogUnsupportedOption(key)
+    }
+  }
+
+  /**
+   * Block combining a CDF read with a time travel pin.
+   */
+  private def rejectTimeTravelWithCDF(hasTimeTravelSpec: Boolean): Unit = {
+    if (hasTimeTravelSpec) {
+      throw DeltaErrors.timeTravelNotSupportedException
     }
   }
 }
