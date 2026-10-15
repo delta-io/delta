@@ -180,7 +180,7 @@ class ConflictDataSkippingSuite extends QueryTest
       name: String, partitionValues: Map[String, String] = Map.empty): AddFile =
     AddFile(name, partitionValues, size = 1L, modificationTime = 1L, dataChange = true)
 
-  private val noConflictEvent = "delta.conflictDetection.dataSkipping.noConflict"
+  private val appliedEvent = "delta.conflictDetection.dataSkipping.applied"
 
   test("empty read predicates on a non-blind-append txn: added file still conflicts") {
     // Soundness of the Serializable blind-append case. A transaction can be a NON-blind append
@@ -363,13 +363,13 @@ class ConflictDataSkippingSuite extends QueryTest
         assert(run(150, 151, winnerP = 1, dataSkipping = true).isSuccess)
         assert(run(10, 11, winnerP = 2, dataSkipping = true).isSuccess)
       }
-      assert(filterUsageRecords(usageLogs, noConflictEvent).size == 2)
-      // A file matching one of the reads still conflicts, and records no noConflict event.
+      assert(filterUsageRecords(usageLogs, appliedEvent).size == 2)
+      // A file matching one of the reads still conflicts, and records no applied event.
       val conflictLogs = Log4jUsageLogger.track {
         assertConflict(run(10, 11, winnerP = 1, dataSkipping = true))
         assertConflict(run(150, 151, winnerP = 2, dataSkipping = true))
       }
-      assert(filterUsageRecords(conflictLogs, noConflictEvent).isEmpty)
+      assert(filterUsageRecords(conflictLogs, appliedEvent).isEmpty)
       // Feature disabled: partition pruning alone keeps the file -> conflict.
       assertConflict(run(150, 151, winnerP = 1, dataSkipping = false))
     }
@@ -400,7 +400,37 @@ class ConflictDataSkippingSuite extends QueryTest
       }
       val fallbackEvent = "delta.conflictDetection.dataSkipping.fallback"
       assert(filterUsageRecords(usageLogs, fallbackEvent).size == 1)
-      assert(filterUsageRecords(usageLogs, noConflictEvent).isEmpty)
+      assert(filterUsageRecords(usageLogs, appliedEvent).isEmpty)
+    }
+  }
+
+  test("skipping evaluates candidates in batches and finds a conflict in a later batch") {
+    withTempDir { dir =>
+      createTable(dir)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val id = AttributeReference("id", LongType)()
+      // Winner adds four files: three whose stats prove they miss `id < 50`, then the [0,100) file,
+      // which matches. Reusing the table's files gives them real stats.
+      val (matching, missing) = log.update().allFiles.collect().toSeq
+        .partition(_.stats.contains("\"minValues\":{\"id\":0}"))
+      val winnerAdds = missing.take(3) ++ matching
+      assert(winnerAdds.size == 4)
+
+      def run(adds: Seq[AddFile]): scala.util.Try[Long] = withSQLConf(
+          DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_BATCH_SIZE.key -> "1") {
+        val loser = log.startTransaction()
+        loser.filterFiles(Seq(LessThan(id, Literal(50L))))
+        log.startTransaction().commit(adds, DeltaOperations.Write(SaveMode.Append))
+        scala.util.Try(loser.commit(
+          Seq(manufacturedAdd(s"loser-${adds.size}.parquet")),
+          DeltaOperations.Write(SaveMode.Append)))
+      }
+      // Only the three non-matching files: every batch is skipped, no conflict.
+      assert(run(winnerAdds.take(3).map(f => f.copy(path = "a-" + f.path))).isSuccess)
+      // The matching file is the fourth batch: still found.
+      assert(run(winnerAdds.map(f => f.copy(path = "b-" + f.path))).failed.toOption
+        .exists(_.isInstanceOf[io.delta.exceptions.ConcurrentAppendException]))
     }
   }
 }

@@ -484,6 +484,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected var commitAttemptStartTimeMillis: Long = _
 
   /**
+   * Whether conflict-time data skipping was applied while checking this transaction against any
+   * winning commit, across all commit attempts. Reported once the transaction commits.
+   */
+  private var conflictDataSkippingApplied = false
+
+  /**
    * Tracks actions within the transaction, will commit along with the passed-in actions in the
    * commit function.
    */
@@ -3609,6 +3615,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
             winningCommitSummary, firstWinningVersion, updatedCurrentTransactionInfo).getOrElse {
           conflictChecker.checkConflictsAndValidateActions()
         }
+        conflictDataSkippingApplied ||= conflictChecker.conflictDataSkippingApplied
 
         logInfo(logPrefix +
           log"No conflicts in version ${MDC(DeltaLogKeys.VERSION, otherCommitVersion)}, " +
@@ -3733,6 +3740,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       committedTransactionInfoOpt.map(_.finalActionsToCommit).getOrElse(Seq.empty)
     val catalogTableForCommittedTransaction =
       committedTransactionInfoOpt.flatMap(_.catalogTable).orElse(catalogTable)
+    if (conflictDataSkippingApplied) {
+      recordDeltaEvent(deltaLog,
+        opType = "delta.conflictDetection.dataSkipping.applied",
+        data = Map("committedVersion" -> committedVersion))
+    }
     committed = Some(CommittedTransaction(
       txnId = txnId,
       deltaLog = deltaLog,

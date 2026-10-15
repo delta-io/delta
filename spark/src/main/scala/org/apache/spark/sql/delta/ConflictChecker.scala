@@ -287,11 +287,14 @@ private[delta] class ConflictChecker(
 
   protected def recordSkippedPhase(phase: String): Unit = timingStats += phase -> 0
 
+  /** Set when conflict-time data skipping was evaluated by a checked-appends probe. */
+  private var dataSkippingApplied = false
+
   /**
-   * Set when conflict-time data skipping was applied to a checked-appends probe that then found no
-   * conflicting file. Reported once the whole check against the winning commit has passed.
+   * Whether conflict-time data skipping was applied while checking against the winning commit.
+   * Read by the transaction, which reports it once the commit succeeds.
    */
-  private var dataSkippingAppliedWithoutConflict = false
+  private[delta] def conflictDataSkippingApplied: Boolean = dataSkippingApplied
 
   /**
    * This function checks conflict of the `initialCurrentTransactionInfo` against the
@@ -364,12 +367,6 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     resolveTimestampOrderingConflicts()
-
-    if (dataSkippingAppliedWithoutConflict) {
-      recordDeltaEvent(deltaLog,
-        opType = "delta.conflictDetection.dataSkipping.noConflict",
-        data = Map("winningCommitVersion" -> winningCommitVersion))
-    }
 
     // Fold the winning commit into our transaction info before the next attempt: this advances
     // `preCommitLatestAMTCheckpointOpt` to the winner's inline AMT checkpoint (when the winner
@@ -1078,33 +1075,33 @@ private[delta] class ConflictChecker(
         !currentTransactionInfo.readWholeTable &&
         currentTransactionInfo.readPredicates.nonEmpty
 
-    import org.apache.spark.sql.delta.implicits._
+    val candidates = new CandidateFiles(
+      files, spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_BATCH_SIZE))
 
     // There is no reason to filter files if the table is not partitioned.
     if (currentTransactionInfo.readWholeTable ||
         currentTransactionInfo.readSnapshot.metadata.partitionColumns.isEmpty) {
       if (!useDataSkipping || files.isEmpty) return files.headOption
       return getFirstFileMatchingDataPredicates(
-        files.toDF(spark), currentTransactionInfo.readPredicates.map(_.dataPredicates))
+        candidates, currentTransactionInfo.readPredicates.map(_.dataPredicates),
+        partitionFilter = None)
     }
-
-    val filesDf = files.toDF(spark)
 
     spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_WIDEN_NONDETERMINISTIC_PREDICATES) match {
       case DeltaSQLConf.NonDeterministicPredicateWidening.OFF =>
         getFirstFileMatchingPartitionPredicatesInternal(
-          filesDf, shouldWidenNonDeterministicPredicates = false, shouldWidenAllUdf = false,
+          candidates, shouldWidenNonDeterministicPredicates = false, shouldWidenAllUdf = false,
           useDataSkipping)
       case wideningMode =>
         val fileWithWidening = getFirstFileMatchingPartitionPredicatesInternal(
-          filesDf, shouldWidenNonDeterministicPredicates = true, shouldWidenAllUdf = true,
+          candidates, shouldWidenNonDeterministicPredicates = true, shouldWidenAllUdf = true,
           useDataSkipping)
 
         fileWithWidening.flatMap { fileWithWidening =>
           val fileWithoutWidening =
             getFirstFileMatchingPartitionPredicatesInternal(
-              filesDf, shouldWidenNonDeterministicPredicates = false, shouldWidenAllUdf = false,
-              useDataSkipping)
+              candidates, shouldWidenNonDeterministicPredicates = false,
+              shouldWidenAllUdf = false, useDataSkipping)
           if (fileWithoutWidening.isEmpty) {
             // Conflict due to widening of non-deterministic predicate.
             recordDeltaEvent(deltaLog,
@@ -1128,7 +1125,7 @@ private[delta] class ConflictChecker(
   }
 
   private def getFirstFileMatchingPartitionPredicatesInternal(
-      filesDf: DataFrame,
+      candidates: CandidateFiles,
       shouldWidenNonDeterministicPredicates: Boolean,
       shouldWidenAllUdf: Boolean,
       useDataSkipping: Boolean): Option[AddFile] = {
@@ -1164,22 +1161,23 @@ private[delta] class ConflictChecker(
     // With data skipping, each probe is a partition predicate plus the data predicates of the reads
     // that share it, so a read's data predicates are only combined with that same read's partition
     // predicate: a file conflicts iff it could match (P_i AND D_i) for some read i, not the looser
-    // (P_1 OR P_2) AND (D_1 OR D_2). Like ExpressionSet, non-deterministic predicates are never
-    // merged.
+    // (P_1 OR P_2) AND (D_1 OR D_2). Reads are grouped by their partition predicate after widening,
+    // so predicates that widen to the same one share a probe. Like ExpressionSet, non-deterministic
+    // predicates are never merged.
     val probes: Seq[(DeltaTableReadPredicate, Seq[Seq[Expression]])] = if (useDataSkipping) {
       val groups =
         mutable.LinkedHashMap[Any, (DeltaTableReadPredicate, mutable.Buffer[Seq[Expression]])]()
       currentTransactionInfo.readPredicates.zipWithIndex.foreach { case (rp, i) =>
-        val key = if (rp.partitionPredicate.deterministic) {
-          (rp.shouldRewriteFilter, rp.partitionPredicate.canonicalized)
+        val widened = rewritePredicateFn(rp.partitionPredicate, rp.shouldRewriteFilter)
+        val key = if (widened.partitionPredicate.deterministic) {
+          (widened.shouldRewriteFilter, widened.partitionPredicate.canonicalized)
         } else {
           i
         }
-        groups.getOrElseUpdate(key, (rp, mutable.ArrayBuffer.empty))._2 += rp.dataPredicates
+        groups.getOrElseUpdate(key, (widened, mutable.ArrayBuffer.empty))._2 += rp.dataPredicates
       }
-      groups.values.toSeq.map { case (rp, dataFiltersPerRead) =>
-        rewritePredicateFn(rp.partitionPredicate, rp.shouldRewriteFilter) ->
-          dataFiltersPerRead.toSeq
+      groups.values.toSeq.map { case (widened, dataFiltersPerRead) =>
+        widened -> dataFiltersPerRead.toSeq
       }
     } else {
       canonicalPredicates.toSeq.map(_ -> Seq.empty[Seq[Expression]])
@@ -1188,16 +1186,17 @@ private[delta] class ConflictChecker(
     import org.apache.spark.sql.delta.implicits._
     val filesMatchingPartitionPredicates = probes.iterator
       .flatMap { case (readPredicate, dataFiltersPerRead) =>
-        val filesMatchingPartition = DeltaLog.filterFileList(
+        def filterByPartition(filesDf: DataFrame): DataFrame = DeltaLog.filterFileList(
           partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
           files = filesDf,
           partitionFilters = readPredicate.partitionPredicates,
           shouldRewritePartitionFilters = readPredicate.shouldRewriteFilter
         )
         val matchingFileOpt = if (useDataSkipping) {
-          getFirstFileMatchingDataPredicates(filesMatchingPartition, dataFiltersPerRead)
+          getFirstFileMatchingDataPredicates(
+            candidates, dataFiltersPerRead, partitionFilter = Some(filterByPartition))
         } else {
-          filesMatchingPartition.as[AddFile].head(1).headOption
+          filterByPartition(candidates.all).as[AddFile].head(1).headOption
         }
         matchingFileOpt.foreach { f =>
           logInfo(log"Partition predicate is matching a file changed by the winning transaction: " +
@@ -1212,28 +1211,52 @@ private[delta] class ConflictChecker(
   }
 
   /**
-   * Returns the first file in `filesDf` whose column stats do not prove it fails every read in
-   * `dataFiltersPerRead`, i.e. a file that must still be treated as a conflict. The skipping filter
-   * is fused into the same `head(1)` job as the caller's partition filter, which is applied first.
+   * The concurrently-added files to check, as the DataFrames the probes need. Built lazily on first
+   * use and shared by every probe.
+   */
+  private class CandidateFiles(val files: Seq[AddFile], batchSize: Int) {
+    import org.apache.spark.sql.delta.implicits._
+    lazy val all: DataFrame = files.toDF(spark)
+    // The files form a local relation, whose filters the optimizer evaluates over every row before
+    // applying a limit, so `head(1)` alone does not stop early. Bounded batches let a probe stop at
+    // the first batch that holds a conflicting file.
+    lazy val batches: LazyList[DataFrame] =
+      files.grouped(batchSize).map(_.toDF(spark)).to(LazyList)
+  }
+
+  /**
+   * Returns the first candidate file that passes `partitionFilter` and whose column stats do not
+   * prove it fails every read in `dataFiltersPerRead`, i.e. a file that must still be treated as a
+   * conflict. The partition and skipping filters are fused into the same query, run over bounded
+   * batches of candidates until one holds a match. When nothing can be skipped, no stats are parsed
+   * and an unpartitioned check (`partitionFilter = None`) runs no query at all.
    *
    * Skipping is a pure optimization over conservative conflict detection: if building or
    * evaluating the skipping filter fails, this records an event and falls back to checking without
    * skipping, exactly as when the feature is disabled.
    */
   private def getFirstFileMatchingDataPredicates(
-      filesDf: DataFrame,
-      dataFiltersPerRead: Seq[Seq[Expression]]): Option[AddFile] = {
+      candidates: CandidateFiles,
+      dataFiltersPerRead: Seq[Seq[Expression]],
+      partitionFilter: Option[DataFrame => DataFrame]): Option[AddFile] = {
     import org.apache.spark.sql.delta.implicits._
     def firstFile(df: DataFrame): Option[AddFile] = df.as[AddFile].head(1).headOption
+    def firstFileWithoutSkipping: Option[AddFile] = partitionFilter match {
+      case Some(filter) => firstFile(filter(candidates.all))
+      case None => candidates.files.headOption
+    }
+    val readSnapshot = currentTransactionInfo.readSnapshot
     try {
-      currentTransactionInfo.readSnapshot
-        .filterFilesDfMatchingAnyReadPredicate(filesDf, dataFiltersPerRead) match {
-          case Some(skippedDf) =>
-            val matchingFileOpt = firstFile(skippedDf)
-            if (matchingFileOpt.isEmpty) dataSkippingAppliedWithoutConflict = true
-            matchingFileOpt
-          case None => firstFile(filesDf)
-        }
+      readSnapshot.conflictSkippingCondition(dataFiltersPerRead) match {
+        case None => firstFileWithoutSkipping
+        case Some(condition) =>
+          val matchingFileOpt = candidates.batches.iterator.map { batch =>
+            val filtered = partitionFilter.map(filter => filter(batch)).getOrElse(batch)
+            firstFile(readSnapshot.applyConflictSkippingCondition(filtered, condition))
+          }.collectFirst { case Some(file) => file }
+          dataSkippingApplied = true
+          matchingFileOpt
+      }
     } catch {
       case NonFatal(e) =>
         logWarning(log"Conflict-time data skipping failed; falling back to treating all added " +
@@ -1244,7 +1267,7 @@ private[delta] class ConflictChecker(
             "winningCommitVersion" -> winningCommitVersion,
             "exceptionClass" -> e.getClass.getName,
             "exceptionMessage" -> e.getMessage))
-        firstFile(filesDf)
+        firstFileWithoutSkipping
     }
   }
 
