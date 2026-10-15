@@ -107,13 +107,22 @@ This design enables:
 
 | <ins>Storage Type</ins> | <ins>`pathOrInlineDv`</ins> | <ins>Encoding</ins> | <ins>Under table root?</ins> |
 | - | - | - | - |
-| <ins>`u`</ins> | <ins>base85-encoded random prefix + UUID</ins> | <ins>base85</ins> | <ins>Yes</ins> |
-| <ins>`p`</ins> | <ins>absolute URI</ins> | <ins>[URI-encoded](https://www.rfc-editor.org/rfc/rfc2396.txt)</ins> | <ins>No</ins> |
+| <ins>`u`</ins> | <ins>optional random prefix + base85-encoded UUID</ins> | <ins>base85</ins> | <ins>Yes</ins> |
+| <ins>`p`</ins> | <ins>absolute URI</ins> | <ins>[URI-encoded](https://www.rfc-editor.org/rfc/rfc2396.txt)</ins> | <ins>Either</ins> |
 | <ins>`r`</ins> | <ins>raw path relative to the table root</ins> | <ins>none</ins> | <ins>Yes</ins> |
 
 <ins>In the adaptive metadata tree, a content entry stores its DV as a `deletion_vector` struct (`location`, `offset`, `size_in_bytes`, `cardinality`). `location` is a bare path relative to the table root when possible, otherwise an absolute path.</ins>
 
-<ins>When writing a content entry's `deletion_vector.location`, writers convert the DV descriptor to a relative or absolute path: an `u` UUID decodes to its `.bin` relative path, a `r` path is used as-is, and an out-of-table `p` is stored as an absolute path, decoded from Delta's URI encoding. When converting `deletion_vector.location` back to `Deletion Vector Descriptor`, a path under the current table root becomes an `r` descriptor and a path outside it becomes a `p` descriptor, re-encoded with Delta's URI encoding.</ins>
+<ins>When writing a content entry's `deletion_vector.location`, writers convert the `Deletion Vector Descriptor` to a path. A `u` descriptor becomes its decoded table-relative path `<prefix>/deletion_vector_<uuid>.bin`, a `r` path is used as-is, and a `p` path is URI-decoded, then stored relative to the table root if it resolves under the table root, otherwise as an absolute path. When converting `deletion_vector.location` back to a `Deletion Vector Descriptor`, a relative `location` becomes an `r` descriptor with the path unchanged, and an absolute `location` becomes a `p` descriptor, URI-encoded. The conversion back never produces `u`, so a DV written as `u` or as an in-table `p` reads back as `r`. The normalized `uniqueId` in [Derived Fields](#derived-fields) still identifies them as the same DV.</ins>
+
+<ins>Examples, for a table rooted at `s3://bucket/my table` (URI-encoded: `s3://bucket/my%20table`), where `<file>` stands for `deletion_vector_d2c639aa-8816-431a-aaf6-d3fe2512ff61.bin`:</ins>
+
+| <ins>Descriptor `storageType`</ins> | <ins>Descriptor `pathOrInlineDv`</ins> | <ins>`deletion_vector.location`</ins> | <ins>Read-back `storageType`</ins> | <ins>Read-back `pathOrInlineDv`</ins> |
+| - | - | - | - | - |
+| <ins>`u`</ins> | <ins>`ab^-aqEH.-t@S}K{vb[*k^`</ins> | <ins>`ab/<file>`</ins> | <ins>`r`</ins> | <ins>`ab/<file>`</ins> |
+| <ins>`r`</ins> | <ins>`ab/<file>`</ins> | <ins>`ab/<file>`</ins> | <ins>`r`</ins> | <ins>`ab/<file>`</ins> |
+| <ins>`p`</ins> | <ins>`s3://bucket/my%20table/ab/<file>`</ins> | <ins>`ab/<file>`</ins> | <ins>`r`</ins> | <ins>`ab/<file>`</ins> |
+| <ins>`p`</ins> | <ins>`s3://bucket/my%20other%20table/ab/<file>`</ins> | <ins>`s3://bucket/my other table/ab/<file>`</ins> | <ins>`p`</ins> | <ins>`s3://bucket/my%20other%20table/ab/<file>`</ins> |
 
 <ins>The same physical DV blob may be serialized under different storage types depending on where it originates, so a `remove` and its matching `add` need not agree on storage type for one blob. [Action Reconciliation](#action-reconciliation) must therefore match them by the DV's normalized object identity, which is the new `adaptiveMetadata` form of `uniqueId` defined in [Derived Fields](#derived-fields).</ins>
 
@@ -121,14 +130,14 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#derived-fields)***
 
-<ins>When `adaptiveMetadata` is enabled, the `uniqueId` derived field is computed as a normalized object identity that names the physical DV blob independent of its storage-type encoding, instead of the existing descriptor-string computation. It is formed as `<marker><path>@<offset>` (the `@<offset>` suffix omitted when `offset` is absent), resolving each storage type as follows:</ins>
+<ins>When `adaptiveMetadata` is enabled, the `uniqueId` derived field is a normalized object identity that names the physical DV blob independent of its storage-type encoding. The normalized identity is `<marker><path>@<offset>`, with the `@<offset>` suffix omitted when `offset` is absent. `<marker>` and `<path>` are derived from the descriptor as follows, and are not necessarily the descriptor's own `storageType` and `pathOrInlineDv`.</ins>
 
 | <ins>Storage Type</ins> | <ins>Marker</ins> | <ins>Path</ins> |
 | - | - | - |
 | <ins>`u`</ins> | <ins>`r`</ins> | <ins>Decode the random prefix and base85 UUID to the file name, giving the table-relative path `<prefix>/deletion_vector_<uuid>.bin`.</ins> |
 | <ins>`r`</ins> | <ins>`r`</ins> | <ins>The raw relative path, as-is.</ins> |
-| <ins>`p`</ins> | <ins>`r` if it resolves under the table root, else `p`</ins> | <ins>URI-decode the path. If it resolves under the table root, relativize it, otherwise keep the absolute path.</ins> |
-| <ins>`i`</ins> | <ins>`i`</ins> | <ins>`pathOrInlineDv`, unchanged.</ins> |
+| <ins>`p`</ins> | <ins>`r` if it resolves under the table root, else `p`</ins> | <ins>If it resolves under the table root, relativize and URI-decode it, otherwise keep the absolute path.</ins> |
+| <ins>`i`</ins> | <ins>`i`</ins> | <ins>`pathOrInlineDv`, unchanged. They can still appear in commits from before enablement.</ins> |
 
 <ins>The `offset` is always part of the identity when present, because a single file may pack multiple DVs at different offsets.</ins>
 
