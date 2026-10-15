@@ -13,21 +13,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.internal.v2.read
+package io.delta.spark.internal.v2.read;
 
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
 
 /** Cached sorted AddFile DataFrame, keyed by version. Callers synchronize externally. */
-private[v2] class DataFrameSnapshotCache(
-    private[this] val version: Long,
-    private[this] val sortedAddFiles: DataFrame)
-    extends AutoCloseable {
+public class DataFrameSnapshotCache implements AutoCloseable {
 
-  def getVersion(): Long = version
+  private final long version;
+  private final Dataset<Row> sortedAddFiles;
 
-  def getSortedAddFiles(): DataFrame = sortedAddFiles
+  public DataFrameSnapshotCache(long version, Dataset<Row> sortedAddFiles) {
+    this.version = version;
+    this.sortedAddFiles = sortedAddFiles;
+  }
 
-  override def close(): Unit = {
-    sortedAddFiles.unpersist()
+  public long getVersion() {
+    return version;
+  }
+
+  public Dataset<Row> getSortedAddFiles() {
+    return sortedAddFiles;
+  }
+
+  @Override
+  public void close() {
+    sortedAddFiles.unpersist();
   }
 }
