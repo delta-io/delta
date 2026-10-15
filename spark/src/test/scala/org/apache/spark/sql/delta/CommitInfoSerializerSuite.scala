@@ -55,7 +55,15 @@ class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
     val roundTripped = Action.fromJson(sparkMetrics.json).asInstanceOf[CommitInfo]
     assert(roundTripped.operationMetrics == sparkMetrics.operationMetrics)
     assert(Action.fromJson(createEmptyCommitInfo().json)
-      .asInstanceOf[CommitInfo].operationMetrics.isEmpty)
+      .asInstanceOf[CommitInfo].operationMetrics == None)
+
+    val nullMetrics = Action.fromJson(
+      """{"commitInfo":{"timestamp":123,"operation":"WRITE","operationMetrics":null}}""")
+      .asInstanceOf[CommitInfo]
+    assert(nullMetrics.operationMetrics == None)
+
+    val emptyMetrics = createEmptyCommitInfo().copy(operationMetrics = Some(Map.empty[String, String]))
+    assert(Action.fromJson(emptyMetrics.json).asInstanceOf[CommitInfo] == emptyMetrics)
   }
 
 

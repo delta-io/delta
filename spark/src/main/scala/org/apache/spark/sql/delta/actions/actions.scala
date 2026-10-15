@@ -2261,6 +2261,10 @@ class JsonMapSerializer extends JsonSerializer[Map[String, String]] {
 
 /** Allows commit metrics from other Delta writers to contain JSON values. */
 class JsonMetricsDeserializer extends JsonDeserializer[Option[Map[String, String]]] {
+  override def getNullValue(ctxt: DeserializationContext): Option[Map[String, String]] = None
+
+  override def getAbsentValue(ctxt: DeserializationContext): Option[Map[String, String]] = None
+
   override def deserialize(
       jp: JsonParser,
       ctxt: DeserializationContext): Option[Map[String, String]] = {
