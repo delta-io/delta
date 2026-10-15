@@ -83,17 +83,23 @@ This design enables:
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>manifestCommitVersion</ins> | <ins>Long</ins> | <ins>Required for both manifest and standalone checkpoints. The version of the manifest commit that published the referenced content root.</ins> |
-| <ins>contentRootVersion</ins> | <ins>Long</ins> | <ins>Required. The referenced checkpoint's `contentRoot.version`, which provides the listing floor even when `checkpoint` is omitted. MUST be less than or equal to `_last_checkpoint.version`.</ins> |
+| <ins>contentRootVersion</ins> | <ins>Long</ins> | <ins>Required. The referenced checkpoint's `contentRoot.version`, which provides the listing floor even when `checkpoint` is omitted. Must be less than or equal to `_last_checkpoint.version`.</ins> |
 | <ins>checkpoint</ins> | <ins>Array</ins> | <ins>Optional. The checkpoint contents encoded as an array of single-action objects. For a manifest checkpoint, this is the [`checkpoint` action](#checkpoint-action)'s value. For a standalone checkpoint, this contains the checkpoint file's actions, including inline `add` and `remove` actions.</ins> |
 | <ins>leaves</ins> | <ins>Array</ins> | <ins>Optional. The complete list of leaf descriptors (`DATA_MANIFEST` [content entries](#content-entry-schema)) from the referenced root manifest, including their tracking information, manifest deletion vectors, and any recorded statistics. An empty array means the root references no leaf manifests.</ins> |
 
-<ins>For an `adaptiveMetadata` checkpoint, `_last_checkpoint.version` holds `checkpointMetadata.version`, and `size` holds `-1` to indicate that the total checkpoint action count is not reported. `parts` is required and MUST equal the number of leaf manifests referenced by the content root plus one for the root manifest. Readers can therefore determine the leaf count as `parts - 1` even when `leaves` is omitted.</ins>
-
 <ins>`amtCheckpoint` and `v2Checkpoint` are mutually exclusive, as are the `adaptiveMetadata` and `v2Checkpoint` features.</ins>
 
-<ins>The optional fields `checkpoint` and `leaves` cache checkpoint contents and leaf descriptors for direct reuse; readers MUST NOT require them. When `checkpoint` is absent, readers compare `_last_checkpoint.version` with `amtCheckpoint.contentRootVersion` to select its source: if equal, read the `checkpoint` action from the commit file at `manifestCommitVersion`; if greater, read the standalone checkpoint file at `_last_checkpoint.version`. Equality selects the manifest commit even if a standalone checkpoint exists at that version. When `leaves` is absent, readers obtain the leaf descriptors by reading the root manifest referenced by the resolved checkpoint. Cached leaf descriptors avoid that discovery step; they do not contain the leaf files' contents.</ins>
+<ins>The optional fields `checkpoint` and `leaves` cache checkpoint contents and leaf descriptors for direct reuse; readers must not require them. When `checkpoint` is absent, readers compare `_last_checkpoint.version` with `amtCheckpoint.contentRootVersion` to select its source: if equal, read the `checkpoint` action from the commit file at `manifestCommitVersion`; if greater, read the standalone checkpoint file at `_last_checkpoint.version`. Equality selects the manifest commit even if a standalone checkpoint exists at that version. When `leaves` is absent, readers obtain the leaf descriptors by reading the root manifest referenced by the resolved checkpoint. Cached leaf descriptors avoid that discovery step; they do not contain the leaf files' contents.</ins>
 
-<ins>Writers SHOULD bound the serialized size of `_last_checkpoint` using an implementation-defined byte limit. If including `checkpoint` and `leaves` would exceed that limit, writers MUST omit both optional fields rather than truncate their contents. Writers MUST retain `parts`, `checkpointType`, `amtCheckpoint.manifestCommitVersion`, `amtCheckpoint.contentRootVersion`, and the other required fields for both manifest and standalone checkpoints.</ins>
+<ins>Writers should bound the serialized size of `_last_checkpoint` using an implementation-defined byte limit. If including `checkpoint` and `leaves` would exceed that limit, writers must omit both optional fields rather than truncate their contents. Writers must retain `parts`, `checkpointType`, `amtCheckpoint.manifestCommitVersion`, `amtCheckpoint.contentRootVersion`, and the other required fields for both manifest and standalone checkpoints.</ins>
+
+<ins>The following AMT requirements apply to the existing fields in `_last_checkpoint`:</ins>
+
+| Field Name | AMT Requirement |
+| - | - |
+| <ins>version</ins> | <ins>Required. Must equal `checkpointMetadata.version`.</ins> |
+| <ins>size</ins> | <ins>Required. Must be `-1`, indicating that the total checkpoint action count is not reported.</ins> |
+| <ins>parts</ins> | <ins>Required. Must equal the number of leaf manifests referenced by the content root plus one for the root manifest. Readers can determine the leaf count as `parts - 1` even when `leaves` is omitted.</ins> |
 
 ### Checkpoints
 
