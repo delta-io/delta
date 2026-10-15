@@ -80,6 +80,7 @@ import io.delta.kernel.internal.{DeltaHistoryManager => KernelDeltaHistoryManage
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.{CatalogStatistics, CatalogTable}
+import org.apache.spark.sql.catalyst.util.QuotingUtils
 import org.apache.spark.sql.connector.catalog.{
   Column,
   Identifier,
@@ -653,9 +654,13 @@ private[catalog] object DeltaV2Table {
       dataSchema = new StructType(dataFields.toArray(new Array[StructField](0)))
       partitionSchema = new StructType(partitionFields.toArray(new Array[StructField](0)))
 
+      // Each partition column is a single top-level field whose name may contain dots, spaces, or
+      // backticks. Expressions.identity parses its argument as a SQL multipart identifier, so
+      // quote the name to keep it as one exact name part (e.g. "a.b" must not become [a, b]).
       partitionTransforms = partColNames
         .stream()
-        .map[Transform](partColName => Expressions.identity(partColName))
+        .map[Transform](partColName =>
+          Expressions.identity(QuotingUtils.quoteIdentifier(partColName)))
         .toArray[Transform](length => new Array[Transform](length))
 
       initialized = true
