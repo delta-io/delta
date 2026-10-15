@@ -127,6 +127,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_STATS_WIDEN_BOUNDS_PRESERVE_NUMERIC_PRECISION_ENABLED =
+    buildConf("stats.widenBounds.preserveNumericPrecision.enabled")
+      .internal()
+      .doc(
+        """When enabled, AddFile.withoutTightBoundStats preserves numeric precision when
+          |updating file statistics to set tightBounds to false. When disabled, the legacy
+          |JSON update can round decimal bounds through Double and cause incorrect data
+          |skipping.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")
       .doc("Arbitrary user-defined metadata to include in CommitInfo.")
@@ -2703,6 +2714,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .createWithDefault(false)
   }
 
+  val DELTA_CDF_SKIP_NONDETERMINISTIC_FILTER_PUSHDOWN =
+    buildConf("changeDataFeed.skipNondeterministicFilterPushdown.enabled")
+      .internal()
+      .doc("When true, V1 CDF scans leave nondeterministic predicates to Spark's outer filter. " +
+        "When false, they also evaluate these predicates internally, restoring the previous " +
+        "behavior.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES =
     buildConf("streaming.unsafeReadOnIncompatibleColumnMappingSchemaChanges.enabled")
       .doc(
@@ -2844,6 +2864,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES =
+    buildConf("changeDataFeed.blockReadsAcrossPartitionSchemaChanges.enabled")
+      .internal()
+      .doc(
+        "When enabled, batch CDF reads fail if their read range crosses a partition schema " +
+          "change. The read must be split at each partition schema change boundary. This also " +
+          "enables the read-time CDF start version schema compatibility check.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE =
     buildConf("changeDataFeed.defaultSchemaModeForColumnMappingTable")
@@ -3576,6 +3606,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val CONCURRENT_IDENTITY_COLUMN_MAX_COLUMNS_PER_TABLE =
+    buildConf("identityColumn.concurrent.maxColumnsPerTable")
+      .internal()
+      .doc("Maximum number of concurrent (service-backed) identity columns allowed on a single " +
+        "table. Enforced when the table opts into the feature: CREATE/REPLACE with the CIC " +
+        "feature and the feature opt-in conversion reject a table whose identity-column count " +
+        "exceeds this, before any sequence is minted.")
+      .intConf
+      .checkValue(_ > 0, "maxColumnsPerTable must be positive")
+      .createWithDefault(50)
 
   //////////////////
   // GeoSpatial

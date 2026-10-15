@@ -48,7 +48,8 @@ public class SerializableReadOnlySnapshotTest extends DeltaV2TestBase {
     spark.range(10).write().format("delta").save(tablePath);
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    PathBasedSnapshotManager mgr =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
     SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot());
 
     SerializableReadOnlySnapshot original =
@@ -88,7 +89,8 @@ public class SerializableReadOnlySnapshotTest extends DeltaV2TestBase {
     spark.range(5).write().format("delta").save(tablePath);
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    PathBasedSnapshotManager mgr =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
     SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(mgr.loadLatestSnapshot());
 
     SerializableReadOnlySnapshot serializable =

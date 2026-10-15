@@ -36,11 +36,6 @@ trait MergeIntoAMTMixin
   with MergeIntoSQLTestUtils {
 
   override def excluded: Seq[String] = super.excluded ++ Seq(
-    // scalastyle:off line.size.limit
-    // AMT tables are always catalog-managed, so the path-based (catalogManaged=false) analysis-
-    // snapshot-reuse variants are not applicable.
-    "merge SQL command reuses analysis snapshot in SQL environments (catalogManaged=false)",
-    "merge SQL command does not reuse analysis snapshot when config is disabled (catalogManaged=false)",
     // This test strips record-count stats from the target files (AddFile.stats = null) to exercise
     // Delta's graceful missing-stats handling. AMT cannot represent such files: its manifest
     // requires a per-file physical record count (DataEntry.fromAddFile throws on a stats-less
@@ -52,7 +47,6 @@ trait MergeIntoAMTMixin
     // ENABLED. Structural AMT invariant (row tracking cannot be disabled), not a MERGE bug.
     "Row tracking marked as not preserved when row tracking disabled",
     "MERGE preserves Row Tracking on tables enabled using backfill"
-    // scalastyle:on line.size.limit
   )
 
   abstract override def executeMerge(

@@ -20,13 +20,15 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, DomainMetadata}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, DeletionVectorDescriptor, DomainMetadata}
 import io.delta.kernel.{CommitActions => KernelCommitActions}
 import io.delta.kernel.data.{ColumnarBatch => KernelColumnarBatch}
 import io.delta.kernel.data.{ColumnVector => KernelColumnVector}
 import io.delta.kernel.data.{Row => KernelRow}
 import io.delta.kernel.data.MapValue
+import io.delta.kernel.defaults.internal.json.{JsonUtils => KernelJsonUtils}
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
+import io.delta.kernel.internal.actions.{AddCDCFile => KernelAddCDCFile}
 import io.delta.kernel.internal.actions.{AddFile => KernelAddFile}
 import io.delta.kernel.internal.actions.{CommitInfo => KernelCommitInfo}
 import io.delta.kernel.internal.actions.{
@@ -38,6 +40,7 @@ import io.delta.kernel.internal.actions.{Metadata => KernelMetadata}
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
 import io.delta.kernel.internal.actions.{RemoveFile => KernelRemoveFile}
 import io.delta.kernel.internal.actions.{SetTransaction => KernelSetTransaction}
+import io.delta.kernel.internal.actions.{SingleAction => KernelSingleAction}
 import io.delta.kernel.internal.data.GenericColumnVector
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.util.{Utils => KernelUtils}
@@ -399,6 +402,60 @@ class KernelActionUtilsSuite extends SparkFunSuite {
     assert(removeFile.deletionVector === null)
   }
 
+  private val kernelActionJsons = Map(
+    KernelDeltaAction.ADD ->
+      """{"add":{"path":"f.parquet","partitionValues":{"p":"1"},"size":10,
+        |"modificationTime":123,"dataChange":true}}""".stripMargin,
+    KernelDeltaAction.REMOVE ->
+      """{"remove":{"path":"f.parquet","deletionTimestamp":123,"dataChange":true}}""",
+    KernelDeltaAction.PROTOCOL ->
+      """{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}""",
+    KernelDeltaAction.TXN ->
+      """{"txn":{"appId":"app-id","version":7,"lastUpdated":123}}""")
+
+  test("actionsFromKernelRow decodes all supported actions in one row") {
+    val kernelActions = Seq(
+      KernelDeltaAction.TXN,
+      KernelDeltaAction.ADD,
+      KernelDeltaAction.REMOVE,
+      KernelDeltaAction.PROTOCOL)
+    val json = """{"txn":{"appId":"app-id","version":7,"lastUpdated":123},
+      |"add":{"path":"f.parquet","partitionValues":{"p":"1"},"size":10,
+      |"modificationTime":123,"dataChange":true},
+      |"remove":{"path":"f.parquet","deletionTimestamp":123,"dataChange":true},
+      |"protocol":{"minReaderVersion":1,"minWriterVersion":2}}""".stripMargin
+    val kernelRow = KernelJsonUtils.rowFromJson(json, KernelSingleAction.FULL_SCHEMA)
+
+    val expectedActions = kernelActions.map(action => Action.fromJson(kernelActionJsons(action)))
+    assert(KernelActionUtils.actionsFromKernelRow(kernelRow) === expectedActions)
+  }
+
+  private val kernelMetadataJson =
+    """{"id":"table-id","format":{"provider":"parquet","options":{}},
+      |"schemaString":"{\"type\":\"struct\",\"fields\":[]}",
+      |"partitionColumns":[],"configuration":{}}""".stripMargin
+
+  private val unsupportedKernelActionJsons = Map(
+    KernelDeltaAction.METADATA -> s"""{"metaData":$kernelMetadataJson}""",
+    KernelDeltaAction.COMMITINFO -> """{"commitInfo":{}}""",
+    KernelDeltaAction.CDC -> """{"cdc":{}}""",
+    KernelDeltaAction.DOMAINMETADATA ->
+      """{"domainMetadata":{"domain":"test-domain","configuration":"{}","removed":false}}""")
+
+  unsupportedKernelActionJsons.keys.toSeq.sortBy(_.colName).foreach { kernelAction =>
+    test(s"actionsFromKernelRow rejects actions without a row decoder ($kernelAction)") {
+      val actionName = kernelAction.colName
+      val json = unsupportedKernelActionJsons(kernelAction)
+      val kernelRow = KernelJsonUtils.rowFromJson(json, KernelSingleAction.FULL_SCHEMA)
+
+      val error = intercept[UnsupportedOperationException] {
+        KernelActionUtils.actionsFromKernelRow(kernelRow)
+      }
+      assert(error.getMessage ===
+        s"Cannot construct action '$actionName' from a Kernel row")
+    }
+  }
+
   /** Wraps a single action column into a one-batch [[KernelCommitActions]] for direct decoding. */
   private def singleColumnCommitActions(
       colName: String, column: KernelColumnVector): KernelCommitActions = {
@@ -458,15 +515,26 @@ class KernelActionUtilsSuite extends SparkFunSuite {
       DomainMetadata("test.userDomain", "{}", removed = true)))
   }
 
-  test("readActions fails loud on an action type with no decoder (hand-built commit batch)") {
-    val presentColumn = new GenericColumnVector(
-      java.util.Collections.singletonList("present"), StringType.STRING)
-    val action = KernelDeltaAction.CDC
-    val e = intercept[UnsupportedOperationException] {
-      KernelActionUtils.readActions(singleColumnCommitActions(action.colName, presentColumn))
+  test("readActions decodes CDC files with and without tags") {
+    val testCases = Seq(
+      """{"path":"_change_data/no-tags.parquet","partitionValues":{"p":"1"},"size":10}""" ->
+        AddCDCFile("_change_data/no-tags.parquet", Map("p" -> "1"), 10L),
+      """{"path":"_change_data/with-tags.parquet","partitionValues":{"p":"2"},"size":20,
+        |"tags":{"tag-a":"value-a"}}""".stripMargin ->
+        AddCDCFile(
+          "_change_data/with-tags.parquet",
+          Map("p" -> "2"),
+          20L,
+          tags = Map("tag-a" -> "value-a")))
+
+    testCases.foreach { case (json, expected) =>
+      val kernelRow = KernelJsonUtils.rowFromJson(json, KernelAddCDCFile.FULL_SCHEMA)
+      val kernelColumn = new GenericColumnVector(
+        java.util.Collections.singletonList(kernelRow), KernelAddCDCFile.FULL_SCHEMA)
+
+      assert(KernelActionUtils.readActions(
+        singleColumnCommitActions(KernelDeltaAction.CDC.colName, kernelColumn)) === Seq(expected))
     }
-    assert(e.getMessage.contains("No V1 action from Kernel decoder"))
-    assert(e.getMessage.contains(action.colName))
   }
 
 }

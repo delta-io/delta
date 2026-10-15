@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import scala.util.Try
 
-import org.apache.spark.sql.delta.{DeltaConfigs, UpdateBaseMixin}
+import org.apache.spark.sql.delta.UpdateBaseMixin
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorProvider, CatalogOwnedTableUtils, InMemoryCommitCoordinator, TrackingCommitCoordinatorClient}
 import org.apache.spark.sql.delta.rowid.RowTrackingUpdateSuiteBase
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -37,14 +37,6 @@ import org.apache.spark.SparkConf
  *    a stable commit order, we prefer to have AMT commits wrap them all.
  */
 trait UpdateAMTTestBase extends AMTDMLTestUtils {
-
-  override protected def sparkConf: SparkConf = super.sparkConf
-    // The UPDATE suites default new tables to `delta.enableDeletionVectors = false`, which AMT
-    // rejects at CREATE since it requires deletion vectors. Unset it instead of setting it to true:
-    // AMT then enables deletion vectors on the table itself, while the tests, which read this
-    // default to predict whether UPDATE writes deletion vectors, keep seeing the command's
-    // behavior. Whether UPDATE writes them is a command conf that the mixins below decide.
-    .remove(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey)
 
   // Override as public to pass compilation
   override def beforeAll(): Unit = super.beforeAll()
@@ -76,25 +68,7 @@ trait UpdateAMTMixin extends UpdateBaseMixin with UpdateAMTTestBase {
     "schema pruning on finding files to update",
     "nested schema pruning on finding files to update",
     "Deletion vectors are cleaned up with subquery",
-    "update logs error if number of records are missing in stats",
-    // These are exclueded due to same reason as in UpdateWithRowTrackingOverrides.
-    "test update on temp view - view with too many internal aliases - Dataset TempView",
-    "test update on temp view - view with too many internal aliases - SQL TempView",
-    "test update on temp view - view with too many internal aliases " +
-      "with write amplification reduction - Dataset TempView",
-    "test update on temp view - view with too many internal aliases " +
-      "with write amplification reduction - SQL TempView",
-    "test update on temp view - basic - Partition=true - SQL TempView",
-    "test update on temp view - basic - Partition=false - SQL TempView",
-    "test update on temp view - superset cols - Dataset TempView",
-    "test update on temp view - superset cols - SQL TempView",
-    "test update on temp view - nontrivial projection - Dataset TempView",
-    "test update on temp view - nontrivial projection - SQL TempView",
-    "test update on temp view - nontrivial projection " +
-      "with write amplification reduction - Dataset TempView",
-    "test update on temp view - nontrivial projection " +
-      "with write amplification reduction - SQL TempView",
-    "update a SQL temp view"
+    "update logs error if number of records are missing in stats"
   )
 
   // Dropping a catalog-managed table leaves it in the in-memory commit coordinator, which keys

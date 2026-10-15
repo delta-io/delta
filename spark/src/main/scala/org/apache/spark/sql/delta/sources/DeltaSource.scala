@@ -125,7 +125,7 @@ trait DeltaSourceBase extends Source
         snapshotAtSourceInit.metadata.columnMappingMode != NoMapping,
       isTypeWideningSupportedInProtocol = TypeWidening.isSupported(snapshotAtSourceInit.protocol))
     if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges) recordDeltaEvent(
-      deltaLog,
+      snapshotAtSourceInit,
       "delta.unsafe.streaming.readOnColumnMappingSchemaChanges"
     )
     schemaReadOptions
@@ -355,7 +355,7 @@ trait DeltaSourceBase extends Source
       maxVersionSeen: Long,
       isStreamingCDC: Boolean): Unit = {
     recordDeltaEvent(
-      deltaLog,
+      snapshotAtSourceInit,
       opType = "delta.exceptions.streamingTrailingCommitMissing",
       data = Map(
         "stackTrace" -> Thread.currentThread().getStackTrace.tail.mkString("\n\t"),
@@ -658,7 +658,7 @@ trait DeltaSourceBase extends Source
         val isRetryable =
           DeltaStreamUtils.SchemaCompatibilityResult.isRetryableIncompatible(checkResult)
         recordDeltaEvent(
-          deltaLog,
+          snapshotAtSourceInit,
           "delta.streaming.source.schemaChanged",
           data = Map(
             "currentVersion" -> snapshotAtSourceInit.version,
@@ -764,7 +764,7 @@ case class DeltaSource(
   private val ignoreFileDeletion = {
     if (options.ignoreFileDeletion) {
       logConsole(DeltaErrors.ignoreStreamingUpdatesAndDeletesWarning(spark))
-      recordDeltaEvent(deltaLog, "delta.deprecation.ignoreFileDeletion")
+      recordDeltaEvent(snapshotAtSourceInit, "delta.deprecation.ignoreFileDeletion")
     }
     options.ignoreFileDeletion
   }

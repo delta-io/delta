@@ -347,7 +347,7 @@ object AMTWriteHelper extends DeltaLogging {
   private def initializeTracking(status: Int): Tracking = Tracking(
     status = status,
     snapshot_id = None,
-    dv_snapshot_id = None,
+    modified_snapshot_id = None,
     sequence_number = None,
     file_sequence_number = None,
     first_row_id = None,
@@ -531,9 +531,9 @@ object AMTWriteHelper extends DeltaLogging {
       status = status,
       deleted_positions = bitmapOf(deletedPositions),
       replaced_positions = bitmapOf(replacedPositions))
-    // manifest_info file/row counts are immutable; only the MDV (dv/dv_cardinality) grows to mask
-    // the newly superseded positions. Live count is record_count - dv_cardinality, and this
-    // commit's CDF positions live on the tracking, not in the counts.
+    // manifest_info file/row counts are immutable; only the MDV (`dv`) grows to mask the newly
+    // superseded positions. Live count is record_count - dvCardinality, and this commit's CDF
+    // positions live on the tracking, not in the counts.
     val manifestInfo = withUpdatedMdv(oldEntry.manifest_info, cumulativeMdv)
     (newTracking, manifestInfo)
   }
@@ -599,16 +599,15 @@ object AMTWriteHelper extends DeltaLogging {
   // Deletion Vector.
   private[amt] def withUpdatedMdv(base: ManifestInfo, mdv: ManifestBitmap): ManifestInfo = {
     if (mdv.isEmpty) {
-      base.copy(dv = None, dv_cardinality = None)
+      base.copy(dv = None)
     } else {
-      base.copy(
-        dv = Some(AMTUtils.serializeMdv(mdv)),
-        dv_cardinality = Some(mdv.cardinality))
+      base.copy(dv = Some(AMTUtils.serializeMdv(mdv)))
     }
   }
 
   private def emptyManifestInfo: ManifestInfo =
     ManifestInfo(
+      format_version = AMTSingleAction.FormatVersionV4,
       added_files_count = 0,
       existing_files_count = 0,
       deleted_files_count = 0,
@@ -621,8 +620,7 @@ object AMTWriteHelper extends DeltaLogging {
       modified_rows_count = 0L,
       // Placeholder overridden before a newly written manifest is emitted.
       min_sequence_number = 0L,
-      dv = None,
-      dv_cardinality = None)
+      dv = None)
 
   /**
    * Writes a sequence of AMTSingleActions to a Parquet file.

@@ -370,7 +370,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
           // The MDV grew this commit: MODIFIED, or DELETED once every live entry is masked.
           AMTWriteHelper.modifiedOrDeletedTrackingForLeaf(
             pointer, newMdvPositions, deletedPositions, replacedPositions)
-        } else if (pointer.manifest_info.dv_cardinality.getOrElse(0L) == pointer.record_count) {
+        } else if (pointer.manifest_info.dvCardinality == pointer.record_count) {
           AMTWriteHelper.deletedTrackingForCarriedLeaf(pointer)
         } else {
           // Untouched leaf (no new MDVs) that still holds live files: carry it forward EXISTING.
@@ -433,7 +433,9 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       val tracking =
         if (commitAddedPaths.contains(r.path)) AMTWriteHelper.replacedTrackingForDataEntry()
         else AMTWriteHelper.removedTrackingForDataEntry()
-      DataEntry.fromAddFile(priorAddFile, tracking, tableRoot)
+      // scalastyle:off removeFile // This calls a DataEntry factory, not a RemoveFile constructor.
+      DataEntry.fromRemoveFile(priorAddFile, r, tracking, tableRoot)
+      // scalastyle:on removeFile
     }
   }
 
