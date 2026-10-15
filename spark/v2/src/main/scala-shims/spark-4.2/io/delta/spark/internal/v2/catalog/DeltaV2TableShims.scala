@@ -16,10 +16,11 @@
 
 package io.delta.spark.internal.v2.catalog
 
-import java.util.{Arrays, Optional}
+import java.util.Arrays
 
 import io.delta.kernel.engine.{Engine => KernelEngine}
 import io.delta.spark.internal.v2.utils.ScalaUtils
+import io.delta.spark.internal.v2.utils.ScalaUtils.toJavaOptional
 import io.delta.spark.internal.v2.write.DeltaMetadataOnlyDeleteExecutor
 
 import org.apache.spark.sql.delta.{ColumnTypeChangeSupport, Snapshot}
@@ -43,7 +44,7 @@ private[v2] abstract class DeltaV2TableShims extends SupportsSchemaEvolution wit
   protected def metadata(): AbstractMetadata
   protected def kernelEngine(): KernelEngine
   protected def initialSnapshot(): Snapshot
-  protected def catalogTable(): Optional[CatalogTable]
+  protected def catalogTable(): Option[CatalogTable]
 
   /**
    * Whether an analyzer-proposed schema-evolution column change (adding a column or widening a
@@ -75,12 +76,12 @@ private[v2] abstract class DeltaV2TableShims extends SupportsSchemaEvolution wit
 
   override def deleteWhere(predicates: Array[Predicate]): Unit =
     DeltaMetadataOnlyDeleteExecutor
-      .deleteWhere(kernelEngine(), initialSnapshot(), catalogTable(), predicates)
+      .deleteWhere(kernelEngine(), initialSnapshot(), toJavaOptional(catalogTable()), predicates)
 }
 
 object DeltaV2TableShims {
 
   /** The schema evolution capability to advertise. */
-  def schemaEvolutionCapability(): Optional[TableCapability] =
-    Optional.of(TableCapability.AUTOMATIC_SCHEMA_EVOLUTION)
+  def schemaEvolutionCapability(): Option[TableCapability] =
+    Some(TableCapability.AUTOMATIC_SCHEMA_EVOLUTION)
 }

@@ -321,7 +321,7 @@ class DeltaV2Table private (
 
   protected def initialSnapshot(): Snapshot = initialSnapshotValue
 
-  protected def catalogTable(): Optional[CatalogTable] = catalogTableValue
+  protected def catalogTable(): Option[CatalogTable] = queryContext.catalogTableOpt
 
   /** Returns a copy of this table pinned to {@code version}. */
   def withVersion(version: Long): DeltaV2Table = {
@@ -529,7 +529,7 @@ private[catalog] object DeltaV2Table {
       TableCapability.MICRO_BATCH_READ,
       TableCapability.BATCH_WRITE,
       TableCapability.STREAMING_WRITE)
-    DeltaV2TableShims.schemaEvolutionCapability().ifPresent(capability => caps.add(capability))
+    DeltaV2TableShims.schemaEvolutionCapability().foreach(capability => caps.add(capability))
     Collections.unmodifiableSet[TableCapability](caps)
   }
 
