@@ -273,6 +273,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val CREATE_TABLE_VERIFY_COLUMN_ORDER_ENABLED =
+    buildConf("createTable.verifyColumnOrder.enabled")
+      .internal()
+      .doc("Whether CREATE TABLE with a column list over an existing Delta table fails when " +
+        "the columns, including nested struct fields, are listed in a different order than " +
+        "the existing schema.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_PARTITION_COLUMN_CHANGE_CHECK = buildConf("partitionColumnChangeCheck")
     .internal()
     .doc("""Controls the validation behavior when changes to partition columns are detected.
