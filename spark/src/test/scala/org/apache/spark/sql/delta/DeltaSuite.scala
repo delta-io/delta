@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -265,8 +265,26 @@ class DeltaSuite extends QueryTest
             .mode("overwrite")
             .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
             .save(tempDir.toString)
-        }.getMessage
-        assert(e1.contains("does not conform to partial table overwrite condition or constraint"))
+        }
+        if (enabled) {
+          checkError(
+            exception = e1,
+            condition = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
+            sqlState = Some("44000"),
+            parameters = Map(
+              "replaceWhere" -> "is_odd = true",
+              "invariantViolationMessage" -> "(?s).*"),
+            matchPVals = true)
+        } else {
+          checkError(
+            exception = e1,
+            condition = "DELTA_REPLACE_WHERE_MISMATCH.INVALID_PARTITIONS",
+            sqlState = Some("44000"),
+            parameters = Map(
+              "replaceWhere" -> "is_odd = true",
+              "badPartitions" -> "(?s).*=false"),
+            matchPVals = true)
+        }
 
         val e2 = intercept[AnalysisException] {
           Seq(true).toDF("is_odd")
@@ -307,14 +325,20 @@ class DeltaSuite extends QueryTest
             .mode("overwrite")
             .option(DeltaOptions.REPLACE_WHERE_OPTION, "value = 1")
             .save(tempDir.toString)
-        }.getMessage
+        }
         if (enabled) {
-          assert(e4.contains(
-            "Written data does not conform to partial table overwrite condition " +
-              "or constraint 'value = 1'"))
+          checkError(
+            exception = e4,
+            condition = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
+            sqlState = Some("44000"),
+            parameters = Map(
+              "replaceWhere" -> "value = 1",
+              "invariantViolationMessage" -> "(?s).*"),
+            matchPVals = true)
         } else {
-          assert(e4.contains("Predicate references non-partition column 'value'. Only the " +
-            "partition columns may be referenced: [is_odd]"))
+          assert(e4.getMessage.contains(
+            "Predicate references non-partition column 'value'. Only the " +
+              "partition columns may be referenced: [is_odd]"))
         }
 
         val e5 = intercept[AnalysisException] {
@@ -331,7 +355,7 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("replaceWhere with rearrangeOnly") {
+  test("replaceWhere with rearrangeOnly", CatalogManagedMaintenanceIncompatible) {
     withTempDir { dir =>
       Seq(1, 2, 3, 4).toDF()
         .withColumn("is_odd", $"value" % 2 =!= 0)
@@ -365,6 +389,32 @@ class DeltaSuite extends QueryTest
       checkAnswer(
         spark.read.format("delta").load(dir.toString),
         Seq(2, 4, 9).toDF().withColumn("is_odd", $"value" % 2 =!= 0))
+    }
+  }
+
+  test("rearrange-only write is blocked for a catalog-managed table") {
+    withCatalogManagedTable() { tableName =>
+      spark.sql(s"INSERT INTO $tableName VALUES (1)")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val snapshotBefore = deltaLog.update()
+
+      checkError(
+        intercept[DeltaUnsupportedOperationException] {
+          Seq(2).toDF("id")
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "id = 1")
+            .option(DeltaOptions.DATA_CHANGE_OPTION, "false")
+            .save(deltaLog.dataPath.toString)
+        },
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "DATA_REORGANIZATION"))
+
+      val snapshotAfter = deltaLog.update()
+      assert(snapshotAfter.version === snapshotBefore.version)
+      assert(snapshotAfter.allFiles.collect().toSet === snapshotBefore.allFiles.collect().toSet)
+      checkAnswer(spark.table(tableName), Row(1))
     }
   }
 
@@ -2108,7 +2158,8 @@ class DeltaSuite extends QueryTest
     // Now make a commit that comes from an "external" writer that deletes existing data and
     // changes the schema
     val actions = Seq(Action.supportedProtocolVersion(
-      featuresToExclude = Seq(CatalogOwnedTableFeature)), newMetadata) ++ files.map(_.remove)
+      featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+      newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
@@ -2223,8 +2274,14 @@ class DeltaSuite extends QueryTest
           .mode("overwrite")
           .saveAsTable(table)
       }
-      assert(e.getMessage.startsWith("[DELTA_REPLACE_WHERE_MISMATCH] " +
-        "Written data does not conform to partial table overwrite condition or constraint"))
+      checkError(
+        exception = e,
+        condition = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
+        sqlState = Some("44000"),
+        parameters = Map(
+          "replaceWhere" -> "a\\.b = 'a' AND `a\\.b` = 'a'",
+          "invariantViolationMessage" -> "(?s).*"),
+        matchPVals = true)
 
       Seq(("a", "b", "c"), ("d", "e", "f"))
         .toDF("a.b", "c.d", "ab")
@@ -2794,10 +2851,8 @@ class DeltaSuite extends QueryTest
       val e1 = intercept[DeltaIllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (4, 0)")
       }
-      checkError(e1, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616", Map("reason" -> (
-        "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
-          "must be specified for idempotent Delta writes")
-      ))
+      checkError(e1, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS", "42616",
+        Map.empty[String, String])
       // this write should succeed as it's using a newer version than the latest
       spark.conf.set("spark.databricks.delta.write.txnVersion", "10")
       spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (2, 0)")
@@ -2805,10 +2860,8 @@ class DeltaSuite extends QueryTest
       val e2 = intercept[DeltaIllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (3, 0)")
       }
-      checkError(e2, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616", Map("reason" -> (
-        "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
-          "must be specified for idempotent Delta writes")
-      ))
+      checkError(e2, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_SESSION_CONFS", "42616",
+        Map.empty[String, String])
 
       val res = spark.sql(s"SELECT col1 FROM $tableName")
         .orderBy(asc("col1"))
@@ -2880,7 +2933,7 @@ class DeltaSuite extends QueryTest
               idempotentWrite(mode, appId2, df, path, name, 5, 12, 4, isSaveAsTable)
 
               // Verify that specifying only one of the options -- either appId or version -- fails.
-              val e1 = intercept[Exception] {
+              val e1 = intercept[DeltaIllegalArgumentException] {
                 val stage = df.write.format("delta").option(DeltaOptions.TXN_APP_ID, 1).mode(mode)
                 if (isSaveAsTable) {
                   stage.option("path", path).saveAsTable(name)
@@ -2888,8 +2941,10 @@ class DeltaSuite extends QueryTest
                   stage.save(path)
                 }
               }
-              assert(e1.getMessage.contains("Invalid options for idempotent Dataframe writes"))
-              val e2 = intercept[Exception] {
+              checkError(e1,
+                "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+                Map.empty[String, String])
+              val e2 = intercept[DeltaIllegalArgumentException] {
                 val stage = df.write.format("delta").option(DeltaOptions.TXN_VERSION, 1).mode(mode)
                 if (isSaveAsTable) {
                   stage.option("path", path).saveAsTable(name)
@@ -2897,7 +2952,9 @@ class DeltaSuite extends QueryTest
                   stage.save(path)
                 }
               }
-              assert(e2.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+              checkError(e2,
+                "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+                Map.empty[String, String])
             }
           }
         }
@@ -2926,16 +2983,20 @@ class DeltaSuite extends QueryTest
             idempotentWrite(mode, appId2, df, path, name, 5, 3, 4, isSaveAsTable)
 
             // Verify that specifying only one of the options -- either appId or version -- fails.
-            val e1 = intercept[Exception] {
+            val e1 = intercept[DeltaIllegalArgumentException] {
               val stage = df.write.format("delta").option(DeltaOptions.TXN_APP_ID, 1).mode(mode)
               if (isSaveAsTable) stage.option("path", path).saveAsTable(name) else stage.save(path)
             }
-            assert(e1.getMessage.contains("Invalid options for idempotent Dataframe writes"))
-            val e2 = intercept[Exception] {
+            checkError(e1,
+              "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+              Map.empty[String, String])
+            val e2 = intercept[DeltaIllegalArgumentException] {
               val stage = df.write.format("delta").option(DeltaOptions.TXN_VERSION, 1).mode(mode)
               if (isSaveAsTable) stage.option("path", path).saveAsTable(name) else stage.save(path)
             }
-            assert(e2.getMessage.contains("Invalid options for idempotent Dataframe writes"))
+            checkError(e2,
+              "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS.MISSING_DATAFRAME_WRITE_OPTIONS", "42616",
+              Map.empty[String, String])
           }
         }
       }

@@ -399,19 +399,24 @@ abstract class ConvertToDeltaCommandBase(
       checkConversionIsAllowed(txn, targetTable)
 
       val numFiles = targetTable.numFiles
-      val addFilesIter = createDeltaActions(spark, manifest, partitionFields, txn, fs)
+      val addFilesIter = createDeltaActions(spark, manifest, partitionFields, txn, fs).buffered
       val transactionMetrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
       )
       metrics("numConvertedFiles") += numFiles
       sendDriverMetrics(spark, metrics)
+      val convertsAnyFile = addFilesIter.hasNext
+      if (convertsAnyFile) {
+        assert(addFilesIter.head.dataChange, "CONVERT must emit AddFiles with dataChange = true")
+      }
       txn.commitLarge(
         spark,
         addFilesIter,
         Some(txn.protocol),
         getOperation(numFiles, convertProperties, targetTable.format),
         getContext,
-        transactionMetrics)
+        transactionMetrics,
+        dataChange = Some(convertsAnyFile))
     } finally {
       manifest.close()
     }

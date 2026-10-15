@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import io.delta.storage.commit.CommitCoordinatorClient
-import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
+import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCConfigUtils, UCTokenBasedRestClient}
 import org.apache.hadoop.conf.Configuration
 
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -33,7 +33,6 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import io.unitycatalog.client.auth.TokenProvider
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.Utils
 
 /**
@@ -287,107 +286,41 @@ trait UCClientFactory {
  */
 object UCTokenBasedRestClientFactory extends UCClientFactory {
 
-  final val URI_KEY = "uri"
-  final val AUTH_PREFIX = "auth."
-  final val DELTA_REST_API_ENABLED_KEY = "deltaRestApi.enabled"
-  final val APP_VERSIONS_PREFIX = "appVersions."
-  /** Opt-in: caller wants `UCDeltaTokenBasedRestClient` constructed with credential renewal. */
-  final val RENEW_CREDENTIAL_ENABLED_KEY = "renewCredential.enabled"
-  /** Opt-in: caller wants `UCDeltaTokenBasedRestClient` constructed with cred-scoped FS. */
-  final val CRED_SCOPED_FS_ENABLED_KEY = "credScopedFs.enabled"
-
-  private val DEFAULT_UC_CLIENT_CLASS: String = classOf[UCTokenBasedRestClient].getName
-
   private val DELTA_UC_CLIENT_CLASS: String =
     "io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient"
 
   override def createUCClient(ucConfig: java.util.Map[String, String]): UCClient = {
-    val uri = Option(ucConfig.get(URI_KEY)).getOrElse(
-      throw new IllegalArgumentException(s"UC config must contain '$URI_KEY'"))
+    if (UCConfigUtils.isDeltaRestApiEnabled(ucConfig)) {
+      createDeltaClient(ucConfig)
+    } else {
+      createDefaultClient(ucConfig)
+    }
+  }
 
-    val authConfig = extractAuthConfig(ucConfig)
-    val tokenProvider = TokenProvider.create(authConfig)
-
-    val className =
-      if (ucConfig.getOrDefault(DELTA_REST_API_ENABLED_KEY, "true").toBoolean) {
-        DELTA_UC_CLIENT_CLASS
-      } else {
-        DEFAULT_UC_CLIENT_CLASS
-      }
-
-    val cls = Utils.classForName(className)
-    require(classOf[UCClient].isAssignableFrom(cls),
-      s"$className does not implement ${classOf[UCClient].getName}")
-    val appVersions = extractAppVersions(ucConfig)
-    val renewCred = Option(ucConfig.get(RENEW_CREDENTIAL_ENABLED_KEY)).exists(_.toBoolean)
-    val credScopedFs = Option(ucConfig.get(CRED_SCOPED_FS_ENABLED_KEY)).exists(_.toBoolean)
+  private def createDeltaClient(ucConfig: java.util.Map[String, String]): UCClient = {
     val hadoopConfSupplier: Supplier[Configuration] = () =>
       SparkSession.getActiveSession
         .map(_.sparkContext.hadoopConfiguration)
         .getOrElse(new Configuration())
-    val ctor = cls.getConstructor(
-      classOf[String],
-      classOf[TokenProvider],
-      classOf[java.util.Map[_, _]],
-      java.lang.Boolean.TYPE,
-      java.lang.Boolean.TYPE,
-      classOf[Supplier[_]])
-    ctor
-      .newInstance(
-        uri,
-        tokenProvider,
-        appVersions.asJava,
-        java.lang.Boolean.valueOf(renewCred),
-        java.lang.Boolean.valueOf(credScopedFs),
-        hadoopConfSupplier)
+    // Seed the default app versions, then overlay the caller's config (which may override them).
+    val merged = new java.util.HashMap[String, String]()
+    defaultAppVersions.foreach { case (k, v) =>
+      merged.put(UCConfigUtils.APP_VERSIONS_PREFIX + k, v)
+    }
+    merged.putAll(ucConfig)
+    val cls = Utils.classForName(DELTA_UC_CLIENT_CLASS)
+    require(classOf[UCClient].isAssignableFrom(cls),
+      s"$DELTA_UC_CLIENT_CLASS does not implement ${classOf[UCClient].getName}")
+    cls.getConstructor(classOf[java.util.Map[_, _]], classOf[Supplier[_]])
+      .newInstance(merged, hadoopConfSupplier)
       .asInstanceOf[UCClient]
   }
 
-  /**
-   * Extracts entries from `ucConfig` whose keys (compared case-insensitively) start with
-   * `prefix`, strips the prefix, and returns the result as a plain [[java.util.Map]].
-   * Uses the case-preserving view of the input when available so the returned map retains
-   * original key casing (e.g. `oauth.clientId` rather than `oauth.clientid`).
-   * Callers decide whether to wrap in [[CaseInsensitiveStringMap]].
-   */
-  private[coordinatedcommits] def filterByPrefix(
-      ucConfig: java.util.Map[String, String],
-      prefix: String): java.util.Map[String, String] = {
-    val prefixLower = prefix.toLowerCase(java.util.Locale.ROOT)
-    val sourceEntries = ucConfig match {
-      case cism: CaseInsensitiveStringMap => cism.asCaseSensitiveMap().entrySet()
-      case m => m.entrySet()
-    }
-    val result = new java.util.HashMap[String, String]()
-    sourceEntries.forEach { e =>
-      if (e.getKey.toLowerCase(java.util.Locale.ROOT).startsWith(prefixLower)) {
-        result.put(e.getKey.substring(prefixLower.length), e.getValue)
-      }
-    }
-    result
-  }
-
-  /**
-   * Extracts authentication configuration from ucConfig.
-   * Prefers `auth.*` keys; falls back to legacy `token` key.
-   *
-   * Returns a [[CaseInsensitiveStringMap]] so that downstream consumers (e.g.
-   * [[TokenProvider.create]]) can look up camelCase keys like `oauth.clientId`
-   * regardless of what casing the source map provides.
-   */
-  private[coordinatedcommits] def extractAuthConfig(
-      ucConfig: java.util.Map[String, String]): CaseInsensitiveStringMap = {
-    val filtered = filterByPrefix(ucConfig, AUTH_PREFIX)
-    if (!filtered.isEmpty) {
-      new CaseInsensitiveStringMap(filtered)
-    } else {
-      Option(ucConfig.get("token")) match {
-        case Some(token) =>
-          new CaseInsensitiveStringMap(
-            java.util.Map.of("type", "static", "token", token))
-        case None => CaseInsensitiveStringMap.empty()
-      }
-    }
+  private def createDefaultClient(ucConfig: java.util.Map[String, String]): UCClient = {
+    val uri = UCConfigUtils.extractUri(ucConfig)
+    val tokenProvider = TokenProvider.create(UCConfigUtils.extractAuthConfig(ucConfig))
+    val appVersions = extractAppVersions(ucConfig)
+    new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
   }
 
   /**
@@ -396,8 +329,7 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
    */
   private[coordinatedcommits] def extractAppVersions(
       ucConfig: java.util.Map[String, String]): Map[String, String] = {
-    val extra = filterByPrefix(ucConfig, APP_VERSIONS_PREFIX).asScala.toMap
-    defaultAppVersions ++ extra
+    defaultAppVersions ++ UCConfigUtils.extractAppVersions(ucConfig).asScala
   }
 
   private[coordinatedcommits] def defaultAppVersions: Map[String, String] = {
@@ -418,13 +350,15 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
  */
 case class UCCatalogConfig(catalogName: String, ucConfig: Map[String, String]) {
 
-  def uri: String = ucConfig.getOrElse("uri",
+  def uri: String = ucConfig.getOrElse(UCConfigUtils.URI_KEY,
     throw new NoSuchElementException(s"No URI in config for catalog $catalogName"))
 
   /**
-   * Returns the authentication config suitable for [[TokenProvider.create]].
-   * Prefers `auth.*` keys; falls back to legacy `token` key.
+   * Returns the authentication config with original key casing preserved (e.g. `oauth.clientId`).
+   * The casing must survive here because callers serialize it back into a flat ucConfig (via
+   * `UCTableInfo.toUcConfig`) that flows through plain maps into `TokenProvider.create`, which
+   * looks up camelCase keys exactly. Prefers `auth.*` keys; falls back to the legacy `token` key.
    */
-  def authConfig: CaseInsensitiveStringMap =
-    UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig.asJava)
+  def authConfig: java.util.Map[String, String] =
+    UCConfigUtils.extractAuthConfig(ucConfig.asJava)
 }

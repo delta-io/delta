@@ -27,15 +27,19 @@ import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, Del
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, MicroBatchExecution, StreamingQueryWrapper}
-import io.delta.tables.DeltaTable
+import org.apache.spark.sql.delta.test.shims.VariantShreddingTestShims
+import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.commons.io.FileUtils
+import org.apache.parquet.hadoop.ParquetFileReader
 import org.scalatest.time.SpanSugar._
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.connector.expressions.IdentityTransform
 import org.apache.spark.sql.execution.DataSourceScanExec
 import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.execution.datasources.v2.{BatchScanExec, DataSourceV2Relation}
 import org.apache.spark.sql.execution.streaming.sources.WriteToMicroBatchDataSourceV1
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming._
@@ -43,8 +47,9 @@ import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 abstract class DeltaSinkTest
-  extends StreamTest
-  with DeltaSQLCommandTest {
+  extends QueryTest
+  with DeltaSQLCommandTest
+  with StreamTest {
 
   override val streamingTimeout = 60.seconds
   import testImplicits._
@@ -83,22 +88,31 @@ class DeltaSinkSuite
   import testImplicits._
 
   /**
-   * When false, sink tests address the target by filesystem path (the original DSv1 access path).
-   * When true, they address it by catalog name via `toTable` (required to exercise the DSv2 sink,
-   * which has no path-based seam). Overridden by [[DeltaSinkNameBasedSuite]].
+   * When true, reads and writes route through the V2 Kernel connector (DeltaV2Table) instead of V1
+   * (under V2_ENABLE_MODE=STRICT). Implies [[useNameBasedAccess]] -- the V2 connector has no
+   * path-based seam -- hence it is the default for that flag.
    */
   protected def useDsv2: Boolean = false
 
   /**
+   * When false, sink tests address the target by filesystem path (the original DSv1 access path).
+   * When true, they address it by catalog name via `toTable` (required to exercise the DSv2 sink,
+   * which has no path-based seam). Defaults to [[useDsv2]] since V2-connector access is inherently
+   * name-based, but can be set independently to run name-based access on the V1 connector.
+   */
+  protected def useNameBasedAccess: Boolean = useDsv2
+
+  /**
    * Run a sink test against a target table, providing the `target` identifier in the form the
-   * current mode expects: a catalog name when [[useDsv2]] is true, otherwise a filesystem path.
+   * current mode expects: a catalog name when [[useNameBasedAccess]] is true, otherwise a
+   * filesystem path.
    * The companion helpers ([[startStream]], [[readTarget]], [[deltaLogForTarget]],
    * [[deltaTableForTarget]]) interpret `target` accordingly, so a single test body covers both
    * modes.
    */
   protected def withSinkTarget(f: (String, File) => Unit): Unit = {
     withTempDir { checkpointDir =>
-      if (useDsv2) {
+      if (useNameBasedAccess) {
         // Unique table name per invocation: the target is a managed table at a deterministic
         // warehouse path, so a fixed name leaks state across tests (stale data / DeltaLog cache).
         val table = "test_delta_sink_" + checkpointDir.getName.replaceAll("[^A-Za-z0-9]", "")
@@ -115,38 +129,41 @@ class DeltaSinkSuite
 
   /** Start the stream against `target`, routing to `toTable` (DSv2) or `start` (path-based). */
   protected def startStream(writer: DataStreamWriter[_], target: String): StreamingQuery =
-    if (useDsv2) writer.toTable(target) else writer.start(target)
+    if (useNameBasedAccess) writer.toTable(target) else writer.start(target)
 
   /** Batch-read `target`, by catalog name (DSv2) or by path (path-based). */
   protected def readTarget(target: String): DataFrame =
-    if (useDsv2) spark.read.table(target) else spark.read.format("delta").load(target)
+    if (useNameBasedAccess) spark.read.table(target) else spark.read.format("delta").load(target)
 
   /** Resolve the [[DeltaLog]] for `target`, by catalog name (DSv2) or by path (path-based). */
   protected def deltaLogForTarget(target: String): DeltaLog =
-    if (useDsv2) DeltaLog.forTable(spark, TableIdentifier(target))
+    if (useNameBasedAccess) DeltaLog.forTable(spark, TableIdentifier(target))
     else DeltaLog.forTable(spark, target)
 
   /** Resolve the [[DeltaTable]] for `target`, by name (DSv2) or path. */
-  protected def deltaTableForTarget(target: String): DeltaTable =
-    if (useDsv2) DeltaTable.forName(spark, target)
-    else DeltaTable.forPath(spark, target)
+  protected def deltaTableForTarget(target: String): IODeltaTable =
+    if (useNameBasedAccess) IODeltaTable.forName(spark, target)
+    else IODeltaTable.forPath(spark, target)
 
   test("append mode") {
     failAfter(streamingTimeout) {
       withSinkTarget { (target, checkpointDir) =>
         val inputData = MemoryStream[Int]
         val df = inputData.toDF()
-        val query = startStream(
+        def startAppendQuery(): StreamingQuery = startStream(
           df.writeStream
             .option("checkpointLocation", checkpointDir.getCanonicalPath)
             .format("delta"),
           target)
+        // `var` so the restart phase below can swap in a fresh query on the same checkpoint while
+        // the `finally` still stops whichever query is currently running.
+        var query = startAppendQuery()
         val log = deltaLogForTarget(target)
         try {
           inputData.addData(1)
           query.processAllAvailable()
 
-          val outputDf = readTarget(target)
+          def outputDf: DataFrame = readTarget(target)
           checkDatasetUnorderly(outputDf.as[Int], 1)
           assert(log.update().transactions.head == (query.id.toString -> 0L))
 
@@ -161,6 +178,28 @@ class DeltaSinkSuite
 
           checkDatasetUnorderly(outputDf.as[Int], 1, 2, 3)
           assert(log.update().transactions.head == (query.id.toString -> 2L))
+
+          // Restart the query from the same checkpoint. This exercises the sink's exactly-once
+          // recovery: the restarted query resumes from the checkpoint's committed offset, so the
+          // already-committed batches (1, 2, 3) must NOT be re-appended, and the streaming
+          // transaction id (appId = query.id) is preserved across the restart.
+          val queryId = query.id
+          query.stop()
+          query = startAppendQuery()
+          query.processAllAvailable()
+
+          // No data was reprocessed: the target still holds exactly the pre-restart rows, the
+          // stable query id is retained, and the last committed batch id is unchanged.
+          checkDatasetUnorderly(outputDf.as[Int], 1, 2, 3)
+          assert(query.id == queryId)
+          assert(log.update().transactions.head == (queryId.toString -> 2L))
+
+          // New data after the restart continues with the next batch id and appends correctly.
+          inputData.addData(4)
+          query.processAllAvailable()
+
+          checkDatasetUnorderly(outputDf.as[Int], 1, 2, 3, 4)
+          assert(log.update().transactions.head == (queryId.toString -> 3L))
         } finally {
           query.stop()
         }
@@ -278,15 +317,17 @@ class DeltaSinkSuite
     withSinkTarget { (target, checkpointDir) =>
       val inputData = MemoryStream[Int]
       val ds = inputData.toDS()
-      val query =
-        startStream(
-          ds.map(i => (i, i * 1000))
-            .toDF("id", "value")
-            .writeStream
-            .partitionBy("id")
-            .option("checkpointLocation", checkpointDir.getCanonicalPath)
-            .format("delta"),
-          target)
+      def startPartitionedQuery(): StreamingQuery = startStream(
+        ds.map(i => (i, i * 1000))
+          .toDF("id", "value")
+          .writeStream
+          .partitionBy("id")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta"),
+        target)
+      // `var` so the restart phase below can swap in a fresh query on the same checkpoint while
+      // the `finally` still stops whichever query is currently running.
+      var query = startPartitionedQuery()
       try {
 
         inputData.addData(1, 2, 3)
@@ -294,21 +335,38 @@ class DeltaSinkSuite
           query.processAllAvailable()
         }
 
-        val outputDf = readTarget(target)
+        def outputDf: DataFrame = readTarget(target)
         val expectedSchema = new StructType()
           .add(StructField("id", IntegerType))
           .add(StructField("value", IntegerType))
         assert(outputDf.schema === expectedSchema)
 
-        // Verify the correct partitioning schema has been inferred
-        val hadoopFsRelations = outputDf.queryExecution.analyzed.collect {
-          case LogicalRelationWithTable(baseRelation, _) if
-              baseRelation.isInstanceOf[HadoopFsRelation] =>
-            baseRelation.asInstanceOf[HadoopFsRelation]
+        // Verify the correct partitioning schema has been inferred. The V1 and V2 connectors
+        // expose it through different plan nodes, so branch on the read connector.
+        if (useDsv2) {
+          // V2: the analyzed plan holds a DataSourceV2Relation whose table advertises the
+          // partition columns as identity transforms; data columns are the rest of the schema.
+          val v2Relations = outputDf.queryExecution.analyzed.collect {
+            case r: DataSourceV2Relation => r
+          }
+          assert(v2Relations.size === 1)
+          val table = v2Relations.head.table
+          val partitionCols = table.partitioning().collect {
+            case it: IdentityTransform => it.reference.fieldNames.mkString(".")
+          }.toSet
+          val dataCols = table.columns().map(_.name).toSet -- partitionCols
+          assert(partitionCols.contains("id"))
+          assert(dataCols.contains("value"))
+        } else {
+          val hadoopFsRelations = outputDf.queryExecution.analyzed.collect {
+            case LogicalRelationWithTable(baseRelation, _) if
+                baseRelation.isInstanceOf[HadoopFsRelation] =>
+              baseRelation.asInstanceOf[HadoopFsRelation]
+          }
+          assert(hadoopFsRelations.size === 1)
+          assert(hadoopFsRelations.head.partitionSchema.exists(_.name == "id"))
+          assert(hadoopFsRelations.head.dataSchema.exists(_.name == "value"))
         }
-        assert(hadoopFsRelations.size === 1)
-        assert(hadoopFsRelations.head.partitionSchema.exists(_.name == "id"))
-        assert(hadoopFsRelations.head.dataSchema.exists(_.name == "value"))
 
         // Verify the data is correctly read
         checkDatasetUnorderly(
@@ -320,7 +378,11 @@ class DeltaSinkSuite
           val filePartitions = df.queryExecution.executedPlan.collect {
             case scan: DataSourceScanExec if scan.inputRDDs().head.isInstanceOf[FileScanRDD] =>
               scan.inputRDDs().head.asInstanceOf[FileScanRDD].filePartitions
-          }.flatten
+            case scan: BatchScanExec =>
+              // V2 (Kernel): DeltaV2Batch plans FilePartitions carrying the same per-file
+              // partitionValues as V1, so the assertions below are connector-agnostic.
+              scan.batch.planInputPartitions().collect { case fp: FilePartition => fp }.toSeq
+          }.flatMap(identity)
           if (filePartitions.isEmpty) {
             fail(s"No FileScan in query\n${df.queryExecution}")
           }
@@ -347,10 +409,165 @@ class DeltaSinkSuite
           assert(filesToBeRead.forall(_.partitionValues.getInt(0) != 3))
           assert(filesToBeRead.map(_.partitionValues).distinct.size === 2)
         }
+
+        // Restart from the same checkpoint: the partitioned sink must recover exactly-once. The
+        // already-committed batch is not reprocessed (no duplicate rows / partition files), and new
+        // data after the restart appends into the correct partition directories.
+        query.stop()
+        query = startPartitionedQuery()
+        query.processAllAvailable()
+        checkDatasetUnorderly(outputDf.as[(Int, Int)], (1, 1000), (2, 2000), (3, 3000))
+
+        inputData.addData(4)
+        failAfter(streamingTimeout) {
+          query.processAllAvailable()
+        }
+        checkDatasetUnorderly(
+          outputDf.as[(Int, Int)], (1, 1000), (2, 2000), (3, 3000), (4, 4000))
       } finally {
         if (query != null) {
           query.stop()
         }
+      }
+    }
+  }
+
+  /** Asserts each of `partitionValues` is a physical `col-<uuid>=<value>` dir, not logical. */
+  private def assertPhysicalColumnMappedPartitionDirs(
+      tableRoot: File, partitionValues: Seq[String]): Unit = {
+    val dirNames = Option(tableRoot.listFiles()).getOrElse(Array.empty[File])
+      .filter(_.isDirectory).map(_.getName)
+    partitionValues.foreach { value =>
+      assert(
+        dirNames.count(n => n.startsWith("col-") && n.endsWith("=" + value)) == 1,
+        s"expected one physical partition dir col-*=$value under $tableRoot, " +
+          s"got: ${dirNames.mkString(", ")}")
+      assert(
+        !dirNames.exists(n => !n.startsWith("col-") && n.endsWith("=" + value)),
+        s"did not expect a logical partition dir ending in '=$value' under $tableRoot")
+    }
+  }
+
+  test("partitioned writing into a column-mapped table") {
+    // Runs on V1 here and, via DeltaV2SinkSuite's classification, on the V2 Kernel sink.
+    Seq("name", "id").foreach { mode =>
+      withClue(s"columnMappingMode=$mode") {
+        withColumnMappingConf(mode) {
+          withSinkTarget { (target, checkpointDir) =>
+            val inputData = MemoryStream[Int]
+            val ds = inputData.toDS()
+            val query = startStream(
+              ds.map(i => (i, i * 1000))
+                .toDF("id", "value")
+                .writeStream
+                .partitionBy("id")
+                .option("checkpointLocation", checkpointDir.getCanonicalPath)
+                .format("delta"),
+              target)
+            try {
+              inputData.addData(1, 2, 3)
+              failAfter(streamingTimeout) {
+                query.processAllAvailable()
+              }
+
+              // Data round-trips through a batch read.
+              checkDatasetUnorderly(
+                readTarget(target).as[(Int, Int)],
+                (1, 1000), (2, 2000), (3, 3000))
+
+              // Guard that the auto-created table is actually column-mapped.
+              assert(deltaLogForTarget(target).update().metadata.columnMappingMode.name == mode)
+
+              // Partition pruning returns the right rows.
+              checkDatasetUnorderly(
+                readTarget(target).filter("id = 1").as[(Int, Int)], (1, 1000))
+              checkDatasetUnorderly(
+                readTarget(target).filter("id in (1, 2)").as[(Int, Int)], (1, 1000), (2, 2000))
+
+              val tableRoot = new File(deltaLogForTarget(target).dataPath.toUri)
+              // TODO(#7140): Implement randomized file prefixes in the V2 sink and remove
+              // this V1/V2 physical-layout distinction.
+              if (useDsv2) {
+                assertPhysicalColumnMappedPartitionDirs(tableRoot, Seq("1", "2", "3"))
+              } else {
+                val dataDirs = Option(tableRoot.listFiles()).getOrElse(Array.empty[File])
+                  .filter(_.isDirectory).map(_.getName).filterNot(_ == "_delta_log")
+                assert(
+                  dataDirs.nonEmpty && !dataDirs.exists(_.contains("=")),
+                  s"expected V1's random-prefix layout (data dirs, none of the form col=value), " +
+                    s"got: ${dataDirs.mkString(", ")}")
+              }
+            } finally {
+              query.stop()
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("streaming write shreds variant columns only when the table enables it") {
+    // Runs on V1 here and, via DeltaV2SinkSuite's classification, on the V2 Kernel sink. Where this
+    // Spark version cannot infer a shredding schema nothing shreds, whatever the property says.
+    val shreddingSupported = VariantShreddingTestShims.variantInferShreddingSchemaSupported
+    withSQLConf("spark.sql.variant.writeShredding.enabled" -> "true") {
+      Seq(true, false).foreach { shreddingEnabled =>
+        withClue(s"${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}=$shreddingEnabled") {
+          withSinkTarget { (target, checkpointDir) =>
+            createPreexistingTableAtSinkTarget(
+              target,
+              Seq(
+                IODeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+                IODeltaTable.columnBuilder(spark, "v").dataType("variant").build()),
+              Map(DeltaConfigs.ENABLE_VARIANT_SHREDDING.key -> shreddingEnabled.toString))
+            val inputData = MemoryStream[(Int, String)]
+            val query = startStream(
+              inputData.toDF()
+                .toDF("id", "json")
+                .selectExpr("id", "parse_json(json) AS v")
+                .writeStream
+                .option("checkpointLocation", checkpointDir.getCanonicalPath)
+                .format("delta"),
+              target)
+            try {
+              inputData.addData((1, """{"a":1,"b":"xy"}"""))
+              failAfter(streamingTimeout) {
+                query.processAllAvailable()
+              }
+            } finally {
+              query.stop()
+            }
+
+            assert(
+              targetHasShreddedVariant(target) == (shreddingEnabled && shreddingSupported),
+              "the shredded layout must follow the table property")
+            checkAnswer(
+              readTarget(target).selectExpr(
+                "id", "variant_get(v, '$.a', 'int')", "variant_get(v, '$.b', 'string')"),
+              Row(1, 1, "xy"))
+          }
+        }
+      }
+    }
+  }
+
+  /** Whether any data file in `target`'s current snapshot stores variant column `v` shredded. */
+  private def targetHasShreddedVariant(target: String): Boolean = {
+    val deltaLog = deltaLogForTarget(target)
+    val snapshot = deltaLog.update()
+    // Parquet footers carry physical column names, which differ from `v` under column mapping.
+    val physicalName = DeltaColumnMapping.getPhysicalName(snapshot.schema("v"))
+    val files = snapshot.allFiles.collect().map(_.absolutePath(deltaLog).toString)
+    assert(files.nonEmpty, s"expected at least one data file in $target")
+    files.exists { file =>
+      val reader =
+        ParquetFileReader.open(deltaLog.newDeltaHadoopConf(), new org.apache.hadoop.fs.Path(file))
+      try {
+        val schema = reader.getFooter.getFileMetaData.getSchema
+        schema.getType(schema.getFieldIndex(physicalName)).asGroupType()
+          .containsField("typed_value")
+      } finally {
+        reader.close()
       }
     }
   }
@@ -431,7 +648,7 @@ class DeltaSinkSuite
           .format("delta")
           .partitionBy("id", "by4")
           .mode("append")
-        if (useDsv2) {
+        if (useNameBasedAccess) {
           // Name-based: the partition-column mismatch surfaces from the catalog as an
           // IllegalArgumentException with a different message than the path-based DataSource.
           val e = intercept[IllegalArgumentException] {
@@ -542,7 +759,7 @@ class DeltaSinkSuite
           .partitionBy("id", "value")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .format("delta")
-      if (useDsv2) {
+      if (useNameBasedAccess) {
         // Name-based: creating a table partitioned by all of its columns is rejected up front (at
         // table creation), rather than surfacing as a StreamingQueryException once the stream runs.
         val e = intercept[AnalysisException] {
@@ -701,6 +918,128 @@ class DeltaSinkSuite
     }
   }
 
+  /**
+   * Create a Delta table with the given `columns` at the sink `target`, so a
+   * test can stream into a preexisting table. `target` is a table name when
+   * [[useDsv2]] is set and a filesystem path otherwise, matching how
+   * [[withSinkTarget]] hands it out.
+   */
+  private def createPreexistingTableAtSinkTarget(
+      target: String,
+      columns: Seq[StructField],
+      properties: Map[String, String] = Map.empty
+  ): Unit = {
+    val builder = IODeltaTable.create(spark)
+    if (useNameBasedAccess) builder.tableName(target) else builder.location(target)
+    columns.foreach(builder.addColumn)
+    properties.foreach { case (key, value) => builder.property(key, value) }
+    builder.execute()
+  }
+
+  test("DeltaSink rejects streaming write to table with generated void column") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    failAfter(streamingTimeout) {
+      withSinkTarget { (target, checkpointDir) =>
+        val columns = Seq(
+          IODeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+          IODeltaTable.columnBuilder(spark, "v")
+            .dataType("void")
+            .nullable(true)
+            .generatedAlwaysAs("null")
+            .build()
+        )
+        createPreexistingTableAtSinkTarget(target, columns)
+
+        val inputData = MemoryStream[Int]
+        val dsWriter = inputData
+          .toDF()
+          .toDF("id")
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+
+        val wrapperException = intercept[StreamingQueryException] {
+          val q = startStream(dsWriter, target)
+          inputData.addData(1)
+          q.processAllAvailable()
+        }
+        assert(wrapperException.cause.isInstanceOf[AnalysisException])
+        checkError(
+          wrapperException.cause.asInstanceOf[AnalysisException],
+          "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE"
+        )
+      }
+    }
+  }
+
+  test("DeltaSink allows streaming write to table with non-generated void column") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    failAfter(streamingTimeout) {
+      withSinkTarget { (target, checkpointDir) =>
+        val columns = Seq(
+          IODeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+          IODeltaTable.columnBuilder(spark, "v")
+            .dataType("void")
+            .nullable(true)
+            .build()
+        )
+        createPreexistingTableAtSinkTarget(target, columns)
+
+        val inputData = MemoryStream[Int]
+        val dsWriter = inputData
+          .toDF()
+          .toDF("id")
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+
+        val q = startStream(dsWriter, target)
+        try {
+          inputData.addData(1)
+          q.processAllAvailable()
+          checkAnswer(readTarget(target), Row(1, null))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("DeltaSink rejects streaming write with NullType column in batch schema") {
+    failAfter(streamingTimeout) {
+      withSinkTarget { (target, checkpointDir) =>
+        val columns = Seq(
+          IODeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+          IODeltaTable.columnBuilder(spark, "value")
+            .dataType("int")
+            .nullable(true)
+            .build()
+        )
+        createPreexistingTableAtSinkTarget(target, columns)
+
+        val inputData = MemoryStream[Int]
+        val dsWriter = inputData
+          .toDF()
+          .toDF("id")
+          .withColumn("value", lit(null).cast(NullType))
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+
+        val wrapperException = intercept[StreamingQueryException] {
+          val q = startStream(dsWriter, target)
+          inputData.addData(1)
+          q.processAllAvailable()
+        }
+        assert(wrapperException.cause.isInstanceOf[AnalysisException])
+        checkError(
+          wrapperException.cause.asInstanceOf[AnalysisException],
+          "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE"
+        )
+      }
+    }
+  }
+
   test("DeltaSink rejects DataFrame with UDT containing NullType") {
     failAfter(streamingTimeout) {
       withSinkTarget { (target, checkpointDir) =>
@@ -739,7 +1078,7 @@ class DeltaSinkSuite
 // by path, exercising the same behaviors through the name-based write seam required by the DSv2
 // sink.
 class DeltaSinkNameBasedSuite extends DeltaSinkSuite {
-  override protected def useDsv2: Boolean = true
+  override protected def useNameBasedAccess: Boolean = true
 }
 
 class DeltaSinkWithCatalogManagedBatch1Suite extends DeltaSinkSuite {

@@ -69,6 +69,9 @@ public abstract class Upsert
 
   private final List<DeltaWriterResult> completedWrites;
 
+  /** First task failure, saved because Caffeine does not propagate removal-listener exceptions. */
+  private RuntimeException writerCompletionFailure;
+
   /**
    * @param rowLocator selects which existing files to scan for PKs that need pre-image removal when
    *     {@link #merge} runs at checkpoint boundaries.
@@ -88,6 +91,7 @@ public abstract class Upsert
   public void init(DeltaSinkWriter writer) {
     this.writer = writer;
     table = (AbstractKernelTable) writer.getTable();
+    writerCompletionFailure = null;
   }
 
   @Override
@@ -142,6 +146,9 @@ public abstract class Upsert
 
     // Dump all Writer Tasks
     writerTasksByPartition.invalidateAll();
+    if (writerCompletionFailure != null) {
+      throw writerCompletionFailure;
+    }
 
     if (!upsertedPrimaryKeys.isEmpty() || !deletedPrimaryKeys.isEmpty()) {
       try {
@@ -179,8 +186,10 @@ public abstract class Upsert
       if (value != null) {
         completedWrites.addAll(value.complete());
       }
-    } catch (IOException e) {
-      throw new RuntimeException(e);
+    } catch (IOException | RuntimeException e) {
+      if (writerCompletionFailure == null) {
+        writerCompletionFailure = ExceptionUtils.wrap(e);
+      }
     }
   }
 

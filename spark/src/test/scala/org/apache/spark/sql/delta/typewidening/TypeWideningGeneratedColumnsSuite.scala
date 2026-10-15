@@ -35,6 +35,19 @@ class TypeWideningGeneratedColumnsSuite
 
 trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
   self: QueryTest with TypeWideningTestMixin =>
+  /**
+   * Asserts the error raised when attempting to change the data type of an array element
+   * referenced by the generated column.
+   */
+  protected def checkArrayElementGeneratedColumnError(insert: => Unit): Unit =
+    checkError(
+      intercept[DeltaAnalysisException](insert),
+      "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+      parameters = Map(
+        "columnName" -> "a.element",
+        "columnType" -> "TINYINT",
+        "dataType" -> "INT",
+        "generatedColumns" -> "gen -> hash(a[0])"))
 
   test("generated column with type change") {
     withTable("t") {
@@ -197,20 +210,11 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         // Insert by name is not supported by type evolution.
-        checkError(
-          intercept[DeltaAnalysisException] {
-            spark.createDataFrame(Seq(Tuple1(Array(200000, 12345))))
-              .toDF("a").withColumn("a", col("a").cast("array<int>"))
-              .write.format("delta").mode("append").saveAsTable("t")
-          },
-          "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
-          parameters = Map(
-            "columnName" -> "a.element",
-            "columnType" -> "TINYINT",
-            "dataType" -> "INT",
-            "generatedColumns" -> "gen -> hash(a[0])"
-          )
-        )
+        checkArrayElementGeneratedColumnError {
+          spark.createDataFrame(Seq(Tuple1(Array(200000, 12345))))
+            .toDF("a").withColumn("a", col("a").cast("array<int>"))
+            .write.format("delta").mode("append").saveAsTable("t")
+        }
 
         checkAnswer(sql("SELECT gen FROM t"), Row(1765031574))
       }

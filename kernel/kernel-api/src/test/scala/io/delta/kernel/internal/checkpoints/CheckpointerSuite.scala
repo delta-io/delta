@@ -15,21 +15,22 @@
  */
 package io.delta.kernel.internal.checkpoints
 
-import java.io.{FileNotFoundException, IOException}
+import java.io.{ByteArrayInputStream, FileNotFoundException, IOException}
+import java.nio.charset.StandardCharsets
 import java.util.Optional
 
 import scala.util.control.NonFatal
 
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, Row}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.engine.FileReadRequest
 import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
-import io.delta.kernel.internal.util.JsonUtils
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
-import io.delta.kernel.types.{DataType, StructType}
+import io.delta.kernel.test.{BaseMockFileSystemClient, BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
+import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -37,128 +38,96 @@ import org.scalatest.funsuite.AnyFunSuite
 class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   import CheckpointerSuite._
 
-  /** Parses two JSON strings and asserts semantic equality (object key order is irrelevant). */
-  private def assertJsonEquals(expected: String, actual: String): Unit = {
-    assert(
-      JsonUtils.mapper.readTree(expected) == JsonUtils.mapper.readTree(actual),
-      s"JSON mismatch.\n expected: $expected\n actual:   $actual")
-  }
-
-  /**
-   * Builds a [[CheckpointMetaData]] via the full constructor with typed, defaulted arguments. The
-   * explicit `Optional` element types are needed because Scala cannot infer them for the Java
-   * `Optional` parameters (e.g. a bare `Optional.empty()` would be `Optional[Nothing]`).
-   */
-  private def checkpointMetaData(
-      version: Long,
-      size: Long,
-      parts: Optional[java.lang.Long] = Optional.empty(),
-      sizeInBytes: Optional[java.lang.Long] = Optional.empty(),
-      numOfAddFiles: Optional[java.lang.Long] = Optional.empty(),
-      v2Checkpoint: Optional[Row] = Optional.empty(),
-      checksum: Optional[String] = Optional.empty(),
-      tags: java.util.Map[String, String] = java.util.Map.of()): CheckpointMetaData =
-    new CheckpointMetaData(
-      version,
-      size,
-      parts,
-      sizeInBytes,
-      numOfAddFiles,
-      v2Checkpoint,
-      checksum,
-      tags)
-
   //////////////////////////////////////////////////////////////////////////////////
   // readLastCheckpointFile tests
   //////////////////////////////////////////////////////////////////////////////////
+  private def mockLastCheckpointEngine(
+      maxFailures: Int): (io.delta.kernel.engine.Engine, MockLastCheckpointMetadataFileReader) = {
+    val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures)
+    (mockEngine(jsonHandler = jsonHandler), jsonHandler)
+  }
+
+  private def mockSerializedLastCheckpointEngine(
+      maxFailures: Int): (io.delta.kernel.engine.Engine, MockLastCheckpointFileSystemClient) = {
+    val fsClient = new MockLastCheckpointFileSystemClient(maxFailures)
+    (mockEngine(fileSystemClient = fsClient), fsClient)
+  }
+
   test("load a valid last checkpoint metadata file") {
-    val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 0)
+    val (engine, jsonHandler) = mockLastCheckpointEngine(maxFailures = 0)
     val lastCheckpoint = new Checkpointer(VALID_LAST_CHECKPOINT_FILE_TABLE)
-      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
+      .readLastCheckpointFile(engine)
     assertValidCheckpointMetadata(lastCheckpoint)
     assert(jsonHandler.currentFailCount == 0)
   }
 
   test("load a zero-sized last checkpoint metadata file") {
-    val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 0)
+    val (engine, jsonHandler) = mockLastCheckpointEngine(maxFailures = 0)
     val lastCheckpoint = new Checkpointer(ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE)
-      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
+      .readLastCheckpointFile(engine)
     assert(!lastCheckpoint.isPresent)
     assert(jsonHandler.currentFailCount == 0)
   }
 
   test("load an invalid last checkpoint metadata file") {
-    val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 0)
+    val (engine, jsonHandler) = mockLastCheckpointEngine(maxFailures = 0)
     val lastCheckpoint = new Checkpointer(INVALID_LAST_CHECKPOINT_FILE_TABLE)
-      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
+      .readLastCheckpointFile(engine)
     assert(!lastCheckpoint.isPresent)
     assert(jsonHandler.currentFailCount == 0)
   }
 
   test("retry last checkpoint metadata loading - succeeds at third attempt") {
-    val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 2)
+    val (engine, jsonHandler) = mockLastCheckpointEngine(maxFailures = 2)
     val lastCheckpoint = new Checkpointer(VALID_LAST_CHECKPOINT_FILE_TABLE)
-      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
+      .readLastCheckpointFile(engine)
     assertValidCheckpointMetadata(lastCheckpoint)
     assert(jsonHandler.currentFailCount == 2)
   }
 
   test("retry last checkpoint metadata loading - exceeds max failures") {
-    val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 4)
+    val (engine, jsonHandler) = mockLastCheckpointEngine(maxFailures = 4)
     val lastCheckpoint = new Checkpointer(VALID_LAST_CHECKPOINT_FILE_TABLE)
-      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
+      .readLastCheckpointFile(engine)
     assert(!lastCheckpoint.isPresent)
     assert(jsonHandler.currentFailCount == 3) // 3 is the max retries
   }
 
   test("try to load last checkpoint metadata when the file is missing") {
-    val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 0)
+    val (engine, jsonHandler) = mockLastCheckpointEngine(maxFailures = 0)
     val lastCheckpoint = new Checkpointer(LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE)
-      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
+      .readLastCheckpointFile(engine)
     assert(!lastCheckpoint.isPresent)
     assert(jsonHandler.currentFailCount == 0)
   }
 
-  //////////////////////////////////////////////////////////////////////////////////
-  // CheckpointMetaData.toJson / toRow tests
-  //////////////////////////////////////////////////////////////////////////////////
-  test("classic (V1) CheckpointMetaData serializes only the present fields") {
-    val cpm = checkpointMetaData(40L, 44L, parts = Optional.of(20L))
-    assertJsonEquals("""{"version":40,"size":44,"parts":20}""", cpm.toJson())
+  test("readLastCheckpointSerialized returns the opaque JSON blob") {
+    val (engine, fsClient) = mockSerializedLastCheckpointEngine(maxFailures = 0)
+    val serialized = new Checkpointer(VALID_LAST_CHECKPOINT_FILE_TABLE)
+      .readLastCheckpointSerialized(engine)
+    assert(serialized.isPresent)
+    assert(serialized.get().json() == SAMPLE_LAST_CHECKPOINT_JSON)
+    assert(fsClient.currentFailCount == 0)
   }
 
-  test("classic (V1) CheckpointMetaData without parts omits parts") {
-    assertJsonEquals("""{"version":7,"size":3}""", checkpointMetaData(7L, 3L).toJson())
+  test("readLastCheckpointSerialized rejects malformed JSON after retries") {
+    val (engine, fsClient) = mockSerializedLastCheckpointEngine(maxFailures = 0)
+    val serialized = new Checkpointer(MALFORMED_JSON_LAST_CHECKPOINT_FILE_TABLE)
+      .readLastCheckpointSerialized(engine)
+    assert(!serialized.isPresent)
+    assert(fsClient.currentFailCount == 0)
   }
 
-  test("V2 CheckpointMetaData serializes only the present fields") {
-    val cpm = checkpointMetaData(
-      2L,
-      9L,
-      sizeInBytes = Optional.of(100L),
-      numOfAddFiles = Optional.of(4L),
-      checksum = Optional.of("abc"))
-    assertJsonEquals(
-      """{"version":2,"size":9,"sizeInBytes":100,"numOfAddFiles":4,"checksum":"abc"}""",
-      cpm.toJson())
-  }
-
-  test("CheckpointMetaData round-trips fields through toRow -> fromRow") {
-    val cpm = checkpointMetaData(
+  test("CheckpointMetaData round-trips classic fields through toRow -> fromRow") {
+    val cpm = new CheckpointMetaData(
       12L,
       34L,
-      parts = Optional.of(2L),
-      sizeInBytes = Optional.of(999L),
-      numOfAddFiles = Optional.of(4L),
-      checksum = Optional.of("abc123"),
-      tags = java.util.Map.of("k", "v"))
+      Optional.of(2L),
+      java.util.Map.of("k", "v"))
     val restored = CheckpointMetaData.fromRow(cpm.toRow())
     assert(restored.version == 12L)
     assert(restored.size == 34L)
     assert(restored.parts == Optional.of(2L))
-    assert(restored.sizeInBytes == Optional.of(999L))
-    assert(restored.numOfAddFiles == Optional.of(4L))
-    assert(restored.checksum == Optional.of("abc123"))
     assert(restored.tags == java.util.Map.of("k", "v"))
   }
 
@@ -330,17 +299,6 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 }
 
 object CheckpointerSuite extends VectorTestUtils {
-  private val nullLong: java.lang.Long = null
-
-  /** A null column vector for any type (only isNullAt is exercised for absent-field columns). */
-  private def nullVector(dt: DataType): ColumnVector = new ColumnVector {
-    override def getDataType: DataType = dt
-    override def getSize: Int = 1
-    override def close(): Unit = {}
-    override def isNullAt(rowId: Int): Boolean = true
-  }
-
-  // A classic (V1) `_last_checkpoint`: version/size/parts present, all V2 fields absent.
   val SAMPLE_LAST_CHECKPOINT_FILE_CONTENT: ColumnarBatch = new ColumnarBatch {
     override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
@@ -349,11 +307,7 @@ object CheckpointerSuite extends VectorTestUtils {
         case 0 => longVector(Seq(40)) // version
         case 1 => longVector(Seq(44)) // size
         case 2 => longVector(Seq(20)) // parts
-        case 3 => longVector(Seq(nullLong)) // sizeInBytes
-        case 4 => longVector(Seq(nullLong)) // numOfAddFiles
-        case 5 => nullVector(CheckpointMetaData.READ_SCHEMA.at(5).getDataType) // v2Checkpoint
-        case 6 => stringVector(Seq(null)) // checksum
-        case 7 => mapTypeVector(Seq(Map.empty[String, String])) // tags
+        case 3 => mapTypeVector(Seq(Map.empty[String, String])) // tags
       }
     }
 
@@ -372,10 +326,69 @@ object CheckpointerSuite extends VectorTestUtils {
   val VALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/valid")
   val ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE = new Path("/zero_sized")
   val INVALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/invalid")
+  val MALFORMED_JSON_LAST_CHECKPOINT_FILE_TABLE = new Path("/malformed_json")
   val LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE = new Path("/filenotfoundtable")
+
+  val SAMPLE_LAST_CHECKPOINT_JSON: String = """{"version":40,"size":44,"parts":20}"""
+  val MALFORMED_LAST_CHECKPOINT_JSON: String = """{not valid json"""
 }
 
 /** `maxFailures` allows how many times to fail before returning the valid data */
+class MockLastCheckpointFileSystemClient(maxFailures: Int) extends BaseMockFileSystemClient {
+  import CheckpointerSuite._
+  var currentFailCount = 0
+
+  private def tableFor(path: String): Path = new Path(path).getParent
+
+  override def getFileStatus(path: String): FileStatus = {
+    tableFor(path) match {
+      case LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE =>
+        throw new FileNotFoundException("File not found")
+      case ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE =>
+        FileStatus.of(path, 0, 0)
+      case VALID_LAST_CHECKPOINT_FILE_TABLE | INVALID_LAST_CHECKPOINT_FILE_TABLE =>
+        FileStatus.of(
+          path,
+          SAMPLE_LAST_CHECKPOINT_JSON.getBytes(StandardCharsets.UTF_8).length,
+          0)
+      case MALFORMED_JSON_LAST_CHECKPOINT_FILE_TABLE =>
+        FileStatus.of(
+          path,
+          MALFORMED_LAST_CHECKPOINT_JSON.getBytes(StandardCharsets.UTF_8).length,
+          0)
+      case _ => throw new IOException("Unknown table")
+    }
+  }
+
+  override def readFiles(
+      readRequests: CloseableIterator[FileReadRequest]): CloseableIterator[ByteArrayInputStream] = {
+    val request = readRequests.next()
+    val table = tableFor(request.getPath)
+
+    Utils.singletonCloseableIterator(
+      try {
+        if (currentFailCount < maxFailures) {
+          currentFailCount += 1
+          throw new IOException("Retryable exception")
+        }
+
+        table match {
+          case VALID_LAST_CHECKPOINT_FILE_TABLE =>
+            new ByteArrayInputStream(
+              SAMPLE_LAST_CHECKPOINT_JSON.getBytes(StandardCharsets.UTF_8))
+          case MALFORMED_JSON_LAST_CHECKPOINT_FILE_TABLE =>
+            new ByteArrayInputStream(
+              MALFORMED_LAST_CHECKPOINT_JSON.getBytes(StandardCharsets.UTF_8))
+          case INVALID_LAST_CHECKPOINT_FILE_TABLE =>
+            throw new IOException("Invalid last checkpoint file")
+          case _ => throw new IOException("Unknown table")
+        }
+      } catch {
+        case NonFatal(e) => throw new KernelEngineException("Failed to read last checkpoint", e)
+      })
+  }
+}
+
 class MockLastCheckpointMetadataFileReader(maxFailures: Int) extends BaseMockJsonHandler {
   import CheckpointerSuite._
   var currentFailCount = 0
@@ -404,7 +417,7 @@ class MockLastCheckpointMetadataFileReader(maxFailures: Int) extends BaseMockJso
           case _ => throw new IOException("Unknown table")
         }
       } catch {
-        case NonFatal(e) => throw new KernelEngineException("Failed to read last checkpoint", e);
+        case NonFatal(e) => throw new KernelEngineException("Failed to read last checkpoint", e)
       })
   }
 }

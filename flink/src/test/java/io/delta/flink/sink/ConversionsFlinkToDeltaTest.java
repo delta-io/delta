@@ -193,6 +193,23 @@ public class ConversionsFlinkToDeltaTest implements FlinkTypeTests {
     assertTrue(expected.equivalent(actual));
   }
 
+  @Test
+  void testPrimitiveDataConversion() {
+    RowType flinkSchema =
+        row(f("sm", new SmallIntType()), f("bool", new BooleanType()), f("bin", new BinaryType()));
+
+    StructType deltaSchema = Conversions.FlinkToDelta.schema(flinkSchema);
+
+    GenericRowData rowData = GenericRowData.of((short) 1000, true, new byte[] {1, 2, 3});
+
+    assertEquals(
+        Literal.ofShort((short) 1000), Conversions.FlinkToDelta.data(deltaSchema, rowData, 0));
+    assertEquals(Literal.ofBoolean(true), Conversions.FlinkToDelta.data(deltaSchema, rowData, 1));
+    assertArrayEquals(
+        (byte[]) Literal.ofBinary(new byte[] {1, 2, 3}).getValue(),
+        (byte[]) Conversions.FlinkToDelta.data(deltaSchema, rowData, 2).getValue());
+  }
+
   @TestAllFlinkTypes
   void testPrimitiveDataNotNull(LogicalType primitiveType) {
     RowType flinkType = RowType.of(new LogicalType[] {primitiveType}, new String[] {"id"});

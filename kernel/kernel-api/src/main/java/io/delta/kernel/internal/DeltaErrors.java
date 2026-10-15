@@ -157,6 +157,10 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static MaxCatalogVersionException maxCatalogVersionError(String message) {
+    return new MaxCatalogVersionException(message);
+  }
+
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
   public static UnsupportedProtocolVersionException unsupportedReaderProtocol(
       String tablePath, int minReaderVersion, int minWriterVersion) {
@@ -490,6 +494,18 @@ public final class DeltaErrors {
                 + "No domain-specific conflict resolution is available for this domain. "
                 + "Attempted domainMetadata: %s. Winning domainMetadata: %s",
             domainMetadataAttempt.getDomain(), domainMetadataAttempt, winningDomainMetadata);
+    return new ConcurrentWriteException(message);
+  }
+
+  public static ConcurrentWriteException concurrentDeleteDeleteException(
+      String filePath, long attemptVersion) {
+    String message =
+        String.format(
+            "A concurrent transaction removed (or updated the deletion vector of) file %s that "
+                + "this transaction (attempting version %d) also removes. Letting both commits "
+                + "through would leave two active entries for the same data file. Retry the "
+                + "operation against the latest table state.",
+            filePath, attemptVersion);
     return new ConcurrentWriteException(message);
   }
 

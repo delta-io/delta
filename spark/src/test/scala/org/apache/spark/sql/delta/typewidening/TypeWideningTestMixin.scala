@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.delta.typewidening
 
+import java.io.File
+import java.util.UUID
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -25,13 +28,14 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import com.google.common.math.DoubleMath
 
-import org.apache.spark.SparkConf
+import org.apache.spark.{SparkConf, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, Encoder, QueryTest}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.{LegacyBehaviorPolicy, SQLConf}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
+import org.apache.spark.util.Utils
 
 /**
  * Test mixin that enables type widening by default for all tests in the suite.
@@ -80,6 +84,30 @@ trait TypeWideningTestMixin
     TypeWidening.isEnabled(snapshot.protocol, snapshot.metadata)
   }
 
+  /**
+   * Runs `write`, tolerating a cast overflow failure. Used in tests that want to check that column
+   * doesn't get automatically widened. Depending on the data, the write may succeed or overflow.
+   */
+  protected def mayOverflow(write: => Unit): Unit = {
+    val allowedConditions = Set(
+      "CAST_OVERFLOW_IN_TABLE_INSERT",
+      "CAST_OVERFLOW",
+      "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE")
+
+    def isAllowedOverflow(error: Throwable): Boolean = error match {
+      case e: SparkThrowable if allowedConditions.contains(e.getCondition) => true
+      case e if e.getCause != null && (e.getCause ne e) => isAllowedOverflow(e.getCause)
+      case _ => false
+    }
+
+    try {
+      write
+    } catch {
+      // Spark may report the arithmetic error directly or wrap it in TASK_WRITE_FAILED.
+      case e: Exception if isAllowedOverflow(e) =>
+    }
+  }
+
   /** Short-hand to create type widening metadata for struct fields. */
   protected def typeWideningMetadata(
       from: AtomicType,
@@ -126,6 +154,44 @@ trait TypeWideningTestMixin
     } else {
       checkAnswer(actualDf, expectedDf)
     }
+  }
+}
+
+/**
+ * Mixin for type widening test suites that run against the DSv2 Delta connector.
+ * Use name-based access as path-based isn't well-supported in DSv2.
+ */
+trait TypeWideningDSv2TestMixin
+  extends TypeWideningTestMixin
+    with DeltaDSv2TestMixin
+    with DeltaDMLTestUtilsNameBased { self: QueryTest =>
+
+  private var testTableName = "test_delta_table"
+  private var testTablePaths = List.empty[File]
+
+  override protected def beforeEach(): Unit = {
+    // A failed V2 write may leave a canceled task running briefly after the write returns. Give
+    // every test its own managed-table path so a late orphan file cannot affect the next test.
+    testTableName = s"test_delta_table_${UUID.randomUUID().toString.replace('-', '_')}"
+    val path = spark.sessionState.catalog.defaultTablePath(tableIdentifier).getPath
+    testTablePaths ::= new File(path)
+    super.beforeEach()
+  }
+
+  override protected def tableSQLIdentifier: String = testTableName
+
+  override protected def afterAll(): Unit = {
+    try {
+      super.afterAll()
+    } finally {
+      // `super.afterAll()` stops the shared Spark context, so canceled tasks can no longer
+      // recreate files while this final cleanup runs.
+      testTablePaths.foreach(Utils.deleteRecursively)
+    }
+  }
+
+  protected override def sparkConf: SparkConf = {
+    super.sparkConf.set(DeltaSQLConf.V2_ENABLE_MODE.key, "AUTO")
   }
 }
 

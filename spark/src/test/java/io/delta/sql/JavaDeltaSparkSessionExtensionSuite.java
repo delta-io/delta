@@ -17,22 +17,17 @@
 package io.delta.sql;
 
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.delta.DeltaSQLCommandJavaTest;
 import org.apache.spark.util.Utils;
 import org.junit.Test;
 
 import java.io.IOException;
 
-public class JavaDeltaSparkSessionExtensionSuite {
+public class JavaDeltaSparkSessionExtensionSuite implements DeltaSQLCommandJavaTest {
 
     @Test
     public void testSQLConf() throws IOException {
-        SparkSession spark = SparkSession.builder()
-                .appName("JavaDeltaSparkSessionExtensionSuiteUsingSQLConf")
-                .master("local[2]")
-                .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-                .config("spark.sql.catalog.spark_catalog",
-                        "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-                .getOrCreate();
+        SparkSession spark = buildSparkSession();
         try {
             String input = Utils.createTempDir(System.getProperty("java.io.tmpdir"), "input")
                     .getCanonicalPath();

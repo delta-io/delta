@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.actions
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaRuntimeException}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.amt.AMTPassthrough
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -66,6 +67,13 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
       Cast(Literal(value), TimestampNTZType, None, ansiEnabled = false).eval(),
       TimestampNTZType)
   }
+
+  test("effectiveFileSequenceNumber uses defaultRowCommitVersion") {
+    val add = createAddFileWithPartitionValue(Map.empty)
+      .copy(defaultRowCommitVersion = Some(10L))
+    assert(add.effectiveFileSequenceNumber.contains(10L))
+  }
+
 
   test("normalizedPartitionValues for non-timestamp partitions returns typed literals") {
     withSQLConf(DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true") {

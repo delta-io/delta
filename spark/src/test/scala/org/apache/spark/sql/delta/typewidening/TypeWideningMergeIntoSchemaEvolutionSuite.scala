@@ -21,8 +21,6 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.types._
 
 /**
@@ -31,8 +29,7 @@ import org.apache.spark.sql.types._
  */
 class TypeWideningMergeIntoSchemaEvolutionSuite
     extends TypeWideningMergeIntoSchemaEvolutionTests
-    with TypeWideningTestMixin
-    with DeltaDMLTestUtilsNameBased {
+    with TypeWideningTestMixin {
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf
@@ -78,15 +75,16 @@ trait TypeWideningMergeIntoSchemaEvolutionTests extends QueryTest
       sql("CREATE TABLE source (a int) USING DELTA")
       sql("INSERT INTO source VALUES (1), (2)")
 
-      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "never",
-        SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "never") {
         // Merge int values into short column. This should not widen the target schema.
-        executeMerge(
-          tgt = s"$tableSQLIdentifier t",
-          src = "source",
-          cond = "0 = 1",
-          clauses = insert("*")
-        )
+        mayOverflow {
+          executeMerge(
+            tgt = s"$tableSQLIdentifier t",
+            src = "source",
+            cond = "0 = 1",
+            clauses = insert("*")
+          )
+        }
         assert(readDeltaTableByIdentifier().schema("a").dataType === ShortType)
       }
     }
@@ -128,17 +126,16 @@ trait TypeWideningMergeIntoSchemaEvolutionTests extends QueryTest
         append(testCase.initialValuesDF)
 
         // Test cases for some of the unsupported type changes may overflow while others only have
-        // values that can be implicitly cast to the narrower type - e.g. double ->float.
-        // We set storeAssignmentPolicy to LEGACY to ignore overflows, this test only ensures
-        // that the table schema didn't evolve.
-        withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+        // values that can be implicitly cast to the narrower type - e.g. double -> float. The merge
+        // either succeeds or overflows; this test only ensures that the table schema didn't evolve.
+        mayOverflow {
           executeMerge(
             tgt = s"$tableSQLIdentifier t",
             src = "source",
             cond = "0 = 1",
             clauses = insert("*"))
-          assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.fromType)
         }
+        assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.fromType)
       }
     }
   }

@@ -28,11 +28,13 @@ import org.apache.spark.sql.delta.fuzzer.{OptimisticTransactionPhases, PhaseLock
 import org.apache.spark.SparkException
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.util.ThreadUtils
 
 trait TransactionExecutionTestMixin {
-  self: PhaseLockingTestMixin with SharedSparkSession with Logging =>
+  self: PhaseLockingTestMixin with Logging =>
+
+  protected def spark: SparkSession
 
   /**
    * Timeout used when waiting for individual phases of instrumented operations to complete.

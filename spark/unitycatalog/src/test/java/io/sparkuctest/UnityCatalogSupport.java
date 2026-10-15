@@ -299,6 +299,22 @@ public abstract class UnityCatalogSupport {
   }
 
   /**
+   * Whether {@code t} (or anything in its cause chain) is an "address already in use" bind failure.
+   * The server's async bind surfaces it wrapped as a {@link
+   * java.util.concurrent.CompletionException} around a Netty {@code NativeIoException}, so we match
+   * by message across the chain.
+   */
+  private static boolean isAddressInUse(Throwable t) {
+    for (Throwable cause = t; cause != null; cause = cause.getCause()) {
+      final String message = cause.getMessage();
+      if (message != null && message.toLowerCase().contains("address already in use")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Starts the Unity Catalog server before all tests. IMPORTANT: Starts the server BEFORE calling
    * other setup to ensure the server is running when SharedSparkSession creates the SparkSession.
    */
@@ -361,9 +377,6 @@ public abstract class UnityCatalogSupport {
     ucBaseTableLocation = Files.createTempDirectory("base-table-location-").toFile();
     ucBaseTableLocation.deleteOnExit();
 
-    // Find an available port
-    ucServerPort = findAvailablePort();
-
     // Start the mock OAuth broker before building UnityCatalogInfo (and before serverProperties(),
     // which reads the broker's issuer for the allowed-issuers config).
     if (authMode() == AuthMode.OAUTH) {
@@ -374,17 +387,33 @@ public abstract class UnityCatalogSupport {
       LOG.info("Mock OAuth broker started at " + mockOAuthBroker.issuer());
     }
 
-    // Start UC server with configuration
+    // Start UC server with configuration. findAvailablePort() picks a free port and releases it,
+    // so a concurrently-starting suite on the same runner can grab it before this server binds.
+    // Retry with a fresh port on "address already in use" rather than failing the suite.
     ServerProperties initServerProperties = new ServerProperties(serverProperties());
-
-    UnityCatalogServer server =
-        UnityCatalogServer.builder()
-            .port(ucServerPort)
-            .serverProperties(initServerProperties)
-            .build();
-
-    server.start();
-    ucServer = server;
+    final int maxBindAttempts = 5;
+    for (int attempt = 1; ; attempt++) {
+      ucServerPort = findAvailablePort();
+      UnityCatalogServer server =
+          UnityCatalogServer.builder()
+              .port(ucServerPort)
+              .serverProperties(initServerProperties)
+              .build();
+      try {
+        server.start();
+        ucServer = server;
+        break;
+      } catch (Exception e) {
+        if (attempt < maxBindAttempts && isAddressInUse(e)) {
+          LOG.warn(
+              String.format(
+                  "UC server bind on port %d failed (address in use), retrying (attempt %d/%d)",
+                  ucServerPort, attempt, maxBindAttempts));
+          continue;
+        }
+        throw e;
+      }
+    }
 
     // Now that UC is up, let the OAuth broker reach the token-exchange endpoint.
     if (mockOAuthBroker != null) {

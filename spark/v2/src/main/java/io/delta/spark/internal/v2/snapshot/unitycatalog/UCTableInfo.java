@@ -18,6 +18,7 @@ package io.delta.spark.internal.v2.snapshot.unitycatalog;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -29,13 +30,6 @@ import java.util.Map;
  * without requiring Spark dependencies.
  */
 public final class UCTableInfo {
-
-  // Per-catalog opt-in flag keys whose values must flow from the Spark catalog config into the UC
-  // client factory so the right client implementation is constructed. Mirrors the keys recognized
-  // by UCTokenBasedRestClientFactory.createUCClient.
-  public static final String DELTA_REST_API_ENABLED_KEY = "deltaRestApi.enabled";
-  public static final String RENEW_CREDENTIAL_ENABLED_KEY = "renewCredential.enabled";
-  public static final String CRED_SCOPED_FS_ENABLED_KEY = "credScopedFs.enabled";
 
   private final String tableId;
   private final String tablePath;
@@ -95,13 +89,13 @@ public final class UCTableInfo {
   /**
    * Builds a flat config map suitable for {@code UCTokenBasedRestClientFactory.createUCClient}.
    * Re-adds the {@code auth.} prefix to auth config keys, includes {@code uri}, and forwards any
-   * per-catalog opt-in flags ({@link #DELTA_REST_API_ENABLED_KEY} etc.) so the factory picks the
-   * correct client implementation.
+   * per-catalog opt-in flags ({@link UCConfigUtils#DELTA_REST_API_ENABLED_KEY} etc.) so the factory
+   * picks the correct client implementation.
    */
   public Map<String, String> toUcConfig() {
     Map<String, String> ucConfig = new HashMap<>();
-    ucConfig.put("uri", ucUri);
-    authConfig.forEach((k, v) -> ucConfig.put("auth." + k, v));
+    ucConfig.put(UCConfigUtils.URI_KEY, ucUri);
+    authConfig.forEach((k, v) -> ucConfig.put(UCConfigUtils.AUTH_PREFIX + k, v));
     ucConfig.putAll(optInFlags);
     return ucConfig;
   }

@@ -83,7 +83,7 @@ public class ScanFileRDD extends RDD<Row> {
   @Override
   public scala.collection.Iterator<Row> compute(Partition split, TaskContext context) {
     Engine engine = DefaultEngine.create(serializableSnapshot.getHadoopConf());
-    Scan scan = serializableSnapshot.toScan();
+    Scan scan = serializableSnapshot.toScan(engine);
 
     CloseableIterator<FilteredColumnarBatch> batchIter;
     try {

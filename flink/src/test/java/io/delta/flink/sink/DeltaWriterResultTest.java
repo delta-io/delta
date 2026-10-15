@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.delta.flink.TestHelper;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.util.JsonUtils;
+import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.types.*;
 import java.io.IOException;
 import java.util.List;

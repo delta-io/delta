@@ -268,8 +268,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
    * Read-time CDF calls into PartitionUtils with {@code isWriteTimeCDCRead=false}. The factory is
    * then a plain Parquet reader factory: PartitionUtils does not augment {@code readDataSchema}
    * with CDC tail columns and does not wrap the reader with {@code CDCReadFunction}. The tail
-   * columns are added by {@code DeltaChangelogBatch.CDCPartitionReaderFactory} as per-partition
-   * constants instead.
+   * columns are added by the read-time CDF partition reader as per-partition constants instead.
    */
   @Test
   public void testCreateDeltaParquetReaderFactory_NotWriteTimeCDCRead() {

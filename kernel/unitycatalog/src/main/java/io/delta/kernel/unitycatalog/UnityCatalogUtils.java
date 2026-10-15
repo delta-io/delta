@@ -311,7 +311,7 @@ public class UnityCatalogUtils {
               f.getName(),
               toUCTypeName(f.getDataType()),
               f.getDataType().toString(),
-              DataTypeJsonSerDe.serializeDataType(f.getDataType()),
+              DataTypeJsonSerDe.serializeStructField(f),
               f.isNullable(),
               i));
     }

@@ -17,28 +17,33 @@
 package org.apache.spark.sql.delta.actions
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.io.StringWriter
 import java.net.URI
 import java.sql.Timestamp
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+import scala.annotation.meta.getter
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+import scala.reflect.ClassTag
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.amt.{AMTPassthrough, AMTUtils}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.stats.DeltaStatistics.TIGHT_BOUNDS
+import org.apache.spark.sql.delta.util.{DeltaEncoder, DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.PartitionUtils
 import com.fasterxml.jackson.annotation._
 import com.fasterxml.jackson.annotation.JsonInclude.Include
-import com.fasterxml.jackson.core.{JsonGenerator, JsonParser}
+import com.fasterxml.jackson.core.{JsonGenerator, JsonParser, JsonToken}
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import com.fasterxml.jackson.databind.node.ObjectNode
@@ -61,6 +66,7 @@ import org.apache.spark.sql.{Column, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.util.Utils
 
@@ -216,6 +222,11 @@ sealed trait Action {
   def json: String = JsonUtils.toJson(wrap)
 }
 
+/** An action that can be included in an AMT [[Checkpoint]]. */
+sealed trait AMTCheckpointAction {
+  def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction
+}
+
 /**
  * Used to block older clients from reading or writing the log when backwards incompatible changes
  * are made to the protocol. Readers and writers are responsible for checking that they meet the
@@ -236,6 +247,7 @@ case class Protocol private (
     @JsonInclude(Include.NON_ABSENT)
     writerFeatures: Option[Set[String]])
   extends Action
+  with AMTCheckpointAction
   with SparkAbstractProtocol
   with StorageAbstractProtocol
   with TableFeatureSupport {
@@ -255,6 +267,9 @@ case class Protocol private (
   }
 
   override def wrap: SingleAction = SingleAction(protocol = this)
+
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(protocol = this)
 
   /**
    * Return a reader-friendly string representation of this Protocol.
@@ -675,8 +690,10 @@ case class SetTransaction(
     appId: String,
     version: Long,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    lastUpdated: Option[Long]) extends Action {
+    lastUpdated: Option[Long]) extends Action with AMTCheckpointAction {
   override def wrap: SingleAction = SingleAction(txn = this)
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(txn = this)
 }
 
 /**
@@ -692,8 +709,15 @@ case class SetTransaction(
 case class DomainMetadata(
     domain: String,
     configuration: String,
-    removed: Boolean) extends Action with StorageAbstractDomainMetadata {
+    removed: Boolean)
+  extends Action
+  with AMTCheckpointAction
+  with StorageAbstractDomainMetadata {
+
   override def wrap: SingleAction = SingleAction(domainMetadata = this)
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(domainMetadata = this)
+
   override def getDomain: String = domain
   override def getConfiguration: String = configuration
   override def isRemoved: Boolean = removed
@@ -824,6 +848,50 @@ sealed trait FileAction extends Action {
   }
 }
 
+object FileAction {
+  /** The path unique tuple in delta log actions: (parquet file, deletion vector id). */
+  final case class UniqueFileActionTuple private (fileURI: URI, deletionVectorId: Option[String])
+
+  /**
+   * Whether deletion vectors should be reconciled by their normalized object identity for the
+   * given table (see [[DeletionVectorDescriptor.uniqueId]]).
+   *
+   * @param metadata the table metadata.
+   * @param protocol the table protocol.
+   */
+  def useDeletionVectorObjectIdentity(
+      metadata: Metadata,
+      protocol: Protocol,
+      spark: SparkSession): Boolean =
+    AMTUtils.amtEnabled(metadata, protocol) ||
+      spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT)
+
+  /**
+   * The same as the `(metadata, protocol, spark)` overload, for the metadata and protocol of
+   * `snapshot`.
+   *
+   * @param snapshot the table snapshot.
+   */
+  def useDeletionVectorObjectIdentity(
+      snapshot: SnapshotDescriptor,
+      spark: SparkSession): Boolean =
+    useDeletionVectorObjectIdentity(snapshot.metadata, snapshot.protocol, spark)
+
+  /**
+   * The unique tuple `(parquet file, deletion vector id)` of a file action, as a method on
+   * [[AddFile]] / [[RemoveFile]]. See [[DeletionVectorDescriptor.uniqueId]] for the
+   * `useObjectIdentity` semantics.
+   */
+  implicit class FileActionUniqueTupleOps(val action: FileAction) {
+    def toUniqueFileActionTuple(
+        tableRoot: Path,
+        useObjectIdentity: Boolean): UniqueFileActionTuple =
+      UniqueFileActionTuple(
+        action.pathAsUri,
+        Option(action.deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity)))
+  }
+}
+
 case class ParsedStatsFields(
   numLogicalRecords: Option[Long],
   tightBounds: Option[Boolean])
@@ -915,13 +983,25 @@ case class AddFile(
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
-    clusteringProvider: Option[String] = None
+    clusteringProvider: Option[String] = None,
+    backReference: Option[BackReference] = None,
+    amtPassthrough: Option[AMTPassthrough] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    snapshotId: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    modifiedSnapshotId: Option[Long] = None
 ) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 
   override def wrap: SingleAction = SingleAction(add = this)
 
   def remove: RemoveFile = removeWithTimestamp()
+
+  /**
+   * Returns the file sequence number, currently euquals to [[defaultRowCommitVersion]].
+   */
+  @JsonIgnore
+  def effectiveFileSequenceNumber: Option[Long] = defaultRowCommitVersion
 
   def removeWithTimestamp(
       timestamp: Long = System.currentTimeMillis(),
@@ -935,7 +1015,11 @@ case class AddFile(
       deletionVector = deletionVector,
       baseRowId = baseRowId,
       defaultRowCommitVersion = defaultRowCommitVersion,
-      stats = stats
+      stats = stats,
+      backReference = backReference,
+      // Set snapshotId to None so OptimisticTransaction stamps it during commit.
+      snapshotId = None,
+      modifiedSnapshotId = modifiedSnapshotId
     )
     // scalastyle:on
   }
@@ -962,8 +1046,13 @@ case class AddFile(
       case Some(_) => deletionVector.copy(maxRowIndex = None)
       case _ => deletionVector
     }
-    var addFileWithNewDv =
-      this.copy(deletionVector = dvDescriptorWithoutMaxRowIndex, dataChange = dataChange)
+    var addFileWithNewDv = this.copy(
+      deletionVector = dvDescriptorWithoutMaxRowIndex,
+      dataChange = dataChange,
+      backReference = None,
+      // Reset modifiedSnapshotId to None, so that it is stamped back to the current
+      // txn's snapshot id by OptimisticTransaction.
+      modifiedSnapshotId = None)
     if (updateStats) {
       addFileWithNewDv = addFileWithNewDv.withoutTightBoundStats
     }
@@ -978,29 +1067,96 @@ case class AddFile(
   }
 
   /**
-   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   * Return the legacy unique id of the deletion vector, if present, or `None` if there's no DV.
    *
-   * The unique id differentiates DVs, even if there are multiple in the same file
+   * The legacy unique id differentiates DVs, even if there are multiple in the same file
    * or the DV is stored inline.
    */
   @JsonIgnore
-  def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
+  def getLegacyDeletionVectorUniqueId: Option[String] =
+    Option(deletionVector).map(_.legacyUniqueId)
+
+  /**
+   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   *
+   * This overload allows callers to use object identity for comparisons. Prefer this
+   * if possible. See document of [[DeletionVectorDescriptor.uniqueId]] for more details.
+   */
+  @JsonIgnore
+  def getDeletionVectorUniqueId(
+      tableRoot: Path,
+      useObjectIdentity: Boolean): Option[String] = {
+    Option(deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity))
+  }
 
   /** Update stats to have tightBounds = false, if file has any stats. */
   def withoutTightBoundStats: AddFile = {
     if (stats == null || stats.isEmpty) {
       this
     } else {
-      val node = JsonUtils.mapper.readTree(stats).asInstanceOf[ObjectNode]
-      if (node.has("tightBounds") &&
-          !node.get("tightBounds").asBoolean(true)) {
-        this
+      val precisionConf = DeltaSQLConf.DELTA_STATS_WIDEN_BOUNDS_PRESERVE_NUMERIC_PRECISION_ENABLED
+      val preserveStatsPrecision = SQLConf.get.getConf(precisionConf)
+      if (preserveStatsPrecision) {
+        withoutTightBoundStatsPreservingPrecision
       } else {
-        node.put("tightBounds", false)
-        val newStatsString = JsonUtils.mapper.writer.writeValueAsString(node)
-        this.copy(stats = newStatsString)
+        val node = JsonUtils.mapper.readTree(stats).asInstanceOf[ObjectNode]
+        if (node.has("tightBounds") &&
+            !node.get("tightBounds").asBoolean(true)) {
+          this
+        } else {
+          node.put("tightBounds", false)
+          val newStatsString = JsonUtils.mapper.writer.writeValueAsString(node)
+          this.copy(stats = newStatsString)
+        }
       }
     }
+  }
+
+  /**
+   * Set the top-level `tightBounds` field to false in the stats JSON while preserving
+   * numeric precision.
+   * Return `this` if bounds are already wide.
+   */
+  private[delta] def withoutTightBoundStatsPreservingPrecision: AddFile = {
+    val writer = new StringWriter()
+    val factory = JsonUtils.mapper.getFactory
+    var needsUpdate = true
+    Utils.tryWithResource(factory.createParser(stats)) { parser =>
+      require(parser.nextToken() == JsonToken.START_OBJECT,
+        "Expected file statistics to be a JSON object")
+      Utils.tryWithResource(factory.createGenerator(writer)) { generator =>
+        generator.writeStartObject()
+        while (needsUpdate && parser.nextToken() != JsonToken.END_OBJECT) {
+          if (parser.currentName() == TIGHT_BOUNDS) {
+            parser.nextToken()
+            // `true` is the default if Jackson cannot convert the value to a boolean.
+            // In that case, widen the bounds as in the legacy path.
+            needsUpdate = parser.readValueAsTree[JsonNode]().asBoolean(true)
+          } else {
+            // Preserve decimal bounds without rounding through Double.
+            // Copy the field name and its value while preserving numeric precision.
+            generator.copyCurrentEventExact(parser)
+            parser.nextToken()
+            var depth = 0
+            do {
+              val token = parser.currentToken()
+              generator.copyCurrentEventExact(parser)
+              if (token.isStructStart) {
+                depth += 1
+              } else if (token.isStructEnd) {
+                depth -= 1
+              }
+              if (depth > 0) {
+                parser.nextToken()
+              }
+            } while (depth > 0)
+          }
+        }
+        generator.writeBooleanField(TIGHT_BOUNDS, false)
+        generator.writeEndObject()
+      }
+    }
+    if (needsUpdate) this.copy(stats = writer.toString) else this
   }
 
   /**
@@ -1126,13 +1282,37 @@ object AddFile {
 }
 
 /**
+ * A back reference points a file action at the exact location of its source entry inside an
+ * Adaptive Metadata Tree (AMT) leaf manifest.
+ *
+ * @param manifest The AMT leaf manifest that held the source entry, stored exactly like the leaf's
+ *                 tree `location`: a raw (non-URL-encoded) path relative to the table root. This
+ *                 differs from [[AddFile.path]], which is URL-encoded.
+ * @param pos      The 0-based position of the entry within that leaf. This equals the parquet
+ *                 `_metadata.row_index` of the leaf row, which is the same ordinal the MDV bitmap
+ *                 indexes.
+ */
+case class BackReference(
+    manifest: String,
+    pos: Int)
+
+object BackReference {
+
+  final lazy val STRUCT_TYPE: StructType =
+    Action.addFileSchema("backReference").dataType.asInstanceOf[StructType]
+
+  private lazy val _encoder = new DeltaEncoder[BackReference]
+  implicit def encoder: Encoder[BackReference] = _encoder.get
+}
+
+/**
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is
  * deleted permanently.
  *
- * Note that for protocol compatibility reasons, the fields `partitionValues`, `size`, and `tags`
- * are only present when the extendedFileMetadata flag is true. New writers should generally be
- * setting this flag, but old writers (and FSCK) won't, so readers must check this flag before
- * attempting to consume those values.
+ * Note that for protocol compatibility reasons, the fields `partitionValues` and `size` are only
+ * present when the extendedFileMetadata flag is true. New writers should generally be setting this
+ * flag, but old writers (and FSCK) won't, so readers must check this flag before attempting to
+ * consume those values.
  *
  * Since old tables would not have `extendedFileMetadata` and `size` field, we should make them
  * nullable by setting their type Option.
@@ -1155,7 +1335,12 @@ case class RemoveFile(
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
-    override val stats: String = null
+    override val stats: String = null,
+    backReference: Option[BackReference] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    snapshotId: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    modifiedSnapshotId: Option[Long] = None
 ) extends FileAction with HasNumRecords {
   override def wrap: SingleAction = SingleAction(remove = this)
 
@@ -1163,13 +1348,27 @@ case class RemoveFile(
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
 
   /**
-   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   * Return the legacy unique id of the deletion vector, if present, or `None` if there's no DV.
    *
-   * The unique id differentiates DVs, even if there are multiple in the same file
+   * The legacy unique id differentiates DVs, even if there are multiple in the same file
    * or the DV is stored inline.
    */
   @JsonIgnore
-  def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
+  def getLegacyDeletionVectorUniqueId: Option[String] =
+    Option(deletionVector).map(_.legacyUniqueId)
+
+  /**
+   * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
+   *
+   * This overload allows callers to use object identity for comparisons. Prefer this
+   * if possible. See document of [[DeletionVectorDescriptor.uniqueId]] for more details.
+   */
+  @JsonIgnore
+  def getDeletionVectorUniqueId(
+      tableRoot: Path,
+      useObjectIdentity: Boolean): Option[String] = {
+    Option(deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity))
+  }
 
   /**
    * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.
@@ -1188,7 +1387,8 @@ case class RemoveFile(
 
   /** Only for testing. */
   @JsonIgnore
-  private [delta] def isDVTombstone: Boolean = DeletionVectorDescriptor.isDeletionVectorPath(new Path(path))
+  private [delta] def isDVTombstone: Boolean =
+    DeletionVectorDescriptor.isSparkImplDeletionVectorPath(new Path(path))
 
 }
 // scalastyle:on
@@ -1242,7 +1442,10 @@ case class Metadata(
     configuration: Map[String, String] = Map.empty,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     createdTime: Option[Long] = None)
-  extends Action with SparkAbstractMetadata with StorageAbstractMetadata {
+  extends Action
+  with AMTCheckpointAction
+  with SparkAbstractMetadata
+  with StorageAbstractMetadata {
 
   // The `schema` and `partitionSchema` methods should be vals or lazy vals, NOT
   // defs, because parsing StructTypes from JSON is extremely expensive and has
@@ -1334,6 +1537,9 @@ case class Metadata(
 
   override def wrap: SingleAction = SingleAction(metaData = this)
 
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(metaData = this)
+
   override def getId: String = id
 
   override def getName: String = name
@@ -1378,9 +1584,11 @@ trait CommitMarker {
  *                          epoch in milliseconds when the commit write was started. This should
  *                          only be set when the feature inCommitTimestamps is enabled.
  * @param isBlindAppend Whether this commit has blindly appended without caring about existing files
+ * @param dataChange Whether this commit changes the data of the table logically.
  * @param engineInfo The information for the engine that makes the commit.
  *                   If a commit is made by Delta Lake 1.1.0 or above, it will be
  *                   `Apache-Spark/x.y.z Delta-Lake/x.y.z`.
+ * @param lastManifestCommit Info of the last AMT manifest commit up to this version.
  */
 case class CommitInfo(
     // The commit version should be left unfilled during commit(). When reading a delta file, we can
@@ -1403,11 +1611,13 @@ case class CommitInfo(
     readVersion: Option[Long],
     isolationLevel: Option[String],
     isBlindAppend: Option[Boolean],
+    dataChange: Option[Boolean],
     operationMetrics: Option[Map[String, String]],
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
     engineInfo: Option[String],
-    txnId: Option[String])
+    txnId: Option[String],
+    lastManifestCommit: Option[LastManifestCommit])
   extends Action with CommitMarker with SparkAbstractCommitInfo with StorageAbstractCommitInfo {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
@@ -1464,8 +1674,40 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, None, null, None, None, null, null, None, None,
-      None, None, None, None, None, None, None, None, None)
+      None, None, None, None, None, None, None, None, None, None, None)
   }
+
+  /**
+   * Derives the commit-level `dataChange` summary stored in [[CommitInfo.dataChange]] from the
+   * actions of a commit: a commit changes data if and only if at least one of its file actions
+   * does.
+   */
+  def dataChangeFromActions(actions: Iterable[Action]): Boolean = actions.exists {
+    case f: FileAction => f.dataChange
+    case _ => false
+  }
+
+  def useCommitInfoForDataChangeEnabled: Boolean =
+    SQLConf.get.getConf(DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED)
+
+  /**
+   * The commit-level `dataChange` value. `None` when it has to fall back to
+   * inspecting the commit's file actions itself.
+   */
+  def commitChangedData(commitInfo: Option[CommitInfo]): Option[Boolean] = {
+    if (!useCommitInfoForDataChangeEnabled) None else commitInfo.flatMap(_.dataChange)
+  }
+
+  /**
+   * A predicate telling whether a file action of the commit changes data:
+   * taken from the commit-level summary when the commit records one, and from the action
+   * itself otherwise.
+   */
+  def fileActionChangesData(commitInfo: Option[CommitInfo]): FileAction => Boolean =
+    commitChangedData(commitInfo) match {
+      case Some(commitChangesData) => _ => commitChangesData
+      case None => _.dataChange
+    }
 
   // scalastyle:off argcount
 
@@ -1478,12 +1720,28 @@ object CommitInfo {
       readVersion: Option[Long],
       isolationLevel: Option[String],
       isBlindAppend: Option[Boolean],
+      dataChange: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
-      txnId: Option[String]): CommitInfo = {
-    apply(None, time, operation, inCommitTimestamp, operationParameters, commandContext,
-      readVersion, isolationLevel, isBlindAppend, operationMetrics, userMetadata, tags, txnId)
+      txnId: Option[String],
+      lastManifestCommit: Option[LastManifestCommit]): CommitInfo = {
+    apply(
+      version = None,
+      time,
+      operation,
+      inCommitTimestamp,
+      operationParameters,
+      commandContext,
+      readVersion,
+      isolationLevel,
+      isBlindAppend,
+      dataChange,
+      operationMetrics,
+      userMetadata,
+      tags,
+      txnId,
+      lastManifestCommit)
   }
 
   def apply(
@@ -1496,10 +1754,12 @@ object CommitInfo {
       readVersion: Option[Long],
       isolationLevel: Option[String],
       isBlindAppend: Option[Boolean],
+      dataChange: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]],
-      txnId: Option[String]): CommitInfo = {
+      txnId: Option[String],
+      lastManifestCommit: Option[LastManifestCommit]): CommitInfo = {
 
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
@@ -1520,11 +1780,13 @@ object CommitInfo {
       readVersion,
       isolationLevel,
       isBlindAppend,
+      dataChange,
       operationMetrics,
       userMetadata,
       tags,
       getEngineInfo,
-      txnId)
+      txnId,
+      lastManifestCommit)
   }
   // scalastyle:on argcount
 
@@ -1572,13 +1834,90 @@ sealed trait CheckpointOnlyAction extends Action
  *
  * @param path        root manifest path, relative to the table root.
  * @param sizeInBytes size of the root manifest file in bytes.
+ * @param version     table version this root reflects. Must be `<=` the enclosing
+ *                    [[Checkpoint.version]]; equal in a manifest commit, and less
+ *                    or equal in a standalone checkpoint (the gap is covered by
+ *                    inline file actions).
+ * @param tags        additional metadata about the AMT. See [[ContentRoot.Tags]] for known keys.
  */
 case class ContentRoot(
     path: String,
-    sizeInBytes: Long)
+    sizeInBytes: Long,
+    version: Long,
+    tags: Map[String, String] = null) extends AMTCheckpointAction {
+
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(contentRoot = this)
+
+  private def tag(key: ContentRoot.Tags.KeyType): Option[String] =
+    Option(tags).flatMap(_.get(key.name))
+
+  /** Whether this manifest tree was built incrementally, if recorded. */
+  def isIncremental: Option[Boolean] = tag(ContentRoot.Tags.IS_INCREMENTAL).map(_.toBoolean)
+
+  /** Number of leaf manifests in this tree, if recorded; `0` means a root-only tree. */
+  def numLeaves: Option[Long] = tag(ContentRoot.Tags.NUM_LEAVES).map(_.toLong)
+
+  /** The version of the most recent full (non-incremental) manifest rewrite, if recorded. */
+  def lastManifestCommitWithFullRewrite: Option[Long] =
+    tag(ContentRoot.Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE).map(_.toLong)
+
+  /** Absolute [[Path]] to the root manifest, resolving `path` against `tableRoot`. */
+  @JsonIgnore
+  def getAbsolutePath(tableRoot: Path): Path =
+    AMTUtils.absolutePathForManifestFile(tableRoot, path)
+
+  /** The root manifest as a Hadoop [[FileStatus]] carrying its path and size. */
+  @JsonIgnore
+  def toFileStatus(tableRoot: Path): FileStatus = {
+    new FileStatus(
+      /* length = */ sizeInBytes,
+      /* isdir = */ false,
+      /* block_replication = */ 0,
+      /* blocksize = */ 1L,
+      // modificationTime is not tracked on the ContentRoot, so report 0.
+      /* modification_time = */ 0L,
+      getAbsolutePath(tableRoot))
+  }
+}
+
+object ContentRoot {
+
+  def apply(
+      path: String,
+      sizeInBytes: Long,
+      version: Long,
+      isIncremental: Boolean,
+      lastManifestCommitWithFullRewrite: Long,
+      numLeaves: Long): ContentRoot = {
+    ContentRoot(
+      path = path,
+      sizeInBytes = sizeInBytes,
+      version = version,
+      tags = Map(
+        Tags.IS_INCREMENTAL.name -> isIncremental.toString,
+        Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE.name ->
+          lastManifestCommitWithFullRewrite.toString,
+        Tags.NUM_LEAVES.name -> numLeaves.toString
+      )
+    )
+  }
+
+  object Tags {
+    sealed abstract class KeyType(val name: String)
+
+    /** Whether the tree was built incrementally (`"true"`/`"false"`). */
+    object IS_INCREMENTAL extends KeyType("isIncremental")
+    /** The version of the most recent full (non-incremental) manifest rewrite. */
+    object LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE
+      extends KeyType("lastManifestCommitWithFullRewrite")
+    /** Number of leaf manifests in the tree; `0` means a root-only tree. */
+    object NUM_LEAVES extends KeyType("numLeaves")
+  }
+}
 
 /**
- * Closed set of values for [[SidecarFile.sidecarType]] under the `adaptiveMetadata-preview`
+ * Closed set of values for the `type` field on [[SidecarFile]] under `adaptiveMetadata-preview`.
  * feature. Tells a reader which slice of the checkpoint's non-content metadata a sidecar
  * carries.
  *
@@ -1604,45 +1943,142 @@ object SidecarType {
 
 /**
  * Top-level Delta action emitted by a commit which also writes AMT.
- * Embeds the full checkpoint state -- `contentRoot` plus the non-content metadata snapshot
- * (protocol, metadata, domain metadata, txns, sidecars) -- that a reader needs to
- * reconstruct the table at the recorded version without replaying earlier commits. Distinct
- * from [[CheckpointMetadata]], which describes V2 checkpoint sidecars.
+ * Contains the actions needed to reconstruct the table at the version recorded by
+ * [[CheckpointMetadata]]: the content root, protocol, metadata, domain metadata, transaction
+ * identifiers, and sidecar references. Entries can appear in any order.
+ *
+ * Exactly one [[CheckpointMetadata]], [[ContentRoot]], [[Protocol]], and [[Metadata]] must be
+ * present. The checkpoint version may lag the enclosing commit, and the content root version
+ * must be less than or equal to the checkpoint version.
  *
  * For domain metadata and transaction identifiers, the data can be carried inline, in
  * sidecars, or split across both (e.g., small changes inline with the bulk in a sidecar).
  * A given entry must not be duplicated across inline and sidecar.
  *
- * @param version        version at which this checkpoint is valid. May belong to a previous
- *                       commit (the checkpoint can lag the enclosing commit).
- * @param contentRoot    pointer to the Iceberg v4 root manifest.
- * @param protocol       protocol snapshot at `version`. Must be non null.
- * @param metaData       metadata snapshot at `version`. Must be non null.
- * @param domainMetadata all [[DomainMetadata]] entries carried inline. An empty list means
- *                       there are no domain metadata entries inline (they may still be
- *                       carried via sidecars).
- * @param txns           transaction identifiers carried inline. An empty list means there are
- *                       no transaction identifiers inline (they may still be carried via
- *                       sidecars).
- * @param sidecars       sidecars that carry the long tail of non-content metadata (transaction
- *                       ids, domain metadata, ...). Empty when all non-content metadata is
- *                       inline.
+ * @param actions wrapped actions comprising this checkpoint.
  */
+@JsonDeserialize(using = classOf[Checkpoint.Deserializer])
 case class Checkpoint(
-    version: Long,
-    contentRoot: ContentRoot,
-    protocol: Protocol,
-    metaData: Metadata,
-    domainMetadata: Seq[DomainMetadata],
-    txns: Seq[SetTransaction],
-    sidecars: Seq[SidecarFile]) extends Action {
+    // The AMT RFC requires a bare action array. JsonValue on the getter makes Jackson serialize
+    // this array directly, without an {"actions": ...} wrapper.
+    @(JsonValue @getter)
+    actions: Seq[AMTCheckpointSingleAction]) extends Action {
+
+  require(actions != null, "Checkpoint actions must not be null.")
+  require(actions.forall(_ != null), "Checkpoint actions must not contain null entries.")
+
+  @JsonIgnore
+  private val unwrappedActions: Seq[AMTCheckpointAction] = actions.map(_.unwrap)
+
+  @JsonIgnore
+  val checkpointMetadata: CheckpointMetadata = getRequiredAction[CheckpointMetadata]
+
+  /**
+   * Version at which this checkpoint is valid. May belong to a previous commit (the checkpoint
+   * can lag the enclosing commit).
+   */
+  @JsonIgnore
+  def version: Long = checkpointMetadata.version
+
+  /**
+   * Pointer to the Iceberg v4 root manifest. `contentRoot.version` is the table version the tree
+   * reflects.
+   */
+  @JsonIgnore
+  val contentRoot: ContentRoot = getRequiredAction[ContentRoot]
+
+  /** Protocol snapshot at `version`. Must be non null. */
+  @JsonIgnore
+  val protocol: Protocol = getRequiredAction[Protocol]
+
+  /** Metadata snapshot at `version`. Must be non null. */
+  @JsonIgnore
+  val metaData: Metadata = getRequiredAction[Metadata]
+
+  /**
+   * All [[DomainMetadata]] entries carried inline. An empty list means there are no domain
+   * metadata entries inline (they may still be carried via sidecars).
+   */
+  @JsonIgnore
+  lazy val domainMetadata: Seq[DomainMetadata] = unwrappedActions.collect {
+    case action: DomainMetadata => action
+  }
+
+  /**
+   * Transaction identifiers carried inline. An empty list means there are no transaction
+   * identifiers inline (they may still be carried via sidecars).
+   */
+  @JsonIgnore
+  lazy val txns: Seq[SetTransaction] = unwrappedActions.collect {
+    case action: SetTransaction => action
+  }
+
+  /**
+   * Sidecars that carry the long tail of non-content metadata (transaction ids, domain metadata,
+   * ...). Empty when all non-content metadata is inline.
+   */
+  @JsonIgnore
+  lazy val sidecars: Seq[SidecarFile] = unwrappedActions.collect {
+    case action: SidecarFile => action
+  }
 
   // AMT checkpoint sidecars must always declare their type.
-  require(sidecars.forall(_.sidecarType.isDefined),
-    "All sidecars in a Checkpoint must have a sidecarType.")
+  require(sidecars.forall(_.`type`.isDefined),
+    "All sidecars in a Checkpoint must have a type.")
+  require(
+    contentRoot.version <= version,
+    s"contentRoot.version (${contentRoot.version}) must be <= checkpoint version ($version).")
 
-  override def wrap: SingleAction = SingleAction(checkpoint = this)
+  override def wrap: SingleAction = SingleAction(checkpoint = actions)
+
+  private def getRequiredAction[T <: AMTCheckpointAction : ClassTag]: T = {
+    // ClassTag makes this pattern check T's runtime class instead of its erased upper bound.
+    val matchedActions = unwrappedActions.collect { case action: T => action }
+    lazy val actionName = implicitly[ClassTag[T]].runtimeClass.getSimpleName
+    require(matchedActions.size == 1,
+      s"A Checkpoint must contain exactly one $actionName action, found ${matchedActions.size}.")
+    matchedActions.head
+  }
 }
+
+object Checkpoint {
+  /** Builds a checkpoint from its individual fields. */
+  def apply(
+      version: Long,
+      contentRoot: ContentRoot,
+      protocol: Protocol,
+      metaData: Metadata,
+      domainMetadata: Seq[DomainMetadata],
+      txns: Seq[SetTransaction],
+      sidecars: Seq[SidecarFile]): Checkpoint = {
+    val flattenedActions = Seq(CheckpointMetadata(version), contentRoot, protocol, metaData) ++
+      domainMetadata ++ txns ++ sidecars
+    fromActions(flattenedActions)
+  }
+
+  /** Wraps the actions comprising a checkpoint, preserving their order. */
+  def fromActions(actions: Seq[AMTCheckpointAction]): Checkpoint =
+    Checkpoint(actions.map(_.wrapAsAMTCheckpointSingleAction))
+
+  /** Reads the bare action array used when a Checkpoint is serialized directly. */
+  class Deserializer extends JsonDeserializer[Checkpoint] {
+    override def deserialize(p: JsonParser, ctxt: DeserializationContext): Checkpoint = {
+      val actions = ctxt.readValue(p, classOf[Array[AMTCheckpointSingleAction]])
+      Checkpoint(actions.toSeq)
+    }
+  }
+}
+
+/**
+ * Info of last AMT manifest commit. Persisted in every [[CommitInfo]] and [[VersionChecksum]]
+ * as the source-of-truth of the last manifest commit up to the current commit version.
+ *
+ * @param version version of the manifest commit
+ * @param contentRootVersion version of the content root recorded in the manifest commit
+ */
+case class LastManifestCommit(
+    version: Long,
+    contentRootVersion: Long)
 
 /**
  * An [[Action]] containing the information about a sidecar file.
@@ -1660,16 +2096,18 @@ case class SidecarFile(
     modificationTime: Long,
     tags: Map[String, String] = null,
     // Applicable only for AMT checkpoint sidecars.
-    // Sidecars corresponding to V2Checkpoints do not have concept of sidecarType.
-    @JsonProperty("type")
+    // Sidecars corresponding to V2Checkpoints do not have concept of type.
     @JsonInclude(Include.NON_ABSENT)
-    sidecarType: Option[String] = None)
-  extends CheckpointOnlyAction {
+    `type`: Option[String] = None)
+  extends CheckpointOnlyAction with AMTCheckpointAction {
 
-  // Either no sidecarType is supplied, or it must be one of the known [[SidecarType]] values.
-  sidecarType.foreach(SidecarType.validate)
+  // Either no type is supplied, or it must be one of the known [[SidecarType]] values.
+  `type`.foreach(SidecarType.validate)
 
   override def wrap: SingleAction = SingleAction(sidecar = this)
+
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(sidecar = this)
 
   def toFileStatus(logPath: Path): FileStatus = {
     val partFilePath = new Path(FileNames.sidecarDirPath(logPath), path)
@@ -1688,7 +2126,8 @@ object SidecarFile {
 }
 
 /**
- * Holds information about the Delta Checkpoint. This action will only be part of checkpoints.
+ * Holds information about the Delta Checkpoint. This action will only be part of checkpoints,
+ * including an AMT [[Checkpoint]]
  *
  * @param version version of the checkpoint
  * @param tags    attributes of the checkpoint, defaults to null (which is semantically same as an
@@ -1698,9 +2137,12 @@ object SidecarFile {
 case class CheckpointMetadata(
     version: Long,
     tags: Map[String, String] = null)
-  extends CheckpointOnlyAction {
+  extends CheckpointOnlyAction with AMTCheckpointAction {
 
   override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
+
+  override def wrapAsAMTCheckpointSingleAction: AMTCheckpointSingleAction =
+    AMTCheckpointSingleAction(checkpointMetadata = this)
 
   import CheckpointMetadata.Tags
 
@@ -1769,7 +2211,9 @@ case class SingleAction(
     sidecar: SidecarFile = null,
     domainMetadata: DomainMetadata = null,
     commitInfo: CommitInfo = null,
-    checkpoint: Checkpoint = null) {
+    // Use a Seq so Spark infers the action array required by the AMT RFC. Spark ignores JsonValue;
+    // using Checkpoint here would infer a struct with an extra "actions" field.
+    checkpoint: Seq[AMTCheckpointSingleAction] = null) {
 
   def unwrap: Action = {
     if (add != null) {
@@ -1793,7 +2237,7 @@ case class SingleAction(
     } else if (commitInfo != null) {
       commitInfo
     } else if (checkpoint != null) {
-      checkpoint
+      Checkpoint(checkpoint)
     } else {
       null
     }
@@ -1815,6 +2259,38 @@ object SingleAction extends Logging {
 
   lazy val nullLitForMetadataAction: Column =
     Column(Literal(null, ScalaReflection.schemaFor[Metadata].dataType))
+}
+
+/** A serialization helper for a single action within an AMT [[Checkpoint]]. */
+case class AMTCheckpointSingleAction(
+    checkpointMetadata: CheckpointMetadata = null,
+    contentRoot: ContentRoot = null,
+    protocol: Protocol = null,
+    metaData: Metadata = null,
+    domainMetadata: DomainMetadata = null,
+    txn: SetTransaction = null,
+    sidecar: SidecarFile = null) {
+
+  /** Returns the enclosed action, or null when no recognized action is present. */
+  def unwrap: AMTCheckpointAction = {
+    if (checkpointMetadata != null) {
+      checkpointMetadata
+    } else if (contentRoot != null) {
+      contentRoot
+    } else if (protocol != null) {
+      protocol
+    } else if (metaData != null) {
+      metaData
+    } else if (domainMetadata != null) {
+      domainMetadata
+    } else if (txn != null) {
+      txn
+    } else if (sidecar != null) {
+      sidecar
+    } else {
+      null
+    }
+  }
 }
 
 /** Serializes Maps containing JSON strings without extra escaping. */

@@ -433,7 +433,7 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
       val serialized = DeletionVectorUtils.serialize(
         bitmap, RoaringBitmapArrayFormat.Portable, Some(tablePath))
       val range = writer.write(serialized)
-      DeletionVectorDescriptor.onDiskWithRelativePath(
+      DeletionVectorDescriptor.onDiskWithUuidRelativePath(
         id = fileId,
         sizeInBytes = serialized.length,
         cardinality = bitmap.cardinality,

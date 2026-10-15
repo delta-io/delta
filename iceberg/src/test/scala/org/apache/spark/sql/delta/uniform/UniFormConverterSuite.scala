@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.uniform
 
+import java.util.UUID
+
 import com.databricks.spark.util.Log4jUsageLogger
 import shadedForDelta.org.apache.iceberg.BaseTable
 import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
@@ -24,11 +26,13 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableReadPredicate, IcebergConstants, Snapshot}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeletionVectorsTestUtils, DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableReadPredicate, IcebergConstants, Snapshot}
 import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
 import org.apache.spark.sql.delta.NonSparkReadIceberg
-import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DomainMetadata, Metadata}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DeletionVectorDescriptor, DomainMetadata, Metadata}
+import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.icebergShaded.{IcebergConverter, UNIFORM_CC_MODE, UNIFORM_POST_COMMIT_MODE}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.test.SharedSparkSession
@@ -68,7 +72,11 @@ class IcebergConverterForTest extends IcebergConverter {
 }
 
 class UniFormConverterSuite extends
-  QueryTest with SharedSparkSession with DeltaSQLCommandTest with NonSparkReadIceberg {
+  QueryTest
+  with SharedSparkSession
+  with DeltaSQLCommandTest
+  with NonSparkReadIceberg
+  with DeletionVectorsTestUtils {
   def constructDummyAddFile(path: String = "s3://path1/1.parquet"): AddFile = {
     AddFile(
       path = path,
@@ -127,6 +135,45 @@ class UniFormConverterSuite extends
     val eventData = JsonUtils.fromJson[Map[String, Any]](rangeEvents.head.blob)
     assert(eventData("fromVersion") === expectedFromVersion)
     assert(eventData("toVersion") === expectedToVersion)
+  }
+
+  /**
+   * Converts an OPTIMIZE-shaped commit that replaces every file of the table's current snapshot
+   * with a single compacted file carrying `addedDeletionVector`, and returns the operation of the
+   * resulting Iceberg snapshot ("replace" for RewriteFiles, "overwrite" for RowDelta).
+   */
+  private def convertRebasedOptimize(
+      tableName: String,
+      addedDeletionVector: DeletionVectorDescriptor): String = {
+    val tableId = TableIdentifier(tableName)
+    val deltaLog = DeltaLog.forTable(spark, tableId)
+    val snapshot = deltaLog.update()
+    val catalogTable = spark.sessionState.catalog.getTableMetadata(tableId)
+    val converter = new IcebergConverterForTest()
+    val metadataPath = converter.convertSnapshotAndReturnMetadataPath(snapshot, catalogTable)
+
+    val compactedFiles = snapshot.allFiles.collect()
+    val compactedAdd = compactedFiles.head.copy(
+      path = s"compacted-${UUID.randomUUID()}.parquet",
+      dataChange = false,
+      deletionVector = addedDeletionVector,
+      modificationTime = System.currentTimeMillis())
+    val actions =
+      compactedFiles.map(_.removeWithTimestamp(dataChange = false)).toSeq :+ compactedAdd
+
+    val catalogTableWithIcebergInfo =
+      catalogTableWithDeltaUniformIceberg(catalogTable, metadataPath, snapshot.version)
+    val attemptDeltaVersion = snapshot.version + 1
+    val txnInfo = constructDummyTxnInfo(
+      version = attemptDeltaVersion,
+      readSnapshot = snapshot,
+      newActions = actions,
+      catalogTable = catalogTableWithIcebergInfo,
+      newMetadata = snapshot.metadata)
+    val (newMetadataPath, _) = converter.convertUncommitedTxn(
+      txnInfo, attemptDeltaVersion, deltaLog, catalogTableWithIcebergInfo)
+    new HadoopTables(deltaLog.newDeltaHadoopConf()).load(newMetadataPath)
+      .currentSnapshot().operation()
   }
 
   test("Verify convertSnapshot writes Iceberg metadata") {
@@ -541,6 +588,161 @@ class UniFormConverterSuite extends
         icebergTable.currentSnapshot().summary().get("total-data-files").toInt
       assert(numFilesInIceberg === currSnapshot.numOfFiles + 1)
       assertDeltaCommitRangeEvent(events, staleSnapshot.version + 1, attemptDeltaVersion)
+    }
+  }
+
+  test("rebased OPTIMIZE that adds the table's first DV is an Iceberg overwrite") {
+    // Rebased OPTIMIZE where the concurrent DELETE dropped a whole input file, so the table holds
+    // no DV at all when OPTIMIZE adds one to its compacted output.
+    val tableName = "test_optimize_first_dv"
+    withTable(tableName) {
+      withSQLConf(
+          DeltaSQLConf.DELTA_UNIFORM_ICEBERG_TABLE_V3_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "true") {
+        spark.sql(
+          s"""CREATE TABLE $tableName (id BIGINT, data STRING) USING DELTA
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV3' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg',
+             |  'delta.enableDeletionVectors' = 'true'
+             |)""".stripMargin)
+        // The first file holds only the row the DELETE removes, so the DELETE drops the entire
+        // file rather than writing a DV for it.
+        spark.sql(s"INSERT INTO $tableName VALUES (1, 'a')")
+        spark.sql(s"INSERT INTO $tableName VALUES (2, 'b'), (3, 'c')")
+        spark.sql(s"INSERT INTO $tableName VALUES (4, 'd'), (5, 'e')")
+        spark.sql(s"INSERT INTO $tableName VALUES (6, 'f'), (7, 'g')")
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        assert(deltaLog.update().numOfFiles === 4)
+
+        spark.sql(s"DELETE FROM $tableName WHERE id = 1")
+        checkAnswer(
+          spark.table(tableName),
+          Seq(Row(2L, "b"), Row(3L, "c"), Row(4L, "d"), Row(5L, "e"), Row(6L, "f"), Row(7L, "g")))
+        val files = deltaLog.update().allFiles.collect()
+        assert(files.length === 3, "Expected DELETE to drop one of the four files")
+        assert(files.forall(_.deletionVector == null), "Expected DELETE to write no DV")
+
+        // The compacted output still physically holds the deleted row, masked by a new DV, while
+        // none of the removed files carries one.
+        val operation = convertRebasedOptimize(
+          tableName, addedDeletionVector = writeDV(deltaLog, RoaringBitmapArray(0L)))
+        assert(operation === "overwrite")
+      }
+    }
+  }
+
+  test("rebased OPTIMIZE that masks more rows than it removes is an Iceberg overwrite") {
+    // Rebased OPTIMIZE where the concurrent DELETE dropped one input file and put a DV on another,
+    // so the compacted output masks two rows while the commit only removes a one-row DV.
+    val tableName = "test_optimize_greater_added_dv_cardinality"
+    withTable(tableName) {
+      withSQLConf(
+          DeltaSQLConf.DELTA_UNIFORM_ICEBERG_TABLE_V3_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "true") {
+        spark.sql(
+          s"""CREATE TABLE $tableName (id BIGINT, data STRING) USING DELTA
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV3' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg',
+             |  'delta.enableDeletionVectors' = 'true'
+             |)""".stripMargin)
+        spark.sql(s"INSERT INTO $tableName VALUES (1, 'a')")
+        spark.sql(s"INSERT INTO $tableName VALUES (2, 'b'), (3, 'c')")
+        spark.sql(s"INSERT INTO $tableName VALUES (4, 'd'), (5, 'e')")
+        spark.sql(s"INSERT INTO $tableName VALUES (6, 'f'), (7, 'g')")
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        assert(deltaLog.update().numOfFiles === 4)
+
+        spark.sql(s"DELETE FROM $tableName WHERE id IN (1, 2)")
+        checkAnswer(
+          spark.table(tableName),
+          Seq(Row(3L, "c"), Row(4L, "d"), Row(5L, "e"), Row(6L, "f"), Row(7L, "g")))
+        val dvCardinalities = deltaLog.update().allFiles.collect()
+          .filter(_.deletionVector != null).map(_.deletionVector.cardinality)
+        assert(dvCardinalities === Array(1L), "Expected the DELETE to leave a single one-row DV")
+
+        val operation = convertRebasedOptimize(
+          tableName, addedDeletionVector = writeDV(deltaLog, RoaringBitmapArray(0L, 1L)))
+        assert(operation === "overwrite")
+      }
+    }
+  }
+
+  test("OPTIMIZE that materializes a removed DV stays an Iceberg replace") {
+    val tableName = "test_optimize_removed_dv_only"
+    withTable(tableName) {
+      withSQLConf(
+          DeltaSQLConf.DELTA_UNIFORM_ICEBERG_TABLE_V3_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "true") {
+        spark.sql(
+          s"""CREATE TABLE $tableName (id BIGINT, data STRING) USING DELTA
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV3' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg',
+             |  'delta.enableDeletionVectors' = 'true'
+             |)""".stripMargin)
+        spark.sql(s"INSERT INTO $tableName VALUES (1, 'a'), (2, 'b')")
+        spark.sql(s"INSERT INTO $tableName VALUES (3, 'c'), (4, 'd')")
+        spark.sql(s"INSERT INTO $tableName VALUES (5, 'e'), (6, 'f')")
+        assert(DeltaLog.forTable(spark, TableIdentifier(tableName)).update().numOfFiles === 3)
+
+        spark.sql(s"DELETE FROM $tableName WHERE id = 1")
+        checkAnswer(
+          spark.table(tableName),
+          Seq(Row(2L, "b"), Row(3L, "c"), Row(4L, "d"), Row(5L, "e"), Row(6L, "f")))
+        val files = DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
+          .allFiles.collect()
+        assert(files.count(_.deletionVector != null) === 1)
+
+        // Compacting the DV-bearing file drops the masked row from the output, so the commit
+        // removes a DV without adding one.
+        val operation = convertRebasedOptimize(tableName, addedDeletionVector = null)
+        assert(operation === "replace")
+      }
+    }
+  }
+
+  test("OPTIMIZE that carries over an unchanged DV stays an Iceberg replace") {
+    // Boundary case of the DV-cardinality comparison: a clustering OPTIMIZE rebased on a partial
+    // DELETE re-masks exactly the rows the removed DV masked.
+    val tableName = "test_optimize_equal_dv_cardinality"
+    withTable(tableName) {
+      withSQLConf(
+          DeltaSQLConf.DELTA_UNIFORM_ICEBERG_TABLE_V3_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "true") {
+        spark.sql(
+          s"""CREATE TABLE $tableName (id BIGINT, data STRING) USING DELTA
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV3' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg',
+             |  'delta.enableDeletionVectors' = 'true'
+             |)""".stripMargin)
+        spark.sql(s"INSERT INTO $tableName VALUES (1, 'a'), (2, 'b')")
+        spark.sql(s"INSERT INTO $tableName VALUES (3, 'c'), (4, 'd')")
+        spark.sql(s"INSERT INTO $tableName VALUES (5, 'e'), (6, 'f')")
+        spark.sql(s"INSERT INTO $tableName VALUES (7, 'g'), (8, 'h')")
+        assert(DeltaLog.forTable(spark, TableIdentifier(tableName)).update().numOfFiles === 4)
+
+        spark.sql(s"DELETE FROM $tableName WHERE id = 1")
+        checkAnswer(
+          spark.table(tableName),
+          Seq(Row(2L, "b"), Row(3L, "c"), Row(4L, "d"), Row(5L, "e"), Row(6L, "f"), Row(7L, "g"),
+            Row(8L, "h")))
+        val files = DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
+          .allFiles.collect()
+        val dvFile = files.find(_.deletionVector != null).getOrElse {
+          fail("Expected a DV-bearing input file")
+        }
+
+        val operation =
+          convertRebasedOptimize(tableName, addedDeletionVector = dvFile.deletionVector)
+        assert(operation === "replace")
+      }
     }
   }
 }
