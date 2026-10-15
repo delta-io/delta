@@ -16,11 +16,14 @@
 
 package org.apache.spark.sql.delta.amt
 
+import java.util.concurrent.TimeUnit
+
 import org.apache.spark.sql.delta.{RowIndexFilter, RowIndexFilterProvider}
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, FileAction, Metadata, Protocol, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.DeltaEncoder
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -496,7 +499,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
   }
 }
 
-object AMTCheckpointProvider {
+object AMTCheckpointProvider extends DeltaLogging {
 
   /**
    * @param actions                       the actions with re-derived back references where needed.
@@ -540,6 +543,7 @@ object AMTCheckpointProvider {
       deltaLog: DeltaLog,
       checkpoint: Checkpoint,
       manifestCommitVersion: Long): AMTCheckpointProvider = {
+    val startNanos = System.nanoTime()
     val tableRoot = deltaLog.dataPath
     val rootFile = checkpoint.contentRoot.toFileStatus(tableRoot)
     val index =
@@ -551,11 +555,37 @@ object AMTCheckpointProvider {
         .toSeq
         .filter(_.content_type == AMTSingleAction.ContentType.Type.DataManifest)
         .map(_.unwrap.asInstanceOf[DataManifestEntry])
-    new AMTCheckpointProvider(
+    val provider = new AMTCheckpointProvider(
       manifestCommitVersion = manifestCommitVersion,
       checkpointAction = checkpoint,
       leaves = leaves,
       tableRoot = tableRoot)
+    recordDeltaEvent(
+      deltaLog,
+      opType = AMTUsageLogs.CHECKPOINT_PROVIDER_INITIALIZE_FROM_CHECKPOINT_ACTION,
+      data = Map(
+        "durationMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos),
+        "manifestCommitVersion" -> manifestCommitVersion,
+        "contentRootVersion" -> checkpoint.contentRoot.version,
+        "checkpointVersion" -> checkpoint.version,
+        "numLeaves" -> leaves.size.toLong,
+        "contentRootSizeInBytes" -> checkpoint.contentRoot.sizeInBytes)
+    )
+    provider
+  }
+
+  /**
+   * Builds a provider from an [[AMTWriteResult]] without reading the root manifest from storage.
+   */
+  def fromWriteResult(
+      deltaLog: DeltaLog,
+      writeResult: AMTWriteResult,
+      manifestCommitVersion: Long): AMTCheckpointProvider = {
+    new AMTCheckpointProvider(
+      manifestCommitVersion = manifestCommitVersion,
+      checkpointAction = writeResult.checkpoint,
+      leaves = writeResult.leaves,
+      tableRoot = deltaLog.dataPath)
   }
 
   /** Reads the AMT root and returns the live [[DataEntry]]s tracked by root. */

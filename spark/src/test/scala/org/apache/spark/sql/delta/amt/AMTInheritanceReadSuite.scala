@@ -90,9 +90,10 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       val metadataDir = FileNames.amtMetadataDirPath(deltaLog.dataPath)
       val (location, sizeInBytes) =
         writeManifest(FileNames.newAMTRootManifestFile(metadataDir), rootEntries)
-      val checkpoint =
-        base.copy(contentRoot =
-          ContentRoot(path = location, sizeInBytes = sizeInBytes, version = base.version))
+      val checkpoint = updateCheckpointActions(base) {
+        case _: ContentRoot =>
+          ContentRoot(path = location, sizeInBytes = sizeInBytes, version = base.version)
+      }
       val provider = AMTCheckpointProvider.fromCheckpoint(
         deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
       provider.loadActionsForStateReconstruction(spark, deltaLog)
@@ -130,7 +131,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
   private def unassignedTracking(status: Int = Tracking.Status.Added): Tracking = Tracking(
     status = status,
     snapshot_id = None,
-    dv_snapshot_id = None,
+    modified_snapshot_id = None,
     sequence_number = None,
     file_sequence_number = None,
     first_row_id = None,
@@ -174,6 +175,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       record_count = leaf.entries.size.toLong,
       file_size_in_bytes = leaf.sizeInBytes,
       manifest_info = ManifestInfo(
+        format_version = AMTSingleAction.FormatVersionV4,
         added_files_count = leaf.entries.size,
         existing_files_count = 0,
         deleted_files_count = 0,
@@ -186,8 +188,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
         modified_rows_count = 0L,
         min_sequence_number = 0L,
         dv = mdv.map(positions =>
-          AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions.map(_.toInt)))),
-        dv_cardinality = mdv.map(_.size.toLong)))
+          AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions.map(_.toInt))))))
   }
 
   /** The messages of `error` and of every exception it wraps. */

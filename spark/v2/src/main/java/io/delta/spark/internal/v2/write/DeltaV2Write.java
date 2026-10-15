@@ -140,9 +140,10 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
 
   @Override
   public BatchWrite toBatch() {
+    DeltaV2Snapshot snapshot = (DeltaV2Snapshot) initialSnapshot;
     DeltaV2OptimisticTransaction optimisticTransaction =
         new DeltaV2OptimisticTransaction(
-            ScalaUtils.toScalaOption(catalogTable), (DeltaV2Snapshot) initialSnapshot, engine);
+            ScalaUtils.toScalaOption(catalogTable), snapshot, snapshot.kernelContext());
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
             engine,

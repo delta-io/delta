@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.{
   CatalogOwnedTableFeature,
   DeltaErrors,
   DeltaV2Mode,
+  InCommitTimestampUtils,
   MaterializedRowCommitVersion,
   MaterializedRowId
 }
@@ -138,6 +139,8 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
             key != MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP &&
             key != MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP &&
             !CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(key) &&
+            // ICT enablement provenance info should not be copied from the source
+            !InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS.contains(key) &&
             key != UC_TABLE_ID_KEY
         }
         val sourceProtocol =

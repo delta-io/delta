@@ -20,14 +20,13 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, DomainMetadata}
-import io.delta.kernel.{CommitActions => KernelCommitActions}
-import io.delta.kernel.data.{ColumnarBatch => KernelColumnarBatch}
-import io.delta.kernel.data.{ColumnVector => KernelColumnVector}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, DeletionVectorDescriptor, DomainMetadata, SetTransaction}
+import io.delta.spark.internal.v2.utils.KernelCommitActionsTestUtil.createCommitActions
 import io.delta.kernel.data.{Row => KernelRow}
 import io.delta.kernel.data.MapValue
 import io.delta.kernel.defaults.internal.json.{JsonUtils => KernelJsonUtils}
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
+import io.delta.kernel.internal.actions.{AddCDCFile => KernelAddCDCFile}
 import io.delta.kernel.internal.actions.{AddFile => KernelAddFile}
 import io.delta.kernel.internal.actions.{CommitInfo => KernelCommitInfo}
 import io.delta.kernel.internal.actions.{
@@ -42,11 +41,9 @@ import io.delta.kernel.internal.actions.{SetTransaction => KernelSetTransaction}
 import io.delta.kernel.internal.actions.{SingleAction => KernelSingleAction}
 import io.delta.kernel.internal.data.GenericColumnVector
 import io.delta.kernel.internal.data.GenericRow
-import io.delta.kernel.internal.util.{Utils => KernelUtils}
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.types.{StringType, StructType}
-import io.delta.kernel.utils.{CloseableIterator => KernelCloseableIterator}
 
 import org.apache.spark.SparkFunSuite
 
@@ -455,20 +452,29 @@ class KernelActionUtilsSuite extends SparkFunSuite {
     }
   }
 
-  /** Wraps a single action column into a one-batch [[KernelCommitActions]] for direct decoding. */
-  private def singleColumnCommitActions(
-      colName: String, column: KernelColumnVector): KernelCommitActions = {
-    val batch = new KernelColumnarBatch {
-      override def getSchema: StructType = new StructType().add(colName, column.getDataType)
-      override def getColumnVector(ordinal: Int): KernelColumnVector = column
-      override def getSize: Int = column.getSize
+  test("readActions iterator returns different actions in row order") {
+    val addRow = addFileRow("first", Map.empty, 1L, 1L, dataChange = true)
+    val addColumn = new GenericColumnVector(
+      Seq(addRow, addRow).asJava, KernelAddFile.SCHEMA_WITHOUT_STATS) {
+      override def isNullAt(rowId: Int): Boolean = rowId != 0
     }
-    new KernelCommitActions {
-      override def getVersion: Long = 1L
-      override def getTimestamp: Long = 0L
-      override def getActions(): KernelCloseableIterator[KernelColumnarBatch] =
-        KernelUtils.singletonCloseableIterator(batch)
-      override def close(): Unit = {}
+    val txnRow = new KernelSetTransaction(
+      "app", Long.box(1L), Optional.empty[java.lang.Long]()).toRow()
+    val txnColumn = new GenericColumnVector(
+      Seq(txnRow, txnRow).asJava, KernelSetTransaction.FULL_SCHEMA) {
+      override def isNullAt(rowId: Int): Boolean = rowId != 1
+    }
+    val kernelCommitActions = createCommitActions(Seq("add" -> addColumn, "txn" -> txnColumn))
+    KernelActionUtils.readActions(kernelCommitActions).processAndClose { iterator =>
+      assert(iterator.hasNext)
+      assert(iterator.hasNext)
+      assert(iterator.next() === AddFile("first", Map.empty, 1L, 1L, dataChange = true))
+      assert(iterator.hasNext)
+      assert(iterator.next() === SetTransaction("app", 1L, None))
+      assert(!iterator.hasNext)
+      intercept[NoSuchElementException] {
+        iterator.next()
+      }
     }
   }
 
@@ -485,7 +491,8 @@ class KernelActionUtilsSuite extends SparkFunSuite {
         defaultRowCommitVersion = Optional.of(java.lang.Long.valueOf(7L)))),
       KernelAddFile.SCHEMA_WITHOUT_STATS)
 
-    val actions = KernelActionUtils.readActions(singleColumnCommitActions("add", addColumn))
+    val actions = KernelActionUtils.readActions(createCommitActions(Seq("add" -> addColumn)))
+      .processAndClose(_.toVector)
 
     val adds = actions.collect { case a: AddFile => a }
     assert(adds.size === 1)
@@ -507,22 +514,35 @@ class KernelActionUtilsSuite extends SparkFunSuite {
       KernelDomainMetadata.FULL_SCHEMA)
 
     val actions = KernelActionUtils.readActions(
-      singleColumnCommitActions(KernelDeltaAction.DOMAINMETADATA.colName, domainColumn))
+      createCommitActions(Seq(KernelDeltaAction.DOMAINMETADATA.colName -> domainColumn)))
+      .processAndClose(_.toVector)
 
     assert(actions === Seq(
       DomainMetadata("delta.rowTracking", configuration, removed = false),
       DomainMetadata("test.userDomain", "{}", removed = true)))
   }
 
-  test("readActions fails loud on an action type with no decoder (hand-built commit batch)") {
-    val presentColumn = new GenericColumnVector(
-      java.util.Collections.singletonList("present"), StringType.STRING)
-    val action = KernelDeltaAction.CDC
-    val e = intercept[UnsupportedOperationException] {
-      KernelActionUtils.readActions(singleColumnCommitActions(action.colName, presentColumn))
+  test("readActions decodes CDC files with and without tags") {
+    val testCases = Seq(
+      """{"path":"_change_data/no-tags.parquet","partitionValues":{"p":"1"},"size":10}""" ->
+        AddCDCFile("_change_data/no-tags.parquet", Map("p" -> "1"), 10L),
+      """{"path":"_change_data/with-tags.parquet","partitionValues":{"p":"2"},"size":20,
+        |"tags":{"tag-a":"value-a"}}""".stripMargin ->
+        AddCDCFile(
+          "_change_data/with-tags.parquet",
+          Map("p" -> "2"),
+          20L,
+          tags = Map("tag-a" -> "value-a")))
+
+    testCases.foreach { case (json, expected) =>
+      val kernelRow = KernelJsonUtils.rowFromJson(json, KernelAddCDCFile.FULL_SCHEMA)
+      val kernelColumn = new GenericColumnVector(
+        java.util.Collections.singletonList(kernelRow), KernelAddCDCFile.FULL_SCHEMA)
+
+      assert(KernelActionUtils.readActions(
+        createCommitActions(Seq(KernelDeltaAction.CDC.colName -> kernelColumn)))
+        .processAndClose(_.toVector) === Seq(expected))
     }
-    assert(e.getMessage.contains("No V1 action from Kernel decoder"))
-    assert(e.getMessage.contains(action.colName))
   }
 
 }

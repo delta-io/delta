@@ -39,6 +39,7 @@ Delta Kernel is a library for operating on Delta tables. Specifically, it provid
          * [Step 4.4: Tasks write the data to data files and send the data file info to the driver.](#step-44-tasks-write-the-data-to-data-files-and-send-the-data-file-info-to-the-driver)
          * [Step 4.5: Finalize the query.](#step-45-finalize-the-query)
    * [Migration guide](#migration-guide)
+      * [Migration from Delta Lake version 4.4.0 to 4.5.0](#migration-from-delta-lake-version-440-to-450)
       * [Migration from Delta Lake version 3.1.0 to 3.2.0](#migration-from-delta-lake-version-310-to-320)
 
 ## Set up Delta Kernel for your project
@@ -1185,6 +1186,21 @@ Thats it. Now you should be able to append data to Delta tables using the Kernel
 Kernel APIs are still evolving and new features are being added. Kernel authors try to make the API changes backward compatible as much as they can with each new release, but sometimes it is hard to maintain the backward compatibility for a project that is evolving rapidly.
 
 This section provides guidance on how to migrate your connector to the latest version of Delta Kernel. With each new release the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) are kept up-to-date with the latest API changes. You can refer to the examples to understand how to use the new APIs.
+
+### Migration from Delta Lake version 4.4.0 to 4.5.0
+
+#### Catalog-managed snapshot errors
+
+`SnapshotBuilder.build` now throws `MaxCatalogVersionException`, a subtype of `KernelException`,
+when a catalog-managed snapshot is loaded without `maxCatalogVersion` or a filesystem-managed
+snapshot is loaded with it. These cases previously threw `IllegalArgumentException`; their error
+messages are unchanged. Update any exception handlers that relied on the previous type.
+
+The exception identifies a mismatch between the snapshot protocol and the supplied catalog context.
+This can result from a table changing management modes or from incorrect builder inputs. It does
+not guarantee that a transition occurred or that a retry will succeed. Other catalog-version
+validation errors, including negative versions, version bounds, and log-tail constraints, retain
+their existing exception types.
 
 ### Migration from Delta Lake version 3.1.0 to 3.2.0
 Following are API changes in Delta Kernel 3.2.0 that may require changes in your connector.

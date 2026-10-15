@@ -157,6 +157,10 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static MaxCatalogVersionException maxCatalogVersionError(String message) {
+    return new MaxCatalogVersionException(message);
+  }
+
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
   public static UnsupportedProtocolVersionException unsupportedReaderProtocol(
       String tablePath, int minReaderVersion, int minWriterVersion) {
