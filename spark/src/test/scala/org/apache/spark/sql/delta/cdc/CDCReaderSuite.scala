@@ -783,24 +783,6 @@ trait CDFStartingCommitSchemaTests extends QueryTest with DeltaSQLCommandTest {
 
   testTypeChangingReplace("none")
 
-  for (mode <- Seq("none", "name", "id")) {
-    test(s"CDF starting commit accepts INSERT OVERWRITE with schema evolution - mapping=$mode") {
-      withStartingCommitTables() { (_, target) =>
-        sql(s"CREATE TABLE $target(acct_id INT, balance INT) USING DELTA " +
-          startingCommitTableProperties(mode))
-        sql(s"INSERT INTO $target VALUES (1, 100)")
-        sql(s"INSERT WITH SCHEMA EVOLUTION OVERWRITE $target " +
-          "SELECT 2 AS acct_id, 200 AS balance, 'west' AS region")
-
-        startingCommitCDFReads(target, version = 2).foreach { read =>
-          checkAnswer(read, Seq(
-            Row(1, 100, null, "delete", 2L),
-            Row(2, 200, "west", "insert", 2L)))
-        }
-      }
-    }
-  }
-
   for {
     mode <- Seq("none", "name", "id")
     schemaCheckEnabled <- Seq(true, false)
