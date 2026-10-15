@@ -18,7 +18,7 @@ package io.delta.spark.internal.v2.read
 import org.apache.spark.sql.DataFrame
 
 /** Cached sorted AddFile DataFrame, keyed by version. Callers synchronize externally. */
-class DataFrameSnapshotCache(
+private[v2] class DataFrameSnapshotCache(
     private[this] val version: Long,
     private[this] val sortedAddFiles: DataFrame)
     extends AutoCloseable {
