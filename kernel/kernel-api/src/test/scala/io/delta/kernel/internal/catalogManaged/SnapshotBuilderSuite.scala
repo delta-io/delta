@@ -293,6 +293,15 @@ class SnapshotBuilderSuite extends AnyFunSuite
       .build(emptyMockEngine)
   }
 
+  test("withMaxCatalogVersion: version time-travel to a file-system managed version is valid") {
+    // The empty mock engine lists no files, so loading the latest protocol would fail.
+    TableManager.loadSnapshot(dataPath.toString)
+      .atVersion(5)
+      .withProtocolAndMetadata(protocol, metadata)
+      .withMaxCatalogVersion(10)
+      .build(emptyMockEngine)
+  }
+
   test("withMaxCatalogVersion: version time-travel must be <= maxCatalogVersion") {
     val exMsg = intercept[IllegalArgumentException] {
       TableManager.loadSnapshot(dataPath.toString)

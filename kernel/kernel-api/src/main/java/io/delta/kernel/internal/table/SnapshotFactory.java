@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.MaxCatalogVersionException;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
@@ -278,9 +279,9 @@ public class SnapshotFactory {
    * Validates maxCatalogVersion presence for the current query.
    *
    * <p>Latest queries validate against the loaded protocol, and timestamp queries validate against
-   * their supplied latest snapshot. Version time travel trusts the target protocol when it agrees
-   * with maxCatalogVersion presence. On disagreement, the target may predate a catalogManaged
-   * upgrade or downgrade, so only then load the latest protocol to decide.
+   * their supplied latest snapshot. Version time travel only validates catalogManaged targets: a
+   * file-system managed target version is fully published and below any catalog ratified version,
+   * so maxCatalogVersion cannot change what is read.
    */
   private void validateMaxCatalogVersionPresence(
       Engine engine, SnapshotMetrics snapshotMetrics, Protocol targetProtocol) {
@@ -288,17 +289,19 @@ public class SnapshotFactory {
       validateMaxCatalogVersionPresenceAgainst(ctx.timestampQueryContextOpt.get()._1.getProtocol());
     } else if (!ctx.versionOpt.isPresent()) {
       validateMaxCatalogVersionPresenceAgainst(targetProtocol);
-    } else if (ctx.maxCatalogVersion.isPresent()
-        != TableFeatures.isCatalogManagedSupported(targetProtocol)) {
-      validateMaxCatalogVersionPresenceAgainst(loadLatestProtocol(engine, snapshotMetrics));
+    } else if (TableFeatures.isCatalogManagedSupported(targetProtocol)
+        && !ctx.maxCatalogVersion.isPresent()) {
+      // The target may predate a downgrade, after which the table is read by path.
+      if (isLatestVersionCatalogManaged(engine, snapshotMetrics)) {
+        throw mustProvideMaxCatalogVersionError();
+      }
     }
   }
 
-  private void validateMaxCatalogVersionPresenceAgainst(Protocol latestProtocol) {
-    boolean isCatalogManaged = TableFeatures.isCatalogManagedSupported(latestProtocol);
+  private void validateMaxCatalogVersionPresenceAgainst(Protocol protocol) {
+    boolean isCatalogManaged = TableFeatures.isCatalogManagedSupported(protocol);
     if (isCatalogManaged && !ctx.maxCatalogVersion.isPresent()) {
-      throw DeltaErrors.maxCatalogVersionError(
-          "Must provide maxCatalogVersion for catalogManaged tables");
+      throw mustProvideMaxCatalogVersionError();
     }
     if (!isCatalogManaged && ctx.maxCatalogVersion.isPresent()) {
       throw DeltaErrors.maxCatalogVersionError(
@@ -306,12 +309,20 @@ public class SnapshotFactory {
     }
   }
 
+  private static MaxCatalogVersionException mustProvideMaxCatalogVersionError() {
+    return DeltaErrors.maxCatalogVersionError(
+        "Must provide maxCatalogVersion for catalogManaged tables");
+  }
+
   /**
-   * Loads the protocol at the latest version visible to this query: maxCatalogVersion if provided,
-   * otherwise the newest of the published deltas and the provided catalog commits. Catalog commits
-   * must be included because a ratified upgrade or downgrade may not be published yet.
+   * Returns whether the protocol at the latest published delta or provided catalog commit,
+   * whichever is newer, supports catalogManaged. Catalog commits must be included because a
+   * ratified downgrade may not be published yet.
+   *
+   * <p>The latest version is not read, so a feature Kernel does not support there must not block
+   * reading the target version.
    */
-  private Protocol loadLatestProtocol(Engine engine, SnapshotMetrics snapshotMetrics) {
+  private boolean isLatestVersionCatalogManaged(Engine engine, SnapshotMetrics snapshotMetrics) {
     final LogSegment latestLogSegment =
         snapshotMetrics.loadLogSegmentTotalDurationTimer.time(
             () ->
@@ -320,14 +331,12 @@ public class SnapshotFactory {
                         engine,
                         Optional.empty() /* timeTravelVersionOpt */,
                         ctx.logDatas,
-                        ctx.maxCatalogVersion));
-    return ProtocolMetadataLogReplay.loadProtocolAndMetadata(
-            engine,
-            tablePath,
-            latestLogSegment,
-            createLazyChecksumFileLoaderWithMetrics(
-                engine, new Lazy<>(() -> latestLogSegment), snapshotMetrics),
-            snapshotMetrics)
-        .protocol;
+                        Optional.empty() /* maxCatalogVersionOpt */));
+    return ProtocolMetadataLogReplay.isCatalogManaged(
+        engine,
+        latestLogSegment,
+        createLazyChecksumFileLoaderWithMetrics(
+            engine, new Lazy<>(() -> latestLogSegment), snapshotMetrics),
+        snapshotMetrics);
   }
 }
