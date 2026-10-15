@@ -33,7 +33,7 @@ import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector}
  * order declared by [[DeltaV2Scan.readSchema]].
  */
 @SerialVersionUID(1L)
-class ColumnReorderReadFunction private (
+private[v2] class ColumnReorderReadFunction private (
     baseReadFuncInput: PartitionedFile => Iterator[InternalRow],
     isVectorizedReaderInput: Boolean,
     targetSchemaInput: StructType,
@@ -85,7 +85,7 @@ class ColumnReorderReadFunction private (
   }
 }
 
-object ColumnReorderReadFunction {
+private[v2] object ColumnReorderReadFunction {
 
   /**
    * Factory method. Returns `baseReadFunc` unchanged if the reorder is the identity (no
