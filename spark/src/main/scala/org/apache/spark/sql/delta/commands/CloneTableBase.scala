@@ -274,7 +274,7 @@ abstract class CloneTableBase(
           deltaOperation,
           context,
           commitOpMetrics.mapValues(_.toString()).toMap,
-          dataChange = Some(commitDataChange))
+          dataChange = commitDataChange)
       }
 
       val cloneLogData = getOperationMetricsForEventRecord(opMetrics) ++ Map(

@@ -1186,7 +1186,7 @@ abstract class CommitCoordinatorSuiteBase
         DeltaOperations.TestOperation("TEST"),
         Map.empty,
         Map.empty,
-        dataChange = Some(false))
+        dataChange = false)
       log = DeltaLog.forTable(spark, tablePath)
       assert(cs.numRegisterTableCalled.get === 1)
       assert(cs.numCommitsCalled.get === 0)
