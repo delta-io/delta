@@ -20,6 +20,7 @@ import java.io.File
 
 import scala.concurrent.duration.Duration
 
+import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.concurrency.PhaseLockingTestMixin
 import org.apache.spark.sql.delta.concurrency.TransactionExecutionTestMixin
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -27,8 +28,10 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.LongType
 import org.apache.spark.util.ThreadUtils
 
 /**
@@ -153,8 +156,9 @@ class RowLevelConcurrencySuite extends QueryTest
       val log = createSingleFileTableWithDVs(dir)
       sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
         s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
-      // The `current ; winner` schedule of two disjoint-row deletes is a valid serialization even
-      // under Serializable (neither read a row the other wrote), so the DV union still commits.
+      // Each DELETE reads only the rows matching its own condition, which are the rows it deletes,
+      // so neither read observes the other's disjoint delete. Committing in `winner ; current`
+      // order is a valid serialization even under Serializable, so the DV union still commits.
       val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
       val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
 
@@ -177,7 +181,8 @@ class RowLevelConcurrencySuite extends QueryTest
       // enters the current txn's readFiles as a genuine read (not merely as a delete target). The
       // winner's disjoint DELETE removes that same file, which under Serializable would trip the
       // delete-read check -- unless row-level resolution drops the reconciled path from readFiles.
-      // This confirms that removal holds for a read-then-modify op under the stricter isolation.
+      // A MERGE without a NOT MATCHED clause cannot observe the winner deleting a row it did not
+      // modify, so this reconciles under the stricter isolation.
       val txnA = sqlTxn(mergeMatched(dir, 10, "DELETE"), rowLevelConcurrency = true)
       val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
 
@@ -606,6 +611,125 @@ class RowLevelConcurrencySuite extends QueryTest
       assert(changes === Seq(
         (10L, "delete", firstDeleteVersion + 1),
         (20L, "delete", firstDeleteVersion)))
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reads of the current transaction that observe the winner's deletes
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The file actions of `DELETE FROM t WHERE id = <id>` against the table at `dir`, produced on a
+   * copy so they can be committed by a hand-driven transaction on `dir`. The copy's DV files are
+   * copied back so the actions resolve.
+   */
+  private def deleteActionsFromCopy(dir: File, id: Long): Seq[Action] = {
+    val copy = new File(dir.getParentFile, dir.getName + "-copy")
+    org.apache.commons.io.FileUtils.copyDirectory(dir, copy)
+    sql(s"DELETE FROM ${tableRef(copy)} WHERE id = $id")
+    val copyLog = DeltaLog.forTable(spark, copy.getCanonicalPath)
+    copy.listFiles().filter(_.getName.contains("deletion_vector"))
+      .foreach(f => org.apache.commons.io.FileUtils.copyFileToDirectory(f, dir))
+    copyLog.getChanges(copyLog.update().version).next()._2
+      .filter(a => a.isInstanceOf[AddFile] || a.isInstanceOf[RemoveFile])
+  }
+
+  private val idAttr = AttributeReference("id", LongType)()
+
+  /**
+   * A hand-driven transaction that runs `read`, then commits `DELETE ... WHERE id = 5`'s actions
+   * after a concurrent `DELETE ... WHERE id = 20` committed. The two deletes are row-disjoint.
+   */
+  private def deleteFiveAfterRead(dir: File, log: DeltaLog)(read: OptimisticTransaction => Unit)
+      : scala.util.Try[Long] = {
+    val loserActions = deleteActionsFromCopy(dir, 5)
+    withSQLConf(DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_ENABLED.key -> "true") {
+      val loser = log.startTransaction()
+      read(loser)
+      sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 20")
+      scala.util.Try(loser.commit(loserActions, DeltaOperations.ManualUpdate))
+    }
+  }
+
+  private def assertConflict(result: scala.util.Try[Long]): Unit = assert(
+    result.failed.toOption.exists(e => Seq("ConcurrentAppend", "ConcurrentDeleteRead")
+      .exists(e.getClass.getName.contains)),
+    s"Expected a concurrency conflict, got: $result")
+
+  test("a read of a row the winner deleted is not reconciled") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
+      // The loser read row 20 ("delete 5 if 20 exists"); the winner deleted row 20. Merging the
+      // DVs would commit a read the winner invalidated.
+      assertConflict(
+        deleteFiveAfterRead(dir, log)(_.filterFiles(Seq(EqualTo(idAttr, Literal(20L))))))
+      assert(ids(dir) === (0L to 99L).filterNot(_ == 20L))
+    }
+  }
+
+  test("a whole-table read is not reconciled") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      assertConflict(deleteFiveAfterRead(dir, log)(_.readWholeTable()))
+      assert(ids(dir) === (0L to 99L).filterNot(_ == 20L))
+    }
+  }
+
+  test("a read the winner's deletes do not match is reconciled") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
+      val result =
+        deleteFiveAfterRead(dir, log)(_.filterFiles(Seq(EqualTo(idAttr, Literal(30L)))))
+      assert(result.isSuccess, s"Expected the DVs to merge, got: $result")
+      assert(ids(dir) === (0L to 99L).filterNot(id => id == 5L || id == 20L))
+      assert(deletionVectorCardinalities(log) === Seq(2L))
+    }
+  }
+
+  test("MERGE with a conditional matched clause and an insert is not reconciled") {
+    withTempDir { dir =>
+      createSingleFileTableWithDVs(dir)
+      // Source {5, 20}: 5 matches and is deleted; 20 matches the ON condition but not the clause,
+      // so it is left alone and NOT inserted. After the winner deletes 20, the same MERGE would
+      // insert 20 -- so committing the MERGE after the winner without rerunning it is wrong.
+      val txnA = sqlTxn(
+        s"""MERGE INTO ${tableRef(dir)} t USING (SELECT explode(array(5L, 20L)) AS id) s
+           |ON t.id = s.id
+           |WHEN MATCHED AND s.id = 5 THEN DELETE
+           |WHEN NOT MATCHED THEN INSERT *""".stripMargin,
+        rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      assertConcurrentModificationException(e)
+      assert(ids(dir) === (0L to 99L).filterNot(_ == 20L))
+    }
+  }
+
+  test("MERGE with an unconditional matched clause and an insert reconciles") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      // Every matched row is modified, so a winner can only delete rows the MERGE did not match,
+      // which cannot change what it inserts.
+      val txnA = sqlTxn(
+        s"""MERGE INTO ${tableRef(dir)} t USING (SELECT explode(array(5L, 1000L)) AS id) s
+           |ON t.id = s.id
+           |WHEN MATCHED THEN DELETE
+           |WHEN NOT MATCHED THEN INSERT *""".stripMargin,
+        rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      assert(ids(dir) === ((0L to 99L).filterNot(id => id == 5L || id == 20L) :+ 1000L))
+      assert(deletionVectorCardinalities(log).contains(2L))
     }
   }
 }

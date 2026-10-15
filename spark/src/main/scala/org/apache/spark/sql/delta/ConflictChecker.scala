@@ -317,6 +317,7 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     resolveTimestampOrderingConflicts()
 
+    recordRowLevelConflictResolution()
     logMetrics()
     currentTransactionInfo
   }
