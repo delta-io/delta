@@ -529,7 +529,7 @@ private[catalog] object DeltaV2Table {
       TableCapability.MICRO_BATCH_READ,
       TableCapability.BATCH_WRITE,
       TableCapability.STREAMING_WRITE)
-    DeltaV2TableShims.schemaEvolutionCapability().foreach(capability => caps.add(capability))
+    DeltaV2TableShims.schemaEvolutionCapability().ifPresent(capability => caps.add(capability))
     Collections.unmodifiableSet[TableCapability](caps)
   }
 

@@ -16,8 +16,8 @@
 
 package io.delta.spark.internal.v2.catalog;
 
+import java.util.Optional;
 import org.apache.spark.sql.connector.catalog.TableCapability;
-import scala.Option;
 
 /**
  * Shim to build the DSv2 Delta table connector against different Spark versions.
@@ -26,7 +26,7 @@ import scala.Option;
 public abstract class DeltaV2TableShims {
 
   /** No schema evolution capability in DSv2 before Spark 4.2. */
-  public static Option<TableCapability> schemaEvolutionCapability() {
-    return Option.empty();
+  public static Optional<TableCapability> schemaEvolutionCapability() {
+    return Optional.empty();
   }
 }

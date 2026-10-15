@@ -41,7 +41,8 @@ class InMemorySparkTable(
 
   override def capabilities(): util.Set[TableCapability] = {
     val caps = new util.HashSet[TableCapability](super.capabilities())
-    DeltaV2TableShims.schemaEvolutionCapability().foreach(capability => caps.add(capability))
+    val schemaEvolution = DeltaV2TableShims.schemaEvolutionCapability()
+    if (schemaEvolution.isPresent) caps.add(schemaEvolution.get)
     caps
   }
 
