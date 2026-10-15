@@ -3163,6 +3163,37 @@ trait DeltaErrorsSuiteBase
     }
   }
 
+  test("starting-commit schema error reports operation") {
+    val error = intercept[DeltaUnsupportedOperationException] {
+      throw DeltaErrors.blockBatchCdfReadWithIncompatibleStartingCommitSchema(
+        start = 2, incompatVersion = 1, operation = Some("CLONE"))
+    }
+    checkError(
+      error,
+      "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_STARTING_COMMIT_SCHEMA.KNOWN_OPERATION",
+      sqlState = "0AKDC",
+      parameters = Map(
+        "operation" -> "CLONE",
+        "start" -> "2",
+        "priorVersion" -> "1"))
+  }
+
+  for (operation <- Seq(None, Some(""), Some(null))) {
+    test(s"starting-commit schema error reports unknown operation - $operation") {
+      val error = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.blockBatchCdfReadWithIncompatibleStartingCommitSchema(
+          start = 2, incompatVersion = 1, operation = operation)
+      }
+      checkError(
+        error,
+        "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_STARTING_COMMIT_SCHEMA.UNKNOWN_OPERATION",
+        sqlState = "0AKDC",
+        parameters = Map(
+          "start" -> "2",
+          "priorVersion" -> "1"))
+    }
+  }
+
   test("raising error class without subclass when subclasses exist") {
     // DELTA_METADATA_MISMATCH defines subclasses, so a fully-qualified subclass extends the
     // main-class template. This guards that the test exercises the has-subclasses scenario.

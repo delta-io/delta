@@ -30,7 +30,8 @@ import org.apache.spark.sql.delta.files.DelayedCommitProtocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
@@ -40,12 +41,14 @@ import org.apache.spark.sql.execution.{LogicalRDD, SQLExecution}
 import org.apache.spark.sql.execution.datasources.FileFormatWriter
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{IntegerType, Metadata, MetadataBuilder, StringType, StructType}
 
 class CDCReaderSuite
   extends QueryTest
   with CheckCDCAnswer
   with SharedSparkSession
   with DeltaSQLCommandTest
+  with CDFStartingCommitSchemaTests
   with DeltaColumnMappingTestUtils
   with CDCSchemaChangeTests {
 
@@ -585,6 +588,304 @@ class CDCReaderSuite
         s"No files are read for this commit, so totalBytes must be 0: $metrics")
     }
   }
+
+  test("CDF reads explicit MERGE change files after type widening") {
+    // Change files contain both images in the new INT schema; removed files use SMALLINT.
+    withColumnMappingConf("none") {
+      withSQLConf(
+          DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "always",
+          DeltaSQLConf.DELTA_CDF_START_VERSION_SCHEMA_CHECK_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key -> "false") {
+        withTable("cdf_start_merge") {
+          sql("""CREATE TABLE cdf_start_merge(id SMALLINT) USING DELTA
+            |TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true',
+            |  'delta.enableTypeWidening' = 'true', 'delta.enableDeletionVectors' = 'false')
+            |""".stripMargin)
+          sql("INSERT INTO cdf_start_merge VALUES (1)")
+          sql("""MERGE WITH SCHEMA EVOLUTION INTO cdf_start_merge t
+            |USING (SELECT 2 AS id) s ON t.id + 1 = s.id
+            |WHEN MATCHED THEN UPDATE SET *
+            |""".stripMargin)
+          assert(spark.table("cdf_start_merge").schema("id").dataType == IntegerType)
+
+          checkAnswer(sql("SELECT id, _change_type, _commit_version " +
+            "FROM table_changes('cdf_start_merge', 2, 2)"),
+            Seq(Row(1, "update_preimage", 2L), Row(2, "update_postimage", 2L)))
+        }
+      }
+    }
+  }
+
+}
+
+trait CDFStartingCommitSchemaTests extends QueryTest with DeltaSQLCommandTest {
+
+  private def startingCommitProperties: Map[String, String] =
+    Map("delta.enableDeletionVectors" -> "false")
+
+  protected def startingCommitTableProperties(mode: String): String = {
+    val properties = startingCommitProperties + ("delta.columnMapping.mode" -> mode)
+    "TBLPROPERTIES (" + properties.toSeq.sorted.map { case (key, value) =>
+      s"'$key' = '$value'"
+    }.mkString(", ") + ")"
+  }
+
+  protected def withStartingCommitTables(
+      schemaCheckEnabled: Boolean = true)(f: (String, String) => Unit): Unit = {
+    withSQLConf(
+        DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key -> "false",
+        DeltaSQLConf.DELTA_CDF_START_VERSION_SCHEMA_CHECK_ENABLED.key ->
+          schemaCheckEnabled.toString,
+        DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key -> "endVersion") {
+      withTable("cdf_start_source", "cdf_start_target") {
+        f("cdf_start_source", "cdf_start_target")
+      }
+    }
+  }
+
+  protected def readStartingCommitCDF(tableName: String, start: Long, end: Long): DataFrame = {
+    sql(s"SELECT acct_id, balance, region, _change_type, _commit_version " +
+      s"FROM table_changes('$tableName', $start, $end)")
+  }
+
+  protected def startingCommitCDFReads(tableName: String, version: Long): Seq[DataFrame] = {
+    startingCommitCDFReads(tableName, version, version)
+  }
+
+  protected def startingCommitCDFReads(
+      tableName: String,
+      start: Long,
+      end: Long): Seq[DataFrame] = {
+    Seq(readStartingCommitCDF(tableName, start, end))
+  }
+
+  protected def assertBlockedStartingCommitCDF(
+      tableName: String,
+      version: Long,
+      operation: String): Unit = {
+    for (schemaMode <- Seq("legacy", "latest", "endVersion")) {
+      withSQLConf(
+          DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key -> schemaMode) {
+        startingCommitCDFReads(tableName, version).foreach { read =>
+          checkError(
+            intercept[DeltaUnsupportedOperationException] { read.collect() },
+            "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_STARTING_COMMIT_SCHEMA.KNOWN_OPERATION",
+            sqlState = "0AKDC",
+            parameters = Map(
+              "operation" -> operation,
+              "start" -> version.toString,
+              "priorVersion" -> (version - 1).toString))
+        }
+      }
+    }
+  }
+
+
+  private def createMappedTable(
+      tableName: String,
+      mode: String,
+      nested: Boolean,
+      swapped: Boolean): Unit = {
+    def mappingMetadata(id: Int, physicalName: String): Metadata = {
+      new MetadataBuilder()
+        .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, id)
+        .putString(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
+        .build()
+    }
+
+    val firstId = if (swapped) 3 else 2
+    val secondId = if (swapped) 2 else 3
+    val schema = if (nested) {
+      new StructType()
+        .add("acct_id", IntegerType, true, mappingMetadata(1, "physical_acct"))
+        .add("balance", new StructType()
+          .add("amount", IntegerType, true, mappingMetadata(firstId, "physical_amount"))
+          .add("other", IntegerType, true, mappingMetadata(secondId, "physical_other")),
+          true, mappingMetadata(4, "physical_balance"))
+    } else {
+      new StructType()
+        .add("acct_id", IntegerType, true, mappingMetadata(firstId, "physical_acct"))
+        .add("balance", IntegerType, true, mappingMetadata(secondId, "physical_balance"))
+    }
+    val builder = DeltaTable.createOrReplace(spark)
+      .tableName(tableName)
+      .addColumns(schema.add("region", StringType, true, mappingMetadata(5, "physical_region")))
+      .property("delta.columnMapping.mode", mode)
+    startingCommitProperties.foreach { case (key, value) => builder.property(key, value) }
+    builder.execute()
+  }
+
+  for {
+    mode <- Seq("name", "id")
+    nested <- Seq(false, true)
+    schemaCheckEnabled <- Seq(true, false)
+  } {
+    test(s"CDF starting commit changed IDs with stable physical names " +
+      s"- mapping=$mode, nested=$nested, schemaCheckEnabled=$schemaCheckEnabled") {
+      withStartingCommitTables(schemaCheckEnabled) { (_, target) =>
+        createMappedTable(target, mode, nested, swapped = false)
+        val balance = if (nested) "named_struct('amount', 100, 'other', 200)" else "100"
+        sql(s"INSERT INTO $target VALUES (1, $balance, 'east')")
+        createMappedTable(target, mode, nested, swapped = true)
+
+          if (mode == "id" && schemaCheckEnabled) {
+            assertBlockedStartingCommitCDF(target, version = 2,
+              operation = "CREATE OR REPLACE TABLE")
+          } else {
+            val expected = (mode, nested) match {
+              case ("id", true) => Row(1, Row(200, 100), "east", "delete", 2L)
+              case ("id", false) => Row(100, 1, "east", "delete", 2L)
+              case (_, true) => Row(1, Row(100, 200), "east", "delete", 2L)
+              case (_, false) => Row(1, 100, "east", "delete", 2L)
+            }
+            startingCommitCDFReads(target, version = 2).foreach { read =>
+              checkAnswer(read, expected)
+            }
+          }
+      }
+    }
+  }
+
+  for {
+    nested <- Seq(false, true)
+    schemaCheckEnabled <- Seq(true, false)
+  } {
+    test(s"CDF starting commit accepts new files after ID-changing empty REPLACE - " +
+      s"nested=$nested, schemaCheckEnabled=$schemaCheckEnabled") {
+      withStartingCommitTables(schemaCheckEnabled) { (_, target) =>
+        createMappedTable(target, "id", nested, swapped = false)
+        createMappedTable(target, "id", nested, swapped = true)
+        val balance = if (nested) "named_struct('amount', 100, 'other', 200)" else "100"
+        sql(s"INSERT INTO $target VALUES (1, $balance, 'east')")
+
+        val expectedBalance = if (nested) Row(100, 200) else 100
+        startingCommitCDFReads(target, 0, 2).foreach { read =>
+          checkAnswer(read, Row(1, expectedBalance, "east", "insert", 2L))
+        }
+      }
+    }
+  }
+
+  private def testTypeChangingReplace(mode: String): Unit = {
+    test(s"CDF starting commit rejects type-changing REPLACE - mapping=$mode") {
+      withStartingCommitTables() { (_, target) =>
+        sql(s"CREATE TABLE $target(acct_id INT, balance INT, region STRING) USING DELTA " +
+          startingCommitTableProperties(mode))
+        sql(s"INSERT INTO $target VALUES (1, 100, 'east')")
+        sql(s"CREATE OR REPLACE TABLE $target(acct_id BIGINT, balance INT, region STRING) " +
+          s"USING DELTA ${startingCommitTableProperties(mode)}")
+
+        assertBlockedStartingCommitCDF(target, version = 2,
+          operation = "CREATE OR REPLACE TABLE")
+      }
+    }
+  }
+
+  testTypeChangingReplace("none")
+
+  for (mode <- Seq("none", "name", "id")) {
+    test(s"CDF starting commit accepts INSERT OVERWRITE with schema evolution - mapping=$mode") {
+      withStartingCommitTables() { (_, target) =>
+        sql(s"CREATE TABLE $target(acct_id INT, balance INT) USING DELTA " +
+          startingCommitTableProperties(mode))
+        sql(s"INSERT INTO $target VALUES (1, 100)")
+        sql(s"INSERT WITH SCHEMA EVOLUTION OVERWRITE $target " +
+          "SELECT 2 AS acct_id, 200 AS balance, 'west' AS region")
+
+        startingCommitCDFReads(target, version = 2).foreach { read =>
+          checkAnswer(read, Seq(
+            Row(1, 100, null, "delete", 2L),
+            Row(2, 200, "west", "insert", 2L)))
+        }
+      }
+    }
+  }
+
+  for {
+    mode <- Seq("none", "name", "id")
+    schemaCheckEnabled <- Seq(true, false)
+  } {
+    test(s"CDF starting commit accepts compatible deletes - " +
+      s"mapping=$mode, schemaCheckEnabled=$schemaCheckEnabled") {
+      withStartingCommitTables(schemaCheckEnabled) { (_, target) =>
+        // Matching the default avoids treating initial creation as a mapping upgrade in OSS.
+        withSQLConf(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> mode) {
+          sql(s"CREATE TABLE $target USING DELTA ${startingCommitTableProperties(mode)} " +
+            "AS SELECT 1 AS acct_id, 100 AS balance, 'east' AS region")
+        }
+        checkAnswer(readStartingCommitCDF(target, 0, 0), Row(1, 100, "east", "insert", 0L))
+
+        sql(s"ALTER TABLE $target ADD COLUMN extra INT")
+        sql(s"INSERT INTO $target(acct_id, balance, region) VALUES (2, 200, 'west')")
+        sql(s"RESTORE TABLE $target TO VERSION AS OF 1")
+          startingCommitCDFReads(target, version = 3).foreach { read =>
+            checkAnswer(read, Row(2, 200, "west", "delete", 3L))
+          }
+      }
+    }
+  }
+
+  private def restoreAfterReaddingBalance(tableName: String, mode: String): Unit = {
+    sql(s"CREATE TABLE $tableName(acct_id INT, balance INT, region STRING) USING DELTA " +
+      startingCommitTableProperties(mode))
+    sql(s"INSERT INTO $tableName VALUES (1, 100, 'east')")
+    sql(s"ALTER TABLE $tableName DROP COLUMN balance")
+    sql(s"ALTER TABLE $tableName ADD COLUMN balance INT")
+    sql(s"INSERT INTO $tableName(acct_id, balance, region) VALUES (2, 200, 'west')")
+    sql(s"RESTORE TABLE $tableName TO VERSION AS OF 1")
+  }
+
+  for {
+    mode <- Seq("name", "id")
+    schemaCheckEnabled <- Seq(true, false)
+  } {
+    test(s"CDF starting commit RESTORE across drop/re-add - " +
+      s"mapping=$mode, schemaCheckEnabled=$schemaCheckEnabled") {
+      withStartingCommitTables(schemaCheckEnabled) { (_, target) =>
+        restoreAfterReaddingBalance(target, mode)
+        checkAnswer(readStartingCommitCDF(target, 3, 3), Seq.empty)
+
+          if (schemaCheckEnabled) {
+            assertBlockedStartingCommitCDF(target, version = 5, operation = "RESTORE")
+          } else {
+            startingCommitCDFReads(target, version = 5).foreach { read =>
+              checkAnswer(read, Row(2, null, "west", "delete", 5L))
+            }
+          }
+
+        // Schema incompatibilities within the queried range remain blocked with either flag value.
+        val error = intercept[DeltaUnsupportedOperationException] {
+          readStartingCommitCDF(target, 1, 5).collect()
+        }
+        assert(error.getErrorClass.startsWith("DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_"))
+      }
+    }
+  }
+
+  for {
+    mode <- Seq("name", "id")
+    schemaCheckEnabled <- Seq(true, false)
+  } {
+    test(s"CDF starting commit with expired prior history - " +
+      s"mapping=$mode, schemaCheckEnabled=$schemaCheckEnabled") {
+      withStartingCommitTables(schemaCheckEnabled) { (_, target) =>
+        restoreAfterReaddingBalance(target, mode)
+        val tableLocation = sql(s"DESCRIBE DETAIL $target").select("location").head().getString(0)
+        val deltaLog = DeltaLog.forTable(spark, tableLocation)
+        deltaLog.checkpoint()
+        // Retain the starting commit and its checkpoint, as ordinary log cleanup can do.
+        (0L until 5L).foreach { version =>
+          assert(new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri).delete())
+        }
+        DeltaLog.invalidateCache(spark, deltaLog.dataPath)
+
+          startingCommitCDFReads(target, version = 5).foreach { read =>
+            checkAnswer(read, Row(2, null, "west", "delete", 5L))
+          }
+      }
+    }
+  }
+
 }
 
 trait CDCSchemaChangeTests {
