@@ -43,7 +43,7 @@ import org.apache.spark.sql.delta.DeltaParquetFileFormatBase
 // Preserve the existing inherited hashCode while converting the equals override.
 // scalastyle:off equals.hash.code
 @SerialVersionUID(1L)
-class DeltaParquetFileFormatV2(
+private[v2] class DeltaParquetFileFormatV2(
     kernelProtocol: KernelProtocol,
     kernelMetadata: KernelMetadata,
     nullableRowTrackingConstantFields: Boolean,
