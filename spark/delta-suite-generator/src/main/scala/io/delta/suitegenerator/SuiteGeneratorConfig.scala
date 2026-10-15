@@ -150,6 +150,7 @@ object SuiteGeneratorConfig {
     val ROW_TRACKING_UPDATE_AMT = DimensionMixin("RowTrackingUpdateAMT", alias = Some("AMT"))
     val DELETE_AMT = DimensionMixin("DeleteAMT", alias = Some("AMT"))
     val ROW_TRACKING_DELETE_AMT = DimensionMixin("RowTrackingDeleteAMT", alias = Some("AMT"))
+    val INSERT_AMT = DimensionMixin("InsertAMT", alias = Some("AMT"))
     val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
     val DELETE_SQL = DimensionMixin("DeleteSQL", alias = Some("SQL"))
     val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors", alias = Some("DV"))
@@ -486,6 +487,19 @@ object SuiteGeneratorConfig {
           List(
             List()
           )
+        )
+      )
+    ),
+    TestGroup(
+      packageName = "insertamt",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.amt._"
+      ),
+      testConfigs = List(
+        TestConfig(
+          List("DeltaInsertIntoSQLSuite"),
+          List(List(Dims.INSERT_AMT))
         )
       )
     ),
