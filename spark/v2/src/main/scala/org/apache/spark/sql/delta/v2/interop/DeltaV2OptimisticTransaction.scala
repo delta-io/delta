@@ -260,7 +260,9 @@ private[v2] class DeltaV2OptimisticTransaction(
   private def readCommitActions(fileStatus: FileStatus): (Seq[Action], Long) = {
     val startTimeNs = System.nanoTime()
     val version = FileNames.deltaVersion(fileStatus)
-    val actions = readCommitActionsInRange(version, version)(KernelActionUtils.readActions).flatten
+    val actions = readCommitActionsInRange(version, version) { kernelCommitActions =>
+      KernelActionUtils.readActions(kernelCommitActions).processAndClose(_.toVector)
+    }.flatten
     val readTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
     (actions, readTimeMs)
   }
