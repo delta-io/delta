@@ -19,8 +19,12 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import scala.concurrent.duration.Duration
+import scala.util.Try
+
+import com.databricks.spark.util.Log4jUsageLogger
 
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
 import org.apache.spark.sql.delta.concurrency.PhaseLockingTestMixin
 import org.apache.spark.sql.delta.concurrency.TransactionExecutionTestMixin
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -28,10 +32,10 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{QueryTest, Row, SaveMode}
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, GreaterThanOrEqual, LessThan, Literal}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, GreaterThanOrEqual, LessThan, Literal}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.LongType
+import org.apache.spark.sql.types.{IntegerType, LongType}
 import org.apache.spark.util.ThreadUtils
 
 /**
@@ -172,8 +176,11 @@ class ConflictDataSkippingSuite extends QueryTest
     }
   }
 
-  private def manufacturedAdd(name: String): AddFile =
-    AddFile(name, Map.empty[String, String], size = 1L, modificationTime = 1L, dataChange = true)
+  private def manufacturedAdd(
+      name: String, partitionValues: Map[String, String] = Map.empty): AddFile =
+    AddFile(name, partitionValues, size = 1L, modificationTime = 1L, dataChange = true)
+
+  private val noConflictEvent = "delta.conflictDetection.dataSkipping.noConflict"
 
   test("empty read predicates on a non-blind-append txn: added file still conflicts") {
     // Soundness of the Serializable blind-append case. A transaction can be a NON-blind append
@@ -275,6 +282,96 @@ class ConflictDataSkippingSuite extends QueryTest
       val allKept = snapshot.filterFilesMatchingAnyReadPredicate(allFiles, Seq(read1, Seq.empty))
       assert(allKept.size == allFiles.size,
         s"a read with no predicate must keep all files, got ${allKept.size}")
+    }
+  }
+
+  test("files with null stats are kept while files whose stats prove no match are skipped") {
+    // Exercises the per-file `!verifyStatsForFilter` keep path: the skipping predicate IS built
+    // (the table has min/max stats), but one candidate file carries no stats at all.
+    withTempDir { dir =>
+      createTable(dir)
+      val snapshot = DeltaLog.forTable(spark, dir.getCanonicalPath).update()
+      val allFiles = snapshot.allFiles.collect().toSeq
+      val noStats = manufacturedAdd("no-stats.parquet")
+      assert(noStats.stats == null)
+
+      val id = AttributeReference("id", LongType)()
+      val survivors = snapshot.filterFilesByDataSkipping(allFiles :+ noStats,
+        Seq(LessThan(id, Literal(50L))))
+      // Only the [0,100) file can match id<50; the other 9 are skipped by their stats. The file
+      // without stats cannot be proven to miss, so it is kept.
+      assert(survivors.size == 2, s"got ${survivors.map(_.path).sorted}")
+      assert(survivors.exists(_.path == noStats.path))
+    }
+  }
+
+  test("concurrently added file with null stats still conflicts") {
+    withTempDir { dir =>
+      createTable(dir)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val id = AttributeReference("id", LongType)()
+      withSQLConf(DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_ENABLED.key -> "true") {
+        val loser = log.startTransaction()
+        loser.filterFiles(Seq(LessThan(id, Literal(50L))))
+        log.startTransaction().commit(
+          Seq(manufacturedAdd("winner-no-stats.parquet")), DeltaOperations.Write(SaveMode.Append))
+        intercept[io.delta.exceptions.ConcurrentAppendException] {
+          loser.commit(
+            Seq(manufacturedAdd("loser.parquet")), DeltaOperations.Write(SaveMode.Append))
+        }
+      }
+    }
+  }
+
+  test("multiple reads: data predicates are paired with their own partition predicate") {
+    // Reads `p=1 AND id<50` and `p=2 AND id>=100`. A file in p=1 with id=150 matches neither read,
+    // but matches (p=1 OR p=2) AND (id<50 OR id>=100), so evaluating partition and data
+    // predicates independently would report a false conflict.
+    withTempDir { dir =>
+      spark.range(0, 1000, 1, 4).withColumn("p", lit(1))
+        .union(spark.range(0, 1000, 1, 4).withColumn("p", lit(2)))
+        .write.partitionBy("p").format("delta").save(dir.getAbsolutePath)
+      sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val id = AttributeReference("id", LongType)()
+      val p = AttributeReference("p", IntegerType)()
+      var loserCount = 0
+
+      /** Runs the two-read loser against a winner appending `id` in [start, end) to `winnerP`. */
+      def run(start: Long, end: Long, winnerP: Int, dataSkipping: Boolean): Try[Long] = {
+        loserCount += 1
+        withSQLConf(DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_ENABLED.key ->
+            dataSkipping.toString) {
+          val loser = log.startTransaction()
+          loser.filterFiles(Seq(EqualTo(p, Literal(1)), LessThan(id, Literal(50L))))
+          loser.filterFiles(Seq(EqualTo(p, Literal(2)), GreaterThanOrEqual(id, Literal(100L))))
+          appendTxn(dir, start, end, partition = Some(winnerP))()
+          Try(loser.commit(
+            Seq(manufacturedAdd(s"loser-$loserCount.parquet", Map("p" -> "1"))),
+            DeltaOperations.Write(SaveMode.Append)))
+        }
+      }
+
+      def assertConflict(result: Try[Long]): Unit = assert(
+        result.failed.toOption.exists(
+          _.isInstanceOf[io.delta.exceptions.ConcurrentAppendException]),
+        s"Expected ConcurrentAppendException, got: $result")
+
+      // Cross terms (P1 AND D2) and (P2 AND D1): no read matches -> no conflict.
+      val usageLogs = Log4jUsageLogger.track {
+        assert(run(150, 151, winnerP = 1, dataSkipping = true).isSuccess)
+        assert(run(10, 11, winnerP = 2, dataSkipping = true).isSuccess)
+      }
+      assert(filterUsageRecords(usageLogs, noConflictEvent).size == 2)
+      // A file matching one of the reads still conflicts, and records no noConflict event.
+      val conflictLogs = Log4jUsageLogger.track {
+        assertConflict(run(10, 11, winnerP = 1, dataSkipping = true))
+        assertConflict(run(150, 151, winnerP = 2, dataSkipping = true))
+      }
+      assert(filterUsageRecords(conflictLogs, noConflictEvent).isEmpty)
+      // Feature disabled: partition pruning alone keeps the file -> conflict.
+      assertConflict(run(150, 151, winnerP = 1, dataSkipping = false))
     }
   }
 }
