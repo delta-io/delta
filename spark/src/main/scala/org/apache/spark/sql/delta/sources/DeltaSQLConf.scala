@@ -2371,6 +2371,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_COMMIT_INFO_DATA_CHANGE_WRITE_FOR_NON_AMT_ENABLED =
+    buildConf("commitInfo.dataChange.writeForNonAMTTables.enabled")
+      .internal()
+      .doc("""
+             |When enabled, Delta records the commit-level dataChange in CommitInfo for non-AMT
+             |tables. AMT tables always record it. This is a kill switch for writing the field to
+             |non-AMT tables.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   object ValidateCheckConstraintsMode extends Enumeration {
     val OFF, LOG_ONLY, ASSERT = Value
 

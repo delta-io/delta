@@ -249,7 +249,7 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           DeltaOperations.Restore(version, timestamp),
           Map.empty,
           metrics.mapValues(_.toString).toMap,
-          dataChange = Some(restoreChangesData))
+          dataChange = restoreChangesData)
 
         Seq(Row(
           metrics.get(TABLE_SIZE_AFTER_RESTORE),
