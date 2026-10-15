@@ -36,7 +36,7 @@ import org.apache.spark.sql.connector.expressions.filter.{AlwaysTrue, PartitionP
  *  - Schema evolution support in DSV2 (add columns, change type) was added in Spark 4.2.
  *  - Partition-aware metadata-only DELETE support depends on Spark 4.2's PartitionPredicate.
  */
-abstract class DeltaV2TableShims extends SupportsSchemaEvolution with SupportsDeleteV2 {
+private[v2] abstract class DeltaV2TableShims extends SupportsSchemaEvolution with SupportsDeleteV2 {
 
   /** Implemented in DeltaV2Table to provide access to the table protocol/metadata. */
   protected def protocol(): AbstractProtocol
