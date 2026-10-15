@@ -15,7 +15,8 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
-import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.delta.DeltaSingleCommit
+import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStore}
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.kernel.KernelContext
 
@@ -34,6 +35,24 @@ private[v2] trait DeltaV2TableManager {
 
   /** Returns a snapshot manager using the caller's current catalog metadata. */
   private[v2] def snapshotManager(catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager
+
+  /**
+   * Gets an iterator over all commits in the inclusive version range as
+   * [[DeltaSingleCommit]].
+   *
+   * @param startVersion first commit version to include.
+   * @param endVersion last commit version to include, or empty to read through the
+   *   latest available commit.
+   * @param catalogTableOpt catalog metadata is used to read the table's commit range.
+   * @param failOnDataLoss whether to fail when commits in the range are missing. Only false is
+   *   currently supported.
+   */
+  private[v2] def getChangesIterator(
+      startVersion: Long,
+      endVersion: Option[Long],
+      catalogTableOpt: Option[CatalogTable],
+      failOnDataLoss: Boolean = false)
+      : ClosableIterator[DeltaSingleCommit]
 
   /** Retires this manager and releases any resources it owns. */
   def retire(): Unit = {}
