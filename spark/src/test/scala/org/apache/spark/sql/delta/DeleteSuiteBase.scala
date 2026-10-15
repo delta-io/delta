@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.files.TahoeFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -505,8 +506,9 @@ trait DeleteBaseTests extends DeleteBaseMixin {
         Row(1, 4) :: Row(1, 1) :: Row(0, 3) :: Nil)
     }
 
+    // Filter out Delta Metadata scans.
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanLike => f
+      case f: FileSourceScanLike if f.relation.location.isInstanceOf[TahoeFileIndex] => f
     })
 
     // The first scan is for finding files to delete. We only are matching against the key
@@ -529,8 +531,9 @@ trait DeleteBaseTests extends DeleteBaseMixin {
         Row(Row(1, 4)) :: Row(Row(1, 1)) :: Row(Row(0, 3)) :: Nil)
     }
 
+    // Filter out Delta Metadata scans.
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanLike => f
+      case f: FileSourceScanLike if f.relation.location.isInstanceOf[TahoeFileIndex] => f
     })
 
     assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
