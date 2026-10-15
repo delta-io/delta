@@ -2498,7 +2498,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
       Some(commit),
       newChecksumOpt = None,
       preCommitLogSegment = preCommitLogSegment,
-      catalogTable)
+      catalogTable,
+      // Since commitLarge neither retries nor writes an inline AMT, the read snapshot's provider
+      // remains authoritative through the successfully committed version.
+      amtCheckpointProviderForPostCommitSnapshot = amtCheckpointProviderOpt)
     if (currentSnapshot.version != attemptVersion) {
       throw DeltaErrors.invalidCommittedVersion(attemptVersion, currentSnapshot.version)
     }
