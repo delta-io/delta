@@ -374,4 +374,33 @@ class ConflictDataSkippingSuite extends QueryTest
       assertConflict(run(150, 151, winnerP = 1, dataSkipping = false))
     }
   }
+
+  test("skipping evaluation failure falls back to treating added files as conflicts") {
+    // `id < 'abc'` builds a skipping predicate over the long `id` stats that fails once evaluated
+    // (the string does not cast to a long). The loser records it with stats skipping off so its own
+    // scan does not fail, then commits with skipping on.
+    withTempDir { dir =>
+      createTable(dir)
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val id = AttributeReference("id", LongType)()
+      val loser = withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> "false") {
+        val txn = log.startTransaction()
+        txn.filterFiles(Seq(LessThan(id, Literal("abc"))))
+        txn
+      }
+      // A stats-bearing winner file that the predicate cannot match if evaluated.
+      appendTxn(dir, 1000, 1100)()
+      val usageLogs = Log4jUsageLogger.track {
+        withSQLConf(DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_ENABLED.key -> "true") {
+          intercept[io.delta.exceptions.ConcurrentAppendException] {
+            loser.commit(
+              Seq(manufacturedAdd("loser.parquet")), DeltaOperations.Write(SaveMode.Append))
+          }
+        }
+      }
+      val fallbackEvent = "delta.conflictDetection.dataSkipping.fallback"
+      assert(filterUsageRecords(usageLogs, fallbackEvent).size == 1)
+      assert(filterUsageRecords(usageLogs, noConflictEvent).isEmpty)
+    }
+  }
 }
