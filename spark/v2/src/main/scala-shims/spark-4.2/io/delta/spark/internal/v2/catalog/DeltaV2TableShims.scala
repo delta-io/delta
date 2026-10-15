@@ -81,6 +81,6 @@ abstract class DeltaV2TableShims extends SupportsSchemaEvolution with SupportsDe
 object DeltaV2TableShims {
 
   /** The schema evolution capability to advertise. */
-  def schemaEvolutionCapability(): Optional[TableCapability] =
-    Optional.of(TableCapability.AUTOMATIC_SCHEMA_EVOLUTION)
+  def schemaEvolutionCapability(): Option[TableCapability] =
+    Some(TableCapability.AUTOMATIC_SCHEMA_EVOLUTION)
 }
