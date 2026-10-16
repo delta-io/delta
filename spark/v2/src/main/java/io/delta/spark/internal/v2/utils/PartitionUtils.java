@@ -87,6 +87,7 @@ import org.apache.spark.sql.types.TimestampType;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.Function1;
 import scala.Option;
+import scala.Some;
 import scala.Tuple2;
 import scala.collection.Iterator;
 import scala.collection.JavaConverters;
@@ -653,11 +654,13 @@ public class PartitionUtils {
     // `fileConstantMetadataExtractors`).
     boolean tableSupportsDV = tableSupportsDeletionVectors(snapshot);
     boolean optimizationsEnabled = !tableSupportsDV;
-    Option<Boolean> useMetadataRowIndex =
-        tableSupportsDV ? Option.apply(Boolean.FALSE) : Option.empty();
     DeltaParquetFileFormatV2 deltaFormat =
         createDeltaParquetFileFormat(
-            snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex, isWriteTimeCDCRead);
+            snapshot,
+            tablePath,
+            optimizationsEnabled,
+            tableSupportsDV ? Option.apply(false) : Option.empty(),
+            isWriteTimeCDCRead);
 
     // Build the metadata context only when the scan requested `_metadata`. The context owns the
     // pruned struct, the parquet read schema (with row-tracking helper columns when needed),
@@ -780,7 +783,8 @@ public class PartitionUtils {
         optimizationsEnabled,
         Option.apply(tablePath),
         isCDCRead,
-        useMetadataRowIndex);
+        // Preserve Some(null) while inferring the Scala constructor's expected Option type.
+        useMetadataRowIndex.isDefined() ? new Some<>(useMetadataRowIndex.get()) : Option.empty());
   }
 
   /**
