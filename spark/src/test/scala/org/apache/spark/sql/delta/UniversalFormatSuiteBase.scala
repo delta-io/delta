@@ -554,12 +554,12 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
         'delta.enableIcebergCompatV2' = 'true',
         'delta.universalFormat.enabledFormats' = 'iceberg')""")
 
-      // With DVs enabled by default at the session level, the overwrite must keep the table's
-      // disabled setting rather than adopt the default.
-      withSQLConf("spark.databricks.delta.properties.defaults.enableDeletionVectors" -> "true") {
-        spark.sql("SELECT 2 AS id, 'b' AS name").write
-          .format("delta").mode("overwrite").saveAsTable(id)
-      }
+      // The writer config can carry a default that enables deletion vectors. The write must not
+      // fail on it.
+      spark.sql("SELECT 2 AS id, 'b' AS name").write
+        .format("delta").mode("overwrite")
+        .option("delta.enableDeletionVectors", "true")
+        .saveAsTable(id)
       assert(getProperties(id).get("delta.enableDeletionVectors") === Some("false"))
     }
   }
