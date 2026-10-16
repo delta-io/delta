@@ -98,9 +98,9 @@ trait ChangelogSupport extends TableCatalog {
   private def resolveRange(
       deltaV2Table: DeltaV2Table,
       range: org.apache.spark.sql.connector.catalog.ChangelogRange): (Long, Long) = {
-    val snapshotManager = deltaV2Table.getSnapshotManager
+    val tableManager = deltaV2Table.getTableManager
     val queryContext = deltaV2Table.getQueryContext
-    val latestVersion = snapshotManager.loadLatestSnapshot(queryContext).version
+    val latestVersion = tableManager.loadLatestSnapshot(queryContext).version
     range match {
       case vr: VersionRange =>
         val rawStart = vr.startingVersion().toLong
@@ -110,7 +110,7 @@ trait ChangelogSupport extends TableCatalog {
           rawStart, rawEnd, vr.startingBoundInclusive(), vr.endingBoundInclusive(), latestVersion)
       case tr: TimestampRange =>
         // TimestampRange carries Catalyst micros. The kernel API takes millis.
-        val rawStart = snapshotManager
+        val rawStart = tableManager
           .getActiveCommitAtTime(
             tr.startingTimestamp / 1000,
             /* canReturnLastCommit */ false,
@@ -119,7 +119,7 @@ trait ChangelogSupport extends TableCatalog {
             queryContext)
           .getVersion
         val rawEnd: Long = if (tr.endingTimestamp.isPresent) {
-          snapshotManager
+          tableManager
             .getActiveCommitAtTime(
               tr.endingTimestamp.get / 1000,
               /* canReturnLastCommit */ true,

@@ -26,6 +26,7 @@ import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.InternalRowTestUtils;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.TableManagerTestAdapter;
 import io.delta.spark.internal.v2.utils.SerializableKernelRowWrapper;
 import java.io.File;
 import java.sql.Timestamp;
@@ -479,7 +480,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                     path,
                     mgr.loadLatestSnapshot(),
                     Optional.empty(),
-                    mgr,
+                    TableManagerTestAdapter.apply(mgr),
                     data,
                     part,
                     WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
@@ -574,7 +575,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 path,
                 mgr.loadLatestSnapshot(),
                 Optional.empty(),
-                mgr,
+                TableManagerTestAdapter.apply(mgr),
                 data,
                 part,
                 WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
@@ -618,7 +619,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 path,
                 mgr.loadLatestSnapshot(),
                 Optional.empty(),
-                mgr,
+                TableManagerTestAdapter.apply(mgr),
                 data,
                 part,
                 WriteTestUtils.logicalWriteInfo(full, CaseInsensitiveStringMap.empty()),
@@ -650,7 +651,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            snapshotManager,
+            TableManagerTestAdapter.apply(snapshotManager),
             PARTITIONED_DATA_SCHEMA,
             PARTITIONED_PART_SCHEMA,
             info,
@@ -755,7 +756,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
                 path,
                 snapshot,
                 Optional.of(catalogTable),
-                snapshotManager,
+                TableManagerTestAdapter.apply(snapshotManager),
                 TABLE_SCHEMA,
                 new StructType(),
                 info,

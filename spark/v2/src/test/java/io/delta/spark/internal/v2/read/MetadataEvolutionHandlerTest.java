@@ -38,6 +38,7 @@ import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.TableManagerTestAdapter;
 import java.io.File;
 import java.util.*;
 import java.util.stream.Stream;
@@ -175,7 +176,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         spark,
         "test-table-id",
         "/tmp/fake-table",
-        THROWING_SNAPSHOT_MANAGER,
+        TableManagerTestAdapter.apply(THROWING_SNAPSHOT_MANAGER),
         defaultEngine,
         emptyDeltaOptions(),
         readOptions,
@@ -233,7 +234,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             spark,
             "test-table-id",
             tablePath,
-            snapshotManager,
+            TableManagerTestAdapter.apply(snapshotManager),
             defaultEngine,
             emptyDeltaOptions(),
             schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false),
@@ -1003,7 +1004,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         spark,
         snapshot,
         options,
-        snapshotManager,
+        TableManagerTestAdapter.apply(snapshotManager),
         defaultEngine,
         Option.empty(),
         /* mergeConsecutiveSchemaChanges= */ false);
@@ -1140,7 +1141,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(tablePath, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-        spark, snapshot, options, snapshotManager, defaultEngine);
+        spark, snapshot, options, TableManagerTestAdapter.apply(snapshotManager), defaultEngine);
   }
 
   /** Schema-tracking set but the log has no entry → empty. */
@@ -1180,7 +1181,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
                       spark,
                       dsv1Snapshot,
                       options,
-                      snapshotManager,
+                      TableManagerTestAdapter.apply(snapshotManager),
                       defaultEngine,
                       Option.empty(),
                       /* mergeConsecutiveSchemaChanges= */ false)
@@ -1198,7 +1199,11 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
           Optional<PersistedMetadata> result =
               MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-                  spark, dsv1Snapshot, options, snapshotManager, defaultEngine);
+                  spark,
+                  dsv1Snapshot,
+                  options,
+                  TableManagerTestAdapter.apply(snapshotManager),
+                  defaultEngine);
           assertTrue(result.isPresent());
           assertEquals(seededVersion, result.get().deltaCommitVersion());
         });
@@ -1449,7 +1454,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
-            current, snapshotManager, defaultEngine, tablePath);
+            current, TableManagerTestAdapter.apply(snapshotManager), defaultEngine, tablePath);
 
     if (expectedMergedVersion == EXPECTED_NO_MERGE) {
       assertTrue(result.isEmpty());
@@ -1515,7 +1520,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
-            current, snapshotManager, defaultEngine, tablePath);
+            current, TableManagerTestAdapter.apply(snapshotManager), defaultEngine, tablePath);
 
     // v3 is metadata-only → merge advances to v3. v4 has file actions → stop.
     assertTrue(result.isDefined());

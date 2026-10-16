@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.TableManagerTestAdapter;
 import java.io.File;
 import java.util.Map;
 import java.util.Optional;
@@ -116,7 +117,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             path,
             mgr.loadLatestSnapshot(),
             Optional.empty(),
-            mgr,
+            TableManagerTestAdapter.apply(mgr),
             dataSchema,
             partitionSchema,
             WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()),
@@ -164,7 +165,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             path,
             mgr.loadLatestSnapshot(),
             Optional.empty(),
-            mgr,
+            TableManagerTestAdapter.apply(mgr),
             dataSchema,
             partitionSchema,
             WriteTestUtils.logicalWriteInfo(fullSchema, CaseInsensitiveStringMap.empty()),
@@ -199,7 +200,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
         path,
         snapshot,
         Optional.empty(),
-        snapshotManager,
+        TableManagerTestAdapter.apply(snapshotManager),
         TABLE_SCHEMA,
         new StructType(),
         info,
