@@ -3820,7 +3820,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
-
   //////////////////
   // CORRECTNESS
   //////////////////

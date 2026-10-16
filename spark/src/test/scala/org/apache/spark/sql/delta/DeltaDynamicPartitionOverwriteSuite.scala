@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,21 +22,19 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{JsonUtils, PartitionUtils}
 
-import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, CreateTableWriter, DataFrame, DataFrameWriter, DataFrameWriterV2, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.functions.{col, lit, struct}
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf.{PARTITION_OVERWRITE_MODE, PartitionOverwriteMode}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
+import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType, TimestampNTZType, TimestampType}
 
 /**
  * Test suite for Dynamic Partition Overwrite.
  *
  * Validates the behavior of DPO in SQL, DF v1 and V2 API and checks both the DF writer options
- * and SQL config. In addition, it validates that DPO config is applied only to selectively
- * overwrite operations and not table replace operations.
+ * and SQL config.
  */
 class DeltaDynamicPartitionOverwriteSuite
     extends QueryTest

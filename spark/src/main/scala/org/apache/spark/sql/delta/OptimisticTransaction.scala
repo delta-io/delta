@@ -1340,7 +1340,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       val newFilesNormalizedPartitionValues =
         newFiles.map(f => normalizePartitionValues(f.partitionValues)).toSet
-      // Table replacement can change partition keys, not just types. Keep legacy matching then.
+      // Fall back to legacy matching if the physical partition keys differ.
       val matchesPartition: Map[String, String] => Boolean = if (typeWideningFixEnabled &&
           existingFilesPartitionSchema.names.toSet == currentPartitionSchema.names.toSet) {
         // Use the same schema as readers to determine the partition value after type widening.
@@ -1403,7 +1403,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
       if (changes.nonEmpty) {
         // Tracks partition type changes, fix/parsing settings, and files selected for removal.
         // Cannot identify missed files or prove matching correctness.
-        // Use as upper bound for affected workloads.
         recordDeltaEvent(
           this,
           opType = "delta.dynamicPartitionOverwrite.partitionTypeWidening",
