@@ -170,16 +170,16 @@ This design enables:
 | - | - |
 | <ins>tightStats</ins> | <ins>Whether per-column statistics (`minValues`, `maxValues`, `nullCount`) are currently **tight** or **wide** across all columns on which statistics are collected, *other than* `string` columns.</ins> |
 
-<ins>Unlike `tightBounds`, which excludes both `string` and timestamp columns, `tightStats` includes `timestamp` and `timestamp without time zone` columns. When the `adaptiveMetadata` table feature is enabled, writers must serialize `timestamp` and `timestamp without time zone` values in `minValues` and `maxValues` at the full precision of the corresponding type (rather than truncating to milliseconds) and must write `tightStats` on newly added or updated files. Under `tightStats`, `minValues`, `maxValues`, and `nullCount` follow the same tight (`tightStats=true`) and wide (`tightStats=false`) semantics defined for `tightBounds`, except that `timestamp` and `timestamp without time zone` bounds are exact at the full precision of the corresponding type and are included in the tightness evaluation.</ins>
+<ins>Unlike `tightBounds`, which excludes both `string` and timestamp columns (because timestamp bounds are truncated down to milliseconds), `tightStats` includes `timestamp` and `timestamp without time zone` columns. When the `adaptiveMetadata` table feature is enabled, writers must write `tightStats` on newly added or updated files. When `tightStats` is explicitly present in `stats` (whether `true` or `false`), `minValues` and `maxValues` of `timestamp` and `timestamp without time zone` columns must not be truncated down to milliseconds and must represent valid lower and upper bounds on the values in the file. Under `tightStats`, `minValues`, `maxValues`, and `nullCount` follow the same tight (`tightStats=true`) and wide (`tightStats=false`) semantics defined for `tightBounds`, except that `timestamp` and `timestamp without time zone` columns are included in the tightness evaluation.</ins>
 
 <ins>When the `adaptiveMetadata` table feature is enabled, if `tightBounds` is absent from `stats`, readers must default it to `false`. Similarly, if `tightStats` is absent, readers must default it to `false`. Tables upgraded to `adaptiveMetadata` may contain legacy files written before enablement alongside newly written files. Readers must interpret `tightBounds`, `tightStats`, and timestamp bounds in `stats` as follows:</ins>
 
-| `tightBounds` present | `tightStats` present | Reader behavior |
+| `tightBounds` present | `tightStats` present | Interpretation |
 | - | - | - |
-| <ins>Yes</ins> | <ins>No</ins> | <ins>Add 1 millisecond to `maxValues` of `timestamp` and `timestamp without time zone` columns to account for millisecond truncation, and evaluate tightness using `tightBounds`. `tightStats` defaults to `false`.</ins> |
-| <ins>No</ins> | <ins>No</ins> | <ins>Add 1 millisecond to `maxValues` of `timestamp` and `timestamp without time zone` columns to account for millisecond truncation. Both `tightBounds` and `tightStats` default to `false`.</ins> |
-| <ins>Yes</ins> | <ins>Yes</ins> | <ins>Do not add 1 millisecond to timestamp `maxValues`. Readers may use `tightBounds` for non-timestamp columns or `tightStats` across all non-`string` columns.</ins> |
-| <ins>No</ins> | <ins>Yes</ins> | <ins>Do not add 1 millisecond to timestamp `maxValues`, as timestamp bounds are written at the full precision of the corresponding type. Evaluate tightness using `tightStats`. `tightBounds` defaults to `false`.</ins> |
+| <ins>Yes</ins> | <ins>No</ins> | <ins>Timestamp `minValues` and `maxValues` are truncated down to milliseconds (so `maxValues` may not be an upper bound). Evaluate tightness using `tightBounds`. `tightStats` defaults to `false`.</ins> |
+| <ins>No</ins> | <ins>No</ins> | <ins>Timestamp `minValues` and `maxValues` are truncated down to milliseconds (so `maxValues` may not be an upper bound). Both `tightBounds` and `tightStats` default to `false`.</ins> |
+| <ins>Yes</ins> | <ins>Yes</ins> | <ins>Timestamp `minValues` and `maxValues` are not truncated down to milliseconds and represent valid lower and upper bounds. Readers may use `tightBounds` for non-timestamp columns or `tightStats` across all non-`string` columns.</ins> |
+| <ins>No</ins> | <ins>Yes</ins> | <ins>Timestamp `minValues` and `maxValues` are not truncated down to milliseconds and represent valid lower and upper bounds. Evaluate tightness using `tightStats`. `tightBounds` defaults to `false`.</ins> |
 
 --------
 
@@ -516,7 +516,7 @@ When folding a log `add` into a manifest, writers convert `add.stats` to `conten
 **Timestamp and tight-bounds conversion (`add.stats` $\leftrightarrow$ `content_stats`):**
 
 - **Files with `tightStats` present:** `minValues` and `maxValues` are copied directly to `lower_bound` and `upper_bound` without adjustment, and `tightStats` maps directly to `tight_bounds`. When reading the manifest entry back as a file action, `tight_bounds` maps back to `tightStats`.
-- **Legacy files (`tightStats` absent):** Because legacy timestamp `maxValues` were truncated to milliseconds, writers folding a legacy `add` into a manifest must add 1 millisecond to `maxValues` of `timestamp` and `timestamp without time zone` columns to produce a valid `upper_bound`. Because that adjustment widens the timestamp upper bound, `tight_bounds` on timestamp columns (or entry-level `tight_bounds` when timestamp columns are present) becomes `false` (see [Per-file Statistics](#per-file-statistics)).
+- **Legacy files (`tightStats` absent):** Because legacy timestamp `maxValues` were truncated down to milliseconds and may not be a true upper bound, writers folding a legacy `add` into a manifest must widen `maxValues` of `timestamp` and `timestamp without time zone` columns (e.g., by adding 1 millisecond) so that `upper_bound` is greater than or equal to all valid values in the file. Because that adjustment widens the timestamp upper bound, `tight_bounds` on timestamp columns (or entry-level `tight_bounds` when timestamp columns are present) becomes `false` (see [Per-file Statistics](#per-file-statistics)).
 
 ## Snapshot ID Generation
 
@@ -640,7 +640,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Materialize row-tracking and partition columns in data files, tagged with their Iceberg `field_id`s (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns) and [Partition Values](#partition-values)).
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
-- Write `timestamp` and `timestamp without time zone` bounds in `add.stats` and `remove.stats` at the full precision of the corresponding type (not truncated to milliseconds), and set `tightStats` on newly written or updated file actions (see [Per-file Statistics](#per-file-statistics) and [Stats Reconciliation](#stats-reconciliation)).
+- Set `tightStats` on newly written or updated file actions, and write `minValues` and `maxValues` of `timestamp` and `timestamp without time zone` columns in `add.stats` and `remove.stats` as valid lower and upper bounds without truncating down to milliseconds (see [Per-file Statistics](#per-file-statistics) and [Stats Reconciliation](#stats-reconciliation)).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
 - Include the `dataChange` field in the `commitInfo` action of every commit (see [Commit Provenance Information](#commit-provenance-information)).
 
