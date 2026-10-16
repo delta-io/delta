@@ -25,6 +25,7 @@ import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult;
+import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
@@ -57,7 +58,6 @@ import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.slf4j.Logger;
@@ -94,7 +94,7 @@ public class MetadataEvolutionHandler {
   private final SparkSession spark;
   private final String tableId;
   private final String tablePath;
-  private final DeltaV2SnapshotManager snapshotManager;
+  private final DeltaV2TableManager tableManager;
   private final DeltaV2QueryContext originalQueryContext;
   private final Engine engine;
   private final DeltaOptions options;
@@ -113,7 +113,7 @@ public class MetadataEvolutionHandler {
       SparkSession spark,
       String tableId,
       String tablePath,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       DeltaOptions options,
       DeltaStreamUtils.SchemaReadOptions schemaReadOptions,
@@ -125,7 +125,7 @@ public class MetadataEvolutionHandler {
         spark,
         tableId,
         tablePath,
-        snapshotManager,
+        tableManager,
         engine,
         options,
         schemaReadOptions,
@@ -140,7 +140,7 @@ public class MetadataEvolutionHandler {
       SparkSession spark,
       String tableId,
       String tablePath,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       DeltaOptions options,
       DeltaStreamUtils.SchemaReadOptions schemaReadOptions,
@@ -152,7 +152,7 @@ public class MetadataEvolutionHandler {
     this.spark = Objects.requireNonNull(spark);
     this.tableId = Objects.requireNonNull(tableId);
     this.tablePath = Objects.requireNonNull(tablePath);
-    this.snapshotManager = Objects.requireNonNull(snapshotManager);
+    this.tableManager = Objects.requireNonNull(tableManager);
     this.originalQueryContext = Objects.requireNonNull(originalQueryContext);
     this.engine = Objects.requireNonNull(engine);
     this.options = Objects.requireNonNull(options);
@@ -357,7 +357,7 @@ public class MetadataEvolutionHandler {
       metadata = validated.metadata;
       protocol = validated.protocol;
     } else {
-      Snapshot snapshot = snapshotManager.loadSnapshotAt(batchStartVersion, originalQueryContext);
+      Snapshot snapshot = tableManager.loadSnapshotAt(batchStartVersion, originalQueryContext);
       version = snapshot.version();
       metadata = snapshot.metadata();
       protocol = snapshot.protocol();
@@ -415,7 +415,7 @@ public class MetadataEvolutionHandler {
     StreamingHelper.collectMetadataActionsFromRangeUnsafe(
             startVersion,
             Optional.of(endVersion),
-            snapshotManager,
+            tableManager,
             engine,
             tablePath,
             originalQueryContext)
@@ -436,7 +436,7 @@ public class MetadataEvolutionHandler {
     StreamingHelper.collectProtocolActionsFromRangeUnsafe(
             startVersion,
             Optional.of(endVersion),
-            snapshotManager,
+            tableManager,
             engine,
             tablePath,
             originalQueryContext)
@@ -457,7 +457,7 @@ public class MetadataEvolutionHandler {
       long startVersion, long endVersion) {
     List<Metadata> metadataChanges =
         new ArrayList<>(collectMetadataActions(startVersion, endVersion).values());
-    Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion, originalQueryContext);
+    Snapshot startSnapshot = tableManager.loadSnapshotAt(startVersion, originalQueryContext);
     Metadata startMetadata = startSnapshot.metadata();
 
     // Try to find rename or drop columns in between, or nullability/datatype changes by using
@@ -538,13 +538,13 @@ public class MetadataEvolutionHandler {
       SparkSession spark,
       Snapshot snapshot,
       Map<String, String> options,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine) {
     return getPersistedMetadataForMicroBatchStream(
         spark,
         snapshot,
         options,
-        snapshotManager,
+        tableManager,
         engine,
         DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
   }
@@ -553,7 +553,7 @@ public class MetadataEvolutionHandler {
       SparkSession spark,
       org.apache.spark.sql.delta.Snapshot snapshot,
       Map<String, String> options,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       DeltaV2QueryContext originalQueryContext) {
     boolean mergeConsecutiveSchemaChanges =
@@ -569,7 +569,7 @@ public class MetadataEvolutionHandler {
             spark,
             snapshot,
             options,
-            snapshotManager,
+            tableManager,
             engine,
             /* sourceMetadataPathOpt= */ Option.empty(),
             mergeConsecutiveSchemaChanges,
@@ -616,7 +616,7 @@ public class MetadataEvolutionHandler {
       SparkSession spark,
       Snapshot snapshot,
       Map<String, String> options,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       Option<String> sourceMetadataPathOpt,
       boolean mergeConsecutiveSchemaChanges) {
@@ -624,7 +624,7 @@ public class MetadataEvolutionHandler {
         spark,
         snapshot,
         options,
-        snapshotManager,
+        tableManager,
         engine,
         sourceMetadataPathOpt,
         mergeConsecutiveSchemaChanges,
@@ -635,7 +635,7 @@ public class MetadataEvolutionHandler {
       SparkSession spark,
       org.apache.spark.sql.delta.Snapshot snapshot,
       Map<String, String> options,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       Option<String> sourceMetadataPathOpt,
       boolean mergeConsecutiveSchemaChanges,
@@ -669,19 +669,19 @@ public class MetadataEvolutionHandler {
             /* consecutiveSchemaChangesMerger= */ Option.apply(
                 currentMetadata ->
                     getMergedConsecutiveMetadataChanges(
-                        currentMetadata, snapshotManager, engine, tablePath, originalQueryContext)),
+                        currentMetadata, tableManager, engine, tablePath, originalQueryContext)),
             /* initMetadataLogEagerly= */ true));
   }
 
   /** V2 port of {@code DeltaSourceMetadataEvolutionSupport.getMergedConsecutiveMetadataChanges}. */
   public static Option<PersistedMetadata> getMergedConsecutiveMetadataChanges(
       PersistedMetadata currentMetadata,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       String tablePath) {
     return getMergedConsecutiveMetadataChanges(
         currentMetadata,
-        snapshotManager,
+        tableManager,
         engine,
         tablePath,
         DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
@@ -689,7 +689,7 @@ public class MetadataEvolutionHandler {
 
   public static Option<PersistedMetadata> getMergedConsecutiveMetadataChanges(
       PersistedMetadata currentMetadata,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       String tablePath,
       DeltaV2QueryContext originalQueryContext) {
@@ -702,7 +702,7 @@ public class MetadataEvolutionHandler {
 
     CommitRangeImpl commitRange =
         (CommitRangeImpl)
-            snapshotManager.getTableChanges(
+            tableManager.getTableChanges(
                 engine, currentMetadataVersion, Optional.empty(), originalQueryContext);
 
     try (CloseableIterator<CommitActions> commitsIter =

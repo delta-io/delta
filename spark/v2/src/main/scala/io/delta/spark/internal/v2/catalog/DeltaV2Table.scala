@@ -53,8 +53,7 @@ import io.delta.spark.internal.v2.exception.{
 import org.apache.spark.sql.delta.v2.interop.{
   AbstractMetadata,
   AbstractProtocol,
-  DeltaV2QueryContext,
-  DeltaV2SnapshotManager
+  DeltaV2QueryContext
 }
 import io.delta.spark.internal.v2.read.{DeltaV2ScanUtils, MetadataEvolutionHandler}
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
@@ -192,7 +191,7 @@ class DeltaV2Table private (
         SparkSession.active,
         initialSnapshotValue,
         options,
-        tableManager.snapshotManager(queryContext.catalogTableOpt),
+        tableManager,
         kernelEngine(),
         queryContext)
 
@@ -312,20 +311,11 @@ class DeltaV2Table private (
   def getQueryContext(): DeltaV2QueryContext = queryContext
 
   /**
-   * Returns the table manager backing this table. Catalog-driven features such as read-time CDF
-   * (TableCatalog.loadChangelog) use this to resolve versions, timestamps, and snapshots without
-   * having to build their own manager.
+   * Returns the table manager for operations using query-scoped inputs. Catalog-driven features
+   * such as read-time CDF (TableCatalog.loadChangelog) use this to resolve versions, timestamps,
+   * and snapshots without building their own manager.
    */
   def getTableManager(): DeltaV2TableManager = tableManager
-
-  /**
-   * Returns a snapshot manager derived from the table manager and the catalog table this table was
-   * resolved from. Transitional: callers that still need a snapshot manager use this until they
-   * move to the query-context APIs on [[getTableManager]].
-   */
-  @deprecated("Use the query-context APIs on getTableManager instead")
-  def getSnapshotManager(): DeltaV2SnapshotManager =
-    tableManager.snapshotManager(queryContext.catalogTableOpt)
 
   /** The table protocol from the initial snapshot. */
   protected def protocol(): AbstractProtocol = initialSnapshotValue.protocol
@@ -449,7 +439,7 @@ class DeltaV2Table private (
       initialSnapshotValue,
       kernelEngine(),
       catalogTableValue,
-      getSnapshotManager(),
+      tableManager,
       schemaProvider.getDataSchema(),
       schemaProvider.getPartitionSchema(),
       schemaProvider.getRawSchema(),
@@ -479,7 +469,7 @@ class DeltaV2Table private (
       hadoopConf,
       initialSnapshotValue,
       catalogTableValue,
-      getSnapshotManager(),
+      tableManager,
       schemaProvider.getDataSchema(),
       schemaProvider.getPartitionSchema(),
       info,

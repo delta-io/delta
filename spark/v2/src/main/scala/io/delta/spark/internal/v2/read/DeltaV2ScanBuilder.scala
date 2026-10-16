@@ -26,8 +26,8 @@ import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaScan
 import io.delta.spark.internal.v2.DeltaV2Logging
+import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManager
 import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2Snapshot}
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, ExprId}
@@ -54,7 +54,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * @param initialSnapshot Kernel snapshot created during connector setup
  * @param kernelEngine the Kernel engine used to read scan files
  * @param catalogTable the catalog table this scan resolved from, if any
- * @param snapshotManager the snapshot manager for this table
+ * @param tableManager the table manager for this table
  * @param dataSchema the data schema (non-partition columns)
  * @param partitionSchema the partition schema
  * @param tableSchema the full table schema (all columns) for filter type alignment
@@ -66,7 +66,7 @@ private[read] class DeltaV2ScanBuilder(
     initialSnapshot: Snapshot,
     kernelEngine: Engine,
     catalogTable: Optional[CatalogTable],
-    snapshotManager: DeltaV2SnapshotManager,
+    tableManager: DeltaV2TableManager,
     dataSchema: StructType,
     partitionSchema: StructType,
     tableSchema: StructType,
@@ -83,7 +83,7 @@ private[read] class DeltaV2ScanBuilder(
   Objects.requireNonNull(initialSnapshot, "initialSnapshot is null")
   Objects.requireNonNull(kernelEngine, "kernelEngine is null")
   Objects.requireNonNull(catalogTable, "catalogTable is null")
-  Objects.requireNonNull(snapshotManager, "snapshotManager is null")
+  Objects.requireNonNull(tableManager, "tableManager is null")
   Objects.requireNonNull(dataSchema, "dataSchema is null")
   Objects.requireNonNull(partitionSchema, "partitionSchema is null")
   Objects.requireNonNull(tableSchema, "tableSchema is null")
@@ -210,7 +210,7 @@ private[read] class DeltaV2ScanBuilder(
       }
 
       val scan = new DeltaV2Scan(
-        snapshotManager,
+        tableManager,
         initialSnapshot,
         tableSchema,
         dataSchema,
@@ -254,7 +254,7 @@ private[read] object DeltaV2ScanBuilder {
       initialSnapshot: Snapshot,
       kernelEngine: Engine,
       catalogTable: Optional[CatalogTable],
-      snapshotManager: DeltaV2SnapshotManager,
+      tableManager: DeltaV2TableManager,
       dataSchema: StructType,
       partitionSchema: StructType,
       tableSchema: StructType,
@@ -265,7 +265,7 @@ private[read] object DeltaV2ScanBuilder {
       initialSnapshot,
       kernelEngine,
       catalogTable,
-      snapshotManager,
+      tableManager,
       dataSchema,
       partitionSchema,
       tableSchema,
@@ -285,7 +285,7 @@ private[read] object DeltaV2ScanBuilder {
    * @param tableName the table name (used only for identification)
    * @param snapshot the Kernel snapshot to read
    * @param kernelEngine the Kernel engine
-   * @param snapshotManager the snapshot manager for this table
+   * @param tableManager the table manager for this table
    * @param dataSchema the data schema (non-partition columns)
    * @param partitionSchema the partition schema
    * @param tableSchema the full table schema
@@ -297,7 +297,7 @@ private[read] object DeltaV2ScanBuilder {
       tableName: String,
       snapshot: Snapshot,
       kernelEngine: Engine,
-      snapshotManager: DeltaV2SnapshotManager,
+      tableManager: DeltaV2TableManager,
       dataSchema: StructType,
       partitionSchema: StructType,
       tableSchema: StructType,
@@ -309,7 +309,7 @@ private[read] object DeltaV2ScanBuilder {
       snapshot,
       kernelEngine,
       Optional.empty[CatalogTable](),
-      snapshotManager,
+      tableManager,
       dataSchema,
       partitionSchema,
       tableSchema,
