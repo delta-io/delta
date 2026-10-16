@@ -21,6 +21,7 @@ import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.BinaryType;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.ByteType;
+import io.delta.kernel.types.CollationIdentifier;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.DateType;
 import io.delta.kernel.types.DecimalType;
@@ -40,9 +41,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import org.apache.spark.QueryContext;
+import org.apache.spark.SparkException;
+import org.apache.spark.SparkRuntimeException;
+import org.apache.spark.sql.catalyst.util.CollationFactory;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.MetadataBuilder;
+import scala.collection.immutable.Map;
 import scala.jdk.CollectionConverters;
 
 /** A utility class for converting between Delta Kernel and Spark schemas and data types. */
@@ -76,7 +82,25 @@ public class SchemaUtils {
       DataType kernelDataType) {
     requireNonNull(kernelDataType);
     if (kernelDataType instanceof StringType) {
-      return DataTypes.StringType;
+      CollationIdentifier collation = ((StringType) kernelDataType).getCollationIdentifier();
+      if (collation.isSparkUTF8BinaryCollation()) {
+        return DataTypes.StringType;
+      }
+      assertValidCollationProvider(collation.getProvider());
+      org.apache.spark.sql.types.StringType sparkStringType =
+          org.apache.spark.sql.types.StringType$.MODULE$.apply(collation.getName());
+      CollationFactory.CollationIdentifier sparkCollation =
+          CollationFactory.fetchCollation(sparkStringType.collationId()).identifier();
+      // Compare providers only so Spark can canonicalize valid collation aliases.
+      if (!sparkCollation.getProvider().equalsIgnoreCase(collation.getProvider())) {
+        throw new SparkRuntimeException(
+            "COLLATION_INVALID_NAME",
+            new Map.Map2<>("collationName", collation.toStringWithoutVersion(), "proposals", ""),
+            null,
+            new QueryContext[] {},
+            "");
+      }
+      return sparkStringType;
     } else if (kernelDataType instanceof BooleanType) {
       return DataTypes.BooleanType;
     } else if (kernelDataType instanceof IntegerType) {
@@ -119,6 +143,24 @@ public class SchemaUtils {
       return DataTypes.VariantType;
     } else {
       throw new IllegalArgumentException("unsupported data type " + kernelDataType);
+    }
+  }
+
+  private static void assertValidCollationProvider(String provider) {
+    try {
+      CollationFactory.assertValidProvider(provider);
+    } catch (SparkException exception) {
+      java.util.Map<String, String> parameters = exception.getMessageParameters();
+      throw new SparkRuntimeException(
+          "COLLATION_INVALID_PROVIDER",
+          new Map.Map2<>(
+              "provider",
+              parameters.get("provider"),
+              "supportedProviders",
+              parameters.get("supportedProviders")),
+          exception,
+          new QueryContext[] {},
+          "");
     }
   }
 
