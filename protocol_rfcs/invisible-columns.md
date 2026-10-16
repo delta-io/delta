@@ -44,7 +44,7 @@ data files.
 | Old reader, table with this feature | Ignores the unrecognized `metaData.invisibleSchemaString` field under [Protocol Evolution](#protocol-evolution). Reads the visible schema from `metaData.schemaString` using normal column-resolution rules and does not request invisible fields from data files. It cannot expose invisible columns through this feature. |
 | Old writer, table with this feature | Rejected by the existing protocol-version or writer-feature checks, even if the invisible schema is empty. |
 | New reader, table without this feature | Reads normally. An absent invisible schema is treated as an empty struct. |
-| New writer, table without this feature | Writes normally. It must establish feature support before or in the commit that first writes a non-empty invisible schema. |
+| New writer, table without this feature | Writes normally without enabling Invisible Columns. If it adds invisible columns, it must enable the feature in the table protocol before or in the same commit. |
 | Existing table that enables the feature (mix of old and new files) | Existing columns can change visibility without rewriting their data. Newly added invisible columns may be missing from existing files; the normal missing-column rules apply. |
 | Checkpoint writer that doesn't know the feature | Rejected by the existing writer-feature requirements. Being allowed to read the table does not authorize writing its checkpoints. |
 
@@ -77,9 +77,6 @@ Both schema strings belong to the same `metaData` action. Concurrent changes to 
 are table-metadata changes and are subject to the existing serializable-write requirements;
 there is no separate invisible-schema action or conflict domain. A visibility transition updates
 both schemas in one metadata action.
-
-With Column Mapping, columns added to either schema share the existing column-ID namespace and
-`delta.columnMapping.maxColumnId`. Writers cannot allocate IDs independently for the two schemas.
 
 ## Alternatives considered
 
@@ -153,24 +150,24 @@ For a snapshot:
 
 See [Examples](#examples) for schema representations and recursive merging.
 
-Invisible columns MAY occur at any nesting level, including within structs, arrays, and maps.
-The invisible schema MUST include the ancestor containers needed to describe a nested invisible
-field's [field path](#field-path). A field in the complete data schema is visible if its path is
-present in the visible schema; otherwise it is invisible. A shared ancestor remains visible;
-its presence in the invisible schema only provides the structure needed for its invisible fields.
-An invisible ancestor and all its descendants are absent from the visible schema.
+Invisible fields MAY occur at any nesting level. The invisible schema MUST include the ancestor
+containers needed to describe their [field paths](#field-path). A field is visible if its path
+appears in the visible schema; otherwise it is invisible. Shared ancestors remain visible and
+provide structure for nested invisible fields.
 
-Field-path matching during the merge MUST be case-sensitive. Shared ancestors MUST have identical
-names, including casing, in both schemas. At each struct being merged, field names that differ only
-in casing MUST cause the merge to fail, rather than being merged or retained as separate columns.
+Field-path matching during the merge MUST be case-insensitive. Shared fields MUST retain the name,
+including casing, from the visible schema; fields present in only one schema retain their names.
+Fields with names that differ only in casing across the two schemas are matched as one field, not
+retained as separate columns.
 
 The merge combines struct fields at matching field paths, retaining fields present in only one
 schema. Shared structs are merged recursively; arrays and maps recursively merge their element,
-key, and value types. Shared definitions MUST agree except for the nested struct fields contributed
-by each schema. Their nullability and metadata, including column-mapping metadata, MUST match.
+key, and value types. Shared definitions MUST agree except for field-name casing and the nested
+struct fields contributed by each schema. Their nullability and metadata, including column-mapping
+metadata, MUST match.
 A shared ancestor represents one column in the complete data schema, not two distinct columns.
-The complete data schema MUST satisfy the column-name uniqueness requirements of the
-[Schema Serialization Format](#schema-serialization-format).
+Each input schema and the complete data schema MUST satisfy the case-insensitive column-name
+uniqueness requirements of the [Schema Serialization Format](#schema-serialization-format).
 
 At each struct level, including the schema root, the complete data schema MUST contain fields from
 the visible schema in their original order, followed by invisible-only fields in their original order
@@ -200,8 +197,8 @@ A reader that chooses to expose invisible columns SHOULD:
 When reading invisible columns, a reader MUST:
 
 - Resolve an explicitly requested invisible field against the invisible schema.
-- Read invisible columns using their schema definitions and the normal Delta column-resolution
-  rules.
+- Read invisible columns using their definitions in the complete data schema and the normal Delta
+  column-resolution rules.
 
 These rules apply independently to each table version. Time travel therefore uses the visible and
 invisible schemas from the requested snapshot.
@@ -217,14 +214,19 @@ A writer that supports Invisible Columns MUST apply all Delta Protocol writer re
 complete data schema. Values for invisible columns are validated and written under the same
 protocol rules as values for visible columns.
 
+Default-column, generated-column, identity-column, and nullability requirements apply to invisible
+columns in the same way as to visible columns. Writers MUST apply any applicable default or
+value-generation rules before validating the resulting values against nullability requirements.
+
 A writer that supports Invisible Columns MUST reject a write if `metaData.invisibleSchemaString`
 is malformed or the snapshot violates the [schema requirements](#schema) or
 [feature-support requirements](#enablement).
 
 A writer that emits a `metaData` action MUST preserve both schemas except for intentional schema
 changes. Moving a column between the visible and invisible schemas MUST update both fields in the
-same `metaData` action. Changing only a column's visibility does not require rewriting data files.
-When Column Mapping is enabled, the column's physical name and ID MUST be preserved.
+same `metaData` action. Changing only a column's visibility MUST preserve all of its column
+metadata, including column-mapping metadata, generation expressions, identity-column properties,
+and column defaults. Such a change does not require rewriting data files.
 
 When rewriting an existing row, a writer MUST preserve its invisible-column values unless the
 write explicitly changes them or changes are required to satisfy
@@ -331,12 +333,13 @@ Merged:    profile { address { city, geo_id }, name, internal_id }, age, source_
 Invisible `profile.address.geo_id` precedes visible `profile.name` because the ordering rule applies
 within each struct, not to all leaf fields globally.
 
-The following schemas cannot be merged because `profile` and `Profile` differ only in casing.
-The merge MUST fail rather than produce two separate columns:
+These schemas merge case-insensitively, retaining the visible schema's spelling for the shared
+ancestor:
 
 ```text
 Visible:   profile { name }
 Invisible: Profile { internal_id }
+Merged:    profile { name, internal_id }
 ```
 
 The following two actions form a complete initial commit, `_delta_log/00000000000000000000.json`,
