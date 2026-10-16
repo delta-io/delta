@@ -509,9 +509,9 @@ When folding a log `add` into a manifest, writers convert `add.stats` to `conten
 | `nullCount[col]` | `null_value_count` |
 | `minValues[col]` | `lower_bound` |
 | `maxValues[col]` | `upper_bound` |
-| `tightStats` / `tightBounds` | `tight_bounds` |
+| `tightStats` | `tight_bounds` |
 
-`value_count` and `nan_value_count` have no Delta source and are left unpopulated (readers treat them as unknown). `tightStats` (or `tightBounds` on legacy files) carries Delta's wide-bounds-under-deletion-vectors semantics to `tight_bounds`, consistent with manifest-level stats being `tight_bounds = false` when an MDV is present.
+`value_count` and `nan_value_count` have no Delta source and are left unpopulated (readers treat them as unknown). `tightStats` carries Delta's wide-bounds-under-deletion-vectors semantics to `tight_bounds`, consistent with manifest-level stats being `tight_bounds = false` when an MDV is present.
 
 **Timestamp and tight-bounds conversion (`add.stats` $\leftrightarrow$ `content_stats`):**
 
