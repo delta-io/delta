@@ -986,7 +986,7 @@ class AMTSnapshotDiscoverySuite
           op = DeltaOperations.Delete(Seq.empty),
           context = Map.empty,
           metrics = Map.empty,
-          dataChange = Some(true))
+          dataChange = true)
 
         assert(committedVersion == txn.readVersion + 1)
         assert(postCommitSnapshot.version == committedVersion)
