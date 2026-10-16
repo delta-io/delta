@@ -558,7 +558,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
       // disabled setting rather than adopt the default.
       withSQLConf("spark.databricks.delta.properties.defaults.enableDeletionVectors" -> "true") {
         spark.sql("SELECT 2 AS id, 'b' AS name").write
-          .format("delta").mode("overwrite").clusterBy("id").saveAsTable(id)
+          .format("delta").mode("overwrite").saveAsTable(id)
       }
       assert(getProperties(id).get("delta.enableDeletionVectors") === Some("false"))
     }
