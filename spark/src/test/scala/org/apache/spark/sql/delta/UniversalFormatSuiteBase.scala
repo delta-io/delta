@@ -554,8 +554,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
         'delta.enableIcebergCompatV2' = 'true',
         'delta.universalFormat.enabledFormats' = 'iceberg')""")
 
-      // The writer config can carry a default that enables deletion vectors. The write must not
-      // fail on it.
+      // The writer config can carry a default that enables deletion vectors.
       spark.sql("SELECT 2 AS id, 'b' AS name").write
         .format("delta").mode("overwrite")
         .option("delta.enableDeletionVectors", "true")
