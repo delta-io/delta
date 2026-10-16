@@ -414,6 +414,8 @@ public abstract class UnityCatalogSupport {
     ServerProperties initServerProperties = new ServerProperties(serverProperties());
     // Keep UC authorization enabled, but use the configured fake credentials instead of
     // assuming the test external location's role.
+    // TODO(https://github.com/delta-io/delta/issues/7896): Fake only STS to test storage
+    // credentials.
     CloudCredentialVendor fakeCredentialVendor =
         new CloudCredentialVendor(initServerProperties) {
           @Override
@@ -453,12 +455,6 @@ public abstract class UnityCatalogSupport {
       }
     }
 
-    // Now that UC is up, let the OAuth broker reach the token-exchange endpoint.
-    if (mockOAuthBroker != null) {
-      mockOAuthBroker.setUcBaseUri(String.format("http://localhost:%s/", ucServerPort));
-      provisionOAuthTestUser();
-    }
-
     // Poll for server readiness by checking if we can create an API client and query catalogs
     int maxRetries = 30;
     int retryDelayMs = 500;
@@ -466,9 +462,19 @@ public abstract class UnityCatalogSupport {
     int retries = 0;
 
     ucInfo = localUnityCatalogInfo();
+    // Use the service token for readiness because the OAuth test user does not exist yet.
+    String setupToken =
+        mockOAuthBroker != null
+            ? Files.readString(Path.of("etc", "conf", "token.txt")).trim()
+            : UC_STATIC_TOKEN;
+    ApiClient setupClient =
+        ApiClientBuilder.create()
+            .uri(ucInfo.serverUri())
+            .tokenProvider(TokenProvider.create(Map.of("type", "static", "token", setupToken)))
+            .build();
     while (!serverReady && retries < maxRetries) {
       try {
-        CatalogsApi catalogsApi = new CatalogsApi(ucInfo.createApiClient());
+        CatalogsApi catalogsApi = new CatalogsApi(setupClient);
         catalogsApi.listCatalogs(null, null); // This will throw if server is not ready
         serverReady = true;
       } catch (Exception e) {
@@ -480,6 +486,12 @@ public abstract class UnityCatalogSupport {
     if (!serverReady) {
       throw new RuntimeException(
           "Unity Catalog server did not become ready after " + (maxRetries * retryDelayMs) + "ms");
+    }
+
+    // Now that UC is up, let the OAuth broker reach the token-exchange endpoint.
+    if (mockOAuthBroker != null) {
+      mockOAuthBroker.setUcBaseUri(ucInfo.serverUri());
+      provisionOAuthTestUser(setupClient, setupToken);
     }
 
     // Create the catalog and default schema in the UC server
@@ -502,9 +514,9 @@ public abstract class UnityCatalogSupport {
   }
 
   /** Creates a regular OAuth user with access to create catalogs and use the test storage path. */
-  private void provisionOAuthTestUser() throws Exception {
+  private void provisionOAuthTestUser(ApiClient serviceClient, String serviceToken)
+      throws Exception {
     // Use the service token only for setup. Tests use the broker's OAuth tokens.
-    String serviceToken = Files.readString(Path.of("etc", "conf", "token.txt")).trim();
     String serverUri = String.format("http://localhost:%s", ucServerPort);
     String userJson =
         String.format(
@@ -528,11 +540,6 @@ public abstract class UnityCatalogSupport {
               + response.body());
     }
 
-    ApiClient serviceClient =
-        ApiClientBuilder.create()
-            .uri(serverUri)
-            .tokenProvider(TokenProvider.create(Map.of("type", "static", "token", serviceToken)))
-            .build();
     GrantsApi grantsApi = new GrantsApi(serviceClient);
     grantsApi.update(
         SecurableType.METASTORE,
