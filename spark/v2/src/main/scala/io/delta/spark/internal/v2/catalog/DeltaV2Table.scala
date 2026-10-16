@@ -481,7 +481,8 @@ class DeltaV2Table private (
       getSnapshotManager(),
       schemaProvider.getDataSchema(),
       schemaProvider.getPartitionSchema(),
-      info)
+      info,
+      queryContext)
   }
 
   /**
