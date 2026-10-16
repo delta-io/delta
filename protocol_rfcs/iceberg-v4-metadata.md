@@ -516,7 +516,7 @@ When folding a log `add` into a manifest, writers convert `add.stats` to `conten
 **Timestamp and tight-bounds conversion (`add.stats` $\leftrightarrow$ `content_stats`):**
 
 - **Files with `tightStats` present:** `minValues` and `maxValues` are copied directly to `lower_bound` and `upper_bound` without adjustment, and `tightStats` maps directly to `tight_bounds`. When reading the manifest entry back as a file action, `tight_bounds` maps back to `tightStats`.
-- **Legacy files (`tightStats` absent):** Because legacy timestamp `maxValues` were truncated down to milliseconds and may not be a true upper bound, writers folding a legacy `add` into a manifest must widen `maxValues` of `timestamp` and `timestamp without time zone` columns (e.g., by adding 1 millisecond) so that `upper_bound` is greater than or equal to all valid values in the file. Because that adjustment widens the timestamp upper bound, `tight_bounds` on timestamp columns (or entry-level `tight_bounds` when timestamp columns are present) becomes `false` (see [Per-file Statistics](#per-file-statistics)).
+- **Legacy files (`tightStats` absent):** Because legacy timestamp `maxValues` were truncated down to milliseconds and may not be a true upper bound, writers folding a legacy `add` into a manifest must widen `maxValues` of `timestamp` and `timestamp without time zone` columns (e.g., by adding 1 millisecond) so that `upper_bound` is greater than or equal to all valid values in the file. Because that adjustment widens the timestamp upper bound, `tight_bounds` on timestamp columns becomes `false` (see [Per-file Statistics](#per-file-statistics)).
 
 ## Snapshot ID Generation
 
