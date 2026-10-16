@@ -62,7 +62,10 @@ public class DeltaV2Changelog implements Changelog {
   public Column[] columns() {
     // Resolve lazily so catalog construction stays side-effect free. The scan path validates
     // each per-commit Metadata against this same end-version schema.
-    Snapshot endSnapshot = deltaV2Table.getSnapshotManager().loadSnapshotAt(endVersion);
+    Snapshot endSnapshot =
+        deltaV2Table
+            .getSnapshotManager()
+            .loadSnapshotAt(endVersion, deltaV2Table.getQueryContext());
     StructType endSchema = endSnapshot.schema();
     StructType cdcSchema =
         endSchema
