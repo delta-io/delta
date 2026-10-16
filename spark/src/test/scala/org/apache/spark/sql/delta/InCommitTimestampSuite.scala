@@ -191,7 +191,7 @@ class InCommitTimestampSuite
             DeltaOperations.ManualUpdate,
             context = Map.empty,
             metrics = Map.empty,
-            dataChange = Some(true))
+            dataChange = true)
         } else {
           deltaLog.startTransaction().commit(
             Seq(createTestAddFile("1")),

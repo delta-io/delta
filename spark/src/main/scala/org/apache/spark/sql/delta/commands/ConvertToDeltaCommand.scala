@@ -416,7 +416,7 @@ abstract class ConvertToDeltaCommandBase(
         getOperation(numFiles, convertProperties, targetTable.format),
         getContext,
         transactionMetrics,
-        dataChange = Some(convertsAnyFile))
+        dataChange = convertsAnyFile)
     } finally {
       manifest.close()
     }

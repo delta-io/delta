@@ -303,6 +303,29 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
     }
   }
 
+  test("disabling Delta limit pushdown keeps LIMIT off the scan") {
+    val table = "v2_scan_e2e_limit_pushdown_disabled"
+    withTable(table) {
+      withV1Mode {
+        sql(s"CREATE TABLE $table (id INT) USING $tableProvider")
+        // One row per file so that a pushed limit would select fewer files than the table has.
+        (0 until 5).foreach { id =>
+          sql(s"INSERT INTO $table VALUES ($id)")
+        }
+      }
+
+      withSQLConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED.key -> "false") {
+        val df = sql(s"SELECT * FROM $table LIMIT 2")
+        assert(df.collect().length == 2, "LIMIT 2 should return exactly 2 rows")
+        assertExpectedNoPushedLimit(df, "LIMIT with Delta limit pushdown disabled")
+        assertRouteSpecificInputFileCount(
+          df,
+          expected = 5,
+          context = "LIMIT with Delta limit pushdown disabled reads every file")
+      }
+    }
+  }
+
   test("a non-deterministic filter prevents LIMIT pushdown") {
     val table = "v2_scan_e2e_limit_nondeterministic_filter"
     withTable(table) {

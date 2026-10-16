@@ -273,6 +273,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val CREATE_TABLE_VERIFY_COLUMN_ORDER_ENABLED =
+    buildConf("createTable.verifyColumnOrder.enabled")
+      .internal()
+      .doc("Whether CREATE TABLE with a column list over an existing Delta table fails when " +
+        "the columns, including nested struct fields, are listed in a different order than " +
+        "the existing schema.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_PARTITION_COLUMN_CHANGE_CHECK = buildConf("partitionColumnChangeCheck")
     .internal()
     .doc("""Controls the validation behavior when changes to partition columns are detected.
@@ -2371,6 +2380,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_COMMIT_INFO_DATA_CHANGE_WRITE_FOR_NON_AMT_ENABLED =
+    buildConf("commitInfo.dataChange.writeForNonAMTTables.enabled")
+      .internal()
+      .doc("""
+             |When enabled, Delta records the commit-level dataChange in CommitInfo for non-AMT
+             |tables. AMT tables always record it. This is a kill switch for writing the field to
+             |non-AMT tables.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   object ValidateCheckConstraintsMode extends Enumeration {
     val OFF, LOG_ONLY, ASSERT = Value
 
@@ -3617,6 +3637,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .checkValue(_ > 0, "maxColumnsPerTable must be positive")
       .createWithDefault(50)
+
+  val CONCURRENT_IDENTITY_COLUMN_SERVICE_CLASS_NAME =
+    buildConf("identityColumn.concurrent.serviceClassName")
+      .internal()
+      .doc("Optional override naming an IdentitySequenceService implementation (with a no-arg " +
+        "constructor) that IdentitySequenceServices.resolve instantiates reflectively instead of " +
+        "the default backend. Unit suites point it at the LocalIdentitySequenceService fake.")
+      .stringConf
+      .createOptional
 
   //////////////////
   // GeoSpatial

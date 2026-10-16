@@ -1948,7 +1948,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         readVersion = Some(readVersion).filter(_ >= 0),
         isolationLevel = Option(isolationLevelToUse.toString),
         isBlindAppend = Some(isBlindAppend),
-        dataChange = Some(CommitInfo.dataChangeFromActions(preparedActions)),
+        dataChange = CommitInfo.dataChangeForCommitInfo(
+          preparedActions, metadata, protocol, spark),
         operationMetrics = getOperationMetrics(op),
         userMetadata = getUserMetadata(op),
         tags = if (allTags.nonEmpty) Some(allTags) else None,
@@ -2124,7 +2125,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       op: DeltaOperations.Operation,
       context: Map[String, String],
       metrics: Map[String, String],
-      dataChange: Option[Boolean]
+      dataChange: Boolean
   ): (Long, Snapshot) = recordDeltaOperation(deltaLog, "delta.commit.large") {
     assert(committed.isEmpty, "Transaction already committed.")
     commitStartNano = System.nanoTime()
@@ -2169,7 +2170,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         readVersion = Some(readVersion),
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
-        dataChange = dataChange,
+        dataChange = CommitInfo.dataChangeForCommitInfo(dataChange, metadata, protocol, spark),
         operationMetrics = Some(metrics),
         userMetadata = getUserMetadata(op),
         tags = if (tags.nonEmpty) Some(tags) else None,
