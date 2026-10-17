@@ -150,10 +150,15 @@ For a snapshot:
 
 See [Examples](#examples) for schema representations and recursive merging.
 
-Invisible fields MAY occur at any nesting level. The invisible schema MUST include the ancestor
-containers needed to describe their [field paths](#field-path). A field is visible if its path
-appears in the visible schema; otherwise it is invisible. Shared ancestors remain visible and
-provide structure for nested invisible fields.
+Invisible fields MAY occur at any nesting level, subject to the map-key restriction below. The
+invisible schema MUST include the ancestor containers needed to describe their
+[field paths](#field-path). A field is visible if its path appears in the visible schema; otherwise
+it is invisible. Shared ancestors remain visible and provide structure for nested invisible fields.
+
+For any map in the visible schema, its key MUST NOT be wholly or partially invisible. Its complete
+key type, including all nested fields, MUST be present in the visible schema. This rule applies at
+every nesting level. Fields within map values and entire map columns MAY be invisible, except
+within the key of a visible map.
 
 Field-path matching during the merge MUST be case-insensitive. Shared fields MUST retain the name,
 including casing, from the visible schema; fields present in only one schema retain their names.
@@ -162,9 +167,9 @@ retained as separate columns.
 
 The merge combines struct fields at matching field paths, retaining fields present in only one
 schema. Shared structs are merged recursively; arrays and maps recursively merge their element,
-key, and value types. Shared definitions MUST agree except for field-name casing and the nested
-struct fields contributed by each schema. Their nullability and metadata, including column-mapping
-metadata, MUST match.
+key, and value types, subject to the map-key restriction above. Shared definitions MUST agree except
+for field-name casing and the nested struct fields contributed by each schema. Their nullability
+and metadata, including column-mapping metadata, MUST match.
 A shared ancestor represents one column in the complete data schema, not two distinct columns.
 Each input schema and the complete data schema MUST satisfy the case-insensitive column-name
 uniqueness requirements of the [Schema Serialization Format](#schema-serialization-format).
@@ -172,7 +177,7 @@ uniqueness requirements of the [Schema Serialization Format](#schema-serializati
 At each struct level, including the schema root, the complete data schema MUST contain fields from
 the visible schema in their original order, followed by invisible-only fields in their original order
 from the invisible schema. Shared fields retain their position from the visible schema. This rule
-applies recursively, including to structs within arrays and map keys or values. A struct present in
+applies recursively, including to structs within arrays and map values. A struct present in
 only one schema retains that schema's field order.
 
 An invisible column is a data column. Except for the visibility behavior and the
@@ -341,6 +346,19 @@ Visible:   profile { name }
 Invisible: Profile { internal_id }
 Merged:    profile { name, internal_id }
 ```
+
+For a top-level map column with the following schematic type:
+
+```text
+scores: map<struct<name: string, id: long>, struct<score: long, internal_id: long>>
+```
+
+Visibility change | Allowed?
+-|-
+Hide `scores.key.id` while `scores` remains visible | No
+Hide the entire key while `scores` remains visible | No
+Hide `scores.value.internal_id` | Yes
+Hide the entire `scores` column | Yes
 
 The following two actions form a complete initial commit, `_delta_log/00000000000000000000.json`,
 for an empty, unpartitioned table with a visible `id` column and an invisible
