@@ -46,7 +46,7 @@ import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapabi
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.V1Table
-import org.apache.spark.sql.connector.expressions._
+import org.apache.spark.sql.connector.expressions.{ClusterByTransform => SparkClusterByTransform, _}
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -233,9 +233,19 @@ class DeltaTableV2 private(
   override def schema(): StructType = tableSchema
 
   override def partitioning(): Array[Transform] = {
-    initialSnapshot.metadata.partitionColumns.map { col =>
-      new IdentityTransform(new FieldReference(Seq(col)))
-    }.toArray
+    val partitionTransforms = initialSnapshot.metadata.partitionColumns.map { col =>
+      new IdentityTransform(new FieldReference(Seq(col))): Transform
+    }
+    // Expose clustering as a Spark `ClusterByTransform` so that callers that compare table
+    // partitioning to user-provided transforms (e.g. Spark's DataFrameWriter
+    // `checkPartitioningMatchesV2Table`) can see Delta's clustering columns. Without this,
+    // `df.write.format("delta").clusterBy(...).mode("append").saveAsTable(t)` fails on any
+    // existing clustered Delta table because Spark passes a `ClusterByTransform` while Delta
+    // would otherwise return an empty array.
+    val clusteringTransforms = clusterBySpec.toSeq.map { spec =>
+      SparkClusterByTransform(spec.columnNames): Transform
+    }
+    (partitionTransforms ++ clusteringTransforms).toArray
   }
 
   override def properties(): ju.Map[String, String] = {
