@@ -1322,28 +1322,40 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val df = snapshot.allFiles.toDF()
     val parseToTypedLiterals =
       spark.conf.get(DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_PARSE_PARTITION_VALUES)
+    val typeWideningFixEnabled =
+      spark.conf.get(DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_TYPE_WIDENING_FIX_ENABLED)
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
-
+    val existingFilesPartitionSchema = snapshot.metadata.physicalPartitionSchema
+    val currentPartitionSchema = metadata.physicalPartitionSchema
     val (filteredFiles, filterPredicate) = try {
       // Always fail on error. We log and throw it again or fall back depending on the config.
-      val newFilesNormalizedPartitionValues = newFiles.map(f =>
+      def normalizePartitionValues(
+          partitionValues: Map[String, String]): Map[String, Literal] =
         Action.normalizePartitionValues(
-          f.partitionValues,
-          metadata.physicalPartitionSchema,
+          partitionValues,
+          currentPartitionSchema,
           timeZone,
           parseToTypedLiterals,
           failOnParsingError = true)
-      ).toSet
 
-      val existingFilesPartitionSchema = snapshot.metadata.physicalPartitionSchema
-      val pred = DeltaUDF.booleanFromMap { filePartValues =>
-        newFilesNormalizedPartitionValues.contains(Action.normalizePartitionValues(
-          filePartValues,
-          existingFilesPartitionSchema,
-          timeZone,
-          parseToTypedLiterals,
-          failOnParsingError = true))
-      }(col("partitionValues"))
+      val newFilesNormalizedPartitionValues =
+        newFiles.map(f => normalizePartitionValues(f.partitionValues)).toSet
+      // Fall back to legacy matching if the physical partition keys differ.
+      val matchesPartition: Map[String, String] => Boolean = if (typeWideningFixEnabled &&
+          existingFilesPartitionSchema.names.toSet == currentPartitionSchema.names.toSet) {
+        // Use the same schema as readers to determine the partition value after type widening.
+        filePartValues =>
+          newFilesNormalizedPartitionValues.contains(normalizePartitionValues(filePartValues))
+      } else {
+        filePartValues =>
+          newFilesNormalizedPartitionValues.contains(Action.normalizePartitionValues(
+            filePartValues,
+            existingFilesPartitionSchema,
+            timeZone,
+            parseToTypedLiterals,
+            failOnParsingError = true))
+      }
+      val pred = DeltaUDF.booleanFromMap(matchesPartition)(col("partitionValues"))
       val files = df.filter(pred)
           .withColumn("stats", DataSkippingReader.nullStringLiteral)
           .as[AddFile]
@@ -1378,6 +1390,31 @@ trait OptimisticTransactionImpl extends TransactionHelper
             .as[AddFile]
             .collect()
         (files, pred)
+    }
+
+    try {
+      val changes = currentPartitionSchema.fields.sortBy(_.name).flatMap { field =>
+        existingFilesPartitionSchema.find(_.name == field.name)
+          .filter(_.dataType != field.dataType)
+          .map { oldField =>
+            Map("fromType" -> oldField.dataType.sql, "toType" -> field.dataType.sql)
+          }
+      }.toSeq
+      if (changes.nonEmpty) {
+        // Tracks partition type changes, fix/parsing settings, and files selected for removal.
+        // Cannot identify missed files or prove matching correctness.
+        recordDeltaEvent(
+          this,
+          opType = "delta.dynamicPartitionOverwrite.partitionTypeWidening",
+          data = Map(
+            "partitionTypeWideningFixEnabled" -> typeWideningFixEnabled,
+            "parsePartitionValues" -> parseToTypedLiterals,
+            "hasFilesToRemove" -> filteredFiles.nonEmpty,
+            "numIncomingFiles" -> newFiles.size,
+            "changes" -> changes))
+      }
+    } catch {
+      case NonFatal(_) => ()
     }
 
     trackReadPredicates(

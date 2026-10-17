@@ -3809,6 +3809,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_DYNAMIC_PARTITION_OVERWRITE_TYPE_WIDENING_FIX_ENABLED =
+    buildConf("dynamicPartitionOverwrite.typeWideningFix.enabled")
+      .internal()
+      .doc(
+        """Only applies when dynamicPartitionOverwrite.parsePartitionValues is enabled.
+          |When enabled, dynamic partition overwrite normalizes both existing and incoming
+          |partition values using the updated partition schema before matching. When disabled,
+          |keeps the legacy typed comparison.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   //////////////////
   // CORRECTNESS
   //////////////////
