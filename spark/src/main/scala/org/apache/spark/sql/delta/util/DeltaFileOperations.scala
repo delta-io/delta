@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.util
 
-import java.io.{FileNotFoundException, IOException}
+import java.io.{FileNotFoundException, IOException, UncheckedIOException}
 import java.net.URI
 import java.util.Locale
 
@@ -119,6 +119,21 @@ object DeltaFileOperations extends DeltaLogging {
   /** Check if the thrown exception is a throttling error. */
   private def isThrottlingError(t: Throwable): Boolean = {
     Option(t.getMessage).exists(_.toLowerCase(Locale.ROOT).contains("slow down"))
+  }
+
+  /**
+   * Check whether the thrown exception represents a "file not found" condition, including the
+   * case where it is wrapped in an [[UncheckedIOException]]. Some Hadoop connectors (e.g. GCS)
+   * open input streams lazily and surface the missing-path `FileNotFoundException` only on the
+   * first read, at which point [[io.delta.storage.LineCloseableIterator]] rethrows it wrapped in
+   * an `UncheckedIOException`. Callers that treat a missing path as "expected" (such as a
+   * brand-new table with no `_last_checkpoint` or `_delta_log`) should use this to recognize both
+   * forms.
+   */
+  def isFileNotFoundException(t: Throwable): Boolean = t match {
+    case _: FileNotFoundException => true
+    case e: UncheckedIOException if e.getCause != null => isFileNotFoundException(e.getCause)
+    case _ => false
   }
 
   private def randomBackoff(
