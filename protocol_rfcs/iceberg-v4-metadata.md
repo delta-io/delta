@@ -160,6 +160,20 @@ This design enables:
 
 <ins>CRC files remain optional. Readers may obtain `lastManifestCommit` from the CRC at the target snapshot version. If that CRC is unavailable, readers must read `commitInfo` from the original JSON commit file at that version. If that CRC is available, its `lastManifestCommit` must be identical to the counterpart from the `commitInfo` of the corresponding version.</ins>
 
+### Per-file Statistics
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#per-file-statistics)***
+
+<ins>When the `adaptiveMetadata` table feature is enabled, the following additional global statistic is supported in `add.stats` and `remove.stats`:</ins>
+
+| Name | Description |
+| - | - |
+| <ins>tightStats</ins> | <ins>Whether per-column statistics (`minValues`, `maxValues`, `nullCount`) are currently **tight** or **wide** across all columns on which statistics are collected, *other than* `string` columns.</ins> |
+
+<ins>Unlike `tightBounds`, which excludes both `string` and timestamp columns (because timestamp bounds are truncated down to milliseconds), `tightStats` includes `timestamp` and `timestamp without time zone` columns. When the `adaptiveMetadata` table feature is enabled, writers must write `tightStats` on newly added or updated files. When `tightStats` is explicitly present in `stats` (whether `true` or `false`), `minValues` and `maxValues` of `timestamp` and `timestamp without time zone` columns must not be truncated down to milliseconds and must represent valid lower and upper bounds on the values in the file. Under `tightStats`, `minValues`, `maxValues`, and `nullCount` follow the same tight (`tightStats=true`) and wide (`tightStats=false`) semantics defined for `tightBounds`, except that `timestamp` and `timestamp without time zone` columns are included in the tightness evaluation.</ins>
+
+<ins>When the `adaptiveMetadata` table feature is enabled, if `tightBounds` is absent from `stats`, readers must default it to `false`. Similarly, if `tightStats` is absent, readers must default it to `false`.</ins>
+
 --------
 
 > ***Add a new section at the [Table Features](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#table-features) section***
@@ -295,7 +309,7 @@ When an `add` re-adds a file in place with no paired `remove` (e.g., `OPTIMIZE` 
   "add": {
     "path": "data/part-00001.parquet",
     "size": 1234567,
-    "stats": "{\"numRecords\":1000,\"minValues\":{\"id\":1},\"maxValues\":{\"id\":1000}}",
+    "stats": "{\"numRecords\":1000,\"minValues\":{\"id\":1},\"maxValues\":{\"id\":1000},\"tightStats\":true}",
     "backReference": {
       "manifest": "metadata/leaf-m1.parquet",
       "pos": 17
@@ -478,7 +492,7 @@ If any child entry is missing a stats field, the aggregate for that field must b
 
 ### Stats Reconciliation
 
-Delta `add` actions carry statistics as a JSON `stats` string (`numRecords`, `nullCount`, `minValues`, `maxValues`, `tightBounds`), keyed by physical column name. Manifest entries carry the same information as `content_stats`, keyed by column-mapping field ID and stored in each field's type. A live file's stats exist as `add.stats` while it is only in the Delta log, and as `content_stats` once it is folded into the tree — never both. Readers must treat the two representations as equivalent for data skipping. `remove` actions carry a copy of the removed file's stats so that log replay can prune them (see [Remove File](#remove-file)).
+Delta `add` actions carry statistics as a JSON `stats` string (`numRecords`, `nullCount`, `minValues`, `maxValues`, `tightStats`, `tightBounds`), keyed by physical column name. Manifest entries carry the same information as `content_stats`, keyed by column-mapping field ID and stored in each field's type. A live file's stats exist as `add.stats` while it is only in the Delta log, and as `content_stats` once it is folded into the tree — never both. Readers must treat the two representations as equivalent for data skipping. `remove` actions carry a copy of the removed file's stats so that log replay can prune them (see [Remove File](#remove-file)).
 
 When folding a log `add` into a manifest, writers convert `add.stats` to `content_stats` as follows. Field IDs are the schema's column mapping IDs (`delta.columnMapping.id`), which are assigned in both `name` and `id` mode: the stats key (a physical column name) is matched to the schema field with that `delta.columnMapping.physicalName`, and that field's ID keys the stats struct. `minValues`/`maxValues` are converted from their JSON representation to the field's typed value.
 
@@ -488,9 +502,9 @@ When folding a log `add` into a manifest, writers convert `add.stats` to `conten
 | `nullCount[col]` | `null_value_count` |
 | `minValues[col]` | `lower_bound` |
 | `maxValues[col]` | `upper_bound` |
-| `tightBounds` | `tight_bounds` |
+| `tightStats` | `tight_bounds` |
 
-`value_count` and `nan_value_count` have no Delta source and are left unpopulated (readers treat them as unknown). `tightBounds` carries Delta's wide-bounds-under-deletion-vectors semantics to `tight_bounds`, consistent with manifest-level stats being `tight_bounds = false` when an MDV is present.
+`value_count` and `nan_value_count` have no Delta source and are left unpopulated (readers treat them as unknown). `tightStats` carries Delta's wide-bounds-under-deletion-vectors semantics to `tight_bounds`, consistent with manifest-level stats being `tight_bounds = false` when an MDV is present.
 
 ## Snapshot ID Generation
 
@@ -601,6 +615,7 @@ When `adaptiveMetadata` is supported and active, readers must:
 - Take the latest checkpoint to be the `checkpoint` action with the greatest `checkpointMetadata.version` (across manifest commits, standalone checkpoints, and `_last_checkpoint`), and use its `contentRoot` as the metadata tree. A later manifest commit that builds a newer tree supersedes an earlier standalone checkpoint that references an older tree.
 - Read the root manifest at `contentRoot.path` and skip leaf-manifest entries marked in `manifest_info.dv` (see [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
 - Reconstruct the current table state by applying the commits after `checkpointMetadata.version` on top of the tree, following [Action Reconciliation](#action-reconciliation).
+- Interpret `tightBounds`, `tightStats`, and timestamp bounds in file statistics according to [Per-file Statistics](#per-file-statistics) and [Stats Reconciliation](#stats-reconciliation).
 - Read any `sidecar` entries referenced by the checkpoint to obtain the complete set of transaction identifiers and domain metadata (see [Checkpoint Action](#checkpoint-action)).
 
 ## Writer Requirements for Adaptive Metadata
@@ -613,6 +628,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Materialize row-tracking and partition columns in data files, tagged with their Iceberg `field_id`s (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns) and [Partition Values](#partition-values)).
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
+- Set `tightStats` on newly written or updated file actions, and write `minValues` and `maxValues` of `timestamp` and `timestamp without time zone` columns in `add.stats` and `remove.stats` as valid lower and upper bounds without truncating down to milliseconds (see [Per-file Statistics](#per-file-statistics) and [Stats Reconciliation](#stats-reconciliation)).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
 - Include the `dataChange` field in the `commitInfo` action of every commit (see [Commit Provenance Information](#commit-provenance-information)).
 
