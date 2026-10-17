@@ -91,6 +91,18 @@ This design enables:
 
 <ins>Table-level aggregates (file count, total size, row count) are derived from the root manifest's aggregated metrics, not from a checkpoint that enumerates every file. Because checkpoints retain no remove tombstones, the count of removes is not part of checkpoint state, and multi-part checkpoint sizing based on that count does not apply.</ins>
 
+### Sidecar Files
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#sidecar-files)***
+
+<ins>When the `adaptiveMetadata` table feature is enabled, a sidecar file may instead contain `txn` or `domainMetadata` actions and is referenced by a `sidecar` entry of a `checkpoint` action. Such a sidecar file need not reside in `_delta_log/_sidecars`. See [Checkpoint Action Contents](#checkpoint-action-contents).</ins>
+
+### Sidecar File Information
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#sidecar-file-information)***
+
+<ins>When the `adaptiveMetadata` table feature is enabled, a `sidecar` action may also appear as an entry of a `checkpoint` action. There it carries an additional `type` field, and its `path` is a plain path relative to the table root rather than a URI-encoded path relative to `_delta_log/_sidecars`. See [Checkpoint Action Contents](#checkpoint-action-contents).</ins>
+
 ### Action Reconciliation
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#action-reconciliation)***
@@ -116,6 +128,8 @@ This design enables:
 <ins>2. **Data files and deletion vectors**: Any data file or deletion vector referenced by a reachable manifest entry, or by an `add` action in a retained log commit, is reachable.</ins>
 
 <ins>3. **Sidecars**: Any sidecar referenced by a retained `checkpoint` action is reachable.</ins>
+
+<ins>The V2 checkpoint sidecar cleanup steps, which delete files in `_delta_log/_sidecars` that no V2 checkpoint references, MUST NOT be applied as written: a file in `_delta_log/_sidecars` MUST be retained if it is referenced by a retained V2 checkpoint or a retained `checkpoint` action.</ins>
 
 <ins>Files not in the reachable set may be deleted once past the retention period. Reachability is derived from the live tree, not from `remove` tombstones, so no tombstone tracking is required (see [Remove File](#remove-file)).</ins>
 
@@ -193,7 +207,7 @@ table/
 │   ├── 00000000000000000042.json     # Commit with embedded checkpoint action
 │   ├── 00000000000000000043.json     # Log commit (small changes only)
 │   ├── _sidecars/
-│   │   └── txn-v42.parquet           # Transaction identifiers sidecar
+│   │   └── txn-5f3a9c1e-v42.parquet  # Transaction identifiers sidecar
 │   └── _last_checkpoint
 ├── metadata/                         # metadata tree
 │   ├── a3d1f7e2-v42.parquet          # Root manifest (UUID + version)
@@ -202,11 +216,16 @@ table/
 └── ... data files ...
 ```
 
-Filenames and directory layout shown above are illustrative. The protocol does not prescribe manifest naming conventions or file locations: manifests, data files, and deletion vectors are referenced by explicit paths (relative to the table root, or absolute URIs) and may reside anywhere the writer places them, including outside the directories shown. Readers locate files via those path references, not by directory or filename pattern, and cleanup determines what to delete by reachability (see [Metadata Cleanup](#metadata-cleanup)), not by layout.
+Filenames and directory layout shown above are illustrative. The protocol does not prescribe manifest naming conventions or file locations: manifests, sidecars, data files, and deletion vectors are referenced by explicit paths (relative to the table root, or absolute URIs) and may reside anywhere the writer places them, including outside the directories shown. Readers locate files via those path references, not by directory or filename pattern, and cleanup determines what to delete by reachability (see [Metadata Cleanup](#metadata-cleanup)), not by layout.
 
-The `metadata/` directory is the default and recommended location for manifests. Manifest paths in the protocol are stored as **relative paths from the table root** (e.g., `metadata/root-v42.parquet`). A path is relative if it does not contain a URI scheme. Relative paths are resolved by joining the table location and the relative path with a `/` separator (`table_location + "/" + relative_path`). Absolute paths (with a URI scheme) are used as-is. Relative paths must not start with `/` and table locations must not end with `/` to avoid duplicate separators. This follows the [Iceberg V4 relative paths specification](https://iceberg.apache.org/spec/#paths-in-metadata).
+The `metadata/` directory is the default and recommended location for manifests. Writers SHOULD place [sidecar files](#checkpoint-action-contents) in the `_delta_log/_sidecars/` directory.
 
-The `_delta_log/_sidecars/` directory stores auxiliary data that is too large to embed in the checkpoint action.
+The paths this RFC introduces are `contentRoot.path`, `sidecar.path`, `backReference.manifest`, and the `location` fields of [content entries](#entry-fields) and [deletion vectors](#deletion-vector). They follow the [Iceberg V4 relative paths specification](https://iceberg.apache.org/spec/#paths-in-metadata):
+- A path is a plain string and is not URI-encoded. This differs from `add.path` and `remove.path`, which are URI-encoded.
+- A path is relative if it does not contain a URI scheme. Relative paths are relative to the table root (e.g., `metadata/root-v42.parquet`) and are resolved by joining the table location and the relative path with a `/` separator (`table_location + "/" + relative_path`). Absolute paths (with a URI scheme) are used as-is.
+- Relative paths MUST NOT start with `/`, and table locations MUST NOT end with `/`, to avoid duplicate separators.
+
+When converting between a file action and a content entry, writers MUST URI-decode an `add` or `remove` path to produce the entry's `location`, and MUST URI-encode a `location` to produce an `add` or `remove` path. Implementations MUST compare an `add` or `remove` path with a `location` only after URI-decoding the action's path.
 
 ## Checkpoint Action
 
@@ -221,7 +240,7 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
     { "metaData": { "id": "af23c9d7-fff1-4a5a-a2c8-55c59bd782aa", "name": "my_table", "schemaString": "{...}", "partitionColumns": [], "configuration": {}, "createdTime": 1234567890000 } },
     { "domainMetadata": { "domain": "delta.rowTracking", "configuration": "{\"rowIdHighWaterMark\": 1000000}", "removed": false } },
     { "txn": { "appId": "streaming-app-1", "version": 100, "lastUpdated": 1234567890000 } },
-    { "sidecar": { "type": "txn", "path": "txn-v42.parquet", "sizeInBytes": 2048, "modificationTime": 1234567890000, "tags": {} } }
+    { "sidecar": { "type": "txn", "path": "_delta_log/_sidecars/txn-5f3a9c1e-v42.parquet", "sizeInBytes": 2048, "modificationTime": 1234567890000, "tags": {} } }
   ]
 }
 ```
@@ -235,16 +254,25 @@ The `checkpoint` action is an array of action entries. Each entry is one of:
 | Action | Description |
 |--------|-------------|
 | `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log. |
-| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). `tags` allow writers to record additional optional metadata about the manifest tree. |
+| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI; see [Storage Layout](#storage-layout)), `sizeInBytes`, `version`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). `tags` allow writers to record additional optional metadata about the manifest tree. |
 | `protocol` | The Protocol action at this checkpoint version. |
 | `metaData` | The Metadata action at this checkpoint version. |
 | `domainMetadata` | A DomainMetadata action. System domains (keys prefixed with `delta.`) must appear here; user domains may appear here or in a sidecar. |
 | `txn` | A SetTransaction action (`appId`, `version`, `lastUpdated`). May appear here or in a sidecar. |
-| `sidecar` | A sidecar reference for spilled user domain metadata or txns: `type` (`txn` or `domainMetadata`), `path`, `sizeInBytes`, `modificationTime`, `tags`. File-level metadata is stored in the content tree, not in sidecars. |
+| `sidecar` | A sidecar reference for spilled user domain metadata or txns: `type` (`txn` or `domainMetadata`), `path` (relative to the table root, or an absolute URI; see [Storage Layout](#storage-layout); e.g., `_delta_log/_sidecars/txn-5f3a9c1e-v42.parquet`. Unlike the `path` of a [V2 checkpoint `sidecar` action](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#sidecar-file-information), it is not URI-encoded and is not relative to `_delta_log/_sidecars`), `sizeInBytes`, `modificationTime`, `tags`. File-level metadata is stored in the content tree, not in sidecars. |
 
 System domain metadata (domains prefixed with `delta.`) must always appear as `domainMetadata` entries in the checkpoint action; it is small and required for correctness. User domain metadata and `txn`s may appear as entries, in sidecars, or split across both.
 
 For both user domain metadata and `txns`, inline and sidecar storage may coexist: a small inline set and one or more sidecars can be present together. The only constraint is per-key uniqueness — a given `appId` (or `domain`) must appear in exactly one place, whether inline or in a single sidecar, never in more than one. Each sidecar carries a `type` field (`txn` or `domainMetadata`) identifying which kind it holds, and a kind may be split across multiple sidecars of the same `type`. The complete set of transaction identifiers (or user domain metadata) at `checkpointMetadata.version` is the union of the inline entries and all sidecars of the corresponding type.
+
+A sidecar file contains the `txn` or `domainMetadata` actions named by its `type`. These files are in parquet format. Writers MUST give each sidecar file a unique path (e.g., by including a UUID in its name) and MUST NOT overwrite an existing sidecar file. As in [V2 checkpoint sidecar files](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#sidecar-files), each row holds one action, stored as a struct in a top-level column named after the action. Writers MUST write exactly one such column, the one named by the sidecar's `type`, and readers MUST read only that column. The struct's fields, types and nullability are those of the [`txn`](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#transaction-identifiers) or [`domainMetadata`](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata) action; for example, `lastUpdated` is optional. A `domainMetadata` sidecar MUST NOT contain tombstones (actions with `removed=true`), as checkpoints exclude them. For example, the `txn` sidecar `_delta_log/_sidecars/txn-5f3a9c1e-v42.parquet` has the following schema:
+
+```
+|-- txn: struct
+|    |-- appId: string
+|    |-- version: long
+|    |-- lastUpdated: long
+```
 
 ## Backreferences
 
@@ -308,7 +336,7 @@ When an `add` re-adds a file in place with no paired `remove` (e.g., `OPTIMIZE` 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `manifest` | String | Path to the leaf manifest containing this file, relative to the table root (e.g., `metadata/leaf-m1.parquet`) |
+| `manifest` | String | Path to the leaf manifest containing this file, stored exactly like the leaf's `location`: a plain path relative to the table root (e.g., `metadata/leaf-m1.parquet`). See [Storage Layout](#storage-layout). |
 | `pos` | Int | Row position (0-indexed) of the file entry within the manifest |
 
 ## Content Entry Schema
@@ -333,7 +361,7 @@ The root manifest contains entries of the following types:
 | 147 | `tracking` | Struct ([Tracking](#tracking)) | Required | All | Tracking information for this entry |
 | 134 | `content_type` | Int | Required | All | 0=DATA, 3=DATA_MANIFEST |
 | 157 | `format_version` | Int | Required | All | Iceberg writer format version; 4 for V4. |
-| 100 | `location` | String | Required | All | Path relative to table root (e.g., `metadata/leaf-m1.parquet` or `data/part-00001.parquet`). May be absolute URI. |
+| 100 | `location` | String | Required | All | Plain path relative to table root (e.g., `metadata/leaf-m1.parquet` or `data/part-00001.parquet`). May be absolute URI. See [Storage Layout](#storage-layout). |
 | 101 | `file_format` | String | Required | All | File format name. Delta only supports `parquet`. |
 | 102 | `partition` | Struct | Optional | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). |
 | 103 | `record_count` | Long | Required | All | Number of records in the file |
@@ -399,7 +427,7 @@ Tracks where a DV blob can be read. Only for `content_type` = DATA entries.
 
 | Field ID | Field Name | Delta Type | Required | Description |
 |----------|------------|------------|----------|-------------|
-| 155 | `location` | String | Required | Path to file containing the DV |
+| 155 | `location` | String | Required | Plain path to the file containing the DV, relative to the table root or an absolute URI. See [Storage Layout](#storage-layout). |
 | 144 | `offset` | Long | Required | Offset in the file where DV content starts |
 | 145 | `size_in_bytes` | Long | Required | Length of DV content in the file |
 | 156 | `cardinality` | Long | Required | Number of set bits (deleted rows) in the vector |
