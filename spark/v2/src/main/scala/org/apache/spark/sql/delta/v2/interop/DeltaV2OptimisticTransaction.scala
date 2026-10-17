@@ -82,6 +82,8 @@ private[v2] class DeltaV2OptimisticTransaction(
       catalogTable.toJava
     )
 
+  private val queryContext = DeltaV2QueryContext(catalogTable)
+
   /**
    * Opt in to the base null-deltaLog guardrail: this transaction legitimately has no V1 DeltaLog.
    */
@@ -203,9 +205,11 @@ private[v2] class DeltaV2OptimisticTransaction(
   private def readCommitActionsInRange[T](
       startVersion: Long,
       endVersion: Long)(mapper: KernelCommitActions => T): Seq[T] = {
-    val commitRange = deltaV2SnapshotManager
-      .getTableChanges(
-        kernelEngine, startVersion, Optional.of(java.lang.Long.valueOf(endVersion)))
+    val commitRange = deltaV2SnapshotManager.getTableChanges(
+      kernelEngine,
+      startVersion,
+      Optional.of(java.lang.Long.valueOf(endVersion)),
+      queryContext)
       .asInstanceOf[KernelCommitRangeImpl]
     val actionSet = java.util.EnumSet.allOf(classOf[KernelDeltaAction])
     val commitActionsIter = commitRange.getCommitActions(kernelEngine, actionSet)
@@ -229,7 +233,7 @@ private[v2] class DeltaV2OptimisticTransaction(
    * Gets the conflicting versions through Kernel, from the previous attempt version to the latest.
    */
   override protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {
-    val latestVersion = deltaV2SnapshotManager.loadLatestSnapshot().version
+    val latestVersion = deltaV2SnapshotManager.loadLatestSnapshot(queryContext).version
     if (previousAttemptVersion > latestVersion) {
       return Seq.empty
     }

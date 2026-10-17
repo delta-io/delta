@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.TableManagerTestAdapter;
 import java.io.File;
 import java.util.Map;
 import java.util.Optional;
@@ -31,6 +32,7 @@ import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.SortOrder;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -115,11 +117,12 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             path,
             mgr.loadLatestSnapshot(),
             Optional.empty(),
-            mgr,
+            TableManagerTestAdapter.apply(mgr),
             dataSchema,
             partitionSchema,
             WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()),
-            /* variantShreddingEnabled */ false);
+            /* variantShreddingEnabled */ false,
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
 
     assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
     SortOrder[] ordering = write.requiredOrdering();
@@ -162,11 +165,12 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             path,
             mgr.loadLatestSnapshot(),
             Optional.empty(),
-            mgr,
+            TableManagerTestAdapter.apply(mgr),
             dataSchema,
             partitionSchema,
             WriteTestUtils.logicalWriteInfo(fullSchema, CaseInsensitiveStringMap.empty()),
-            /* variantShreddingEnabled */ false);
+            /* variantShreddingEnabled */ false,
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
 
     assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
     SortOrder[] ordering = write.requiredOrdering();
@@ -196,10 +200,11 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
         path,
         snapshot,
         Optional.empty(),
-        snapshotManager,
+        TableManagerTestAdapter.apply(snapshotManager),
         TABLE_SCHEMA,
         new StructType(),
         info,
-        /* variantShreddingEnabled */ false);
+        /* variantShreddingEnabled */ false,
+        DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
   }
 }

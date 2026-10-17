@@ -686,11 +686,11 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
           DeltaV2TableManagerCache$.MODULE$.forTable(
               sessionB, path, tableOptions, catalogTableOptB);
 
-      assertTrue(tableA.getSnapshotManager() instanceof CachedSnapshotManager);
-      assertTrue(tableB.getSnapshotManager() instanceof CachedSnapshotManager);
+      assertSame(managerA, tableA.getTableManager());
+      assertSame(managerB, tableB.getTableManager());
       assertSame(managerA, managerB);
       assertSame(managerA.kernelContext(), managerB.kernelContext());
-      assertSame(tableA.getSnapshotManager(), tableB.getSnapshotManager());
+      assertSame(tableA.getTableManager(), tableB.getTableManager());
       assertEquals("0", tableA.version());
       assertEquals("0", tableB.version());
 
@@ -792,7 +792,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   private static void assertLatestSnapshot(
       DeltaV2Table table, SparkSession activeSession, long expectedVersion, long expectedFiles) {
     DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.apply(table.getCatalogTable());
-    Snapshot snapshot = table.getSnapshotManager().loadLatestSnapshot(queryContext);
+    Snapshot snapshot = table.getTableManager().loadLatestSnapshot(queryContext);
     Dataset<?> allFiles = snapshot.allFiles();
     assertEquals(expectedVersion, snapshot.version());
     assertSame(activeSession, allFiles.sparkSession());

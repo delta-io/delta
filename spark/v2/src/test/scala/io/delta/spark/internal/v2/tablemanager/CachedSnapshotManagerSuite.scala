@@ -151,7 +151,6 @@ class CachedSnapshotManagerSuite
         storage = CatalogStorageFormat.empty,
         schema = new StructType())
       val observedCatalogTables = new ConcurrentLinkedQueue[Option[CatalogTable]]()
-      val kernelContext = KernelContext(Map.empty, LogStore.createLogStore(spark))
       val factoryMock = mockStatic(
         classOf[SnapshotManagerFactory],
         new Answer[DeltaV2SnapshotManager] {
@@ -162,13 +161,14 @@ class CachedSnapshotManagerSuite
             throw new IllegalStateException("recorded catalog metadata")
           }
         })
-      val manager = new CachedSnapshotManager(
+      val tableManager = new DeltaV2TableManagerImpl(
         new Path(dir.getCanonicalPath),
-        kernelContext,
-        new AtomicReference[CatalogTable](legacyCatalogTable))
+        Map.empty,
+        Some(legacyCatalogTable))
+      val manager = tableManager.snapshotManager(Some(legacyCatalogTable))
       try {
         val queryContext = DeltaV2QueryContext(Some(queryCatalogTable))
-        val kernelEngine = kernelContext.getDefaultEngine()
+        val kernelEngine = tableManager.kernelContext.getDefaultEngine()
 
         def assertRoutesWith(
             expectedCatalogTableOpt: Option[CatalogTable])(
@@ -188,16 +188,18 @@ class CachedSnapshotManagerSuite
           assertRoutesWith(Some(legacyCatalogTable))(operation()))
 
         def contextualOperations(context: DeltaV2QueryContext): Seq[() => Any] = Seq(
-          () => manager.loadLatestSnapshot(context),
-          () => manager.loadSnapshotAt(0L, context),
-          () => manager.getActiveCommitAtTime(0L, false, false, false, context),
-          () => manager.checkVersionExists(0L, false, false, context),
-          () => manager.getTableChanges(kernelEngine, 0L, Optional.empty(), context))
+          () => tableManager.loadLatestSnapshot(context),
+          () => tableManager.loadSnapshotAt(0L, context),
+          () => tableManager.getActiveCommitAtTime(0L, false, false, false, context),
+          () => tableManager.checkVersionExists(0L, false, false, context),
+          () => tableManager.getTableChanges(kernelEngine, 0L, Optional.empty(), context))
 
         contextualOperations(queryContext).foreach(operation =>
           assertRoutesWith(Some(queryCatalogTable))(operation()))
         contextualOperations(DeltaV2QueryContext.empty).foreach(operation =>
           assertRoutesWith(None)(operation()))
+        legacyOperations.foreach(operation =>
+          assertRoutesWith(Some(legacyCatalogTable))(operation()))
         assert(observedCatalogTables.isEmpty)
       } finally {
         factoryMock.close()
@@ -246,7 +248,7 @@ class CachedSnapshotManagerSuite
               Identifier.of(Array("default"), laterTableName),
               laterCatalogTable,
               Collections.emptyMap[String, String]())
-            assert(originalTable.getSnapshotManager eq laterTable.getSnapshotManager)
+            assert(originalTable.getTableManager eq laterTable.getTableManager)
 
             val laterPublicationAtMs = System.currentTimeMillis()
             awaitClockAfter(laterPublicationAtMs)
