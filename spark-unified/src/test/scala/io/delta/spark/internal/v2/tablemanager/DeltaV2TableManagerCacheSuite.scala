@@ -15,17 +15,20 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
-import java.util.Collections
+import java.util.{Collections, Optional}
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
+import io.delta.kernel.{CommitRange => KernelCommitRange}
+import io.delta.kernel.engine.{Engine => KernelEngine}
+import io.delta.kernel.internal.{DeltaHistoryManager => KernelDeltaHistoryManager}
 import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache.CacheKey
 
-import org.apache.spark.sql.delta.DeltaSingleCommit
+import org.apache.spark.sql.delta.{DeltaSingleCommit, Snapshot}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStore}
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2SnapshotManager}
 
 import com.google.common.base.Ticker
 import org.apache.spark.sql.QueryTest
@@ -437,6 +440,29 @@ private[tablemanager] class StubTableManager(val id: String) extends DeltaV2Tabl
       catalogTableOpt: Option[CatalogTable],
       failOnDataLoss: Boolean)
       : ClosableIterator[DeltaSingleCommit] =
+    throw new UnsupportedOperationException("stub")
+  override def loadLatestSnapshot(queryContext: DeltaV2QueryContext): Snapshot =
+    throw new UnsupportedOperationException("stub")
+  override def loadSnapshotAt(version: Long, queryContext: DeltaV2QueryContext): Snapshot =
+    throw new UnsupportedOperationException("stub")
+  override def getActiveCommitAtTime(
+      timestampMillis: Long,
+      canReturnLastCommit: Boolean,
+      mustBeRecreatable: Boolean,
+      canReturnEarliestCommit: Boolean,
+      queryContext: DeltaV2QueryContext): KernelDeltaHistoryManager.Commit =
+    throw new UnsupportedOperationException("stub")
+  override def checkVersionExists(
+      version: Long,
+      mustBeRecreatable: Boolean,
+      allowOutOfRange: Boolean,
+      queryContext: DeltaV2QueryContext): Unit =
+    throw new UnsupportedOperationException("stub")
+  override def getTableChanges(
+      kernelEngine: KernelEngine,
+      startVersion: Long,
+      endVersion: Optional[java.lang.Long],
+      queryContext: DeltaV2QueryContext): KernelCommitRange =
     throw new UnsupportedOperationException("stub")
   override def retire(): Unit = { retired = true }
 }

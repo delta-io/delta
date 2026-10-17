@@ -15,12 +15,12 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
-import java.util.EnumSet
+import java.util.{EnumSet, Optional}
 import java.util.concurrent.atomic.AtomicReference
 
 import scala.jdk.OptionConverters._
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaSingleCommit}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaSingleCommit, Snapshot}
 import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStoreProvider}
 import org.apache.spark.sql.delta.v2.interop.{
   DeltaV2QueryContext,
@@ -29,6 +29,9 @@ import org.apache.spark.sql.delta.v2.interop.{
 }
 import io.delta.spark.internal.v2.kernel.KernelContext
 import org.apache.hadoop.fs.Path
+import io.delta.kernel.{CommitRange => KernelCommitRange}
+import io.delta.kernel.engine.{Engine => KernelEngine}
+import io.delta.kernel.internal.{DeltaHistoryManager => KernelDeltaHistoryManager}
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 
 import org.apache.spark.sql.SparkSession
@@ -98,6 +101,40 @@ private[tablemanager] class DeltaV2TableManagerImpl(
       override def close(): Unit = kernelCommits.close()
     }
   }
+
+  override def loadLatestSnapshot(queryContext: DeltaV2QueryContext): Snapshot =
+    cachedSnapshotManager.loadLatestSnapshot(queryContext)
+
+  override def loadSnapshotAt(version: Long, queryContext: DeltaV2QueryContext): Snapshot =
+    cachedSnapshotManager.loadSnapshotAt(version, queryContext)
+
+  override def getActiveCommitAtTime(
+      timestampMillis: Long,
+      canReturnLastCommit: Boolean,
+      mustBeRecreatable: Boolean,
+      canReturnEarliestCommit: Boolean,
+      queryContext: DeltaV2QueryContext): KernelDeltaHistoryManager.Commit =
+    cachedSnapshotManager.getActiveCommitAtTime(
+      timestampMillis,
+      canReturnLastCommit,
+      mustBeRecreatable,
+      canReturnEarliestCommit,
+      queryContext)
+
+  override def checkVersionExists(
+      version: Long,
+      mustBeRecreatable: Boolean,
+      allowOutOfRange: Boolean,
+      queryContext: DeltaV2QueryContext): Unit =
+    cachedSnapshotManager.checkVersionExists(
+      version, mustBeRecreatable, allowOutOfRange, queryContext)
+
+  override def getTableChanges(
+      kernelEngine: KernelEngine,
+      startVersion: Long,
+      endVersion: Optional[java.lang.Long],
+      queryContext: DeltaV2QueryContext): KernelCommitRange =
+    cachedSnapshotManager.getTableChanges(kernelEngine, startVersion, endVersion, queryContext)
 
   override def retire(): Unit = cachedSnapshotManager.retire()
 }
