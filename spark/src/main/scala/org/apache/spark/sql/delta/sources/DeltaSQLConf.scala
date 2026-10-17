@@ -2895,6 +2895,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CDF_START_VERSION_SCHEMA_CHECK_ENABLED =
+    buildConf("changeDataFeed.startVersionSchemaCheck.enabled")
+      .internal()
+      .doc("When enabled, batch CDF reads fail if files removed in the starting commit use " +
+        "an incompatible prior schema. Incompatibilities are logged even when this flag " +
+        "is disabled.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE =
     buildConf("changeDataFeed.defaultSchemaModeForColumnMappingTable")
       .doc(

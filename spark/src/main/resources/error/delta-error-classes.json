@@ -565,6 +565,24 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_STARTING_COMMIT_SCHEMA" : {
+    "message" : [
+      "Cannot read changes from version <start> because its removed files use the version <priorVersion> schema, which is incompatible with the read schema."
+    ],
+    "subClass" : {
+      "KNOWN_OPERATION" : {
+        "message" : [
+          "Operation: <operation>."
+        ]
+      },
+      "UNKNOWN_OPERATION" : {
+        "message" : [
+          "The commit operation is unknown."
+        ]
+      }
+    },
+    "sqlState" : "0AKDC"
+  },
   "DELTA_CHANGE_TABLE_FEED_DISABLED" : {
     "message" : [
       "Cannot write to table with delta.enableChangeDataFeed set. Change data feed from Delta is not available."
