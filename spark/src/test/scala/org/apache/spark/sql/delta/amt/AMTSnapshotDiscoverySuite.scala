@@ -965,6 +965,55 @@ class AMTSnapshotDiscoverySuite
       s"Log segment must trim deltas up to the checkpoint version; got $segmentDeltaVersions.")
   }
 
+  test("[post-commit] commitLarge retains the read snapshot's AMT provider") {
+    withSQLConf(
+        // Disable async read so any reconciliation would fail, as commitLarge doesn't write CRC.
+        DeltaSQLConf.AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED.key -> "false") {
+      val name = "amt_post_commit_large_reuses_provider"
+      withTable(name) {
+        createAMTTable(name, checkpointInterval = Int.MaxValue)
+        sql(s"INSERT INTO $name VALUES (1)")
+        val deltaLog = deltaLogForName(name)
+        commitCheckpoint(deltaLog, incremental = false)
+        val txn = deltaLog.startTransaction(Some(catalogTableFor(name)))
+        val readAMTProvider = amtProvider(txn.snapshot).get
+        val addFile = liveAddFiles(txn.snapshot).head
+
+        val (committedVersion, postCommitSnapshot) = txn.commitLarge(
+          spark,
+          Iterator(addFile.removeWithTimestamp()),
+          newProtocolOpt = None,
+          op = DeltaOperations.Delete(Seq.empty),
+          context = Map.empty,
+          metrics = Map.empty,
+          dataChange = true)
+
+        assert(committedVersion == txn.readVersion + 1)
+        assert(postCommitSnapshot.version == committedVersion)
+        // The post-commit snapshot for commitLarge does not include the synchronous AMT checkpoint,
+        // so it should have the same last manifest commit as the read snapshot.
+        assert(postCommitSnapshot.lastManifestCommitOpt == txn.snapshot.lastManifestCommitOpt)
+        // The post-commit snapshot should have the same AMT provider as the read snapshot.
+        val postCommitAMTProvider = amtProvider(postCommitSnapshot).get
+        assert(postCommitAMTProvider eq readAMTProvider)
+        assert(postCommitAMTProvider.version == readAMTProvider.version)
+
+        // The synchronous checkpoint lands in the next commit and covers the large commit's state.
+        val latestSnapshot = deltaLog.update()
+        assert(latestSnapshot.version == committedVersion + 1)
+        val latestAMTProvider = amtProvider(latestSnapshot).get
+        assert(latestAMTProvider ne readAMTProvider)
+        assert(latestAMTProvider.version == committedVersion)
+        assert(latestAMTProvider.manifestCommitVersion == committedVersion + 1)
+        assert(latestAMTProvider.checkpointAction.contentRoot.version == committedVersion)
+        val expectedLastManifestCommit = LastManifestCommit(
+          version = committedVersion + 1,
+          contentRootVersion = committedVersion)
+        assert(latestSnapshot.lastManifestCommitOpt == Some(expectedLastManifestCommit))
+      }
+    }
+  }
+
   test("[post-commit] conflict retry reuses the AMT discovered on a separate DeltaLog") {
     // Time  Transaction A                             Transaction B
     // ----  ----------------------------------------  -------------------------------------
