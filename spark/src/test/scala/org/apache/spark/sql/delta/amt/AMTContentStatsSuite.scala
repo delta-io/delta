@@ -414,6 +414,58 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
       s"nested a.b stats must reconstruct into its own slot; got $reconstructed")
   }
 
+  test("nested null counts: null parents are counted and required fields keep a zero count") {
+    val tableName = "amt_content_stats_null_parent"
+    withTable(tableName) {
+      createAMTTable(
+        tableName,
+        checkpointInterval = Int.MaxValue,
+        tableSchema = "s STRUCT<i: INT, f: FLOAT>, s2 STRUCT<i: INT, f: FLOAT>, " +
+          "req STRUCT<i: INT NOT NULL, f: FLOAT NOT NULL> NOT NULL")
+      // One file, three rows. In `s` the children are never independently null, so its count comes
+      // only from the null parent in row 1. In `s2` the inner fields are null in row 0 and the
+      // parent is null in row 1, so its count combines both. `req` is NOT NULL at the field and
+      // across its whole ancestor chain, so it can never be null, yet still keeps a null count:
+      //
+      // | row | s               | s2                 | req             |
+      // |-----|-----------------|--------------------|-----------------|
+      // | 0   | {i: 0,  f: 0.0} | {i: null, f: null} | {i: 0,  f: 0.0} |
+      // | 1   | null            | null               | {i: 10, f: 1.0} |
+      // | 2   | {i: 20, f: 2.0} | {i: 20, f: 2.0}    | {i: 20, f: 2.0} |
+      appendRowsAsSeparateFiles(
+        tableName,
+        numFiles = 1,
+        rowsPerFile = 3,
+        columnExprs = Seq(
+          "IF(id = 1, NULL, named_struct('i', CAST(id * 10 AS INT), 'f', CAST(id AS FLOAT)))",
+          "IF(id = 1, NULL, named_struct(" +
+            "'i', IF(id = 0, NULL, CAST(id * 10 AS INT)), " +
+            "'f', IF(id = 0, NULL, CAST(id AS FLOAT))))",
+          "named_struct('i', CAST(id * 10 AS INT), 'f', CAST(id AS FLOAT))"))
+      val deltaLog = deltaLogForName(tableName)
+      val snapshot = deltaLog.update()
+      val add = liveAddFiles(snapshot).head
+      val entry = DataEntry.fromAddFile(
+        add, AMTWriteHelper.addedTrackingForDataEntry(), deltaLog.dataPath)
+      val input = Seq(entry.wrap).toDS().toDF()
+      val persisted = AMTContentStats.forWrite(input, snapshot.metadata, snapshot.protocol)
+
+      def nullCount(name: String): Long = {
+        val sub = col("content_stats").getField(contentStatsField(persisted, name))
+        persisted.select(sub.getField("null_value_count")).as[Long].head()
+      }
+      // `s`: only the null parent (row 1) is counted, int and float alike.
+      assert(nullCount("s_i") == 1, "int child: the null parent row must be counted")
+      assert(nullCount("s_f") == 1, "float child: the null parent row must be counted, same as int")
+      // `s2`: null inner (row 0) plus null parent (row 1) both counted, int and float alike.
+      assert(nullCount("s2_i") == 2, "int child: null inner and null parent are both counted")
+      assert(nullCount("s2_f") == 2, "float child: null inner and null parent are both counted")
+      // `req`: a required field (NOT NULL up the whole chain) still keeps null_value_count, as 0.
+      assert(nullCount("req_i") == 0, "required int field: null_value_count is kept, as 0")
+      assert(nullCount("req_f") == 0, "required float field: null_value_count is kept, as 0")
+    }
+  }
+
   /** The persisted Iceberg `tight_bounds` of the sub-struct for logical column `column`. */
   private def persistedTightBounds(persisted: DataFrame, column: String): Boolean = {
     val sub = col("content_stats").getField(contentStatsField(persisted, column))
