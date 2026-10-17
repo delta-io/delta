@@ -31,7 +31,8 @@ import org.apache.spark.sql.delta.util.SetAccumulator
 import org.apache.spark.sql.{Column, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal, Or}
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeIntoClause
-import org.apache.spark.sql.functions.{coalesce, col, count, input_file_name, lit, monotonically_increasing_id, sum}
+import org.apache.spark.sql.execution.datasources.FileFormat.FILE_PATH
+import org.apache.spark.sql.functions.{coalesce, col, count, lit, monotonically_increasing_id, sum}
 
 /**
  * Trait with merge execution in two phases:
@@ -133,9 +134,11 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         deltaTxn,
         dataSkippedFiles,
         columnsToDrop)
-    val targetDF = DataFrameUtils.ofRows(spark, targetPlan)
+    val (targetPlanWithFileMetadata, fileMetadataCol) =
+      DeltaTableUtils.addFileMetadataColumn(targetPlan)
+    val targetDF = DataFrameUtils.ofRows(spark, targetPlanWithFileMetadata)
       .withColumn(ROW_ID_COL, monotonically_increasing_id())
-      .withColumn(FILE_NAME_COL, input_file_name())
+      .withColumn(FILE_NAME_COL, Column(fileMetadataCol).getField(FILE_PATH))
 
     val joinToFindTouchedFiles =
       sourceDF.join(targetDF, Column(condition), joinType)
