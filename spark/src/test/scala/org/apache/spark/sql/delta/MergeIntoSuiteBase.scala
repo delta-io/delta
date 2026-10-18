@@ -3027,8 +3027,8 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
       mergeOn: String,
       result: Seq[(JInt, JInt)]) = {
     Seq(true, false).foreach { isPartitioned =>
-      withConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> "true") {
-        test(s"matched only merge - null handling - $name, isPartitioned: $isPartitioned") {
+      test(s"matched only merge - null handling - $name, isPartitioned: $isPartitioned") {
+        withConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> "true") {
           withView("sourceView") {
             val partitions = if (isPartitioned) "key" :: Nil else Nil
             append(target.toDF("key", "value"), partitions)
