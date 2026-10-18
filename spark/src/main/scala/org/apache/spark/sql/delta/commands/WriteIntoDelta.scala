@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.commands
 
+import java.time.Instant
+
 import scala.collection.mutable
 import scala.util.Try
 
@@ -77,6 +79,9 @@ import org.apache.spark.sql.types.{StringType, StructType}
  * @param catalogTableOpt Should explicitly be set when table is accessed from catalog
  * @param schemaInCatalog The schema created in Catalog. We will use this schema to update metadata
  *                        when it is set (in CTAS code path), and otherwise use schema from `data`.
+ * @param insertReplaceOnOrUsingCurrentTimeOpt Statement time, when INSERT REPLACE ON/USING uses
+ *                                            time functions such as current_timestamp() or now().
+ *                                            Captures one time for both DELETE and INSERT.
  */
 case class WriteIntoDelta(
     override val deltaLog: DeltaLog,
@@ -87,8 +92,8 @@ case class WriteIntoDelta(
     override val data: DataFrame,
     val catalogTableOpt: Option[CatalogTable] = None,
     schemaInCatalog: Option[StructType] = None,
-    isInsertReplaceUsingByName: Boolean = false
-    )
+    isInsertReplaceUsingByName: Boolean = false,
+    insertReplaceOnOrUsingCurrentTimeOpt: Option[Instant] = None)
   extends LeafRunnableCommand
   with ImplicitMetadataOperation
   with DeltaCommand
@@ -129,6 +134,16 @@ case class WriteIntoDelta(
     }
     Seq.empty
   }
+
+  /** Matches the DELETE condition to the source's statement time. */
+  private[commands] def pinReplaceOnOrUsingCurrentTime(
+      deleteCommand: DeleteCommand): DeleteCommand =
+    insertReplaceOnOrUsingCurrentTimeOpt match {
+      case Some(instant) =>
+        DeltaInsertReplaceOnOrUsingCommand.applyWithTimestamp(deleteCommand, instant)
+          .asInstanceOf[DeleteCommand]
+      case None => deleteCommand
+    }
 
   override def writeAndReturnCommitData(
       txn: OptimisticTransaction,
@@ -482,7 +497,7 @@ case class WriteIntoDelta(
     val command = sparkWithSubqueryDelete.sessionState.analyzer.execute(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
     sparkWithSubqueryDelete.sessionState.analyzer.checkAnalysis(command)
-    val deleteCmd = command.asInstanceOf[DeleteCommand]
+    val deleteCmd = pinReplaceOnOrUsingCurrentTime(command.asInstanceOf[DeleteCommand])
     val (deleteActions, deleteMetrics) =
       deleteCmd.performDelete(sparkWithSubqueryDelete, txn.deltaLog, txn)
     recordDeltaEvent(

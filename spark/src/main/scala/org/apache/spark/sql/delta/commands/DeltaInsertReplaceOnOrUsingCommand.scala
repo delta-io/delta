@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.commands
 
+import java.time.{Instant, LocalDateTime}
+
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DataFrameUtils, DeltaErrors, DeltaLog, DeltaOptions, OptimisticTransaction}
@@ -23,18 +25,21 @@ import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.commands.InsertReplaceOnOrUsingAPIOrigin.InsertReplaceOnOrUsingAPIOrigin
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.commons.lang3.StringUtils
 
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
-import org.apache.spark.sql.catalyst.expressions.{Alias, And, Attribute, EqualTo, Expression}
+import org.apache.spark.sql.catalyst.expressions.{Alias, And, Attribute, CurrentDate, CurrentTimestamp, CurrentTimeZone, EqualTo, Expression, Literal, LocalTimestamp, Now}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.catalyst.trees.TreePattern.CURRENT_LIKE
+import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{DateType, StringType, TimestampNTZType, TimestampType}
 
 case class DeltaInsertReplaceOnOrUsingCommand(
     deltaTable: DeltaTableV2,
@@ -114,7 +119,8 @@ case class DeltaInsertReplaceOnOrUsingCommand(
   private def prepareWriteCmd(
       sparkSession: SparkSession,
       materializedDf: DataFrame,
-      insertReplaceCriteria: InsertReplaceCriteria): WriteIntoDelta = {
+      insertReplaceCriteria: InsertReplaceCriteria,
+      insertReplaceOnOrUsingCurrentTimeOpt: Option[Instant]): WriteIntoDelta = {
     /**
      * For REPLACE USING, an internal table alias is required to ensure certain attributes
      * resolve to the target table, not the query, when we construct the EXISTS condition.
@@ -140,6 +146,7 @@ case class DeltaInsertReplaceOnOrUsingCommand(
     writeCmd.copy(
       options = deltaOptions,
       data = materializedDf,
+      insertReplaceOnOrUsingCurrentTimeOpt = insertReplaceOnOrUsingCurrentTimeOpt,
       isInsertReplaceUsingByName = byName && insertReplaceCriteria.isInstanceOf[InsertReplaceUsing])
   }
 
@@ -151,6 +158,7 @@ case class DeltaInsertReplaceOnOrUsingCommand(
    */
   private def materializeSource(
       sparkSession: SparkSession,
+      query: LogicalPlan,
       insertReplaceCriteria: InsertReplaceCriteria): DataFrame = {
     commandStats.replaceCriteria = StringUtils.abbreviate(
       insertReplaceCriteria match {
@@ -190,7 +198,21 @@ case class DeltaInsertReplaceOnOrUsingCommand(
       Project(schemaAdjustmentProjectionList, getMergeSource.df.queryExecution.analyzed))
   }
 
-  private def checkShouldMaterializeSource(sparkSession: SparkSession): Boolean = {
+  /**
+   * Captures one time for INSERT REPLACE ON/USING time functions such as current_timestamp()
+   * and now(), so DELETE, INSERT, and retries use the same statement time.
+   */
+  private def resolveCurrentTimeToPin(sparkSession: SparkSession): Option[Instant] = {
+    if (sparkSession.conf.get(DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED)) {
+      Some(DeltaInsertReplaceOnOrUsingCommand.resolveInstant())
+    } else {
+      None
+    }
+  }
+
+  private def checkShouldMaterializeSource(
+      sparkSession: SparkSession,
+      query: LogicalPlan): Boolean = {
     val (shouldMaterialize, materializeReason) =
       shouldMaterializeSource(sparkSession, source = query, isInsertOnly = false)
     commandStats.materializeSourceReason = Some(materializeReason.toString)
@@ -199,8 +221,9 @@ case class DeltaInsertReplaceOnOrUsingCommand(
 
   private def executeWithRetry(
       sparkSession: SparkSession,
+      query: LogicalPlan,
       runOperationFunc: SparkSession => Seq[Row]): Seq[Row] = {
-    val shouldMaterialize = checkShouldMaterializeSource(sparkSession)
+    val shouldMaterialize = checkShouldMaterializeSource(sparkSession, query)
     if (!shouldMaterialize) {
       runOperationFunc(sparkSession)
     } else {
@@ -219,9 +242,19 @@ case class DeltaInsertReplaceOnOrUsingCommand(
       val insertReplaceCriteria = resolveInsertReplaceCriteria(sparkSession)
       var resultOpt: Option[T] = None
 
-      executeWithRetry(sparkSession, runOperationFunc = { spark =>
-        val materializedDf = materializeSource(spark, insertReplaceCriteria)
-        val preparedWriteCmd = prepareWriteCmd(spark, materializedDf, insertReplaceCriteria)
+      // The source is a field of this leaf command and escapes normal clock folding.
+      // Fold before retries so both phases and rematerializations share one instant.
+      val insertReplaceOnOrUsingCurrentTimeOpt = resolveCurrentTimeToPin(sparkSession)
+      val sourceQuery = insertReplaceOnOrUsingCurrentTimeOpt.map { instant =>
+        DeltaInsertReplaceOnOrUsingCommand.applyWithTimestamp(query, instant)
+      }.getOrElse(query)
+
+      executeWithRetry(sparkSession, sourceQuery, runOperationFunc = { spark =>
+        val materializedDf = materializeSource(spark, sourceQuery, insertReplaceCriteria)
+        val preparedWriteCmd =
+          prepareWriteCmd(
+            spark, materializedDf, insertReplaceCriteria, insertReplaceOnOrUsingCurrentTimeOpt)
+
         resultOpt = Some(executeAndRecordStats(preparedWriteCmd))
         Seq.empty
       })
@@ -267,6 +300,34 @@ case class DeltaInsertReplaceOnOrUsingCommand(
 }
 
 object DeltaInsertReplaceOnOrUsingCommand {
+  private[commands] def resolveInstant(): Instant = {
+    Instant.now()
+  }
+
+  /** Replaces current date/time functions in the plan and its subqueries with one instant. */
+  private[commands] def applyWithTimestamp(
+      plan: LogicalPlan,
+      instant: Instant): LogicalPlan = {
+    import org.apache.spark.sql.delta.implicits._
+
+    val currentTimestampMicros = DateTimeUtils.instantToMicros(instant)
+    val currentTime = Literal.create(currentTimestampMicros, TimestampType)
+    val timezone = Literal.create(SQLConf.get.sessionLocalTimeZone, StringType)
+
+    plan.transformUpWithSubqueries {
+      case subQuery =>
+        subQuery.transformAllExpressionsUpWithPruning(_.containsPattern(CURRENT_LIKE)) {
+          case cd: CurrentDate =>
+            Literal.create(DateTimeUtils.microsToDays(currentTimestampMicros, cd.zoneId), DateType)
+          case CurrentTimestamp() | Now() => currentTime
+          case CurrentTimeZone() => timezone
+          case localTimestamp: LocalTimestamp =>
+            val asDateTime = LocalDateTime.ofInstant(instant, localTimestamp.zoneId)
+            Literal.create(DateTimeUtils.localDateTimeToMicros(asDateTime), TimestampNTZType)
+        }
+    }
+  }
+
   /**
    * Adds a [[Project]] node on top of the query that aliases each query column to
    * the corresponding provided attribute name by ordinal position.

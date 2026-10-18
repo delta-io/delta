@@ -1276,6 +1276,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     final val list = Set(NONE, ALL, AUTO)
   }
 
+  val INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED =
+    buildConf("insertReplaceOnOrUsing.pinStatementTime.enabled")
+      .internal()
+      .doc(
+        """
+          |If enabled, INSERT REPLACE ON/USING folds current date/time functions in its source
+          |query and REPLACE ON condition to one statement instant. DELETE, INSERT and source
+          |materialization retries then use the same time. When disabled, the phases fold time
+          |independently, which can lose or duplicate rows selected by a current-time filter.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val INSERT_REPLACE_ON_OR_USING_MATERIALIZE_SOURCE =
     buildConf("insertReplaceOnOrUsing.materializeSource")
       .internal()
