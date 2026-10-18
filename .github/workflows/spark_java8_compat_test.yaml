@@ -1,0 +1,51 @@
+name: "Delta Spark Java 8 Compatibility"
+on:
+  push:
+    branches: [branch-3.3]
+  pull_request:
+    branches: [branch-3.3]
+jobs:
+  test:
+    # Compile with JDK 17 and run the compiled classes on Java 8 to catch APIs that exist only in
+    # newer JDKs, such as the covariant java.nio.ByteBuffer overrides added in JDK 9.
+    name: "DSJ8: Scala ${{ matrix.scala }}"
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        # These Scala versions must match those in the build.sbt
+        scala: [2.12.18, 2.13.13]
+    env:
+      SCALA_VERSION: ${{ matrix.scala }}
+    steps:
+    - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+    - name: install java
+      uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
+      with:
+        distribution: "zulu"
+        # The last version is the default JAVA_HOME used by sbt
+        java-version: |
+          8
+          17
+    - name: Cache Scala, SBT
+      uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3.5.0
+      with:
+        path: |
+          ~/.sbt
+          ~/.ivy2
+          ~/.cache/coursier
+        key: delta-sbt-cache-java8-compat-scala${{ matrix.scala }}
+    - name: Run deletion vector tests on Java 8
+      # Use Java 8 only for the forked test JVM; setting `Test / javaHome` would also compile tests
+      # with Java 8. Java 8 cannot read the @argfiles that sbt on JDK 17 uses to start the fork.
+      run: |
+        build/sbt -Dsbt.argsfile=false "++ $SCALA_VERSION" \
+          'set spark / Test / forkOptions ~= (_.withJavaHome(Some(file(sys.env("JAVA_HOME_8_X64")))))' \
+          "spark / Test / testOnly org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArraySuite"
+    - name: Check for Java 9+ Buffer method references
+      run: |
+        classes="spark/target/scala-${SCALA_VERSION%.*}/classes"
+        if find "$classes" -name '*.class' -print0 | xargs -0 javap -c -p |
+            grep -E 'java/nio/[A-Za-z]+Buffer\.(position|limit|mark|reset|clear|flip|rewind):\([^)]*\)Ljava/nio/[A-Za-z]+Buffer;'; then
+          echo "Found Buffer methods that do not exist on Java 8"
+          exit 1
+        fi
