@@ -33,10 +33,14 @@ class AMTIncrementalWriteTrackingMDVSuite extends AMTIncrementalWriteTestBase {
         // would be promoted into the root, leaving no leaf to mask.
         commitBoth(baselineDeltaLog, amtDeltaLog, (1 to 15).map(fakeAdd))
         commitCheckpoint(amtDeltaLog, incremental = false)
-        val leafCount = leafToAddFileMap(amtDeltaLog).size
+        val baseProvider = amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT"))
+        val baseTrackingByLeaf =
+          baseProvider.leaves.map(leaf => leaf.location -> leaf.tracking).toMap
+        val leafCount = baseTrackingByLeaf.size
         assert(leafCount >= 2, s"Need a tree-shaped bootstrap; got $leafCount leaves.")
         // Delete one file, so exactly its own leaf is updated and every sibling stays untouched.
         val victim = leafToAddFileMap(amtDeltaLog).toSeq.sortBy(_._1).head._2.head
+        val victimLeaf = victim.backReference.get.manifest
         commitBoth(baselineDeltaLog, amtDeltaLog, Seq(victim.remove))
         createIncrementalAMTAndValidate(
           baselineDeltaLog,
@@ -47,6 +51,23 @@ class AMTIncrementalWriteTrackingMDVSuite extends AMTIncrementalWriteTestBase {
             numLeafMdvBitsAdded = 1,
             numLeavesModifiedStatus = 1,
             numLeavesExistingStatus = leafCount - 1))
+        val updatedProvider = amtProvider(amtDeltaLog.update()).getOrElse(fail("expected AMT"))
+        updatedProvider.leaves.foreach { leaf =>
+          if (leaf.location == victimLeaf) {
+            assert(leaf.tracking.status == Tracking.Status.Modified)
+            assert(leaf.tracking.snapshot_id == baseTrackingByLeaf(leaf.location).snapshot_id)
+            val oldModifiedSnapshotId =
+              baseTrackingByLeaf(leaf.location).modified_snapshot_id
+            assert(leaf.tracking.modified_snapshot_id.isDefined,
+              "The transaction materializing the changed manifest DV must stamp its snapshot ID.")
+            assert(leaf.tracking.modified_snapshot_id != oldModifiedSnapshotId,
+              "The changed manifest DV must advance modified_snapshot_id.")
+          } else {
+            assert(leaf.tracking.snapshot_id == baseTrackingByLeaf(leaf.location).snapshot_id)
+            assert(leaf.tracking.modified_snapshot_id ==
+              baseTrackingByLeaf(leaf.location).modified_snapshot_id)
+          }
+        }
       }
     }
   }
