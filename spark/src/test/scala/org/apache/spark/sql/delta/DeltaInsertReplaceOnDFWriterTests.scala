@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.sql.Timestamp
+
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
@@ -35,7 +37,7 @@ import org.apache.spark.storage.StorageLevel
  * (save(), insertInto(), and saveAsTable()).
  */
 trait DeltaInsertReplaceOnDFWriterTests
-  extends DeltaInsertReplaceCurrentTimeTests {
+  extends DeltaInsertReplaceOnOrUsingTestUtils {
   import testImplicits._
 
   /**
@@ -48,99 +50,42 @@ trait DeltaInsertReplaceOnDFWriterTests
       targetAlias: Option[String] = None,
       mergeSchema: Boolean = false): Unit
 
-  override protected def writeReplaceWithCurrentTimeDF(
-      sourceDF: DataFrame,
-      target: String): Unit = {
-    writeReplaceOnDF(sourceDF.as("s"), target, "t.k = s.k", targetAlias = Some("t"))
-  }
-
-  for (pinStatementTime <- Seq(false, true)) {
-    test(s"replaceOn shares the source clock with its condition, " +
-        s"pinStatementTime=$pinStatementTime",
-      ChecksDeltaInternals("checks V1 source materialization and DELETE clock folding")) {
-      withSQLConf(
-          DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED.key ->
-            pinStatementTime.toString,
-          DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_MATERIALIZE_SOURCE.key -> "all") {
-        withTempDir { targetDir =>
-          val targetPath = targetDir.getAbsolutePath
-          sql("SELECT id AS k, 'target' AS row_origin, CAST(NULL AS TIMESTAMP) AS ts " +
-            "FROM range(0, 10)")
-            .write.format(writeFormat).save(targetPath)
-
-          // - Source checkpoint contains (k=1, ts=10:00:00).
-          // - The ON condition must also see 10:00:00, so it deletes the old k=1 row.
-          // - With the flag disabled, DELETE sees a later time and keeps the old row too.
-          val source = sql("SELECT id AS k, 'source' AS row_origin, current_timestamp() AS ts " +
-            "FROM range(0, 10)")
-          writeReplaceOnDF(
-            source.as("s"),
-            targetPath,
-            "t.k = s.k AND current_timestamp() = s.ts",
-            targetAlias = Some("t"))
-
-          val expectedOrigins = if (pinStatementTime) Seq("source") else Seq("source", "target")
-          checkAnswer(
-            spark.read.format(writeFormat).load(targetPath).select("k", "row_origin"),
-            for (key <- 0L until 10L; origin <- expectedOrigins) yield Row(key, origin))
-        }
-      }
-    }
-  }
-
-  for (castType <- Seq("TIMESTAMP", "TIMESTAMP_NTZ");
-       pinStatementTime <- Seq(false, true)) {
-    test(s"replaceOn evaluates the current time once with a target-column cast to $castType, " +
-        s"pinStatementTime=$pinStatementTime",
-      DSv2TemporarilyIncompatible("uses V1 REPLACE ON target-column analysis")) {
-      withSQLConf(
-          DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED.key ->
-            pinStatementTime.toString) {
-        withTempDir { targetDir =>
-          val targetPath = targetDir.getAbsolutePath
-          sql(
-            """
-              |SELECT CAST(k AS BIGINT) AS k, CAST(ts AS TIMESTAMP) AS ts, v
-              |FROM VALUES
-              |  (1, '2020-01-01 00:00:00', 'old'),
-              |  (2, '2020-01-01 00:00:00', 'old'),
-              |  (3, '2020-01-03 00:00:00', 'old'),
-              |  (4, '2020-01-01 00:00:00', 'old')
-              |AS target(k, ts, v)
-              |""".stripMargin)
-            .write.format(writeFormat).save(targetPath)
-
-          // - Key 1 is newer in the source and replaces its old target row.
-          // - Key 3 is older in the source, so both rows remain; the future key 4 is filtered out.
-          // - Casting target.ts must work after the target columns have been resolved.
-          val source = sql(
-            """
-              |SELECT CAST(k AS BIGINT) AS k, CAST(ts AS TIMESTAMP) AS ts, v
-              |FROM VALUES
-              |  (1, '2020-01-02 00:00:00', 'new'),
-              |  (3, '2020-01-02 00:00:00', 'new'),
-              |  (4, '2999-01-01 00:00:00', 'future'),
-              |  (5, '2020-01-02 00:00:00', 'new')
-              |AS source(k, ts, v)
-              |WHERE CAST(ts AS TIMESTAMP) <= current_timestamp()
-              |""".stripMargin)
-          writeReplaceOnDF(
-            source.as("s"),
-            targetPath,
-            s"t.k = s.k AND CAST(t.ts AS $castType) <= CAST(s.ts AS $castType) " +
-              s"AND CAST(t.ts AS $castType) < current_date()",
-            targetAlias = Some("t"))
-
-          checkAnswer(
-            spark.read.format(writeFormat).load(targetPath)
-              .selectExpr("k", "CAST(ts AS STRING)", "v"),
-            Seq(
-              Row(1L, "2020-01-02 00:00:00", "new"),
-              Row(2L, "2020-01-01 00:00:00", "old"),
-              Row(3L, "2020-01-03 00:00:00", "old"),
-              Row(3L, "2020-01-02 00:00:00", "new"),
-              Row(4L, "2020-01-01 00:00:00", "old"),
-              Row(5L, "2020-01-02 00:00:00", "new")))
+  test("replaceOn shares the statement time with its source DataFrame",
+    ChecksDeltaInternals("uses a DELETE phase observer to separate the two clocks")) {
+    val targetTime = Timestamp.valueOf("2020-01-01 00:00:00")
+    for (pinStatementTime <- Seq(false, true)) {
+      withClue(s"pinStatementTime=$pinStatementTime: ") {
+        withSQLConf(
+            DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED.key ->
+              pinStatementTime.toString) {
+          withTempDir { targetDir =>
+            val targetPath = targetDir.getAbsolutePath
+            Seq((1L, targetTime, "target"), (3L, targetTime, "target"))
+              .toDF("id", "eventTime", "rowOrigin")
+              .write.format("delta").save(targetPath)
+            val source = sql(
+              "SELECT id, current_timestamp() AS eventTime, 'source' AS rowOrigin " +
+                "FROM range(1, 3)")
+            // The delayed DELETE can match id 1 only when its clock equals the source clock.
+            // Id 2 is always inserted; id 3 always survives from the target.
+            InsertAtomicReplaceExecutionObserver.withObserver(new DelayingDeleteObserver) {
+              writeReplaceOnDF(
+                source.as("s"),
+                targetPath,
+                "t.id = s.id AND current_timestamp() = s.eventTime",
+                targetAlias = Some("t"))
+            }
+            val result = spark.read.format("delta").load(targetPath)
+            val sourceTimes = result.where("rowOrigin = 'source'")
+              .select("eventTime").distinct().as[Timestamp].collect()
+            assert(sourceTimes.length === 1)
+            val statementTime = sourceTimes.head
+            checkAnswer(result, Seq(
+              Row(1L, statementTime, "source"),
+              Row(2L, statementTime, "source"),
+              Row(3L, targetTime, "target")) ++
+              (if (pinStatementTime) Seq.empty else Seq(Row(1L, targetTime, "target"))))
+          }
         }
       }
     }

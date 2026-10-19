@@ -28,7 +28,7 @@ import org.apache.spark.sql.internal.SQLConf
  * and saveAsTable()).
  */
 trait DeltaInsertReplaceUsingDFWriterTests
-  extends DeltaInsertReplaceCurrentTimeTests {
+  extends DeltaInsertReplaceOnOrUsingTestUtils {
   import testImplicits._
 
   /**
@@ -42,10 +42,36 @@ trait DeltaInsertReplaceUsingDFWriterTests
       mergeSchema: Boolean = false,
       options: Map[String, String] = Map.empty): Unit
 
-  override protected def writeReplaceWithCurrentTimeDF(
-      sourceDF: DataFrame,
-      target: String): Unit = {
-    writeReplaceUsingDF(sourceDF, target, "k")
+  test("replaceUsing shares the current-time cutoff in its source DataFrame",
+    ChecksDeltaInternals("uses DELETE/INSERT phase observers")) {
+    for (pinStatementTime <- Seq(false, true)) {
+      withClue(s"pinStatementTime=$pinStatementTime: ") {
+        withSQLConf(
+            DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED.key ->
+              pinStatementTime.toString) {
+          withTable("target", "source") {
+            // Each id advances eventTime by one millisecond. The DELETE delay moves the
+            // source cutoff between phases unless both use the pinned statement time.
+            createTable("target", Seq("id bigint", "eventTime timestamp", "rowOrigin string"))
+            sql(
+              s"""
+                 |INSERT INTO target
+                 |SELECT id, current_timestamp() + make_dt_interval(0, 0, 0, id / 1000.0),
+                 |  'target'
+                 |FROM range(0, $currentTimeGridNumRows)
+                 |""".stripMargin)
+            createTable("source", Seq("id bigint", "eventTime timestamp", "rowOrigin string"))
+            sql("INSERT INTO source SELECT id, eventTime, 'source' FROM target")
+            val targetPath = sql("DESCRIBE DETAIL target").select("location").as[String].head()
+            val source = spark.table("source").where("eventTime <= current_timestamp()")
+            InsertAtomicReplaceExecutionObserver.withObserver(new DelayingDeleteObserver) {
+              writeReplaceUsingDF(source, targetPath, "id")
+            }
+            checkCurrentTimeResult(pinStatementTime)
+          }
+        }
+      }
+    }
   }
 
   // Basic replaceUsing operations
@@ -94,61 +120,6 @@ trait DeltaInsertReplaceUsingDFWriterTests
           Row(2, "b", "source") ::
           Row(3, "a", "source") ::
           Nil)
-    }
-  }
-
-  test("replaceUsing evaluates the current time once in a source DataFrame",
-    ChecksDeltaInternals("uses V1 DELETE/INSERT phase observers")) {
-    withTempDir { targetDir =>
-      withTempDir { sourceDir =>
-        val targetPath = targetDir.getAbsolutePath
-        val sourcePath = sourceDir.getAbsolutePath
-        // One row per key, with `ts` 1 ms apart starting at the current time.
-        val numKeys = 200000L
-        sql(
-          s"""
-             |SELECT id, current_timestamp() + make_dt_interval(0, 0, 0, id / 1000.0) AS ts,
-             |  'target' AS value
-             |FROM range(0, $numKeys)
-             |""".stripMargin)
-          .write.format("delta").save(targetPath)
-        spark.read.format("delta").load(targetPath).withColumn("value", lit("source"))
-          .write.format("delta").save(sourcePath)
-
-        // Delay the DELETE step, so that it and the INSERT step plan the source at clearly
-        // different wall-clock times.
-        val delayingDeleteObserver = new InsertAtomicReplaceExecutionObserver {
-          override def delete[T](f: => T): T = {
-            Thread.sleep(500)
-            f
-          }
-          override def insert[T](f: => T): T = f
-          override def commit[T](f: => T): T = f
-        }
-        withSQLConf(
-            DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED.key -> "true",
-            DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_MATERIALIZE_SOURCE.key -> "none",
-            disableSourceMaterializationNotAllowedConfKey -> "false") {
-          InsertAtomicReplaceExecutionObserver.withObserver(delayingDeleteObserver) {
-            writeReplaceUsingDF(
-              sourceDF = spark.read.format("delta").load(sourcePath)
-                .where("ts <= current_timestamp()"),
-              target = targetPath,
-              replaceUsingCols = "id")
-          }
-        }
-
-        // Every key is present exactly once, and the replaced keys are a non-empty proper prefix.
-        checkAnswer(
-          spark.read.format("delta").load(targetPath).selectExpr(
-            "count(*)",
-            "count(DISTINCT id)",
-            "count_if(value = 'source') > 0",
-            "count_if(value = 'target') > 0",
-            "max(id) FILTER (WHERE value = 'source') + 1 = " +
-              "min(id) FILTER (WHERE value = 'target')"),
-          Row(numKeys, numKeys, true, true, true))
-      }
     }
   }
 

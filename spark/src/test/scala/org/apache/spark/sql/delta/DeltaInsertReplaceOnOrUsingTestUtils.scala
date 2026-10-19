@@ -29,6 +29,54 @@ trait DeltaInsertReplaceOnOrUsingTestUtils
   with SharedSparkSession
   with DeltaSQLCommandTest {
 
+  protected val currentTimeGridNumRows = 200000L
+
+  // Separate the unpinned DELETE and INSERT clocks so the moving cutoff reproduces the bug.
+  protected class DelayingDeleteObserver extends InsertAtomicReplaceExecutionObserver {
+    override def delete[T](f: => T): T = {
+      Thread.sleep(500)
+      f
+    }
+    override def insert[T](f: => T): T = f
+    override def commit[T](f: => T): T = f
+  }
+
+  /**
+   * DELETE removes target ids selected at cutoff D; INSERT adds source ids selected at cutoff I.
+   * Examples use six ids from the 200,000-row grid, starting at 12:00:00.000:
+   *
+   *   id:         0    1    2    3    4    5
+   *   eventTime: .000 .001 .002 .003 .004 .005
+   *
+   * Both tables start with the same ids and eventTime values. Each tuple is (id, eventTime,
+   * rowOrigin); only rowOrigin differs between the initial target and source rows:
+   *
+   *   target: (0, .000, 'target'), (1, .001, 'target'), ..., (5, .005, 'target')
+   *   source: (0, .000, 'source'), (1, .001, 'source'), ..., (5, .005, 'source')
+   *
+   * Filtered source:
+   *   INSERT INTO target REPLACE USING (id)
+   *   SELECT * FROM source WHERE eventTime <= current_timestamp()
+   *
+   * This replaces matching rows in target; source stays unchanged. For these six ids:
+   * - D = 12:00:00.004 deletes target ids 0..4.
+   * - I = 12:00:00.002 inserts source ids 0..2.
+   * Target now has source rows for ids 0, 1, 2 and its original row for id 5; ids 3 and 4 are
+   * missing. Pinning D = I preserves every id once.
+   */
+  protected def checkCurrentTimeResult(pinStatementTime: Boolean): Unit = {
+    val targetIds = spark.table("target").select("id")
+    if (pinStatementTime) {
+      checkAnswer(targetIds, spark.table("source").select("id"))
+    } else {
+      val counts = targetIds.selectExpr(
+        "count(*) AS rowCount", "count(DISTINCT id) AS distinctIds").head()
+      assert(counts.getAs[Long]("rowCount") != currentTimeGridNumRows ||
+        counts.getAs[Long]("distinctIds") != currentTimeGridNumRows,
+        s"expected missing or duplicate ids: $counts")
+    }
+  }
+
   protected def createTable(
      tableName: String,
      tableCols: Seq[String],

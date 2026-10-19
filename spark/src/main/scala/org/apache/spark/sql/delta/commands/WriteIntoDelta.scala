@@ -135,16 +135,6 @@ case class WriteIntoDelta(
     Seq.empty
   }
 
-  /** Matches the DELETE condition to the source's statement time. */
-  private[commands] def pinReplaceOnOrUsingCurrentTime(
-      deleteCommand: DeleteCommand): DeleteCommand =
-    insertReplaceOnOrUsingCurrentTimeOpt match {
-      case Some(instant) =>
-        DeltaInsertReplaceOnOrUsingCommand.applyWithTimestamp(deleteCommand, instant)
-          .asInstanceOf[DeleteCommand]
-      case None => deleteCommand
-    }
-
   override def writeAndReturnCommitData(
       txn: OptimisticTransaction,
       sparkSession: SparkSession,
@@ -497,7 +487,14 @@ case class WriteIntoDelta(
     val command = sparkWithSubqueryDelete.sessionState.analyzer.execute(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
     sparkWithSubqueryDelete.sessionState.analyzer.checkAnalysis(command)
-    val deleteCmd = pinReplaceOnOrUsingCurrentTime(command.asInstanceOf[DeleteCommand])
+    val deleteCmd =
+      if (sparkWithSubqueryDelete.conf.get(
+          DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED)) {
+        pinReplaceOnOrUsingCurrentTime(
+          command.asInstanceOf[DeleteCommand], insertReplaceOnOrUsingCurrentTimeOpt)
+      } else {
+        command.asInstanceOf[DeleteCommand]
+      }
     val (deleteActions, deleteMetrics) =
       deleteCmd.performDelete(sparkWithSubqueryDelete, txn.deltaLog, txn)
     recordDeltaEvent(
