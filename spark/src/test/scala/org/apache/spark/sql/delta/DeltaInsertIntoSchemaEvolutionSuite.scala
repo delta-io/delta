@@ -220,10 +220,11 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteB
           sql(
             "CREATE TABLE target " +
               "(s STRUCT<arr: ARRAY<STRUCT<x: INT, y: INT>>>) USING delta")
-          sql(
-            """INSERT WITH SCHEMA EVOLUTION INTO target
-              |SELECT named_struct(
-              |  'arr', array(named_struct('y', 1, 'x', 2, 'z', 3))) AS s""".stripMargin)
+          runInsertSql(withSchemaEvolution = true) { clause =>
+            s"""INSERT ${clause}INTO target
+               |SELECT named_struct(
+               |  'arr', array(named_struct('y', 1, 'x', 2, 'z', 3))) AS s""".stripMargin
+          }
 
           val expected = if (resolutionFixEnabled) Row(1, 2, 3) else Row(2, 1, 3)
           checkAnswer(sql("SELECT s.arr[0].x, s.arr[0].y, s.arr[0].z FROM target"), expected)
@@ -263,9 +264,10 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteB
     withConf(resolutionFixKey -> "true") {
       withTable("target") {
         sql("CREATE TABLE target (arr ARRAY<STRUCT<x: INT, y: INT>>) USING delta")
-        sql(
-          """INSERT WITH SCHEMA EVOLUTION INTO target
-            |SELECT array(named_struct('y', 1, 'x', 2, 'z', 3)) AS arr""".stripMargin)
+        runInsertSql(withSchemaEvolution = true) { clause =>
+          s"""INSERT ${clause}INTO target
+             |SELECT array(named_struct('y', 1, 'x', 2, 'z', 3)) AS arr""".stripMargin
+        }
 
         checkAnswer(sql("SELECT arr[0].x, arr[0].y, arr[0].z FROM target"), Row(1, 2, 3))
       }
@@ -281,10 +283,11 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoEvolutionSuiteB
         sql(
           "CREATE TABLE target " +
             "(s STRUCT<m: MAP<STRING, STRUCT<x: INT, y: INT>>>) USING delta")
-        sql(
-          """INSERT WITH SCHEMA EVOLUTION INTO target
-            |SELECT named_struct(
-            |  'm', map('k', named_struct('y', 1, 'x', 2, 'z', 3))) AS s""".stripMargin)
+        runInsertSql(withSchemaEvolution = true) { clause =>
+          s"""INSERT ${clause}INTO target
+             |SELECT named_struct(
+             |  'm', map('k', named_struct('y', 1, 'x', 2, 'z', 3))) AS s""".stripMargin
+        }
 
         checkAnswer(
           sql("SELECT s.m['k'].x, s.m['k'].y, s.m['k'].z FROM target"),
