@@ -15,12 +15,21 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
+import java.util.EnumSet
 import java.util.concurrent.atomic.AtomicReference
 
-import org.apache.spark.sql.delta.storage.LogStoreProvider
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import scala.jdk.OptionConverters._
+
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaSingleCommit}
+import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStoreProvider}
+import org.apache.spark.sql.delta.v2.interop.{
+  DeltaV2QueryContext,
+  DeltaV2SingleCommit,
+  DeltaV2SnapshotManager
+}
 import io.delta.spark.internal.v2.kernel.KernelContext
 import org.apache.hadoop.fs.Path
+import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
@@ -63,6 +72,31 @@ private[tablemanager] class DeltaV2TableManagerImpl(
     // uses it consistently while selecting its path-based or catalog-managed uncached delegate.
     latestCatalogTable.set(catalogTableOpt.orNull)
     cachedSnapshotManager
+  }
+
+  override private[v2] def getChangesIterator(
+      startVersion: Long,
+      endVersion: Option[Long],
+      catalogTableOpt: Option[CatalogTable],
+      failOnDataLoss: Boolean)
+      : ClosableIterator[DeltaSingleCommit] = {
+    if (failOnDataLoss) {
+      throw DeltaErrors.assertionFailedError(
+        "getChangesIterator does not support failOnDataLoss = true")
+    }
+    val kernelEngine = kernelContext.getDefaultEngine()
+    val commitRange = cachedSnapshotManager.getTableChanges(
+      kernelEngine,
+      startVersion,
+      endVersion.map(Long.box).toJava,
+      DeltaV2QueryContext(catalogTableOpt))
+    val kernelCommits = commitRange.getCommitActions(
+      kernelEngine, EnumSet.allOf(classOf[KernelDeltaAction]))
+    new ClosableIterator[DeltaSingleCommit] {
+      override def hasNext: Boolean = kernelCommits.hasNext
+      override def next(): DeltaSingleCommit = DeltaV2SingleCommit(kernelCommits.next())
+      override def close(): Unit = kernelCommits.close()
+    }
   }
 
   override def retire(): Unit = cachedSnapshotManager.retire()

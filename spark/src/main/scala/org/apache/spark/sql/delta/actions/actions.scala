@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.actions
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.io.StringWriter
 import java.net.URI
 import java.sql.Timestamp
 import java.util.Locale
@@ -36,12 +37,13 @@ import org.apache.spark.sql.delta.amt.{AMTPassthrough, AMTUtils}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaStatistics.TIGHT_BOUNDS
 import org.apache.spark.sql.delta.util.{DeltaEncoder, DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.PartitionUtils
 import com.fasterxml.jackson.annotation._
 import com.fasterxml.jackson.annotation.JsonInclude.Include
-import com.fasterxml.jackson.core.{JsonGenerator, JsonParser}
+import com.fasterxml.jackson.core.{JsonGenerator, JsonParser, JsonToken}
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import com.fasterxml.jackson.databind.node.ObjectNode
@@ -865,6 +867,17 @@ object FileAction {
       spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT)
 
   /**
+   * The same as the `(metadata, protocol, spark)` overload, for the metadata and protocol of
+   * `snapshot`.
+   *
+   * @param snapshot the table snapshot.
+   */
+  def useDeletionVectorObjectIdentity(
+      snapshot: SnapshotDescriptor,
+      spark: SparkSession): Boolean =
+    useDeletionVectorObjectIdentity(snapshot.metadata, snapshot.protocol, spark)
+
+  /**
    * The unique tuple `(parquet file, deletion vector id)` of a file action, as a method on
    * [[AddFile]] / [[RemoveFile]]. See [[DeletionVectorDescriptor.uniqueId]] for the
    * `useObjectIdentity` semantics.
@@ -1081,16 +1094,69 @@ case class AddFile(
     if (stats == null || stats.isEmpty) {
       this
     } else {
-      val node = JsonUtils.mapper.readTree(stats).asInstanceOf[ObjectNode]
-      if (node.has("tightBounds") &&
-          !node.get("tightBounds").asBoolean(true)) {
-        this
+      val precisionConf = DeltaSQLConf.DELTA_STATS_WIDEN_BOUNDS_PRESERVE_NUMERIC_PRECISION_ENABLED
+      val preserveStatsPrecision = SQLConf.get.getConf(precisionConf)
+      if (preserveStatsPrecision) {
+        withoutTightBoundStatsPreservingPrecision
       } else {
-        node.put("tightBounds", false)
-        val newStatsString = JsonUtils.mapper.writer.writeValueAsString(node)
-        this.copy(stats = newStatsString)
+        val node = JsonUtils.mapper.readTree(stats).asInstanceOf[ObjectNode]
+        if (node.has("tightBounds") &&
+            !node.get("tightBounds").asBoolean(true)) {
+          this
+        } else {
+          node.put("tightBounds", false)
+          val newStatsString = JsonUtils.mapper.writer.writeValueAsString(node)
+          this.copy(stats = newStatsString)
+        }
       }
     }
+  }
+
+  /**
+   * Set the top-level `tightBounds` field to false in the stats JSON while preserving
+   * numeric precision.
+   * Return `this` if bounds are already wide.
+   */
+  private[delta] def withoutTightBoundStatsPreservingPrecision: AddFile = {
+    val writer = new StringWriter()
+    val factory = JsonUtils.mapper.getFactory
+    var needsUpdate = true
+    Utils.tryWithResource(factory.createParser(stats)) { parser =>
+      require(parser.nextToken() == JsonToken.START_OBJECT,
+        "Expected file statistics to be a JSON object")
+      Utils.tryWithResource(factory.createGenerator(writer)) { generator =>
+        generator.writeStartObject()
+        while (needsUpdate && parser.nextToken() != JsonToken.END_OBJECT) {
+          if (parser.currentName() == TIGHT_BOUNDS) {
+            parser.nextToken()
+            // `true` is the default if Jackson cannot convert the value to a boolean.
+            // In that case, widen the bounds as in the legacy path.
+            needsUpdate = parser.readValueAsTree[JsonNode]().asBoolean(true)
+          } else {
+            // Preserve decimal bounds without rounding through Double.
+            // Copy the field name and its value while preserving numeric precision.
+            generator.copyCurrentEventExact(parser)
+            parser.nextToken()
+            var depth = 0
+            do {
+              val token = parser.currentToken()
+              generator.copyCurrentEventExact(parser)
+              if (token.isStructStart) {
+                depth += 1
+              } else if (token.isStructEnd) {
+                depth -= 1
+              }
+              if (depth > 0) {
+                parser.nextToken()
+              }
+            } while (depth > 0)
+          }
+        }
+        generator.writeBooleanField(TIGHT_BOUNDS, false)
+        generator.writeEndObject()
+      }
+    }
+    if (needsUpdate) this.copy(stats = writer.toString) else this
   }
 
   /**
@@ -1619,6 +1685,31 @@ object CommitInfo {
   def dataChangeFromActions(actions: Iterable[Action]): Boolean = actions.exists {
     case f: FileAction => f.dataChange
     case _ => false
+  }
+
+  /**
+   * Returns the commit-level `dataChange` to write to [[CommitInfo]]. AMT tables always write the
+   * value. Non-AMT tables write it only while the kill switch is enabled.
+   */
+  private[delta] def dataChangeForCommitInfo(
+      dataChange: Boolean,
+      metadata: Metadata,
+      protocol: Protocol,
+      spark: SparkSession): Option[Boolean] = {
+    if (AMTUtils.amtEnabled(metadata, protocol) ||
+        spark.conf.get(DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_WRITE_FOR_NON_AMT_ENABLED)) {
+      Some(dataChange)
+    } else {
+      None
+    }
+  }
+
+  private[delta] def dataChangeForCommitInfo(
+      actions: Iterable[Action],
+      metadata: Metadata,
+      protocol: Protocol,
+      spark: SparkSession): Option[Boolean] = {
+    dataChangeForCommitInfo(dataChangeFromActions(actions), metadata, protocol, spark)
   }
 
   def useCommitInfoForDataChangeEnabled: Boolean =

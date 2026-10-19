@@ -22,8 +22,9 @@ import java.util.concurrent.atomic.AtomicInteger
 import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache.CacheKey
 
+import org.apache.spark.sql.delta.DeltaSingleCommit
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStore}
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 
 import com.google.common.base.Ticker
@@ -429,6 +430,13 @@ private[tablemanager] class StubTableManager(val id: String) extends DeltaV2Tabl
     throw new UnsupportedOperationException("stub")
   override private[v2] def snapshotManager(
       catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager =
+    throw new UnsupportedOperationException("stub")
+  override private[v2] def getChangesIterator(
+      startVersion: Long,
+      endVersion: Option[Long],
+      catalogTableOpt: Option[CatalogTable],
+      failOnDataLoss: Boolean)
+      : ClosableIterator[DeltaSingleCommit] =
     throw new UnsupportedOperationException("stub")
   override def retire(): Unit = { retired = true }
 }

@@ -224,7 +224,7 @@ object SingleAMTWriteMetrics {
     val liveLeaves =
       leaves.filter(leaf => Tracking.Status.liveEntryStatuses.contains(leaf.tracking.status))
     def maskedEntries(leaf: DataManifestEntry): Long =
-      leaf.manifest_info.dv_cardinality.getOrElse(0L)
+      leaf.manifest_info.dvCardinality
     SingleAMTWriteMetrics(
       trigger = trigger,
       incremental = incremental,

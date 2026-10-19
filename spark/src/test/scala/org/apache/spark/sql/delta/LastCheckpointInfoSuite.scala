@@ -296,6 +296,7 @@ class LastCheckpointInfoSuite extends SharedSparkSession
     record_count = recordCount,
     file_size_in_bytes = sizeInBytes,
     manifest_info = ManifestInfo(
+      format_version = AMTSingleAction.FormatVersionV4,
       added_files_count = recordCount.toInt,
       existing_files_count = 2,
       deleted_files_count = 3,
@@ -307,8 +308,7 @@ class LastCheckpointInfoSuite extends SharedSparkSession
       replaced_rows_count = 400L,
       modified_rows_count = 500L,
       min_sequence_number = 7L,
-      dv = Some(Array[Byte](9, 8, 7)),
-      dv_cardinality = Some(5L)),
+      dv = Some(Array[Byte](9, 8, 7))),
     partition = Some(Map("part_col" -> "part_val")),
     spec_id = Some(1),
     content_stats = Some("""{"minValues":{"col-1":1}}"""),

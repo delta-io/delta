@@ -73,6 +73,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     stats = """{"numRecords":42}""")
 
   private def sampleManifestInfo: ManifestInfo = ManifestInfo(
+    format_version = AMTSingleAction.FormatVersionV4,
     added_files_count = 2,
     existing_files_count = 0,
     deleted_files_count = 0,
@@ -84,12 +85,11 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     replaced_rows_count = 0L,
     modified_rows_count = 7L,
     min_sequence_number = 3L,
-    dv = None,
-    dv_cardinality = None)
+    dv = None)
 
   test("encoder schema has the expected V4 column names in order") {
     assert(spark.emptyDataset[AMTSingleAction].schema.fieldNames.toSeq == Seq(
-      "content_type", "format_version", "location", "file_format", "tracking",
+      "content_type", "location", "file_format", "tracking",
       "deletion_vector", "spec_id", "partition", "sort_order_id", "record_count",
       "file_size_in_bytes", "content_stats", "manifest_info", "key_metadata",
       "split_offsets", "tags"))
@@ -191,7 +191,6 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       tags: Option[Map[String, String]] = None,
       tracking: Tracking = addedTracking): AMTSingleAction = AMTSingleAction(
     content_type = content_type,
-    format_version = AMTSingleAction.FormatVersionV4,
     location = "f.parquet",
     file_format = AMTSingleAction.FileFormatParquet,
     tracking = tracking,
@@ -294,7 +293,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
           deleted_positions = Some(deletedPos), replaced_positions = Some(replacedPos)),
         record_count = 1L,
         file_size_in_bytes = 1L,
-        manifest_info = sampleManifestInfo.copy(dv = Some(manifestDv), dv_cardinality = Some(2L)),
+        manifest_info = sampleManifestInfo.copy(dv = Some(manifestDv)),
         key_metadata = Some(keyMeta)).wrap
       val path = new java.io.File(dir, "binary").getCanonicalPath
       spark.createDataset(Seq(entry)).write.parquet(path)
@@ -444,14 +443,12 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       "modified_snapshot_id must be null when the entry has no modification metadata")
     // file_format / format_version are not carried; they are reconstructed at the M1 defaults.
     assert(restored.file_format == AMTSingleAction.FileFormatParquet)
-    assert(restored.format_version == AMTSingleAction.FormatVersionV4)
   }
 
   test("fromAddFile falls back to defaults with no passthrough") {
     val restored = DataEntry.fromAddFile(sampleAddFile, addedTracking, tableRoot)
     assert(restored.file_format == AMTSingleAction.FileFormatParquet)
     assert(restored.spec_id.isEmpty)
-    assert(restored.format_version == AMTSingleAction.FormatVersionV4)
   }
 
   test("fromAddFile maps snapshot IDs only from top-level AddFile fields") {
