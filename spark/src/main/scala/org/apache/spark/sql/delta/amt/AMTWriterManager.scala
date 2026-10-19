@@ -315,11 +315,14 @@ class LazyAMTCheckpointProvider(
  */
 class AMTWriterManager(
     private val txnId: String,
+    private val snapshotId: Long,
     readSnapshot: Snapshot,
     initialOperation: DeltaOperations.Operation) extends DeltaLogging {
 
   import AMTConflictResolutionRoundMetrics._
   import BackRefRebaseMetrics._
+
+  require(snapshotId >= 0L, s"AMT snapshot ID must be non-negative: $snapshotId.")
 
   private def spark: SparkSession = SparkSession.active
   private def deltaLog: DeltaLog = readSnapshot.deltaLog
@@ -713,6 +716,7 @@ class AMTWriterManager(
         intermediateLogCommits = intermediateLogCommits,
         attemptVersion = commitVersion,
         actionsToCommit = currentTransactionInfo.actions,
+        snapshotId = snapshotId,
         trigger = trigger)
     } else {
       assert(currentTransactionInfo.actions.isEmpty,
@@ -724,6 +728,7 @@ class AMTWriterManager(
         commitVersion = commitVersion,
         postCommitProtocol = currentTransactionInfo.protocol,
         postCommitMetadata = currentTransactionInfo.metadata,
+        snapshotId = snapshotId,
         trigger = trigger)
     }
     // Enrich the writer's metrics with log-segment context.

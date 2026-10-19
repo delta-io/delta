@@ -2857,8 +2857,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // edits. This is the logical set of actions we want to commit, and it is what gets fed to
       // the ConflictChecker in case of a conflict.
       var updatedUnpreparedCurrentTransactionInfo = currentTransactionInfo
-      val amtWriterManager =
-        new AMTWriterManager(currentTransactionInfo.txnId, snapshot, currentTransactionInfo.op)
+      val amtWriterManager = new AMTWriterManager(
+        currentTransactionInfo.txnId,
+        amtSnapshotId,
+        snapshot,
+        currentTransactionInfo.op)
       val isFsToCcCommit =
         snapshot.metadata.coordinatedCommitsCoordinatorName.isEmpty &&
           metadata.coordinatedCommitsCoordinatorName.nonEmpty
