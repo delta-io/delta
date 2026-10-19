@@ -115,11 +115,24 @@ trait DeltaInsertReplaceCurrentTimeTests
     assert(result.getBoolean(4), s"replaced keys are not cut at a single instant: $result")
   }
 
-  for ((filterName, gridStartSql, sourceFilter, sourceSelectsRowsBeforeCutoff) <- Seq(
-      ("ts <= current_timestamp()", "current_timestamp()", "ts <= current_timestamp()", true),
-      ("lookback ts >= now() - INTERVAL 1 DAY", "now() - INTERVAL 1 DAY",
-        "ts >= now() - INTERVAL 1 DAY", false))) {
-    test(s"INSERT REPLACE ON/USING evaluates the current time once, $filterName",
+  private case class CurrentTimeFilterTestCase(
+      name: String,
+      gridStartSql: String,
+      sourceFilter: String,
+      sourceSelectsRowsBeforeCutoff: Boolean)
+
+  for (testCase <- Seq(
+      CurrentTimeFilterTestCase(
+        name = "ts <= current_timestamp()",
+        gridStartSql = "current_timestamp()",
+        sourceFilter = "ts <= current_timestamp()",
+        sourceSelectsRowsBeforeCutoff = true),
+      CurrentTimeFilterTestCase(
+        name = "lookback ts >= now() - INTERVAL 1 DAY",
+        gridStartSql = "now() - INTERVAL 1 DAY",
+        sourceFilter = "ts >= now() - INTERVAL 1 DAY",
+        sourceSelectsRowsBeforeCutoff = false))) {
+    test(s"INSERT REPLACE ON/USING evaluates the current time once, ${testCase.name}",
       ChecksDeltaInternals("uses V1 DELETE/INSERT phase observers")) {
       withSQLConf(
           DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED.key -> "true",
@@ -128,7 +141,9 @@ trait DeltaInsertReplaceCurrentTimeTests
         withTable("target", "source") {
           checkSingleInstantResult(
             runReplaceWithCurrentTimeFilter(
-              gridStartSql, sourceFilter, sourceSelectsRowsBeforeCutoff))
+              gridStartSql = testCase.gridStartSql,
+              sourceFilter = testCase.sourceFilter,
+              sourceSelectsRowsBeforeCutoff = testCase.sourceSelectsRowsBeforeCutoff))
         }
       }
     }
