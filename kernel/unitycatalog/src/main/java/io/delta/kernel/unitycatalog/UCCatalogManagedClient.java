@@ -27,6 +27,7 @@ import io.delta.kernel.TableManager;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.VersionToLoadAfterLatestCommitException;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
@@ -88,8 +89,10 @@ public class UCCatalogManagedClient {
    *     mutually exclusive with timestampOpt.
    * @param timestampOpt The optional timestamp to time-travel to when loading the table. This must
    *     be mutually exclusive with versionOpt.
-   * @throws IllegalArgumentException if a negative version or timestamp is provided
+   * @throws IllegalArgumentException if a negative version is provided
    * @throws IllegalArgumentException if both versionOpt and timestampOpt are defined
+   * @throws VersionToLoadAfterLatestCommitException if the requested version is greater than the
+   *     latest version ratified by UC
    */
   public Snapshot loadSnapshot(
       Engine engine,
@@ -273,7 +276,7 @@ public class UCCatalogManagedClient {
    * @throws IllegalArgumentException if neither startVersionOpt nor startTimestampOpt is provided
    * @throws IllegalArgumentException if both startVersionOpt and startTimestampOpt are defined
    * @throws IllegalArgumentException if both endVersionOpt and endTimestampOpt are defined
-   * @throws IllegalArgumentException if either startVersionOpt or endVersionOpt is provided and is
+   * @throws VersionToLoadAfterLatestCommitException if either startVersionOpt or endVersionOpt is
    *     greater than the latest ratified version from UC
    */
   public CommitRange loadCommitRange(
@@ -486,7 +489,7 @@ public class UCCatalogManagedClient {
   private void validateTimeTravelVersionNotPastMax(
       String ucTableId, long tableVersionToLoad, long maxRatifiedVersion) {
     if (tableVersionToLoad > maxRatifiedVersion) {
-      throw new IllegalArgumentException(
+      throw new VersionToLoadAfterLatestCommitException(
           String.format(
               "[%s] Cannot load table version %s as the latest version ratified by UC is %s",
               ucTableId, tableVersionToLoad, maxRatifiedVersion));
@@ -501,7 +504,7 @@ public class UCCatalogManagedClient {
     BiConsumer<Long, String> validateVersion =
         (version, type) -> {
           if (version > maxRatifiedVersion) {
-            throw new IllegalArgumentException(
+            throw new VersionToLoadAfterLatestCommitException(
                 String.format(
                     "[%s] Cannot load commit range with %s version %d as the latest version "
                         + "ratified by UC is %d",

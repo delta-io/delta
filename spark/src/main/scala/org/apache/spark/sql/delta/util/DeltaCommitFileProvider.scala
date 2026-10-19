@@ -79,16 +79,13 @@ case class DeltaCommitFileProvider(
 
 object DeltaCommitFileProvider {
   def apply(snapshot: Snapshot): DeltaCommitFileProvider = {
-    val uuids = snapshot.logSegment.deltas
-      .collect { case UnbackfilledDeltaFile(_, version, uuid) => version -> uuid }
-      .toMap
-    new DeltaCommitFileProvider(snapshot.path.toString, snapshot.version, uuids)
+    apply(snapshot.logPath, snapshot.logSegment)
   }
 
   def apply(logPath: Path, logSegment: LogSegment): DeltaCommitFileProvider = {
-    val uuids = logSegment.deltas
-      .collect { case UnbackfilledDeltaFile(_, version, uuid) => version -> uuid }
-      .toMap
+    val uuids = logSegment.unbackfilledDeltas.map {
+      case (_, version, uuid) => version -> uuid
+    }.toMap
     new DeltaCommitFileProvider(logPath.toString, logSegment.version, uuids)
   }
 }

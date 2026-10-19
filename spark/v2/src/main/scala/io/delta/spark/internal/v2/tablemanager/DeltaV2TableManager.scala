@@ -15,27 +15,45 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
+import org.apache.spark.sql.delta.DeltaSingleCommit
+import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStore}
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import io.delta.spark.internal.v2.kernel.KernelContext
+
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
- * Composite contract for a process-cached Delta table manager.
- *
- * The composite holds an engine-free kernel snapshot that is safe to cache across requests.
- * Per-request context enters at operation time via [[snapshotManager]], which builds a fresh
- * Kernel Engine scoped to the caller's credentials.
- *
- * Table identity (path, catalog table) is seeded at construction and determines cache-key affinity.
+ * Contract for a Delta table manager used by the DSv2 connector.
  */
 private[v2] trait DeltaV2TableManager {
 
-  /** Returns a per-request snapshot manager backed by this composite's shared snapshot state. */
-  def snapshotManager(): DeltaV2SnapshotManager
+  /** Returns the table-scoped Kernel context. */
+  private[v2] def kernelContext: KernelContext
+
+  /** Returns the table-scoped log store. */
+  private[v2] def logStore: LogStore
+
+  /** Returns a snapshot manager using the caller's current catalog metadata. */
+  private[v2] def snapshotManager(catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager
 
   /**
-   * Idempotently prevents future acquisitions and releases exclusively owned state when safe.
+   * Gets an iterator over all commits in the inclusive version range as
+   * [[DeltaSingleCommit]].
    *
-   * Default no-op: the single production implementation overrides this. Test stubs inherit the
-   * no-op safely.
+   * @param startVersion first commit version to include.
+   * @param endVersion last commit version to include, or empty to read through the
+   *   latest available commit.
+   * @param catalogTableOpt catalog metadata is used to read the table's commit range.
+   * @param failOnDataLoss whether to fail when commits in the range are missing. Only false is
+   *   currently supported.
    */
+  private[v2] def getChangesIterator(
+      startVersion: Long,
+      endVersion: Option[Long],
+      catalogTableOpt: Option[CatalogTable],
+      failOnDataLoss: Boolean = false)
+      : ClosableIterator[DeltaSingleCommit]
+
+  /** Retires this manager and releases any resources it owns. */
   def retire(): Unit = {}
 }

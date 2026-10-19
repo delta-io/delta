@@ -17,12 +17,39 @@
 package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.AdaptiveMetadataTableFeature
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{
+  AddFile,
+  DeletionVectorDescriptor,
+  Metadata,
+  Protocol,
+  RemoveFile
+}
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.test.SharedSparkSession
 
-class AMTUtilsSuite extends SparkFunSuite {
+class AMTUtilsSuite extends QueryTest with SharedSparkSession {
+
+  test("invariantCheckWithLogging: succeeds when the invariant holds") {
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = true,
+      opTypeSuffix = AMTUsageLogs.ALERT_MIXED_LEAF_CONTENT,
+      message = "valid AMT invariant")
+  }
+
+
+  test("invariantCheckWithLogging: evaluates the check once") {
+    var checkCount = 0
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = {
+        checkCount += 1
+        true
+      },
+      opTypeSuffix = AMTUsageLogs.ALERT_MIXED_LEAF_CONTENT,
+      message = "valid AMT invariant")
+    assert(checkCount === 1)
+  }
 
   test("hasScheme: follows URI scheme grammar") {
     assert(AMTUtils.hasScheme("s3://bucket/path"))
@@ -114,5 +141,93 @@ class AMTUtilsSuite extends SparkFunSuite {
 
   test("amtEnabled: false when the protocol lacks the AMT feature") {
     assert(!AMTUtils.amtEnabled(Metadata(), Protocol()))
+  }
+
+  test("AMTSnapshotId fills missing AddFile and RemoveFile lifecycle IDs") {
+    val protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    val dv = DeletionVectorDescriptor(
+      storageType = "u",
+      pathOrInlineDv = "test-dv",
+      offset = Some(1),
+      sizeInBytes = 10,
+      cardinality = 1)
+    val newFile = AddFile("new", Map.empty, 1L, 1L, dataChange = true)
+    val dvUpdate = AddFile(
+      "existing", Map.empty, 1L, 1L, dataChange = true,
+      deletionVector = dv,
+      snapshotId = Some(2L))
+    val remove = AddFile(
+      "removed", Map.empty, 1L, 1L, dataChange = true,
+      deletionVector = dv,
+      snapshotId = Some(2L),
+      modifiedSnapshotId = Some(3L)).remove
+    val removeWithAssignedSnapshotId = remove.copy(snapshotId = Some(7L))
+    val unstampedNoDataChangeRemove =
+      remove.copy(dataChange = false, snapshotId = None, modifiedSnapshotId = None)
+    val unstampedMetadataReAdd =
+      dvUpdate.copy(dataChange = false, snapshotId = None, modifiedSnapshotId = None)
+
+    val assigned = AMTSnapshotId.assignIfMissing(
+      Metadata(), protocol,
+      Iterator(
+        newFile,
+        dvUpdate,
+        remove,
+        removeWithAssignedSnapshotId,
+        unstampedNoDataChangeRemove,
+        unstampedMetadataReAdd),
+      snapshotId = 5L).toSeq
+    val assignedNew = assigned(0).asInstanceOf[AddFile]
+    assert(assignedNew.snapshotId.contains(5L))
+    assert(assignedNew.modifiedSnapshotId.isEmpty)
+
+    val assignedDvUpdate = assigned(1).asInstanceOf[AddFile]
+    assert(assignedDvUpdate.snapshotId.contains(2L))
+    assert(assignedDvUpdate.modifiedSnapshotId.contains(5L))
+
+    val assignedRemove = assigned(2).asInstanceOf[RemoveFile]
+    assert(assignedRemove.snapshotId.contains(5L))
+    assert(assignedRemove.modifiedSnapshotId.contains(3L))
+
+    val preservedRemove = assigned(3).asInstanceOf[RemoveFile]
+    assert(preservedRemove.snapshotId.contains(7L))
+    assert(preservedRemove.modifiedSnapshotId.contains(3L))
+
+    val assignedNoDataChangeRemove = assigned(4).asInstanceOf[RemoveFile]
+    assert(assignedNoDataChangeRemove.snapshotId.contains(5L))
+    assert(assignedNoDataChangeRemove.modifiedSnapshotId.contains(5L))
+
+    val assignedMetadataReAdd = assigned(5).asInstanceOf[AddFile]
+    assert(assignedMetadataReAdd.snapshotId.contains(5L))
+    assert(assignedMetadataReAdd.modifiedSnapshotId.contains(5L))
+  }
+
+  test("AMTSnapshotId preserves a materialized modification ID") {
+    val protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    val add = AddFile(
+      "materialized",
+      Map.empty,
+      1L,
+      1L,
+      dataChange = true,
+      modifiedSnapshotId = Some(3L))
+    val remove = add.remove
+
+    val assigned = AMTSnapshotId.assignIfMissing(
+      Metadata(), protocol, Iterator(add, remove), snapshotId = 5L).toSeq
+    assert(assigned(0).asInstanceOf[AddFile].modifiedSnapshotId.contains(3L))
+    assert(assigned(1).asInstanceOf[RemoveFile].modifiedSnapshotId.contains(3L))
+  }
+
+
+  test("AMTSnapshotId generates a non-negative random ID") {
+    assert(AMTSnapshotId.generate() >= 0L)
+  }
+
+  test("AMTSnapshotId leaves actions unchanged when AMT is disabled") {
+    val add = AddFile("plain", Map.empty, 1L, 1L, dataChange = true)
+    val assigned = AMTSnapshotId.assignIfMissing(
+      Metadata(), Protocol(), Iterator(add), snapshotId = 5L).toSeq
+    assert(assigned == Seq(add))
   }
 }

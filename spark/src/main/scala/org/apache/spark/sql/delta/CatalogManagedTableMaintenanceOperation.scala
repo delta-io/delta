@@ -17,6 +17,9 @@
 package org.apache.spark.sql.delta
 
 object CatalogManagedTableMaintenanceOperation {
+  /** Storage property carrying the catalog-permitted maintenance operations, comma-separated. */
+  val ALLOWED_OPERATIONS_PROPERTY = "delta.clientMaintenanceOperations"
+
   /**
    * Deletes data files that no retained table version needs. It deletes the files only after the
    * retention period.

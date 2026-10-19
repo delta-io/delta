@@ -46,7 +46,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
   private def addedTracking: Tracking = Tracking(
     status = Tracking.Status.Added,
     snapshot_id = None,
-    dv_snapshot_id = None,
+    modified_snapshot_id = None,
     sequence_number = None,
     file_sequence_number = None,
     first_row_id = None,
@@ -57,7 +57,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
   private def rootTracking: Tracking = Tracking(
     status = Tracking.Status.Existing,
     snapshot_id = Some(7L),
-    dv_snapshot_id = None,
+    modified_snapshot_id = None,
     sequence_number = Some(3L),
     file_sequence_number = Some(3L),
     first_row_id = None,
@@ -73,6 +73,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     stats = """{"numRecords":42}""")
 
   private def sampleManifestInfo: ManifestInfo = ManifestInfo(
+    format_version = AMTSingleAction.FormatVersionV4,
     added_files_count = 2,
     existing_files_count = 0,
     deleted_files_count = 0,
@@ -84,12 +85,11 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     replaced_rows_count = 0L,
     modified_rows_count = 7L,
     min_sequence_number = 3L,
-    dv = None,
-    dv_cardinality = None)
+    dv = None)
 
   test("encoder schema has the expected V4 column names in order") {
     assert(spark.emptyDataset[AMTSingleAction].schema.fieldNames.toSeq == Seq(
-      "content_type", "format_version", "location", "file_format", "tracking",
+      "content_type", "location", "file_format", "tracking",
       "deletion_vector", "spec_id", "partition", "sort_order_id", "record_count",
       "file_size_in_bytes", "content_stats", "manifest_info", "key_metadata",
       "split_offsets", "tags"))
@@ -191,7 +191,6 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       tags: Option[Map[String, String]] = None,
       tracking: Tracking = addedTracking): AMTSingleAction = AMTSingleAction(
     content_type = content_type,
-    format_version = AMTSingleAction.FormatVersionV4,
     location = "f.parquet",
     file_format = AMTSingleAction.FileFormatParquet,
     tracking = tracking,
@@ -294,7 +293,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
           deleted_positions = Some(deletedPos), replaced_positions = Some(replacedPos)),
         record_count = 1L,
         file_size_in_bytes = 1L,
-        manifest_info = sampleManifestInfo.copy(dv = Some(manifestDv), dv_cardinality = Some(2L)),
+        manifest_info = sampleManifestInfo.copy(dv = Some(manifestDv)),
         key_metadata = Some(keyMeta)).wrap
       val path = new java.io.File(dir, "binary").getCanonicalPath
       spark.createDataset(Seq(entry)).write.parquet(path)
@@ -365,7 +364,8 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       cardinality = 3L,
       offset = Some(8))
     val amtDv = DeletionVector.fromDescriptor(dv, tableRoot)
-    assert(amtDv.location == dv.absolutePath(tableRoot).toString)
+    assert(amtDv.location ==
+      s"test%dv%prefix-/${DeletionVectorDescriptor.assembleDeletionVectorFileName(id)}")
     assert(amtDv.location.contains("test%dv%prefix-"))
     assert(amtDv.offset == 8L)
     assert(amtDv.cardinality == 3L)
@@ -376,6 +376,8 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(roundTripped.storageType == DeletionVectorDescriptor.RELATIVE_DV_MARKER)
     assert(roundTripped.pathOrInlineDv.contains("test%dv%prefix-"))
     assert(roundTripped.absolutePath(tableRoot) == dv.absolutePath(tableRoot))
+    assert(roundTripped.normalizedTableRelativeObjectId(tableRoot) ==
+      dv.normalizedTableRelativeObjectId(tableRoot))
   }
 
   test("DeletionVector round-trips an absolute-path DV outside the table root") {
@@ -409,7 +411,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
   private def entryWithPassthrough: DataEntry = DataEntry(
     location = "f.parquet",
     file_format = AMTSingleAction.FileFormatParquet,
-    tracking = addedTracking,
+    tracking = addedTracking.copy(snapshot_id = Some(11L)),
     record_count = 10L,
     file_size_in_bytes = 100L,
     spec_id = Some(7),
@@ -422,26 +424,92 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
       location = "f.parquet", file_format = AMTSingleAction.FileFormatParquet,
       tracking = addedTracking, record_count = 10L, file_size_in_bytes = 100L).toAddFile(tableRoot)
     assert(add.amtPassthrough.isEmpty, "a default entry must add no per-file passthrough")
+    assert(add.snapshotId.isEmpty)
+    assert(add.modifiedSnapshotId.isEmpty)
   }
 
   test("DataEntry round-trips toAddFile -> fromAddFile") {
     val add = entryWithPassthrough.toAddFile(tableRoot)
     assert(add.amtPassthrough.isDefined, "a genuine passthrough must be carried")
+    assert(add.snapshotId.contains(11L))
+    assert(add.modifiedSnapshotId.isEmpty)
     val restored = DataEntry.fromAddFile(add, addedTracking, tableRoot)
     assert(restored.spec_id.contains(7))
     assert(restored.sort_order_id.contains(3))
     assert(restored.key_metadata.exists(_.sameElements(Array[Byte](4, 5, 6))))
     assert(restored.split_offsets.contains(Seq(0L, 64L, 128L)))
+    assert(restored.tracking.snapshot_id.contains(11L))
+    assert(restored.tracking.modified_snapshot_id.isEmpty,
+      "modified_snapshot_id must be null when the entry has no modification metadata")
     // file_format / format_version are not carried; they are reconstructed at the M1 defaults.
     assert(restored.file_format == AMTSingleAction.FileFormatParquet)
-    assert(restored.format_version == AMTSingleAction.FormatVersionV4)
   }
 
   test("fromAddFile falls back to defaults with no passthrough") {
     val restored = DataEntry.fromAddFile(sampleAddFile, addedTracking, tableRoot)
     assert(restored.file_format == AMTSingleAction.FileFormatParquet)
     assert(restored.spec_id.isEmpty)
-    assert(restored.format_version == AMTSingleAction.FormatVersionV4)
+  }
+
+  test("fromAddFile maps snapshot IDs only from top-level AddFile fields") {
+    val transitionTracking =
+      addedTracking.copy(snapshot_id = Some(99L), modified_snapshot_id = Some(100L))
+    val withoutPassthrough = DataEntry.fromAddFile(sampleAddFile, transitionTracking, tableRoot)
+    assert(withoutPassthrough.tracking.snapshot_id.isEmpty)
+    assert(withoutPassthrough.tracking.modified_snapshot_id.isEmpty)
+
+    val dv = DeletionVectorDescriptor.onDiskWithUuidRelativePath(
+      id = UUID.randomUUID(), sizeInBytes = 10, cardinality = 1L, offset = Some(1))
+    val add = sampleAddFile.copy(
+      deletionVector = dv,
+      snapshotId = Some(11L),
+      modifiedSnapshotId = Some(12L))
+    val withPassthrough = DataEntry.fromAddFile(add, transitionTracking, tableRoot)
+    assert(withPassthrough.tracking.snapshot_id.contains(11L))
+    assert(withPassthrough.tracking.modified_snapshot_id.contains(12L))
+  }
+
+  test("fromRemoveFile combines prior content with terminal snapshot provenance") {
+    val dv = DeletionVectorDescriptor.onDiskWithUuidRelativePath(
+      id = UUID.randomUUID(), sizeInBytes = 10, cardinality = 1L, offset = Some(1))
+    val priorAdd = sampleAddFile.copy(
+      deletionVector = dv,
+      amtPassthrough = Some(AMTPassthrough(spec_id = Some(7))),
+      snapshotId = Some(11L),
+      modifiedSnapshotId = Some(12L))
+    val remove = priorAdd.remove.copy(
+      snapshotId = Some(21L),
+      modifiedSnapshotId = Some(12L))
+    // scalastyle:off removeFile // This calls a DataEntry factory, not a RemoveFile constructor.
+    val entry = DataEntry.fromRemoveFile(
+      priorAdd, remove, addedTracking.copy(status = Tracking.Status.Deleted), tableRoot)
+    // scalastyle:on removeFile
+    assert(entry.location == priorAdd.path)
+    assert(entry.record_count == priorAdd.numPhysicalRecords.get)
+    assert(entry.spec_id.contains(7))
+    assert(entry.tracking.snapshot_id.contains(21L))
+    assert(entry.tracking.modified_snapshot_id.contains(12L))
+  }
+
+  test("fromAddFile maps defaultRowCommitVersion to both sequence numbers") {
+    val entry = DataEntry.fromAddFile(
+      sampleAddFile.copy(defaultRowCommitVersion = Some(10L)),
+      addedTracking,
+      tableRoot)
+    assert(entry.tracking.sequence_number.contains(10L))
+    assert(entry.tracking.file_sequence_number.contains(10L))
+  }
+
+  test("toAddFile maps file_sequence_number to defaultRowCommitVersion") {
+    val add = DataEntry(
+      location = "f.parquet",
+      file_format = AMTSingleAction.FileFormatParquet,
+      tracking = addedTracking.copy(
+        sequence_number = Some(20L),
+        file_sequence_number = Some(10L)),
+      record_count = 10L,
+      file_size_in_bytes = 100L).toAddFile(tableRoot)
+    assert(add.defaultRowCommitVersion.contains(10L))
   }
 
   private val sampleTags: Map[String, String] =
@@ -488,7 +556,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     }
   }
 
-  test("amtPassthrough round-trips through the commit JSON") {
+  test("AMT AddFile fields round-trip through the commit JSON") {
     val add = entryWithPassthrough.toAddFile(tableRoot)
     assert(add.amtPassthrough.isDefined)
     val json = add.json
@@ -496,6 +564,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     Seq("spec_id", "sort_order_id", "key_metadata", "split_offsets").foreach { f =>
       assert(json.contains(f), s"$f must be serialized; got $json")
     }
+    assert(json.contains("\"snapshotId\":11"))
 
     val roundTripped = Action.fromJson(json) match {
       case a: AddFile => a
@@ -507,6 +576,8 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(passthrough.sort_order_id.contains(3))
     assert(passthrough.key_metadata.exists(_.sameElements(Array[Byte](4, 5, 6))))
     assert(passthrough.split_offsets.contains(Seq(0L, 64L, 128L)))
+    assert(roundTripped.snapshotId.contains(11L))
+    assert(roundTripped.modifiedSnapshotId.isEmpty)
   }
 
   test("an AddFile with no amtPassthrough keeps it out of the commit JSON") {

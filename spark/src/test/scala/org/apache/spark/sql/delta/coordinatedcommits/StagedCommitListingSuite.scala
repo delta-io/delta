@@ -45,18 +45,16 @@ class StagedCommitListingSuite extends QueryTest
   override protected def sparkConf: SparkConf =
     super.sparkConf.set(logStoreClassConfKey, classOf[RecursiveListingLocalLogStore].getName)
 
-  /** Runs `f` with Catalog Owned (CCv2) enabled by default for new tables. */
-  private def withCatalogOwnedCommits(f: => Unit): Unit = {
-    withDefaultCCTableFeature {
-      withSQLConf(
-        // Keep checkpoints/minor-compactions out of the picture; these tests reason about versions.
-        DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
-        f
-      }
+  /** Runs `f` with Catalog Owned (CCv2) and staged-commit filtering enabled. */
+  private def withCatalogOwnedCommits(f: => Unit): Unit = withDefaultCCTableFeature {
+    withSQLConf(
+      DeltaSQLConf.DELTA_SNAPSHOT_FILESYSTEM_LISTING_FILTER_STAGED_COMMITS_ENABLED.key ->
+        "true") {
+      f
     }
   }
 
-  private def logDir(path: String): File = new File(path, "_delta_log")
+  private def logDir(path: String): File = new File(DeltaLog.logPathFor(path).toString)
 
   private def stagedCommitsDir(path: String): File =
     new File(logDir(path), FileNames.COMMIT_SUBDIR)
@@ -66,6 +64,12 @@ class StagedCommitListingSuite extends QueryTest
       .filter(_.getName.endsWith(".json"))
       .sortBy(_.getName)
       .toSeq
+
+  private def assertStagedVersions(path: String, expectedVersions: Seq[Long]): Seq[File] = {
+    val staged = stagedCommitFiles(path)
+    assert(staged.map(f => FileNames.deltaVersion(new Path(f.getName))) === expectedVersions)
+    staged
+  }
 
   private def backfilledDeltaFile(path: String, version: Long): File =
     new File(FileNames.unsafeDeltaFile(new Path(logDir(path).toString), version).toString)
@@ -93,8 +97,7 @@ class StagedCommitListingSuite extends QueryTest
         // Append v1; with batch size 100 it stays staged (un-backfilled).
         spark.range(10, 20).write.format("delta").mode("append").save(path)
 
-        assert(stagedCommitFiles(path).nonEmpty,
-          "expected at least one staged commit file to exist on disk")
+        assertStagedVersions(path, Seq(1L))
 
         val deltaLog = DeltaLog.forTable(spark, path)
         val logPath = deltaLog.logPath
@@ -102,33 +105,85 @@ class StagedCommitListingSuite extends QueryTest
           .listFrom(FileNames.listingPrefix(logPath, 0L), deltaLog.newDeltaHadoopConf())
           .map(_.getPath)
           .toSeq
-        assert(listed.exists(p => p.getParent.getName == FileNames.COMMIT_SUBDIR),
-          s"recursive listing should surface _staged_commits files, but listed: $listed")
+        val listedStagedVersions = listed
+          .filter(_.getParent.getName == FileNames.COMMIT_SUBDIR)
+          .map(FileNames.deltaVersion)
+        assert(listedStagedVersions === Seq(1L),
+          s"recursive listing should surface exactly staged version 1, but listed: $listed")
       }
     }
   }
 
-  test("backfilled + staged copy of the same version does not throw NOT_CONTIGUOUS") {
+  test("filesystem listing keeps checkpoints and minor compactions") {
     withCatalogOwnedCommits {
       withTempDir { tempDir =>
         val path = tempDir.getCanonicalPath
         spark.range(0, 10).write.format("delta").save(path) // v0
         spark.range(10, 20).write.format("delta").mode("append").save(path) // v1 (staged)
+        assertStagedVersions(path, Seq(1L))
 
-        // Also materialise the backfilled `00...01.json` so v1 exists both backfilled and staged.
-        val staged = stagedCommitFiles(path)
-        assert(staged.nonEmpty, "expected a staged commit for v1")
-        val stagedV1 = staged.find(f => FileNames.deltaVersion(new Path(f.getName)) == 1L).get
-        val backfilledV1 = backfilledDeltaFile(path, 1L)
-        if (!backfilledV1.exists()) {
-          java.nio.file.Files.copy(stagedV1.toPath, backfilledV1.toPath)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val hadoopConf = deltaLog.newDeltaHadoopConf()
+        deltaLog.store.write(
+          FileNames.checkpointFileSingular(deltaLog.logPath, 0L),
+          Iterator("{}"),
+          overwrite = false,
+          hadoopConf)
+        deltaLog.store.write(
+          FileNames.compactedDeltaFile(deltaLog.logPath, 0L, 0L),
+          Iterator("{}"),
+          overwrite = false,
+          hadoopConf)
+
+        def listedFileTypes(
+            includeMinorCompactions: Boolean): Set[(FileNames.FileType.Value, Long)] = {
+          deltaLog.listFromFileSystemInternal(
+            startVersion = 0L,
+            versionToLoad = None,
+            includeMinorCompactions = includeMinorCompactions)
+            ._1
+            .getOrElse(Array.empty)
+            .map { case (_, fileType, version) => fileType -> version }
+            .toSet
         }
-        assert(backfilledV1.exists() && stagedV1.exists(),
-          "v1 must exist both backfilled and staged for this scenario")
 
-        DeltaLog.invalidateCache(spark, new Path(path))
+        assert(listedFileTypes(includeMinorCompactions = false) === Set(
+          FileNames.FileType.DELTA -> 0L,
+          FileNames.FileType.CHECKPOINT -> 0L))
+        assert(listedFileTypes(includeMinorCompactions = true) === Set(
+          FileNames.FileType.DELTA -> 0L,
+          FileNames.FileType.CHECKPOINT -> 0L,
+          FileNames.FileType.COMPACTED_DELTA -> 0L))
+      }
+    }
+  }
 
-        // Before the fix this threw DELTA_VERSIONS_NOT_CONTIGUOUS (versions [0, 1, 1]).
+  testWithCatalogOwned(backfillBatchSize = 1)(
+      "rollout flag controls staged-commit filtering for a backfilled version") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.range(0, 10).write.format("delta").save(path) // v0
+      spark.range(10, 20).write.format("delta").mode("append").save(path) // v1 (backfilled)
+
+      val stagedV1 = assertStagedVersions(path, Seq(1L)).head
+      val backfilledV1 = backfilledDeltaFile(path, 1L)
+      assert(backfilledV1.exists() && stagedV1.exists(),
+        "batch size 1 must leave both backfilled and staged copies of v1")
+
+      DeltaLog.invalidateCache(spark, new Path(path))
+      withSQLConf(
+          DeltaSQLConf.DELTA_SNAPSHOT_FILESYSTEM_LISTING_FILTER_STAGED_COMMITS_ENABLED.key ->
+            "false") {
+        val error = intercept[DeltaIllegalStateException] {
+          DeltaLog.forTable(spark, path).update()
+        }
+        assert(error.getErrorClass.startsWith("DELTA_VERSIONS_NOT_CONTIGUOUS"))
+      }
+
+      DeltaLog.invalidateCache(spark, new Path(path))
+      withSQLConf(
+          DeltaSQLConf.DELTA_SNAPSHOT_FILESYSTEM_LISTING_FILTER_STAGED_COMMITS_ENABLED.key ->
+            "true") {
         val snapshot = DeltaLog.forTable(spark, path).update()
         assert(snapshot.version == 1L)
         checkAnswer(
@@ -149,15 +204,16 @@ class StagedCommitListingSuite extends QueryTest
         val deltaLog = DeltaLog.forTable(spark, path)
         val logPath = deltaLog.logPath
 
-        // Orphan v1: drop it from the coordinator and delete any backfilled copy, leaving only the
-        // well-formed staged file under `_staged_commits/`.
+        val stagedV1 = assertStagedVersions(path, Seq(1L)).head
+        val backfilledV1 = backfilledDeltaFile(path, 1L)
+        assert(!backfilledV1.exists(), "batch size 100 must not backfill v1")
+
+        // Orphan v1 by dropping it from the coordinator. Its staged file remains on disk.
         val coordinator = getInMemoryCoordinator
         coordinator.removeCommitTestOnly(logPath, commitVersion = 1L)
-        val backfilledV1 = backfilledDeltaFile(path, 1L)
-        if (backfilledV1.exists()) assert(backfilledV1.delete())
-        assert(stagedCommitFiles(path).exists(f =>
-          FileNames.deltaVersion(new Path(f.getName)) == 1L),
-          "the orphaned staged v1 file must still be present on disk")
+        assert(stagedV1.exists(), "orphaning v1 must not delete its staged file")
+        assertStagedVersions(path, Seq(1L))
+        assert(!backfilledV1.exists(), "orphaned v1 must not have a backfilled copy")
 
         DeltaLog.invalidateCache(spark, new Path(path))
 
@@ -179,9 +235,7 @@ class StagedCommitListingSuite extends QueryTest
         spark.range(10, 20).write.format("delta").mode("append").save(path) // v1 (ratified, staged)
 
         // v1 is ratified by the coordinator but, with batch size 100, still only exists staged.
-        val staged = stagedCommitFiles(path)
-        assert(staged.exists(f => FileNames.deltaVersion(new Path(f.getName)) == 1L),
-          "v1 should be present as a staged commit")
+        assertStagedVersions(path, Seq(1L))
         assert(!backfilledDeltaFile(path, 1L).exists(),
           "v1 should NOT be backfilled yet (batch size is large)")
 
@@ -226,18 +280,18 @@ class RecursiveListingLocalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
 
   override def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = {
     val fs = path.getFileSystem(hadoopConf)
-    val parent = path.getParent
-    if (!fs.exists(parent)) {
-      throw DeltaErrors.fileOrDirectoryNotFoundException(s"$parent")
+    // `path` is the first file name to return. List from its containing log directory.
+    val logDir = path.getParent
+    if (!fs.exists(logDir)) {
+      throw DeltaErrors.fileOrDirectoryNotFoundException(s"$logDir")
     }
-    // Recursively collect leaf files under the parent (mirrors a no-delimiter prefix listing).
+
+    // This mirrors an object-store prefix listing without a delimiter.
     val collected = scala.collection.mutable.ArrayBuffer.empty[FileStatus]
-    def recurse(dir: Path): Unit = {
-      fs.listStatus(dir).foreach { st =>
-        if (st.isDirectory) recurse(st.getPath) else collected += st
-      }
+    val remoteFiles = fs.listFiles(logDir, true)
+    while (remoteFiles.hasNext) {
+      collected += remoteFiles.next()
     }
-    recurse(parent)
     // Return files with name >= the start name, sorted by leaf name (as the S3 log store does).
     collected
       .filter(_.getPath.getName >= path.getName)

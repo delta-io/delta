@@ -53,7 +53,8 @@ object DeltaV2SinkSuite {
     "append mode",
     "work with aggregation + watermark",
     "do not trust user nullability, so that parquet files aren't corrupted",
-    "can't write out with all columns being partition columns"
+    "can't write out with all columns being partition columns",
+    "streaming write shreds variant columns only when the table enables it"
   )
 
   val FailingTests: Set[String] = Set(

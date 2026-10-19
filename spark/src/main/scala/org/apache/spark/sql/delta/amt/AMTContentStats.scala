@@ -163,7 +163,7 @@ private[amt] object AMTContentStats {
         field.dataType match {
           case nested: StructType => collect(nested, path, namePath)
           case dt =>
-            val boundType = if (isBoundTypeSupported(dt)) Some(dt) else None
+            val boundType = if (isSupportedBoundType(dt)) Some(dt) else None
             Some(StatsLeaf(
               fieldId = DeltaColumnMapping.getColumnId(field).toLong,
               name = namePath.mkString("_"),
@@ -183,7 +183,7 @@ private[amt] object AMTContentStats {
    * package can depend on. Types outside this set are left out of `content_stats`, matching that
    * converter's behavior of ignoring unsupported stats.
    */
-  private def isBoundTypeSupported(dataType: DataType): Boolean =
+  private def isSupportedBoundType(dataType: DataType): Boolean =
     SkippingEligibleDataType(dataType) && (dataType match {
       case _: StringType | _: IntegerType | _: FloatType | _: DoubleType | _: DecimalType |
           _: BooleanType | _: DateType | _: TimestampType | _: TimestampNTZType | _: LongType |

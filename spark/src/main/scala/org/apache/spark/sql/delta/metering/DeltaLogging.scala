@@ -155,7 +155,7 @@ trait DeltaLogging
       check: => Boolean,
       name: String,
       msg: String,
-      deltaLog: DeltaLog = null,
+      deltaLog: DeltaLoggingProvider = null,
       data: AnyRef = null,
       path: Option[Path] = None)
     : Unit = {
@@ -169,6 +169,58 @@ trait DeltaLogging
         path = path
       )
       logWarning(msg)
+    }
+  }
+
+  /**
+   * A variation of [[deltaAssert]] that only logs the assertion error and
+   * does not add an assertion in test. This is useful for writing negative tests
+   * that validates the behaviour of executing the code after the [[deltaAssert]] call.
+   * The assertion in test prevents us from testing the production behaviour.
+   */
+  protected def deltaAssertLogOnly(
+      check: => Boolean,
+      name: String,
+      msg: String,
+      deltaLog: DeltaLoggingProvider = null,
+      data: AnyRef = null,
+      path: Option[Path] = None
+    ): Unit = {
+    if (!check) {
+      recordDeltaEvent(
+        provider = deltaLog,
+        opType = s"delta.assertions.$name",
+        data = data,
+        path = path
+      )
+      logWarning(msg)
+    }
+  }
+
+  /**
+   * A variation of [[deltaAssert]] that logs the assertion error and throws a throwable.
+   * We don't need an assertion in test since if it fails we want the same throwable in
+   * test and in production.
+   */
+  protected def deltaAssertAndThrow(
+      check: => Boolean,
+      name: String,
+      msg: String,
+      throwable: Throwable,
+      deltaLog: DeltaLoggingProvider = null,
+      data: AnyRef = null,
+      path: Option[Path] = None
+    ): Unit = {
+    if (!check) {
+      recordDeltaEvent(
+        provider = deltaLog,
+        opType = s"delta.assertions.$name",
+        data = data,
+        path = path
+      )
+      logError(msg)
+
+      throw throwable
     }
   }
 

@@ -19,15 +19,17 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.TableConfig;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
+import org.apache.spark.sql.delta.DeltaConfigs;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.types.StructType;
 
@@ -46,6 +48,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   private final String tablePath;
   private final Configuration hadoopConf;
   private final Snapshot initialSnapshot;
+  private final Optional<CatalogTable> catalogTable;
   private final DeltaV2SnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -55,7 +58,8 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
    * @param engine Kernel engine (persisted in DeltaV2Table, shared across operations)
    * @param tablePath filesystem path to the Delta table root
    * @param hadoopConf Hadoop configuration (with merged table options)
-   * @param initialSnapshot Kernel snapshot loaded at table construction time
+   * @param initialSnapshot snapshot loaded at table construction time
+   * @param catalogTable the catalog table containing table metadata
    * @param snapshotManager reloads the latest snapshot; used by the streaming write to build each
    *     epoch's commit against the current table state (see {@link DeltaV2StreamingWrite})
    * @param dataSchema the table's data (non-partition) schema, from DeltaV2Table's SchemaProvider
@@ -68,6 +72,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       String tablePath,
       Configuration hadoopConf,
       Snapshot initialSnapshot,
+      Optional<CatalogTable> catalogTable,
       DeltaV2SnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
@@ -76,6 +81,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
+    this.catalogTable = requireNonNull(catalogTable, "catalogTable is null");
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
@@ -108,6 +114,9 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       }
     }
 
+    // Resolved once here through the same V1 accessor (alternate keys and default included) and
+    // passed down as a boolean, so the batch and streaming writes share one decision.
+    boolean variantShreddingEnabled = isVariantShreddingEnabled(initialSnapshot);
     // Returns a mode-dispatching Write: toBatch() -> DeltaV2BatchWrite (batch commit off
     // initialSnapshot), toStreaming() -> DeltaV2StreamingWrite (per-epoch commit off the latest
     // snapshot via snapshotManager). Both modes share the executor-side write-state construction.
@@ -115,11 +124,24 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         engine,
         hadoopConf,
         tablePath,
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(initialSnapshot),
+        initialSnapshot,
+        catalogTable,
         snapshotManager,
         dataSchema,
         partitionSchema,
-        writeInfo);
+        writeInfo,
+        variantShreddingEnabled);
+  }
+
+  /**
+   * Whether {@code snapshot} opted into shredded variant writes.
+   *
+   * <p>Read through the V1 {@link DeltaConfigs} accessor so alternate property keys and the
+   * property default are handled exactly as the V1 write path handles them. Package-visible because
+   * the streaming commit re-reads it off a reloaded snapshot to detect a mid-query change.
+   */
+  static boolean isVariantShreddingEnabled(Snapshot snapshot) {
+    return (Boolean) DeltaConfigs.ENABLE_VARIANT_SHREDDING().fromMetaData(snapshot.metadata());
   }
 
   static void validateDataSchema(Snapshot initialSnapshot, StructType dataSchema) {

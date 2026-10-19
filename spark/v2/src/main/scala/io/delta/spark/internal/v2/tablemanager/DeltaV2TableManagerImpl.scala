@@ -15,16 +15,29 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
-import org.apache.hadoop.fs.Path
+import java.util.EnumSet
+import java.util.concurrent.atomic.AtomicReference
 
+import scala.jdk.OptionConverters._
+
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaSingleCommit}
+import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStoreProvider}
+import org.apache.spark.sql.delta.v2.interop.{
+  DeltaV2QueryContext,
+  DeltaV2SingleCommit,
+  DeltaV2SnapshotManager
+}
+import io.delta.spark.internal.v2.kernel.KernelContext
+import org.apache.hadoop.fs.Path
+import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
+
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
- * Process-cached [[DeltaV2TableManager]] composite.
+ * Process-cached [[DeltaV2TableManager]] implementation.
  *
- * Placeholder: inherits default trait stubs. The real implementation (snapshot lifecycle and
- * freshness control) is added in a follow-up layer.
+ * Reuses a table-scoped snapshot manager backed by the table's [[KernelContext]].
  *
  * @param qualifiedTableDataPath the fully-qualified table data directory (parent of `_delta_log`).
  * @param sessionInvariantFsOptions filesystem-prefixed credential options (`fs.*`, `dfs.*`) that
@@ -36,12 +49,55 @@ private[tablemanager] class DeltaV2TableManagerImpl(
     val qualifiedTableDataPath: Path,
     val sessionInvariantFsOptions: Map[String, String],
     val initialCatalogTableOpt: Option[CatalogTable])
-    extends DeltaV2TableManager {
+    extends DeltaV2TableManager
+    with LogStoreProvider
+{
 
   /** The table's data directory, fully qualified. */
   def tablePath: Path = qualifiedTableDataPath
 
-  // Placeholder until snapshot lifecycle is implemented.
-  override def snapshotManager(): DeltaV2SnapshotManager =
-    throw new UnsupportedOperationException("snapshotManager not yet implemented")
+  /** Used to read and write physical log files and checkpoints. */
+  override private[v2] val logStore = createLogStore(SparkSession.active)
+
+  override private[v2] val kernelContext = KernelContext(sessionInvariantFsOptions, logStore)
+
+  private val latestCatalogTable =
+    new AtomicReference[CatalogTable](initialCatalogTableOpt.orNull)
+  private val cachedSnapshotManager =
+    new CachedSnapshotManager(tablePath, kernelContext, latestCatalogTable)
+
+  override private[v2] def snapshotManager(
+      catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager = {
+    // Catalog metadata is latest-wins best-effort state. A refresh captures one atomic value and
+    // uses it consistently while selecting its path-based or catalog-managed uncached delegate.
+    latestCatalogTable.set(catalogTableOpt.orNull)
+    cachedSnapshotManager
+  }
+
+  override private[v2] def getChangesIterator(
+      startVersion: Long,
+      endVersion: Option[Long],
+      catalogTableOpt: Option[CatalogTable],
+      failOnDataLoss: Boolean)
+      : ClosableIterator[DeltaSingleCommit] = {
+    if (failOnDataLoss) {
+      throw DeltaErrors.assertionFailedError(
+        "getChangesIterator does not support failOnDataLoss = true")
+    }
+    val kernelEngine = kernelContext.getDefaultEngine()
+    val commitRange = cachedSnapshotManager.getTableChanges(
+      kernelEngine,
+      startVersion,
+      endVersion.map(Long.box).toJava,
+      DeltaV2QueryContext(catalogTableOpt))
+    val kernelCommits = commitRange.getCommitActions(
+      kernelEngine, EnumSet.allOf(classOf[KernelDeltaAction]))
+    new ClosableIterator[DeltaSingleCommit] {
+      override def hasNext: Boolean = kernelCommits.hasNext
+      override def next(): DeltaSingleCommit = DeltaV2SingleCommit(kernelCommits.next())
+      override def close(): Unit = kernelCommits.close()
+    }
+  }
+
+  override def retire(): Unit = cachedSnapshotManager.retire()
 }

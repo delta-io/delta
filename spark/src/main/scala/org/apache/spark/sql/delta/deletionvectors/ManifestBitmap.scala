@@ -16,17 +16,20 @@
 
 package org.apache.spark.sql.delta.deletionvectors
 
-import org.apache.spark.util.Utils
+import java.nio.ByteBuffer
+
+import scala.collection.Seq
+
+import org.apache.spark.sql.delta.RowIndexFilterProvider
+import org.apache.spark.sql.delta.deletionvectors.mumbling.{MumblingBitmap, MumblingBitmapWriter}
+import org.apache.hadoop.fs.Path
 
 /**
- * A mutable bitmap of unsigned positions for the AMT manifest deletion vectors: the masking MDV
- * in `manifest_info.dv` and the CDF `tracking.deleted_positions` / `tracking.replaced_positions`
- * bitmaps.
+ * An immutable bitmap of unsigned positions for the AMT manifest deletion vectors: the masking
+ * MDV in `manifest_info.dv` and the CDF `tracking.deleted_positions` /
+ * `tracking.replaced_positions` bitmaps.
  */
 trait ManifestBitmap {
-  /** Adds `value` to the bitmap. */
-  def add(value: Int): Unit
-
   /** Returns `true` if `value` is set. */
   def contains(value: Int): Boolean
 
@@ -36,73 +39,77 @@ trait ManifestBitmap {
   /** Returns `true` if no position is set. */
   def isEmpty: Boolean
 
+  /** Returns a mutable copy that can be updated and converted back to an immutable bitmap. */
+  def toMutable: MutableManifestBitmap
+
   /** Serializes to the on-disk byte form carried in `manifest_info.dv` / the CDF bitmaps. */
   def serializeAsByteArray(): Array[Byte]
 
-  /** The set positions in ascending order, for tests only. */
-  final def toArrayForTesting: Array[Long] = {
-    assert(Utils.isTesting)
-    toArrayForTestingImpl
-  }
+  /** Builds a [[RowIndexFilterProvider]] representing this bitmap. */
+  def toRowIndexFilterProvider(tableRoot: Path): RowIndexFilterProvider
+}
 
-  protected def toArrayForTestingImpl: Array[Long]
+/** A mutable copy of a [[ManifestBitmap]]. */
+trait MutableManifestBitmap {
+  /** Adds `value` to the bitmap. */
+  def add(value: Int): Unit
 
+  /** Returns an immutable snapshot of the current bitmap. */
+  def toManifestBitmap: ManifestBitmap
 }
 
 object ManifestBitmap {
   /** Returns a bitmap of the given positions. */
-  def fromPositions(values: Seq[Int]): ManifestBitmap = RoaringManifestBitmap.fromPositions(values)
+  def fromPositions(values: Seq[Int]): ManifestBitmap =
+    MumblingManifestBitmap.fromPositions(values)
 
   /** Deserializes a bitmap previously produced by [[ManifestBitmap.serializeAsByteArray]]. */
   def fromSerializedByteArray(bytes: Array[Byte]): ManifestBitmap =
-    RoaringManifestBitmap.fromSerializedByteArray(bytes)
+    MumblingManifestBitmap.fromSerializedByteArray(bytes)
 }
 
-/**
- * A [[ManifestBitmap]] backed by a [[RoaringBitmapArray]] in the portable format.
- */
-final class RoaringManifestBitmap private (
-    private val serializedBytesOrPositions: Either[Array[Byte], Seq[Int]])
+/** A [[ManifestBitmap]] backed by an immutable [[MumblingBitmap]]. */
+final class MumblingManifestBitmap private[deletionvectors] (
+    private val underlying: MumblingBitmap)
   extends ManifestBitmap {
 
-  // Materialized on first bit-level use: decoded from the on-disk bytes, or built from the
-  // positions.
-  private lazy val roaringBitmapArray: RoaringBitmapArray =
-    serializedBytesOrPositions match {
-      case Left(bytes) => RoaringBitmapArray.readFrom(bytes)
-      case Right(positions) => RoaringBitmapArray(positions.map(_.toLong): _*)
-    }
+  override def contains(value: Int): Boolean = value >= 0 && underlying.isSet(value)
 
-  // Set once a position is added, so serialization re-encodes from the decoded (mutated) bitmap
-  // instead of returning the now-stale `serializedBytesOrPositions`.
-  private var mutated = false
+  override def cardinality: Long = underlying.cardinality().toLong
 
-  override def add(value: Int): Unit = {
-    mutated = true
-    roaringBitmapArray.add(value.toLong)
+  override def isEmpty: Boolean = underlying.cardinality() == 0
+
+  override def toMutable: MutableManifestBitmap =
+    new MutableMumblingManifestBitmap(underlying.toMutable())
+
+  override def serializeAsByteArray(): Array[Byte] = {
+    val buffer = underlying.buffer()
+    val bytes = new Array[Byte](buffer.remaining())
+    buffer.get(bytes)
+    bytes
   }
 
-  override def contains(value: Int): Boolean = roaringBitmapArray.contains(value.toLong)
-
-  override def cardinality: Long = roaringBitmapArray.cardinality
-
-  override def isEmpty: Boolean = roaringBitmapArray.isEmpty
-
-  override protected def toArrayForTestingImpl: Array[Long] = roaringBitmapArray.toArray
-
-  override def serializeAsByteArray(): Array[Byte] =
-    serializedBytesOrPositions match {
-      // Defensive copy: Don't expose internal buffer for a caller to mutate.
-      case Left(bytes) if !mutated => bytes.clone()
-      case _ => roaringBitmapArray.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
-    }
-
+  override def toRowIndexFilterProvider(tableRoot: Path): RowIndexFilterProvider =
+    new MumblingRowIndexFilterProvider(serializeAsByteArray(), cardinality)
 }
 
-object RoaringManifestBitmap {
-  def fromPositions(values: Seq[Int]): RoaringManifestBitmap =
-    new RoaringManifestBitmap(Right(values))
+object MumblingManifestBitmap {
+  def fromPositions(values: Seq[Int]): MumblingManifestBitmap = {
+    val bytes = MumblingBitmapWriter.serialize(values.distinct.sorted.toArray)
+    new MumblingManifestBitmap(new MumblingBitmap(ByteBuffer.wrap(bytes)))
+  }
 
-  def fromSerializedByteArray(serializedBytes: Array[Byte]): RoaringManifestBitmap =
-    new RoaringManifestBitmap(Left(serializedBytes))
+  def fromSerializedByteArray(bytes: Array[Byte]): MumblingManifestBitmap =
+    new MumblingManifestBitmap(new MumblingBitmap(ByteBuffer.wrap(bytes)))
+}
+
+/** A [[MutableManifestBitmap]] backed by a [[MutableMumblingBitmap]]. */
+private final class MutableMumblingManifestBitmap(
+    private val underlying: MutableMumblingBitmap)
+  extends MutableManifestBitmap {
+
+  override def add(value: Int): Unit = underlying.add(value.toLong)
+
+  override def toManifestBitmap: ManifestBitmap =
+    new MumblingManifestBitmap(underlying.toMumblingBitmap)
 }

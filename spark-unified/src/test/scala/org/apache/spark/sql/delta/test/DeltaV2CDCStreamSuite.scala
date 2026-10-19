@@ -81,7 +81,10 @@ class DeltaV2CDCStreamSuite extends DeltaCDCStreamSuite with V2ForceTest {
 
     // ========== CDC combination coverage ==========
     "CDC stream on partitioned table strips partition and CDC columns correctly",
-    "CDC stream on column-mapped table passes through correctly"
+    "CDC stream on column-mapped table passes through correctly",
+
+    // ========== filterFiles END-marker offset-roll ==========
+    "CDF stream rolls the offset past a change-data commit (keeps END marker)"
   )
 
   override protected def shouldFailTests: Set[String] = Set(

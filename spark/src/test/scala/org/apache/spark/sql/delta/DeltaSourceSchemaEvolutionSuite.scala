@@ -33,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.logging.log4j.Level
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{DataFrame, Row}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.execution.streaming.Offset
 import org.apache.spark.sql.functions.lit
@@ -41,8 +41,11 @@ import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils
 
-trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
-  with DeltaSourceSuiteBase with DeltaColumnMappingSelectedTestMixin with DeltaSQLCommandTest {
+trait StreamingSchemaEvolutionSuiteBase
+  extends QueryTest
+  with DeltaColumnMappingSelectedTestMixin
+  with DeltaSourceSuiteBase
+  with ColumnMappingStreamingTestUtils {
 
   override protected def runOnlyTests: Seq[String] = Seq(
     "schema log initialization with additive schema changes",
@@ -250,12 +253,6 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   protected def getDefaultSchemaLocation(implicit log: DeltaLog): Path =
     new Path(getDefaultCheckpoint, "_schema_location")
-
-  /**
-   * Executes a DDL/DML SQL statement. Overridable so that V2 suites can route it through the V1
-   * connector, since DeltaV2Table (V2) is read-only and does not support writes/DDL.
-   */
-  protected def executeDml(sqlText: String): Unit = sql(sqlText)
 
   protected def addColumn(column: String, dt: String = "STRING")(implicit log: DeltaLog): Unit = {
     executeDml(s"ALTER TABLE delta.`${log.dataPath}` ADD COLUMN ($column $dt)")
