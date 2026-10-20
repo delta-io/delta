@@ -171,12 +171,13 @@ class AMTIncrementalWriteInlineSuite extends AMTIncrementalWriteTestBase with Gr
             numLeavesModifiedStatus = 1),
           inlineAMTCommitActions = Some(Seq(removeOf(amtDeltaLog, 1))))
         val stamped =
-          leafPointers(amtDeltaLog.update()).values.filter(leafDeletedPositions(_).nonEmpty).toSeq
+          leafPointers(amtDeltaLog.update()).values
+            .filter(leafDeletedPositionCount(_) > 0).toSeq
         assert(stamped.size == 1,
           s"Exactly one leaf must carry this commit's deleted_positions; got ${stamped.size}.")
-        assert(leafDeletedPositions(stamped.head).size == 1,
+        assert(leafDeletedPositionCount(stamped.head) == 1,
           s"deleted_positions must hold this commit's single deletion; " +
-            s"got ${leafDeletedPositions(stamped.head)}.")
+            s"got ${leafDeletedPositionCount(stamped.head)}.")
         assert(mdvCardinality(stamped.head) == 1L,
           "The same leaf's cumulative MDV must also carry that one bit.")
 
@@ -191,9 +192,9 @@ class AMTIncrementalWriteInlineSuite extends AMTIncrementalWriteTestBase with Gr
           inlineAMTCommitActions = Some(Seq(fakeAdd(31))))
         val afterAppend = amtDeltaLog.update()
         leafPointers(afterAppend).foreach { case (location, leaf) =>
-          assert(leafDeletedPositions(leaf).isEmpty,
+          assert(leafDeletedPositionCount(leaf) == 0,
             s"deleted_positions must reset on leaf $location when this commit deletes nothing " +
-              s"from it; got ${leafDeletedPositions(leaf)}.")
+              s"from it; got ${leafDeletedPositionCount(leaf)}.")
         }
         assert(leafPointers(afterAppend).values.map(mdvCardinality).sum == 1L,
           "The cumulative MDV bit from the earlier delete must survive the append.")
@@ -225,11 +226,11 @@ class AMTIncrementalWriteInlineSuite extends AMTIncrementalWriteTestBase with Gr
             numLeavesModifiedStatus = 1),
           inlineAMTCommitActions = Some(removeAndReAddWithDV(amtDeltaLog, Left(1))))
         val replaced = leafPointers(amtDeltaLog.update()).values
-          .filter(leafReplacedPositions(_).nonEmpty).toSeq
+          .filter(leafReplacedPositionCount(_) > 0).toSeq
         assert(replaced.size == 1,
           s"Exactly one leaf must carry this commit's replaced_positions; got ${replaced.size}.")
-        assert(leafReplacedPositions(replaced.head).size == 1 &&
-          leafDeletedPositions(replaced.head).isEmpty,
+        assert(leafReplacedPositionCount(replaced.head) == 1 &&
+          leafDeletedPositionCount(replaced.head) == 0,
           s"REPLACE sets replaced_positions, not deleted; got ${replaced.head.tracking}.")
         assert(
           rootDataEntryStatusToCount(amtDeltaLog).getOrElse(Tracking.Status.Modified, 0L) == 1L,
@@ -449,10 +450,11 @@ class AMTIncrementalWriteInlineSuite extends AMTIncrementalWriteTestBase with Gr
             numLeavesExistingStatus = leavesBefore.size - 1),
           inlineAMTCommitActions = Some(fileToDelete.remove +: replaceActions))
         val touched = leafPointers(amtDeltaLog.update()).values
-          .filter(l => leafDeletedPositions(l).nonEmpty || leafReplacedPositions(l).nonEmpty).toSeq
+          .filter(l =>
+            leafDeletedPositionCount(l) > 0 || leafReplacedPositionCount(l) > 0).toSeq
         assert(touched.size == 1, s"exactly one leaf must be touched; got ${touched.size}.")
-        assert(leafDeletedPositions(touched.head).size == 1 &&
-          leafReplacedPositions(touched.head).size == 1,
+        assert(leafDeletedPositionCount(touched.head) == 1 &&
+          leafReplacedPositionCount(touched.head) == 1,
           s"leaf must carry a deleted AND replaced position; got ${touched.head.tracking}.")
         assertLiveAddFilesEquals(baselineDeltaLog, amtDeltaLog)
       }

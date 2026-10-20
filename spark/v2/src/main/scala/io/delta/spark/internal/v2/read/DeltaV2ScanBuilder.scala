@@ -23,6 +23,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
 
 import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaScan
 import io.delta.spark.internal.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
@@ -133,21 +134,27 @@ private[read] class DeltaV2ScanBuilder(
   /**
    * Accepts a LIMIT hint from Spark's optimizer.
    *
-   * Always returns `true`: the connector treats the limit as a best-effort hint. When the limit is
-   * kept (see [[build]]), file selection routes through V1's limit-aware `filesForScan`, which
-   * stops adding files once enough logical rows have accumulated. Because pruning happens at file
-   * granularity, the planned scan may still return more rows than requested (for example, a single
-   * file with 1,000 rows for LIMIT 5), so `isPartiallyPushed()` is left at its default of `true`
-   * and Spark keeps its limit operators as a backstop.
+   * The connector treats the limit as a best-effort hint. When the limit is kept (see [[build]]),
+   * file selection routes through V1's limit-aware `filesForScan`, which stops adding files once
+   * enough logical rows have accumulated. Because pruning happens at file granularity, the planned
+   * scan may still return more rows than requested (for example, a single file with 1,000 rows for
+   * LIMIT 5), so `isPartiallyPushed()` is left at its default of `true` and Spark keeps its limit
+   * operators as a backstop.
    *
    * @param limit the row limit requested by Spark which must be non-negative.
+   * @return `false`, keeping no limit, when `spark.databricks.delta.stats.limitPushdown.enabled`
+   *         is off; `true` otherwise.
    */
   override def pushLimit(limit: Int): Boolean = {
     if (limit < 0) {
       throw new IllegalArgumentException("Pushed limit must be non-negative, but got: " + limit)
     }
-    pushedLimit = OptionalInt.of(limit)
-    true
+    if (SQLConf.get.getConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED)) {
+      pushedLimit = OptionalInt.of(limit)
+      true
+    } else {
+      false
+    }
   }
 
   // isPartiallyPushed() intentionally uses the interface default (true). Because pruning happens at
@@ -201,11 +208,9 @@ private[read] class DeltaV2ScanBuilder(
         }
       }
 
-      val kernelSnapshot =
-        DeltaV2Snapshot.getKernelSnapshot(initialSnapshot)
       val scan = new DeltaV2Scan(
         snapshotManager,
-        kernelSnapshot,
+        initialSnapshot,
         tableSchema,
         dataSchema,
         partitionSchema,

@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{ContentRoot, Metadata}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -89,7 +89,9 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
       provider: AMTCheckpointProvider, deltaLog: DeltaLog, metadata: Metadata): DataFrame =
     new AMTCheckpointProvider(
         manifestCommitVersion = provider.manifestCommitVersion,
-        checkpointAction = provider.checkpointAction.copy(metaData = metadata),
+        checkpointAction = updateCheckpointActions(provider.checkpointAction) {
+          case _: Metadata => metadata
+        },
         leaves = provider.leaves,
         tableRoot = provider.tableRoot)
       .loadActionsForStateReconstruction(spark, deltaLog)
@@ -155,7 +157,7 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
   }
 
   test("persistedSchema stamps an id on every mapped field of AMTSingleAction") {
-    withAllTypesTable("amt_fieldid_schema", numFiles = 0) { deltaLog =>
+    withAllTypesTable("amt_fieldid_schema") { deltaLog =>
       val snapshot = deltaLog.update()
       val metadata = snapshot.metadata
       val protocol = snapshot.protocol
@@ -188,11 +190,12 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
         // d_double=12, d_binary=13, d_arr=14, d_nested=15 (inner=16).
         Seq(
           (1, "d_int"), (2, "d_long"), (3, "d_short"), (4, "d_byte"), (5, "d_str"),
-          (6, "d_date"), (7, "d_ts"), (8, "d_ts_ntz"), (9, "d_dec"),
+          (6, "d_date"), (9, "d_dec"),
           (11, "d_float"), (12, "d_double"), (16, "d_nested_inner"))
           .flatMap { case (id, name) => statsIds(id, name, withBounds = true) } ++
-        // Boolean, array, and binary are not skipping-eligible (no min/max): null count only.
-        Seq((10, "d_bool"), (13, "d_binary"), (14, "d_arr"))
+        // Boolean, array, and binary are not skipping-eligible (no min/max), and timestamp bounds
+        // are not persisted yet (see `AMTContentStats.isSupportedBoundType`): null count only.
+        Seq((7, "d_ts"), (8, "d_ts_ntz"), (10, "d_bool"), (13, "d_binary"), (14, "d_arr"))
           .flatMap { case (id, name) => statsIds(id, name, withBounds = false) }
       assert(
         stamped == expected,
@@ -447,11 +450,11 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
             fail(s"'$name' should carry a timestamp annotation, got $other in ${file.getName}")
         }
       }
-      // TimestampType -> adjust-to-utc; TimestampNTZType -> not. content_stats keys each
-      // sub-struct by `<column>_<field id>`; partition keys by logical name.
-      assertTimestampMicros(s"${cs("d_ts")}.lower_bound", adjustToUtc = true)
-      assertTimestampMicros(s"${cs("d_ts")}.upper_bound", adjustToUtc = true)
-      assertTimestampMicros(s"${cs("d_ts_ntz")}.lower_bound", adjustToUtc = false)
+      // TimestampType -> adjust-to-utc; TimestampNTZType -> not. Partition values are keyed by
+      // logical name. content_stats persists no timestamp bounds yet (see
+      // `AMTContentStats.isSupportedBoundType`), so only the partition values carry timestamps.
+      assert(!primitives.contains(s"${cs("d_ts")}.lower_bound"),
+        s"content_stats must not persist timestamp bounds in ${file.getName}")
       assertTimestampMicros("partition.p_ts", adjustToUtc = true)
       assertTimestampMicros("partition.p_ts_ntz", adjustToUtc = false)
     }
@@ -502,10 +505,11 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
           // Reading the rewritten root through the production path recovers every leaf pointer
           // unchanged: `manifest_info` is resolved by its Iceberg field id, not its name. (If it
           // were not, the DATA_MANIFEST rows would unwrap with a missing `manifest_info`.)
-          val rewrittenCheckpoint = checkpoint.copy(
-            contentRoot = checkpoint.contentRoot.copy(
+          val rewrittenCheckpoint = updateCheckpointActions(checkpoint) {
+            case root: ContentRoot => root.copy(
               path = rewrittenFile.getAbsolutePath,
-              sizeInBytes = rewrittenFile.length()))
+              sizeInBytes = rewrittenFile.length())
+          }
           val rewrittenProvider = AMTCheckpointProvider.fromCheckpoint(
             deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
           assertLeavesEqual(rewrittenProvider.leaves, provider.leaves)

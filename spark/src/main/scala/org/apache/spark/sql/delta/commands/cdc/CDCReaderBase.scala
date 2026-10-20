@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.commands.cdc
 
 import java.sql.Timestamp
 
+import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
@@ -117,8 +119,13 @@ abstract class DeltaCDFRelationBase(
     val outputMap = df.queryExecution.analyzed.output.map(a => a.name -> a).toMap
     val projections =
       requiredColumns.map(a => Column(outputMap(a.name)))
+    lazy val skipNondeterministicFilters =
+      sqlContext.sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_CDF_SKIP_NONDETERMINISTIC_FILTER_PUSHDOWN)
     val filter = Column(
       filters
+        // Spark evaluates nondeterministic predicates in a filter above the CDF scan.
+        .filter(predicate => predicate.deterministic || !skipNondeterministicFilters)
         .map(_.transform { case a: Attribute => outputMap(a.name) })
         .reduceOption(And)
         .getOrElse(Literal.TrueLiteral)
@@ -277,11 +284,9 @@ trait CDCReaderBase extends DeltaLogging {
     // Non-legacy schema mode options cannot be used with time-travel because the schema to use
     // will be confusing.
     if (isTimeTravelQuery && schemaMode != BatchCDFSchemaLegacy) {
-      throw DeltaErrors.illegalDeltaOptionException(
+      throw DeltaErrors.illegalDeltaOptionSchemaModeWithTimeTravel(
         DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key,
-        schemaMode.name,
-        s"${DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key} " +
-          s"cannot be used with time travel options.")
+        schemaMode.name)
     }
 
     getConstructedCDCRelation(
@@ -382,7 +387,9 @@ trait CDCReaderBase extends DeltaLogging {
       shouldCheckSchemaToBlockBatchRead: Boolean,
       metadata: Metadata,
       metadataVer: Long,
-      isSchemaChange: Boolean): Unit = {
+      isSchemaChange: Boolean,
+      blockOnIncompatibleSchema: Boolean = true,
+      blockOnIncompatiblePartitionSchema: Boolean = true): Unit = {
     // We do not check for any incompatibility if the global "I don't care" flag is turned on
     if (shouldCheckSchemaToBlockBatchRead) {
       // Column mapping incompatibilities
@@ -425,15 +432,198 @@ trait CDCReaderBase extends DeltaLogging {
         }
       }
 
-      if (!compatible) {
+      val newPartitionColumns = readSchemaSnapshot.metadata.partitionColumns
+      val oldPartitionColumns = metadata.partitionColumns
+      val hasPartitionSchemaChange = !SchemaUtils.isPartitionCompatible(
+        newPartitionColumns = newPartitionColumns,
+        oldPartitionColumns = oldPartitionColumns)
+      val partitionSchemaChangeCheckEnabled = SQLConf.get.getConf(
+        DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES)
+      val blockOnPartitionSchemaChange =
+        blockOnIncompatiblePartitionSchema && partitionSchemaChangeCheckEnabled
+
+      if (!compatible || hasPartitionSchemaChange) {
+        recordDeltaEvent(
+          readSchemaSnapshot.deltaLog,
+          "delta.changeDataFeed.schemaIncompatibility",
+          data = Map(
+            "startVersion" -> start,
+            "endVersion" -> end,
+            "readVersion" -> readSchemaSnapshot.version,
+            "incompatibleVersion" -> metadataVer,
+            "isStartVersionCheck" -> !isSchemaChange,
+            "isSchemaCompatible" -> compatible,
+            "hasPartitionSchemaChange" -> hasPartitionSchemaChange,
+            "partitionSchemaCheckEnabled" -> partitionSchemaChangeCheckEnabled,
+            "partitionSchemaBlockEnabled" -> blockOnPartitionSchemaChange,
+            "schemaCheckEnabled" -> blockOnIncompatibleSchema))
+      }
+      if ((!compatible && blockOnIncompatibleSchema) ||
+          (hasPartitionSchemaChange && blockOnPartitionSchemaChange)) {
         throw DeltaErrors.blockBatchCdfReadWithIncompatibleSchemaChange(
           start, end,
           // The consistent read schema
           readSchemaSnapshot.metadata.schema, readSchemaSnapshot.version,
           // The conflicting schema or schema change version
           metadataVer,
-          isSchemaChange
+          isSchemaChange || hasPartitionSchemaChange
         )
+      }
+    }
+  }
+
+  /** Tracks whether a partition schema change happens on a non-empty table. */
+  protected class CdfPartitionSchemaTracker(
+      startPartitionColumns: Seq[String],
+      startSnapshotHasData: Boolean) {
+    private var hasSeenData = startSnapshotHasData
+    private var hasSeenPartitionSchemaChange = false
+    private var hadDataBeforeFirstPartitionSchemaChange = startSnapshotHasData
+
+    def processMetadata(metadata: Metadata): Unit = {
+      if (!hasSeenPartitionSchemaChange && !SchemaUtils.isPartitionCompatible(
+          newPartitionColumns = metadata.partitionColumns,
+          oldPartitionColumns = startPartitionColumns)) {
+        hasSeenPartitionSchemaChange = true
+        hadDataBeforeFirstPartitionSchemaChange = hasSeenData
+      }
+    }
+
+    def processActions(actions: Seq[Action]): Unit = {
+      val commitInfo = actions.collectFirst { case ci: CommitInfo => ci }
+      val changesData = CommitInfo.fileActionChangesData(commitInfo)
+      hasSeenData ||= actions.exists {
+        case _: AddCDCFile => true
+        case add: AddFile => changesData(add)
+        case remove: RemoveFile => changesData(remove)
+        case _ => false
+      }
+    }
+
+    def blockStartVersionPartitionSchemaCheck: Boolean = {
+      if (hasSeenPartitionSchemaChange) {
+        hadDataBeforeFirstPartitionSchemaChange
+      } else {
+        hasSeenData
+      }
+    }
+  }
+
+  private def isPreviousVersionSchemaCompatible(
+      readSchemaSnapshot: SnapshotDescriptor,
+      metadata: Metadata,
+      metadataVer: Long): Boolean = {
+    // Compare schemas in version order so adding a column remains read-compatible.
+    val metadataAtOrBeforeReadVersion = metadataVer <= readSchemaSnapshot.version
+    val compatibleColumnMapping = if (metadataAtOrBeforeReadVersion) {
+      DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
+        newMetadata = readSchemaSnapshot.metadata, oldMetadata = metadata)
+    } else {
+      DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
+        newMetadata = metadata, oldMetadata = readSchemaSnapshot.metadata)
+    }
+    compatibleColumnMapping && {
+      if (metadataAtOrBeforeReadVersion) {
+        SchemaUtils.isReadCompatible(
+          existingSchema = metadata.schema,
+          readSchema = readSchemaSnapshot.schema,
+          forbidTightenNullability = true)
+      } else {
+        SchemaUtils.isReadCompatible(
+          existingSchema = readSchemaSnapshot.schema,
+          readSchema = metadata.schema,
+          forbidTightenNullability = false)
+      }
+    }
+  }
+
+  private def checkPreviousVersionSchemaIncompatibility(
+      readSchemaSnapshot: SnapshotDescriptor,
+      start: Long,
+      end: Long,
+      previousMetadata: Metadata,
+      previousVersion: Long,
+      schemaCheckEnabled: Boolean): Boolean = {
+    // Compare column identities for rows removed by the starting commit.
+    val previousMode = previousMetadata.columnMappingMode
+    val readMode = readSchemaSnapshot.metadata.columnMappingMode
+    val compatibleColumnIdentities = if (previousMode != NoMapping && readMode != NoMapping &&
+        previousMode != readMode) {
+      false
+    } else if (previousMode == IdMapping && readMode == IdMapping) {
+      // Independent tables can reuse physical names with different IDs after replacement.
+      val readFields = DeltaColumnMapping.getPhysicalNameFieldMap(readSchemaSnapshot.schema)
+      DeltaColumnMapping.getPhysicalNameFieldMap(previousMetadata.schema)
+        .forall { case (path, field) =>
+          readFields.get(path).forall { readField =>
+            DeltaColumnMapping.getColumnId(field) == DeltaColumnMapping.getColumnId(readField)
+          }
+        }
+    } else {
+      true
+    }
+    val schemaIncompatible = !compatibleColumnIdentities ||
+      !isPreviousVersionSchemaCompatible(readSchemaSnapshot, previousMetadata, previousVersion)
+    if (schemaIncompatible) {
+      recordDeltaEvent(
+        readSchemaSnapshot.deltaLog,
+        "delta.changeDataFeed.schemaIncompatibility",
+        data = Map(
+          "startVersion" -> start,
+          "endVersion" -> end,
+          "readVersion" -> readSchemaSnapshot.version,
+          "incompatibleVersion" -> previousVersion,
+          "isStartVersionCheck" -> true,
+          "isPriorVersionCheck" -> true,
+          "isSchemaCompatible" -> false,
+          "schemaCheckEnabled" -> schemaCheckEnabled,
+          "readSchema" -> readSchemaSnapshot.schema.json,
+          "incompatibleSchema" -> previousMetadata.schema.json,
+          "readColumnMappingMode" -> readMode.name,
+          "incompatibleColumnMappingMode" -> previousMode.name))
+    }
+    schemaIncompatible
+  }
+
+  /**
+   * Validate the old data schema when the starting commit changes metadata and removes files.
+   * Callers must check that those removed files are selected for the CDF scan.
+   */
+  protected def checkStartVersionRemovedFilesSchema(
+      readSchemaSnapshot: SnapshotDescriptor,
+      start: Long,
+      end: Long,
+      checkSchemaToBlockRead: Boolean,
+      catalogTableOpt: Option[CatalogTable],
+      operation: Option[String]): Unit = {
+    if (start > 0 && checkSchemaToBlockRead) {
+      val previousVersion = start - 1
+      val schemaCheckEnabled = SQLConf.get.getConf(
+        DeltaSQLConf.DELTA_CDF_START_VERSION_SCHEMA_CHECK_ENABLED)
+      val schemaIncompatible = try {
+        val previousMetadata = readSchemaSnapshot.deltaLog
+          .getSnapshotAt(previousVersion, catalogTableOpt = catalogTableOpt).metadata
+        checkPreviousVersionSchemaIncompatibility(
+          readSchemaSnapshot, start, end, previousMetadata, previousVersion, schemaCheckEnabled)
+      } catch {
+        case NonFatal(error) =>
+          // Unavailable history or unexpected validation failures must not block the read.
+          recordDeltaEvent(
+            readSchemaSnapshot.deltaLog,
+            "delta.changeDataFeed.startVersionSchemaCheckError",
+            data = Map(
+              "startVersion" -> start,
+              "endVersion" -> end,
+              "readVersion" -> readSchemaSnapshot.version,
+              "incompatibleVersion" -> previousVersion,
+              "schemaCheckEnabled" -> schemaCheckEnabled,
+              "errorClass" -> error.getClass.getName,
+              "errorMessage" -> error.getMessage))
+          return
+      }
+      if (schemaIncompatible && schemaCheckEnabled) {
+        throw DeltaErrors.blockBatchCdfReadWithIncompatibleStartingCommitSchema(
+          start, previousVersion, operation)
       }
     }
   }

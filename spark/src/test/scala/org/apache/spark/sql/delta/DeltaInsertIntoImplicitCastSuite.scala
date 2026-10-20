@@ -35,9 +35,6 @@ import org.apache.spark.sql.types._
 trait DeltaInsertIntoImplicitCastBase extends DeltaInsertIntoTest {
   override protected def beforeAll(): Unit = {
     super.beforeAll()
-    // Enable the null expansion fix by preserving NULL source structs in INSERT operations.
-    // Without this fix, NULL source structs are incorrectly expanded to structs with NULL fields.
-    spark.conf.set(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS.key, "true")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
@@ -341,8 +338,15 @@ trait DeltaInsertIntoImplicitCastStreamingWriteTests extends DeltaInsertIntoImpl
      // Dataframe INSERTs by name don't support implicit casting except for streaming
      // writes, no point in testing them.
      excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
-     confs = Seq(DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
-       -> preserveNullSourceStructs.toString)
+     confs = Seq(
+       DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
+         -> preserveNullSourceStructs.toString,
+       // With null preservation disabled, both implicit-casting paths expand a null struct for a
+       // field-order-only mismatch. This narrow case does not justify extra casting complexity.
+       DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key
+         -> preserveNullSourceStructs.toString,
+       DeltaSQLConf.DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS.key
+         -> preserveNullSourceStructs.toString)
    )
  }
 

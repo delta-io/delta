@@ -42,8 +42,6 @@ class DeltaSourceFastDropFeatureSuite
     spark.conf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "true")
   }
 
-  protected def executeDml(sqlText: String): Unit = sql(sqlText)
-
   protected def dropUnsupportedFeature(dir: File): Unit =
     executeDml(
       s"""ALTER TABLE delta.`${dir.getCanonicalPath}`

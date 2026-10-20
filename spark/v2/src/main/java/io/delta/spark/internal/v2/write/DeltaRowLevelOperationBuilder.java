@@ -17,7 +17,6 @@ package io.delta.spark.internal.v2.write;
 
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import org.apache.hadoop.conf.Configuration;
@@ -29,6 +28,7 @@ import org.apache.spark.sql.connector.write.RowLevelOperation;
 import org.apache.spark.sql.connector.write.RowLevelOperationBuilder;
 import org.apache.spark.sql.connector.write.RowLevelOperationInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 

@@ -198,6 +198,12 @@ object DeltaV2SourceSuite {
     "fail on missing trailing commit - empty batch from startIndex >= endIndex is not a" +
       " false positive readChangeFeed=false",
 
+    // === Commit-level dataChange is invisible to the V2 read path ===
+    // Kernel's CommitInfo schema has no dataChange field, so the V2 path keeps deciding from the
+    // file actions (see StreamingHelper.getAddFileWithDataChange). The test makes the two disagree
+    // and expects the commit-level value to win, which it cannot here.
+    "a commit recording dataChange = false does not break an append-only stream",
+
     // === Misc ===
     // TODO(#5900): fix exception mismatch
     "no schema should throw an exception",

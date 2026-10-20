@@ -22,9 +22,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
-import io.delta.kernel.Scan;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
@@ -47,8 +45,6 @@ import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
-import io.delta.spark.internal.v2.utils.SerializableReadOnlySnapshot;
-import io.delta.spark.internal.v2.utils.SparkRowToKernelRow;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -56,14 +52,9 @@ import java.nio.channels.ClosedByInterruptException;
 import java.sql.Timestamp;
 import java.time.ZoneId;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.spark.api.java.JavaRDD;
-import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Row;
-import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.connector.read.InputPartition;
@@ -78,6 +69,7 @@ import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.TypeWidening;
+import org.apache.spark.sql.delta.files.DeltaSourceSnapshot;
 import org.apache.spark.sql.delta.sources.AdmittableFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
@@ -89,21 +81,18 @@ import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
-import org.apache.spark.sql.functions;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.DataType;
-import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
-import org.apache.spark.storage.StorageLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Function2;
 import scala.Option;
 import scala.Some;
-import scala.Tuple2;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 import scala.jdk.javaapi.CollectionConverters;
@@ -121,8 +110,6 @@ class DeltaV2MicroBatchStream
     implements MicroBatchStream, SupportsAdmissionControl, SupportsTriggerAvailableNow {
 
   private static final Logger logger = LoggerFactory.getLogger(DeltaV2MicroBatchStream.class);
-
-  private static final String FILE_IDX_COL = "_file_idx";
 
   public static final Set<DeltaAction> ACTION_SET =
       ImmutableSet.of(
@@ -213,28 +200,9 @@ class DeltaV2MicroBatchStream
   // getStartingVersion() must return the same value across multiple calls.
   private volatile Optional<Long> cachedStartingVersion = null;
 
-  // Cache for the initial snapshot files to avoid re-sorting on repeated access.
-  private static class InitialSnapshotCache {
-    final Long version;
-    final List<IndexedFile> files;
-    final long commitTimestamp;
-
-    InitialSnapshotCache(Long version, List<IndexedFile> files, long commitTimestamp) {
-      this.version = version;
-      this.files = files;
-      this.commitTimestamp = commitTimestamp;
-    }
-  }
-
-  private final AtomicReference<InitialSnapshotCache> cachedInitialSnapshot =
-      new AtomicReference<>(null);
-
-  private final AtomicReference<DataFrameSnapshotCache> cachedDataFrameSnapshot =
-      new AtomicReference<>(null);
-
-  private final int maxInitialSnapshotFiles;
-  private final boolean useDistributedInitialSnapshot;
-  private final StorageLevel snapshotCacheStorageLevel;
+  // A metadata snapshot when starting the query.
+  private DeltaSourceSnapshot initialSnapshot = null;
+  private long initialSnapshotVersion = -1L;
 
   public DeltaV2MicroBatchStream(
       DeltaV2SnapshotManager snapshotManager,
@@ -308,25 +276,6 @@ class DeltaV2MicroBatchStream
                 spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION()),
             "shouldValidateOffsets is null");
     this.excludeRegex = ScalaUtils.toJavaOptional(options.excludeRegex());
-    this.maxInitialSnapshotFiles =
-        (Integer)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES());
-    this.useDistributedInitialSnapshot =
-        (Boolean)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT());
-    this.snapshotCacheStorageLevel =
-        StorageLevel.fromString(
-            (String)
-                spark
-                    .sessionState()
-                    .conf()
-                    .getConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL()));
 
     boolean isStreamingFromColumnMappingTable =
         ColumnMapping.getColumnMappingMode(
@@ -387,62 +336,12 @@ class DeltaV2MicroBatchStream
   private void initLastOffsetForTriggerAvailableNow(DeltaSourceOffset startOffsetOpt) {
     // TODO(#6817): Explore unifying TAN offset computation into latestOffsetInternal.
     // Blocked: latestOffset per-batch shares the same conditions but must NOT bypass rate limiting.
-    if (useDistributedInitialSnapshot && startOffsetOpt.isInitialSnapshot()) {
-      lastOffsetForTriggerAvailableNow = getLastOffsetForAvailableNowViaDataFrame(startOffsetOpt);
-    } else {
-      lastOffsetForTriggerAvailableNow =
-          latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable());
-    }
+    lastOffsetForTriggerAvailableNow =
+        latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable());
 
     lastOffsetForTriggerAvailableNow.ifPresent(
         lastOffset ->
             logger.info("lastOffset for Trigger.AvailableNow has set to " + lastOffset.json()));
-  }
-
-  /**
-   * Computes the end offset for Trigger.AvailableNow without iterating all snapshot files. Avoids
-   * O(n) driver memory pressure that causes OOM for large tables.
-   */
-  private Optional<DeltaSourceOffset> getLastOffsetForAvailableNowViaDataFrame(
-      DeltaSourceOffset startOffset) {
-    long snapshotVersion = startOffset.reservoirVersion();
-
-    checkReadIncompatibleSchemaChangeOnStreamStartOnce(
-        snapshotVersion, /* batchEndVersion= */ null);
-
-    // iteratorLast exhausts the iterator and closes it — do not wrap in try-with-resources
-    // (that would double-close). Use a plain try block for exception context.
-    try {
-      CloseableIterator<IndexedFile> deltaChanges =
-          filterDeltaLogs(snapshotVersion + 1, /* endOffset= */ Optional.empty());
-      Optional<IndexedFile> lastDelta = Utils.iteratorLast(deltaChanges);
-
-      if (lastDelta.isPresent()) {
-        IndexedFile lastFile = lastDelta.get();
-        return Optional.of(
-            DeltaSource.buildOffsetFromIndexedFile(
-                tableId,
-                lastFile.getVersion(),
-                lastFile.getIndex(),
-                startOffset.reservoirVersion(),
-                startOffset.isInitialSnapshot()));
-      }
-    } catch (UncheckedIOException e) {
-      throw new RuntimeException(
-          String.format(
-              "Failed to iterate delta changes for table %s after version %d",
-              tablePath, snapshotVersion),
-          e);
-    }
-
-    // No delta changes — END_INDEX bumps offset to (snapshotVersion + 1, BASE_INDEX, false).
-    return Optional.of(
-        DeltaSource.buildOffsetFromIndexedFile(
-            tableId,
-            snapshotVersion,
-            DeltaSourceOffset.END_INDEX(),
-            startOffset.reservoirVersion(),
-            startOffset.isInitialSnapshot()));
   }
 
   ////////////
@@ -745,22 +644,22 @@ class DeltaV2MicroBatchStream
     // before updateMetadataTrackingLogAndFailTheStreamIfNeeded as it may throw an exception.
     DeltaSourceOffset offset = DeltaSourceOffset.apply(tableId, end);
     if (!offset.isInitialSnapshot()) {
-      // Release the cached DataFrame only after initial snapshot processing has completed.
-      invalidateDataFrameCache();
+      // Release snapshot resources after initial snapshot processing has completed.
+      cleanUpSnapshotResources();
     }
     metadataEvolutionHandler.updateMetadataTrackingLogAndFailTheStreamIfNeeded(offset);
   }
 
   @Override
   public void stop() {
-    cachedInitialSnapshot.set(null);
-    invalidateDataFrameCache();
+    cleanUpSnapshotResources();
   }
 
-  private void invalidateDataFrameCache() {
-    DataFrameSnapshotCache prev = cachedDataFrameSnapshot.getAndSet(null);
-    if (prev != null) {
-      prev.close();
+  private void cleanUpSnapshotResources() {
+    if (initialSnapshot != null) {
+      initialSnapshot.close(
+          /* unpersistSnapshot= */ initialSnapshotVersion < snapshotAtSourceInit.getVersion());
+      initialSnapshot = null;
     }
   }
 
@@ -998,14 +897,7 @@ class DeltaV2MicroBatchStream
     if (isInitialSnapshot) {
       // Lazily combine snapshot files with delta logs starting from fromVersion + 1.
       // filterDeltaLogs handles the case when no commits exist after fromVersion.
-      // TODO: Unify behind SnapshotFileSource interface; extend distributed path to CDC.
-      CloseableIterator<IndexedFile> snapshotFiles;
-      if (useDistributedInitialSnapshot) {
-        snapshotFiles = getSnapshotFilesViaDataFrame(fromVersion, fromIndex);
-      } else {
-        InitialSnapshotCache snapshot = getSnapshotFiles(fromVersion);
-        snapshotFiles = Utils.toCloseableIterator(snapshot.files.iterator());
-      }
+      CloseableIterator<IndexedFile> snapshotFiles = getSnapshotAt(fromVersion);
       CloseableIterator<IndexedFile> deltaChanges = filterDeltaLogs(fromVersion + 1, endOffset);
       result = snapshotFiles.combine(deltaChanges);
     } else {
@@ -1035,10 +927,8 @@ class DeltaV2MicroBatchStream
     validateCDFEnabledOnTable(fromVersion);
     CloseableIterator<IndexedFile> result;
     if (isInitialSnapshot) {
-      InitialSnapshotCache snapshot = getSnapshotFiles(fromVersion);
-      long commitTimestamp = snapshot.commitTimestamp;
-      CloseableIterator<IndexedFile> snapshotFiles =
-          Utils.toCloseableIterator(snapshot.files.iterator());
+      CloseableIterator<IndexedFile> snapshotFiles = getSnapshotAt(fromVersion);
+      long commitTimestamp = initialSnapshot.snapshot().timestamp();
       snapshotFiles =
           snapshotFiles.map(
               file ->
@@ -1844,200 +1734,72 @@ class DeltaV2MicroBatchStream
   }
 
   /**
-   * Get all files from a snapshot at the specified version, sorted by modificationTime and path,
-   * with indices assigned sequentially, and wrapped with BEGIN/END sentinels.
-   *
-   * <p>Mimics DeltaSourceSnapshot in DSv1.
-   *
-   * @param version The snapshot version to read
-   * @return The cached or newly loaded initial snapshot
+   * Adds dummy BEGIN_INDEX and END_INDEX IndexedFiles for {@code version} before and after the
+   * contents of the iterator. The contents of the iterator must be the IndexedFiles that correspond
+   * to this version.
    */
-  private InitialSnapshotCache getSnapshotFiles(long version) {
-    InitialSnapshotCache cache = cachedInitialSnapshot.get();
-
-    if (cache != null && cache.version != null && cache.version == version) {
-      return cache;
-    }
-
-    InitialSnapshotCache newCache = loadAndValidateSnapshot(version);
-    cachedInitialSnapshot.set(newCache);
-
-    return newCache;
+  private static CloseableIterator<IndexedFile> addBeginAndEndIndexOffsetsForVersion(
+      long version, CloseableIterator<IndexedFile> files) {
+    return Utils.singletonCloseableIterator(
+            IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()))
+        .combine(files)
+        .combine(
+            Utils.singletonCloseableIterator(
+                IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX())));
   }
 
-  private CloseableIterator<IndexedFile> getSnapshotFilesViaDataFrame(
-      long version, long fromIndex) {
-    DataFrameSnapshotCache dfCache = cachedDataFrameSnapshot.get();
-    if (dfCache == null || dfCache.getVersion() != version) {
-      invalidateDataFrameCache();
-      dfCache = buildDataFrameSnapshotCache(version);
-      cachedDataFrameSnapshot.set(dfCache);
+  /**
+   * This method computes the initial snapshot to read when Delta Source was initialized on a fresh
+   * stream.
+   *
+   * @return an iterator of IndexedFiles for the initial snapshot
+   */
+  private CloseableIterator<IndexedFile> getSnapshotAt(long version) {
+    if (initialSnapshot == null || version != initialSnapshotVersion) {
+      cleanUpSnapshotResources();
+      Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
+
+      initialSnapshot = new DeltaSourceSnapshot(spark, snapshot, Seq$.MODULE$.empty());
+      initialSnapshotVersion = version;
+
+      SnapshotImpl kernelSnapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshot);
+
+      // This handles a special case for schema tracking log when it's initialized but the initial
+      // snapshot's schema has changed, suppose:
+      // 1. The stream starts and looks at the initial snapshot to compute the starting offset, say
+      //    at version 0 with schema <a>
+      // 2. User renames a column, creates version 1 with schema <b>
+      // 3. The read compatibility check fails during scanning version 1, initializes schema log
+      //    using the initial snapshot's schema (<a>, because that's the safest thing to do as we
+      //    have not served any data from initial snapshot yet) and exits stream.
+      // 4. Stream restarts, since no starting offset was generated, it will retry loading the
+      //    initial snapshot, which is now at version 1, but the tracked schema <a> is now different
+      //    from the "new" initial snapshot schema! Worse, since schema tracking ignores any schema
+      //    changes inside initial snapshot, we will then be reading the files using a wrong schema!
+      // The below logic allows us to detect any discrepancies when reading initial snapshot using
+      // a tracked schema, and reinitialize the log if needed.
+      if (metadataEvolutionHandler.shouldTrackMetadataChange()
+          && initialSnapshot.snapshot().version() >= readSnapshotAtSourceInit.getVersion()) {
+        metadataEvolutionHandler.updateMetadataTrackingLogAndFailTheStreamIfNeeded(
+            kernelSnapshot.getMetadata(),
+            kernelSnapshot.getProtocol(),
+            initialSnapshot.snapshot().version(),
+            // The new schema should replace the previous initialized schema for initial snapshot
+            /* replace= */ true);
+      }
     }
 
-    Dataset<Row> df = dfCache.getSortedAddFiles();
-
-    // Push filtering to executors: O(remaining) per batch instead of O(N) full-scan.
-    if (fromIndex > DeltaSourceOffset.BASE_INDEX()) {
-      df = df.where(functions.col(FILE_IDX_COL).gt(fromIndex));
-    }
-
-    return dataFrameToIndexedFiles(df, version);
-  }
-
-  /** Builds a new persisted DataFrame cache for the initial snapshot at the given version. */
-  private DataFrameSnapshotCache buildDataFrameSnapshotCache(long version) {
-    // May differ from snapshotAtSourceInit on checkpoint restart. loadSnapshotAt is
-    // metadata-only on driver; log replay runs on executors via ScanFileRDD.
-    SnapshotImpl snapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(version));
-    SerializableReadOnlySnapshot serSnapshot =
-        SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
-
-    ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), serSnapshot);
-    Dataset<Row> sorted =
-        spark.createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA).orderBy("modificationTime", "path");
-
-    // zipWithIndex for contiguous 0-based indices — monotonically_increasing_id() is
-    // non-contiguous across partitions and breaks checkpoint compatibility.
-    int numFields = ScanFileRDD.SPARK_SCHEMA.size();
-    StructType schemaWithIdx =
-        ScanFileRDD.SPARK_SCHEMA.add(FILE_IDX_COL, DataTypes.LongType, false);
-    JavaRDD<Row> indexedRDD =
-        sorted
-            .javaRDD()
-            .zipWithIndex()
+    // TODO: Add range-aware iteration to DeltaSourceSnapshot so V1 and V2 can filter the
+    // already-processed prefix before decoding files, and V2 avoids converting skipped AddFiles.
+    CloseableIterator<IndexedFile> snapshotFiles =
+        Utils.toCloseableIterator(CollectionConverters.asJava(initialSnapshot.iterator()))
             .map(
-                (Tuple2<Row, Long> tuple) -> {
-                  Row row = tuple._1();
-                  long idx = tuple._2();
-                  Object[] fields = new Object[numFields + 1];
-                  for (int i = 0; i < numFields; i++) {
-                    fields[i] = row.get(i);
-                  }
-                  fields[numFields] = idx;
-                  return RowFactory.create(fields);
-                });
-
-    Dataset<Row> df =
-        spark.createDataFrame(indexedRDD, schemaWithIdx).persist(snapshotCacheStorageLevel);
-
-    return new DataFrameSnapshotCache(version, df);
-  }
-
-  /** Converts sorted AddFile DataFrame to lazy IndexedFile iterator with BEGIN/END sentinels. */
-  private static CloseableIterator<IndexedFile> dataFrameToIndexedFiles(
-      Dataset<Row> df, long version) {
-
-    int fileIdxOrdinal = df.schema().fieldIndex(FILE_IDX_COL);
-    java.util.Iterator<Row> localIter = df.toLocalIterator();
-
-    return new CloseableIterator<IndexedFile>() {
-      private boolean sentBegin = false;
-      private boolean sentEnd = false;
-
-      @Override
-      public boolean hasNext() {
-        return !sentEnd;
-      }
-
-      @Override
-      public IndexedFile next() {
-        if (!sentBegin) {
-          sentBegin = true;
-          return IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX());
-        }
-
-        if (localIter.hasNext()) {
-          Row sparkRow = localIter.next();
-          long fileIdx = sparkRow.getLong(fileIdxOrdinal);
-          // Extra _file_idx column at ordinal N is safely ignored (ordinal-based access up to
-          // schema size).
-          io.delta.kernel.data.Row kernelRow =
-              new SparkRowToKernelRow(sparkRow, AddFile.SCHEMA_WITHOUT_STATS);
-          return IndexedFile.addFile(version, fileIdx, new AddFile(kernelRow));
-        }
-
-        sentEnd = true;
-        return IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX());
-      }
-
-      @Override
-      public void close() throws IOException {
-        // toLocalIterator() resources are managed by Spark
-      }
-    };
-  }
-
-  /** Loads snapshot files at the specified version. */
-  private InitialSnapshotCache loadAndValidateSnapshot(long version) {
-    SnapshotImpl snapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(version));
-    // If schema tracking is already active and the initial snapshot has advanced since the tracked
-    // read snapshot, replace the tracked metadata/protocol before reading snapshot files.
-    if (metadataEvolutionHandler.shouldTrackMetadataChange()
-        && snapshot.getVersion() >= readSnapshotAtSourceInit.getVersion()) {
-      metadataEvolutionHandler.updateMetadataTrackingLogAndFailTheStreamIfNeeded(
-          snapshot.getMetadata(),
-          snapshot.getProtocol(),
-          snapshot.getVersion(),
-          /* replace= */ true);
-    }
-    long commitTimestamp = snapshot.getTimestamp(engine);
-
-    Scan scan = snapshot.getScanBuilder().build();
-
-    List<AddFile> addFiles = new ArrayList<>();
-    try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {
-      while (filesIter.hasNext()) {
-        FilteredColumnarBatch filteredBatch = filesIter.next();
-
-        // Get all AddFiles from the batch. Include both dataChange=true and dataChange=false
-        // (checkpoint files) files. StreamingHelper.getAddFile respects the selection vector
-        // to filter out duplicate files (e.g., stats re-collection re-adds files with updated
-        // stats).
-        for (int rowId = 0; rowId < filteredBatch.getData().getSize(); rowId++) {
-          Optional<AddFile> addOpt = StreamingHelper.getAddFile(filteredBatch, rowId);
-          if (addOpt.isPresent()) {
-            addFiles.add(addOpt.get());
-
-            // Basic memory protection: each IndexedFile is ~1-2KB (path, stats, partition values,
-            // etc.).
-            // This limit aims to prevent OOM for large tables.
-            // TODO(#5318): support large tables and remove this limit.
-            if (addFiles.size() > maxInitialSnapshotFiles) {
-              throw (RuntimeException)
-                  DeltaErrors.initialSnapshotTooLargeForStreaming(
-                      version, addFiles.size(), maxInitialSnapshotFiles, tablePath);
-            }
-          }
-        }
-      }
-    } catch (IOException e) {
-      throw new RuntimeException(
-          String.format("Failed to read snapshot files at version %d", version), e);
-    }
-
-    // TODO(#5318): For large snapshots, consider external sorting.
-    // CRITICAL: Sort by modificationTime, then path for deterministic ordering
-    addFiles.sort(
-        Comparator.comparing(AddFile::getModificationTime).thenComparing(AddFile::getPath));
-
-    // Build IndexedFile list with sentinels
-    List<IndexedFile> indexedFiles = new ArrayList<>();
-
-    // Add BEGIN sentinel
-    indexedFiles.add(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()));
-
-    // Add data files with sequential indices starting from 0
-    for (int i = 0; i < addFiles.size(); i++) {
-      indexedFiles.add(IndexedFile.addFile(version, /* index= */ i, addFiles.get(i)));
-    }
-
-    // Add END sentinel
-    indexedFiles.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
-
-    return new InitialSnapshotCache(
-        version, Collections.unmodifiableList(indexedFiles), commitTimestamp);
+                file ->
+                    IndexedFile.addFile(
+                        file.version(),
+                        file.index(),
+                        KernelActionUtils$.MODULE$.toKernelScanAddFile(file.add())));
+    return addBeginAndEndIndexOffsetsForVersion(version, snapshotFiles);
   }
 
   /**

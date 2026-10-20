@@ -71,7 +71,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
 
     Configuration hadoopConf = new Configuration();
-    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
@@ -108,7 +109,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
 
     Configuration hadoopConf = new Configuration();
-    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
@@ -128,7 +130,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("INSERT INTO %s VALUES (2, 'User2')", tableName);
 
     Configuration hadoopConf = new Configuration();
-    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
@@ -150,7 +153,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
 
     Configuration hadoopConf = new Configuration();
-    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     long latestVersion = snapshotManager.loadLatestSnapshot().version();
@@ -267,7 +271,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     // DSv2
     Configuration hadoopConf = new Configuration();
-    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     List<IndexedFile> dsv2Files = new ArrayList<>();
@@ -1026,7 +1031,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
   private DeltaV2MicroBatchStream createStreamWithSeededTrackingLog(
       String tablePath, String schemaLogPath, long seededVersion) {
     Configuration hadoopConf = new Configuration();
-    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
     Engine engine = DefaultEngine.create(hadoopConf);
 
     Map<String, String> javaOptions = new HashMap<>();
@@ -1123,7 +1129,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
       Optional<Long> maxBytes)
       throws Exception {
     Configuration hadoopConf = new Configuration();
-    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     List<IndexedFile> files = new ArrayList<>();
@@ -1203,14 +1210,16 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
   private DeltaV2MicroBatchStream createStream(String tablePath) {
     Configuration hadoopConf = new Configuration();
-    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
     return createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
   }
 
   private CommitActions getCommitActions(String tablePath, long version) {
     Configuration hadoopConf = new Configuration();
     Engine engine = DefaultEngine.create(hadoopConf);
-    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
 
     CommitRange commitRange =
         snapshotManager.getTableChanges(engine, version, Optional.of(version));
@@ -1371,7 +1380,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertEquals(2, dataFiles.size(), "Expected exactly 2 CDC data files (insert + delete)");
     for (IndexedFile f : dataFiles) {
       assertFalse(
-          f.getCDCDataFile().getEffectiveDv().isPresent(),
+          f.getCDCDataFile().getEffectiveDv().isDefined(),
           "Plain same-path pair must not produce a DV-diff CDCDataFile");
     }
     long inserts =
@@ -1484,7 +1493,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     List<IndexedFile> result =
         stream.applyPerCommitCDCAdmission(commitFiles, limits.get(), version);
 
-    // Both files must be admitted together: any DV-diff file (getEffectiveDv().isPresent())
+    // Both files must be admitted together: any DV-diff file (getEffectiveDv().isDefined())
     // signals that the commit cannot be split, even when the backing AddFile has no DV.
     long admittedData = result.stream().filter(IndexedFile::hasFileAction).count();
     assertEquals(

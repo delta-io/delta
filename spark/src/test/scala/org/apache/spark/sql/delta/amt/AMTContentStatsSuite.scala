@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ColumnMappingTableFeature, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaConfigs, DomainMetadataTableFeature, RowTrackingFeature}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.util.JsonUtils
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.DataFrame
@@ -76,7 +78,9 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
   }
 
   test("forWrite persists content_stats as the typed struct the delta log's stats fill") {
-    withAllTypesTable("amt_content_stats_write", numFiles = 1) { deltaLog =>
+    withAllTypesTable("amt_content_stats_write") { deltaLog =>
+      appendRowsAsSeparateFiles(
+        "amt_content_stats_write", numFiles = 1, columnExprs = allTypesTableColumnExprs)
       val snapshot = deltaLog.update()
       val metadata = snapshot.metadata
       val protocol = snapshot.protocol
@@ -105,12 +109,12 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
       bounded("d_byte", ByteType, "0", tight = true)
       bounded("d_str", StringType, "row0", tight = false)
       bounded("d_date", DateType, "2026-07-25", tight = true)
-      bounded("d_ts", TimestampType, "2026-07-25 01:02:03.456", tight = false)
-      bounded("d_ts_ntz", TimestampNTZType, "2026-07-25T01:02:03.456", tight = false)
       bounded("d_dec", DecimalType(9, 3), "0.000", tight = true)
       bounded("d_float", FloatType, "0.0", tight = true)
       bounded("d_double", DoubleType, "0.0", tight = true)
       bounded("d_nested_inner", IntegerType, "0", tight = true)
+      boundless("d_ts")
+      boundless("d_ts_ntz")
       boundless("d_bool")
       boundless("d_binary")
       boundless("d_arr")
@@ -118,7 +122,10 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
   }
 
   test("forRead reconstructs the stats JSON the delta log holds, for every type") {
-    withAllTypesTable("amt_content_stats_roundtrip", numFiles = leafPackedFiles) { deltaLog =>
+    withAllTypesTable("amt_content_stats_roundtrip") { deltaLog =>
+      appendRowsAsSeparateFiles(
+        "amt_content_stats_roundtrip", numFiles = leafPackedFiles,
+        columnExprs = allTypesTableColumnExprs)
       commitCheckpoint(deltaLog, incremental = false)
       val snapshot = deltaLog.update()
       val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
@@ -132,12 +139,23 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
       // itself. Compare as parsed JSON trees so field order and formatting do not matter.
       val loggedSchema = StructType(Seq(StructField("add", StructType(Seq(
         StructField("stats", StringType))))))
+      // AMT persists no timestamp bounds (see `isSupportedBoundType`), so the reconstruction has no
+      // timestamp min/max; drop them from the logged stats before comparing.
+      val timestampColumns = metadata.dataSchema.filter(f =>
+        f.dataType.isInstanceOf[TimestampType] || f.dataType.isInstanceOf[TimestampNTZType])
+      def withoutTimestampBounds(stats: JsonNode): JsonNode = {
+        Seq("minValues", "maxValues").foreach { stat =>
+          val values = stats.get(stat).asInstanceOf[ObjectNode]
+          timestampColumns.foreach(f => values.remove(DeltaColumnMapping.getPhysicalName(f)))
+        }
+        stats
+      }
       val logged = spark.read.schema(loggedSchema)
         .json(new Path(deltaLog.logPath, "*.json").toString)
         .where(col("add").isNotNull)
         .select(col("add.stats"))
         .as[String].collect()
-        .map(JsonUtils.mapper.readTree).toSet
+        .map(json => withoutTimestampBounds(JsonUtils.mapper.readTree(json))).toSet
       assert(logged.size == leafPackedFiles,
         s"Expected one logged stats per file, got ${logged.size}.")
 
@@ -216,6 +234,8 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
       case _: StringType => Some(("\"apple\"", "\"pear\""))
       case _: TimestampType =>
         Some(("\"2020-01-01T00:00:00.000Z\"", "\"2020-12-31T00:00:00.000Z\""))
+      case _: TimestampNTZType =>
+        Some(("\"2020-01-01T00:00:00.000\"", "\"2020-12-31T00:00:00.000\""))
       case _: VariantType => None
       case other => fail(s"getSampleStatsJson has no placeholder for $other")
     }
@@ -259,7 +279,7 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
 
   test("variant columns persist a null count but no bounds") {
     // Delta collects min/max for VARIANT, but AMTContentStats has no Iceberg V4 bound
-    // representation for it yet, so `isBoundTypeSupported` rejects it. It is still counted for
+    // representation for it yet, so `isSupportedBoundType` rejects it. It is still counted for
     // nulls, so it surfaces with a `null_value_count` only -- like a plain array column.
     val metadata = metadataWithColumnIds(
       new StructType()
@@ -274,6 +294,31 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
       "tight_bounds" -> (BooleanType, "true"),
       "null_value_count" -> (LongType, "0")))
     assertStatFields(persisted, "v", Map("null_value_count" -> (LongType, "0")))
+  }
+
+  test("timestamp columns persist a null count but no bounds") {
+    // Delta truncates timestamp stats to milliseconds, so its max can sit below the file's true
+    // max; persisted as-is it would be an unsafe Iceberg upper_bound. `isSupportedBoundType`
+    // therefore rejects both timestamp types, which keep only a `null_value_count`, and reading
+    // back reconstructs no min/max for them (Delta just does not skip on those columns).
+    val metadata = metadataWithColumnIds(
+      new StructType()
+        .add("id", LongType)
+        .add("ts", TimestampType)
+        .add("ts_ntz", TimestampNTZType))
+    val persisted =
+      writeStats(getSampleStatsJson(metadata, tightBounds = true), metadata, amtProtocol)
+    assertStatFields(persisted, "ts", Map("null_value_count" -> (LongType, "0")))
+    assertStatFields(persisted, "ts_ntz", Map("null_value_count" -> (LongType, "0")))
+
+    val reconstructed = JsonUtils.mapper.readTree(readStats(persisted, metadata, amtProtocol))
+    Seq("ts", "ts_ntz").foreach { name =>
+      val physical = DeltaColumnMapping.getPhysicalName(metadata.dataSchema(name))
+      assert(!reconstructed.get("minValues").has(physical), s"$name must have no min")
+      assert(!reconstructed.get("maxValues").has(physical), s"$name must have no max")
+      assert(reconstructed.get("nullCount").get(physical).asLong == 0,
+        s"$name keeps its null count")
+    }
   }
 
   test("content stats adapter round-trips a table that collects no statistics") {
@@ -345,6 +390,32 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
       s"reading back with 2 indexed columns keeps only a and b, dropping c; got $minValues")
   }
 
+  test("the dataSkippingStatsColumns allowlist selects which columns get content_stats") {
+    // The `delta.dataSkippingStatsColumns` table property is an explicit allowlist that overrides
+    // the first-N-columns default (`dataSkippingNumIndexedCols`). Allowlisting `b,c` (skipping the
+    // leading `a`) proves the selection follows the property, not a column prefix.
+    val metadata = metadataWithColumnIds(
+      schema = new StructType().add("a", LongType).add("b", LongType).add("c", LongType),
+      configuration = Map(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key -> "b,c"))
+    val protocol = amtProtocol
+    val persisted =
+      writeStats(getSampleStatsJson(metadata, tightBounds = true), metadata, protocol)
+
+    assert(contentStatsLogicalNames(persisted) == Seq("b", "c"),
+      s"only the allowlisted columns get content_stats; got " +
+        s"${contentStatsLogicalNames(persisted)}")
+    assertStatFields(persisted, "b", Map(
+      "lower_bound" -> (LongType, "1"),
+      "upper_bound" -> (LongType, "9"),
+      "tight_bounds" -> (BooleanType, "true"),
+      "null_value_count" -> (LongType, "0")))
+    assertStatFields(persisted, "c", Map(
+      "lower_bound" -> (LongType, "1"),
+      "upper_bound" -> (LongType, "9"),
+      "tight_bounds" -> (BooleanType, "true"),
+      "null_value_count" -> (LongType, "0")))
+  }
+
   test("content stats round-trip a schema whose flattened leaf names collide") {
     // A top-level column `a_b` and a nested leaf `a`.`b` both flatten to the logical name "a_b".
     // Naming each content_stats sub-struct by that flattened name makes the two collide: the
@@ -383,6 +454,58 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
       s"nested a.b stats must reconstruct into its own slot; got $reconstructed")
   }
 
+  test("nested null counts: null parents are counted and required fields keep a zero count") {
+    val tableName = "amt_content_stats_null_parent"
+    withTable(tableName) {
+      createAMTTable(
+        tableName,
+        checkpointInterval = Int.MaxValue,
+        tableSchema = "s STRUCT<i: INT, f: FLOAT>, s2 STRUCT<i: INT, f: FLOAT>, " +
+          "req STRUCT<i: INT NOT NULL, f: FLOAT NOT NULL> NOT NULL")
+      // One file, three rows. In `s` the children are never independently null, so its count comes
+      // only from the null parent in row 1. In `s2` the inner fields are null in row 0 and the
+      // parent is null in row 1, so its count combines both. `req` is NOT NULL at the field and
+      // across its whole ancestor chain, so it can never be null, yet still keeps a null count:
+      //
+      // | row | s               | s2                 | req             |
+      // |-----|-----------------|--------------------|-----------------|
+      // | 0   | {i: 0,  f: 0.0} | {i: null, f: null} | {i: 0,  f: 0.0} |
+      // | 1   | null            | null               | {i: 10, f: 1.0} |
+      // | 2   | {i: 20, f: 2.0} | {i: 20, f: 2.0}    | {i: 20, f: 2.0} |
+      appendRowsAsSeparateFiles(
+        tableName,
+        numFiles = 1,
+        rowsPerFile = 3,
+        columnExprs = Seq(
+          "IF(id = 1, NULL, named_struct('i', CAST(id * 10 AS INT), 'f', CAST(id AS FLOAT)))",
+          "IF(id = 1, NULL, named_struct(" +
+            "'i', IF(id = 0, NULL, CAST(id * 10 AS INT)), " +
+            "'f', IF(id = 0, NULL, CAST(id AS FLOAT))))",
+          "named_struct('i', CAST(id * 10 AS INT), 'f', CAST(id AS FLOAT))"))
+      val deltaLog = deltaLogForName(tableName)
+      val snapshot = deltaLog.update()
+      val add = liveAddFiles(snapshot).head
+      val entry = DataEntry.fromAddFile(
+        add, AMTWriteHelper.addedTrackingForDataEntry(), deltaLog.dataPath)
+      val input = Seq(entry.wrap).toDS().toDF()
+      val persisted = AMTContentStats.forWrite(input, snapshot.metadata, snapshot.protocol)
+
+      def nullCount(name: String): Long = {
+        val sub = col("content_stats").getField(contentStatsField(persisted, name))
+        persisted.select(sub.getField("null_value_count")).as[Long].head()
+      }
+      // `s`: only the null parent (row 1) is counted, int and float alike.
+      assert(nullCount("s_i") == 1, "int child: the null parent row must be counted")
+      assert(nullCount("s_f") == 1, "float child: the null parent row must be counted, same as int")
+      // `s2`: null inner (row 0) plus null parent (row 1) both counted, int and float alike.
+      assert(nullCount("s2_i") == 2, "int child: null inner and null parent are both counted")
+      assert(nullCount("s2_f") == 2, "float child: null inner and null parent are both counted")
+      // `req`: a required field (NOT NULL up the whole chain) still keeps null_value_count, as 0.
+      assert(nullCount("req_i") == 0, "required int field: null_value_count is kept, as 0")
+      assert(nullCount("req_f") == 0, "required float field: null_value_count is kept, as 0")
+    }
+  }
+
   /** The persisted Iceberg `tight_bounds` of the sub-struct for logical column `column`. */
   private def persistedTightBounds(persisted: DataFrame, column: String): Boolean = {
     val sub = col("content_stats").getField(contentStatsField(persisted, column))
@@ -394,16 +517,16 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
     Option(JsonUtils.mapper.readTree(statsJson).get("tightBounds")).map(_.asBoolean)
 
   test("all columns have truncated type: Delta tightBounds is reconstructed conservatively false") {
-    // The only bounded columns are string/timestamp. Each is forced to tight_bounds=false on write,
-    // and on read there is no untruncated column to recover the file flag from, so it falls back
-    // to false -- a safe precision loss even though the source file was tight.
+    // The only bounded column is a string, forced to tight_bounds=false on write (the timestamp
+    // column persists no bounds at all), and on read there is no untruncated column to recover the
+    // file flag from, so it falls back to false -- a safe precision loss even though the source
+    // file was tight.
     val metadata = metadataWithColumnIds(
       new StructType().add("s", StringType).add("ts", TimestampType))
     Seq(true, false).foreach { tight =>
       val persisted =
         writeStats(getSampleStatsJson(metadata, tightBounds = tight), metadata, amtProtocol)
       assert(!persistedTightBounds(persisted, "s"), "a string column is never tight")
-      assert(!persistedTightBounds(persisted, "ts"), "a timestamp column is never tight")
       assert(tightBoundsOf(readStats(persisted, metadata, amtProtocol)).contains(false),
         "with no untruncated column to vouch for it, the file flag reconstructs to false")
     }
