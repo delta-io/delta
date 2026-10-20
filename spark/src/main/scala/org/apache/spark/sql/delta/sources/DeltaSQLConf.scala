@@ -1287,7 +1287,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |independently, which can lose or duplicate rows selected by a current-time filter.
           |""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val INSERT_REPLACE_ON_OR_USING_MATERIALIZE_SOURCE =
     buildConf("insertReplaceOnOrUsing.materializeSource")
