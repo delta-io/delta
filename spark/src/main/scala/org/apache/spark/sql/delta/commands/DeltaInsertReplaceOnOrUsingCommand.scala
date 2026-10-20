@@ -264,12 +264,10 @@ case class DeltaInsertReplaceOnOrUsingCommand(
         None
       }
 
-      val runOperationFunc: SparkSession => Seq[Row] = { spark =>
-        val materializedDf = if (pinStatementTime) {
-          materializeSource(spark, insertReplaceCriteria, sourceQueryWithPinnedTimestampOpt)
-        } else {
-          materializeSource(spark, insertReplaceCriteria)
-        }
+      executeWithRetry(sparkSession, runOperationFunc = { spark =>
+        val materializedDf = materializeSource(spark, insertReplaceCriteria,
+          sourceQueryWithPinnedTimestampOpt =
+            if (pinStatementTime) sourceQueryWithPinnedTimestampOpt else None)
         val preparedWriteCmd = if (pinStatementTime) {
           prepareWriteCmd(spark, materializedDf, insertReplaceCriteria)
             .copy(insertReplaceOnOrUsingCurrentTimeOpt = instantOpt)
@@ -278,13 +276,8 @@ case class DeltaInsertReplaceOnOrUsingCommand(
         }
         resultOpt = Some(executeAndRecordStats(preparedWriteCmd))
         Seq.empty
-      }
-      if (pinStatementTime) {
-        executeWithRetry(sparkSession, runOperationFunc,
-          sourceQueryWithPinnedTimestampOpt = sourceQueryWithPinnedTimestampOpt)
-      } else {
-        executeWithRetry(sparkSession, runOperationFunc = runOperationFunc)
-      }
+      }, sourceQueryWithPinnedTimestampOpt =
+        if (pinStatementTime) sourceQueryWithPinnedTimestampOpt else None)
 
       resultOpt.getOrElse(throw new IllegalStateException(
         "executeWithRetry did not invoke the operation function"))
