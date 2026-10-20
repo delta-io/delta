@@ -25,7 +25,6 @@ import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult;
-import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
@@ -57,6 +56,7 @@ import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -285,8 +285,7 @@ public class MetadataEvolutionHandler {
     Protocol protocolToUse = changedProtocol != null ? changedProtocol : readProtocolAtSourceInit;
 
     PersistedMetadata schemaToPersist =
-        PersistedMetadata.apply(
-            tableId, version, metadataToUse, protocolToUse, metadataPath);
+        PersistedMetadata.apply(tableId, version, metadataToUse, protocolToUse, metadataPath);
 
     metadataTrackingLog.get().writeNewMetadata(schemaToPersist, /* replaceCurrent= */ replace);
 
@@ -354,13 +353,9 @@ public class MetadataEvolutionHandler {
   private boolean hasMetadataOrProtocolChangeComparedToStreamMetadata(
       @Nullable Metadata newMetadata, @Nullable Protocol newProtocol, long newSchemaVersion) {
     Option<AbstractMetadata> metadataOpt =
-        newMetadata != null
-            ? Option.apply((AbstractMetadata) newMetadata)
-            : Option.empty();
+        newMetadata != null ? Option.apply((AbstractMetadata) newMetadata) : Option.empty();
     Option<AbstractProtocol> protocolOpt =
-        newProtocol != null
-            ? Option.apply((AbstractProtocol) newProtocol)
-            : Option.empty();
+        newProtocol != null ? Option.apply((AbstractProtocol) newProtocol) : Option.empty();
     Option<PersistedMetadata> persistedOpt =
         persistedMetadataAtSourceInit != null
             ? Option.apply(persistedMetadataAtSourceInit)
@@ -388,8 +383,8 @@ public class MetadataEvolutionHandler {
     StreamingHelper.collectMetadataActionsFromRangeUnsafe(
             startVersion, Optional.of(endVersion), snapshotManager, engine, tablePath)
         .forEach(
-        (version, action) ->
-            actions.put(version, KernelActionUtils$.MODULE$.metadataFromKernel(action)));
+            (version, action) ->
+                actions.put(version, KernelActionUtils$.MODULE$.metadataFromKernel(action)));
     return actions;
   }
 
@@ -404,8 +399,8 @@ public class MetadataEvolutionHandler {
     StreamingHelper.collectProtocolActionsFromRangeUnsafe(
             startVersion, Optional.of(endVersion), snapshotManager, engine, tablePath)
         .forEach(
-        (version, action) ->
-            actions.put(version, KernelActionUtils$.MODULE$.protocolFromKernel(action)));
+            (version, action) ->
+                actions.put(version, KernelActionUtils$.MODULE$.protocolFromKernel(action)));
     return actions;
   }
 
@@ -733,5 +728,4 @@ public class MetadataEvolutionHandler {
         protocolJson,
         current.previousMetadataSeqNum());
   }
-
 }

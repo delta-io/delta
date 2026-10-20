@@ -268,9 +268,7 @@ class DeltaV2MicroBatchStream
                 : snapshotAtSourceInit,
             "readSnapshotDescriptor is null");
     this.readSchemaAtSourceInit =
-        Objects.requireNonNull(
-            readSnapshotDescriptor.schema(),
-            "readSchemaAtSourceInit is null");
+        Objects.requireNonNull(readSnapshotDescriptor.schema(), "readSchemaAtSourceInit is null");
 
     this.shouldValidateOffsets =
         Objects.requireNonNull(
@@ -1214,12 +1212,10 @@ class DeltaV2MicroBatchStream
           metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
               validationResult.metadataAction == null
                   ? null
-                  : KernelActionUtils$.MODULE$.metadataFromKernel(
-                      validationResult.metadataAction),
+                  : KernelActionUtils$.MODULE$.metadataFromKernel(validationResult.metadataAction),
               validationResult.protocolAction == null
                   ? null
-                  : KernelActionUtils$.MODULE$.protocolFromKernel(
-                      validationResult.protocolAction),
+                  : KernelActionUtils$.MODULE$.protocolFromKernel(validationResult.protocolAction),
               version);
 
       CloseableIterator<IndexedFile> inner =

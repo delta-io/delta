@@ -60,8 +60,8 @@ import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.delta.RowId$;
-import org.apache.spark.sql.delta.SnapshotDescriptor;
 import org.apache.spark.sql.delta.RowIndexFilterType;
+import org.apache.spark.sql.delta.SnapshotDescriptor;
 import org.apache.spark.sql.delta.stats.DeltaScan;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
@@ -647,8 +647,7 @@ public class PartitionUtils {
             v1Metadata.createdTime().isDefined()
                 ? Optional.of((Long) v1Metadata.createdTime().get())
                 : Optional.empty(),
-            VectorUtils.stringStringMapValue(
-                ScalaUtils.toJavaMap(v1Metadata.configuration())));
+            VectorUtils.stringStringMapValue(ScalaUtils.toJavaMap(v1Metadata.configuration())));
 
     org.apache.spark.sql.delta.actions.Protocol v1Protocol = snapshot.protocol();
     Protocol protocol =

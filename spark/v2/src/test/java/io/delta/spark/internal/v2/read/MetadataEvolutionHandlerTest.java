@@ -1240,10 +1240,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         MetadataEvolutionHandler.buildReadSnapshotDescriptorFromPersistedMetadata(
             source, withoutProtocol);
 
-    assertEquals(
-        source.protocol().minReaderVersion(), read.protocol().minReaderVersion());
-    assertEquals(
-        source.protocol().minWriterVersion(), read.protocol().minWriterVersion());
+    assertEquals(source.protocol().minReaderVersion(), read.protocol().minReaderVersion());
+    assertEquals(source.protocol().minWriterVersion(), read.protocol().minWriterVersion());
   }
 
   /**
