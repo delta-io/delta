@@ -22,8 +22,10 @@ import scala.jdk.CollectionConverters._
 import io.delta.kernel.exceptions.{KernelException, VersionToLoadAfterLatestCommitException}
 import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils, UCTableIdentifier}
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
+import io.delta.spark.internal.v2.kernel.KernelContext
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
+import org.apache.spark.sql.delta.storage.LogStore
 import org.scalatest.Outcome
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -41,13 +43,15 @@ class UCManagedTableSnapshotManagerSuite
   private val testUcToken = "test-token"
   private val testUcAuthConfig = Map("token" -> testUcToken).asJava
 
+  private def kernelContext = new KernelContext(Map.empty, LogStore(spark))
+
   private def createManager(
       ucClient: InMemoryUCClient,
       tablePath: String) = {
     val client = new UCCatalogManagedClient(ucClient)
     val tableInfo =
       new UCTableInfo(testUcTableId, tablePath, testTableIdentifier, testUcUri, testUcAuthConfig)
-    new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
+    new UCManagedTableSnapshotManager(client, tableInfo, kernelContext)
   }
 
   // ==================== Constructor ====================
@@ -64,19 +68,19 @@ class UCManagedTableSnapshotManagerSuite
         testUcAuthConfig)
 
     val ex1 = intercept[NullPointerException] {
-      new UCManagedTableSnapshotManager(null, tableInfo, defaultEngine)
+      new UCManagedTableSnapshotManager(null, tableInfo, kernelContext)
     }
     assert(ex1.getMessage == "ucCatalogManagedClient is null")
 
     val ex2 = intercept[NullPointerException] {
-      new UCManagedTableSnapshotManager(client, null, defaultEngine)
+      new UCManagedTableSnapshotManager(client, null, kernelContext)
     }
     assert(ex2.getMessage == "tableInfo is null")
 
     val ex3 = intercept[NullPointerException] {
       new UCManagedTableSnapshotManager(client, tableInfo, null)
     }
-    assert(ex3.getMessage == "engine is null")
+    assert(ex3.getMessage == "kernelContext is null")
   }
 
   // ==================== loadLatestSnapshot ====================
@@ -102,7 +106,7 @@ class UCManagedTableSnapshotManagerSuite
       testUcUri,
       testUcAuthConfig)
     val client = new UCCatalogManagedClient(ucClient)
-    val manager = new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
+    val manager = new UCManagedTableSnapshotManager(client, tableInfo, kernelContext)
 
     val ex = intercept[RuntimeException] {
       manager.loadLatestSnapshot()
@@ -335,7 +339,7 @@ class UCManagedTableSnapshotManagerSuite
       testUcUri,
       testUcAuthConfig)
     val client = new UCCatalogManagedClient(ucClient)
-    val manager = new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
+    val manager = new UCManagedTableSnapshotManager(client, tableInfo, kernelContext)
 
     val ex1 = intercept[RuntimeException] { manager.loadLatestSnapshot() }
     assert(ex1.getCause.isInstanceOf[InvalidTargetTableException])

@@ -1316,7 +1316,7 @@ class OptimisticTransactionSuite
               op = DeltaOperations.Restore(Some(0), None),
               context = Map.empty,
               metrics = Map.empty,
-              dataChange = Some(true))
+              dataChange = true)
           }
           if (conflict) {
             assert(e.isInstanceOf[ConcurrentWriteException])
@@ -1952,7 +1952,7 @@ class OptimisticTransactionSuite
               op = DeltaOperations.ManualUpdate,
               context = Map.empty,
               metrics = Map.empty,
-              dataChange = Some(true))
+              dataChange = true)
           } else {
             log.startTransaction().commit(mixedActions, ManualUpdate)
           }

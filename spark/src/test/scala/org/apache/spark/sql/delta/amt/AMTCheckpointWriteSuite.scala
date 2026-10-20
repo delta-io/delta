@@ -19,8 +19,8 @@ package org.apache.spark.sql.delta.amt
 import java.io.File
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
-import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaOperations, LastCheckpointInfo, RowId}
-import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DomainMetadata, SetTransaction}
+import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaLog, DeltaOperations, LastCheckpointInfo, RowId}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, DomainMetadata, SetTransaction, SingleAction}
 import org.apache.spark.sql.delta.coordinatedcommits.TrackingInMemoryCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
@@ -30,7 +30,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{StructType, TimestampNTZType, TimestampType}
 
 class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
@@ -94,6 +94,44 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       assert((rootFiles(path) ++ leafFiles(path)).exists(_.getName == rootName),
         s"contentRoot must reference an on-disk manifest; got $rootName")
     }
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "manifest commit checkpoint round-trips through Jackson and Spark",
+      "amt_manifest_commit_serde")(
+      setup = name => sql(s"INSERT INTO $name VALUES (1)"),
+      inlineCheckpointTriggerActionsOrSQL = Some { _ =>
+        Left((Seq(
+          DomainMetadata("serialization-test", """{"value":1}""", removed = false),
+          SetTransaction("serialization-app", 7L, lastUpdated = None)),
+          DeltaOperations.ManualUpdate))
+      }) { context =>
+    val expectedCheckpoint = context.checkpoint
+    assert(expectedCheckpoint.domainMetadata.contains(
+      DomainMetadata("serialization-test", """{"value":1}""", removed = false)))
+    assert(expectedCheckpoint.txns == Seq(
+      SetTransaction("serialization-app", 7L, lastUpdated = None)))
+
+    val snapshot = context.postCheckpointSnapshot
+    val deltaLog = snapshot.deltaLog
+    // A deferred checkpoint is published in the commit after the version it describes.
+    val commitPath = DeltaCommitFileProvider(snapshot).deltaFile(context.manifestCommitVersion)
+    val jacksonCheckpoints = deltaLog.store
+      .read(commitPath, deltaLog.newDeltaHadoopConf())
+      .map(Action.fromJson)
+      .collect { case checkpoint: Checkpoint => checkpoint }
+    val sparkCheckpoints = allowReadWithinDeltaLog {
+      spark.read.schema(Action.logSchema)
+        .option("mode", "FAILFAST")
+        .json(commitPath.toString)
+        .as[SingleAction](SingleAction.encoder)
+        .collect().toSeq
+        .map(_.unwrap)
+        .collect { case checkpoint: Checkpoint => checkpoint }
+    }
+
+    assert(jacksonCheckpoints == Seq(expectedCheckpoint))
+    assert(sparkCheckpoints == Seq(expectedCheckpoint))
   }
 
   testAcrossAMTCheckpointScenarios(
@@ -223,14 +261,19 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     }
   }
 
+  // AMT persists no timestamp bounds yet (see `AMTContentStats.isSupportedBoundType`), so their
+  // min/max cannot round-trip; leave the timestamp columns out of this exact round trip.
+  private val roundTripColumns = allTypeColumns.values.toSeq.filterNot(column =>
+    column.dataType == TimestampType || column.dataType == TimestampNTZType)
+  private val roundTripColumnExprs = roundTripColumns.map(_.valueExpr)
   testAcrossAMTCheckpointScenarios(
       "typed content stats round-trip through reconstruction",
       "amt_typed_content_stats",
-      tableSchema = allTypeColumnDefinitions.mkString(", "))(
+      tableSchema = roundTripColumns.map(_.columnDef("c_")).mkString(", "))(
       setup = name =>
-        appendRowsAsSeparateFiles(name, numFiles = 2, columnExprs = allTypeColumnExprs),
+        appendRowsAsSeparateFiles(name, numFiles = 2, columnExprs = roundTripColumnExprs),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name SELECT ${allTypeColumnExprs.mkString(", ")} FROM range(2, 3)"))) {
+        s"INSERT INTO $name SELECT ${roundTripColumnExprs.mkString(", ")} FROM range(2, 3)"))) {
     context =>
     val snapshot = context.postCheckpointSnapshot
 
@@ -248,6 +291,36 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     // The typed content stats must round-trip: the AddFiles reconstructed from the checkpoint must
     // carry the same stats Delta originally wrote.
     assertLiveAddFilesRoundTrip(context)
+  }
+
+  private val subMillisTsExpr = "TIMESTAMP '2026-01-01 00:00:00.123456'"
+  private val subMillisTsNtzExpr = "TIMESTAMP_NTZ '2026-01-01 00:00:00.123456'"
+  private val subMillisColumnExprs = Seq("CAST(id AS INT)", subMillisTsExpr, subMillisTsNtzExpr)
+  testAcrossAMTCheckpointScenarios(
+      "a predicate above the millisecond-truncated timestamp max still finds the row",
+      "amt_sub_millis_ts",
+      tableSchema = "id INT, ts TIMESTAMP, ts_ntz TIMESTAMP_NTZ")(
+      setup = name =>
+        appendRowsAsSeparateFiles(name, numFiles = 2, columnExprs = subMillisColumnExprs),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name SELECT ${subMillisColumnExprs.mkString(", ")} FROM range(2, 3)"))) {
+    context =>
+    // Delta logs the max of a .123456 row as .123, and persisting that as the Iceberg upper bound
+    // would let a reader skip the file for a predicate between the two. Read the table back from
+    // the AMT checkpoint and check such a predicate still finds every row.
+    val name = context.tableName
+    DeltaLog.clearCache()
+    val snapshot = deltaLogForName(name).update()
+    assert(snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider],
+      s"${context.scenario.name}: expected the table to be read from an AMT checkpoint")
+    val rowCount = spark.table(name).count()
+    assert(rowCount > 0)
+    Seq("ts" -> "TIMESTAMP", "ts_ntz" -> "TIMESTAMP_NTZ").foreach { case (column, sqlType) =>
+      val matching = spark.table(name)
+        .where(s"$column > $sqlType '2026-01-01 00:00:00.123200'").count()
+      assert(matching == rowCount,
+        s"${context.scenario.name}: $column > .123200 must find all $rowCount rows, got $matching")
+    }
   }
 
   testAcrossAMTCheckpointScenarios(
@@ -405,6 +478,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
         "leaf with space.parquet",
         Seq(AMTSingleAction.fromAddFile(dataAdd, addedTracking, dataPath)))
       val parentTracking = addedTracking.copy(
+        snapshot_id = Some(1L),
         sequence_number = Some(base.version),
         file_sequence_number = Some(base.version),
         first_row_id = Some(0L))
@@ -416,8 +490,10 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
         file_size_in_bytes = leafSize,
         manifest_info = emptyManifestInfo.copy(added_files_count = 1))
       val (rootLoc, rootSize) = writeManifest("root with space.parquet", Seq(leafPointer.wrap))
-      val checkpoint = base.copy(
-        contentRoot = ContentRoot(path = rootLoc, sizeInBytes = rootSize, version = base.version))
+      val checkpoint = updateCheckpointActions(base) {
+        case _: ContentRoot =>
+          ContentRoot(path = rootLoc, sizeInBytes = rootSize, version = base.version)
+      }
 
       // The synthesized pointers really do carry spaces and are not URL-encoded.
       assert(rootLoc.contains("root with space.parquet") && !rootLoc.contains("%20"))
@@ -953,7 +1029,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
   private def addedTracking: Tracking = Tracking(
     status = Tracking.Status.Added,
     snapshot_id = None,
-    dv_snapshot_id = None,
+    modified_snapshot_id = None,
     sequence_number = None,
     file_sequence_number = None,
     first_row_id = None,
@@ -962,6 +1038,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
   /** A zeroed [[ManifestInfo]]; tests set only the counts they assert on via `copy`. */
   private def emptyManifestInfo: ManifestInfo = ManifestInfo(
+    format_version = AMTSingleAction.FormatVersionV4,
     added_files_count = 0,
     existing_files_count = 0,
     deleted_files_count = 0,
@@ -973,6 +1050,5 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     replaced_rows_count = 0L,
     modified_rows_count = 0L,
     min_sequence_number = 0L,
-    dv = None,
-    dv_cardinality = None)
+    dv = None)
 }

@@ -949,6 +949,10 @@ object Checkpoints
   /** The name of the last checkpoint file */
   val LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint"
 
+  /** RemoveFile fields intentionally omitted from classic and V2 checkpoints. */
+  private[delta] val REMOVE_FILE_EXCLUDED_FROM_CHECKPOINT_FIELDS =
+    Seq("tags", "stats", "snapshotId", "modifiedSnapshotId")
+
   /**
    * Determines the V2 checkpoint format to use for the given snapshot, if applicable.
    *
@@ -1121,7 +1125,9 @@ object Checkpoints
         // separately after sidecar files are written.
         repartitioned
           .select("add", "remove")
-          .withColumn("remove", col("remove").dropFields("tags", "stats"))
+          .withColumn(
+            "remove",
+            col("remove").dropFields(REMOVE_FILE_EXCLUDED_FROM_CHECKPOINT_FIELDS: _*))
           .where("add is not null or remove is not null")
       } else {
         // When V2 Checkpoint is disabled, the baseCheckpoint refers to the main classic checkpoint
@@ -1129,7 +1135,9 @@ object Checkpoints
         // "checkpoint".
         repartitioned
           .drop("commitInfo", "cdc", "checkpointMetadata", "sidecar", "checkpoint")
-          .withColumn("remove", col("remove").dropFields("tags", "stats"))
+          .withColumn(
+            "remove",
+            col("remove").dropFields(REMOVE_FILE_EXCLUDED_FROM_CHECKPOINT_FIELDS: _*))
       }
     }
 
@@ -1651,8 +1659,8 @@ object Checkpoints
       additionalCols ++= partitionValues
       additionalCols ++= Checkpoints.extractStats(snapshot.statsSchema, "add.stats")
     }
-    // amtResidue and backReference are dropped on purpose here: V1/V2 checkpoints are incompatible
-    // with AMT, so these AMT-era extras do not belong in the checkpoint `add` struct.
+    // amtPassthrough, backReference, and snapshot IDs are dropped on purpose here: V1/V2
+    // checkpoints are incompatible with AMT, so these extras do not belong in the `add` struct.
     val withAdd = state.withColumn("add",
       when(col("add").isNotNull, struct(Seq(
         col("add.path"),

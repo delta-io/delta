@@ -204,7 +204,7 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
   protected def leafToLeafMDVCardinalityMap(amtDeltaLog: DeltaLog): Map[String, Long] = {
     val provider = amtProvider(amtDeltaLog.update())
       .getOrElse(fail("AMT table must be checkpoint-provider-backed."))
-    provider.leaves.map(l => l.location -> l.manifest_info.dv_cardinality.getOrElse(0L)).toMap
+    provider.leaves.map(l => l.location -> l.manifest_info.dvCardinality).toMap
   }
 
   /** Root-resident DATA-entry counts (live adds, tombstones) read straight off the new root. */
@@ -221,17 +221,17 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
     (liveAdds, tombstones)
   }
 
-  /** Decodes a manifest bitmap's set positions into a set (empty if the bytes are absent). */
-  private def bitmapPositions(bytes: Array[Byte]): Set[Long] =
-    ManifestBitmap.fromSerializedByteArray(bytes).toArrayForTesting.toSet
+  /** Returns the number of set positions in a serialized manifest bitmap. */
+  private def bitmapCardinality(bytes: Array[Byte]): Long =
+    ManifestBitmap.fromSerializedByteArray(bytes).cardinality
 
-  /** The per-commit CDF `tracking.deleted_positions` off a leaf pointer (empty if unset). */
-  protected def leafDeletedPositions(leaf: DataManifestEntry): Set[Long] =
-    leaf.tracking.deleted_positions.map(bitmapPositions).getOrElse(Set.empty)
+  /** The per-commit CDF `tracking.deleted_positions` count off a leaf pointer. */
+  protected def leafDeletedPositionCount(leaf: DataManifestEntry): Long =
+    leaf.tracking.deleted_positions.map(bitmapCardinality).getOrElse(0L)
 
-  /** The per-commit CDF `tracking.replaced_positions` off a leaf pointer (empty if unset). */
-  protected def leafReplacedPositions(leaf: DataManifestEntry): Set[Long] =
-    leaf.tracking.replaced_positions.map(bitmapPositions).getOrElse(Set.empty)
+  /** The per-commit CDF `tracking.replaced_positions` count off a leaf pointer. */
+  protected def leafReplacedPositionCount(leaf: DataManifestEntry): Long =
+    leaf.tracking.replaced_positions.map(bitmapCardinality).getOrElse(0L)
 
   /** The current snapshot's leaf pointers, keyed by relative location. */
   protected def leafPointers(snapshot: Snapshot): Map[String, DataManifestEntry] = {
@@ -241,7 +241,7 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
 
   /** The MDV cardinality numLeafCountBefore on a leaf pointer, 0 when it has none. */
   protected def mdvCardinality(leaf: DataManifestEntry): Long =
-    leaf.manifest_info.dv_cardinality.getOrElse(0L)
+    leaf.manifest_info.dvCardinality
 
   /**
    * Emits one incremental AMT and cross-checks its metrics three ways: the hand-specified
@@ -378,8 +378,8 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
       .getOrElse(fail("AMT table must be checkpoint-provider-backed.")).leaves
     val statusToLeafCountMapping =
       newLeafPointers.groupBy(_.tracking.status).map { case (s, ps) => s -> ps.size }
-    val deleteCDFBitsAdded = newLeafPointers.map(p => leafDeletedPositions(p).size).sum
-    val replaceCDFBitsAdded = newLeafPointers.map(p => leafReplacedPositions(p).size).sum
+    val deleteCDFBitsAdded = newLeafPointers.map(leafDeletedPositionCount).sum
+    val replaceCDFBitsAdded = newLeafPointers.map(leafReplacedPositionCount).sum
 
     val derived = metrics.copy(
       numOldLeavesUpdated = updated,
@@ -425,7 +425,7 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
 
   /**
    * Performs following validations on the underlying AMT (from latest snapshot):
-   *   - each leaf pointer's `dv_cardinality` equals its decoded MDV bitmap size, and every MDV
+   *   - each leaf pointer's MDV cardinality is within its physical entry count, and every MDV
    *     position is in range of that leaf's physical entry count (no stale / out-of-range mask);
    *   - conservation: the reader's live count equals root-resident live adds plus, over every leaf,
    *     (physical leaf entries - MDV cardinality)
@@ -457,20 +457,16 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
         val livePhysicalEntries = statusToCountMapForLeaf
           .filter { case (status, _) => Tracking.Status.liveEntryStatuses.contains(status) }
           .values.sum
-        val mdvDeclaredCardinality = leaf.manifest_info.dv_cardinality.getOrElse(0L)
+        val mdvDeclaredCardinality = leaf.manifest_info.dvCardinality
         val decoded = leaf.manifest_info.dv.map(ManifestBitmap.fromSerializedByteArray)
           .getOrElse(ManifestBitmap.fromPositions(Seq.empty))
-        assert(decoded.cardinality == mdvDeclaredCardinality,
-          s"Leaf ${leaf.location}: dv_cardinality=$mdvDeclaredCardinality but the decoded MDV " +
-            s"has ${decoded.cardinality} bits.")
         assert(mdvDeclaredCardinality <= physicalEntries,
           s"Leaf ${leaf.location}: MDV cardinality ($mdvDeclaredCardinality) exceeds physical " +
             s"entries " +
             s"($physicalEntries).")
-        decoded.toArrayForTesting.foreach { pos =>
-          assert(pos >= 0 && pos < physicalEntries,
-            s"Leaf ${leaf.location}: MDV position $pos is out of range [0, $physicalEntries).")
-        }
+        val positionsInRange = (0L until physicalEntries).count(pos => decoded.contains(pos.toInt))
+        assert(positionsInRange == decoded.cardinality,
+          s"Leaf ${leaf.location}: MDV contains a position outside [0, $physicalEntries).")
         livePhysicalEntries - mdvDeclaredCardinality
       }.sum
 
