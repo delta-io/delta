@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.cic.{IdentitySequenceService, ReserveIdsReques
 import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
 
 import org.apache.spark.SparkEnv
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.rpc.{IsolatedThreadSafeRpcEndpoint, RpcCallContext, RpcEnv}
 import org.apache.spark.sql.SparkSession
