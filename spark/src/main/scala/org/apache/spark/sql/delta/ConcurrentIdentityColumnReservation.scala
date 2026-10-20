@@ -117,17 +117,24 @@ class IdentityColumnReservation(
   private var _reservedServiceTableId: Option[String] = None
 
   /**
-   * Prepares this reservation to serve `numRows` identity values per identity column on the
-   * target table, recording per-column state in [[_reservedSlots]]. Values
-   * are not reserved up front here; each executor task reserves its own range from the
-   * coordinator on demand (see [[reserveValuesViaService]]).
+   * Prepares this reservation for each identity column on the target table, recording
+   * per-column state in [[_reservedSlots]]. Values are not reserved up front here; each executor
+   * task reserves its own range from the coordinator on demand (see [[reserveValuesViaService]]).
    *
-   * If prior reservation state already covers `numRows`, the call is a no-op; otherwise stale
-   * state is dropped before the next service call. No retry today (a single RPC per column;
-   * transient failures surface to the caller); retry is future work.
-   * @param numRows the number of values the caller expects to write.
+   * Any state from a prior call is dropped first and the setup is redone; the slots are
+   * degenerate (no values are reserved up front), so there is nothing to reuse. No retry today
+   * (a single RPC per column; transient failures surface to the caller); retry is future work.
+   * @param sizeHint An estimate of the number of distinct values to reserve. `Some(0)` is a
+   *                 provably empty source (a no-op reservation that skips the sequence setup);
+   *                 pass it only for an exact count such as the `numSourceRows` metric, never for
+   *                 a planning-time estimate (map an estimated 0 to `None`). `None` means the
+   *                 count is unknown; the reservation still registers the sequence scope.
    */
-  def reserveValuesForIdentityColumns(numRows: Long): Unit = {
+  def reserveValuesForIdentityColumns(sizeHint: Option[Long]): Unit = {
+    // `sizeHint` distinguishes three cases, all propagated to reserveValuesViaService as-is:
+    //   Some(0)   => provably empty source (no-op reservation)
+    //   Some(n>0) => known count
+    //   None      => count unknown (NOT empty)
     // Callers must gate on hasIdentityColumn, not just feature support
     if (Utils.isTesting) {
       assert(
@@ -136,19 +143,7 @@ class IdentityColumnReservation(
         "reserveValuesForIdentityColumns called on a table with no identity column")
     }
 
-    if (_reservedSlots.nonEmpty) {
-      val allIntervalsValid = _reservedSlots.forall {
-        // math.abs so a descending (negative-step) range, whose end < start, is measured by
-        // magnitude; otherwise the slot would never be reused and every call re-reserves.
-        case (_, range) => math.abs(range.end - range.start) >= numRows
-      }
-      if (allIntervalsValid) {
-        return
-      }
-      // This may drop unused values. Gaps in identity columns does not go against the protocol but
-      // may provide a bad user experience.
-      _reservedSlots = Map.empty
-    }
+    _reservedSlots = Map.empty
 
     // Kill switch: blocks every identity-generating write to a service-backed table.
     if (!spark.conf.get(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED)) {
@@ -163,7 +158,7 @@ class IdentityColumnReservation(
       throw SparkException.internalError(
         "Concurrent identity column reservation requires an IdentitySequenceService.")
     }
-    reserveValuesViaService(seqService, numRows)
+    reserveValuesViaService(seqService, sizeHint)
   }
 
   /**
@@ -182,10 +177,15 @@ class IdentityColumnReservation(
    *      and a degenerate [[_reservedSlots]] entry per column (its range end is unused on the
    *      reserve-more path). Sequence existence and step are validated by the first executor
    *      reserve, not here.
+   *
+   * @param seqService the identity sequence service to use for the reservation.
+   * @param sizeHint the write's row-count hint (see [[reserveValuesForIdentityColumns]]).
    */
-  private def reserveValuesViaService(seqService: IdentitySequenceService, numRows: Long): Unit = {
+  private def reserveValuesViaService(
+      seqService: IdentitySequenceService,
+      sizeHint: Option[Long]): Unit = {
     val snapshot = deltaLog.update()
-    if (numRows <= 0L) {
+    if (sizeHint.contains(0L)) {
       // No identity values are needed (e.g. an empty MERGE source). The service contract
       // requires count > 0, so don't call reserveIds; instead register a degenerate
       // single-point slot per identity column, so the MERGE generator rewrite and the

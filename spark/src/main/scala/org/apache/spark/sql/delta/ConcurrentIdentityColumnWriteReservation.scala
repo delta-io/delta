@@ -77,18 +77,14 @@ object ConcurrentIdentityColumnWriteReservation {
     // stats, e.g. a Delta scan), so CIC INSERT never forces an extra full scan of the input.
     // data.count() was considered but has additional downsides on a non-deterministic /
     // side-effecting source.
-    //   Some(0) => provably empty input, nothing to reserve.
-    //   Some(n) => non-empty input of ~n rows (a sizing hint; values are reserved on demand).
+    //   Some(n) => ~n input rows, passed on as a sizing hint (values are reserved on demand).
     //   None    => size unknown without a scan, so reserve rate-based on demand, like MERGE.
-    val rowCountEstimate = data.queryExecution.optimizedPlan.stats.rowCount.map(_.toLong)
-    if (rowCountEstimate.contains(0L)) return None
-    val sizeHint = rowCountEstimate.filter(_ > 0L)
+    // An estimate of 0 is not proof of an empty input (stale stats, CBO estimates), so it is
+    // treated as unknown (None) and still sets up the full reservation.
+    val sizeHint = data.queryExecution.optimizedPlan.stats.rowCount.map(_.toLong).filter(_ > 0L)
 
-    // Only >0 vs 0 matters now (the empty-source gate); the driver's controller sizes the actual
-    // reserve, so any positive fallback (1) is fine when the row count is unknown.
-    val seedSize = sizeHint.getOrElse(1L)
     val reservation = new IdentityColumnReservation(deltaLog, catalog, spark)
-    reservation.reserveValuesForIdentityColumns(seedSize)
+    reservation.reserveValuesForIdentityColumns(sizeHint)
     Some(reservation)
   }
 }

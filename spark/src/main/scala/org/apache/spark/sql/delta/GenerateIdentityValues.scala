@@ -225,7 +225,7 @@ case class PartitionIdentityValueGenerator(
   private case class ReservationMetadata(stageId: Int, taskAttemptId: Long)
 
   /**
-   * Helper to retrieve reservation metadata.
+   * Helper to retrieve reservation metadata from the task context.
    */
   private def getReservationMetadata(): ReservationMetadata = {
     val taskContext = TaskContext.get()
