@@ -150,10 +150,8 @@ trait DeltaSourceBase extends Source
    */
   protected lazy val readSnapshotDescriptor: SnapshotDescriptor =
     persistedMetadataAtSourceInit
-      .map { customMetadata =>
-        DeltaSourceMetadataEvolutionSupport.buildReadSnapshotDescriptor(
-          snapshotAtSourceInit, customMetadata, entry => logWarning(entry))
-      }
+      .map(DeltaSourceMetadataEvolutionSupport.buildReadSnapshotDescriptor(
+        snapshotAtSourceInit, _))
       .getOrElse(snapshotAtSourceInit)
 
   /**

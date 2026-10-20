@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.v2.interop.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.internal.{LogEntry, Logging, MDC}
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.streaming.Offset
@@ -411,13 +411,7 @@ object DeltaSourceMetadataEvolutionSupport extends Logging {
    */
   def buildReadSnapshotDescriptor(
       snapshotAtSourceInit: SnapshotDescriptor,
-      customMetadata: PersistedMetadata): SnapshotDescriptor =
-    buildReadSnapshotDescriptor(snapshotAtSourceInit, customMetadata, entry => logWarning(entry))
-
-  def buildReadSnapshotDescriptor(
-      snapshotAtSourceInit: SnapshotDescriptor,
-      customMetadata: PersistedMetadata,
-      logWarning: LogEntry => Unit): SnapshotDescriptor = {
+      customMetadata: PersistedMetadata): SnapshotDescriptor = {
     new SnapshotDescriptor {
       val deltaLog: DeltaLog = snapshotAtSourceInit.deltaLog
       override val dataPath: Path = snapshotAtSourceInit.dataPath
