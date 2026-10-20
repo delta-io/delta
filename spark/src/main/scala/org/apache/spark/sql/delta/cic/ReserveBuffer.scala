@@ -66,6 +66,11 @@ case class ReserveConfig(
     driverInitialSize: Long,
     minBatchSize: Long) {
 
+  // A refill is capped at maxBatch but planDistribution never grants below minBatchSize, so a
+  // larger floor would leave every parked caller with 0 until its RPC times out.
+  require(minBatchSize <= maxBatch,
+    s"minBatchSize ($minBatchSize) must not exceed maxBatchSize ($maxBatch)")
+
   def driverRefillWindow: FiniteDuration = FiniteDuration(refillWindowMs, MILLISECONDS)
 
   def executorRefillWindow: FiniteDuration = driverRefillWindow / 2

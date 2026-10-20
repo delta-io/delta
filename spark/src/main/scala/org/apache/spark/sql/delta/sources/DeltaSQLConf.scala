@@ -3678,7 +3678,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "pull and an executor's grant) is clamped up to at least this. Prevents a tiny request " +
         "(e.g. a single-row write) from burning a UC round-trip on a trivially small " +
         "reservation. Raise if reserves are routinely under-sized; leave at 1 (default) to let " +
-        "adaptive sizing dominate.")
+        "adaptive sizing dominate. Must not exceed maxBatchSize.")
       .longConf
       .checkValue(_ > 0L, "minBatchSize must be positive")
       .createWithDefault(1L)
