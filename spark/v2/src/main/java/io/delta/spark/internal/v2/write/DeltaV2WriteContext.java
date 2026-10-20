@@ -15,6 +15,7 @@
  */
 package io.delta.spark.internal.v2.write;
 
+import io.delta.kernel.Operation;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -47,13 +48,11 @@ import scala.Option;
  * Shared driver-side setup for Delta DSv2 writes, independent of the write mode's {@code
  * Operation}. Builds the operation-independent write state -- schema split (data / partition),
  * Spark Parquet {@link OutputWriterFactory}, serializable Hadoop conf, session time zone -- once,
- * from the table snapshot. The mode-specific transaction lifecycle lives in subclasses: {@link
- * DeltaV2BatchWriteContext} (batch, {@code Operation.WRITE}) for the batch path, while the
- * streaming path drives per-epoch transactions and reuses only {@link #buildDataWriterFactory}.
+ * from the table snapshot. Batch and streaming writes manage their commit transaction lifecycles.
  *
- * <p>{@link #buildDataWriterFactory} turns a caller-supplied {@link Transaction} into the executor
- * write state ({@link DeltaV2DataWriterFactory}); it is the single reuse point so batch and
- * streaming never duplicate the Parquet / schema setup.
+ * <p>{@link #buildDataWriterFactory} creates a transaction from the caller's snapshot and captures
+ * its executor write state ({@link DeltaV2DataWriterFactory}); batch and streaming share the
+ * Parquet / schema setup.
  */
 class DeltaV2WriteContext {
 
@@ -66,6 +65,8 @@ class DeltaV2WriteContext {
   }
 
   private final Engine engine;
+  private final Snapshot initialSnapshot;
+  private final LogicalWriteInfo writeInfo;
   private final StructType dataSchema;
   // Logical (pre-column-mapping) data schema. Column ordinals are matched against writeSchema by
   // logical name, so with column mapping this must stay logical even though dataSchema is physical
@@ -78,6 +79,7 @@ class DeltaV2WriteContext {
   private final OutputWriterFactory outputWriterFactory;
   private final SerializableConfiguration serializableHadoopConf;
   private final String sessionTimeZone;
+  private final boolean variantShreddingEnabled;
   /**
    * Whether the variant shredding layout of this write actually tracks {@code
    * delta.enableVariantShredding}. It does only when this Spark version can shred, the write
@@ -151,7 +153,7 @@ class DeltaV2WriteContext {
     throw new IllegalStateException("Unable to verify Parquet write schema", cause);
   }
 
-  protected DeltaV2WriteContext(
+  private DeltaV2WriteContext(
       Engine engine,
       Configuration hadoopConf,
       String tablePath,
@@ -161,6 +163,9 @@ class DeltaV2WriteContext {
       LogicalWriteInfo writeInfo,
       boolean variantShreddingEnabled) {
     this.engine = engine;
+    this.initialSnapshot = initialSnapshot;
+    this.writeInfo = writeInfo;
+    this.variantShreddingEnabled = variantShreddingEnabled;
 
     SparkSession session =
         SparkSession.getActiveSession()
@@ -276,16 +281,24 @@ class DeltaV2WriteContext {
     return variantLayoutFollowsProperty;
   }
 
+  boolean variantShreddingEnabled() {
+    return variantShreddingEnabled;
+  }
+
   /**
-   * Builds the executor-side write state from {@code transaction}: the serialized transaction state
-   * and target directory (from a Kernel write context), packaged with the shared Parquet {@link
-   * OutputWriterFactory}, Hadoop conf, and data schema into a {@link DeltaV2DataWriterFactory}.
-   *
-   * <p>Operation-independent, so any write mode (batch {@code Operation.WRITE}, streaming {@code
-   * Operation.STREAMING_UPDATE}) can build its factory from its own transaction without duplicating
-   * the driver-side Parquet / schema setup done in the constructor.
+   * Builds executor write state from the initial snapshot using {@code operation}: the serialized
+   * transaction state, shared Parquet {@link OutputWriterFactory}, Hadoop conf, and data schema.
    */
-  DeltaV2DataWriterFactory buildDataWriterFactory(Transaction transaction) {
+  DeltaV2DataWriterFactory buildDataWriterFactory(Operation operation) {
+    Transaction transaction =
+        DeltaV2Snapshot$.MODULE$
+            .getKernelSnapshot(initialSnapshot)
+            .buildUpdateTableTransaction(getEngineInfo(), operation)
+            .build(engine);
+    return buildDataWriterFactory(transaction);
+  }
+
+  private DeltaV2DataWriterFactory buildDataWriterFactory(Transaction transaction) {
     Row txnState = transaction.getTransactionState(engine);
     SerializableKernelRowWrapper serializedTxnState = new SerializableKernelRowWrapper(txnState);
 
@@ -293,8 +306,8 @@ class DeltaV2WriteContext {
     // The per-partition target directory is not computed here (it depends on each row's partition
     // values); the executor writer derives it via Transaction.getWriteContext.
     // Match by logical name: writeSchema and partitionSchema carry logical names, so dataSchema
-    // (physical under column mapping, via prepareSchemaForWrite) cannot be used here. The physical
-    // dataSchema has the same field order, so the ordinals apply to it unchanged on the executor.
+    // (physical under column mapping) cannot be used here. The physical dataSchema keeps the
+    // same field order, so the ordinals also apply to it on the executor.
     int[] dataOrdinals = ordinalsOf(writeSchema, logicalDataSchema);
     int[] partitionOrdinals = ordinalsOf(writeSchema, partitionSchema);
 
@@ -332,6 +345,14 @@ class DeltaV2WriteContext {
 
   Engine getEngine() {
     return engine;
+  }
+
+  Snapshot getInitialSnapshot() {
+    return initialSnapshot;
+  }
+
+  LogicalWriteInfo getWriteInfo() {
+    return writeInfo;
   }
 
   StructType getDataSchema() {

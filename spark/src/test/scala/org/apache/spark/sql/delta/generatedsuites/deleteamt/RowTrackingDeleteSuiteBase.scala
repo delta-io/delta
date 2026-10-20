@@ -26,14 +26,18 @@
 // ***********************************************************************************
 
 // scalastyle:off line.size.limit
-package org.apache.spark.sql.delta.generatedsuites.updateamt
+package org.apache.spark.sql.delta.generatedsuites.deleteamt
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.amt._
 import org.apache.spark.sql.delta.rowid._
 
-class UpdateSQLSQLNameBasedAMTSuite
-  extends UpdateSQLTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsNameBased
-  with UpdateAMTMixin
+class RowTrackingDeleteSuiteBaseDVOffAMTSuite
+  extends RowTrackingDeleteSuiteBase
+  with PersistentDVDisabled
+  with RowTrackingDeleteAMTMixin
+
+class RowTrackingDeleteSuiteBaseDVOnAMTSuite
+  extends RowTrackingDeleteSuiteBase
+  with PersistentDVEnabled
+  with RowTrackingDeleteAMTMixin
