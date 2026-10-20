@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.amt
 import java.io.File
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
-import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaOperations, LastCheckpointInfo, RowId}
+import org.apache.spark.sql.delta.{Checkpoints, CommitStats, DeltaLog, DeltaOperations, LastCheckpointInfo, RowId}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, DomainMetadata, SetTransaction, SingleAction}
 import org.apache.spark.sql.delta.coordinatedcommits.TrackingInMemoryCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -30,7 +30,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{StructType, TimestampNTZType, TimestampType}
 
 class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
@@ -261,14 +261,19 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     }
   }
 
+  // AMT persists no timestamp bounds yet (see `AMTContentStats.isSupportedBoundType`), so their
+  // min/max cannot round-trip; leave the timestamp columns out of this exact round trip.
+  private val roundTripColumns = allTypeColumns.values.toSeq.filterNot(column =>
+    column.dataType == TimestampType || column.dataType == TimestampNTZType)
+  private val roundTripColumnExprs = roundTripColumns.map(_.valueExpr)
   testAcrossAMTCheckpointScenarios(
       "typed content stats round-trip through reconstruction",
       "amt_typed_content_stats",
-      tableSchema = allTypeColumnDefinitions.mkString(", "))(
+      tableSchema = roundTripColumns.map(_.columnDef("c_")).mkString(", "))(
       setup = name =>
-        appendRowsAsSeparateFiles(name, numFiles = 2, columnExprs = allTypeColumnExprs),
+        appendRowsAsSeparateFiles(name, numFiles = 2, columnExprs = roundTripColumnExprs),
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name SELECT ${allTypeColumnExprs.mkString(", ")} FROM range(2, 3)"))) {
+        s"INSERT INTO $name SELECT ${roundTripColumnExprs.mkString(", ")} FROM range(2, 3)"))) {
     context =>
     val snapshot = context.postCheckpointSnapshot
 
@@ -286,6 +291,36 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     // The typed content stats must round-trip: the AddFiles reconstructed from the checkpoint must
     // carry the same stats Delta originally wrote.
     assertLiveAddFilesRoundTrip(context)
+  }
+
+  private val subMillisTsExpr = "TIMESTAMP '2026-01-01 00:00:00.123456'"
+  private val subMillisTsNtzExpr = "TIMESTAMP_NTZ '2026-01-01 00:00:00.123456'"
+  private val subMillisColumnExprs = Seq("CAST(id AS INT)", subMillisTsExpr, subMillisTsNtzExpr)
+  testAcrossAMTCheckpointScenarios(
+      "a predicate above the millisecond-truncated timestamp max still finds the row",
+      "amt_sub_millis_ts",
+      tableSchema = "id INT, ts TIMESTAMP, ts_ntz TIMESTAMP_NTZ")(
+      setup = name =>
+        appendRowsAsSeparateFiles(name, numFiles = 2, columnExprs = subMillisColumnExprs),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name SELECT ${subMillisColumnExprs.mkString(", ")} FROM range(2, 3)"))) {
+    context =>
+    // Delta logs the max of a .123456 row as .123, and persisting that as the Iceberg upper bound
+    // would let a reader skip the file for a predicate between the two. Read the table back from
+    // the AMT checkpoint and check such a predicate still finds every row.
+    val name = context.tableName
+    DeltaLog.clearCache()
+    val snapshot = deltaLogForName(name).update()
+    assert(snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider],
+      s"${context.scenario.name}: expected the table to be read from an AMT checkpoint")
+    val rowCount = spark.table(name).count()
+    assert(rowCount > 0)
+    Seq("ts" -> "TIMESTAMP", "ts_ntz" -> "TIMESTAMP_NTZ").foreach { case (column, sqlType) =>
+      val matching = spark.table(name)
+        .where(s"$column > $sqlType '2026-01-01 00:00:00.123200'").count()
+      assert(matching == rowCount,
+        s"${context.scenario.name}: $column > .123200 must find all $rowCount rows, got $matching")
+    }
   }
 
   testAcrossAMTCheckpointScenarios(
