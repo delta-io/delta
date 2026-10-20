@@ -190,11 +190,12 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
         // d_double=12, d_binary=13, d_arr=14, d_nested=15 (inner=16).
         Seq(
           (1, "d_int"), (2, "d_long"), (3, "d_short"), (4, "d_byte"), (5, "d_str"),
-          (6, "d_date"), (7, "d_ts"), (8, "d_ts_ntz"), (9, "d_dec"),
+          (6, "d_date"), (9, "d_dec"),
           (11, "d_float"), (12, "d_double"), (16, "d_nested_inner"))
           .flatMap { case (id, name) => statsIds(id, name, withBounds = true) } ++
-        // Boolean, array, and binary are not skipping-eligible (no min/max): null count only.
-        Seq((10, "d_bool"), (13, "d_binary"), (14, "d_arr"))
+        // Boolean, array, and binary are not skipping-eligible (no min/max), and timestamp bounds
+        // are not persisted yet (see `AMTContentStats.isSupportedBoundType`): null count only.
+        Seq((7, "d_ts"), (8, "d_ts_ntz"), (10, "d_bool"), (13, "d_binary"), (14, "d_arr"))
           .flatMap { case (id, name) => statsIds(id, name, withBounds = false) }
       assert(
         stamped == expected,
@@ -449,11 +450,11 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
             fail(s"'$name' should carry a timestamp annotation, got $other in ${file.getName}")
         }
       }
-      // TimestampType -> adjust-to-utc; TimestampNTZType -> not. content_stats keys each
-      // sub-struct by `<column>_<field id>`; partition keys by logical name.
-      assertTimestampMicros(s"${cs("d_ts")}.lower_bound", adjustToUtc = true)
-      assertTimestampMicros(s"${cs("d_ts")}.upper_bound", adjustToUtc = true)
-      assertTimestampMicros(s"${cs("d_ts_ntz")}.lower_bound", adjustToUtc = false)
+      // TimestampType -> adjust-to-utc; TimestampNTZType -> not. Partition values are keyed by
+      // logical name. content_stats persists no timestamp bounds yet (see
+      // `AMTContentStats.isSupportedBoundType`), so only the partition values carry timestamps.
+      assert(!primitives.contains(s"${cs("d_ts")}.lower_bound"),
+        s"content_stats must not persist timestamp bounds in ${file.getName}")
       assertTimestampMicros("partition.p_ts", adjustToUtc = true)
       assertTimestampMicros("partition.p_ts_ntz", adjustToUtc = false)
     }
