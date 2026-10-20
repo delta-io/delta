@@ -18,38 +18,30 @@ package io.delta.spark.internal.v2.read;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.CommitRange;
-import io.delta.kernel.data.ArrayValue;
-import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.actions.Format;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.Utils;
-import io.delta.kernel.internal.util.VectorUtils;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
-import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
-import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
 import java.util.*;
 import java.util.stream.Stream;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaRuntimeException;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.SnapshotDescriptor;
+import org.apache.spark.sql.delta.actions.Format;
+import org.apache.spark.sql.delta.actions.Metadata;
+import org.apache.spark.sql.delta.actions.Protocol;
+import org.apache.spark.sql.delta.actions.Protocol$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
@@ -58,6 +50,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
+import scala.collection.immutable.Seq;
+import scala.collection.immutable.Seq$;
 
 /** Unit tests for {@link MetadataEvolutionHandler}. */
 public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
@@ -66,47 +60,26 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
   // Shared test fixtures
   // ---------------------------------------------------------------------------
 
-  /** A simple (c1 INT, c2 STRING) schema used as the default for most tests. */
-  private static final StructType DEFAULT_KERNEL_SCHEMA =
-      new StructType().add("c1", IntegerType.INTEGER).add("c2", StringType.STRING);
-
   private static final String DEFAULT_SCHEMA_JSON =
       "{\"type\":\"struct\",\"fields\":["
           + "{\"name\":\"c1\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}},"
           + "{\"name\":\"c2\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]}";
 
-  /** Default kernel Metadata action used as the handler's init metadata in most tests. */
-  private static final Metadata DEFAULT_METADATA =
-      new Metadata(
-          "test-id",
-          Optional.empty(),
-          Optional.empty(),
-          new Format("parquet", Collections.emptyMap()),
-          DEFAULT_SCHEMA_JSON,
-          DEFAULT_KERNEL_SCHEMA,
-          emptyArrayValue(),
-          Optional.empty(),
-          VectorUtils.stringStringMapValue(Collections.emptyMap()));
-
-  /** Default kernel Protocol action: reader=1, writer=2, no features. */
-  private static final Protocol DEFAULT_PROTOCOL = new Protocol(1, 2);
-
   private static final scala.collection.immutable.Map<String, String> EMPTY_SCALA_MAP =
       scala.collection.immutable.Map$.MODULE$.empty();
 
-  private static ArrayValue emptyArrayValue() {
-    return new ArrayValue() {
-      @Override
-      public int getSize() {
-        return 0;
-      }
+  private static final Metadata DEFAULT_METADATA =
+      new Metadata(
+          "test-id",
+          null,
+          null,
+          new Format("parquet", EMPTY_SCALA_MAP),
+          DEFAULT_SCHEMA_JSON,
+          (Seq<String>) Seq$.MODULE$.empty(),
+          EMPTY_SCALA_MAP,
+          Option.empty());
 
-      @Override
-      public ColumnVector getElements() {
-        return InternalUtils.singletonStringColumnVector("");
-      }
-    };
-  }
+  private static final Protocol DEFAULT_PROTOCOL = Protocol$.MODULE$.apply(1, 2);
 
   /**
    * A no-op snapshot manager that throws on any call. Used for tests that only exercise handler
@@ -198,11 +171,9 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
       String tablePath, long initVersion, boolean seedLogWithInitEntry) {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, createKernelContext());
-    SnapshotImpl snapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(initVersion));
-    Metadata tableMetadata = snapshot.getMetadata();
-    Protocol tableProtocol = snapshot.getProtocol();
-    KernelMetadataAdapter adapter = new KernelMetadataAdapter(tableMetadata);
+    Snapshot snapshot = snapshotManager.loadSnapshotAt(initVersion);
+    Metadata tableMetadata = snapshot.metadata();
+    Protocol tableProtocol = snapshot.protocol();
 
     String metadataLogPath = tablePath + "/metadata_log";
     DeltaSourceMetadataTrackingLog trackingLog =
@@ -222,8 +193,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
           PersistedMetadata.apply(
               "test-table-id",
               initVersion,
-              adapter,
-              new KernelProtocolAdapter(tableProtocol),
+              tableMetadata,
+              tableProtocol,
               tablePath + "/_delta_log/_streaming_metadata");
       trackingLog.writeNewMetadata(entry, false);
     }
@@ -268,8 +239,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
           PersistedMetadata.apply(
               "test-table-id",
               0L,
-              new KernelMetadataAdapter(DEFAULT_METADATA),
-              new KernelProtocolAdapter(DEFAULT_PROTOCOL),
+              DEFAULT_METADATA,
+              DEFAULT_PROTOCOL,
               "/tmp/fake-table/_delta_log/_streaming_metadata");
       trackingLog.writeNewMetadata(entry, false);
     }
@@ -457,7 +428,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         buildLightweightHandler(
             Option.empty(), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ true));
 
-    Protocol upgradedProtocol = new Protocol(3, 7);
+    Protocol upgradedProtocol = Protocol$.MODULE$.apply(3, 7);
     List<IndexedFile> result =
         drainIndexedFiles(
             handler.getMetadataOrProtocolChangeIndexedFileIterator(
@@ -490,7 +461,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         buildLightweightHandler(
             Option.apply(seededLog), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false));
 
-    Protocol upgradedProtocol = new Protocol(3, 7);
+    Protocol upgradedProtocol = Protocol$.MODULE$.apply(3, 7);
     List<IndexedFile> result =
         drainIndexedFiles(
             handler.getMetadataOrProtocolChangeIndexedFileIterator(
@@ -510,12 +481,6 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         buildLightweightHandler(
             Option.apply(seededLog), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false));
 
-    // Add a c3 column to the default (c1, c2) schema
-    StructType schemaWithNewColumn =
-        new StructType()
-            .add("c1", IntegerType.INTEGER)
-            .add("c2", StringType.STRING)
-            .add("c3", IntegerType.INTEGER);
     String schemaWithNewColumnJson =
         "{\"type\":\"struct\",\"fields\":["
             + "{\"name\":\"c1\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}},"
@@ -524,14 +489,13 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     Metadata metadataWithNewColumn =
         new Metadata(
             "test-id",
-            Optional.empty(),
-            Optional.empty(),
-            new Format("parquet", Collections.emptyMap()),
+            null,
+            null,
+            new Format("parquet", EMPTY_SCALA_MAP),
             schemaWithNewColumnJson,
-            schemaWithNewColumn,
-            emptyArrayValue(),
-            Optional.empty(),
-            VectorUtils.stringStringMapValue(Collections.emptyMap()));
+            (Seq<String>) Seq$.MODULE$.empty(),
+            EMPTY_SCALA_MAP,
+            Option.empty());
 
     List<IndexedFile> result =
         drainIndexedFiles(
@@ -558,14 +522,13 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     Metadata metadataWithNewConfig =
         new Metadata(
             "test-id",
-            Optional.empty(),
-            Optional.empty(),
-            new Format("parquet", Collections.emptyMap()),
+            null,
+            null,
+            new Format("parquet", EMPTY_SCALA_MAP),
             DEFAULT_SCHEMA_JSON,
-            DEFAULT_KERNEL_SCHEMA,
-            emptyArrayValue(),
-            Optional.empty(),
-            VectorUtils.stringStringMapValue(configWithCDF));
+            (Seq<String>) Seq$.MODULE$.empty(),
+            ScalaUtils.toScalaMap(configWithCDF),
+            Option.empty());
 
     List<IndexedFile> result =
         drainIndexedFiles(
@@ -752,7 +715,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         buildLightweightHandler(
             Option.apply(seededLog), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false));
 
-    Protocol upgradedProtocol = new Protocol(3, 7);
+    Protocol upgradedProtocol = Protocol$.MODULE$.apply(3, 7);
     DeltaRuntimeException ex =
         assertThrows(
             DeltaRuntimeException.class,
@@ -791,7 +754,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         buildLightweightHandler(
             Option.apply(seededLog), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false));
 
-    Protocol upgradedProtocol = new Protocol(3, 7);
+    Protocol upgradedProtocol = Protocol$.MODULE$.apply(3, 7);
     DeltaRuntimeException ex =
         assertThrows(
             DeltaRuntimeException.class,
@@ -1161,7 +1124,6 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, createKernelContext());
     Snapshot dsv1Snapshot = snapshotManager.loadLatestSnapshot();
-    SnapshotImpl snapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(dsv1Snapshot);
 
     String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
     Map<String, String> options = new HashMap<>();
@@ -1189,10 +1151,10 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
           long seededVersion = 42L;
           PersistedMetadata seeded =
               PersistedMetadata.apply(
-                  snapshot.getMetadata().getId(),
+                  dsv1Snapshot.metadata().id(),
                   seededVersion,
-                  new KernelMetadataAdapter(snapshot.getMetadata()),
-                  new KernelProtocolAdapter(snapshot.getProtocol()),
+                  dsv1Snapshot.metadata(),
+                  dsv1Snapshot.protocol(),
                   tablePath + "/_delta_log/_streaming_metadata");
           trackingLog.writeNewMetadata(seeded, false);
 
@@ -1205,64 +1167,63 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
   }
 
   // ---------------------------------------------------------------------------
-  // buildReadSnapshotFromPersistedMetadata
+  // buildReadSnapshotDescriptorFromPersistedMetadata
   // ---------------------------------------------------------------------------
 
   /** Loads the latest snapshot from a fresh empty Delta table created at {@code tempDir/table}. */
-  private SnapshotImpl loadSourceSnapshot(File tempDir) {
+  private Snapshot loadSourceSnapshot(File tempDir) {
     String tablePath = new File(tempDir, "table").getAbsolutePath();
     String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
     createEmptyTestTable(tablePath, tableName);
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, createKernelContext());
-    return DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadLatestSnapshot());
+    return snapshotManager.loadLatestSnapshot();
   }
 
   /** Persisted metadata with schema, protocol, and configuration distinct from the source. */
   private static PersistedMetadata persistedMetadataWithMarker(long version) {
-    Metadata customKernelMetadata =
+    Metadata customMetadata =
         new Metadata(
             "persisted-id",
-            Optional.empty(),
-            Optional.empty(),
-            new Format("parquet", Collections.emptyMap()),
+            null,
+            null,
+            new Format("parquet", EMPTY_SCALA_MAP),
             DEFAULT_SCHEMA_JSON,
-            DEFAULT_KERNEL_SCHEMA,
-            emptyArrayValue(),
-            Optional.empty(),
-            VectorUtils.stringStringMapValue(Collections.singletonMap("persisted.marker", "yes")));
-    // Use feature-less reader/writer versions (2/5) — different from a fresh table's defaults.
-    Protocol customKernelProtocol = new Protocol(2, 5);
+            (Seq<String>) Seq$.MODULE$.empty(),
+            ScalaUtils.toScalaMap(Collections.singletonMap("persisted.marker", "yes")),
+            Option.empty());
     return PersistedMetadata.apply(
         "persisted-id",
         version,
-        new KernelMetadataAdapter(customKernelMetadata),
-        new KernelProtocolAdapter(customKernelProtocol),
+        customMetadata,
+        Protocol$.MODULE$.apply(2, 5),
         "/fake/metadata/path");
   }
 
   /** Happy path: persisted metadata overlays version, schema, protocol, and configuration. */
   @Test
-  public void testBuildReadSnapshot_overlaysCustomMetadataAndProtocol(@TempDir File tempDir) {
-    SnapshotImpl source = loadSourceSnapshot(tempDir);
-    long persistedVersion = source.getVersion() + 100; // distinct from source version
+  public void testBuildReadSnapshotDescriptor_overlaysCustomMetadataAndProtocol(
+      @TempDir File tempDir) {
+    Snapshot source = loadSourceSnapshot(tempDir);
+    long persistedVersion = source.version() + 100; // distinct from source version
     PersistedMetadata persisted = persistedMetadataWithMarker(persistedVersion);
 
-    SnapshotImpl read =
-        MetadataEvolutionHandler.buildReadSnapshotFromPersistedMetadata(
-            source, defaultEngine, persisted);
+    SnapshotDescriptor read =
+        MetadataEvolutionHandler.buildReadSnapshotDescriptorFromPersistedMetadata(
+            source, persisted);
 
-    assertEquals(persistedVersion, read.getVersion());
-    assertEquals(2, read.getProtocol().getMinReaderVersion());
-    assertEquals(5, read.getProtocol().getMinWriterVersion());
-    assertEquals("yes", read.getMetadata().getConfiguration().get("persisted.marker"));
-    assertEquals(DEFAULT_KERNEL_SCHEMA, read.getSchema());
+    assertEquals(persistedVersion, read.version());
+    assertEquals(2, read.protocol().minReaderVersion());
+    assertEquals(5, read.protocol().minWriterVersion());
+    assertEquals("yes", read.metadata().configuration().apply("persisted.marker"));
+    assertEquals(persisted.dataSchema(), read.metadata().schema());
   }
 
   /** When {@code protocolJson} is absent on the persisted entry, fall back to the source's. */
   @Test
-  public void testBuildReadSnapshot_fallsBackToSnapshotProtocolWhenAbsent(@TempDir File tempDir) {
-    SnapshotImpl source = loadSourceSnapshot(tempDir);
+  public void testBuildReadSnapshotDescriptor_fallsBackToSnapshotProtocolWhenAbsent(
+      @TempDir File tempDir) {
+    Snapshot source = loadSourceSnapshot(tempDir);
     PersistedMetadata withBoth = persistedMetadataWithMarker(42L);
     PersistedMetadata withoutProtocol =
         new PersistedMetadata(
@@ -1275,23 +1236,23 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             Option.empty(),
             withBoth.previousMetadataSeqNum());
 
-    SnapshotImpl read =
-        MetadataEvolutionHandler.buildReadSnapshotFromPersistedMetadata(
-            source, defaultEngine, withoutProtocol);
+    SnapshotDescriptor read =
+        MetadataEvolutionHandler.buildReadSnapshotDescriptorFromPersistedMetadata(
+            source, withoutProtocol);
 
     assertEquals(
-        source.getProtocol().getMinReaderVersion(), read.getProtocol().getMinReaderVersion());
+        source.protocol().minReaderVersion(), read.protocol().minReaderVersion());
     assertEquals(
-        source.getProtocol().getMinWriterVersion(), read.getProtocol().getMinWriterVersion());
+        source.protocol().minWriterVersion(), read.protocol().minWriterVersion());
   }
 
   /**
    * When {@code tableConfigurations} is absent on the persisted entry, fall back to the source's.
    */
   @Test
-  public void testBuildReadSnapshot_fallsBackToSnapshotConfigurationWhenAbsent(
+  public void testBuildReadSnapshotDescriptor_fallsBackToSnapshotConfigurationWhenAbsent(
       @TempDir File tempDir) {
-    SnapshotImpl source = loadSourceSnapshot(tempDir);
+    Snapshot source = loadSourceSnapshot(tempDir);
     PersistedMetadata withBoth = persistedMetadataWithMarker(42L);
     PersistedMetadata withoutConfig =
         new PersistedMetadata(
@@ -1304,39 +1265,13 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             withBoth.protocolJson(),
             withBoth.previousMetadataSeqNum());
 
-    SnapshotImpl read =
-        MetadataEvolutionHandler.buildReadSnapshotFromPersistedMetadata(
-            source, defaultEngine, withoutConfig);
+    SnapshotDescriptor read =
+        MetadataEvolutionHandler.buildReadSnapshotDescriptorFromPersistedMetadata(
+            source, withoutConfig);
 
-    assertEquals(source.getMetadata().getConfiguration(), read.getMetadata().getConfiguration());
+    assertEquals(source.metadata().configuration(), read.metadata().configuration());
     // The persisted marker must not have leaked through when we fell back to the source.
-    assertFalse(read.getMetadata().getConfiguration().containsKey("persisted.marker"));
-  }
-
-  /**
-   * The synthetic snapshot's {@code lazyLogSegment} / {@code lazyCrcInfo} are traps: anything that
-   * resolves them must fail loudly instead of silently reading against the wrong version.
-   */
-  @Test
-  public void testBuildReadSnapshot_trapsLogReplayAccess(@TempDir File tempDir) {
-    SnapshotImpl source = loadSourceSnapshot(tempDir);
-    PersistedMetadata persisted = persistedMetadataWithMarker(42L);
-
-    SnapshotImpl read =
-        MetadataEvolutionHandler.buildReadSnapshotFromPersistedMetadata(
-            source, defaultEngine, persisted);
-
-    IllegalStateException crcEx =
-        assertThrows(IllegalStateException.class, read::getCurrentCrcInfo);
-    assertTrue(
-        crcEx.getMessage().contains("CRC info is not available"),
-        "Unexpected message: " + crcEx.getMessage());
-
-    IllegalStateException segEx =
-        assertThrows(IllegalStateException.class, () -> read.getLazyLogSegment().get());
-    assertTrue(
-        segEx.getMessage().contains("log segment is not available"),
-        "Unexpected message: " + segEx.getMessage());
+    assertFalse(read.metadata().configuration().contains("persisted.marker"));
   }
 
   // ---------------------------------------------------------------------------
@@ -1351,13 +1286,12 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
   /** Builds a {@link PersistedMetadata} snapshot of the table state at v0. */
   private PersistedMetadata buildCurrentMetadataAtV0(
       String tablePath, PathBasedSnapshotManager snapshotManager) {
-    SnapshotImpl v0 =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(0L));
+    Snapshot v0 = snapshotManager.loadSnapshotAt(0L);
     return PersistedMetadata.apply(
         "test-table-id",
         0L,
-        new KernelMetadataAdapter(v0.getMetadata()),
-        new KernelProtocolAdapter(v0.getProtocol()),
+        v0.metadata(),
+        v0.protocol(),
         tablePath + "/_delta_log/_streaming_metadata");
   }
 
@@ -1460,15 +1394,13 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     // version. We build the "expected" PersistedMetadata directly from the snapshot at that
     // version. Compare parsed schemas because JSON object key ordering is not significant.
     assertTrue(result.isDefined());
-    SnapshotImpl mergedSnapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-            snapshotManager.loadSnapshotAt(expectedMergedVersion));
+    Snapshot mergedSnapshot = snapshotManager.loadSnapshotAt(expectedMergedVersion);
     PersistedMetadata expected =
         PersistedMetadata.apply(
             "test-table-id",
             expectedMergedVersion,
-            new KernelMetadataAdapter(mergedSnapshot.getMetadata()),
-            new KernelProtocolAdapter(mergedSnapshot.getProtocol()),
+            mergedSnapshot.metadata(),
+            mergedSnapshot.protocol(),
             tablePath + "/_delta_log/_streaming_metadata");
 
     assertEquals(expected.dataSchema(), result.get().dataSchema());
@@ -1503,14 +1435,13 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(tablePath, createKernelContext());
 
     // current = v2 (the ALTER ADD COLUMN). Merger walks forward from here.
-    SnapshotImpl v2Snapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(2L));
+    Snapshot v2Snapshot = snapshotManager.loadSnapshotAt(2L);
     PersistedMetadata current =
         PersistedMetadata.apply(
             "test-table-id",
             2L,
-            new KernelMetadataAdapter(v2Snapshot.getMetadata()),
-            new KernelProtocolAdapter(v2Snapshot.getProtocol()),
+            v2Snapshot.metadata(),
+            v2Snapshot.protocol(),
             tablePath + "/_delta_log/_streaming_metadata");
 
     Option<PersistedMetadata> result =
@@ -1521,9 +1452,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     assertTrue(result.isDefined());
     assertEquals(3L, result.get().deltaCommitVersion());
 
-    SnapshotImpl v3Snapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(3L));
-    assertEquals(
-        new KernelMetadataAdapter(v3Snapshot.getMetadata()).schema(), result.get().dataSchema());
+    Snapshot v3Snapshot = snapshotManager.loadSnapshotAt(3L);
+    assertEquals(v3Snapshot.metadata().schema(), result.get().dataSchema());
   }
 }

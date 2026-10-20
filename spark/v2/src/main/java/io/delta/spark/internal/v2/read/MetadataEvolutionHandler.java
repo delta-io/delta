@@ -20,42 +20,32 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
-import io.delta.kernel.internal.lang.Lazy;
-import io.delta.kernel.internal.metrics.SnapshotQueryContext;
-import io.delta.kernel.internal.replay.LogReplay;
-import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
-import io.delta.kernel.internal.util.VectorUtils;
-import io.delta.kernel.types.StringType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult;
-import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
-import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
+import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
-import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.SnapshotDescriptor;
 import org.apache.spark.sql.delta.TypeWideningMode;
+import org.apache.spark.sql.delta.actions.Metadata;
+import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.schema.SchemaUtils$;
 import org.apache.spark.sql.delta.sources.DeltaDataSource$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
@@ -66,7 +56,6 @@ import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.slf4j.Logger;
@@ -297,11 +286,7 @@ public class MetadataEvolutionHandler {
 
     PersistedMetadata schemaToPersist =
         PersistedMetadata.apply(
-            tableId,
-            version,
-            new KernelMetadataAdapter(metadataToUse),
-            new KernelProtocolAdapter(protocolToUse),
-            metadataPath);
+            tableId, version, metadataToUse, protocolToUse, metadataPath);
 
     metadataTrackingLog.get().writeNewMetadata(schemaToPersist, /* replaceCurrent= */ replace);
 
@@ -341,21 +326,14 @@ public class MetadataEvolutionHandler {
       metadata = validated.metadata;
       protocol = validated.protocol;
     } else {
-      SnapshotImpl snapshot =
-          DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-              snapshotManager.loadSnapshotAt(batchStartVersion));
-      version = snapshot.getVersion();
-      metadata = snapshot.getMetadata();
-      protocol = snapshot.getProtocol();
+      Snapshot snapshot = snapshotManager.loadSnapshotAt(batchStartVersion);
+      version = snapshot.version();
+      metadata = snapshot.metadata();
+      protocol = snapshot.protocol();
     }
 
     PersistedMetadata newMetadata =
-        PersistedMetadata.apply(
-            tableId,
-            version,
-            new KernelMetadataAdapter(metadata),
-            new KernelProtocolAdapter(protocol),
-            metadataPath);
+        PersistedMetadata.apply(tableId, version, metadata, protocol, metadataPath);
     metadataTrackingLog.get().writeNewMetadata(newMetadata, false);
 
     if (hasMetadataOrProtocolChangeComparedToStreamMetadata(metadata, protocol, version)
@@ -377,11 +355,11 @@ public class MetadataEvolutionHandler {
       @Nullable Metadata newMetadata, @Nullable Protocol newProtocol, long newSchemaVersion) {
     Option<AbstractMetadata> metadataOpt =
         newMetadata != null
-            ? Option.apply((AbstractMetadata) new KernelMetadataAdapter(newMetadata))
+            ? Option.apply((AbstractMetadata) newMetadata)
             : Option.empty();
     Option<AbstractProtocol> protocolOpt =
         newProtocol != null
-            ? Option.apply((AbstractProtocol) new KernelProtocolAdapter(newProtocol))
+            ? Option.apply((AbstractProtocol) newProtocol)
             : Option.empty();
     Option<PersistedMetadata> persistedOpt =
         persistedMetadataAtSourceInit != null
@@ -394,8 +372,8 @@ public class MetadataEvolutionHandler {
             protocolOpt,
             newSchemaVersion,
             persistedOpt,
-            new KernelProtocolAdapter(readProtocolAtSourceInit),
-            new KernelMetadataAdapter(readMetadataAtSourceInit),
+            readProtocolAtSourceInit,
+            readMetadataAtSourceInit,
             spark);
   }
 
@@ -406,8 +384,13 @@ public class MetadataEvolutionHandler {
 
   /** Collect all metadata actions between start and end version, both inclusive. */
   private Map<Long, Metadata> collectMetadataActions(long startVersion, long endVersion) {
-    return StreamingHelper.collectMetadataActionsFromRangeUnsafe(
-        startVersion, Optional.of(endVersion), snapshotManager, engine, tablePath);
+    Map<Long, Metadata> actions = new LinkedHashMap<>();
+    StreamingHelper.collectMetadataActionsFromRangeUnsafe(
+            startVersion, Optional.of(endVersion), snapshotManager, engine, tablePath)
+        .forEach(
+        (version, action) ->
+            actions.put(version, KernelActionUtils$.MODULE$.metadataFromKernel(action)));
+    return actions;
   }
 
   /** Collect the protocol action at a specific version. Returns null if none. */
@@ -417,8 +400,13 @@ public class MetadataEvolutionHandler {
 
   /** Collect all protocol actions between start and end version, both inclusive. */
   private Map<Long, Protocol> collectProtocolActions(long startVersion, long endVersion) {
-    return StreamingHelper.collectProtocolActionsFromRangeUnsafe(
-        startVersion, Optional.of(endVersion), snapshotManager, engine, tablePath);
+    Map<Long, Protocol> actions = new LinkedHashMap<>();
+    StreamingHelper.collectProtocolActionsFromRangeUnsafe(
+            startVersion, Optional.of(endVersion), snapshotManager, engine, tablePath)
+        .forEach(
+        (version, action) ->
+            actions.put(version, KernelActionUtils$.MODULE$.protocolFromKernel(action)));
+    return actions;
   }
 
   /**
@@ -428,15 +416,12 @@ public class MetadataEvolutionHandler {
    * <p>V2 port of V1's {@code
    * DeltaSourceMetadataEvolutionSupport.validateAndResolveMetadataForLogInitialization}.
    */
-  // TODO(kernel-table-manager): Remove getKernelSnapshot here once collectMetadataActions
-  // and collectProtocolActions return AbstractMetadata/AbstractProtocol instead of Kernel types.
   private ValidatedMetadataAndProtocol validateAndResolveMetadataForLogInitialization(
       long startVersion, long endVersion) {
     List<Metadata> metadataChanges =
         new ArrayList<>(collectMetadataActions(startVersion, endVersion).values());
-    SnapshotImpl startSnapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(startVersion));
-    Metadata startMetadata = startSnapshot.getMetadata();
+    Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
+    Metadata startMetadata = startSnapshot.metadata();
 
     // Try to find rename or drop columns in between, or nullability/datatype changes by using
     // the last schema as the read schema. If so, we cannot find a good read schema.
@@ -444,19 +429,16 @@ public class MetadataEvolutionHandler {
     Metadata mostRecentMetadataChange =
         metadataChanges.isEmpty() ? null : metadataChanges.get(metadataChanges.size() - 1);
     if (mostRecentMetadataChange != null) {
-      KernelMetadataAdapter mostRecentAdapter = new KernelMetadataAdapter(mostRecentMetadataChange);
       // Validate startMetadata + all intermediate changes against the most recent
       List<Metadata> otherMetadataChanges = new ArrayList<>();
       otherMetadataChanges.add(startMetadata);
       otherMetadataChanges.addAll(metadataChanges.subList(0, metadataChanges.size() - 1));
       for (Metadata potentialSchemaChangeMetadata : otherMetadataChanges) {
-        KernelMetadataAdapter potentialAdapter =
-            new KernelMetadataAdapter(potentialSchemaChangeMetadata);
         if (!DeltaColumnMapping$.MODULE$.hasNoColumnMappingSchemaChanges(
-                mostRecentAdapter, potentialAdapter, false)
+                mostRecentMetadataChange, potentialSchemaChangeMetadata, false)
             || !SchemaUtils$.MODULE$.isReadCompatible(
-                potentialAdapter.schema(),
-                mostRecentAdapter.schema(),
+                potentialSchemaChangeMetadata.schema(),
+                mostRecentMetadataChange.schema(),
                 /* forbidTightenNullability= */ true,
                 /* allowMissingColumns= */ false,
                 TypeWideningMode.NoTypeWidening$.MODULE$,
@@ -471,12 +453,13 @@ public class MetadataEvolutionHandler {
     }
 
     // Check protocol changes and use the most supportive protocol
-    Protocol mostSupportiveProtocol = startSnapshot.getProtocol();
+    Protocol mostSupportiveProtocol = startSnapshot.protocol();
     List<Protocol> protocolChanges =
         new ArrayList<>(collectProtocolActions(startVersion, endVersion).values());
     for (Protocol p : protocolChanges) {
-      if (p.getReaderAndWriterFeatures()
-          .containsAll(mostSupportiveProtocol.getReaderAndWriterFeatures())) {
+      if (mostSupportiveProtocol
+          .readerAndWriterFeatureNames()
+          .subsetOf(p.readerAndWriterFeatureNames())) {
         mostSupportiveProtocol = p;
       } else {
         // TODO: or use protocol union instead?
@@ -516,7 +499,7 @@ public class MetadataEvolutionHandler {
    */
   public static Optional<PersistedMetadata> getPersistedMetadataForMicroBatchStream(
       SparkSession spark,
-      org.apache.spark.sql.delta.Snapshot snapshot,
+      Snapshot snapshot,
       Map<String, String> options,
       DeltaV2SnapshotManager snapshotManager,
       Engine engine) {
@@ -562,103 +545,11 @@ public class MetadataEvolutionHandler {
     return inReadOptions && !inTableOptions;
   }
 
-  /**
-   * Builds the effective read snapshot by overlaying {@code customMetadata} from the
-   * schema-tracking log onto {@code snapshotAtSourceInit}: it reports the persisted schema,
-   * configuration, protocol, and commit version so downstream reads see the evolved state.
-   *
-   * <p>The returned snapshot is intentionally <em>not</em> consistent for log-replay-driven APIs.
-   * Its reported {@code version} is the persisted commit version (often older than {@code
-   * snapshotAtSourceInit.getVersion()}), but there is no aligned log segment available without an
-   * extra log read. To prevent silent reads against the wrong version, the {@code lazyLogSegment}
-   * and {@code lazyCrcInfo} fields throw on access. Callers must only read {@code metadata}, {@code
-   * protocol}, {@code schema}, {@code version}, and {@code dataPath} from the returned snapshot;
-   * anything that triggers log replay (e.g. {@code getCurrentCrcInfo}, {@code getScanBuilder}) must
-   * call {@link DeltaV2SnapshotManager#loadSnapshotAt} instead.
-   */
-  public static SnapshotImpl buildReadSnapshotFromPersistedMetadata(
-      SnapshotImpl snapshotAtSourceInit, Engine engine, PersistedMetadata customMetadata) {
-    Metadata sourceMetadata = snapshotAtSourceInit.getMetadata();
-
-    Map<String, String> readConfigurations;
-    if (customMetadata.tableConfigurations().isDefined()) {
-      readConfigurations = ScalaUtils.toJavaMap(customMetadata.tableConfigurations().get());
-    } else {
-      readConfigurations = sourceMetadata.getConfiguration();
-      logger.warn("Using snapshot's table configuration: {}", readConfigurations);
-    }
-
-    Metadata readMetadata =
-        new Metadata(
-            sourceMetadata.getId(),
-            sourceMetadata.getName(),
-            sourceMetadata.getDescription(),
-            sourceMetadata.getFormat(),
-            customMetadata.dataSchemaJson(),
-            SchemaUtils.convertSparkSchemaToKernelSchema(customMetadata.dataSchema()),
-            VectorUtils.buildArrayValue(
-                Arrays.asList(customMetadata.partitionSchema().fieldNames()), StringType.STRING),
-            sourceMetadata.getCreatedTime(),
-            VectorUtils.stringStringMapValue(readConfigurations));
-
-    Protocol readProtocol;
-    if (customMetadata.protocol().isDefined()) {
-      readProtocol = toKernelProtocol(customMetadata.protocol().get());
-    } else {
-      readProtocol = snapshotAtSourceInit.getProtocol();
-      logger.warn("Using snapshot's protocol: {}", readProtocol);
-    }
-
-    // Trap log segment / crc: the synthetic snapshot's version does not match the source-init
-    // snapshot's log segment, so resolving either would read against the wrong version. Today no
-    // caller exercises log replay on this snapshot; trapping makes any future regression fail
-    // loudly instead of silently corrupting reads.
-    Lazy<LogSegment> trapLazyLogSegment =
-        new Lazy<>(
-            () -> {
-              throw new IllegalStateException(
-                  "log segment is not available on the synthetic read snapshot built from "
-                      + "PersistedMetadata");
-            });
-    Lazy<Optional<CRCInfo>> trapLazyCrcInfo =
-        new Lazy<>(
-            () -> {
-              throw new IllegalStateException(
-                  "CRC info is not available on the synthetic read snapshot built from "
-                      + "PersistedMetadata");
-            });
-    LogReplay logReplay =
-        new LogReplay(
-            engine, snapshotAtSourceInit.getDataPath(), trapLazyLogSegment, trapLazyCrcInfo);
-
-    return new SnapshotImpl(
-        snapshotAtSourceInit.getDataPath(),
-        customMetadata.deltaCommitVersion(),
-        trapLazyLogSegment,
-        logReplay,
-        readProtocol,
-        readMetadata,
-        snapshotAtSourceInit.getCommitter(),
-        SnapshotQueryContext.forVersionSnapshot(
-            snapshotAtSourceInit.getDataPath().toString(), customMetadata.deltaCommitVersion()),
-        Optional.empty() /* inCommitTimestampOpt */);
-  }
-
-  private static Protocol toKernelProtocol(
-      org.apache.spark.sql.delta.actions.Protocol sparkProtocol) {
-    Set<String> readerFeatures =
-        sparkProtocol.getReaderFeatures() == null
-            ? Collections.emptySet()
-            : new HashSet<>(sparkProtocol.getReaderFeatures());
-    Set<String> writerFeatures =
-        sparkProtocol.getWriterFeatures() == null
-            ? Collections.emptySet()
-            : new HashSet<>(sparkProtocol.getWriterFeatures());
-    return new Protocol(
-        sparkProtocol.getMinReaderVersion(),
-        sparkProtocol.getMinWriterVersion(),
-        readerFeatures,
-        writerFeatures);
+  /** Builds the read-time descriptor using metadata persisted in the schema-tracking log. */
+  public static SnapshotDescriptor buildReadSnapshotDescriptorFromPersistedMetadata(
+      SnapshotDescriptor snapshotAtSourceInit, PersistedMetadata customMetadata) {
+    return DeltaSourceMetadataEvolutionSupport$.MODULE$.buildReadSnapshotDescriptor(
+        snapshotAtSourceInit, customMetadata);
   }
 
   /**
@@ -669,7 +560,7 @@ public class MetadataEvolutionHandler {
    */
   public static Option<DeltaSourceMetadataTrackingLog> getMetadataTrackingLogForMicroBatchStream(
       SparkSession spark,
-      org.apache.spark.sql.delta.Snapshot snapshot,
+      Snapshot snapshot,
       Map<String, String> options,
       DeltaV2SnapshotManager snapshotManager,
       Engine engine,
@@ -750,21 +641,27 @@ public class MetadataEvolutionHandler {
               ColumnVector cdcVec = cdcIdx >= 0 ? batch.getColumnVector(cdcIdx) : null;
 
               for (int rowId = 0; rowId < numRows; rowId++) {
-                Optional<Metadata> m = StreamingHelper.getMetadata(batch, rowId);
-                if (m.isPresent()) {
+                Metadata metadata =
+                    StreamingHelper.getMetadata(batch, rowId)
+                        .map(KernelActionUtils$.MODULE$::metadataFromKernel)
+                        .orElse(null);
+                if (metadata != null) {
                   Preconditions.checkArgument(
                       metadataAction == null,
                       "Should not encounter two metadata actions in the same commit of version %d",
                       version);
-                  metadataAction = m.get();
+                  metadataAction = metadata;
                 }
-                Optional<Protocol> p = StreamingHelper.getProtocol(batch, rowId);
-                if (p.isPresent()) {
+                Protocol protocol =
+                    StreamingHelper.getProtocol(batch, rowId)
+                        .map(KernelActionUtils$.MODULE$::protocolFromKernel)
+                        .orElse(null);
+                if (protocol != null) {
                   Preconditions.checkArgument(
                       protocolAction == null,
                       "Should not encounter two protocol actions in the same commit of version %d",
                       version);
-                  protocolAction = p.get();
+                  protocolAction = protocol;
                 }
                 if ((addVec != null && !addVec.isNullAt(rowId))
                     || (removeVec != null && !removeVec.isNullAt(rowId))
@@ -818,14 +715,12 @@ public class MetadataEvolutionHandler {
     Option<String> protocolJson = current.protocolJson();
 
     if (newMetadata != null) {
-      KernelMetadataAdapter mAdapter = new KernelMetadataAdapter(newMetadata);
-      dataSchemaJson = mAdapter.schema().json();
-      partitionSchemaJson = mAdapter.partitionSchema().json();
-      tableConfigurations = Option.apply(mAdapter.configuration());
+      dataSchemaJson = newMetadata.schema().json();
+      partitionSchemaJson = newMetadata.partitionSchema().json();
+      tableConfigurations = Option.apply(newMetadata.configuration());
     }
     if (newProtocol != null) {
-      protocolJson =
-          Option.apply(PersistedMetadata.toProtocolJson(new KernelProtocolAdapter(newProtocol)));
+      protocolJson = Option.apply(PersistedMetadata.toProtocolJson(newProtocol));
     }
 
     return new PersistedMetadata(
@@ -838,4 +733,5 @@ public class MetadataEvolutionHandler {
         protocolJson,
         current.previousMetadataSeqNum());
   }
+
 }

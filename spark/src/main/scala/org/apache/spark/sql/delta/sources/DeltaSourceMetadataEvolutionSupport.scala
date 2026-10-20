@@ -22,12 +22,14 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, FileAction, Metadata, Protocol}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.v2.interop.{AbstractMetadata, AbstractProtocol}
+import org.apache.hadoop.fs.Path
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{LogEntry, Logging, MDC}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.streaming.Offset
@@ -403,6 +405,52 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
 }
 
 object DeltaSourceMetadataEvolutionSupport extends Logging {
+  /**
+   * Returns the read-time snapshot descriptor obtained by overlaying persisted stream metadata on
+   * the source's initial snapshot descriptor.
+   */
+  def buildReadSnapshotDescriptor(
+      snapshotAtSourceInit: SnapshotDescriptor,
+      customMetadata: PersistedMetadata): SnapshotDescriptor =
+    buildReadSnapshotDescriptor(snapshotAtSourceInit, customMetadata, entry => logWarning(entry))
+
+  def buildReadSnapshotDescriptor(
+      snapshotAtSourceInit: SnapshotDescriptor,
+      customMetadata: PersistedMetadata,
+      logWarning: LogEntry => Unit): SnapshotDescriptor = {
+    new SnapshotDescriptor {
+      val deltaLog: DeltaLog = snapshotAtSourceInit.deltaLog
+      override val dataPath: Path = snapshotAtSourceInit.dataPath
+      val logPath: Path = snapshotAtSourceInit.logPath
+      val metadata: Metadata =
+        snapshotAtSourceInit.metadata.copy(
+          schemaString = customMetadata.dataSchemaJson,
+          partitionColumns = customMetadata.partitionSchema.fieldNames,
+          // Copy the configurations so the correct file format can be constructed
+          configuration = customMetadata.tableConfigurations
+            // Fallback for backward compat only, this should technically not be triggered
+            .getOrElse {
+              val config = snapshotAtSourceInit.metadata.configuration
+              logWarning(log"Using snapshot's table configuration: " +
+                log"${MDC(DeltaLogKeys.CONFIG, config)}")
+              config
+            }
+        )
+      val protocol: Protocol = customMetadata.protocol.getOrElse {
+        val protocol = snapshotAtSourceInit.protocol
+        logWarning(log"Using snapshot's protocol: ${MDC(DeltaLogKeys.PROTOCOL, protocol)}")
+        protocol
+      }
+      // The following are not important in stream reading
+      val version: Long = customMetadata.deltaCommitVersion
+      val numOfFilesIfKnown = snapshotAtSourceInit.numOfFilesIfKnown
+      val sizeInBytesIfKnown = snapshotAtSourceInit.sizeInBytesIfKnown
+      // V2 has no DeltaLog; keep the inherited tag lookup for V1.
+      override def getCommonTags =
+        if (deltaLog == null) snapshotAtSourceInit.getCommonTags else super.getCommonTags
+    }
+  }
+
   /** SQL configs that allow unblocking each type of schema changes. */
   private val SQL_CONF_PREFIX = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming"
 
