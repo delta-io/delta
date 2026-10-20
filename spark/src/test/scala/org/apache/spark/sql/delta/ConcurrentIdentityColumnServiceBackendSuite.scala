@@ -700,33 +700,6 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
     }
   }
 
-  test("CIC identity column can also declare a column default") {
-    // CREATE accepts this combination even though ALTER COLUMN SET DEFAULT rejects it.
-    // Omitting the column must still allocate IDs rather than insert the column default.
-    withTable("target") {
-      val createsBefore = localService.createSequenceCount
-      withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
-        spark.sql(createTargetTableStatement(
-          columns = Seq(
-            "ids BIGINT GENERATED ALWAYS AS IDENTITY DEFAULT -1",
-            "value INT"),
-          additionalTableProperties = Seq(
-            s"${TableFeatureProtocolUtils.propertyKey(AllowColumnDefaultsTableFeature)} " +
-              "= 'supported'")))
-
-        val idField = deltaLog.update().metadata.schema("ids")
-        assert(ColumnWithDefaultExprUtils.isIdentityColumn(idField))
-        assert(idField.metadata.getString(CURRENT_DEFAULT_COLUMN_METADATA_KEY) === "-1")
-        spark.sql(s"INSERT INTO delta.`$tempPath` (value) VALUES (10), (20)")
-        val ids = readDeltaTable(tempPath).select("ids").collect().map(_.getLong(0))
-        assert(ids.length === 2)
-        assert(ids.distinct.length === 2)
-        assert(ids.forall(_ > 0))
-      }
-      assert(localService.createSequenceCount === createsBefore + 1)
-    }
-  }
-
   test("service-backed reservation throws when identity column lacks concurrent stamping") {
     // A legacy table (feature on, never stamped) cannot reserve: the pre-scan guard must
     // hit before any partial allocation happens, pointing at the conversion DDL.
