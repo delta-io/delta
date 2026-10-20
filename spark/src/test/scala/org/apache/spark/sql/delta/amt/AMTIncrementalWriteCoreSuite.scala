@@ -53,6 +53,7 @@ class AMTIncrementalWriteCoreSuite extends AMTIncrementalWriteTestBase {
         intermediateLogCommits = Seq.empty,
         attemptVersion = attemptVersion,
         actionsToCommit = Seq(add),
+        snapshotId = 1L,
         trigger = "snapshot-bootstrap-test")
       val metric = result.amtWriteMetrics
 
@@ -65,7 +66,7 @@ class AMTIncrementalWriteCoreSuite extends AMTIncrementalWriteTestBase {
         attemptVersion))
       assert(result.includeActionsInCommitJson)
       assert(result.leaves.isEmpty)
-      assert(metric.incremental === "true")
+      assert(metric.incremental)
       val incrementalMetrics = metric.incrementalWriteMetrics.getOrElse(
         fail("The snapshot bootstrap must report incremental-write metrics."))
       assert(incrementalMetrics.numIntermediateCommits === 0)
@@ -265,7 +266,7 @@ class AMTIncrementalWriteCoreSuite extends AMTIncrementalWriteTestBase {
         // The two removes share one (leaf, position), which the writer holds as a set, so the write
         // reports a single MDV bit, matching what the leaf's bitmap actually gains. That
         // agreement is what lets this go through the shared validator, whose second check
-        // derives the bits from the on-disk dv_cardinality delta.
+        // derives the bits from the on-disk MDV bitmap.
         createIncrementalAMTAndValidate(
           baselineDeltaLog,
           amtDeltaLog,

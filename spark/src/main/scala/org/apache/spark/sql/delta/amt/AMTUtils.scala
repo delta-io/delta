@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, Snapshot, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, LogSegment, Snapshot, SnapshotDescriptor, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -182,4 +182,18 @@ object AMTUtils extends DeltaLogging {
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
   private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
     ManifestBitmap.fromSerializedByteArray(bytes)
+
+  /** Logs and throws when non-compacted deltas are absent in the log segment. */
+  def logAndThrowMissingNonCompactedDeltasInLogSegment(
+      deltaLog: DeltaLog,
+      logSegment: LogSegment,
+      eventData: Map[String, Any] = Map.empty): Unit = {
+    invariantCheckWithLogging(
+      checkInvariant = false,
+      opTypeSuffix = AMTUsageLogs.ALERT_MISSING_NON_COMPACTED_DELTAS,
+      message = s"nonCompactedDeltas are absent in an AMT log segment:\n${logSegment.toString}",
+      deltaLog = deltaLog,
+      data = Map("logSegmentVersion" -> logSegment.version) ++ eventData
+    )
+  }
 }

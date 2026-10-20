@@ -21,7 +21,7 @@ import scala.jdk.OptionConverters._
 
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
-import io.delta.spark.internal.v2.kernel.KernelEngineFactory
+import io.delta.spark.internal.v2.kernel.KernelContext
 
 import org.apache.spark.sql.delta.{CheckpointProvider, DeltaColumnMappingMode, DeltaLogFileIndex, Snapshot, VersionChecksum}
 import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, RemoveFile, SingleAction}
@@ -50,7 +50,8 @@ class DeltaV2Snapshot(
     // `Snapshot` interface: the decoded data path is only exposed on SnapshotImpl in the
     // OSS-published Kernel. The public io.delta.kernel.Snapshot has no `getDataPath`, and its
     // `getPath` is URL-encoded, which breaks Hadoop `Path` for table roots containing spaces.
-    private val kernelSnapshot: KernelSnapshot)
+    private val kernelSnapshot: KernelSnapshot,
+    private[v2] val kernelContext: KernelContext)
     extends Snapshot(
       // toString keeps this compiling across Kernel versions: getDataPath returns String in the
       // currently pinned Kernel and io.delta.kernel.internal.fs.Path in newer Kernels.
@@ -62,20 +63,20 @@ class DeltaV2Snapshot(
       logSegment = null,
       deltaLog = null,
       checksumOpt = None) {
+  require(kernelContext != null, "kernelContext must not be null")
+
 
   private[this] var resolvedCatalogTableOpt: Option[CatalogTable] = None
 
   def this(
       kernelSnapshot: KernelSnapshot,
+      kernelContext: KernelContext,
       catalogTableOpt: Option[CatalogTable]) = {
-    this(kernelSnapshot)
+    this(kernelSnapshot, kernelContext)
     resolvedCatalogTableOpt = catalogTableOpt
   }
 
-  // scalastyle:off deltahadoopconfiguration
-  private def kernelEngine: Engine =
-    KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
-  // scalastyle:on deltahadoopconfiguration
+  private def kernelEngine: Engine = kernelContext.getDefaultEngine()
 
   // --- logSegment/deltaLog = null guardrail: construction-path overrides ----------------------
   // These are the members dereferenced while the super `Snapshot` constructor runs (init() and the
