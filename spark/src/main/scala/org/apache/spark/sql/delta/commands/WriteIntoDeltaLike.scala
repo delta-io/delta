@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.DeltaTableUtils
 import org.apache.spark.sql.delta.InsertAtomicReplaceExecutionObserver
 import org.apache.spark.sql.delta.OptimisticTransaction
+import org.apache.spark.sql.delta.PreprocessTableMerge
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.AddCDCFile
@@ -99,7 +100,7 @@ trait WriteIntoDeltaLike extends DeltaCommand with AnalysisHelper {
     insertReplaceOnOrUsingCurrentTimeOpt match {
       case Some(instant) =>
         val pinnedCommand = {
-          org.apache.spark.sql.delta.PreprocessTableMerge(SQLConf.get)
+          PreprocessTableMerge(SQLConf.get)
             .transformTimestamps(deleteCommand, instant)
         }
         pinnedCommand.asInstanceOf[T]

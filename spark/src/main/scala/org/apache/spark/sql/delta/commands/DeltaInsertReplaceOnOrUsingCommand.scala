@@ -21,6 +21,7 @@ import java.time.Instant
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DataFrameUtils, DeltaErrors, DeltaLog, DeltaOptions, OptimisticTransaction}
+import org.apache.spark.sql.delta.PreprocessTableMerge
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
@@ -238,7 +239,6 @@ case class DeltaInsertReplaceOnOrUsingCommand(
   private def withMaterializeRetryAndStats[T](
       sparkSession: SparkSession)(
       executeAndRecordStats: WriteIntoDelta => T): T = {
-
     recordReplaceOnOrUsingStats(sparkSession) {
       val insertReplaceCriteria = resolveInsertReplaceCriteria(sparkSession)
       var resultOpt: Option[T] = None
@@ -257,7 +257,7 @@ case class DeltaInsertReplaceOnOrUsingCommand(
       }
       val sourceQueryWithPinnedTimestampOpt = if (pinStatementTime) {
         instantOpt.map { instant =>
-          org.apache.spark.sql.delta.PreprocessTableMerge(SQLConf.get)
+          PreprocessTableMerge(SQLConf.get)
             .transformTimestamps(query, instant)
         }
       } else {
