@@ -79,9 +79,7 @@ import org.apache.spark.sql.types.{StringType, StructType}
  * @param catalogTableOpt Should explicitly be set when table is accessed from catalog
  * @param schemaInCatalog The schema created in Catalog. We will use this schema to update metadata
  *                        when it is set (in CTAS code path), and otherwise use schema from `data`.
- * @param insertReplaceOnOrUsingCurrentTimeOpt Statement time, when INSERT REPLACE ON/USING uses
- *                                            time functions such as current_timestamp() or now().
- *                                            Captures one time for both DELETE and INSERT.
+ * @param insertReplaceOnOrUsingCurrentTimeOpt Statement time shared by DELETE and INSERT.
  */
 case class WriteIntoDelta(
     override val deltaLog: DeltaLog,
