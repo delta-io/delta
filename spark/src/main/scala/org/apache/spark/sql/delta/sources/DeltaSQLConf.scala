@@ -3127,6 +3127,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CDF_READ_FILES_WITH_WRITTEN_PARTITIONING =
+    buildConf("changeDataFeed.readFilesWithWrittenPartitioning.enabled")
+      .internal()
+      .doc(
+        "When enabled, batch CDF reads read each data file and change data file with the " +
+          "partition columns it was written with, taken from the keys of its partitionValues, " +
+          "instead of the partition columns of the read schema. This returns correct values for " +
+          "former and new partition columns when the read range crosses a partition schema " +
+          "change, so such reads are not blocked by " +
+          s"${DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key}.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE =
     buildConf("changeDataFeed.defaultSchemaModeForColumnMappingTable")
       .doc(

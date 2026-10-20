@@ -481,8 +481,12 @@ trait CDCReaderBase extends DeltaLogging {
         oldPartitionColumns = oldPartitionColumns)
       val partitionSchemaChangeCheckEnabled = SQLConf.get.getConf(
         DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES)
-      val blockOnPartitionSchemaChange =
-        blockOnIncompatiblePartitionSchema && partitionSchemaChangeCheckEnabled
+      // Files are read with the partition columns they were written with, so a partition schema
+      // change alone does not produce wrong values and does not need to block the read.
+      val readFilesWithWrittenPartitioning = SQLConf.get.getConf(
+        DeltaSQLConf.DELTA_CDF_READ_FILES_WITH_WRITTEN_PARTITIONING)
+      val blockOnPartitionSchemaChange = blockOnIncompatiblePartitionSchema &&
+        partitionSchemaChangeCheckEnabled && !readFilesWithWrittenPartitioning
 
       if (!compatible || hasPartitionSchemaChange) {
         recordDeltaEvent(
@@ -497,6 +501,7 @@ trait CDCReaderBase extends DeltaLogging {
             "isSchemaCompatible" -> compatible,
             "hasPartitionSchemaChange" -> hasPartitionSchemaChange,
             "partitionSchemaCheckEnabled" -> partitionSchemaChangeCheckEnabled,
+            "readFilesWithWrittenPartitioning" -> readFilesWithWrittenPartitioning,
             "partitionSchemaBlockEnabled" -> blockOnPartitionSchemaChange,
             "schemaCheckEnabled" -> blockOnIncompatibleSchema))
       }
