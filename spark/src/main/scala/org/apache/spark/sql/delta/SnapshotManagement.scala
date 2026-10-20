@@ -2048,7 +2048,12 @@ case class LogSegment(
         }
       }
 
-  /** Returns the unbackfilled commits in the [[LogSegment]] */
+  /**
+   * Returns the unbackfilled commits in the [[LogSegment]]. Presumptions:
+   *  - All commits before the checkpoint version (exclusive) must already be backfilled.
+   *  - For non-AMT tables, the commit at the checkpoint version itself must also be backfilled.
+   *  - For AMT tables, the commit at the checkpoint version may still be unbackfilled.
+   */
   lazy val unbackfilledDeltas: Seq[(FileStatus, Long, String)] =
     // If `deltas` contains a compacted delta [X...Y], then every commit up to Y must be backfilled.
     // (guaranteed by minor-compaction hook), so collecting from `deltas` is sufficient.
