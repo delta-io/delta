@@ -31,18 +31,24 @@ class DeltaInsertReplaceOnOrUsingMaterializationWithoutParallelConcurrencySuite
   import InsertReplaceOnOrUsingAPIOrigin._
   import testImplicits._
 
-  for (replaceClause <- Seq("ON", "USING"); pinStatementTime <- Seq(false, true)) {
+  for {
+    replaceClause <- Seq("ON", "USING")
+    pinStatementTime <- Seq(false, true)
+    materializeSource <- Seq("auto", "all", "none")
+  } {
     test(s"INSERT REPLACE $replaceClause retains its source clock during a concurrent append, " +
-        s"pinStatementTime=$pinStatementTime",
+        s"pinStatementTime=$pinStatementTime, materializeSource=$materializeSource",
       ChecksDeltaInternals("uses DELETE/INSERT phase barriers")) {
       withSQLConf(
           DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED.key ->
-            pinStatementTime.toString) {
+            pinStatementTime.toString,
+          DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_MATERIALIZE_SOURCE.key -> materializeSource) {
         withTable("source", "target") {
           // - Duplicate id=1 rows verify replacement preserves source multiplicity.
-          // - Append id=3 after DELETE, when the source snapshot is already materialized.
+          // - Append id=3 after DELETE, once the source snapshot has been captured.
           // - The target keeps its id=3 row; only the source table sees the concurrent append.
-          // - Pinning keeps the source clock before DELETE; unpinned INSERT folds it afterward.
+          // - Pinning or forced materialization keeps the source clock before DELETE.
+          //   Otherwise, INSERT folds it afterward.
           val targetTime = Timestamp.valueOf("2020-01-01 00:00:00")
           createTable("target", Seq("id int", "eventTime timestamp", "rowOrigin string"))
           insertValues("target", Seq(
@@ -74,9 +80,10 @@ class DeltaInsertReplaceOnOrUsingMaterializationWithoutParallelConcurrencySuite
               .as[Timestamp].collect()
             assert(sourceTimes.length === 1)
             val statementTime = sourceTimes.head
-            assert(statementTime.before(deleteCompletedAt) == pinStatementTime,
-              s"pinStatementTime=$pinStatementTime, statementTime=$statementTime, " +
-                s"deleteCompletedAt=$deleteCompletedAt")
+            assert(statementTime.before(deleteCompletedAt) ==
+              (pinStatementTime || materializeSource == "all"),
+              s"pinStatementTime=$pinStatementTime, materializeSource=$materializeSource, " +
+                s"statementTime=$statementTime, deleteCompletedAt=$deleteCompletedAt")
             checkAnswer(sql("SELECT * FROM target"), Seq(
               Row(1, statementTime, "source-1"),
               Row(1, statementTime, "source-duplicate"),
