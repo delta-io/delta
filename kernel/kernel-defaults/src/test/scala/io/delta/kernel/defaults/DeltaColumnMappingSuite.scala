@@ -519,6 +519,66 @@ trait DeltaColumnMappingSuiteBase extends AnyFunSuite with AbstractWriteUtils
     }
   }
 
+  Seq("name", "id").foreach { cmMode =>
+    test(s"write, add a column via Kernel schema evolution, then write again (mode=$cmMode) - " +
+      "old rows backfill null and new rows are readable by Kernel and Spark") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val schema = new StructType()
+          .add("id", IntegerType.INTEGER)
+          .add("name", StringType.STRING)
+        val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode)
+
+        // Write initial data under the original schema
+        val dataBefore = generateData(schema, Seq.empty, Map.empty, batchSize = 20, numBatches = 1)
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          schema = schema,
+          data = Seq(Map.empty[String, Literal] -> dataBefore),
+          tableProperties = props)
+
+        // Add a new nullable column "score" via Kernel schema evolution
+        val currentSchema = getMetadata(engine, tablePath).getSchema
+        val evolvedSchema = new StructType()
+          .add("id", IntegerType.INTEGER, true, currentSchema.get("id").getMetadata)
+          .add("name", StringType.STRING, true, currentSchema.get("name").getMetadata)
+          .add("score", IntegerType.INTEGER, true)
+        updateTableMetadata(engine, tablePath, schema = evolvedSchema)
+
+        val updatedSchema = getMetadata(engine, tablePath).getSchema
+        assert(updatedSchema.fieldNames().asScala.toSeq == Seq("id", "name", "score"))
+        // The new column must get its own column mapping id/physical name assigned by Kernel
+        assertColumnMapping(updatedSchema.get("score"), 3, "score")
+
+        // Write more data after the column was added; new rows carry a value for "score"
+        val schemaAfterAdd = new StructType()
+          .add("id", IntegerType.INTEGER)
+          .add("name", StringType.STRING)
+          .add("score", IntegerType.INTEGER)
+        val dataAfter =
+          generateData(schemaAfterAdd, Seq.empty, Map.empty, batchSize = 20, numBatches = 1)
+        appendData(
+          engine,
+          tablePath,
+          data = Seq(Map.empty[String, Literal] -> dataAfter))
+
+        // Rows written before the column was added must read back with "score" = null; rows
+        // written after must read back with their written "score" value.
+        val expectedData = dataBefore.flatMap(_.toTestRows).map { row =>
+          TestRow((row.toSeq :+ null): _*)
+        } ++ dataAfter.flatMap(_.toTestRows)
+        checkTable(tablePath, expectedData, engine = engine)
+
+        // Spark must also see the evolved logical schema and be able to read all the data,
+        // including the backfilled nulls for rows written before the column was added.
+        val sparkDf = spark.read.format("delta").load(tablePath)
+        assert(sparkDf.schema.fieldNames.toSeq == Seq("id", "name", "score"))
+        checkAnswer(sparkDf.collect().map(TestRow(_)).toSeq, expectedData)
+      }
+    }
+  }
+
   test("id mode write: parquet.field.id is present in Parquet file footer for scalar columns") {
     withTempDirAndEngine { (tablePath, engine) =>
       val schema = new StructType()
