@@ -21,6 +21,7 @@ import scala.concurrent.duration.Duration
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.concurrency.PhaseLockingTestMixin
 import org.apache.spark.sql.delta.concurrency.TransactionExecutionTestMixin
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.Row
@@ -577,7 +578,11 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin
 
       // The target-only part of the merge condition and the NOT MATCHED BY SOURCE condition
       // are combined with OR, so the file for key=-1 is not touched.
-      if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
+      val usesDeletionVectors =
+        spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS) &&
+          DeletionVectorUtils.deletionVectorsWritable(
+            DeltaLog.forTable(spark, target).update())
+      if (!usesDeletionVectors) {
         checkAnswer(
           spark.sql(s"DESCRIBE HISTORY delta.`$target` LIMIT 1").select(
             "operation",
