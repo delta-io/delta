@@ -242,11 +242,12 @@ case class DeltaInsertReplaceOnOrUsingCommand(
     recordReplaceOnOrUsingStats(sparkSession) {
       val insertReplaceCriteria = resolveInsertReplaceCriteria(sparkSession)
       var resultOpt: Option[T] = None
+      val pinStatementTime = sparkSession.conf.get(
+        DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED)
 
       // The source is a field of this leaf command and escapes normal clock folding.
       // Fold before retries so both phases and rematerializations share one instant.
-      val instantOpt = if (sparkSession.conf.get(
-          DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED)) {
+      val instantOpt = if (pinStatementTime) {
         val instant: Instant = {
           Instant.now()
         }
@@ -254,20 +255,22 @@ case class DeltaInsertReplaceOnOrUsingCommand(
       } else {
         None
       }
-      val sourceQueryWithPinnedTimestampOpt = instantOpt.map { instant =>
-        org.apache.spark.sql.delta.PreprocessTableMerge(SQLConf.get)
-          .transformTimestamps(query, instant)
+      val sourceQueryWithPinnedTimestampOpt = if (pinStatementTime) {
+        instantOpt.map { instant =>
+          org.apache.spark.sql.delta.PreprocessTableMerge(SQLConf.get)
+            .transformTimestamps(query, instant)
+        }
+      } else {
+        None
       }
 
       val runOperationFunc: SparkSession => Seq[Row] = { spark =>
-        val materializedDf = if (sparkSession.conf.get(
-            DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED)) {
+        val materializedDf = if (pinStatementTime) {
           materializeSource(spark, insertReplaceCriteria, sourceQueryWithPinnedTimestampOpt)
         } else {
           materializeSource(spark, insertReplaceCriteria)
         }
-        val preparedWriteCmd = if (sparkSession.conf.get(
-            DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED)) {
+        val preparedWriteCmd = if (pinStatementTime) {
           prepareWriteCmd(spark, materializedDf, insertReplaceCriteria)
             .copy(insertReplaceOnOrUsingCurrentTimeOpt = instantOpt)
         } else {
@@ -276,8 +279,7 @@ case class DeltaInsertReplaceOnOrUsingCommand(
         resultOpt = Some(executeAndRecordStats(preparedWriteCmd))
         Seq.empty
       }
-      if (sparkSession.conf.get(
-          DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED)) {
+      if (pinStatementTime) {
         executeWithRetry(sparkSession, runOperationFunc,
           sourceQueryWithPinnedTimestampOpt = sourceQueryWithPinnedTimestampOpt)
       } else {
