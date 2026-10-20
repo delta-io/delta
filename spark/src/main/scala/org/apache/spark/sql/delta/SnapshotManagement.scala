@@ -799,7 +799,7 @@ trait SnapshotManagement { self: DeltaLog =>
       // Start reading the latest commit's CommitInfo (the fallback source of the last manifest
       // commit reference, used when no CRC is available) in parallel with the CRC read below.
       val lastCommitInfoFutureOpt = maybeReadLastCommitInfoAsync(
-        segment, shouldReconcileAMTCheckpointProvider)
+        segment, checksumOpt, shouldReconcileAMTCheckpointProvider)
       val checksumOptAfterRead = checksumOpt.orElse(
         readChecksum(segment.version, lastSeenChecksumFileStatusOpt))
       val finalLogSegment = if (shouldReconcileAMTCheckpointProvider) {
