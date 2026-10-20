@@ -32,6 +32,8 @@ import org.apache.spark.sql.catalyst.catalog.{
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableInfo, TransactionalCatalogPlugin, V1Table}
 import org.apache.spark.sql.delta.{
   CatalogOwnedTableFeature,
+  ConcurrentIdentityColumnSchema,
+  ConcurrentIdentityColumnsTableFeature,
   DeltaErrors,
   DeltaV2Mode,
   InCommitTimestampUtils,
@@ -143,11 +145,21 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
             !InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS.contains(key) &&
             key != UC_TABLE_ID_KEY
         }
-        val sourceProtocol =
+        val catalogOwnedFilteredProtocol =
           if (isEnablingCatalogOwnedViaExplicitPropertyOverrides) {
             snapshot.protocol
           } else {
             snapshot.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
+          }
+        // Like Catalog-Owned, the target is a Concurrent Identity Columns table only when the
+        // TBLPROPERTIES clause enables the feature; fresh sequence IDs are stamped only then.
+        val sourceProtocol =
+          if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
+              configs = explicitDeltaProperties).contains(ConcurrentIdentityColumnsTableFeature)) {
+            catalogOwnedFilteredProtocol
+          } else {
+            catalogOwnedFilteredProtocol.removeFeature(
+              targetFeature = ConcurrentIdentityColumnsTableFeature)
           }
 
         (
@@ -155,7 +167,10 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
             identifier = targetTableIdentifier,
             tableType = tableType,
             storage = newStorage,
-            schema = sourceMetadata.schema,
+            // Drop copied concurrent-identity sequence IDs so the create path stamps fresh ones:
+            // the service keys a sequence by (metastore, sequenceId), so the source's ID is taken.
+            schema =
+              ConcurrentIdentityColumnSchema.stripConcurrentSequenceMetadata(sourceMetadata.schema),
             properties = filteredConfig ++ explicitDeltaProperties,
             partitionColumnNames = sourceMetadata.partitionColumns,
             provider = Some("delta"),
