@@ -16,10 +16,12 @@
 
 package org.apache.spark.sql.delta
 
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.delta.cic.{
   CreateSequenceRequest,
   DropSequenceRequest,
@@ -167,6 +169,18 @@ trait ConcurrentIdentityColumnSuiteBase extends QueryTest
        |tblproperties(${properties.mkString(", ")})
        |""".stripMargin
   }
+
+  /**
+   * Collect the CIC usage events of one `opType` emitted while running `f`, as parsed blobs. The
+   * dashboard reads these opType strings and blob keys, so asserting on them here is what keeps a
+   * rename from silently breaking a panel.
+   */
+  protected def cicEvents(opType: String)(f: => Unit): Seq[Map[String, Any]] =
+    Log4jUsageLogger.track(f)
+      .filter { e =>
+        e.metric == MetricDefinitions.EVENT_TAHOE.name && e.tags.get("opType").contains(opType)
+      }
+      .map(e => JsonUtils.fromJson[Map[String, Any]](e.blob))
 }
 
 /**
