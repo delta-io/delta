@@ -57,6 +57,7 @@ import javax.annotation.Nullable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
+import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.*;
@@ -559,7 +560,7 @@ class DeltaV2MicroBatchStream
     List<PartitionedFile> partitionedFiles = new ArrayList<>();
     long totalBytesToRead = 0;
     boolean isCDC = options.readChangeFeed();
-    ZoneId zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
+    ZoneId zoneId = DateTimeUtils.getZoneId(sqlConf.sessionLocalTimeZone());
 
     try (CloseableIterator<IndexedFile> fileChanges =
         isCDC
