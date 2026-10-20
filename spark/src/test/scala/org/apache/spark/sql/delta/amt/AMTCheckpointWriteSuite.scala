@@ -443,6 +443,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
         "leaf with space.parquet",
         Seq(AMTSingleAction.fromAddFile(dataAdd, addedTracking, dataPath)))
       val parentTracking = addedTracking.copy(
+        snapshot_id = Some(1L),
         sequence_number = Some(base.version),
         file_sequence_number = Some(base.version),
         first_row_id = Some(0L))

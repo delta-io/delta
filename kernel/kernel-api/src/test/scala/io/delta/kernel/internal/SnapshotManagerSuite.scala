@@ -23,7 +23,7 @@ import scala.reflect.ClassTag
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.engine.FileReadResult
-import io.delta.kernel.exceptions.{InvalidTableException, TableNotFoundException}
+import io.delta.kernel.exceptions.{InvalidTableException, TableNotFoundException, VersionToLoadAfterLatestCommitException, VersionTruncatedException}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.{CheckpointInstance, CheckpointMetaData, SidecarFile}
 import io.delta.kernel.internal.fs.Path
@@ -411,12 +411,12 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("getLogSegmentForVersion: versionToLoad higher than possible") {
-    testExpectedError[RuntimeException](
+    testExpectedError[VersionToLoadAfterLatestCommitException](
       files = deltaFileStatuses(Seq(0L)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains =
         "Cannot load table version 15 as it does not exist. The latest available version is 0")
-    testExpectedError[RuntimeException](
+    testExpectedError[VersionToLoadAfterLatestCommitException](
       files = deltaFileStatuses((10L until 13L)) ++ singularCheckpointFileStatuses(Seq(10L)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains =
@@ -475,7 +475,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("getLogSegmentForVersion: versionToLoad not constructable from history") {
-    testExpectedError[RuntimeException](
+    testExpectedError[VersionTruncatedException](
       deltaFileStatuses(20L until 25L) ++ singularCheckpointFileStatuses(Seq(20L)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains = "Cannot load table version 15")

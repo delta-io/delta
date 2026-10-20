@@ -57,6 +57,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
             intermediateLogCommits = intermediateLogCommits,
             attemptVersion = snapshot.version + 5,
             actionsToCommit = Seq.empty,
+            snapshotId = 1L,
             trigger = AMTTriggerMode.CheckpointIntervalIncremental.name)
         }
       }
@@ -200,7 +201,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
       val mixed = carriedLeafPointer(existingFiles = 2, deletedFiles = 1)
       val ex = intercept[IllegalStateException] {
         writer.carryForwardOneLeaf(mixed, newMdvPositions = Seq.empty,
-          deletedPositions = Seq.empty, replacedPositions = Seq.empty)
+          deletedPositions = Seq.empty, replacedPositions = Seq.empty, snapshotId = 1L)
       }
       assert(ex.getMessage.contains("both live files and tombstones"),
         s"expected the live+tombstone-mix invariant; got: ${ex.getMessage}")
@@ -215,7 +216,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
       val tombstoneOnly = carriedLeafPointer(deletedFiles = 3)
       val ex = intercept[IllegalStateException] {
         writer.carryForwardOneLeaf(tombstoneOnly, newMdvPositions = Seq(0),
-          deletedPositions = Seq.empty, replacedPositions = Seq.empty)
+          deletedPositions = Seq.empty, replacedPositions = Seq.empty, snapshotId = 1L)
       }
       assert(ex.getMessage.contains("no live file but gained new MDV positions"),
         s"expected the dead-leaf-MDV invariant; got: ${ex.getMessage}")

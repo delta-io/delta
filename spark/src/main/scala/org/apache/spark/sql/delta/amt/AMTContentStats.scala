@@ -41,7 +41,7 @@ import org.apache.spark.sql.types.{BooleanType, ByteType, DataType, DateType, De
  *
  * Only the statistics Delta actually collects get a slot: `null_value_count`, `lower_bound`,
  * `upper_bound` and `tight_bounds`. The remaining spec-optional statistics (`value_count`,
- * `nan_value_count`, `avg_value_size`, `max_value_size`) are omitted.
+ * `nan_value_count`, `total_bytes`) are omitted.
  */
 private[amt] object AMTContentStats {
 
