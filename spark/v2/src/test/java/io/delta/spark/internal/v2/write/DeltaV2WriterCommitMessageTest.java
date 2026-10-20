@@ -122,7 +122,7 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
 
   private DeltaV2DataWriterFactory dataWriterFactory(String path) {
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(path, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty());

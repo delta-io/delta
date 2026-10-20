@@ -48,6 +48,29 @@ trait DeltaInsertIntoTest
   val catalogName = "spark_catalog"
 
   /**
+   * Runs a SQL INSERT, enabling Delta schema evolution when [[withSchemaEvolution]] is set.
+   *
+   * Spark 4.2 introduced the `INSERT WITH SCHEMA EVOLUTION` syntax. On 4.2+ the clause is
+   * spliced into the statement right after the leading `INSERT` keyword. Earlier versions
+   * cannot parse that syntax, so schema evolution is toggled through
+   * [[DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE]] instead.
+   *
+   * @param buildInsert builds the INSERT statement given the schema evolution clause to splice
+   *                    in right after the leading `INSERT` keyword.
+   */
+  def runInsertSql(withSchemaEvolution: Boolean)(buildInsert: String => String): Unit = {
+    if (sparkVersionBucket(spark) == "4.2+") {
+      val clause = if (withSchemaEvolution) "WITH SCHEMA EVOLUTION " else ""
+      sql(buildInsert(clause))
+    } else {
+      withSQLConf(
+          DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
+        sql(buildInsert(""))
+      }
+    }
+  }
+
+  /**
    * Represents one way of inserting data into a Delta table.
    * @param name A human-readable name for the insert type displayed in the test names.
    * @param mode Append or Overwrite. This dictates in particular what the expected result after the
@@ -74,29 +97,6 @@ trait DeltaInsertIntoTest
 
     /** SQL keyword for this type of insert.  */
     def intoOrOverwrite: String = if (mode == SaveMode.Append) "INTO" else "OVERWRITE"
-
-    /**
-     * Runs a SQL INSERT, enabling Delta schema evolution when [[withSchemaEvolution]] is set.
-     *
-     * Spark 4.2 introduced the `INSERT WITH SCHEMA EVOLUTION` syntax. On 4.2+ the clause is
-     * spliced into the statement right after the leading `INSERT` keyword. Earlier versions
-     * cannot parse that syntax, so schema evolution is toggled through
-     * [[DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE]] instead.
-     *
-     * @param buildInsert builds the INSERT statement given the schema evolution clause to splice
-     *                    in right after the leading `INSERT` keyword.
-     */
-    def runInsertSql(withSchemaEvolution: Boolean)(buildInsert: String => String): Unit = {
-      if (sparkVersionBucket(spark) == "4.2+") {
-        val clause = if (withSchemaEvolution) "WITH SCHEMA EVOLUTION " else ""
-        sql(buildInsert(clause))
-      } else {
-        withSQLConf(
-            DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-          sql(buildInsert(""))
-        }
-      }
-    }
 
     /** The expected content of the table after the insert. */
     def expectedResult(initialDF: DataFrame, insertedDF: DataFrame): DataFrame = {

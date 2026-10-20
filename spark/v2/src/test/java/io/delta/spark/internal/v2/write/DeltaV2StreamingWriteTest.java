@@ -594,7 +594,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
 
   private DeltaV2StreamingWrite newWrite(String path, boolean variantShreddingEnabled) {
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(path, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
@@ -659,7 +659,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
 
   private DeltaV2StreamingWrite newVariantWrite(String path, boolean variantShreddingEnabled) {
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(path, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(VARIANT_TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
@@ -702,7 +702,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
 
   private DeltaV2StreamingWrite newPartitionedWrite(String path) {
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(path, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(PARTITIONED_FULL_SCHEMA, CaseInsensitiveStringMap.empty());

@@ -265,7 +265,7 @@ private[tablemanager] class CachedSnapshotManager(
       f: DeltaV2SnapshotManager => T): T = {
     f(SnapshotManagerFactory.create(
       tablePath.toString,
-      kernelContext.getDefaultEngine(),
+      kernelContext,
       catalogTableOpt.toJava))
   }
 

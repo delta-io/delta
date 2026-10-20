@@ -100,6 +100,15 @@ object DeltaTestUtilsBase {
 trait CDCTestMixin {
   // Setting the spark Conf is left to the test implementation.
 
+  /** Reads through the CDF scan so tests also exercise scan filter handling. */
+  def readCDF(
+      spark: SparkSession,
+      tableName: String,
+      startVersion: Long,
+      endVersion: Long): DataFrame = {
+    spark.sql(s"SELECT * FROM table_changes('$tableName', $startVersion, $endVersion)")
+  }
+
   def computeCDC(
       spark: SparkSession,
       deltaLog: DeltaLog,
@@ -735,7 +744,7 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
 }
 
 trait DeltaTestUtilsForTempViews
-  extends SharedSparkSession
+  extends DeltaSQLCommandTest
   with DeltaTestUtilsBase {
 
   def testWithTempView(testName: String)(testFun: Boolean => Any): Unit = {

@@ -386,16 +386,14 @@ class CachedSnapshotManagerSuite
         CachedSnapshotManagerRecordingFileSystem.clear()
         assert(manager.loadLatestSnapshot().version == 0L)
         assertRecordingFileSystemObserved("first-operation")
-        val retainedEngine = kernelContext.getDefaultEngine()
 
         appendToDeltaTable(dir)
         SparkSession.setActiveSession(secondOperationSession)
         setRecordingMarkers(secondOperationSession, "second-operation")
         CachedSnapshotManagerRecordingFileSystem.clear()
         assert(manager.loadSnapshotAt(1L).version == 1L)
-        assert(kernelContext.getDefaultEngine() eq retainedEngine)
         val expectedSessionMarker =
-          "first-operation"
+          "second-operation"
         assertRecordingFileSystemObserved(expectedSessionMarker)
       } finally {
         if (manager != null) manager.retire()

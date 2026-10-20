@@ -36,9 +36,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 /**
- * Shared casting and schema-adjustment utilities for Delta insert operations.
- * Mixed into both [[DeltaAnalysis]] (SQL + DF by-ordinal inserts) and [[DeltaImplicitCast]]
- * (DF by-name inserts).
+ * Shared casting and schema-adjustment utilities for Delta insert resolution.
  */
 trait DeltaInsertCastSupport extends DeltaLogging {
 
@@ -86,13 +84,15 @@ trait DeltaInsertCastSupport extends DeltaLogging {
       query: LogicalPlan,
       targetAttrs: Seq[Attribute],
       deltaTable: DeltaTableV2,
-      writeOptions: Map[String, String]): LogicalPlan = {
+      writeOptions: Map[String, String],
+      expandCollectionCasts: Boolean = false): LogicalPlan = {
     // always add a Cast. it will be removed in the optimizer if it is unnecessary.
     val project = query.output.zipWithIndex.map { case (attr, i) =>
       if (i < targetAttrs.length) {
         val targetAttr = targetAttrs(i)
         addCastToColumn(attr, targetAttr, deltaTable.name(),
-          typeWideningMode = getTypeWideningMode(deltaTable, writeOptions)
+          typeWideningMode = getTypeWideningMode(deltaTable, writeOptions),
+          expandCollectionCasts = expandCollectionCasts
         )
       } else {
         attr
@@ -116,17 +116,18 @@ trait DeltaInsertCastSupport extends DeltaLogging {
       deltaTable: DeltaTableV2,
       writeOptions: Map[String, String],
       allowSchemaEvolution: Boolean = false,
-      isDfByNameInsert: Boolean): LogicalPlan = {
+      byName: Boolean = false,
+      isSqlInsert: Boolean = true): LogicalPlan = {
+    val isDfByNameInsert = byName && !isSqlInsert
     // Schema evolution is only effective when mergeSchema is enabled in write options AND
-    // the feature is enabled via SQL conf. For dataframe by-name queries, the schema evolution
+    // the feature is enabled via SQL conf. For DataFrame by-name queries, the schema evolution
     // check is always deferred until after DeltaAnalysis, so avoid throwing here.
     val effectiveSchemaEvolution = allowSchemaEvolution && (isDfByNameInsert ||
       new DeltaOptions(deltaTable.options ++ writeOptions, conf).canMergeSchema &&
       session.conf.get(DeltaSQLConf.DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED))
 
-    // DataFrame by-name inserts always allow missing columns; SQL BY NAME inserts only allow
-    // them when USE_NULLS_FOR_DEFAULT_COLUMN_VALUES is set or the column has a default/generated
-    // expression. isDfByNameInsert=false signals the SQL path, which needs the stricter check.
+    // DataFrame by-name inserts always allow missing columns; other paths are stricter and check
+    // for default/generated expression or USE_NULLS_FOR_DEFAULT_COLUMN_VALUES.
     if (!isDfByNameInsert) {
       insertIntoByNameMissingColumn(query, targetAttrs, deltaTable, effectiveSchemaEvolution)
     }
@@ -152,7 +153,8 @@ trait DeltaInsertCastSupport extends DeltaLogging {
         }
       addCastToColumn(attr, targetAttr, deltaTable.name(),
         typeWideningMode = getTypeWideningMode(deltaTable, writeOptions),
-        byName = isDfByNameInsert
+        byName = byName,
+        isDfByNameInsert = isDfByNameInsert
       )
     }
     Project(project, query)
@@ -163,26 +165,42 @@ trait DeltaInsertCastSupport extends DeltaLogging {
       targetAttr: NamedExpression,
       tblName: String,
       typeWideningMode: TypeWideningMode,
-      byName: Boolean = false): NamedExpression = {
+      byName: Boolean = false,
+      isDfByNameInsert: Boolean = false,
+      expandCollectionCasts: Boolean = false): NamedExpression = {
     val expr = (attr.dataType, targetAttr.dataType) match {
       case (s, t) if s == t =>
         attr
       case (s: StructType, t: StructType) if s != t =>
         if (byName) {
-          addCastsToStructsByName(tblName, attr, s, t, typeWideningMode)
+          addCastsToStructsByName(tblName, attr, s, t, typeWideningMode, isDfByNameInsert)
         } else {
-          addCastsToStructsByPosition(tblName, attr, s, t, typeWideningMode)
+          addCastsToStructsByPosition(tblName, attr, s, t, typeWideningMode, expandCollectionCasts)
         }
       case (ArrayType(s: StructType, sNull: Boolean), ArrayType(t: StructType, tNull: Boolean))
         if s != t && sNull == tNull =>
-        addCastsToArrayStructs(tblName, attr, s, t, sNull, typeWideningMode, byName)
-      case (ArrayType(s, sNull: Boolean), ArrayType(t, tNull: Boolean)) if byName && s != t =>
-        // General array element casting for non-struct elements currently only for by-name inserts.
-        // Recursively applies addCastToColumn to each element via ArrayTransform.
+        addCastsToArrayStructs(
+          tblName,
+          attr,
+          s,
+          t,
+          sNull,
+          typeWideningMode,
+          byName = byName,
+          isDfByNameInsert = isDfByNameInsert,
+          expandCollectionCasts = expandCollectionCasts)
+      case (ArrayType(s, sNull: Boolean), ArrayType(t, tNull: Boolean))
+          if s != t && (byName || expandCollectionCasts) =>
         val elementVar = NamedLambdaVariable("element", s, sNull)
         val targetElementAttr = AttributeReference("element", t, tNull)()
         val castedElement = addCastToColumn(
-          elementVar, targetElementAttr, tblName, typeWideningMode, byName)
+          elementVar,
+          targetElementAttr,
+          tblName,
+          typeWideningMode,
+          byName = byName,
+          isDfByNameInsert = isDfByNameInsert,
+          expandCollectionCasts = expandCollectionCasts)
         ArrayTransform(attr, LambdaFunction(castedElement, Seq(elementVar)))
       case (_, _: NullType) =>
         attr
@@ -195,13 +213,21 @@ trait DeltaInsertCastSupport extends DeltaLogging {
         if !DataType.equalsStructurally(s, t, ignoreNullability = true) || (byName && s != t) =>
         // only trigger addCastsToMaps if exists differences like extra fields, renaming or type
         // differences. When by-name, always trigger as equalsStructurally is a positional check.
-        addCastsToMaps(tblName, attr, s, t, typeWideningMode, byName)
+        addCastsToMaps(
+          tblName,
+          attr,
+          s,
+          t,
+          typeWideningMode,
+          byName = byName,
+          isDfByNameInsert = isDfByNameInsert,
+          expandCollectionCasts = expandCollectionCasts)
       case _ =>
         getCastFunction(attr, targetAttr.dataType, targetAttr.name)
     }
-    // Preserve source name when byName=true to let downstream handle normalization.
-    val fieldName = if (byName) attr.name else targetAttr.name
-    val metadata = if (byName) attr.metadata else targetAttr.metadata
+    // Preserve source names for DataFrame by-name writes so downstream can normalize them.
+    val fieldName = if (isDfByNameInsert) attr.name else targetAttr.name
+    val metadata = if (isDfByNameInsert) attr.metadata else targetAttr.metadata
     Alias(expr, fieldName)(explicitMetadata = Option(metadata))
   }
 
@@ -238,7 +264,8 @@ trait DeltaInsertCastSupport extends DeltaLogging {
       deltaTable: DeltaTableV2,
       query: LogicalPlan,
       schema: StructType,
-      writeOptions: Map[String, String]): Boolean = {
+      writeOptions: Map[String, String],
+      checkNestedFieldsByOrdinal: Boolean = false): Boolean = {
     val output = query.output
     if (output.length < schema.length) {
       throw DeltaErrors.notEnoughColumnsInInsert(deltaTable.name(), output.length, schema.length)
@@ -246,10 +273,35 @@ trait DeltaInsertCastSupport extends DeltaLogging {
     // Now we should try our best to match everything that already exists, and leave the rest
     // for schema evolution to WriteIntoDelta
     val existingSchemaOutput = output.take(schema.length)
-    existingSchemaOutput.map(_.name) != schema.map(_.name) ||
-      !SchemaUtils.isReadCompatible(schema.asNullable, existingSchemaOutput.toStructType,
+    if (existingSchemaOutput.map(_.name) != schema.map(_.name)) {
+      true
+    } else {
+      val existingSchema = existingSchemaOutput.toStructType
+      // Ordinal compatibility also requires every nested field name to match by position.
+      val isReadCompatible = SchemaUtils.isReadCompatible(
+        schema.asNullable,
+        existingSchema,
         typeWideningMode = getTypeWideningMode(deltaTable, writeOptions))
+      !isReadCompatible ||
+        (checkNestedFieldsByOrdinal && !nestedFieldNamesMatchByOrdinal(schema, existingSchema))
+    }
   }
+
+  private def nestedFieldNamesMatchByOrdinal(expected: DataType, actual: DataType): Boolean =
+    (expected, actual) match {
+      case (expectedStruct: StructType, actualStruct: StructType) =>
+        actualStruct.length >= expectedStruct.length &&
+          expectedStruct.zip(actualStruct).forall { case (expectedField, actualField) =>
+            expectedField.name == actualField.name &&
+              nestedFieldNamesMatchByOrdinal(expectedField.dataType, actualField.dataType)
+          }
+      case (expectedArray: ArrayType, actualArray: ArrayType) =>
+        nestedFieldNamesMatchByOrdinal(expectedArray.elementType, actualArray.elementType)
+      case (expectedMap: MapType, actualMap: MapType) =>
+        nestedFieldNamesMatchByOrdinal(expectedMap.keyType, actualMap.keyType) &&
+          nestedFieldNamesMatchByOrdinal(expectedMap.valueType, actualMap.valueType)
+      case _ => true
+    }
 
   protected def hasReplaceOnOrUsingOption(writeOptions: Map[String, String]): Boolean = {
     val caseInsensitiveWriteOptions = CaseInsensitiveMap(writeOptions)
@@ -368,7 +420,8 @@ trait DeltaInsertCastSupport extends DeltaLogging {
       parent: NamedExpression,
       source: StructType,
       target: StructType,
-      typeWideningMode: TypeWideningMode): NamedExpression = {
+      typeWideningMode: TypeWideningMode,
+      expandCollectionCasts: Boolean): NamedExpression = {
     if (source.length < target.length) {
       throw DeltaErrors.notEnoughColumnsInInsert(
         tableName, source.length, target.length, Some(parent.qualifiedName))
@@ -384,7 +437,8 @@ trait DeltaInsertCastSupport extends DeltaLogging {
           case t: StructType =>
             val subField = Alias(GetStructField(parent, i, Option(name)), targetField.name)(
               explicitMetadata = Option(metadata))
-            addCastsToStructsByPosition(tableName, subField, nested, t, typeWideningMode)
+            addCastsToStructsByPosition(
+              tableName, subField, nested, t, typeWideningMode, expandCollectionCasts)
           case _: NullType =>
             Alias(GetStructField(parent, i, Option(name)), targetField.name)(
               explicitMetadata = Option(metadata))
@@ -405,6 +459,23 @@ trait DeltaInsertCastSupport extends DeltaLogging {
         Alias(
           GetStructField(parent, i, Option(name)),
           targetName)(explicitMetadata = Option(targetMetadata))
+      case (sourceField, i @ TargetIndex(targetField))
+          if expandCollectionCasts &&
+            sourceField.dataType != targetField.dataType &&
+            ((sourceField.dataType, targetField.dataType) match {
+              case (_: ArrayType, _: ArrayType) | (_: MapType, _: MapType) => true
+              case _ => false
+            }) =>
+        val sourceAttr = Alias(
+          GetStructField(parent, i, Option(sourceField.name)),
+          sourceField.name)(explicitMetadata = Option(sourceField.metadata))
+        val targetAttr = AttributeReference(
+          targetField.name,
+          targetField.dataType,
+          targetField.nullable,
+          targetField.metadata)()
+        addCastToColumn(sourceAttr, targetAttr, tableName, typeWideningMode,
+          expandCollectionCasts = expandCollectionCasts)
       case (sourceField, i @ TargetIndex(targetField)) =>
         Alias(
           getCastFunction(GetStructField(parent, i, Option(sourceField.name)),
@@ -451,7 +522,15 @@ trait DeltaInsertCastSupport extends DeltaLogging {
       parent: NamedExpression,
       source: StructType,
       target: StructType,
-      typeWideningMode: TypeWideningMode): NamedExpression = {
+      typeWideningMode: TypeWideningMode,
+      isDfByNameInsert: Boolean): NamedExpression = {
+    // Only SQL by-name inserts enforce missing column checks. Although missing columns should be
+    // searched for by name (and not using counts) we do it like this to preserve existing behavior.
+    if (!isDfByNameInsert && source.length < target.length) {
+      throw DeltaErrors.notEnoughColumnsInInsert(
+        tableName, source.length, target.length, Some(parent.qualifiedName))
+    }
+
     val resolver = session.sessionState.conf.resolver
     val fields = source.map { sourceField =>
       val sourceIndex = source.fieldIndex(sourceField.name)
@@ -470,7 +549,8 @@ trait DeltaInsertCastSupport extends DeltaLogging {
               )()
               val targetAttr = AttributeReference(
                 targetField.name, targetField.dataType, targetField.nullable)()
-              addCastToColumn(subField, targetAttr, tableName, typeWideningMode, byName = true)
+              addCastToColumn(subField, targetAttr, tableName, typeWideningMode, byName = true,
+                isDfByNameInsert = isDfByNameInsert)
 
             case (_, _: NullType) =>
               GetStructField(parent, sourceIndex, Option(sourceField.name))
@@ -496,11 +576,16 @@ trait DeltaInsertCastSupport extends DeltaLogging {
       }
     }
 
-    // Wrap the struct in an if statement to make sure that when a null is passed in, the struct
-    // field is null instead of a non-null struct with a null for each nested field.
     val resultStruct = CreateStruct(fields)
-    val createStructExpr = If(IsNull(parent), Literal(null, resultStruct.dataType), resultStruct)
-    Alias(createStructExpr, parent.name)(
+    val wrappedExpr = if (isDfByNameInsert) {
+      If(IsNull(parent), Literal(null, resultStruct.dataType), resultStruct)
+    } else {
+      // SQL by-name: use the config-gated null preservation.
+      maybeWrapWithNullPreservationForInsert(
+        sourceExpr = parent,
+        createStructExpr = resultStruct)
+    }
+    Alias(wrappedExpr, parent.name)(
       parent.exprId, parent.qualifier, Option(parent.metadata))
   }
 
@@ -511,14 +596,16 @@ trait DeltaInsertCastSupport extends DeltaLogging {
       target: StructType,
       sourceNullable: Boolean,
       typeWideningMode: TypeWideningMode,
-      byName: Boolean = false): Expression = {
+      byName: Boolean,
+      isDfByNameInsert: Boolean,
+      expandCollectionCasts: Boolean): Expression = {
     val structConverter: (Expression, Expression) => Expression = (_, i) => {
       if (byName) {
         addCastsToStructsByName(tableName, Alias(GetArrayItem(parent, i), i.toString)(),
-          source, target, typeWideningMode)
+          source, target, typeWideningMode, isDfByNameInsert)
       } else {
         addCastsToStructsByPosition(tableName, Alias(GetArrayItem(parent, i), i.toString)(),
-          source, target, typeWideningMode)
+          source, target, typeWideningMode, expandCollectionCasts)
       }
     }
     val transformLambdaFunc = {
@@ -538,7 +625,9 @@ trait DeltaInsertCastSupport extends DeltaLogging {
       sourceMapType: MapType,
       targetMapType: MapType,
       typeWideningMode: TypeWideningMode,
-      byName: Boolean = false): Expression = {
+      byName: Boolean,
+      isDfByNameInsert: Boolean,
+      expandCollectionCasts: Boolean): Expression = {
     val transformedKeys =
       if (sourceMapType.keyType != targetMapType.keyType) {
         // Create a transformation for the keys
@@ -555,7 +644,9 @@ trait DeltaInsertCastSupport extends DeltaLogging {
               keyAttr,
               tableName,
               typeWideningMode,
-              byName
+              byName = byName,
+              isDfByNameInsert = isDfByNameInsert,
+              expandCollectionCasts = expandCollectionCasts
             )
           LambdaFunction(castedKey, Seq(key))
         })
@@ -579,7 +670,9 @@ trait DeltaInsertCastSupport extends DeltaLogging {
               valueAttr,
               tableName,
               typeWideningMode,
-              byName
+              byName = byName,
+              isDfByNameInsert = isDfByNameInsert,
+              expandCollectionCasts = expandCollectionCasts
             )
           LambdaFunction(castedValue, Seq(value))
         })

@@ -424,7 +424,7 @@ Summary information for `content_type` = DATA_MANIFEST entries. Includes file/ro
 
 ### Manifest Deletion Vectors (MDVs)
 
-MDVs track which entries in a leaf manifest have been deleted or replaced. The `dv` field in `manifest_info` contains a Roaring bitmap of all invalidated positions (cumulative, used for reading).  The `deleted_positions` and `replaced_positions` fields in `tracking` represent what changed in the current commit only (used for CDF):
+MDVs track which entries in a leaf manifest have been deleted or replaced. The `dv` field in `manifest_info` contains all invalidated positions (cumulative, used for reading). The `deleted_positions` and `replaced_positions` fields in `tracking` represent what changed in the current commit only (used for CDF). All three bitmaps are encoded using the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec:
 
 - **`manifest_info.dv`**: Cumulative set of all invalidated positions. Grows
   monotonically. Used by readers to skip entries.
