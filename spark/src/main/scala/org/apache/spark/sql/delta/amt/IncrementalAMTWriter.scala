@@ -99,6 +99,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
    * @param attemptVersion            the version this commit targets.
    * @param actionsToCommit           this commit's actions (empty for a deferred OPTIMIZE
    *                                  CHECKPOINT).
+   * @param snapshotId                random ID of the transaction generating this AMT tree.
    * @param trigger                   trigger name recorded in metrics.
    */
   def writeIncremental(
@@ -106,6 +107,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       intermediateLogCommits: Seq[FileStatus],
       attemptVersion: Long,
       actionsToCommit: Seq[Action],
+      snapshotId: Long,
       trigger: String): AMTWriteResult = {
     val startNanos = System.nanoTime()
     val oldAMT = oldAMTActionsProvider.load()
@@ -147,7 +149,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
         oldAMT.allLeafs,
         processedActions.mdvSupersededBackrefs,
         processedActions.cdfDeletedBackrefs,
-        processedActions.cdfReplacedBackrefs)
+        processedActions.cdfReplacedBackrefs,
+        snapshotId)
 
     // ---- Step 3: build the root DATA entries (with per-file status). ----
     // 3.a: live files -- classify each by whether THIS commit changed it:
@@ -186,13 +189,17 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       processedActions.domainMetadatas.collectFirst {
         case RowTrackingMetadataDomain(domain) => domain.rowIdHighWaterMark
       })
+    val newLeafTracking = AMTWriteHelper.NewLeafTracking(
+      contentTreeVersion = contentTreeVersion,
+      snapshotId = snapshotId,
+      firstRowId = firstRowIdForNewLeaves)
 
     // ---- Step 4: spill entries into new leaves if the root would exceed the per-leaf cap. ----
     val fixedRootCount = carriedLeafPointers.size
     val (rootLiveEntries, rootRemoveEntries, spilledLeafPointers) =
       spillIfNeeded(liveEntries, removeEntries, fixedRootCount,
         processedActions.postCommitMetadata, processedActions.postCommitProtocol,
-        contentTreeVersion, firstRowIdForNewLeaves)
+        newLeafTracking)
     val allLeafPointers = carriedLeafPointers ++ spilledLeafPointers
 
     // ---- Step 5: write the new root. The post-commit metadata and protocol shape the persisted
@@ -256,11 +263,21 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       numLeavesModifiedStatus = leavesByStatus.getOrElse(Tracking.Status.Modified, 0),
       numLeavesDeletedStatus = leavesByStatus.getOrElse(Tracking.Status.Deleted, 0),
       numStaleDeletedLeavesDropped = numStaleDeletedLeavesDropped)
+    val numRootLiveDataEntries = Tracking.Status.liveEntryStatuses.toSeq
+      .map(status => rootEntriesByStatus.getOrElse(status, 0)).sum.toLong
+    val numRootTombstoneDataEntries = Tracking.Status.tombstoneEntryStatuses.toSeq
+      .map(status => rootEntriesByStatus.getOrElse(status, 0)).sum.toLong
     val metric = SingleAMTWriteMetrics(
       trigger = trigger,
       // This writer only ever produces an incremental tree.
-      incremental = "true",
+      incremental = true,
       materializeDurationMs = NANOSECONDS.toMillis(System.nanoTime() - startNanos),
+      contentRoot = checkpoint.contentRoot,
+      numRootLiveDataEntries = numRootLiveDataEntries,
+      numRootTombstoneDataEntries = numRootTombstoneDataEntries,
+      leaves = allLeafPointers,
+      numSetTransactions = checkpoint.txns.size.toLong,
+      numDomainMetadata = checkpoint.domainMetadata.size.toLong,
       incrementalWriteMetrics = Some(incrementalWriteMetrics))
     AMTWriteResult(
       contentRootVersion = contentTreeVersion,
@@ -290,7 +307,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       oldLeaves: Seq[DataManifestEntry],
       mdvSupersededBackrefs: Seq[BackReference],
       cdfDeletedBackrefs: Seq[BackReference],
-      cdfReplacedBackrefs: Seq[BackReference])
+      cdfReplacedBackrefs: Seq[BackReference],
+      snapshotId: Long)
       : (Seq[DataManifestEntry], MDVAndCDFPositions) = {
     // A (leaf, position) can be superseded multiple times, e.g. a leaf file removed, re-added and
     // removed again. We use a Set to dedupe the positions so the count matches the number of bits
@@ -310,7 +328,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
           deletedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
         val replacedPositions =
           replacedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
-        Some(carryForwardOneLeaf(pointer, newMdvPositions, deletedPositions, replacedPositions))
+        Some(carryForwardOneLeaf(
+          pointer, newMdvPositions, deletedPositions, replacedPositions, snapshotId))
       }
     }
     (pointers,
@@ -322,7 +341,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       pointer: DataManifestEntry,
       newMdvPositions: Seq[Int],
       deletedPositions: Seq[Int],
-      replacedPositions: Seq[Int]): DataManifestEntry = {
+      replacedPositions: Seq[Int],
+      snapshotId: Long): DataManifestEntry = {
     // The file counts in manifest_info describe the leaf when it was initially created. They are
     // not updated when the leaf is carried forward; only its manifest deletion vector can grow.
     val liveFileCount = pointer.manifest_info.liveFilesCount
@@ -348,7 +368,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       if (tombstoneFileCount > 0) {
         // A carried leaf with no live file -- a tombstone-only leaf born ADDED last commit --
         // decays to DELETED so the next AMT drops it.
-        AMTWriteHelper.deletedTrackingForCarriedLeaf(pointer)
+        AMTWriteHelper.deletedTrackingForCarriedLeaf(pointer, snapshotId)
       } else {
         // this case means tombstoneFileCount = 0 and liveFileCount >= 0
         // In this scenario, mark the leaf as DELETED if any of below is true:
@@ -359,9 +379,9 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
         if (newMdvPositions.nonEmpty) {
           // The MDV grew this commit: MODIFIED, or DELETED once every live entry is masked.
           AMTWriteHelper.modifiedOrDeletedTrackingForLeaf(
-            pointer, newMdvPositions, deletedPositions, replacedPositions)
-        } else if (pointer.manifest_info.dv_cardinality.getOrElse(0L) == pointer.record_count) {
-          AMTWriteHelper.deletedTrackingForCarriedLeaf(pointer)
+            pointer, newMdvPositions, deletedPositions, replacedPositions, snapshotId)
+        } else if (pointer.manifest_info.dvCardinality == pointer.record_count) {
+          AMTWriteHelper.deletedTrackingForCarriedLeaf(pointer, snapshotId)
         } else {
           // Untouched leaf (no new MDVs) that still holds live files: carry it forward EXISTING.
           AMTWriteHelper.existingTrackingForLeaf(pointer)
@@ -423,7 +443,9 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       val tracking =
         if (commitAddedPaths.contains(r.path)) AMTWriteHelper.replacedTrackingForDataEntry()
         else AMTWriteHelper.removedTrackingForDataEntry()
-      DataEntry.fromAddFile(priorAddFile, tracking, tableRoot)
+      // scalastyle:off removeFile // This calls a DataEntry factory, not a RemoveFile constructor.
+      DataEntry.fromRemoveFile(priorAddFile, r, tracking, tableRoot)
+      // scalastyle:on removeFile
     }
   }
 
@@ -440,8 +462,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       fixedRootCount: Int,
       metadata: Metadata,
       protocol: Protocol,
-      contentTreeVersion: Long,
-      firstRowIdForNewLeaves: Long)
+      newLeafTracking: AMTWriteHelper.NewLeafTracking)
       : (Seq[DataEntry], Seq[DataEntry], Seq[DataManifestEntry]) = {
     val spilled = ArrayBuffer.empty[DataManifestEntry]
     var remainingLive = liveEntries
@@ -452,14 +473,14 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       val (batch, rest) = remainingLive.splitAt(entriesPerLeaf)
       spilled += AMTWriteHelper.writeLeaf(
         spark, fs, hadoopConf, tableRoot, metadataDir, metadata, protocol, batch,
-        contentTreeVersion, firstRowIdForNewLeaves)
+        newLeafTracking)
       remainingLive = rest
     }
     while (rootRowCount > entriesPerLeaf && remainingRemoves.nonEmpty) {
       val (batch, rest) = remainingRemoves.splitAt(entriesPerLeaf)
       spilled += AMTWriteHelper.writeLeaf(
         spark, fs, hadoopConf, tableRoot, metadataDir, metadata, protocol, batch,
-        contentTreeVersion, firstRowIdForNewLeaves)
+        newLeafTracking)
       remainingRemoves = rest
     }
     (remainingLive, remainingRemoves, spilled.toSeq)

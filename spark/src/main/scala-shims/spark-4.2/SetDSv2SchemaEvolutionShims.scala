@@ -35,7 +35,7 @@ class SetDSv2SchemaEvolutionShims(session: SparkSession) extends Rule[LogicalPla
     new DeltaOptions(writeOptions, session.sessionState.conf).canMergeSchema
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
-    if (!new DeltaV2Mode(session.sessionState.conf).allowsV2SchemaEvolutionShims()) return plan
+    if (!DeltaV2Mode(session).allowsV2SchemaEvolutionShims()) return plan
 
     // This rule runs during pre-resolution so it cannot identify the target table type. It applies
     // to all DSv2 tables that declare AUTOMATIC_SCHEMA_EVOLUTION when a Delta-specific config is

@@ -32,11 +32,11 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.amt._
 import org.apache.spark.sql.delta.rowid._
 
-class RowTrackingUpdateCommonAMTRowTrackingUpdateDVSuite
-  extends RowTrackingUpdateCommonTests
-  with RowTrackingUpdateAMTMixin
-  with RowTrackingUpdateDVMixin
-
 class RowTrackingUpdateCommonAMTSuite
   extends RowTrackingUpdateCommonTests
+  with RowTrackingUpdateAMTMixin
+
+class RowTrackingUpdateCommonRowTrackingUpdateDVAMTSuite
+  extends RowTrackingUpdateCommonTests
+  with RowTrackingUpdateDVMixin
   with RowTrackingUpdateAMTMixin

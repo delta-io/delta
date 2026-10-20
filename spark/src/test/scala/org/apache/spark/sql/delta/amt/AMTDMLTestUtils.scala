@@ -37,15 +37,31 @@ import org.apache.spark.sql.functions.col
  */
 trait AMTDMLTestUtils extends AMTCheckpointTestBase {
 
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(defaultPropertyKey(AdaptiveMetadataTableFeature), FEATURE_PROP_SUPPORTED)
-    // Disable periodic checkpoints so the only AMT checkpoints are the ones the harness commits
-    // around each DML.
-    .set(DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey, Int.MaxValue.toString)
-    // With the default cap, a small table's tree is a single root without leaves, and entries in
-    // the root carry no back reference. One entry per leaf gives any table with more than one file
-    // real leaves, so the files a DML removes carry back references into them.
-    .set(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key, "1")
+  override protected def sparkConf: SparkConf = {
+    val conf = super.sparkConf
+      .set(defaultPropertyKey(AdaptiveMetadataTableFeature), FEATURE_PROP_SUPPORTED)
+      // Disable periodic checkpoints so the only AMT checkpoints are the ones the harness commits
+      // around each DML.
+      .set(DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey, Int.MaxValue.toString)
+      // With the default cap, a small table's tree is a single root without leaves, and entries
+      // in the root carry no back reference. One entry per leaf gives any table with more than one
+      // file real leaves, so the files a DML removes carry back references into them.
+      .set(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key, "1")
+    // Some suites default new tables to `delta.enableDeletionVectors = false`, which AMT rejects at
+    // CREATE since it requires deletion vectors. Unset it instead of setting it to true: AMT then
+    // enables deletion vectors on the table itself, while the tests, which read this default to
+    // predict whether a DML writes deletion vectors, keep seeing it off. Keep the DMLs from writing
+    // them to match, so they still rewrite files as those tests assert.
+    val dvsInNewTablesKey = DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey
+    if (conf.getOption(dvsInNewTablesKey).contains("false")) {
+      Seq(
+        DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS,
+        DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS,
+        DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS
+      ).foreach(dmlConf => conf.set(dmlConf.key, "false"))
+    }
+    conf.remove(dvsInNewTablesKey)
+  }
 
   // Register the in-memory commit coordinator before super.beforeAll(). Some suites (e.g.
   // RowTrackingMergeSuiteBase) create catalog-managed tables in their own beforeAll(), which runs
@@ -138,7 +154,7 @@ trait AMTDMLTestUtils extends AMTCheckpointTestBase {
       target: AMTTarget,
       triggerMode: AMTTriggerMode): AMTCheckpointProvider = {
     val snapshotBefore = target.snapshot
-      target.deltaLog.checkpoint(snapshotBefore, Some(target.catalogTable), Some(triggerMode))
+    target.deltaLog.checkpoint(snapshotBefore, Some(target.catalogTable), Some(triggerMode))
     val snapshotAfter = target.snapshot
     assert(snapshotAfter.version == snapshotBefore.version + 1,
       s"Expected the $triggerMode checkpoint of v${snapshotBefore.version} to commit " +
