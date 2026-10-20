@@ -80,8 +80,11 @@ class DeltaInsertReplaceOnOrUsingMaterializationWithoutParallelConcurrencySuite
               .as[Timestamp].collect()
             assert(sourceTimes.length === 1)
             val statementTime = sourceTimes.head
-            assert(statementTime.before(deleteCompletedAt) ==
-              (pinStatementTime || materializeSource == "all"),
+            val expectTimeBeforeDelete =
+              pinStatementTime || materializeSource == "all"
+            assert(
+              if (expectTimeBeforeDelete) statementTime.before(deleteCompletedAt)
+              else statementTime.after(deleteCompletedAt),
               s"pinStatementTime=$pinStatementTime, materializeSource=$materializeSource, " +
                 s"statementTime=$statementTime, deleteCompletedAt=$deleteCompletedAt")
             checkAnswer(sql("SELECT * FROM target"), Seq(
