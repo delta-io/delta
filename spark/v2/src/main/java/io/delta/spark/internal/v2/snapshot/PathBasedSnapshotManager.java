@@ -19,35 +19,29 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
-import io.delta.spark.internal.v2.kernel.KernelEngineFactory;
+import io.delta.spark.internal.v2.kernel.KernelContext;
 import java.util.ArrayList;
 import java.util.Optional;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager$;
 
 /** Implementation of DeltaV2SnapshotManager for managing Delta snapshots for Path-based Table. */
 @Experimental
 public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
 
   private final String tablePath;
-  private final Engine kernelEngine;
+  private final KernelContext kernelContext;
 
-  public PathBasedSnapshotManager(String tablePath, Configuration hadoopConf) {
-    this(
-        tablePath,
-        KernelEngineFactory.createDefaultEngine(requireNonNull(hadoopConf, "hadoopConf is null")));
-  }
-
-  public PathBasedSnapshotManager(String tablePath, Engine kernelEngine) {
+  public PathBasedSnapshotManager(String tablePath, KernelContext kernelContext) {
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
-    this.kernelEngine = requireNonNull(kernelEngine, "kernelEngine is null");
+    this.kernelContext = requireNonNull(kernelContext, "kernelContext is null");
   }
 
   /**
@@ -57,7 +51,8 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
    */
   @Override
   public Snapshot loadLatestSnapshot() {
-    return TableManager.loadSnapshot(tablePath).build(kernelEngine);
+    return DeltaV2SnapshotManager$.MODULE$.wrapKernelSnapshot(
+        loadLatestKernelSnapshot(), kernelContext, tablePath);
   }
 
   /**
@@ -68,7 +63,20 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
    */
   @Override
   public Snapshot loadSnapshotAt(long version) {
-    return TableManager.loadSnapshot(tablePath).atVersion(version).build(kernelEngine);
+    return DeltaV2SnapshotManager$.MODULE$.wrapKernelSnapshot(
+        loadKernelSnapshotAt(version), kernelContext, tablePath);
+  }
+
+  private SnapshotImpl loadLatestKernelSnapshot() {
+    return (SnapshotImpl)
+        TableManager.loadSnapshot(tablePath).build(kernelContext.getDefaultEngine());
+  }
+
+  private SnapshotImpl loadKernelSnapshotAt(long version) {
+    return (SnapshotImpl)
+        TableManager.loadSnapshot(tablePath)
+            .atVersion(version)
+            .build(kernelContext.getDefaultEngine());
   }
 
   /**
@@ -92,9 +100,9 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit) {
-    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    SnapshotImpl snapshot = loadLatestKernelSnapshot();
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
-        kernelEngine,
+        kernelContext.getDefaultEngine(),
         snapshot,
         snapshot.getLogPath(),
         timestampMillis,
@@ -117,15 +125,15 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
   @Override
   public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
       throws VersionNotFoundException {
-    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    SnapshotImpl snapshot = loadLatestKernelSnapshot();
     long earliest =
         mustBeRecreatable
             ? DeltaHistoryManager.getEarliestRecreatableCommit(
-                kernelEngine,
+                kernelContext.getDefaultEngine(),
                 snapshot.getLogPath(),
                 Optional.empty() /*earliestRatifiedCommitVersion*/)
             : DeltaHistoryManager.getEarliestDeltaFile(
-                kernelEngine,
+                kernelContext.getDefaultEngine(),
                 snapshot.getLogPath(),
                 Optional.empty() /*earliestRatifiedCommitVersion*/);
 

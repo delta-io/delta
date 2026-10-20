@@ -121,7 +121,10 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         // If we trigger limit push down, the filters must be partition filters. Since
         // there are no data filters, we don't need to apply Generated Columns
         // optimization. See `DeltaTableScan` for more details.
-        return scanGenerator.filesForScan(limitOpt.get, filters)
+        return recordFrameProfile(
+            "Delta", "PrepareDeltaScan.filesForScan.limitAndFilters") {
+          scanGenerator.filesForScan(limitOpt.get, filters)
+        }
       }
       val filtersForScan =
         if (!GeneratedColumn.partitionFilterOptimizationEnabled(spark)) {
@@ -131,7 +134,9 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
             spark, scanGenerator.snapshotToScan, filters, delta)
           filters ++ generatedPartitionFilters
         }
-      scanGenerator.filesForScan(filtersForScan)
+      return recordFrameProfile("Delta", "PrepareDeltaScan.filesForScan.filters") {
+        scanGenerator.filesForScan(filtersForScan)
+      }
     }
   }
 

@@ -27,8 +27,10 @@ import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, Del
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, MicroBatchExecution, StreamingQueryWrapper}
+import org.apache.spark.sql.delta.test.shims.VariantShreddingTestShims
 import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.commons.io.FileUtils
+import org.apache.parquet.hadoop.ParquetFileReader
 import org.scalatest.time.SpanSugar._
 
 import org.apache.spark.SparkConf
@@ -45,8 +47,9 @@ import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 abstract class DeltaSinkTest
-  extends StreamTest
-  with DeltaSQLCommandTest {
+  extends QueryTest
+  with DeltaSQLCommandTest
+  with StreamTest {
 
   override val streamingTimeout = 60.seconds
   import testImplicits._
@@ -429,6 +432,146 @@ class DeltaSinkSuite
     }
   }
 
+  /** Asserts each of `partitionValues` is a physical `col-<uuid>=<value>` dir, not logical. */
+  private def assertPhysicalColumnMappedPartitionDirs(
+      tableRoot: File, partitionValues: Seq[String]): Unit = {
+    val dirNames = Option(tableRoot.listFiles()).getOrElse(Array.empty[File])
+      .filter(_.isDirectory).map(_.getName)
+    partitionValues.foreach { value =>
+      assert(
+        dirNames.count(n => n.startsWith("col-") && n.endsWith("=" + value)) == 1,
+        s"expected one physical partition dir col-*=$value under $tableRoot, " +
+          s"got: ${dirNames.mkString(", ")}")
+      assert(
+        !dirNames.exists(n => !n.startsWith("col-") && n.endsWith("=" + value)),
+        s"did not expect a logical partition dir ending in '=$value' under $tableRoot")
+    }
+  }
+
+  test("partitioned writing into a column-mapped table") {
+    // Runs on V1 here and, via DeltaV2SinkSuite's classification, on the V2 Kernel sink.
+    Seq("name", "id").foreach { mode =>
+      withClue(s"columnMappingMode=$mode") {
+        withColumnMappingConf(mode) {
+          withSinkTarget { (target, checkpointDir) =>
+            val inputData = MemoryStream[Int]
+            val ds = inputData.toDS()
+            val query = startStream(
+              ds.map(i => (i, i * 1000))
+                .toDF("id", "value")
+                .writeStream
+                .partitionBy("id")
+                .option("checkpointLocation", checkpointDir.getCanonicalPath)
+                .format("delta"),
+              target)
+            try {
+              inputData.addData(1, 2, 3)
+              failAfter(streamingTimeout) {
+                query.processAllAvailable()
+              }
+
+              // Data round-trips through a batch read.
+              checkDatasetUnorderly(
+                readTarget(target).as[(Int, Int)],
+                (1, 1000), (2, 2000), (3, 3000))
+
+              // Guard that the auto-created table is actually column-mapped.
+              assert(deltaLogForTarget(target).update().metadata.columnMappingMode.name == mode)
+
+              // Partition pruning returns the right rows.
+              checkDatasetUnorderly(
+                readTarget(target).filter("id = 1").as[(Int, Int)], (1, 1000))
+              checkDatasetUnorderly(
+                readTarget(target).filter("id in (1, 2)").as[(Int, Int)], (1, 1000), (2, 2000))
+
+              val tableRoot = new File(deltaLogForTarget(target).dataPath.toUri)
+              // TODO(#7140): Implement randomized file prefixes in the V2 sink and remove
+              // this V1/V2 physical-layout distinction.
+              if (useDsv2) {
+                assertPhysicalColumnMappedPartitionDirs(tableRoot, Seq("1", "2", "3"))
+              } else {
+                val dataDirs = Option(tableRoot.listFiles()).getOrElse(Array.empty[File])
+                  .filter(_.isDirectory).map(_.getName).filterNot(_ == "_delta_log")
+                assert(
+                  dataDirs.nonEmpty && !dataDirs.exists(_.contains("=")),
+                  s"expected V1's random-prefix layout (data dirs, none of the form col=value), " +
+                    s"got: ${dataDirs.mkString(", ")}")
+              }
+            } finally {
+              query.stop()
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("streaming write shreds variant columns only when the table enables it") {
+    // Runs on V1 here and, via DeltaV2SinkSuite's classification, on the V2 Kernel sink. Where this
+    // Spark version cannot infer a shredding schema nothing shreds, whatever the property says.
+    val shreddingSupported = VariantShreddingTestShims.variantInferShreddingSchemaSupported
+    withSQLConf("spark.sql.variant.writeShredding.enabled" -> "true") {
+      Seq(true, false).foreach { shreddingEnabled =>
+        withClue(s"${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}=$shreddingEnabled") {
+          withSinkTarget { (target, checkpointDir) =>
+            createPreexistingTableAtSinkTarget(
+              target,
+              Seq(
+                IODeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+                IODeltaTable.columnBuilder(spark, "v").dataType("variant").build()),
+              Map(DeltaConfigs.ENABLE_VARIANT_SHREDDING.key -> shreddingEnabled.toString))
+            val inputData = MemoryStream[(Int, String)]
+            val query = startStream(
+              inputData.toDF()
+                .toDF("id", "json")
+                .selectExpr("id", "parse_json(json) AS v")
+                .writeStream
+                .option("checkpointLocation", checkpointDir.getCanonicalPath)
+                .format("delta"),
+              target)
+            try {
+              inputData.addData((1, """{"a":1,"b":"xy"}"""))
+              failAfter(streamingTimeout) {
+                query.processAllAvailable()
+              }
+            } finally {
+              query.stop()
+            }
+
+            assert(
+              targetHasShreddedVariant(target) == (shreddingEnabled && shreddingSupported),
+              "the shredded layout must follow the table property")
+            checkAnswer(
+              readTarget(target).selectExpr(
+                "id", "variant_get(v, '$.a', 'int')", "variant_get(v, '$.b', 'string')"),
+              Row(1, 1, "xy"))
+          }
+        }
+      }
+    }
+  }
+
+  /** Whether any data file in `target`'s current snapshot stores variant column `v` shredded. */
+  private def targetHasShreddedVariant(target: String): Boolean = {
+    val deltaLog = deltaLogForTarget(target)
+    val snapshot = deltaLog.update()
+    // Parquet footers carry physical column names, which differ from `v` under column mapping.
+    val physicalName = DeltaColumnMapping.getPhysicalName(snapshot.schema("v"))
+    val files = snapshot.allFiles.collect().map(_.absolutePath(deltaLog).toString)
+    assert(files.nonEmpty, s"expected at least one data file in $target")
+    files.exists { file =>
+      val reader =
+        ParquetFileReader.open(deltaLog.newDeltaHadoopConf(), new org.apache.hadoop.fs.Path(file))
+      try {
+        val schema = reader.getFooter.getFileMetaData.getSchema
+        schema.getType(schema.getFieldIndex(physicalName)).asGroupType()
+          .containsField("typed_value")
+      } finally {
+        reader.close()
+      }
+    }
+  }
+
   test("work with aggregation + watermark") {
     withSinkTarget { (target, checkpointDir) =>
       val inputData = MemoryStream[Long]
@@ -783,11 +926,13 @@ class DeltaSinkSuite
    */
   private def createPreexistingTableAtSinkTarget(
       target: String,
-      columns: Seq[StructField]
+      columns: Seq[StructField],
+      properties: Map[String, String] = Map.empty
   ): Unit = {
     val builder = IODeltaTable.create(spark)
     if (useNameBasedAccess) builder.tableName(target) else builder.location(target)
     columns.foreach(builder.addColumn)
+    properties.foreach { case (key, value) => builder.property(key, value) }
     builder.execute()
   }
 

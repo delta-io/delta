@@ -21,12 +21,12 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DeltaLog, SingleCommit}
+import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, DomainMetadata, FileAction, InMemoryLogReplay, Metadata, Protocol, RemoveFile, SetTransaction}
-import org.apache.spark.sql.delta.actions.InMemoryLogReplay.{UniqueAddFileTuple, UniqueFileActionTuple, UniqueRemoveFileTuple}
-import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
+import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.hadoop.fs.FileStatus
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.SparkSession
 
@@ -82,6 +82,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
 
   private val hadoopConf = deltaLog.newDeltaHadoopConf()
   private val tableRoot = deltaLog.dataPath
+  // Always use object identity for AMT tables here.
+  private val useDeletionVectorObjectIdentity = true
   private val fs = tableRoot.getFileSystem(hadoopConf)
   private val metadataDir = FileNames.amtMetadataDirPath(tableRoot)
 
@@ -89,25 +91,27 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
    * Materializes the incremental manifest for `attemptVersion` and returns the inline
    * [[Checkpoint]] write result plus its metrics.
    *
-   * @param oldAMTVersion             version the previous AMT checkpoint describes.
-   * @param oldAMTCheckpointProvider  provider for the previous AMT (root, leaves, inline state).
+   * @param oldAMTActionsProvider     provider for the previous AMT (version, root files, leaves,
+   *                                  inline state); loaded once at the start of this write.
    * @param intermediateLogCommits    the commit log files written after the old AMT and up to the
    *                                  last committed version (the window between the old AMT and
    *                                  this commit), in commit order.
    * @param attemptVersion            the version this commit targets.
    * @param actionsToCommit           this commit's actions (empty for a deferred OPTIMIZE
    *                                  CHECKPOINT).
+   * @param snapshotId                random ID of the transaction generating this AMT tree.
    * @param trigger                   trigger name recorded in metrics.
    */
   def writeIncremental(
-      oldAMTVersion: Long,
-      oldAMTCheckpointProvider: AMTCheckpointProvider,
+      oldAMTActionsProvider: BaseAMTActionsProvider,
       intermediateLogCommits: Seq[FileStatus],
       attemptVersion: Long,
       actionsToCommit: Seq[Action],
-      trigger: String): (AMTWriteResult, SingleAMTWriteMetrics) = {
+      snapshotId: Long,
+      trigger: String): AMTWriteResult = {
     val startNanos = System.nanoTime()
-    val oldCheckpoint = oldAMTCheckpointProvider.checkpointAction
+    val oldAMT = oldAMTActionsProvider.load()
+    val oldAMTVersion = oldAMT.version
 
     // ---- Step 0: validate the window is contiguous and lines up with our assumptions. ----
     // The intermediate commits after the old AMT must contiguously cover
@@ -117,18 +121,16 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     // ---- Step 1: gather the actions of all three parts and process them. ----
     // 1.a: old AMT root -- its live root-resident files, plus its inline non-content state
     // (protocol, metadata, setTxns, domainMetadata). Leaf-resident files are NOT read here.
-    val fileActionsFromOldRoot = AMTCheckpointProvider.readLiveRootDataEntries(
-      deltaLog, oldCheckpoint)
+    val fileActionsFromOldRoot = oldAMT.fileActionsFromRoot
     val nonContentFromOldCheckpoint: Seq[Action] =
-      Seq[Action](oldCheckpoint.protocol, oldCheckpoint.metaData) ++
-        oldCheckpoint.txns ++ oldCheckpoint.domainMetadata
+      Seq[Action](oldAMT.protocol, oldAMT.metadata) ++
+        oldAMT.setTransactions ++ oldAMT.domainMetadatas
     // 1.b: the log commits / minor compactions committed after the old AMT, read in parallel (the
-    // MinorCompactionHook primitive). Each segment delta file becomes a SingleCommit keyed by its
-    // version (a compacted delta's version is its endVersion, via getFileVersion).
-    val windowCommits =
-      intermediateLogCommits.map(f => SingleCommit(deltaLog, FileNames.getFileVersion(f), f))
+    // MinorCompactionHook primitive). Each segment delta file becomes a RangedSingleCommit with its
+    // start and end version, so that compacted deltas can be replayed correctly.
+    val windowCommits = intermediateLogCommits.map(RangedSingleCommit(deltaLog, _))
     val actionsFromDeltas =
-      DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsSeq(spark, windowCommits)
+      DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsSeq(spark, windowCommits.map(_.commit))
     // 1.c: this commit attempt's own actions (actionsToCommit).
     val processedActions = new ProcessedActions(
       oldAMTVersion = oldAMTVersion,
@@ -137,15 +139,18 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       windowCommits = windowCommits,
       windowCommitActions = actionsFromDeltas,
       attemptVersion = attemptVersion,
-      actionsToCommit = actionsToCommit)
+      actionsToCommit = actionsToCommit,
+      tableRoot = tableRoot,
+      useDeletionVectorObjectIdentity = useDeletionVectorObjectIdentity)
 
     // ---- Step 2: carry the old leaf pointers forward, patching MDV + CDF positions. ----
     val (carriedLeafPointers, leafPositions) =
       carryForwardLeaves(
-        oldAMTCheckpointProvider,
+        oldAMT.allLeafs,
         processedActions.mdvSupersededBackrefs,
         processedActions.cdfDeletedBackrefs,
-        processedActions.cdfReplacedBackrefs)
+        processedActions.cdfReplacedBackrefs,
+        snapshotId)
 
     // ---- Step 3: build the root DATA entries (with per-file status). ----
     // 3.a: live files -- classify each by whether THIS commit changed it:
@@ -161,7 +166,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       if (processedActions.replacedPaths.contains(add.path)) {
         AMTWriteHelper.modifiedTrackingForDataEntry()
       } else if (add.backReference.isDefined ||
-          processedActions.preCommitLiveKeys.contains(add.toUniqueFileActionTuple)) {
+          processedActions.preCommitLiveKeys.contains(
+            add.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity))) {
         AMTWriteHelper.existingTrackingForDataEntry()
       } else {
         AMTWriteHelper.addedTrackingForDataEntry()
@@ -175,57 +181,67 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       processedActions.cdfNoBackrefRemoves, liveAddFiles, processedActions.rootAndWindowAdds,
       processedActions.commitAddedPaths)
 
+    // The version the tree describes: an inline commit describes itself; a deferred OPTIMIZE
+    // CHECKPOINT (no user actions) describes the last committed version (attemptVersion - 1).
+    val contentTreeVersion =
+      if (actionsToCommit.isEmpty) attemptVersion - 1 else attemptVersion
+    val firstRowIdForNewLeaves = AMTWriteHelper.firstRowIdAfter(
+      processedActions.domainMetadatas.collectFirst {
+        case RowTrackingMetadataDomain(domain) => domain.rowIdHighWaterMark
+      })
+    val newLeafTracking = AMTWriteHelper.NewLeafTracking(
+      contentTreeVersion = contentTreeVersion,
+      snapshotId = snapshotId,
+      firstRowId = firstRowIdForNewLeaves)
+
     // ---- Step 4: spill entries into new leaves if the root would exceed the per-leaf cap. ----
     val fixedRootCount = carriedLeafPointers.size
     val (rootLiveEntries, rootRemoveEntries, spilledLeafPointers) =
-      spillIfNeeded(liveEntries, removeEntries, fixedRootCount, processedActions.postCommitMetadata)
+      spillIfNeeded(liveEntries, removeEntries, fixedRootCount,
+        processedActions.postCommitMetadata, processedActions.postCommitProtocol,
+        newLeafTracking)
     val allLeafPointers = carriedLeafPointers ++ spilledLeafPointers
 
-    // ---- Step 5: write the new root. The post-commit metadata shapes the persisted manifest
-    // schema (the Iceberg partition struct), so every manifest write needs it.
+    // ---- Step 5: write the new root. The post-commit metadata and protocol shape the persisted
+    // manifest schema (the Iceberg partition struct and the typed per-column content stats), so
+    // every manifest write needs them.
     val rootRows =
       allLeafPointers.map(_.wrap) ++
         rootLiveEntries.map(_.wrap) ++
         rootRemoveEntries.map(_.wrap)
     val contentRootBase = AMTWriteHelper.writeRoot(
-      spark, fs, hadoopConf, tableRoot, metadataDir, processedActions.postCommitMetadata, rootRows)
+      spark, fs, hadoopConf, tableRoot, metadataDir, processedActions.postCommitMetadata,
+      processedActions.postCommitProtocol, rootRows,
+      version = contentTreeVersion)
 
     // ---- Step 6: generate the Checkpoint action. ----
-    // The version the tree describes: an inline commit describes itself; a deferred OPTIMIZE
-    // CHECKPOINT (no user actions) describes the last committed version (attemptVersion - 1).
-    val contentStateVersion =
-      if (actionsToCommit.isEmpty) attemptVersion - 1 else attemptVersion
     // An incremental rewrite carries forward the previous tree's last-full-rewrite marker.
-    val lastFullRewriteVersion = oldCheckpoint.contentRoot
-      .lastManifestCommitWithFullRewrite.getOrElse(contentStateVersion)
+    val lastFullRewriteVersion =
+      oldAMT.lastManifestCommitWithFullRewrite.getOrElse(contentTreeVersion)
     val contentRoot = ContentRoot(
       path = contentRootBase.path,
       sizeInBytes = contentRootBase.sizeInBytes,
+      version = contentTreeVersion,
       isIncremental = true,
       lastManifestCommitWithFullRewrite = lastFullRewriteVersion,
       numLeaves = allLeafPointers.size.toLong)
     val checkpoint = Checkpoint(
-      version = contentStateVersion,
+      version = contentTreeVersion,
       contentRoot = contentRoot,
       protocol = processedActions.postCommitProtocol,
       metaData = processedActions.postCommitMetadata,
       domainMetadata = processedActions.domainMetadatas,
       txns = processedActions.transactions,
       sidecars = Seq.empty)
-    val result = AMTWriteResult(
-      contentRootVersion = contentStateVersion,
-      checkpoint = checkpoint,
-      leaves = allLeafPointers,
-      includeActionsInCommitJson = true)
     val numOldLeavesUpdated = carriedLeafPointers.count(p =>
-      leafPositions.newMDVPositionsByLeaf.getOrElse(p.location, Set.empty[Long]).nonEmpty)
+      leafPositions.newMDVPositionsByLeaf.getOrElse(p.location, Set.empty[Int]).nonEmpty)
     // Per-status breakdown over every leaf pointer in the new tree (carried + newly spilled).
     val leavesByStatus = allLeafPointers.groupBy(_.tracking.status).map {
       case (status, ps) => status -> ps.size
     }
     val numStaleDeletedLeavesDropped =
-      oldAMTCheckpointProvider.leaves.count(_.tracking.status == Tracking.Status.Deleted)
-    def positionCount(byLeaf: Map[String, Set[Long]]): Int = byLeaf.valuesIterator.map(_.size).sum
+      oldAMT.allLeafs.count(_.tracking.status == Tracking.Status.Deleted)
+    def positionCount(byLeaf: Map[String, Set[Int]]): Int = byLeaf.valuesIterator.map(_.size).sum
     // Per-status breakdown over the new tree's root-resident DATA entries (live + remove entries).
     val rootEntriesByStatus = (rootLiveEntries ++ rootRemoveEntries)
       .groupBy(_.tracking.status).map { case (status, es) => status -> es.size }
@@ -247,13 +263,28 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       numLeavesModifiedStatus = leavesByStatus.getOrElse(Tracking.Status.Modified, 0),
       numLeavesDeletedStatus = leavesByStatus.getOrElse(Tracking.Status.Deleted, 0),
       numStaleDeletedLeavesDropped = numStaleDeletedLeavesDropped)
+    val numRootLiveDataEntries = Tracking.Status.liveEntryStatuses.toSeq
+      .map(status => rootEntriesByStatus.getOrElse(status, 0)).sum.toLong
+    val numRootTombstoneDataEntries = Tracking.Status.tombstoneEntryStatuses.toSeq
+      .map(status => rootEntriesByStatus.getOrElse(status, 0)).sum.toLong
     val metric = SingleAMTWriteMetrics(
       trigger = trigger,
       // This writer only ever produces an incremental tree.
-      incremental = "true",
+      incremental = true,
       materializeDurationMs = NANOSECONDS.toMillis(System.nanoTime() - startNanos),
+      contentRoot = checkpoint.contentRoot,
+      numRootLiveDataEntries = numRootLiveDataEntries,
+      numRootTombstoneDataEntries = numRootTombstoneDataEntries,
+      leaves = allLeafPointers,
+      numSetTransactions = checkpoint.txns.size.toLong,
+      numDomainMetadata = checkpoint.domainMetadata.size.toLong,
       incrementalWriteMetrics = Some(incrementalWriteMetrics))
-    (result, metric)
+    AMTWriteResult(
+      contentRootVersion = contentTreeVersion,
+      checkpoint = checkpoint,
+      leaves = allLeafPointers,
+      includeActionsInCommitJson = true,
+      amtWriteMetrics = metric)
   }
 
   /**
@@ -273,30 +304,32 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
    * Returns the carried-forward pointers and an [[MDVAndCDFPositions]] that has been set per-leaf.
    */
   private def carryForwardLeaves(
-      provider: AMTCheckpointProvider,
+      oldLeaves: Seq[DataManifestEntry],
       mdvSupersededBackrefs: Seq[BackReference],
       cdfDeletedBackrefs: Seq[BackReference],
-      cdfReplacedBackrefs: Seq[BackReference])
+      cdfReplacedBackrefs: Seq[BackReference],
+      snapshotId: Long)
       : (Seq[DataManifestEntry], MDVAndCDFPositions) = {
     // A (leaf, position) can be superseded multiple times, e.g. a leaf file removed, re-added and
     // removed again. We use a Set to dedupe the positions so the count matches the number of bits
     // gained by the MDV or CDF bitmap.
-    def positionsByLeaf(backrefs: Seq[BackReference]): Map[String, Set[Long]] =
+    def positionsByLeaf(backrefs: Seq[BackReference]): Map[String, Set[Int]] =
       backrefs.map(br => br.manifest -> br.pos)
         .groupBy(_._1).map { case (leaf, pairs) => leaf -> pairs.map(_._2).toSet }
     val newMDVPositionsByLeaf = positionsByLeaf(mdvSupersededBackrefs)
     val deletedPositionsByLeaf = positionsByLeaf(cdfDeletedBackrefs)
     val replacedPositionsByLeaf = positionsByLeaf(cdfReplacedBackrefs)
-    val pointers = provider.leaves.flatMap { pointer =>
+    val pointers = oldLeaves.flatMap { pointer =>
       if (pointer.tracking.status == Tracking.Status.Deleted) None
       else {
         val newMdvPositions =
-          newMDVPositionsByLeaf.getOrElse(pointer.location, Set.empty[Long]).toSeq
+          newMDVPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
         val deletedPositions =
-          deletedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Long]).toSeq
+          deletedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
         val replacedPositions =
-          replacedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Long]).toSeq
-        Some(carryForwardOneLeaf(pointer, newMdvPositions, deletedPositions, replacedPositions))
+          replacedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
+        Some(carryForwardOneLeaf(
+          pointer, newMdvPositions, deletedPositions, replacedPositions, snapshotId))
       }
     }
     (pointers,
@@ -306,24 +339,36 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
   // Visible for testing.
   private[amt] def carryForwardOneLeaf(
       pointer: DataManifestEntry,
-      newMdvPositions: Seq[Long],
-      deletedPositions: Seq[Long],
-      replacedPositions: Seq[Long]): DataManifestEntry = {
+      newMdvPositions: Seq[Int],
+      deletedPositions: Seq[Int],
+      replacedPositions: Seq[Int],
+      snapshotId: Long): DataManifestEntry = {
+    // The file counts in manifest_info describe the leaf when it was initially created. They are
+    // not updated when the leaf is carried forward; only its manifest deletion vector can grow.
     val liveFileCount = pointer.manifest_info.liveFilesCount
     val tombstoneFileCount = pointer.manifest_info.tombstoneFilesCount
-    if (liveFileCount > 0 && tombstoneFileCount > 0) {
-      throw new IllegalStateException(
-        "Leaves having mix of live files and tombstones are not supported yet")
-    }
-    if (newMdvPositions.nonEmpty && liveFileCount == 0) {
-      throw new IllegalStateException(
-        s"Leaf ${pointer.location} holds no live file but gained new MDV positions.")
-    }
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = liveFileCount == 0 || tombstoneFileCount == 0,
+      opTypeSuffix = AMTUsageLogs.ALERT_MIXED_LEAF_CONTENT,
+      message = "ManifestInfo representing a leaf's initial state must not contain both live " +
+        "files and tombstones.",
+      deltaLog = deltaLog,
+      data = Map("liveFileCount" -> liveFileCount, "tombstoneFileCount" -> tombstoneFileCount))
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = newMdvPositions.isEmpty || liveFileCount > 0,
+      opTypeSuffix = AMTUsageLogs.ALERT_MDV_WITHOUT_LIVE_FILES,
+      message = s"Leaf ${pointer.location} holds no live file but gained new MDV positions.",
+      deltaLog = deltaLog,
+      data = Map(
+        "leafLocation" -> pointer.location,
+        "liveFileCount" -> liveFileCount,
+        "tombstoneFileCount" -> tombstoneFileCount,
+        "newMdvPositionCount" -> newMdvPositions.size))
     val (tracking, manifestInfo) =
       if (tombstoneFileCount > 0) {
         // A carried leaf with no live file -- a tombstone-only leaf born ADDED last commit --
         // decays to DELETED so the next AMT drops it.
-        AMTWriteHelper.deletedTrackingForCarriedLeaf(pointer)
+        AMTWriteHelper.deletedTrackingForCarriedLeaf(pointer, snapshotId)
       } else {
         // this case means tombstoneFileCount = 0 and liveFileCount >= 0
         // In this scenario, mark the leaf as DELETED if any of below is true:
@@ -334,9 +379,9 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
         if (newMdvPositions.nonEmpty) {
           // The MDV grew this commit: MODIFIED, or DELETED once every live entry is masked.
           AMTWriteHelper.modifiedOrDeletedTrackingForLeaf(
-            pointer, newMdvPositions, deletedPositions, replacedPositions)
-        } else if (pointer.manifest_info.dv_cardinality.getOrElse(0L) == pointer.record_count) {
-          AMTWriteHelper.deletedTrackingForCarriedLeaf(pointer)
+            pointer, newMdvPositions, deletedPositions, replacedPositions, snapshotId)
+        } else if (pointer.manifest_info.dvCardinality == pointer.record_count) {
+          AMTWriteHelper.deletedTrackingForCarriedLeaf(pointer, snapshotId)
         } else {
           // Untouched leaf (no new MDVs) that still holds live files: carry it forward EXISTING.
           AMTWriteHelper.existingTrackingForLeaf(pointer)
@@ -363,32 +408,44 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       commitAddedPaths: Set[String]): Seq[DataEntry] = {
     if (withoutBackrefRemoves.isEmpty) return Seq.empty
     val liveKeys: Set[UniqueFileActionTuple] =
-      liveAdds.iterator.map(_.toUniqueFileActionTuple).toSet
+      liveAdds.iterator
+        .map(_.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity))
+        .toSet
     // AddFile lookup from root + window: the removed file's add predates this commit (a replace
     // re-adds the same path under a new DV -- a distinct key -- so this still finds the prior add).
     val addByKey: Map[UniqueFileActionTuple, AddFile] =
-      rootAndWindowAdds.map(a => a.toUniqueFileActionTuple -> a).toMap
+      rootAndWindowAdds
+        .map(a => a.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity) -> a)
+        .toMap
     withoutBackrefRemoves.map { r =>
-      val removeKey = r.toUniqueFileActionTuple
+      val removeKey = r.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity)
       // Two invariants a no-backref remove must satisfy (it targets a root-resident or
       // window-added file, never a leaf); violating either means a corrupt tree:
       //   - it is net-removed, so its (path, dv) is absent from the live set (a still-live key
       //     means a malformed add + remove of the same key in one commit); and
       //   - its originating add is present among root + window adds.
-      if (liveKeys.contains(removeKey)) {
-        throw new IllegalStateException(
+      AMTUtils.invariantCheckWithLogging(
+        checkInvariant = !liveKeys.contains(removeKey),
+        opTypeSuffix = AMTUsageLogs.ALERT_NO_BACKREF_REMOVE_STILL_LIVE,
+        message =
           s"Net-removed no-backref file ${r.path} (key $removeKey) is still in the live set; " +
-            "a file cannot be both removed and live in the same commit.")
-      }
-      val priorAddFile = addByKey.get(removeKey).getOrElse {
-        throw new IllegalStateException(
-          s"No originating AddFile for net-removed no-backref file ${r.path} (key " +
-            s"$removeKey); cannot build its CDF root entry.")
-      }
+            "a file cannot be both removed and live in the same commit.",
+        deltaLog = deltaLog,
+        data = Map("filePath" -> r.path, "removeKey" -> removeKey.toString))
+      AMTUtils.invariantCheckWithLogging(
+        checkInvariant = addByKey.contains(removeKey),
+        opTypeSuffix = AMTUsageLogs.ALERT_NO_BACKREF_REMOVE_MISSING_ADD,
+        message = s"No originating AddFile for net-removed no-backref file ${r.path} (key " +
+          s"$removeKey); cannot build its CDF root entry.",
+        deltaLog = deltaLog,
+        data = Map("filePath" -> r.path, "removeKey" -> removeKey.toString))
+      val priorAddFile = addByKey(removeKey)
       val tracking =
         if (commitAddedPaths.contains(r.path)) AMTWriteHelper.replacedTrackingForDataEntry()
         else AMTWriteHelper.removedTrackingForDataEntry()
-      DataEntry.fromAddFile(priorAddFile, tracking, tableRoot)
+      // scalastyle:off removeFile // This calls a DataEntry factory, not a RemoveFile constructor.
+      DataEntry.fromRemoveFile(priorAddFile, r, tracking, tableRoot)
+      // scalastyle:on removeFile
     }
   }
 
@@ -403,7 +460,10 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       liveEntries: Seq[DataEntry],
       removeEntries: Seq[DataEntry],
       fixedRootCount: Int,
-      metadata: Metadata): (Seq[DataEntry], Seq[DataEntry], Seq[DataManifestEntry]) = {
+      metadata: Metadata,
+      protocol: Protocol,
+      newLeafTracking: AMTWriteHelper.NewLeafTracking)
+      : (Seq[DataEntry], Seq[DataEntry], Seq[DataManifestEntry]) = {
     val spilled = ArrayBuffer.empty[DataManifestEntry]
     var remainingLive = liveEntries
     var remainingRemoves = removeEntries
@@ -412,13 +472,15 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     while (rootRowCount > entriesPerLeaf && remainingLive.nonEmpty) {
       val (batch, rest) = remainingLive.splitAt(entriesPerLeaf)
       spilled += AMTWriteHelper.writeLeaf(
-        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, batch)
+        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, protocol, batch,
+        newLeafTracking)
       remainingLive = rest
     }
     while (rootRowCount > entriesPerLeaf && remainingRemoves.nonEmpty) {
       val (batch, rest) = remainingRemoves.splitAt(entriesPerLeaf)
       spilled += AMTWriteHelper.writeLeaf(
-        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, batch)
+        spark, fs, hadoopConf, tableRoot, metadataDir, metadata, protocol, batch,
+        newLeafTracking)
       remainingRemoves = rest
     }
     (remainingLive, remainingRemoves, spilled.toSeq)
@@ -445,17 +507,40 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
   }
 }
 
+/** A commit reader paired with the inclusive version range its actions cover. */
+private class RangedSingleCommit private (
+  val commit: SingleCommit,
+  val startVersion: Long,
+  val endVersion: Long)
+
+private object RangedSingleCommit {
+  def apply(deltaLog: DeltaLog, file: FileStatus): RangedSingleCommit = {
+    val (startVersion, endVersion) = file match {
+      case FileNames.CompactedDeltaFile(_, start, end) => (start, end)
+      case _ =>
+        val version = FileNames.deltaVersion(file)
+        (version, version)
+    }
+    val commit = SingleCommit(deltaLog, endVersion, file)
+    new RangedSingleCommit(commit, startVersion, endVersion)
+  }
+}
+
 private class ProcessedActions(
     oldAMTVersion: Long,
     oldRootAdds: Seq[AddFile],
     nonContentFromOldCheckpoint: Seq[Action],
-    windowCommits: Seq[SingleCommit],
+    windowCommits: Seq[RangedSingleCommit],
     windowCommitActions: Seq[Seq[Action]],
     attemptVersion: Long,
-    actionsToCommit: Seq[Action]) {
-
+    actionsToCommit: Seq[Action],
+    tableRoot: Path,
+    useDeletionVectorObjectIdentity: Boolean) {
   private val replay = new InMemoryLogReplay(
-    minFileRetentionTimestamp = None, minSetTransactionRetentionTimestamp = None)
+    minFileRetentionTimestamp = None,
+    minSetTransactionRetentionTimestamp = None,
+    tableRoot = tableRoot,
+    useDeletionVectorObjectIdentity = useDeletionVectorObjectIdentity)
   private val rootAndWindowAddsBuf = ArrayBuffer.empty[AddFile]
   private val mdvSupersededBuf = ArrayBuffer.empty[BackReference]
   // This commit's own file actions, split out for CDF and re-add classification.
@@ -465,12 +550,14 @@ private class ProcessedActions(
   // Log replay of part-1/2/3.
   replay.append(oldAMTVersion, oldRootAdds.iterator ++ nonContentFromOldCheckpoint.iterator)
   windowCommits.zip(windowCommitActions).foreach { case (commit, actions) =>
-    replay.append(commit.version, actions.iterator)
+    replay.append(commit.startVersion, commit.endVersion, actions.iterator)
   }
   // Keys of files live in the {old root + window}'s replay BEFORE this commit's actions; a
   // live add already here (or carrying a leaf back reference) is EXISTING, not ADDED.
   val preCommitLiveKeys: Set[UniqueFileActionTuple] =
-    replay.allFiles.iterator.map(_.toUniqueFileActionTuple).toSet
+    replay.allFiles.iterator
+      .map(_.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity))
+      .toSet
   replay.append(attemptVersion, actionsToCommit.iterator)
 
   // One more pass over part-1/2/3 to initialize the auxiliary buffers above.
@@ -545,39 +632,58 @@ private class ProcessedActions(
   // ---- Commit-shape invariants, checked once at construction. ----
   // True if `add` re-commits a file already live before this commit (its key is in the pre-commit
   // live set, or it carries a back reference to an existing leaf slot) and is not a replace (a
-  // replace changes the DV, a distinct key). Such a re-add is a metadata-only refresh.
-  private def isReCommittedLiveAdd(add: AddFile): Boolean =
+  // replace changes the DV, a distinct key). Such a re-add is only valid with dataChange=false.
+  private def isReCommittedLiveAdd(add: AddFile): Boolean = {
+    val preCommitLiveKeysContainAddFile = preCommitLiveKeys.contains(
+      add.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity))
     !replacedPaths.contains(add.path) &&
-      (add.backReference.isDefined || preCommitLiveKeys.contains(add.toUniqueFileActionTuple))
+      (add.backReference.isDefined || preCommitLiveKeysContainAddFile)
+  }
   val reCommittedLiveAdd: Option[AddFile] = commitAddsBuf.find(isReCommittedLiveAdd)
   if (dataChange) {
     // (1) A data-changing commit must not re-add a file already live before it: a same-key re-add
-    // is a metadata-only refresh, so it must carry dataChange=false.
+    // must carry dataChange=false.
     reCommittedLiveAdd.foreach { add =>
-      throw new IllegalStateException(
-        s"Re-adding already-live file ${add.path} with dataChange=true is not allowed; a " +
-          "same-key re-add must be a metadata-only change (dataChange=false).")
+      AMTUtils.invariantCheckWithLogging(
+        checkInvariant = false,
+        opTypeSuffix = AMTUsageLogs.ALERT_DATA_CHANGE_READD,
+        message = s"Re-adding already-live file ${add.path} with dataChange=true is not allowed; " +
+          "a same-key re-add must use dataChange=false.",
+        data = Map("filePath" -> add.path, "dataChange" -> dataChange))
     }
   } else if (commitRemovesBuf.nonEmpty) {
-    // (2) A metadata-only commit that also removes files is a compaction (OPTIMIZE/REORG): its adds
-    // are freshly written files, so none may re-add a file already live before it.
+    // (2) A dataChange=false commit that also removes files is a compaction (OPTIMIZE/REORG):
+    // Its adds are freshly written files, so none may re-add a file already live before it.
     reCommittedLiveAdd.foreach { add =>
-      throw new IllegalStateException(
-        s"A metadata-only commit that removes files must not re-add an already-live file, but " +
-          s"${add.path} is re-added.")
+      AMTUtils.invariantCheckWithLogging(
+        checkInvariant = false,
+        opTypeSuffix = AMTUsageLogs.ALERT_COMPACTION_READD,
+        message = "A dataChange=false commit with removes must not re-add an already-live file, " +
+          s"but ${add.path} is re-added.",
+        data = Map(
+          "filePath" -> add.path,
+          "dataChange" -> dataChange,
+          "removeCount" -> commitRemovesBuf.size))
     }
   } else {
-    // (3) A metadata-only commit with no removes is a metadata refresh (e.g. stats/tags update):
+    // (3) A dataChange=false commit with no removes is a metadata refresh (e.g. stats/tags
+    // update):
     // every add must re-commit a file already live before it, under the same (path, dv) key.
     commitAddsBuf.find(a => !isReCommittedLiveAdd(a)).foreach { add =>
-      throw new IllegalStateException(
-        s"A metadata-only commit with no removes must re-add only already-live files, but " +
-          s"${add.path} is a new file.")
+      AMTUtils.invariantCheckWithLogging(
+        checkInvariant = false,
+        opTypeSuffix = AMTUsageLogs.ALERT_METADATA_REFRESH_DATA_CHANGE_FALSE_ADDS_NEW_FILE,
+        message = "A dataChange=false commit with no removes must re-add only already-live " +
+          s"files, but ${add.path} is a new file.",
+        data = Map(
+          "filePath" -> add.path,
+          "dataChange" -> dataChange,
+          "removeCount" -> commitRemovesBuf.size))
     }
   }
 }
 
 private case class MDVAndCDFPositions(
-    newMDVPositionsByLeaf: Map[String, Set[Long]],
-    deleteCDFPositionByLeaf: Map[String, Set[Long]],
-    replaceCDFPositionByLeaf: Map[String, Set[Long]])
+    newMDVPositionsByLeaf: Map[String, Set[Int]],
+    deleteCDFPositionByLeaf: Map[String, Set[Int]],
+    replaceCDFPositionByLeaf: Map[String, Set[Int]])

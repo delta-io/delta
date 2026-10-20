@@ -17,18 +17,17 @@ package io.delta.spark.internal.v2.write;
 
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
-import io.delta.spark.internal.v2.utils.SchemaUtils;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
+import org.apache.spark.sql.delta.DeltaConfigs;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
@@ -49,6 +48,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   private final String tablePath;
   private final Configuration hadoopConf;
   private final Snapshot initialSnapshot;
+  private final Optional<CatalogTable> catalogTable;
   private final DeltaV2SnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -58,7 +58,8 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
    * @param engine Kernel engine (persisted in DeltaV2Table, shared across operations)
    * @param tablePath filesystem path to the Delta table root
    * @param hadoopConf Hadoop configuration (with merged table options)
-   * @param initialSnapshot Kernel snapshot loaded at table construction time
+   * @param initialSnapshot snapshot loaded at table construction time
+   * @param catalogTable the catalog table containing table metadata
    * @param snapshotManager reloads the latest snapshot; used by the streaming write to build each
    *     epoch's commit against the current table state (see {@link DeltaV2StreamingWrite})
    * @param dataSchema the table's data (non-partition) schema, from DeltaV2Table's SchemaProvider
@@ -71,6 +72,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       String tablePath,
       Configuration hadoopConf,
       Snapshot initialSnapshot,
+      Optional<CatalogTable> catalogTable,
       DeltaV2SnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
@@ -79,6 +81,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
+    this.catalogTable = requireNonNull(catalogTable, "catalogTable is null");
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
@@ -91,15 +94,18 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
 
     // TODO: support partitioned IcebergCompat / materializePartitionColumns writes.
     if (!partitionSchema.isEmpty()) {
-      SnapshotImpl snapshotImpl = (SnapshotImpl) initialSnapshot;
-      Metadata metadata = snapshotImpl.getMetadata();
-      Protocol protocol = snapshotImpl.getProtocol();
       boolean icebergCompat =
-          TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata)
-              || TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(
+                  initialSnapshot.metadata().getConfiguration())
+              || TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(
+                  initialSnapshot.metadata().getConfiguration());
       // Detect the materializePartitionColumns writer feature by its protocol name.
       boolean materializePartitionColumns =
-          protocol.getWriterFeatures().contains("materializePartitionColumns");
+          initialSnapshot.protocol().getWriterFeatures() != null
+              && initialSnapshot
+                  .protocol()
+                  .getWriterFeatures()
+                  .contains("materializePartitionColumns");
       if (icebergCompat || materializePartitionColumns) {
         throw new UnsupportedOperationException(
             "DSv2 partitioned writes are not supported on tables that materialize partition "
@@ -108,6 +114,9 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       }
     }
 
+    // Resolved once here through the same V1 accessor (alternate keys and default included) and
+    // passed down as a boolean, so the batch and streaming writes share one decision.
+    boolean variantShreddingEnabled = isVariantShreddingEnabled(initialSnapshot);
     // Returns a mode-dispatching Write: toBatch() -> DeltaV2BatchWrite (batch commit off
     // initialSnapshot), toStreaming() -> DeltaV2StreamingWrite (per-epoch commit off the latest
     // snapshot via snapshotManager). Both modes share the executor-side write-state construction.
@@ -116,17 +125,29 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         hadoopConf,
         tablePath,
         initialSnapshot,
+        catalogTable,
         snapshotManager,
         dataSchema,
         partitionSchema,
-        writeInfo);
+        writeInfo,
+        variantShreddingEnabled);
+  }
+
+  /**
+   * Whether {@code snapshot} opted into shredded variant writes.
+   *
+   * <p>Read through the V1 {@link DeltaConfigs} accessor so alternate property keys and the
+   * property default are handled exactly as the V1 write path handles them. Package-visible because
+   * the streaming commit re-reads it off a reloaded snapshot to detect a mid-query change.
+   */
+  static boolean isVariantShreddingEnabled(Snapshot snapshot) {
+    return (Boolean) DeltaConfigs.ENABLE_VARIANT_SHREDDING().fromMetaData(snapshot.metadata());
   }
 
   static void validateDataSchema(Snapshot initialSnapshot, StructType dataSchema) {
     // Validate data schema against table schema using the same utility as V1
     // (ImplicitMetadataOperation.updateMetadata -> SchemaMergingUtils.mergeSchemas).
-    StructType tableSchema =
-        SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
+    StructType tableSchema = initialSnapshot.schema();
     // Strip column mapping metadata (physical names, IDs) so mergeSchemas compares
     // only logical types - matches V1's dropColumnMappingMetadata call.
     StructType cleanTableSchema =

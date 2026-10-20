@@ -15,7 +15,6 @@
  */
 package io.delta.spark.internal.v2.read;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import java.util.Optional;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -23,6 +22,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.StructType;

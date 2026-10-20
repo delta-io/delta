@@ -35,6 +35,7 @@ import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContex
 import io.delta.spark.internal.v2.read.metadata.MetadataStructReadFunction;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructSchemaContext;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -58,6 +59,7 @@ import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.delta.RowIndexFilterType;
+import org.apache.spark.sql.delta.stats.DeltaScan;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.FilePartition$;
@@ -85,6 +87,7 @@ import org.apache.spark.sql.types.TimestampType;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.Function1;
 import scala.Option;
+import scala.Some;
 import scala.Tuple2;
 import scala.collection.Iterator;
 import scala.collection.JavaConverters;
@@ -132,6 +135,30 @@ public class PartitionUtils {
     long bytesPerCore = calculatedTotalBytes / minPartitionNum;
 
     return Math.min(defaultMaxSplitBytes, Math.max(openCostInBytes, bytesPerCore));
+  }
+
+  /**
+   * Materializes selected AddFiles only when a batch needs physical input partitions. Optimizer
+   * statistics and validation consumers retain the AddFiles without constructing partition rows,
+   * resolving paths, or serializing DV metadata.
+   */
+  public static InputPartition[] planInputPartitions(
+      SparkSession sparkSession,
+      DeltaScan deltaScan,
+      StructType partitionSchema,
+      String tablePath,
+      ZoneId zoneId,
+      Configuration hadoopConf,
+      SQLConf sqlConf) {
+    List<org.apache.spark.sql.delta.actions.AddFile> selectedFiles =
+        CollectionConverters.asJava(deltaScan.files());
+    List<PartitionedFile> partitionedFiles = new ArrayList<>(selectedFiles.size());
+    long totalBytes = 0L;
+    for (org.apache.spark.sql.delta.actions.AddFile addFile : selectedFiles) {
+      partitionedFiles.add(buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId));
+      totalBytes += addFile.size();
+    }
+    return planInputPartitions(sparkSession, partitionedFiles, totalBytes, hadoopConf, sqlConf);
   }
 
   /**
@@ -482,7 +509,7 @@ public class PartitionUtils {
     if (!cdcFile.isAddCDCFile()) {
       cdcConstants.put(CDCSchemaContext.CDC_TYPE_COLUMN, cdcFile.getChangeType());
     }
-    Optional<String> effectiveDv = cdcFile.getEffectiveDv();
+    Optional<String> effectiveDv = ScalaUtils.toJavaOptional(cdcFile.getEffectiveDv());
     scala.collection.immutable.Map<String, Object> metadata =
         effectiveDv.isPresent()
             ? buildDvMetadata(effectiveDv.get(), cdcFile.getDvFilterType())
@@ -627,11 +654,13 @@ public class PartitionUtils {
     // `fileConstantMetadataExtractors`).
     boolean tableSupportsDV = tableSupportsDeletionVectors(snapshot);
     boolean optimizationsEnabled = !tableSupportsDV;
-    Option<Boolean> useMetadataRowIndex =
-        tableSupportsDV ? Option.apply(Boolean.FALSE) : Option.empty();
     DeltaParquetFileFormatV2 deltaFormat =
         createDeltaParquetFileFormat(
-            snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex, isWriteTimeCDCRead);
+            snapshot,
+            tablePath,
+            optimizationsEnabled,
+            tableSupportsDV ? Option.apply(false) : Option.empty(),
+            isWriteTimeCDCRead);
 
     // Build the metadata context only when the scan requested `_metadata`. The context owns the
     // pruned struct, the parquet read schema (with row-tracking helper columns when needed),
@@ -754,7 +783,8 @@ public class PartitionUtils {
         optimizationsEnabled,
         Option.apply(tablePath),
         isCDCRead,
-        useMetadataRowIndex);
+        // Preserve Some(null) while inferring the Scala constructor's expected Option type.
+        useMetadataRowIndex.isDefined() ? new Some<>(useMetadataRowIndex.get()) : Option.empty());
   }
 
   /**

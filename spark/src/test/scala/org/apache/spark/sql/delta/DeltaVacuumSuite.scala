@@ -1540,21 +1540,45 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
 
   test("running vacuum on a catalog managed table should fail") {
     withCatalogManagedTable() { tableName =>
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val untrackedFile = new Path(deltaLog.dataPath, "untracked-file")
+      val fs = untrackedFile.getFileSystem(deltaLog.newDeltaHadoopConf())
+      fs.create(untrackedFile).close()
+
       checkError(
         intercept[DeltaUnsupportedOperationException] {
           spark.sql(s"VACUUM $tableName")
         },
         "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
-        parameters = Map("operation" -> "VACUUM")
+        parameters = Map("operation" -> "DATA_CLEANUP")
       )
+      assert(fs.exists(untrackedFile))
       checkError(
         intercept[DeltaUnsupportedOperationException] {
           spark.sql(s"VACUUM $tableName DRY RUN")
         },
         "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
-        parameters = Map("operation" -> "VACUUM")
+        parameters = Map("operation" -> "DATA_CLEANUP")
       )
+      assert(fs.exists(untrackedFile))
     }
+  }
+}
+
+
+// Runs the full DeltaVacuumSuite with the protection-set tombstones sourced from commit traversal
+// instead of the reconstructed checkpoint state (as they are for AMT / Delta on Iceberg V4 tables).
+class DeltaVacuumTombstonesFromCommitsSuite extends DeltaVacuumSuite {
+  override def sparkConf: SparkConf = {
+    super.sparkConf.set(
+      DeltaSQLConf.VACUUM_PROTECTION_SET_TOMBSTONES_FROM_COMMITS_ENABLED.key, "true")
+  }
+}
+
+class DeltaVacuumLiteTombstonesFromCommitsSuite extends DeltaLiteVacuumSuite {
+  override def sparkConf: SparkConf = {
+    super.sparkConf.set(
+      DeltaSQLConf.VACUUM_PROTECTION_SET_TOMBSTONES_FROM_COMMITS_ENABLED.key, "true")
   }
 }
 

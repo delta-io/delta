@@ -20,7 +20,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -38,6 +37,7 @@ import java.util.Set;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
+import org.apache.spark.sql.delta.Snapshot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -54,8 +54,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_volatile_snapshot";
     createEmptyTestTable(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     org.apache.spark.sql.delta.Snapshot deltaSnapshot = deltaLog.unsafeVolatileSnapshot();
     Snapshot kernelSnapshot = snapshotManager.loadLatestSnapshot();
@@ -63,7 +62,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     spark.sql(String.format("INSERT INTO %s VALUES (4, 'David')", testTableName));
 
     assertEquals(0L, deltaSnapshot.version());
-    assertEquals(deltaSnapshot.version(), kernelSnapshot.getVersion());
+    assertEquals(deltaSnapshot.version(), kernelSnapshot.version());
   }
 
   @Test
@@ -71,12 +70,11 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_update";
     createEmptyTestTable(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
 
     Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
-    assertEquals(0L, initialSnapshot.getVersion());
+    assertEquals(0L, initialSnapshot.version());
 
     spark.sql(String.format("INSERT INTO %s VALUES (4, 'David')", testTableName));
 
@@ -86,10 +84,10 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     org.apache.spark.sql.delta.Snapshot cachedSnapshot = deltaLog.unsafeVolatileSnapshot();
     Snapshot kernelcachedSnapshot = snapshotManager.loadLatestSnapshot();
 
-    assertEquals(1L, updatedSnapshot.getVersion());
-    assertEquals(deltaSnapshot.version(), updatedSnapshot.getVersion());
-    assertEquals(1L, kernelcachedSnapshot.getVersion());
-    assertEquals(cachedSnapshot.version(), kernelcachedSnapshot.getVersion());
+    assertEquals(1L, updatedSnapshot.version());
+    assertEquals(deltaSnapshot.version(), updatedSnapshot.version());
+    assertEquals(1L, kernelcachedSnapshot.version());
+    assertEquals(cachedSnapshot.version(), kernelcachedSnapshot.version());
   }
 
   @Test
@@ -97,12 +95,11 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_multiple_updates";
     createEmptyTestTable(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
 
-    assertEquals(0L, snapshotManager.loadLatestSnapshot().getVersion());
+    assertEquals(0L, snapshotManager.loadLatestSnapshot().version());
 
     for (int i = 0; i < 3; i++) {
       spark.sql(
@@ -114,7 +111,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
       long expectedVersion = i + 1;
       assertEquals(expectedVersion, deltaSnapshot.version());
-      assertEquals(expectedVersion, kernelSnapshot.getVersion());
+      assertEquals(expectedVersion, kernelSnapshot.version());
     }
   }
 
@@ -140,8 +137,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_commit_past";
     setupTableWithDeletedVersions(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Thread.sleep(100);
     Timestamp timestamp = new Timestamp(System.currentTimeMillis());
@@ -175,8 +171,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_commit_future_last";
     setupTableWithDeletedVersions(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Timestamp futureTimestamp = new Timestamp(System.currentTimeMillis() + 10000);
 
@@ -208,8 +203,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_commit_future_not_recreatable";
     setupTableWithDeletedVersions(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Timestamp futureTimestamp = new Timestamp(System.currentTimeMillis() + 10000);
 
@@ -241,8 +235,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_commit_early";
     setupTableWithDeletedVersions(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Timestamp earlyTimestamp = new Timestamp(0);
 
@@ -274,8 +267,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_commit_early_not_recreatable";
     setupTableWithDeletedVersions(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Timestamp earlyTimestamp = new Timestamp(0);
 
@@ -354,8 +346,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_version_" + testName;
     setupTableWithDeletedVersions(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
 
     if (shouldThrow) {
@@ -416,8 +407,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_metadata_" + scenario;
     setupTableWithMetadataChangeAtV2(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Map<Long, Metadata> result =
         StreamingHelper.collectMetadataActionsFromRangeUnsafe(
@@ -433,8 +423,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_metadata_content";
     setupTableWithMetadataChangeAtV2(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Map<Long, Metadata> result =
         StreamingHelper.collectMetadataActionsFromRangeUnsafe(
@@ -493,8 +482,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_protocol_" + scenario;
     setupTableWithProtocolUpgradeAtV2(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Map<Long, Protocol> result =
         StreamingHelper.collectProtocolActionsFromRangeUnsafe(
@@ -510,8 +498,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_protocol_content";
     setupTableWithProtocolUpgradeAtV2(testTablePath, testTableName);
-    snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Map<Long, Protocol> result =
         StreamingHelper.collectProtocolActionsFromRangeUnsafe(

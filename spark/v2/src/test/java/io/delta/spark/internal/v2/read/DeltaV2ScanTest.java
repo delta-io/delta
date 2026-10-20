@@ -11,11 +11,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogColumnStat;
@@ -31,6 +32,10 @@ import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
+import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.actions.AddFile;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -511,7 +516,10 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     List<PartitionedFile> afterDppFiles = getPartitionedFiles(deltaV2Scan);
     long afterDppTotalBytes = getTotalBytes(deltaV2Scan);
     long afterDppEstimatedSize = getEstimatedSizeInBytes(deltaV2Scan);
-    assert (beforeDppFiles.containsAll(afterDppFiles));
+    // Compare by file path: each getPartitionedFiles call rebuilds fresh PartitionedFile instances
+    // (physical input partitions are materialized on demand), so the surviving files are a subset
+    // by path rather than by object identity.
+    assert (partitionedFilePaths(beforeDppFiles).containsAll(partitionedFilePaths(afterDppFiles)));
     assert (beforeDppTotalBytes >= afterDppTotalBytes);
 
     List<PartitionedFile> expectedPartitionFilesAfterDpp = new ArrayList<>();
@@ -527,17 +535,21 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     }
 
     assertEquals(expectedPartitionFilesAfterDpp.size(), afterDppFiles.size());
-    assertEquals(new HashSet<>(expectedPartitionFilesAfterDpp), new HashSet<>(afterDppFiles));
+    assertEquals(
+        partitionedFilePaths(expectedPartitionFilesAfterDpp), partitionedFilePaths(afterDppFiles));
     assertEquals(expectedTotalBytesAfterDpp, afterDppTotalBytes);
     // Runtime filtering updates the selected-file byte sum used by the size API.
     assertEquals(afterDppTotalBytes, afterDppEstimatedSize);
   }
 
   private static List<PartitionedFile> getPartitionedFiles(DeltaV2Scan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
-    Field field = DeltaV2Scan.class.getDeclaredField("partitionedFiles");
-    field.setAccessible(true);
-    return (List<PartitionedFile>) field.get(scan);
+    return Arrays.stream(scan.toBatch().planInputPartitions())
+        .flatMap(partition -> Arrays.stream(((FilePartition) partition).files()))
+        .collect(Collectors.toList());
+  }
+
+  private static List<String> partitionedFilePaths(List<PartitionedFile> files) {
+    return files.stream().map(pf -> pf.filePath().toString()).sorted().collect(Collectors.toList());
   }
 
   @Test
@@ -546,32 +558,62 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     List<PartitionedFile> plannedFiles = getPartitionedFiles(scan);
-    List<DeltaScanFile> selectedFiles = scan.getSelectedFiles();
+    List<AddFile> selectedFiles =
+        scala.jdk.javaapi.CollectionConverters.asJava(scan.preparedScan().files());
     assertEquals(plannedFiles.size(), selectedFiles.size());
     assertEquals(5, selectedFiles.size(), "test table should start with all selected files");
     assertTrue(
-        selectedFiles.stream().allMatch(file -> file.getPath().contains("city=")),
+        selectedFiles.stream().allMatch(file -> file.path().contains("city=")),
         "selected file descriptors should expose Delta-relative AddFile paths");
     assertTrue(
-        selectedFiles.stream().allMatch(file -> file.getSize() > 0),
+        selectedFiles.stream().allMatch(file -> file.size() > 0),
         "selected file descriptors should expose file sizes");
 
     scan.filter(new Predicate[] {cityPredicate});
 
     List<PartitionedFile> filteredFiles = getPartitionedFiles(scan);
-    List<DeltaScanFile> filteredSelectedFiles = scan.getSelectedFiles();
+    List<AddFile> filteredSelectedFiles =
+        scala.jdk.javaapi.CollectionConverters.asJava(scan.preparedScan().files());
     assertEquals(filteredFiles.size(), filteredSelectedFiles.size());
     assertEquals(2, filteredSelectedFiles.size(), "city=hz runtime filter should keep two files");
     assertTrue(
-        filteredSelectedFiles.stream().allMatch(file -> file.getPath().contains("city=hz")),
+        filteredSelectedFiles.stream().allMatch(file -> file.path().contains("city=hz")),
         "selected files should be pruned with runtime partition filters");
   }
 
+  @Test
+  public void testPlannedSnapshotTriggersPlanningAndReturnsSameSnapshot() throws Exception {
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    assertFalse(getPlanned(scan), "build() should leave file planning lazy");
+
+    Snapshot plannedSnapshot = scan.preparedScan().scannedSnapshot();
+
+    assertTrue(getPlanned(scan), "preparedScan() should trigger file planning");
+    assertSame(
+        plannedSnapshot,
+        scan.preparedScan().scannedSnapshot(),
+        "repeated preparedScan() calls should return the same planned snapshot");
+  }
+
   private static long getTotalBytes(DeltaV2Scan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
-    Field field = DeltaV2Scan.class.getDeclaredField("totalBytes");
-    field.setAccessible(true);
-    return (long) field.get(scan);
+    scan.preparedScan();
+    return getTotalBytesWithoutPlanning(scan);
+  }
+
+  private static long getTotalBytesWithoutPlanning(DeltaV2Scan scan) throws Exception {
+    if (!getPlanned(scan)) {
+      return 0L;
+    }
+    scala.Option<Object> bytesCompressed = scan.preparedScan().scanned().bytesCompressed();
+    if (bytesCompressed.isDefined()) {
+      return ((Number) bytesCompressed.get()).longValue();
+    }
+    // No scanned-bytes aggregate (e.g. a table without file statistics): fall back to the
+    // selected-file byte sum, matching estimateSizeInBytes().
+    return scala.jdk.javaapi.CollectionConverters.asJava(scan.preparedScan().files()).stream()
+        .mapToLong(AddFile::size)
+        .sum();
   }
 
   private static long getEstimatedSizeInBytes(DeltaV2Scan scan) throws Exception {
@@ -592,17 +634,13 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   }
 
   private static long getTotalRows(DeltaV2Scan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
-    Field field = DeltaV2Scan.class.getDeclaredField("totalRows");
-    field.setAccessible(true);
-    return (long) field.get(scan);
+    return isRowCountKnown(scan)
+        ? ((Number) scan.preparedScan().scanned().rows().get()).longValue()
+        : 0L;
   }
 
   private static boolean isRowCountKnown(DeltaV2Scan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
-    Field field = DeltaV2Scan.class.getDeclaredField("rowCountKnown");
-    field.setAccessible(true);
-    return (boolean) field.get(scan);
+    return scan.preparedScan().scanned().rows().isDefined();
   }
 
   // ================================================================================================
@@ -643,8 +681,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
           DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
           DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
-          assertTrue(isRowCountKnown(scan), "Row count should be known when all files have stats");
-          assertEquals(5L, getTotalRows(scan), "Total rows should match the 5 inserted rows");
+          assertFalse(
+              isRowCountKnown(scan),
+              "retaining per-file stats must not synthesize a missing DeltaScan row count");
           assertFalse(
               scan.estimateStatistics().numRows().isPresent(),
               "path-based optimizer statistics should not expose per-file row counts");
@@ -653,16 +692,16 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
   @Test
   public void testNumRowsAfterRuntimeFiltering() throws Exception {
-    // Runtime partition filtering still recomputes the internal per-file row count used by Delta
-    // metrics, even though path-based optimizer statistics intentionally omit numRows().
+    // Start with a known aggregate from file selection. Runtime partition filtering recomputes
+    // this count, while path-based optimizer statistics intentionally omit numRows().
     withSQLConf(
-        "spark.sql.cbo.planStats.enabled",
+        "spark.databricks.delta.alwaysCollectStats.enabled",
         "true",
         () -> {
           DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
           DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
-          scan.estimateStatistics();
+          scan.toBatch();
           assertEquals(5L, getTotalRows(scan), "5 rows before filtering");
 
           // Two rows in the table have city=hz (Alice and Bob, in different date partitions).
@@ -682,7 +721,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testNumRowsZeroAfterFilteringOutAllFiles() throws Exception {
     // When runtime filtering prunes every file, the internal totalRows recomputes to 0.
     withSQLConf(
-        "spark.sql.cbo.planStats.enabled",
+        "spark.databricks.delta.alwaysCollectStats.enabled",
         "true",
         () -> {
           DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
@@ -697,6 +736,8 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
               0L,
               getTotalRows(scan),
               "the internal row count should be 0 when all files are filtered out");
+          assertTrue(
+              isRowCountKnown(scan), "an empty selection should retain the known zero count");
         });
   }
 
@@ -1021,6 +1062,113 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testUnfilteredOrdinaryStatisticsDoNotTriggerFilePlanning() throws Exception {
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    int[] supplierCalls = instrumentDeltaScanSupplier(scan);
+
+    OptionalLong sizeOnly = scan.estimateSizeInBytes();
+    Statistics fullStatistics = scan.estimateStatistics();
+
+    assertTrue(sizeOnly.isPresent(), "the snapshot checksum should contain the table size");
+    assertEquals(sizeOnly, fullStatistics.sizeInBytes());
+    assertEquals(0, supplierCalls[0], "unfiltered ordinary stats must not select files");
+    assertFalse(getPlanned(scan), "unfiltered ordinary stats must leave planning lazy");
+
+    scan.toBatch();
+
+    assertEquals(1, supplierCalls[0], "physical planning should select files exactly once");
+    assertTrue(getPlanned(scan), "physical planning should still plan the scan");
+    assertEquals(
+        5, getPartitionedFiles(scan).size(), "the unfiltered scan should select all files");
+    assertEquals(sizeOnly, scan.estimateSizeInBytes());
+    assertEquals(1, supplierCalls[0], "reading planned statistics must reuse the selection");
+  }
+
+  @Test
+  public void testFilteredOrdinaryStatisticsPlanFilesOnce() throws Exception {
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    pushFilters(builder, new org.apache.spark.sql.sources.EqualTo("city", "hz"));
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    int[] supplierCalls = instrumentDeltaScanSupplier(scan);
+
+    OptionalLong sizeOnly = scan.estimateSizeInBytes();
+
+    assertTrue(sizeOnly.isPresent());
+    assertTrue(getPlanned(scan), "filtered ordinary stats must plan files");
+    assertEquals(1, supplierCalls[0], "filtered ordinary stats should plan exactly once");
+    assertEquals(2, getPartitionedFiles(scan).size(), "the pushed filter should select two files");
+    assertEquals(sizeOnly, scan.estimateStatistics().sizeInBytes());
+    assertEquals(1, supplierCalls[0], "repeated filtered stats must reuse file selection");
+  }
+
+  @Test
+  public void testMissingChecksumFallsBackToFilePlanning(@TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_without_checksum";
+    withTable(
+        new String[] {tblName},
+        () -> {
+          withSQLConf(
+              DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED().key(),
+              "false",
+              () -> {
+                spark.sql(
+                    String.format(
+                        "CREATE TABLE %s (id INT) USING delta LOCATION '%s'", tblName, path));
+                spark.sql(String.format("INSERT INTO %s VALUES (1)", tblName));
+              });
+
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          DeltaV2Table tableWithoutChecksum = new DeltaV2Table(id, path);
+          DeltaV2ScanBuilder builder =
+              (DeltaV2ScanBuilder) tableWithoutChecksum.newScanBuilder(options);
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+          int[] supplierCalls = instrumentDeltaScanSupplier(scan);
+
+          OptionalLong sizeOnly = scan.estimateSizeInBytes();
+
+          assertTrue(sizeOnly.isPresent(), "file planning should provide the missing size");
+          assertTrue(getPlanned(scan), "missing checksum bytes must fall back to file planning");
+          assertEquals(1, supplierCalls[0], "missing checksum bytes should plan exactly once");
+          assertEquals(sizeOnly, scan.estimateStatistics().sizeInBytes());
+          assertEquals(1, supplierCalls[0], "all later statistics must reuse file selection");
+        });
+  }
+
+  @Test
+  public void testPositiveLimitStatisticsPlanFilesOnce() throws Exception {
+    DeltaV2Scan scan = buildScanWithLimit(1);
+    int[] supplierCalls = instrumentDeltaScanSupplier(scan);
+
+    OptionalLong sizeOnly = scan.estimateSizeInBytes();
+
+    assertTrue(sizeOnly.isPresent());
+    assertTrue(getPlanned(scan), "positive-limit statistics must plan files");
+    assertEquals(1, supplierCalls[0], "positive-limit statistics should plan exactly once");
+    assertEquals(1, getPartitionedFiles(scan).size(), "LIMIT 1 should select one file");
+    assertEquals(sizeOnly, scan.estimateStatistics().sizeInBytes());
+    assertEquals(1, supplierCalls[0], "repeated limit statistics must reuse file selection");
+  }
+
+  @SuppressWarnings("unchecked")
+  private static int[] instrumentDeltaScanSupplier(DeltaV2Scan scan) throws Exception {
+    Field supplierField = DeltaV2Scan.class.getDeclaredField("deltaScanSupplier");
+    supplierField.setAccessible(true);
+    Supplier<org.apache.spark.sql.delta.stats.DeltaScan> originalSupplier =
+        (Supplier<org.apache.spark.sql.delta.stats.DeltaScan>) supplierField.get(scan);
+    int[] supplierCalls = new int[] {0};
+    supplierField.set(
+        scan,
+        (Supplier<org.apache.spark.sql.delta.stats.DeltaScan>)
+            () -> {
+              supplierCalls[0]++;
+              return originalSupplier.get();
+            });
+    return supplierCalls;
+  }
+
+  @Test
   public void testEstimateSizeInBytesUsesCheapFileSizePath() throws Exception {
     withSQLConf(
         "spark.sql.cbo.enabled",
@@ -1035,6 +1183,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
                   DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
                   long sizeInBytes = scan.estimateSizeInBytes().getAsLong();
+                  assertFalse(getPlanned(scan), "size estimation must not plan Delta files");
                   assertEquals(getTotalBytes(scan), sizeInBytes);
                   assertTrue(sizeInBytes > 0, "post-pruning size should be positive");
                   assertFalse(
@@ -1480,8 +1629,8 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testEstimateStatisticsWithCatalogStats_noNumRows(@TempDir File tempDir)
       throws Exception {
     // Catalog stats with sizeInBytes but no numRows: the size-only API should use the catalog
-    // size without planning files, while full statistics should use the planned file size and
-    // leave row and column statistics empty.
+    // size without planning files, while full statistics should use the snapshot size and leave
+    // row and column statistics empty.
     String path = tempDir.getAbsolutePath();
     String tblName = "stats_no_numrows";
     spark.sql(
@@ -1523,7 +1672,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     assertNotEquals(
         99999L,
         stats.sizeInBytes().getAsLong(),
-        "sizeInBytes should come from planned files, not catalog stats");
+        "sizeInBytes should come from snapshot metadata, not catalog stats");
     assertTrue(
         stats.columnStats().isEmpty(),
         "columnStats should be empty when catalog stats have no column stats");
@@ -1664,24 +1813,26 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
               stats.numRows().getAsLong(),
               "LIMIT 0 must report 0 rows, not the stale catalog count (999)");
           assertEquals(
-              0L, getTotalBytes(scan), "LIMIT 0 should read zero bytes even with catalog stats");
+              0L,
+              getTotalBytesWithoutPlanning(scan),
+              "LIMIT 0 should read zero bytes even with catalog stats");
           assertFalse(getPlanned(scan), "LIMIT 0 statistics should remain on the fast path");
         });
   }
 
   @Test
   public void testLimitPushdown_numRowsRemainsInternalUnderPlanStats() throws Exception {
-    // Delta retains per-file or scan-level row counts for its internal scan statistics, but the
+    // Delta retains aggregate row counts for its internal scan statistics, but the
     // generic SupportsReportStatistics handoff intentionally exposes only scan-local size when
     // catalog row statistics are absent.
     withSQLConf(
         "spark.sql.cbo.planStats.enabled",
         "true",
         () -> {
-          // Baseline: no limit, count summed from per-file numRecords (table has 5 rows, 5 files).
+          // Without a limit, retaining numRecords does not populate an aggregate row count.
           DeltaV2Scan noLimit =
               (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
-          assertTrue(isRowCountKnown(noLimit), "row count should be known without a limit");
+          assertFalse(isRowCountKnown(noLimit), "missing aggregate row count should stay unknown");
           assertFalse(noLimit.estimateStatistics().numRows().isPresent());
 
           // With a pushed limit, the per-file counts are gone but the aggregate still reports the
@@ -1689,7 +1840,8 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
           DeltaV2Scan withLimit = buildScanWithLimit(3);
           assertTrue(
               isRowCountKnown(withLimit),
-              "row count must stay known for a pushed limit (aggregate fallback)");
+              "row count must stay known for a pushed limit (DeltaScan aggregate)");
+          assertEquals(3L, getTotalRows(withLimit));
           assertFalse(
               withLimit.estimateStatistics().numRows().isPresent(),
               "generic relation statistics must not expose the internal limited row count");
@@ -1698,8 +1850,8 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
   @Test
   public void testLimitPushdown_numRowsEmptyWhenPlanStatsDisabled() throws Exception {
-    // The aggregate fallback must respect the same plan-stats gate as the per-file path: with CBO
-    // and planStats off, a pushed limit must not start reporting numRows.
+    // Scan metadata preserves the aggregate independently of CBO/planStats. The generic
+    // optimizer statistics still do not expose it as numRows for a path-based table.
     withSQLConf(
         "spark.sql.cbo.enabled",
         "false",
@@ -1709,9 +1861,10 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
               "false",
               () -> {
                 DeltaV2Scan scan = buildScanWithLimit(3);
-                assertFalse(
+                assertTrue(
                     isRowCountKnown(scan),
-                    "row count must stay unknown when CBO and planStats are both disabled");
+                    "scan metadata should retain the row count collected by limit selection");
+                assertEquals(3L, getTotalRows(scan));
                 assertFalse(
                     scan.estimateStatistics().numRows().isPresent(),
                     "numRows must be empty when CBO and planStats are both disabled");

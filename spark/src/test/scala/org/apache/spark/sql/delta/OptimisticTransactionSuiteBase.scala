@@ -21,7 +21,7 @@ import java.util.ConcurrentModificationException
 import scala.jdk.CollectionConverters._
 
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -37,6 +37,20 @@ trait OptimisticTransactionSuiteBase
     with DeltaTestUtilsBase
     with DeletionVectorsTestUtils {
 
+
+  /**
+   * Starts a new transaction for the test table at `dataPath`. Defaults to the table's V1
+   * `OptimisticTransaction`.
+   */
+  protected def startTestTransaction(dataPath: Path): OptimisticTransaction =
+    DeltaLog.forTable(spark, dataPath).startTransaction()
+
+  /**
+   * Default metadata and protocol for the test table.
+   */
+  protected def testDefaultMetadata(): Metadata = Metadata()
+  protected def testDefaultProtocol(): Protocol = Action.supportedProtocolVersion(
+    featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))
 
   /**
    * Check whether the test transaction conflict with the concurrent writes by executing the
@@ -62,8 +76,7 @@ trait OptimisticTransactionSuiteBase
   protected def check(
       name: String,
       conflicts: Boolean,
-      setup: Seq[Action] = Seq(Metadata(), Action.supportedProtocolVersion(
-        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))),
+      setup: Seq[Action] = Seq(testDefaultMetadata(), testDefaultProtocol()),
       reads: Seq[OptimisticTransaction => Unit],
       concurrentWrites: Seq[Action],
       actions: Seq[Action],
@@ -140,7 +153,7 @@ trait OptimisticTransactionSuiteBase
         initialSetup(log)
 
         // Perform reads
-        val txn = log.startTransaction()
+        val txn = startTestTransaction(log.dataPath)
         reads.foreach(_ (txn))
 
         // Execute concurrent txn while current transaction is active

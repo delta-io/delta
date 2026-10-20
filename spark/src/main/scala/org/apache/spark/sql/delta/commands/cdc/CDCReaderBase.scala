@@ -117,8 +117,13 @@ abstract class DeltaCDFRelationBase(
     val outputMap = df.queryExecution.analyzed.output.map(a => a.name -> a).toMap
     val projections =
       requiredColumns.map(a => Column(outputMap(a.name)))
+    lazy val skipNondeterministicFilters =
+      sqlContext.sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_CDF_SKIP_NONDETERMINISTIC_FILTER_PUSHDOWN)
     val filter = Column(
       filters
+        // Spark evaluates nondeterministic predicates in a filter above the CDF scan.
+        .filter(predicate => predicate.deterministic || !skipNondeterministicFilters)
         .map(_.transform { case a: Attribute => outputMap(a.name) })
         .reduceOption(And)
         .getOrElse(Literal.TrueLiteral)
@@ -277,11 +282,9 @@ trait CDCReaderBase extends DeltaLogging {
     // Non-legacy schema mode options cannot be used with time-travel because the schema to use
     // will be confusing.
     if (isTimeTravelQuery && schemaMode != BatchCDFSchemaLegacy) {
-      throw DeltaErrors.illegalDeltaOptionException(
+      throw DeltaErrors.illegalDeltaOptionSchemaModeWithTimeTravel(
         DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key,
-        schemaMode.name,
-        s"${DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key} " +
-          s"cannot be used with time travel options.")
+        schemaMode.name)
     }
 
     getConstructedCDCRelation(
@@ -382,7 +385,9 @@ trait CDCReaderBase extends DeltaLogging {
       shouldCheckSchemaToBlockBatchRead: Boolean,
       metadata: Metadata,
       metadataVer: Long,
-      isSchemaChange: Boolean): Unit = {
+      isSchemaChange: Boolean,
+      blockOnIncompatibleSchema: Boolean = true,
+      blockOnIncompatiblePartitionSchema: Boolean = true): Unit = {
     // We do not check for any incompatibility if the global "I don't care" flag is turned on
     if (shouldCheckSchemaToBlockBatchRead) {
       // Column mapping incompatibilities
@@ -425,15 +430,79 @@ trait CDCReaderBase extends DeltaLogging {
         }
       }
 
-      if (!compatible) {
+      val newPartitionColumns = readSchemaSnapshot.metadata.partitionColumns
+      val oldPartitionColumns = metadata.partitionColumns
+      val hasPartitionSchemaChange = !SchemaUtils.isPartitionCompatible(
+        newPartitionColumns = newPartitionColumns,
+        oldPartitionColumns = oldPartitionColumns)
+      val partitionSchemaChangeCheckEnabled = SQLConf.get.getConf(
+        DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES)
+      val blockOnPartitionSchemaChange =
+        blockOnIncompatiblePartitionSchema && partitionSchemaChangeCheckEnabled
+
+      if (!compatible || hasPartitionSchemaChange) {
+        recordDeltaEvent(
+          readSchemaSnapshot.deltaLog,
+          "delta.changeDataFeed.schemaIncompatibility",
+          data = Map(
+            "startVersion" -> start,
+            "endVersion" -> end,
+            "readVersion" -> readSchemaSnapshot.version,
+            "incompatibleVersion" -> metadataVer,
+            "isStartVersionCheck" -> !isSchemaChange,
+            "isSchemaCompatible" -> compatible,
+            "hasPartitionSchemaChange" -> hasPartitionSchemaChange,
+            "partitionSchemaCheckEnabled" -> partitionSchemaChangeCheckEnabled,
+            "partitionSchemaBlockEnabled" -> blockOnPartitionSchemaChange,
+            "schemaCheckEnabled" -> blockOnIncompatibleSchema))
+      }
+      if ((!compatible && blockOnIncompatibleSchema) ||
+          (hasPartitionSchemaChange && blockOnPartitionSchemaChange)) {
         throw DeltaErrors.blockBatchCdfReadWithIncompatibleSchemaChange(
           start, end,
           // The consistent read schema
           readSchemaSnapshot.metadata.schema, readSchemaSnapshot.version,
           // The conflicting schema or schema change version
           metadataVer,
-          isSchemaChange
+          isSchemaChange || hasPartitionSchemaChange
         )
+      }
+    }
+  }
+
+  /** Tracks whether a partition schema change happens on a non-empty table. */
+  protected class CdfPartitionSchemaTracker(
+      startPartitionColumns: Seq[String],
+      startSnapshotHasData: Boolean) {
+    private var hasSeenData = startSnapshotHasData
+    private var hasSeenPartitionSchemaChange = false
+    private var hadDataBeforeFirstPartitionSchemaChange = startSnapshotHasData
+
+    def processMetadata(metadata: Metadata): Unit = {
+      if (!hasSeenPartitionSchemaChange && !SchemaUtils.isPartitionCompatible(
+          newPartitionColumns = metadata.partitionColumns,
+          oldPartitionColumns = startPartitionColumns)) {
+        hasSeenPartitionSchemaChange = true
+        hadDataBeforeFirstPartitionSchemaChange = hasSeenData
+      }
+    }
+
+    def processActions(actions: Seq[Action]): Unit = {
+      val commitInfo = actions.collectFirst { case ci: CommitInfo => ci }
+      val changesData = CommitInfo.fileActionChangesData(commitInfo)
+      hasSeenData ||= actions.exists {
+        case _: AddCDCFile => true
+        case add: AddFile => changesData(add)
+        case remove: RemoveFile => changesData(remove)
+        case _ => false
+      }
+    }
+
+    def blockStartVersionPartitionSchemaCheck: Boolean = {
+      if (hasSeenPartitionSchemaChange) {
+        hadDataBeforeFirstPartitionSchemaChange
+      } else {
+        hasSeenData
       }
     }
   }

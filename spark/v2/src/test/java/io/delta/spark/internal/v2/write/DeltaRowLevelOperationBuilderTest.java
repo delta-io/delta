@@ -17,11 +17,10 @@ package io.delta.spark.internal.v2.write;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
+import io.delta.spark.internal.v2.kernel.KernelContext;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.util.Collections;
@@ -35,6 +34,7 @@ import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.RowLevelOperation;
 import org.apache.spark.sql.connector.write.RowLevelOperationBuilder;
 import org.apache.spark.sql.connector.write.RowLevelOperationInfo;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -105,9 +105,10 @@ public class DeltaRowLevelOperationBuilderTest extends DeltaV2TestBase {
     DeltaV2Table table = createRowLevelTable(tempDir);
     RowLevelOperationInfo info = testInfo(RowLevelOperation.Command.DELETE);
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    Engine engine = DefaultEngine.create(hadoopConf);
+    KernelContext kernelContext = createKernelContext(hadoopConf);
+    Engine engine = kernelContext.getDefaultEngine();
     Snapshot snapshot =
-        new PathBasedSnapshotManager(tempDir.getAbsolutePath(), engine).loadLatestSnapshot();
+        new PathBasedSnapshotManager(tempDir.getAbsolutePath(), kernelContext).loadLatestSnapshot();
 
     assertThrows(
         NullPointerException.class,
@@ -137,9 +138,11 @@ public class DeltaRowLevelOperationBuilderTest extends DeltaV2TestBase {
       File tableDir, RowLevelOperation.Command command) {
     DeltaV2Table table = createRowLevelTable(new File(tableDir, "table_" + System.nanoTime()));
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    Engine engine = DefaultEngine.create(hadoopConf);
+    KernelContext kernelContext = createKernelContext(hadoopConf);
+    Engine engine = kernelContext.getDefaultEngine();
     Snapshot snapshot =
-        new PathBasedSnapshotManager(table.getTablePath().toString(), engine).loadLatestSnapshot();
+        new PathBasedSnapshotManager(table.getTablePath().toString(), kernelContext)
+            .loadLatestSnapshot();
     return new DeltaRowLevelOperationBuilder(
         table, engine, hadoopConf, snapshot, testInfo(command));
   }

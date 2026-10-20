@@ -103,11 +103,18 @@ trait CloneTableTestMixin extends DeltaColumnMappingTestUtils
   }
 
   // Extracted function so it can be overriden in subclasses.
-  protected def uniqueFileActionGroupBy(action: FileAction): String = {
+  protected def uniqueFileActionGroupBy(
+      action: FileAction, tableRoot: Path, useObjectIdentity: Boolean): String = {
     val filePath = action.pathAsUri.toString
     val dvId = action match {
-      case add: AddFile => Option(add.deletionVector).map(_.uniqueId).getOrElse("")
-      case remove: RemoveFile => Option(remove.deletionVector).map(_.uniqueId).getOrElse("")
+      case add: AddFile =>
+        Option(add.deletionVector)
+          .map(_.uniqueId(tableRoot, useObjectIdentity))
+          .getOrElse("")
+      case remove: RemoveFile =>
+        Option(remove.deletionVector)
+          .map(_.uniqueId(tableRoot, useObjectIdentity))
+          .getOrElse("")
       case _ => ""
     }
     filePath + dvId
@@ -250,7 +257,13 @@ trait CloneTableTestMixin extends DeltaColumnMappingTestUtils
         case _ => None
       }
     }
-    assert(filePaths.groupBy(uniqueFileActionGroupBy(_)).forall(_._2.length === 1),
+    val useObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
+      targetLog.unsafeVolatileSnapshot.metadata,
+      targetLog.unsafeVolatileSnapshot.protocol,
+      spark
+    )
+    assert(filePaths.groupBy(uniqueFileActionGroupBy(_, targetLog.dataPath, useObjectIdentity))
+      .forall(_._2.length === 1),
       "A file was added and removed in the same commit")
     // Check whether the resulting datasets are the same
     val targetDf = DataFrameUtils.ofRows(

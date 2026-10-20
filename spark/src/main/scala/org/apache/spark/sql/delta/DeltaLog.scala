@@ -29,7 +29,6 @@ import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinition
 import com.databricks.spark.util.TagDefinitions._
-import org.apache.spark.sql.delta.v2.interop.DeltaV2TableManager
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
@@ -41,7 +40,7 @@ import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
-import org.apache.spark.sql.delta.util.{FileNames, PathWithFileSystem, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.{DeltaFileSystemOptions, FileNames, PathWithFileSystem, Utils => DeltaUtils}
 import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
@@ -91,8 +90,7 @@ class DeltaLog private(
   with DeltaFileFormat
   with ProvidesUniFormConverters
   with ReadChecksum
-  with DeltaLoggingProvider
-  with DeltaV2TableManager {
+  with DeltaLoggingProvider {
 
   import org.apache.spark.sql.delta.files.TahoeFileIndex
   import org.apache.spark.sql.delta.util.FileNames._
@@ -1060,15 +1058,7 @@ object DeltaLog extends DeltaLogging {
       spark: SparkSession,
       options: Map[String, String],
       rootPath: Path): Path = {
-    val fileSystemOptions: Map[String, String] =
-      if (spark.sessionState.conf.getConf(
-        DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
-        options.filterKeys { k =>
-          DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
-        }.toMap
-      } else {
-        Map.empty
-      }
+    val fileSystemOptions = DeltaFileSystemOptions.buildFsOptions(spark, options)
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
     // scalastyle:on deltahadoopconfiguration
@@ -1100,25 +1090,8 @@ object DeltaLog extends DeltaLogging {
       initialCatalogTable: Option[CatalogTable],
       clock: Clock
   ): DeltaLog = {
-    // Construct the filesystem options based on the DataFrameReader/Writer options, and if it's
-    // a catalog based table, we need combine both options and catalog-based table storage
-    // properties since all cloud credential information are stored in storage properties.
-    val catalogTableStorageProps = initialCatalogTable
-      .map(t => t.storage.properties.filter { case (k, _) =>
-          DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
-        })
-      .getOrElse(Map.empty)
-    val fileSystemOptions: Map[String, String] =
-      if (spark.sessionState.conf.getConf(
-          DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
-        // We pick up only file system options so that we don't pass any parquet or json options to
-        // the code that reads Delta transaction logs.
-        catalogTableStorageProps ++ options.filterKeys { k =>
-          DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
-        }.toMap
-      } else {
-        catalogTableStorageProps
-      }
+    val fileSystemOptions =
+      DeltaFileSystemOptions.buildFsOptions(spark, options, initialCatalogTable)
 
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
@@ -1277,19 +1250,12 @@ object DeltaLog extends DeltaLogging {
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil,
       shouldRewritePartitionFilters: Boolean = true): DataFrame = {
-
-    val rewrittenFilters = if (shouldRewritePartitionFilters) {
-      rewritePartitionFilters(
-        partitionSchema,
-        files.sparkSession.sessionState.conf.resolver,
-        partitionFilters,
-        partitionColumnPrefixes)
-    } else {
-      partitionFilters
-    }
-    val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
-    val columnFilter = Column(expr)
-    files.filter(columnFilter)
+    DeltaLogUtils.filterFileList(
+      partitionSchema,
+      files,
+      partitionFilters,
+      partitionColumnPrefixes,
+      shouldRewritePartitionFilters)
   }
 
   /**
@@ -1306,26 +1272,8 @@ object DeltaLog extends DeltaLogging {
       resolver: Resolver,
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
-    partitionFilters
-      .map(_.transformUp {
-      case a: Attribute =>
-        // If we have a special column name, e.g. `a.a`, then an UnresolvedAttribute returns
-        // the column name as '`a.a`' instead of 'a.a', therefore we need to strip the backticks.
-        val unquoted = a.name.stripPrefix("`").stripSuffix("`")
-        val partitionCol = partitionSchema.find { field => resolver(field.name, unquoted) }
-        partitionCol match {
-          case Some(f: StructField) =>
-            val name = DeltaColumnMapping.getPhysicalName(f)
-            Cast(
-              UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
-              f.dataType)
-          case None =>
-            // This should not be able to happen, but the case was present in the original code so
-            // we kept it to be safe.
-            log.error(s"Partition filter referenced column ${a.name} not in the partition schema")
-            UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
-        }
-    })
+    DeltaLogUtils.rewritePartitionFilters(
+      partitionSchema, resolver, partitionFilters, partitionColumnPrefixes)
   }
 
 
@@ -1373,5 +1321,74 @@ object DeltaLog extends DeltaLogging {
         hadoopPath.toUri.toString
       }
     }
+  }
+}
+
+/** Partition-filtering helpers shared by DeltaLog and snapshot readers. */
+object DeltaLogUtils extends DeltaLogging {
+
+  /**
+   * Filters the given [[Dataset]] by the given `partitionFilters`, returning those that match.
+   * @param files The active files in the log state, which contain partition value information
+   * @param partitionFilters Filters on the partition columns
+   * @param partitionColumnPrefixes The path to the `partitionValues` column, if it's nested
+   * @param shouldRewritePartitionFilters Whether to rewrite `partitionFilters` to be over the
+   *                                      [[AddFile]] schema
+   */
+  def filterFileList(
+      partitionSchema: StructType,
+      files: DataFrame,
+      partitionFilters: Seq[Expression],
+      partitionColumnPrefixes: Seq[String] = Nil,
+      shouldRewritePartitionFilters: Boolean = true): DataFrame = {
+
+    val rewrittenFilters = if (shouldRewritePartitionFilters) {
+      rewritePartitionFilters(
+        partitionSchema,
+        files.sparkSession.sessionState.conf.resolver,
+        partitionFilters,
+        partitionColumnPrefixes)
+    } else {
+      partitionFilters
+    }
+    val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
+    val columnFilter = Column(expr)
+    files.filter(columnFilter)
+  }
+
+  /**
+   * Rewrite the given `partitionFilters` to be used for filtering partition values.
+   * We need to explicitly resolve the partitioning columns here because the partition columns
+   * are stored as keys of a Map type instead of attributes in the AddFile schema and thus
+   * cannot be resolved automatically.
+   *
+   * @param partitionFilters Filters on the partition columns
+   * @param partitionColumnPrefixes The path to the `partitionValues` column, if it's nested
+   */
+  def rewritePartitionFilters(
+      partitionSchema: StructType,
+      resolver: Resolver,
+      partitionFilters: Seq[Expression],
+      partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
+    partitionFilters
+      .map(_.transformUp {
+      case a: Attribute =>
+        // If we have a special column name, e.g. `a.a`, then an UnresolvedAttribute returns
+        // the column name as '`a.a`' instead of 'a.a', therefore we need to strip the backticks.
+        val unquoted = a.name.stripPrefix("`").stripSuffix("`")
+        val partitionCol = partitionSchema.find { field => resolver(field.name, unquoted) }
+        partitionCol match {
+          case Some(f: StructField) =>
+            val name = DeltaColumnMapping.getPhysicalName(f)
+            Cast(
+              UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
+              f.dataType)
+          case None =>
+            // This should not be able to happen, but the case was present in the original code so
+            // we kept it to be safe.
+            log.error(s"Partition filter referenced column ${a.name} not in the partition schema")
+            UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
+        }
+    })
   }
 }
