@@ -133,7 +133,9 @@ case class MergeIntoCommand(
             performedSecondSourceScan = false
             // The fast path has no prior job that counts source rows, so size the reservation from
             // a cheap planning-time row-count estimate instead of an extra source scan. With no
-            // stats the reservation is rate-based and the executor reserves more on demand.
+            // stats the reservation is rate-based and the executor reserves more on demand. An
+            // estimate of 0 is not proof of an empty source (stale stats, CBO estimates), so it is
+            // treated as unknown (None), never as the provably empty Some(0).
             reserveIdentityValuesIfNeeded(
               spark,
               deltaTxn,

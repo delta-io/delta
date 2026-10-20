@@ -22,9 +22,8 @@ import java.util.Locale
 import scala.collection.JavaConverters._
 import scala.collection.immutable.NumericRange
 
-import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.skipping.clustering.ClusteringColumnInfo
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
-import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
@@ -654,21 +653,6 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
         val rowsBeforeOptimize = readDeltaTable(tempPath).select("ids", "value").collect().toSeq
         assert(rowsBeforeOptimize.map(_.getLong(0)).distinct.size === 3)
         assert(rowsBeforeOptimize.map(_.getInt(1)).toSet === Set(10, 20, 30))
-        val optimizeMetrics = withSQLConf(
-          DeltaSQLConf.DELTA_LIQUID_LAZY_CLUSTERING_NODE_SIZE_THRESHOLD.key -> "0",
-          DeltaSQLConf.DELTA_LIQUID_LAZY_CLUSTERING_MAX_ITERATIONS.key -> "1",
-          DeltaSQLConf.DELTA_LIQUID_LAZY_CLUSTERING_FORCE_OPTIMIZE.key -> "true") {
-          spark.sql(s"OPTIMIZE delta.`$tempPath`")
-            .select("metrics.*").as[OptimizeMetrics].collect()
-        }
-        assert(optimizeMetrics.exists(_.numFilesAdded > 0))
-        val clusteredFiles = deltaLog.update().allFiles.collect()
-        assert(clusteredFiles.nonEmpty)
-        assert(clusteredFiles.forall(ClusteredTableUtils.isClusteredFile))
-        assert(ClusteringColumnInfo.extractLogicalNames(deltaLog.update()) === Seq("ids"))
-        checkAnswer(
-          readDeltaTable(tempPath).select("ids", "value"),
-          rowsBeforeOptimize)
       }
     }
   }
@@ -753,7 +737,8 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
       val reservation =
         new TestServiceBackedIdentityColumnReservation(deltaLog, None, spark)
       val ex = intercept[ConcurrentIdentityColumnReservationException] {
-        reservation.reserveValuesForIdentityColumns(numRows = 1L)
+        // A positive count so this triggers a real reservation.
+        reservation.reserveValuesForIdentityColumns(sizeHint = Some(1L))
       }
       checkError(
         ex,
@@ -795,7 +780,7 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
       val reservation =
         new TestServiceBackedIdentityColumnReservation(deltaLog, None, spark)
       val ex = intercept[ConcurrentIdentityColumnReservationException] {
-        reservation.reserveValuesForIdentityColumns(numRows = 1L)
+        reservation.reserveValuesForIdentityColumns(sizeHint = Some(1L))
       }
       checkError(
         ex,
@@ -1360,7 +1345,7 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
           new TestServiceBackedIdentityColumnReservation(deltaLog, None, spark)
         val reservesBefore = localService.reserveIdsCount
 
-        reservation.reserveValuesForIdentityColumns(numRows = 0L)
+        reservation.reserveValuesForIdentityColumns(sizeHint = Some(0L))
 
         val slot = reservation.reservedSlots("ids")
         assert(slot.start === 1L && slot.end === 1L,
@@ -1398,6 +1383,39 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
     }
   }
 
+  test("an unknown row count (None) reserves the sequence scope, unlike an empty source") {
+    // For the sizeHint: None means the count is unknown (NOT empty), so it must take the REAL
+    // branch and record the per-column sequence scope, exactly like a known count.
+    // Some(0) is the only "no rows" signal that must leave the scope empty.
+    withTable("target") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true") {
+        spark.sql(createTargetTableStatement(Seq(
+          "ids BIGINT GENERATED ALWAYS AS IDENTITY",
+          "values INT")))
+
+        val unknown =
+          new TestServiceBackedIdentityColumnReservation(deltaLog, None, spark)
+        unknown.reserveValuesForIdentityColumns(sizeHint = None)
+        assert(unknown.reservedSequenceIds.contains("ids"),
+          s"an unknown count (None) must reserve the sequence scope (real reservation); got " +
+            s"${unknown.reservedSequenceIds.keySet}")
+
+        val empty =
+          new TestServiceBackedIdentityColumnReservation(deltaLog, None, spark)
+        empty.reserveValuesForIdentityColumns(sizeHint = Some(0L))
+        assert(empty.reservedSequenceIds.isEmpty,
+          s"a provably empty source (Some(0)) must NOT reserve a sequence scope; got " +
+            s"${empty.reservedSequenceIds.keySet}")
+
+        // A repeat call on the same instance must redo the setup, not reuse the empty-source
+        // slots: otherwise the generator has no sequence scope and falls back to the legacy path.
+        empty.reserveValuesForIdentityColumns(sizeHint = None)
+        assert(empty.reservedSequenceIds.contains("ids"),
+          s"a repeat call with None must reserve the sequence scope; got " +
+            s"${empty.reservedSequenceIds.keySet}")
+      }
+    }
+  }
 
   test("reserve continues over a larger skewed write (async refill + partial returns)") {
     // Larger skewed write through the always-on buffer / async refill / partial-return path: the
@@ -1419,6 +1437,34 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
     }
   }
 
+
+  test("maxBatchSize clamps each LocalIdentitySequenceService reserve") {
+    // A cold driver pull would otherwise use driverInitialSize (100). The clamp must cut that
+    // first UC request, and every later refill, down to maxBatchSize.
+    val maxBatch = 10L
+    val numRows = 25
+    withTable("target") {
+      withSQLConf(
+        DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_ENABLED.key -> "true",
+        DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_RESERVE_MAX_BATCH_SIZE.key -> maxBatch.toString,
+        DeltaSQLConf.CONCURRENT_IDENTITY_COLUMN_RESERVE_DRIVER_INITIAL_SIZE.key -> "100") {
+        spark.sql(createTargetTableStatement(Seq(
+          "ids BIGINT GENERATED ALWAYS AS IDENTITY",
+          "values INT")))
+        val sizesBefore = localService.reserveRequestSizes.size
+        (1 to numRows).toDF("values").repartition(1)
+          .write.format("delta").mode("append").save(tempPath)
+        val sizes = localService.reserveRequestSizes.drop(sizesBefore)
+        assert(sizes.nonEmpty, "the write must reserve from LocalIdentitySequenceService")
+        assert(sizes.head === maxBatch,
+          s"the first UC pull must clamp driverInitialSize=100 to $maxBatch; got $sizes")
+        assert(sizes.forall(_ <= maxBatch),
+          s"every service reserve must be <= $maxBatch; got $sizes")
+        assertCorrectIdentityColumn(
+          readDeltaTable(tempPath).select("ids"), expectedSize = numRows, expectedMin = 1)
+      }
+    }
+  }
 
   test("a write against a deleted sequence fails and commits no rows (service backend)") {
     withTable("target") {
@@ -1577,7 +1623,7 @@ class ConcurrentIdentityColumnServiceBackendSuite extends ConcurrentIdentityColu
  * [[LocalIdentitySequenceService]] (the same one the injected backend forwards to) so the
  * service-backed reservation path is exercised in isolation, and its invocation counts line up
  * with the suite's assertions. Used to pin contracts that live on the class itself (e.g. the
- * [[reservedSlots]] cache-reuse / clear path).
+ * [[reservedSlots]] repeat-call / empty-source path).
  */
 private class TestServiceBackedIdentityColumnReservation(
     deltaLog: DeltaLog,

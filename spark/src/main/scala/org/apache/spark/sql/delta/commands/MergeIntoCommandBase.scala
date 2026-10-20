@@ -141,12 +141,13 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
    * reservation before any write consumes [[computeCicNotMatchedClausesForInsertExpressions]].
    *
    * `sizeHint` follows the same precise -> estimate -> rate-based tiering the INSERT path uses:
-   *   - `Some(n)`: a row count seeding the up-front reserve and the executor reserve-more basis.
-   *     The classic path passes the exact `numSourceRows` metric (precise, already computed); the
-   *     insert-only fast path passes a planning-time stats estimate (no extra source scan).
-   *   - `None`: no count is available without a scan, so seed the config default and let the
-   *     executor reserve more rate-based on demand.
-   * The count is only an upper bound on inserts; unused values become gaps.
+   *   - `Some(n)`: a row count passed on to the reservation as a sizing hint. The classic path
+   *     passes the exact `numSourceRows` metric (precise, already computed); the insert-only fast
+   *     path passes a planning-time stats estimate (no extra source scan).
+   *   - `None`: no count is available without a scan, so the executor reserves rate-based on
+   *     demand from a cold start.
+   * The count is only an upper bound on inserts; unused values become gaps. A MERGE without a
+   * NOT MATCHED clause inserts nothing, so it passes the exact `Some(0)` instead.
    */
   protected def reserveIdentityValuesIfNeeded(
       spark: SparkSession,
@@ -154,13 +155,9 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       sizeHint: => Option[Long]): Unit = {
     if (deltaTxn.protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature) &&
         ColumnWithDefaultExprUtils.hasIdentityColumn(deltaTxn.metadata.schema)) {
-      val hint = sizeHint
-      // Only >0 vs 0 matters here (the empty-source gate); the driver's controller sizes the actual
-      // reserve, so any positive fallback (1) is fine when the row count is unknown.
-      val seedSize = hint.getOrElse(1L)
       val reserver = new IdentityColumnReservation(targetDeltaLog, catalogTable, spark)
       identityColumnReserver = Some(reserver)
-      reserver.reserveValuesForIdentityColumns(seedSize)
+      reserver.reserveValuesForIdentityColumns(if (includesInserts) sizeHint else Some(0L))
     }
   }
 
