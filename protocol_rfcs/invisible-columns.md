@@ -175,6 +175,10 @@ A shared ancestor represents one column in the complete data schema, not two dis
 Each input schema and the complete data schema MUST satisfy the case-insensitive column-name
 uniqueness requirements of the [Schema Serialization Format](#schema-serialization-format).
 
+The merge MUST recurse only through struct, array, and map types in the Delta schema. All other
+types MUST be treated as indivisible for visibility and merging, regardless of their physical
+representation.
+
 At each struct level, including the schema root, the complete data schema MUST contain fields from
 the visible schema in their original order, followed by invisible-only fields in their original order
 from the invisible schema. Shared fields retain their position from the visible schema. This rule
