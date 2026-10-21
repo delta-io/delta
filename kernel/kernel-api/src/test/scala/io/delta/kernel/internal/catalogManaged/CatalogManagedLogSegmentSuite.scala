@@ -22,6 +22,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.TableManager
 import io.delta.kernel.internal.actions.Protocol
+import io.delta.kernel.internal.files.ParsedCatalogCommitData
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils}
@@ -48,14 +49,21 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
       ratifiedCommitVersions: Seq[Long],
       crcVersions: Seq[Long] = Seq.empty,
       expectedDeltaAndCommitVersionsOpt: Option[Seq[Long]] = None,
-      expectedExceptionClassOpt: Option[Class[_ <: Exception]] = None): Unit = {
+      expectedExceptionClassOpt: Option[Class[_ <: Exception]] = None,
+      publishedRatifiedCommitVersions: Set[Long] = Set.empty): Unit = {
     // TODO: test with ratified=inline
 
     test(testName + " - ratified=materialized") {
       val checkpointFile = checkpointVersionOpt.map(v => classicCheckpointFileStatus(v)).toSeq
       val deltaFiles = deltaFileStatuses(deltaVersions)
       val crcFiles = crcVersions.map(checksumFileStatus)
-      val ratifiedCommitParsedLogDatas = parsedRatifiedStagedCommits(ratifiedCommitVersions)
+      val ratifiedCommitParsedLogDatas = ratifiedCommitVersions.map { v =>
+        if (publishedRatifiedCommitVersions.contains(v)) {
+          ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, v, deltaFileStatus(v))
+        } else {
+          parsedRatifiedStagedCommit(v)
+        }
+      }
 
       val engine = createMockFSListFromEngine(checkpointFile ++ deltaFiles ++ crcFiles)
 
@@ -91,7 +99,8 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
 
         actualDeltaAndCommitFileStatuses.map(_.getPath).foreach { path =>
           val version = FileNames.deltaVersion(path)
-          if (expectedRatifiedVersions.contains(version)) {
+          if (expectedRatifiedVersions.contains(version) &&
+            !publishedRatifiedCommitVersions.contains(version)) {
             assert(FileNames.isStagedDeltaFile(path))
           } else {
             assert(FileNames.isPublishedDeltaFile(path))
@@ -124,6 +133,39 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
   /////////////////////////////////////////////////////
   // LogSegment construction tests -- positive cases //
   /////////////////////////////////////////////////////
+
+  // _delta_log: [10.checkpoint+json, 11.json                ]
+  // catalog:    [                    11.json, 12.uuid.json  ]
+  testLogSegment(
+    testName = "Build RT with a published catalog commit followed by a staged commit",
+    versionToLoad = 12L,
+    checkpointVersionOpt = Some(10L),
+    deltaVersions = 10L to 11L,
+    ratifiedCommitVersions = 11L to 12L,
+    expectedDeltaAndCommitVersionsOpt = Some(11L to 12L),
+    publishedRatifiedCommitVersions = Set(11L))
+
+  // _delta_log: [10.checkpoint+json, 11.json, 12.json                     ]
+  // catalog:    [                    11.uuid.json, 12.json, 13.uuid.json  ]
+  testLogSegment(
+    testName = "Build RT with a published catalog commit between staged commits",
+    versionToLoad = 13L,
+    checkpointVersionOpt = Some(10L),
+    deltaVersions = 10L to 12L,
+    ratifiedCommitVersions = 11L to 13L,
+    expectedDeltaAndCommitVersionsOpt = Some(11L to 13L),
+    publishedRatifiedCommitVersions = Set(12L))
+
+  // _delta_log: [10.checkpoint+json, 11.json]
+  // catalog:    [                    11.json]
+  testLogSegment(
+    testName = "Build RT with only published catalog commits",
+    versionToLoad = 11L,
+    checkpointVersionOpt = Some(10L),
+    deltaVersions = 10L to 11L,
+    ratifiedCommitVersions = Seq(11L),
+    expectedDeltaAndCommitVersionsOpt = Some(Seq(11L)),
+    publishedRatifiedCommitVersions = Set(11L))
 
   // _delta_log: [                          10.checkpoint+json, 11.json, 12.json]
   // catalog:    [8.uuid.json, 9.uuid.json                                      ]
