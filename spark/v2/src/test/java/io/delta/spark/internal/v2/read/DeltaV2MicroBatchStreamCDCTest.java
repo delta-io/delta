@@ -1380,7 +1380,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertEquals(2, dataFiles.size(), "Expected exactly 2 CDC data files (insert + delete)");
     for (IndexedFile f : dataFiles) {
       assertFalse(
-          f.getCDCDataFile().getEffectiveDv().isDefined(),
+          f.getCDCDataFile().getEffectiveDv().isPresent(),
           "Plain same-path pair must not produce a DV-diff CDCDataFile");
     }
     long inserts =
@@ -1493,7 +1493,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     List<IndexedFile> result =
         stream.applyPerCommitCDCAdmission(commitFiles, limits.get(), version);
 
-    // Both files must be admitted together: any DV-diff file (getEffectiveDv().isDefined())
+    // Both files must be admitted together: any DV-diff file (getEffectiveDv().isPresent())
     // signals that the commit cannot be split, even when the backing AddFile has no DV.
     long admittedData = result.stream().filter(IndexedFile::hasFileAction).count();
     assertEquals(
