@@ -272,10 +272,10 @@ object WinningCommitSummary {
 private[delta] class ConflictChecker(
     protected val spark: SparkSession,
     initialCurrentTransactionInfo: CurrentTransactionInfo,
-    // A `var` (reassigned once by [[resolveRowLevelConflicts]]) to drop files that were reconciled
-    // at the row level, mirroring how `currentTransactionInfo` is rebased. After that the
-    // file-level checks run against a summary that never mentions the reconciled files, so they
-    // need no changes.
+    // A `var` (reassigned once by [[prepareRowLevelConflictResolution]]) to drop files that are
+    // resolved at the row level, mirroring how `currentTransactionInfo` is rebased. After that the
+    // file-level checks run against a summary that never mentions those files, so they need no
+    // changes.
     protected var winningCommitSummary: WinningCommitSummary,
     isolationLevel: IsolationLevel)
   extends DeltaLogging with ConflictCheckerPredicateElimination
@@ -357,17 +357,21 @@ private[delta] class ConflictChecker(
     // Update the table version in newly added type widening metadata.
     updateTypeWideningMetadata()
 
-    // Row-level concurrency: try to resolve "same physical file" conflicts by merging deletion
-    // vectors before the file-level checks run, so that concurrent DML touching disjoint rows of
-    // the same file no longer aborts. Runs after row-ID reassignment so merged files keep stable
-    // base row IDs.
-    resolveRowLevelConflicts()
+    // Row-level concurrency: set aside the "same physical file" conflicts that merging deletion
+    // vectors may resolve, so that concurrent DML touching disjoint rows of the same file no
+    // longer aborts. The file-level checks below then see only the other conflicts. Runs after
+    // row-ID reassignment so merged files keep stable base row IDs.
+    prepareRowLevelConflictResolution()
 
     // Data file checks.
     checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn()
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     resolveTimestampOrderingConflicts()
+
+    // Resolve the set-aside files last, so a transaction that aborts on another conflict decodes
+    // no deletion vector, scans no read and writes no merged deletion vector.
+    resolveRowLevelConflicts()
 
     recordRowLevelConflictResolution()
 

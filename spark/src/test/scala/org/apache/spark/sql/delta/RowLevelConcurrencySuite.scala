@@ -544,8 +544,14 @@ class RowLevelConcurrencySuite extends QueryTest
   // parmap preserves input order, so the reconciled result matches the sequential branch.
   // ---------------------------------------------------------------------------
 
-  test("disjoint DELETEs spanning two files reconcile via the bounded-parallel path") {
-    withTempDir { dir =>
+  for ((name, confs, expectedDvFiles) <- Seq(
+      ("", Seq.empty[(String, String)], 1),
+      (", re-reading bitmaps that were not kept",
+        Seq(DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_MAX_RETAINED_DV_BYTES.key -> "0"), 1),
+      (", one DV file per packing target size",
+        Seq(DeltaSQLConf.DELETION_VECTOR_PACKING_TARGET_SIZE.key -> "1"), 2)))
+  test(s"disjoint DELETEs spanning two files reconcile via the bounded-parallel path$name") {
+    withTempDir { dir => withSQLConf(confs: _*) {
       // Two data files: ids [0,100) and [100,200), one file each (separate appends).
       spark.range(start = 0, end = 100, step = 1, numPartitions = 1)
         .write.format("delta").mode("append").save(dir.getAbsolutePath)
@@ -569,7 +575,10 @@ class RowLevelConcurrencySuite extends QueryTest
       assert(ids(dir) === (0L to 199L).filterNot(id => Set(10L, 20L, 110L, 120L).contains(id)))
       // Both files survive, each carrying its own merged DV (winner + loser delete): cardinality 2.
       assert(deletionVectorCardinalities(log).sorted === Seq(2L, 2L))
-    }
+      // The merged DVs are packed into one DV file unless the packing target size forbids it.
+      val dvFiles = log.update().allFiles.collect().map(_.deletionVector.pathOrInlineDv).distinct
+      assert(dvFiles.length === expectedDvFiles)
+    }}
   }
 
   // ---------------------------------------------------------------------------
@@ -713,8 +722,9 @@ class RowLevelConcurrencySuite extends QueryTest
   }
 
   private def assertConflict(result: scala.util.Try[Long]): Unit = assert(
-    result.failed.toOption.exists(e => Seq("ConcurrentAppend", "ConcurrentDeleteRead")
-      .exists(e.getClass.getName.contains)),
+    result.failed.toOption.exists(e =>
+      Seq("ConcurrentAppend", "ConcurrentDeleteRead", "ConcurrentDeleteDelete")
+        .exists(e.getClass.getName.contains)),
     s"Expected a concurrency conflict, got: $result")
 
   test("a read of a row the winner deleted is not reconciled") {
@@ -748,6 +758,32 @@ class RowLevelConcurrencySuite extends QueryTest
         val expected = (0L to 99L).filterNot(id => id == 20L || id == 50L)
         assert(ids(dir) === (if (name == "UPDATE") (expected :+ 1050L).sorted else expected))
       }
+    }
+  }
+
+  test("a loser that aborts on another conflict scans no read and writes no merged DV") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      val loserActions = deleteActionsFromCopy(dir, 5)
+      def dvFilesOnDisk(): Set[String] =
+        dir.listFiles().map(_.getName).filter(_.contains("deletion_vector_")).toSet
+      var result: scala.util.Try[Long] = null
+      var dvFilesWritten = Set.empty[String]
+      val scans = countReadCheckScans {
+        withSQLConf(DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_ENABLED.key -> "true") {
+          val loser = log.startTransaction()
+          loser.filterFiles(Seq(EqualTo(idAttr, Literal(30L))))
+          // The winner's UPDATE masks row 20 in the shared file, which alone would reconcile, and
+          // appends an image file with id 1020, which the loser's read cannot rule out.
+          sql(s"UPDATE ${tableRef(dir)} SET id = 1020 WHERE id = 20")
+          val before = dvFilesOnDisk()
+          result = scala.util.Try(loser.commit(loserActions, DeltaOperations.ManualUpdate))
+          dvFilesWritten = dvFilesOnDisk() -- before
+        }
+      }
+      assert(result.failed.toOption.exists(_.isInstanceOf[ConcurrentAppendException]), result)
+      assert(scans === 0)
+      assert(dvFilesWritten.isEmpty, dvFilesWritten)
     }
   }
 
