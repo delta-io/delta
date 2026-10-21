@@ -359,6 +359,28 @@ class RowLevelConcurrencySuite extends QueryTest
     }
   }
 
+  test("crossed MERGEs whose sources read the target table are not reconciled") {
+    withTempDir { dir =>
+      createSingleFileTableWithDVs(dir)
+      // A reads row 20 as its source and deletes row 5; B reads row 5 and deletes row 20. The
+      // deletes are disjoint, but either serial order deletes only one row: the second MERGE's
+      // source is empty. A's source read of row 20 must abort it.
+      def selfMerge(sourceId: Long, targetId: Long): String =
+        s"""MERGE INTO ${tableRef(dir)} t
+           |USING (SELECT id + ${targetId - sourceId} AS id FROM ${tableRef(dir)}
+           |       WHERE id = $sourceId) s
+           |ON t.id = s.id WHEN MATCHED THEN DELETE""".stripMargin
+      val txnA = sqlTxn(selfMerge(sourceId = 20, targetId = 5), rowLevelConcurrency = true)
+      val txnB = sqlTxn(selfMerge(sourceId = 5, targetId = 20), rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      assertConcurrentModificationException(e)
+      assert(ids(dir) === (0L to 99L).filterNot(_ == 20L))
+    }
+  }
+
   test("DELETE (loser) vs MERGE matched-update (winner): winner image file conservatively " +
       "conflicts") {
     withTempDir { dir =>

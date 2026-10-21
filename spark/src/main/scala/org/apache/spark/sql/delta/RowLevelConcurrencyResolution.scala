@@ -244,16 +244,20 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
    * subquery-free conjuncts (dropping a conjunct only matches more rows), a read with none of
    * those matches every row, and any failure counts as affected.
    *
-   * A MERGE's target read usually matches every row, but most MERGEs are provably unaffected
-   * without a scan, see [[mergeUnaffectedByDeletesOfUntouchedRows]].
+   * A MERGE's target read usually matches every row, but most MERGEs whose only read is that
+   * target scan are provably unaffected without a scan, see
+   * [[mergeUnaffectedByDeletesOfUntouchedRows]].
    */
   private def currentReadsUnaffectedByWinnerDeletes(files: Seq[DisjointFile]): Boolean = {
+    val readPredicates = currentTransactionInfo.readPredicates
     currentTransactionInfo.op match {
-      case merge: DeltaOperations.Merge if mergeUnaffectedByDeletesOfUntouchedRows(merge) =>
+      // The shortcut reasons about the target scan only, so it applies only when that scan is the
+      // transaction's only read: a MERGE whose source also reads the table records more reads.
+      case merge: DeltaOperations.Merge
+          if readPredicates.size == 1 && mergeUnaffectedByDeletesOfUntouchedRows(merge) =>
         return true
       case _ =>
     }
-    val readPredicates = currentTransactionInfo.readPredicates
     if (readPredicates.isEmpty) return false
     val conjunctsPerRead = readPredicates.map { rp =>
       (rp.partitionPredicates ++ rp.dataPredicates).filter { e =>
