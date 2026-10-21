@@ -108,6 +108,11 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
     if (!rowLevelConcurrencyEnabled) return
     // A whole-table read observes every row, so any row the winner deleted affects it.
     if (currentTransactionInfo.readWholeTable) return
+    // RESTORE is not reconciled: it can bring deleted rows back, which the DV merge does not model.
+    if (currentTransactionInfo.op.name == DeltaOperations.OP_RESTORE ||
+        winningOperationName.contains(DeltaOperations.OP_RESTORE)) {
+      return
+    }
 
     // Winning transaction's DV updates: path present in both an AddFile (with a DV) and a
     // RemoveFile of the winning commit.
@@ -352,8 +357,14 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
     val winningBitmap = bitmapOf(winningAdd.deletionVector)
     val currentBitmap = bitmapOf(currentAdd.deletionVector)
     // `baseBitmap` is the DV of `P` at the current txn's read time (carried on its RemoveFile).
-    // Both `dv_win` and `dv_cur` are supersets of it (a DV only grows), so each side's *newly*
-    // deleted rows are `dv \ base`, and their overlap is `(dv_win INTERSECT dv_cur) MINUS base`.
+    // DELETE/UPDATE/MERGE only add rows to a DV, so `dv_win` and `dv_cur` contain `base` and each
+    // side's *newly* deleted rows are `dv \ base`. A commit that brings deleted rows back breaks
+    // this: the union would delete those rows again, and the read check would not see them. Such
+    // a file is not reconciled.
+    if (!containsAll(winningBitmap, baseBitmap) || !containsAll(currentBitmap, baseBitmap)) {
+      return None
+    }
+    // The newly-deleted rows overlap in `(dv_win INTERSECT dv_cur) MINUS base`.
     // Empty overlap => the two txns deleted disjoint rows, so the DV union is safe as far as the
     // writes go (the reads are checked separately, see currentReadsUnaffectedByWinnerDeletes).
     // Non-empty => the same row was deleted concurrently: a genuine conflict, left for the
@@ -380,6 +391,13 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
     } else {
       None
     }
+  }
+
+  /** Whether `bitmap` contains every row of `subset`. */
+  private def containsAll(bitmap: RoaringBitmapArray, subset: RoaringBitmapArray): Boolean = {
+    val missing = subset.copy()
+    missing.andNot(bitmap)
+    missing.isEmpty
   }
 
   /**

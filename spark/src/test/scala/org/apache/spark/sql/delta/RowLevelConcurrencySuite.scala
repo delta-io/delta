@@ -171,7 +171,8 @@ class RowLevelConcurrencySuite extends QueryTest
     }
   }
 
-  test("Serializable: a MERGE matched-delete (read-then-modify) reconciles vs a concurrent DELETE") {
+  test("Serializable: a MERGE matched-delete (read-then-modify) reconciles vs a concurrent " +
+      "DELETE") {
     withTempDir { dir =>
       val log = createSingleFileTableWithDVs(dir)
       sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
@@ -362,8 +363,8 @@ class RowLevelConcurrencySuite extends QueryTest
       "conflicts") {
     withTempDir { dir =>
       val log = createSingleFileTableWithDVs(dir)
-      // A (loser) deletes id=10; B (winner) matched-updates id=20 -> 1020, which masks row 20 with a
-      // DV and appends an image file for 1020. Like the standalone-UPDATE case above, that image
+      // A (loser) deletes id=10; B (winner) matched-updates id=20 -> 1020, which masks row 20 with
+      // a DV and appends an image file for 1020. Like the standalone-UPDATE case above, that image
       // file is a non-blind changed-data add the append check cannot prove disjoint, so the loser
       // conservatively aborts rather than reconciling.
       val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
@@ -623,10 +624,14 @@ class RowLevelConcurrencySuite extends QueryTest
    * copy so they can be committed by a hand-driven transaction on `dir`. The copy's DV files are
    * copied back so the actions resolve.
    */
-  private def deleteActionsFromCopy(dir: File, id: Long): Seq[Action] = {
-    val copy = new File(dir.getParentFile, dir.getName + "-copy")
+  private def deleteActionsFromCopy(dir: File, id: Long): Seq[Action] =
+    fileActionsFromCopy(dir)(copy => s"DELETE FROM ${tableRef(copy)} WHERE id = $id")
+
+  /** The file actions of the `sqlOnCopy(copy)` command, produced on a copy of the table. */
+  private def fileActionsFromCopy(dir: File)(sqlOnCopy: File => String): Seq[Action] = {
+    val copy = new File(dir.getParentFile, s"${dir.getName}-copy-${java.util.UUID.randomUUID()}")
     org.apache.commons.io.FileUtils.copyDirectory(dir, copy)
-    sql(s"DELETE FROM ${tableRef(copy)} WHERE id = $id")
+    sql(sqlOnCopy(copy))
     val copyLog = DeltaLog.forTable(spark, copy.getCanonicalPath)
     copy.listFiles().filter(_.getName.contains("deletion_vector"))
       .foreach(f => org.apache.commons.io.FileUtils.copyFileToDirectory(f, dir))
@@ -687,6 +692,104 @@ class RowLevelConcurrencySuite extends QueryTest
       assert(result.isSuccess, s"Expected the DVs to merge, got: $result")
       assert(ids(dir) === (0L to 99L).filterNot(id => id == 5L || id == 20L))
       assert(deletionVectorCardinalities(log) === Seq(2L))
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // RESTORE and other commits that bring deleted rows back
+  // ---------------------------------------------------------------------------
+
+  private def restoreTo(dir: File, version: Long): String =
+    s"RESTORE TABLE ${tableRef(dir)} TO VERSION AS OF $version"
+
+  test("RESTORE winner that brings back a deleted row is not reconciled") {
+    withTempDir { dir =>
+      createSingleFileTableWithDVs(dir) // v0
+      sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 1") // v1: dv = {1}
+      sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 2") // v2: dv = {1, 2}
+      // A prepares dv = {1, 2, 50}; B restores dv = {1}. Merging them would delete row 2 again.
+      val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 50", rowLevelConcurrency = true)
+      val txnB = sqlTxn(restoreTo(dir, 1), rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      assertConcurrentModificationException(e)
+      assert(ids(dir) === (0L to 99L).filterNot(_ == 1L))
+    }
+  }
+
+  test("RESTORE winner that only deletes rows is not reconciled") {
+    withTempDir { dir =>
+      createSingleFileTableWithDVs(dir) // v0
+      sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 1") // v1: dv = {1}
+      sql(restoreTo(dir, 0)) // v2: no dv
+      // B restores dv = {1}, a superset of A's base. RESTORE is still left to the file checks.
+      val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 50", rowLevelConcurrency = true)
+      val txnB = sqlTxn(restoreTo(dir, 1), rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      assertConcurrentModificationException(e)
+      assert(ids(dir) === (0L to 99L).filterNot(_ == 1L))
+    }
+  }
+
+  test("RESTORE loser aborts on a concurrent DELETE") {
+    withTempDir { dir =>
+      createSingleFileTableWithDVs(dir) // v0
+      sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 1") // v1: dv = {1}
+      sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 2") // v2: dv = {1, 2}
+      // A restores dv = {1}; B deletes row 50 from the same file. RESTORE commits through
+      // `commitLarge`, which aborts on any concurrent commit without running conflict resolution.
+      val txnA = sqlTxn(restoreTo(dir, 1), rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 50", rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      assert(e.getCause.isInstanceOf[io.delta.exceptions.ConcurrentWriteException], e.getCause)
+      assert(ids(dir) === (0L to 99L).filterNot(id => Set(1L, 2L, 50L).contains(id)))
+    }
+  }
+
+  test("RESTORE loser committed through conflict resolution is not reconciled") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir) // v0
+      sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 1") // v1: dv = {1}
+      sql(restoreTo(dir, 0)) // v2: no dv
+      // The loser restores dv = {1} (rows only added) after reading row 1; the winner deletes row
+      // 20. Both DV checks pass, so only the RESTORE exclusion keeps this from reconciling.
+      val loserActions = fileActionsFromCopy(dir)(restoreTo(_, 1))
+      val result = withSQLConf(DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_ENABLED.key -> "true") {
+        val loser = log.startTransaction()
+        loser.filterFiles(Seq(EqualTo(idAttr, Literal(1L))))
+        sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 20")
+        scala.util.Try(loser.commit(loserActions, DeltaOperations.Restore(Some(1L), None)))
+      }
+      assertConflict(result)
+      assert(ids(dir) === (0L to 99L).filterNot(_ == 20L))
+    }
+  }
+
+  test("a non-RESTORE commit that brings back a deleted row is not reconciled") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir) // v0
+      sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 1") // v1: dv = {1}
+      sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 2") // v2: dv = {1, 2}
+      // The winner un-deletes row 2 like RESTORE does, but under another operation name (e.g.
+      // written by another engine). The DVs themselves show the winner's DV lost a base row.
+      val winnerActions = fileActionsFromCopy(dir)(restoreTo(_, 1))
+      val loserActions = deleteActionsFromCopy(dir, 50)
+      val result = withSQLConf(DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_ENABLED.key -> "true") {
+        val loser = log.startTransaction()
+        loser.filterFiles(Seq(EqualTo(idAttr, Literal(50L))))
+        log.startTransaction().commit(winnerActions, DeltaOperations.ManualUpdate)
+        scala.util.Try(loser.commit(loserActions, DeltaOperations.ManualUpdate))
+      }
+      assertConflict(result)
+      assert(ids(dir) === (0L to 99L).filterNot(_ == 1L))
     }
   }
 
