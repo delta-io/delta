@@ -853,7 +853,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
         builder.build(mockEngine())
       }.getMessage
 
-      assert(exMsg.contains("Only staged ratified commits are supported"))
+      assert(exMsg.contains("Only file-based ratified catalog commits are supported"))
     }
   }
 
@@ -1119,5 +1119,21 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     val commitRange = builder.build(createMockFSListFromEngine(fileList))
     assert(commitRange.getStartVersion == 0)
     assert(commitRange.getEndVersion == 3)
+  }
+
+  test("withLogData: published and staged catalog commits are both accepted") {
+    val logData = Seq(
+      ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 0, deltaFileStatus(0)),
+      ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 1, deltaFileStatus(1)),
+      ParsedCatalogCommitData.forFileStatus(stagedCommitFile(2)))
+    val fileList = deltaFileStatuses(0L to 1L)
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withEndBoundary(CommitBoundary.atVersion(2))
+      .withLogData(logData.toList.asJava)
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 0)
+    assert(commitRange.getEndVersion == 2)
   }
 }

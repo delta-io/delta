@@ -172,7 +172,7 @@ public final class DeltaHistoryManager {
       List<ParsedCatalogCommitData> catalogCommits)
       throws TableNotFoundException {
     // For now, we only accept *staged* ratified  commits (not inline)
-    LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(catalogCommits);
+    LogDataUtils.validateLogDataContainsOnlyRatifiedCatalogCommits(catalogCommits);
 
     // Create a mapper for delta version -> file status that takes into account ratified commits
     Function<Long, FileStatus> versionToFileStatusFunction =

@@ -51,6 +51,9 @@ public interface CommitRangeBuilder {
   /**
    * Provides parsed log data to optimize the commit range construction.
    *
+   * <p>Currently, only file-based ratified catalog commits are supported, sorted and contiguous by
+   * version. Each commit may be staged or already published.
+   *
    * <p><strong>Note:</strong> If no end boundary is provided via {@link
    * #withEndBoundary(CommitBoundary)}, or a timestamp-based end boundary is provided, the provided
    * log data must include all available ratified commits. If a version-based end boundary is
