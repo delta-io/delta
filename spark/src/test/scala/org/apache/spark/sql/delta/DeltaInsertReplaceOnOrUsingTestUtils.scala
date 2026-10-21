@@ -83,7 +83,7 @@ trait DeltaInsertReplaceOnOrUsingTestUtils
   protected def checkCurrentTimestampMatchingKey(
       pinStatementTime: Boolean,
       materializeSource: String,
-      loseSource: Boolean)(replace: String => Unit): Unit = {
+      loseSource: Boolean)(executeInsertReplace: String => Unit): Unit = {
     import testImplicits._
 
     withSQLConf(
@@ -151,10 +151,14 @@ trait DeltaInsertReplaceOnOrUsingTestUtils
           }
           override def commit[T](f: => T): T = f
         }
+        val sourceQuery =
+          """SELECT id % 3 + 1 AS id, current_timestamp() AS eventTime,
+            |  concat('source-', id) AS rowOrigin
+            |FROM range(0, 4)
+            |""".stripMargin
         TransactionExecutionObserver.withObserver(seedTargetBeforeSnapshot) {
           InsertAtomicReplaceExecutionObserver.withObserver(failFirstAttempt) {
-            replace("SELECT id % 3 + 1 AS id, current_timestamp() AS eventTime, " +
-              "concat('source-', id) AS rowOrigin FROM range(0, 4)")
+            executeInsertReplace(sourceQuery)
           }
         }
         assert(injectedFailures === (if (loseSource) 1 else 0))
