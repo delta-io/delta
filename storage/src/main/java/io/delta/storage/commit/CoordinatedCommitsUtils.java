@@ -30,6 +30,8 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class CoordinatedCommitsUtils {
 
@@ -40,6 +42,13 @@ public class CoordinatedCommitsUtils {
 
     /** The subdirectory in which to store the unbackfilled commit files. */
     private static final String COMMIT_SUBDIR = "_staged_commits";
+
+    /** Published commit file name: 00000000000000000001.json */
+    private static final Pattern PUBLISHED_COMMIT_FILE_PATTERN = Pattern.compile("(\\d+)\\.json");
+
+    /** Staged commit file name: 00000000000000000001.uuid.json */
+    private static final Pattern STAGED_COMMIT_FILE_PATTERN =
+        Pattern.compile("(\\d+)\\.([^./]+)\\.json");
 
     /** The configuration key for the coordinated commits owner name. */
     private static final String COORDINATED_COMMITS_COORDINATOR_NAME_KEY =
@@ -75,6 +84,52 @@ public class CoordinatedCommitsUtils {
             Path logPath,
             Long version) {
         return new Path(logPath, String.format("%020d.json", version));
+    }
+
+    /**
+     * Returns the path of a commit file returned by a catalog, given only its file name.
+     *
+     * <p>A catalog may return a commit after it has been published, so the file name decides
+     * the directory: a published name ({@code 00000000000000000001.json}) resolves to
+     * {@code logPath/00000000000000000001.json}, and a staged name
+     * ({@code 00000000000000000001.uuid.json}) resolves to
+     * {@code logPath/_staged_commits/00000000000000000001.uuid.json}.
+     *
+     * @param logPath The root path of the delta log.
+     * @param version The commit version reported by the catalog.
+     * @param fileName The commit file name reported by the catalog.
+     * @throws IllegalArgumentException if fileName is not a commit file name, or its version
+     *     does not equal version
+     */
+    public static Path catalogCommitPath(Path logPath, long version, String fileName) {
+        if (version < 0) {
+            throw new IllegalArgumentException(
+                "Commit version must be non-negative, but got " + version);
+        }
+        if (fileName == null) {
+            throw new IllegalArgumentException("Commit file name must not be null");
+        }
+        Matcher published = PUBLISHED_COMMIT_FILE_PATTERN.matcher(fileName);
+        Matcher staged = STAGED_COMMIT_FILE_PATTERN.matcher(fileName);
+        Path parent;
+        Matcher matched;
+        if (published.matches()) {
+            parent = logPath;
+            matched = published;
+        } else if (staged.matches()) {
+            parent = commitDirPath(logPath);
+            matched = staged;
+        } else {
+            throw new IllegalArgumentException(
+                "Expected a commit file name but got " + fileName);
+        }
+        long fileVersion = Long.parseLong(matched.group(1));
+        if (fileVersion != version) {
+            throw new IllegalArgumentException(String.format(
+                "Commit file %s has version %d but the catalog reported version %d",
+                fileName, fileVersion, version));
+        }
+        return new Path(parent, fileName);
     }
 
     /**
