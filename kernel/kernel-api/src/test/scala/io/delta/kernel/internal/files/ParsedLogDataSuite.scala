@@ -182,7 +182,10 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
   test("ParsedCatalogCommitData.forCatalogFileStatus: rejects file from another table") {
     Seq(
       FileStatus.of("/other/table/_delta_log/00000000000000000005.json", 5, 50),
-      FileStatus.of("/other/table/_delta_log/_staged_commits/00000000000000000005.uuid.json", 5, 50),
+      FileStatus.of(
+        "/other/table/_delta_log/_staged_commits/00000000000000000005.uuid.json",
+        5,
+        50),
       FileStatus.of("s3://bucket" + FileNames.deltaFile(logPath, 5), 5, 50)).foreach { fs =>
       val exMsg = intercept[IllegalArgumentException] {
         ParsedCatalogCommitData.forCatalogFileStatus("file:" + logPath, 5, fs)
