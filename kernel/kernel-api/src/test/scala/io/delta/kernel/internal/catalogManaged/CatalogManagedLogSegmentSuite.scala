@@ -99,8 +99,10 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
 
         actualDeltaAndCommitFileStatuses.map(_.getPath).foreach { path =>
           val version = FileNames.deltaVersion(path)
-          if (expectedRatifiedVersions.contains(version) &&
-            !publishedRatifiedCommitVersions.contains(version)) {
+          if (
+            expectedRatifiedVersions.contains(version) &&
+            !publishedRatifiedCommitVersions.contains(version)
+          ) {
             assert(FileNames.isStagedDeltaFile(path))
           } else {
             assert(FileNames.isPublishedDeltaFile(path))
