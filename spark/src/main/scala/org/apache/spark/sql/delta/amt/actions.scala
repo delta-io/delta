@@ -763,6 +763,7 @@ case class DataManifestEntry(
     spec_id: Option[Int] = None,
     content_stats: Option[String] = None,
     key_metadata: Option[Array[Byte]] = None,
+    @JsonDeserialize(contentUsing = classOf[AMTSplitOffsetsDeserializer])
     split_offsets: Option[Seq[Long]] = None)
   extends AMTAction {
 
@@ -828,10 +829,15 @@ case class DataManifestEntry(
  */
 case class Tracking(
     status: Int,                            // ID: 0, required.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     snapshot_id: Option[Long],              // ID: 1, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     modified_snapshot_id: Option[Long],     // ID: 5, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     sequence_number: Option[Long],          // ID: 3, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     file_sequence_number: Option[Long],     // ID: 4, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     first_row_id: Option[Long],             // ID: 142, optional.
     deleted_positions: Option[Array[Byte]], // ID: 6, optional (bitmap).
     replaced_positions: Option[Array[Byte]] // ID: 7, optional (bitmap).
