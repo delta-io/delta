@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 /**
  * A trait representing a single Delta commit.
  */
-trait DeltaSingleCommit extends AutoCloseable {
+trait DeltaSingleCommit {
 
   /** The version of this commit. */
   def version: Long
@@ -36,15 +36,11 @@ trait DeltaSingleCommit extends AutoCloseable {
   /**
    * Creates a rewindable iterator over this commit's actions.
    *
-   * The caller owns this commit and its action iterators. Keep this commit open until all action
-   * reads and rewinds have finished, then call [[close]].
+   * The caller owns the returned iterator and must close it after use.
    *
    * @param maxInMemoryFileSizeBytes threshold for caching a commit's actions in memory for rewinds.
    *   Only the default value (0) is currently supported.
    */
   def getActionsIterator(
       maxInMemoryFileSizeBytes: Long = 0): ClosableIterator[Action] with SupportsRewinding[Action]
-
-  /** Releases the commit's resources. */
-  override def close(): Unit
 }
