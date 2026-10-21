@@ -20,15 +20,17 @@ import java.io.{File, FileNotFoundException}
 import java.net.URISyntaxException
 import java.util.UUID
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
-import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaParquetFileFormat, DeltaTestUtilsForTempViews, ScanWithDeletionVectors}
+import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, filterUsageRecords}
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor._
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.{DeltaDataSkippingType, PreparedDeltaFileIndex}
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
+import com.databricks.spark.util.Log4jUsageLogger
 import com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
@@ -44,6 +46,7 @@ import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
 import org.apache.spark.sql.execution.FileSourceScanLike
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -483,6 +486,76 @@ class DeletionVectorsSuite extends QueryTest
           spark.read.format("delta").load(tablePath).orderBy("value"),
           (3 until 10).map(i => Row(i, s"/path/to/value/$i"))
         )
+      }
+    }
+  }
+
+  test("DELETE with DVs - partition column whose name contains the DV column name") {
+    withDeletionVectorsEnabled() {
+      withTempDir { dir =>
+        val tablePath = dir.getAbsolutePath
+        val partCol = "p" + DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME
+        (0 until 10).map(i => (i, i % 2)).toDF("value", partCol)
+          .write.format("delta").partitionBy(partCol).save(tablePath)
+        DeltaTable.forPath(tablePath).delete("value = 0")
+
+        // A partition-only condition takes the metadata-only DELETE path, which removes every
+        // file returned by file skipping without re-checking the condition.
+        sql(s"DELETE FROM delta.`$tablePath` WHERE $partCol = 1")
+
+        checkAnswer(
+          spark.read.format("delta").load(tablePath),
+          Seq(2, 4, 6, 8).map(i => Row(i, 0)))
+      }
+    }
+  }
+
+  test("scan with DVs - files are listed once") {
+    withDeletionVectorsEnabled() {
+      withTempDir { dir =>
+        val tablePath = dir.getAbsolutePath
+        (0 until 10).map(i => (i, i % 2)).toDF("value", "part")
+          .write.format("delta").partitionBy("part").save(tablePath)
+        DeltaTable.forPath(tablePath).delete("value = 0")
+
+        val df = spark.read.format("delta").load(tablePath).where("part = 0 AND value >= 0")
+        val usageRecords = Log4jUsageLogger.track { df.collect() }
+        checkAnswer(df, Seq(2, 4, 6, 8).map(i => Row(i, 0)))
+
+        // Files are listed once to prepare the scan. Checking for DVs and executing the scan must
+        // reuse the prepared files, even though the scan's filters now include the DV filter.
+        val skippingOps =
+          Seq("delta.skipping.none", "delta.skipping.partition", "delta.skipping.data")
+            .flatMap(filterUsageRecords(usageRecords, _))
+        assert(skippingOps.size == 1)
+        val reuseEvents =
+          filterUsageRecords(usageRecords, "delta.preparedDeltaFileIndex.reuseSkippingResult")
+        assert(reuseEvents.nonEmpty)
+        assert(reuseEvents.forall(_.blob.contains("\"reused\":true")))
+      }
+    }
+  }
+
+  test("scan with DVs - files pruned by LIMIT are not trusted for the DV check") {
+    withDeletionVectorsEnabled() {
+      withTempDir { dir =>
+        val tablePath = dir.getAbsolutePath
+        (0 until 10).map(i => (i, i % 2)).toDF("value", "part").coalesce(1)
+          .write.format("delta").partitionBy("part").save(tablePath)
+        // Only the file of partition 1 has a DV.
+        DeltaTable.forPath(tablePath).delete("value = 1")
+
+        val df = spark.read.format("delta").load(tablePath).where("part = 0").limit(1)
+        val (relation, index) = df.queryExecution.optimizedPlan.collectFirst {
+          case r @ LogicalRelationWithTable(
+              HadoopFsRelation(i: PreparedDeltaFileIndex, _, _, _, _, _), _) => (r, i)
+        }.get
+        assert(index.preparedScan.dataSkippingType == DeltaDataSkippingType.filteredLimit)
+        assert(index.preparedScan.files.forall(_.deletionVector == null))
+
+        // The scan lists all matching files instead of the LIMIT-pruned ones if its filters
+        // change after it was prepared, so it must still handle DVs.
+        assert(ScanWithDeletionVectors.unapply(relation).isDefined)
       }
     }
   }

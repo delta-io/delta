@@ -109,7 +109,22 @@ abstract class TahoeFileIndex(
   private def listAddFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Map[Map[String, String], Seq[AddFile]] = {
-    matchingFiles(partitionFilters, dataFilters).groupBy(_.partitionValues)
+    matchingFiles(partitionFilters, dataFilters.filterNot(isRowDeletedFilter))
+      .groupBy(_.partitionValues)
+  }
+
+  /**
+   * Whether `filter` only references the row deleted column that [[PreprocessTableWithDVs]] adds
+   * to scans of tables with deletion vectors, e.g. `__delta_internal_is_row_deleted#2723 = 0`.
+   * Such a filter is evaluated per row after the scan and can't skip any files, so it isn't
+   * passed to `matchingFiles`. This keeps the filters the same as when the scan was prepared, so
+   * that [[org.apache.spark.sql.delta.stats.PreparedDeltaFileIndex]] reuses the prepared files
+   * instead of listing them again.
+   */
+  private def isRowDeletedFilter(filter: Expression): Boolean = {
+    val columnName = DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME
+    filter.references.size == 1 && filter.references.head.name == columnName &&
+      !metadata.schema.fieldNames.exists(_.equalsIgnoreCase(columnName))
   }
 
   /**

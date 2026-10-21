@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.PreparedDeltaFileIndex
+import org.apache.spark.sql.delta.stats.{DeltaDataSkippingType, DeltaScan, PreparedDeltaFileIndex}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
@@ -86,16 +86,18 @@ object ScanWithDeletionVectors {
     // 3. Unnecessary pinned snapshot requirements break legitimate use cases like transaction
     //    read tracking with TahoeLogFileIndex (e.g., OptimisticTransaction.withNewTransaction)
     // 4. Performance: Avoids forcing expensive pinned snapshots when not needed
-    val filesWithDVs = index match {
-      // Reuse the files of an already prepared scan instead of listing the table again.
+    val filesToCheck = index match {
+      // Reuse the files of an already prepared scan instead of listing the table again. Files
+      // pruned by LIMIT are only a subset of the matching files, and the scan may list all of
+      // them if its filters change after the scan was prepared, so check the whole table instead.
+      case p: PreparedDeltaFileIndex if isPrunedByLimit(p.preparedScan) =>
+        p.preparedScan.scannedSnapshot.filesForScan(filters = Nil).files
       case p: PreparedDeltaFileIndex =>
-        p.preparedScan.files.distinct.filter(_.deletionVector != null)
+        p.preparedScan.files
       case _ =>
-        index
-          .matchingFiles(partitionFilters = Nil, dataFilters = Nil)
-          .filter(_.deletionVector != null)
+        index.matchingFiles(partitionFilters = Nil, dataFilters = Nil)
     }
-    if (filesWithDVs.isEmpty) return None
+    if (!filesToCheck.exists(_.deletionVector != null)) return None
 
     // At this point, we know there are actual files with DVs, so we need a pinned snapshot.
     // TahoeLogFileIndex (non-pinned) cannot be used with deletion vectors as it may not
@@ -118,6 +120,11 @@ object ScanWithDeletionVectors {
     // Now add a project on top of the row index filter node to
     // remove the skip row column
     Some(Project(planOutput, rowIndexFilter))
+  }
+
+  private def isPrunedByLimit(scan: DeltaScan): Boolean = {
+    scan.dataSkippingType == DeltaDataSkippingType.limit ||
+      scan.dataSkippingType == DeltaDataSkippingType.filteredLimit
   }
 
   /**
