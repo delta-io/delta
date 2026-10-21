@@ -925,6 +925,38 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
       expectedAnswer = (0L until 100L).map(TestRow(_)))
   }
 
+  test("read table with stale _last_checkpoint after checkpoint cleanup") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      // Write 15 versions (v0 through v14), each appending 10 rows.
+      // With the default checkpoint interval of 10, a checkpoint is created at v10.
+      (0 to 14).foreach { i =>
+        spark.range(i * 10, i * 10 + 10).write
+          .format("delta")
+          .mode("append")
+          .save(path)
+      }
+
+      val checkpointFile = new File(
+        f"$path/_delta_log/00000000000000000010.checkpoint.parquet")
+      assert(checkpointFile.exists(), "Expected checkpoint at version 10")
+
+      val lastCheckpointFile = new File(path + "/_delta_log/_last_checkpoint")
+      assert(lastCheckpointFile.exists(), "Expected _last_checkpoint file to exist")
+
+      // Delete the checkpoint file, simulating cleanup by vacuum or log retention.
+      // _last_checkpoint still references v10, making it stale.
+      assert(checkpointFile.delete(), "Failed to delete checkpoint file")
+
+      // Kernel should detect the stale _last_checkpoint, fall back to searching for an
+      // earlier valid checkpoint, find none, and reconstruct from delta files at version 0.
+      checkTable(
+        path = path,
+        expectedAnswer = (0L until 150L).map(TestRow(_)),
+        expectedVersion = Some(14))
+    }
+  }
+
   test("error - version not contiguous") {
     val e = intercept[InvalidTableException] {
       latestSnapshot(goldenTablePath("versions-not-contiguous"))
