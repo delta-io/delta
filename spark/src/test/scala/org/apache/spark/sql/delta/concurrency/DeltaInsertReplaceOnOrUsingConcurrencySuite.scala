@@ -79,18 +79,18 @@ class DeltaInsertReplaceOnOrUsingMaterializationWithoutParallelConcurrencySuite
               "SELECT DISTINCT eventTime FROM target WHERE rowOrigin LIKE 'source%'")
               .as[Timestamp].collect()
             assert(sourceTimes.length === 1)
-            val statementTime = sourceTimes.head
+            val sourceEventTime = sourceTimes.head
             val expectTimeBeforeDelete =
               pinStatementTime || materializeSource == "all"
             assert(
-              if (expectTimeBeforeDelete) statementTime.before(deleteCompletedAt)
-              else statementTime.after(deleteCompletedAt),
+              if (expectTimeBeforeDelete) sourceEventTime.compareTo(deleteCompletedAt) < 0
+              else sourceEventTime.compareTo(deleteCompletedAt) > 0,
               s"pinStatementTime=$pinStatementTime, materializeSource=$materializeSource, " +
-                s"statementTime=$statementTime, deleteCompletedAt=$deleteCompletedAt")
+                s"sourceEventTime=$sourceEventTime, deleteCompletedAt=$deleteCompletedAt")
             checkAnswer(sql("SELECT * FROM target"), Seq(
-              Row(1, statementTime, "source-1"),
-              Row(1, statementTime, "source-duplicate"),
-              Row(2, statementTime, "source-2"),
+              Row(1, sourceEventTime, "source-1"),
+              Row(1, sourceEventTime, "source-duplicate"),
+              Row(2, sourceEventTime, "source-2"),
               Row(3, targetTime, "target-3")))
           }
           checkAnswer(sql("SELECT * FROM source"), Seq(

@@ -79,10 +79,10 @@ trait DeltaInsertReplaceOnDFWriterTests
             val sourceTimes = result.where("rowOrigin = 'source'")
               .select("eventTime").distinct().as[Timestamp].collect()
             assert(sourceTimes.length === 1)
-            val statementTime = sourceTimes.head
+            val sourceEventTime = sourceTimes.head
             checkAnswer(result, Seq(
-              Row(1L, statementTime, "source"),
-              Row(2L, statementTime, "source"),
+              Row(1L, sourceEventTime, "source"),
+              Row(2L, sourceEventTime, "source"),
               Row(3L, targetTime, "target")) ++
               (if (pinStatementTime) Seq.empty else Seq(Row(1L, targetTime, "target"))))
           }
