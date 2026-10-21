@@ -173,14 +173,10 @@ class DeltaV2TableManagerImplSuite
             val changes = manager.getChangesIterator(startVersion, endVersion, catalogTableOpt)
             try {
               val versions = changes.map { commit =>
-                try {
-                  commit.getActionsIterator().processAndClose { iterator =>
-                    assert(iterator.count(_.isInstanceOf[AddFile]) === 2)
-                  }
-                  commit.version
-                } finally {
-                  commit.close()
+                commit.getActionsIterator().processAndClose { iterator =>
+                  assert(iterator.count(_.isInstanceOf[AddFile]) === 2)
                 }
+                commit.version
               }.toList
               assert(versions === expectedVersions)
             } finally {
