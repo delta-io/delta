@@ -15,7 +15,6 @@
  */
 package io.delta.spark.internal.v2.read;
 
-import static io.delta.spark.internal.v2.utils.ScalaUtils.toJavaOptional;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.data.Row;
@@ -192,7 +191,7 @@ public class CDCDataFileTest {
     assertEquals(77777L, cdcFile.getCommitTimestamp());
     assertEquals(1024, cdcFile.getFileSize());
     assertFalse(cdcFile.isAddCDCFile());
-    assertEquals(Optional.of("inline-dv=="), toJavaOptional(cdcFile.getEffectiveDv()));
+    assertEquals(Optional.of("inline-dv=="), cdcFile.getEffectiveDv());
     assertEquals(RowIndexFilterType.IF_NOT_CONTAINED, cdcFile.getDvFilterType());
     assertEquals("data.parquet", cdcFile.getPath());
     assertTrue(cdcFile.hasDeletionVector());
@@ -206,7 +205,7 @@ public class CDCDataFileTest {
             addFile, CDCReader.CDC_TYPE_INSERT(), /* commitTimestamp= */ 88888L, "restore-dv==");
 
     assertEquals(CDCReader.CDC_TYPE_INSERT(), cdcFile.getChangeType());
-    assertEquals(Optional.of("restore-dv=="), toJavaOptional(cdcFile.getEffectiveDv()));
+    assertEquals(Optional.of("restore-dv=="), cdcFile.getEffectiveDv());
     assertEquals(RowIndexFilterType.IF_NOT_CONTAINED, cdcFile.getDvFilterType());
   }
 }

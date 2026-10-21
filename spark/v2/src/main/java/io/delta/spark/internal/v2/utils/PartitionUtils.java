@@ -514,7 +514,7 @@ public class PartitionUtils {
     if (!cdcFile.isAddCDCFile()) {
       cdcConstants.put(CDCSchemaContext.CDC_TYPE_COLUMN, cdcFile.getChangeType());
     }
-    Optional<String> effectiveDv = ScalaUtils.toJavaOptional(cdcFile.getEffectiveDv());
+    Optional<String> effectiveDv = cdcFile.getEffectiveDv();
     scala.collection.immutable.Map<String, Object> metadata =
         effectiveDv.isPresent()
             ? buildDvMetadata(effectiveDv.get(), cdcFile.getDvFilterType())
