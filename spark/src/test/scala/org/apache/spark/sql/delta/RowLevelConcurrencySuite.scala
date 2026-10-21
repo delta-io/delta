@@ -17,21 +17,26 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 
 import scala.concurrent.duration.Duration
 
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.concurrency.PhaseLockingTestMixin
 import org.apache.spark.sql.delta.concurrency.TransactionExecutionTestMixin
+import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
+import org.apache.spark.sql.execution.QueryExecution
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.LongType
+import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.util.ThreadUtils
 
 /**
@@ -102,6 +107,35 @@ class RowLevelConcurrencySuite extends QueryTest
       Seq("ConcurrentAppend", "ConcurrentDeleteRead", "ConcurrentDeleteDelete")
         .exists(causeName.contains),
       s"Expected a concurrency conflict, got: $causeName")
+  }
+
+  /** Runs `f` and returns how many row-level read-check scans it issued. */
+  private def countReadCheckScans(f: => Unit): Int = {
+    val count = new AtomicInteger(0)
+    def isReadCheck(qe: QueryExecution): Boolean = qe.analyzed.exists {
+      case l: LogicalRelation => l.relation match {
+        case h: HadoopFsRelation => h.location match {
+          case index: TahoeBatchFileIndex => index.actionType == "rowLevelConcurrencyReadCheck"
+          case _ => false
+        }
+        case _ => false
+      }
+      case _ => false
+    }
+    val listener = new QueryExecutionListener {
+      override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit =
+        if (isReadCheck(qe)) count.incrementAndGet()
+      override def onFailure(funcName: String, qe: QueryExecution, exception: Exception): Unit =
+        if (isReadCheck(qe)) count.incrementAndGet()
+    }
+    spark.listenerManager.register(listener)
+    try {
+      f
+      spark.sparkContext.listenerBus.waitUntilEmpty()
+    } finally {
+      spark.listenerManager.unregister(listener)
+    }
+    count.get()
   }
 
   private def ids(dir: File): Seq[Long] =
@@ -696,6 +730,27 @@ class RowLevelConcurrencySuite extends QueryTest
     }
   }
 
+  for ((name, loserSql) <- Seq(
+      "DELETE" -> ((dir: File) => s"DELETE FROM ${tableRef(dir)} WHERE id = 50"),
+      "UPDATE" -> ((dir: File) => s"UPDATE ${tableRef(dir)} SET id = 1050 WHERE id = 50"))) {
+    test(s"a $name whose only read is its condition reconciles without a read-check scan") {
+      withTempDir { dir =>
+        createSingleFileTableWithDVs(dir)
+        val txnA = sqlTxn(loserSql(dir), rowLevelConcurrency = true)
+        val txnB =
+          sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
+        val scans = countReadCheckScans {
+          val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+          ThreadUtils.awaitResult(futureA, Duration.Inf)
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+        }
+        assert(scans === 0)
+        val expected = (0L to 99L).filterNot(id => id == 20L || id == 50L)
+        assert(ids(dir) === (if (name == "UPDATE") (expected :+ 1050L).sorted else expected))
+      }
+    }
+  }
+
   test("a whole-table read is not reconciled") {
     withTempDir { dir =>
       val log = createSingleFileTableWithDVs(dir)
@@ -709,9 +764,13 @@ class RowLevelConcurrencySuite extends QueryTest
       val log = createSingleFileTableWithDVs(dir)
       sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
         s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
-      val result =
-        deleteFiveAfterRead(dir, log)(_.filterFiles(Seq(EqualTo(idAttr, Literal(30L)))))
+      var result: scala.util.Try[Long] = null
+      val scans = countReadCheckScans {
+        result = deleteFiveAfterRead(dir, log)(_.filterFiles(Seq(EqualTo(idAttr, Literal(30L)))))
+      }
       assert(result.isSuccess, s"Expected the DVs to merge, got: $result")
+      // A read that is not the DML's own condition is checked by scanning the shared file.
+      assert(scans === 1)
       assert(ids(dir) === (0L to 99L).filterNot(id => id == 5L || id == 20L))
       assert(deletionVectorCardinalities(log) === Seq(2L))
     }

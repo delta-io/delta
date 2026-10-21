@@ -234,7 +234,8 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
    * winner's deletes.
    *
    * The winner's newly-deleted rows of a file are its live rows under the current transaction's
-   * base DV minus its live rows under the winner's DV (the latter is a subset), so for the read
+   * base DV minus its live rows under the winner's DV (a subset, as the winner's DV contains the
+   * base DV, see [[disjointFileDeletionVectors]]), so for the read
    * condition `cond` (OR across reads, AND within a read):
    *
    *   matches(newly deleted) = matches(base-DV live rows) - matches(winner-DV live rows)
@@ -244,13 +245,18 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
    * subquery-free conjuncts (dropping a conjunct only matches more rows), a read with none of
    * those matches every row, and any failure counts as affected.
    *
-   * A MERGE's target read usually matches every row, but most MERGEs whose only read is that
-   * target scan are provably unaffected without a scan, see
-   * [[mergeUnaffectedByDeletesOfUntouchedRows]].
+   * Two cases are provably unaffected without a scan: a DELETE/UPDATE whose only read is its own
+   * condition, and most MERGEs whose only read is the target scan (which usually matches every
+   * row), see [[mergeUnaffectedByDeletesOfUntouchedRows]].
    */
   private def currentReadsUnaffectedByWinnerDeletes(files: Seq[DisjointFile]): Boolean = {
     val readPredicates = currentTransactionInfo.readPredicates
     currentTransactionInfo.op match {
+      // A DELETE/UPDATE whose only read is its own condition marked every row of the shared files
+      // that matches it, so the disjointness test already shows none of the winner's new deletes
+      // match. No scan needed.
+      case _: DeltaOperations.Delete | _: DeltaOperations.Update if readPredicates.size == 1 =>
+        return true
       // The shortcut reasons about the target scan only, so it applies only when that scan is the
       // transaction's only read: a MERGE whose source also reads the table records more reads.
       case merge: DeltaOperations.Merge
