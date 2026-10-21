@@ -29,6 +29,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.tablemanager.TableManagerTestAdapter;
 import java.io.File;
 import java.sql.Timestamp;
 import java.util.Map;
@@ -411,7 +412,11 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
     Map<Long, Metadata> result =
         StreamingHelper.collectMetadataActionsFromRangeUnsafe(
-            startVersion, endVersionOpt, snapshotManager, defaultEngine, testTablePath);
+            startVersion,
+            endVersionOpt,
+            TableManagerTestAdapter.apply(snapshotManager),
+            defaultEngine,
+            testTablePath);
 
     assertEquals(expectedVersions, result.keySet());
   }
@@ -427,7 +432,11 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
     Map<Long, Metadata> result =
         StreamingHelper.collectMetadataActionsFromRangeUnsafe(
-            0L, Optional.of(2L), snapshotManager, defaultEngine, testTablePath);
+            0L,
+            Optional.of(2L),
+            TableManagerTestAdapter.apply(snapshotManager),
+            defaultEngine,
+            testTablePath);
 
     StructType expectedV0Schema =
         new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
@@ -486,7 +495,11 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
     Map<Long, Protocol> result =
         StreamingHelper.collectProtocolActionsFromRangeUnsafe(
-            startVersion, endVersionOpt, snapshotManager, defaultEngine, testTablePath);
+            startVersion,
+            endVersionOpt,
+            TableManagerTestAdapter.apply(snapshotManager),
+            defaultEngine,
+            testTablePath);
 
     assertEquals(expectedVersions, result.keySet());
   }
@@ -502,7 +515,11 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
     Map<Long, Protocol> result =
         StreamingHelper.collectProtocolActionsFromRangeUnsafe(
-            0L, Optional.of(2L), snapshotManager, defaultEngine, testTablePath);
+            0L,
+            Optional.of(2L),
+            TableManagerTestAdapter.apply(snapshotManager),
+            defaultEngine,
+            testTablePath);
 
     // v0 default: reader=1, writer=2; v2 upgraded: reader=3, writer=7
     assertEquals(1, result.get(0L).getMinReaderVersion());
