@@ -26,7 +26,6 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.metric.SQLMetrics
 
 class AMTSnapshotDiscoverySuite
@@ -375,10 +374,6 @@ class AMTSnapshotDiscoverySuite
   ///////////////////////////
   // deltaLog.update()
   ///////////////////////////
-
-  /** The catalog table for a catalog-managed AMT table accessed by name. */
-  private def catalogTableFor(tableName: String): CatalogTable =
-    spark.sessionState.catalog.getTableMetadata(new TableIdentifier(tableName))
 
   /** The delta versions of the deltas kept in the snapshot's log segment. */
   private def segmentDeltaVersions(snapshot: Snapshot): Seq[Long] =
