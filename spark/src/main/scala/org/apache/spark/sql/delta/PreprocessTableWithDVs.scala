@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
-import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DeltaDataSkippingType, DeltaScan, PreparedDeltaFileIndex}
 
@@ -86,20 +86,23 @@ object ScanWithDeletionVectors {
     // 3. Unnecessary pinned snapshot requirements break legitimate use cases like transaction
     //    read tracking with TahoeLogFileIndex (e.g., OptimisticTransaction.withNewTransaction)
     // 4. Performance: Avoids forcing expensive pinned snapshots when not needed
-    val filesToCheck = index match {
-      // Reuse the files of an already prepared scan instead of listing the table again. Files
-      // pruned by LIMIT are only a subset of the matching files, and the scan may list all of
-      // them if its filters change after the scan was prepared, so check the whole table instead.
-      case p: PreparedDeltaFileIndex if isPrunedByLimit(p.preparedScan) =>
-        p.preparedScan.scannedSnapshot.filesForScan(filters = Nil).files
-      case p: PreparedDeltaFileIndex =>
-        p.preparedScan.files
+    val hasDVs = index match {
+      // Files pruned by LIMIT are only a subset of the matching files, and the scan lists all of
+      // them if its filters change after the scan was prepared. Instead of listing the whole
+      // table to check for DVs, always handle DVs: such a scan usually reads only a few files.
+      case p: PreparedDeltaFileIndex if isPrunedByLimit(p.preparedScan) => true
+      // Reuse the files of an already prepared scan instead of listing the table again.
+      case p: PreparedDeltaFileIndex => p.preparedScan.files.exists(_.deletionVector != null)
+      // Check the files in memory instead of running a job to filter them.
+      case b: TahoeBatchFileIndex => b.addFiles.exists(_.deletionVector != null)
       case _ =>
-        index.matchingFiles(partitionFilters = Nil, dataFilters = Nil)
+        index
+          .matchingFiles(partitionFilters = Nil, dataFilters = Nil)
+          .exists(_.deletionVector != null)
     }
-    if (!filesToCheck.exists(_.deletionVector != null)) return None
+    if (!hasDVs) return None
 
-    // At this point, we know there are actual files with DVs, so we need a pinned snapshot.
+    // At this point, the scan may read files with DVs, so we need a pinned snapshot.
     // TahoeLogFileIndex (non-pinned) cannot be used with deletion vectors as it may not
     // have a consistent view of the table state required for correct DV filtering.
     require(!index.isInstanceOf[TahoeLogFileIndex],

@@ -21,7 +21,7 @@ import java.net.URISyntaxException
 import java.util.UUID
 
 import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaParquetFileFormat, DeltaTestUtilsForTempViews, ScanWithDeletionVectors}
-import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, filterUsageRecords}
+import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, filterUsageRecords, withAllPlansCaptured}
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor._
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
@@ -46,7 +46,7 @@ import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
 import org.apache.spark.sql.execution.FileSourceScanLike
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -554,8 +554,45 @@ class DeletionVectorsSuite extends QueryTest
         assert(index.preparedScan.files.forall(_.deletionVector == null))
 
         // The scan lists all matching files instead of the LIMIT-pruned ones if its filters
-        // change after it was prepared, so it must still handle DVs.
-        assert(ScanWithDeletionVectors.unapply(relation).isDefined)
+        // change after it was prepared, so it must still handle DVs, without listing the table.
+        val usageRecords = Log4jUsageLogger.track {
+          assert(ScanWithDeletionVectors.unapply(relation).isDefined)
+        }
+        val skippingOps =
+          Seq("delta.skipping.none", "delta.skipping.partition", "delta.skipping.data")
+            .flatMap(filterUsageRecords(usageRecords, _))
+        assert(skippingOps.isEmpty)
+        assert(df.collect().length == 1)
+      }
+    }
+  }
+
+  test("DV check on a batch file index doesn't run a query") {
+    withDeletionVectorsEnabled() {
+      withTempDir { dir =>
+        val tablePath = dir.getAbsolutePath
+        (0 until 10).toDF("value").coalesce(1).write.format("delta").save(tablePath)
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        def batchRelation(): LogicalRelation = {
+          val snapshot = deltaLog.update()
+          deltaLog.createDataFrame(snapshot, snapshot.allFiles.collect().toSeq)
+            .queryExecution.analyzed.collectFirst { case r: LogicalRelation => r }.get
+        }
+
+        // The batch file index holds its files in memory, so they are checked for DVs directly
+        // instead of filtering them with a query.
+        val relationWithoutDVs = batchRelation()
+        val plansWithoutDVs = withAllPlansCaptured(spark) {
+          assert(ScanWithDeletionVectors.unapply(relationWithoutDVs).isEmpty)
+        }
+        assert(plansWithoutDVs.isEmpty)
+
+        DeltaTable.forPath(tablePath).delete("value = 0")
+        val relationWithDVs = batchRelation()
+        val plansWithDVs = withAllPlansCaptured(spark) {
+          assert(ScanWithDeletionVectors.unapply(relationWithDVs).isDefined)
+        }
+        assert(plansWithDVs.isEmpty)
       }
     }
   }
