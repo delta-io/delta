@@ -53,10 +53,11 @@ class DeltaInsertReplaceOnDFWriterV1SaveSuite
 
   for {
     materializeSource <- Seq("auto", "all")
-    loseSource <- Seq(false, true)
+    injectSourceMaterializationFailure <- Seq(false, true)
   } {
     test("replaceOn matches current_timestamp source keys, " +
-        s"materializeSource=$materializeSource, loseSource=$loseSource",
+        s"materializeSource=$materializeSource, " +
+        s"injectSourceMaterializationFailure=$injectSourceMaterializationFailure",
       ChecksDeltaInternals("uses transaction and source-materialization observers")) {
       for {
         pinStatementTime <- Seq(false, true)
@@ -64,7 +65,7 @@ class DeltaInsertReplaceOnDFWriterV1SaveSuite
         withClue(s"pinStatementTime=$pinStatementTime: ") {
           checkCurrentTimestampMatchingKey(
               pinStatementTime,
-              materializeSource, loseSource) { sourceQuery =>
+              materializeSource, injectSourceMaterializationFailure) { sourceQuery =>
             val targetPath = sql("DESCRIBE DETAIL target").select("location").as[String].head()
             writeReplaceOnDF(
               sql(sourceQuery).as("s"),

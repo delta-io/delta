@@ -83,7 +83,8 @@ trait DeltaInsertReplaceOnOrUsingTestUtils
   protected def checkCurrentTimestampMatchingKey(
       pinStatementTime: Boolean,
       materializeSource: String,
-      loseSource: Boolean)(executeInsertReplace: String => Unit): Unit = {
+      injectSourceMaterializationFailure: Boolean)(
+      executeInsertReplace: String => Unit): Unit = {
     import testImplicits._
 
     withSQLConf(
@@ -133,7 +134,7 @@ trait DeltaInsertReplaceOnOrUsingTestUtils
         }
         val failFirstAttempt = new InsertAtomicReplaceExecutionObserver {
           private def beforePhase(): Unit = synchronized {
-            if (loseSource && injectedFailures == 0) {
+            if (injectSourceMaterializationFailure && injectedFailures == 0) {
               assert(firstSourceMicros.nonEmpty, "target keys were not seeded")
               val checkpoint = materializedSource.getOrElse(
                 fail("the range source should materialize"))
@@ -161,14 +162,14 @@ trait DeltaInsertReplaceOnOrUsingTestUtils
             executeInsertReplace(sourceQuery)
           }
         }
-        assert(injectedFailures === (if (loseSource) 1 else 0))
+        assert(injectedFailures === (if (injectSourceMaterializationFailure) 1 else 0))
         val originalMicros = firstSourceMicros.getOrElse(fail("target keys were not seeded"))
         val finalSourceTimes = sql(
           "SELECT DISTINCT unix_micros(eventTime) FROM target WHERE rowOrigin LIKE 'source-%'")
           .as[Long].collect()
         assert(finalSourceTimes.length === 1)
         val finalMicros = finalSourceTimes.head
-        val expectMatchingKeys = pinStatementTime || !loseSource
+        val expectMatchingKeys = pinStatementTime || !injectSourceMaterializationFailure
         if (expectMatchingKeys) {
           assert(finalMicros === originalMicros)
         } else {
