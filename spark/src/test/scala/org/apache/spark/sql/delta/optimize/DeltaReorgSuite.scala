@@ -727,7 +727,9 @@ class DeltaReorgSuite extends QueryTest
     withTempDir { tempDir =>
       val parquetDir = new File(tempDir, "valid")
       spark.range(1).coalesce(1).write.parquet(parquetDir.getCanonicalPath)
+      // scalastyle:off deltahadoopconfiguration
       val conf = spark.sessionState.newHadoopConf()
+      // scalastyle:on deltahadoopconfiguration
       val parquetPath = new Path(parquetDir.toURI)
       val status = parquetPath.getFileSystem(conf).listStatus(parquetPath)
         .find(_.getPath.getName.endsWith(".parquet")).get
@@ -792,7 +794,9 @@ class DeltaReorgSuite extends QueryTest
     withTempDir { tempDir =>
       val parquetDir = new File(tempDir, "valid")
       spark.range(1).coalesce(1).write.parquet(parquetDir.getCanonicalPath)
+      // scalastyle:off deltahadoopconfiguration
       val conf = spark.sessionState.newHadoopConf()
+      // scalastyle:on deltahadoopconfiguration
       val parquetPath = new Path(parquetDir.toURI)
       val fs = parquetPath.getFileSystem(conf)
       val status = fs.listStatus(parquetPath)
