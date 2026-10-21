@@ -19,9 +19,11 @@ package org.apache.spark.sql.delta.optimize
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.file.Files
-import java.util.concurrent.{Callable, CountDownLatch, Executors, TimeUnit}
+import java.util.concurrent.{Callable, CountDownLatch, CyclicBarrier, Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicReference
 
+import scala.collection.JavaConverters._
+import scala.collection.mutable
 import scala.concurrent.duration._
 
 import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMapping, DeltaIOException, DeltaLog, DeltaTableProvider, DeltaUnsupportedOperationException}
@@ -38,11 +40,57 @@ import org.apache.logging.log4j.Level
 import org.apache.parquet.bytes.ByteBufferAllocator
 import org.apache.parquet.hadoop.Footer
 
-import org.apache.spark.{BarrierTaskContext, SparkEnv, SparkException}
+import org.apache.spark.{SparkEnv, SparkException, TaskContext}
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.SerializableConfiguration
+import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.{CollectionAccumulator, SerializableConfiguration}
+
+private object RecordingDeltaPurgeOperation {
+  val firstFooterBarrier = new CyclicBarrier(2)
+}
+
+private class RecordingDeltaPurgeOperation(
+    observations: CollectionAccumulator[(Long, String, Int, Int, Long)])
+  extends DeltaPurgeOperation {
+
+  private var recordedFirstFooter = false
+
+  override protected def filterParquetFiles(
+      sqlConf: SQLConf,
+      files: Seq[AddFile],
+      dataPath: Path,
+      configuration: Configuration,
+      ignoreCorruptFiles: Boolean,
+      footerReadParallelism: Int,
+      seenAbsolutePaths: Option[mutable.Set[String]])(
+      filterFileFn: StructType => Boolean): Seq[AddFile] = {
+    val taskAttemptId = TaskContext.get().taskAttemptId()
+    val executorId = SparkEnv.get.executorId
+    val admission = DeltaFileOperations.ParquetFooterMemoryAdmission.global
+    val admissionIdentity = System.identityHashCode(admission)
+    def recordingFilter(schema: StructType): Boolean = {
+      if (!recordedFirstFooter) {
+        recordedFirstFooter = true
+        RecordingDeltaPurgeOperation.firstFooterBarrier.await(10, TimeUnit.SECONDS)
+        observations.add((taskAttemptId, executorId, admissionIdentity,
+          admission.availableReaderPermits, admission.availableMemoryBytes))
+        RecordingDeltaPurgeOperation.firstFooterBarrier.await(10, TimeUnit.SECONDS)
+      }
+      filterFileFn(schema)
+    }
+    super.filterParquetFiles(
+      sqlConf,
+      files,
+      dataPath,
+      configuration,
+      ignoreCorruptFiles,
+      footerReadParallelism,
+      seenAbsolutePaths)(recordingFilter)
+  }
+}
 
 class DeltaReorgSuite extends QueryTest
   with SharedSparkSession
@@ -292,14 +340,16 @@ class DeltaReorgSuite extends QueryTest
       def select(
           batchSize: Int,
           parallelism: Int,
-          memoryAdmissionEnabled: Boolean = false): Set[String] = {
+          memoryAdmissionEnabled: Boolean = false,
+          leafNodeParallelism: Int = 1,
+          purgeOperation: DeltaPurgeOperation = purge): Set[String] = {
         withSQLConf(
             DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_BATCH_SIZE.key -> batchSize.toString,
             DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_PARALLELISM.key -> parallelism.toString,
             DeltaSQLConf.DELTA_REORG_FOOTER_MEMORY_ADMISSION_ENABLED.key ->
               memoryAdmissionEnabled.toString,
-            "spark.sql.leafNodeDefaultParallelism" -> "1") {
-          purge.filterFilesToReorg(spark, snapshot, files).map(_.path).toSet
+            "spark.sql.leafNodeDefaultParallelism" -> leafNodeParallelism.toString) {
+          purgeOperation.filterFilesToReorg(spark, snapshot, files).map(_.path).toSet
         }
       }
 
@@ -316,6 +366,28 @@ class DeltaReorgSuite extends QueryTest
         assert(select(batchSize, parallelism = 3, memoryAdmissionEnabled = true) === expected,
           s"memory admission changed selection for batchSize=$batchSize")
       }
+
+      val admission = DeltaFileOperations.ParquetFooterMemoryAdmission.global
+      assert(admission.activeReaderLimit >= 2)
+      val admissionObservations = spark.sparkContext
+        .collectionAccumulator[(Long, String, Int, Int, Long)]("footer admission")
+      val sharedAdmissionSelection = select(
+        batchSize = 1,
+        parallelism = 1,
+        memoryAdmissionEnabled = true,
+        leafNodeParallelism = 2,
+        purgeOperation = new RecordingDeltaPurgeOperation(admissionObservations))
+      assert(sharedAdmissionSelection === expected)
+      val observations = admissionObservations.value.asScala
+      assert(observations.map(_._1).distinct.size === 2)
+      assert(observations.map(_._2).distinct.size === 1)
+      assert(observations.map(_._3).distinct.size === 1)
+      assert(observations.map(_._4).distinct === Seq(admission.activeReaderLimit - 2))
+      assert(observations.map(_._5).distinct.size === 1)
+      assert(admission.memoryLimitBytes - observations.head._5 >=
+        2L * DeltaFileOperations.ParquetFooterMemoryAdmission.DECODED_OBJECT_ALLOWANCE_BYTES)
+      assert(admission.availableReaderPermits === admission.activeReaderLimit)
+      assert(admission.availableMemoryBytes === admission.memoryLimitBytes)
 
       val footerLogs = new LogAppender("REORG footer scan parallelism", maxEvents = 1000)
       footerLogs.setThreshold(Level.INFO)
@@ -431,33 +503,6 @@ class DeltaReorgSuite extends QueryTest
     assert(admission.executorMemoryLimit(
       10L * 1024 * 1024 * 1024,
       executorMemoryFraction = 0.10) === 1024L * 1024 * 1024)
-  }
-
-  test("REORG footer admission is shared by Spark tasks in one executor") {
-    val results = spark.sparkContext.parallelize(Seq(0, 1), numSlices = 2)
-      .barrier()
-      .mapPartitions { _ =>
-        val admission = DeltaFileOperations.ParquetFooterMemoryAdmission.global
-        admission.withReader("barrier reader") { _ =>
-          val barrierContext = BarrierTaskContext.get()
-          barrierContext.barrier()
-          val result = (
-            SparkEnv.get.executorId,
-            System.identityHashCode(admission),
-            admission.availableReaderPermits,
-            admission.activeReaderLimit)
-          barrierContext.barrier()
-          Iterator.single(result)
-        }
-      }
-      .collect()
-
-    assert(results.length === 2)
-    assert(results.map(_._1).distinct.length === 1)
-    assert(results.map(_._2).distinct.length === 1)
-    results.foreach { case (_, _, availableReaderPermits, activeReaderLimit) =>
-      assert(availableReaderPermits === activeReaderLimit - 2)
-    }
   }
 
   test("REORG footer admission is executor-wide, weighted, and cleans up reservations") {

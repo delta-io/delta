@@ -397,9 +397,10 @@ object DeltaFileOperations extends DeltaLogging {
   }
 
   private[delta] object ParquetFooterMemoryAdmission {
-    // The widest measured 999-node QPL graph retained about 150 KiB. Add 64 KiB for
-    // file-unique footer metadata, round 214 KiB up to 256 KiB, then apply a 2x safety margin.
-    // AddFile.stats is deliberately excluded because REORG batching bounds it separately.
+    // Heap measurements of a representative wide Parquet schema graph retained about 150 KiB.
+    // Add 64 KiB for file-unique footer metadata, round the 214 KiB subtotal up to 256 KiB,
+    // then apply a 2x safety margin. AddFile.stats is excluded because REORG batching bounds it
+    // separately.
     val DECODED_OBJECT_ALLOWANCE_BYTES: Int = 512 * 1024
     val MEMORY_PERMIT_BYTES: Long = 1024L
 
