@@ -46,7 +46,7 @@ import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
 import org.apache.spark.sql.execution.FileSourceScanLike
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
+import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -510,62 +510,91 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
-  test("scan with DVs - files are listed once") {
-    withDeletionVectorsEnabled() {
-      withTempDir { dir =>
-        val tablePath = dir.getAbsolutePath
-        (0 until 10).map(i => (i, i % 2)).toDF("value", "part")
-          .write.format("delta").partitionBy("part").save(tablePath)
-        DeltaTable.forPath(tablePath).delete("value = 0")
+  for (useMetadataRowIndex <- BOOLEAN_DOMAIN)
+    test("scan with DVs - files are listed once: " +
+      s"useMetadataRowIndex=$useMetadataRowIndex") {
+      withSQLConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key ->
+          useMetadataRowIndex.toString) {
+        withDeletionVectorsEnabled() {
+          withTempDir { dir =>
+            val tablePath = dir.getAbsolutePath
+            (0 until 10).map(i => (i, i % 2)).toDF("value", "part")
+              .write.format("delta").partitionBy("part").save(tablePath)
+            DeltaTable.forPath(tablePath).delete("value = 0")
 
-        val df = spark.read.format("delta").load(tablePath).where("part = 0 AND value >= 0")
-        val usageRecords = Log4jUsageLogger.track { df.collect() }
-        checkAnswer(df, Seq(2, 4, 6, 8).map(i => Row(i, 0)))
+            val df = spark.read.format("delta").load(tablePath).where("part = 0 AND value >= 0")
+            val usageRecords = Log4jUsageLogger.track { df.collect() }
+            checkAnswer(df, Seq(2, 4, 6, 8).map(i => Row(i, 0)))
 
-        // Files are listed once to prepare the scan. Checking for DVs and executing the scan must
-        // reuse the prepared files, even though the scan's filters now include the DV filter.
-        val skippingOps =
-          Seq("delta.skipping.none", "delta.skipping.partition", "delta.skipping.data")
-            .flatMap(filterUsageRecords(usageRecords, _))
-        assert(skippingOps.size == 1)
-        val reuseEvents =
-          filterUsageRecords(usageRecords, "delta.preparedDeltaFileIndex.reuseSkippingResult")
-        assert(reuseEvents.nonEmpty)
-        assert(reuseEvents.forall(_.blob.contains("\"reused\":true")))
-      }
-    }
-  }
-
-  test("scan with DVs - files pruned by LIMIT are not trusted for the DV check") {
-    withDeletionVectorsEnabled() {
-      withTempDir { dir =>
-        val tablePath = dir.getAbsolutePath
-        (0 until 10).map(i => (i, i % 2)).toDF("value", "part").coalesce(1)
-          .write.format("delta").partitionBy("part").save(tablePath)
-        // Only the file of partition 1 has a DV.
-        DeltaTable.forPath(tablePath).delete("value = 1")
-
-        val df = spark.read.format("delta").load(tablePath).where("part = 0").limit(1)
-        val (relation, index) = df.queryExecution.optimizedPlan.collectFirst {
-          case r @ LogicalRelationWithTable(
-              HadoopFsRelation(i: PreparedDeltaFileIndex, _, _, _, _, _), _) => (r, i)
-        }.get
-        assert(index.preparedScan.dataSkippingType == DeltaDataSkippingType.filteredLimit)
-        assert(index.preparedScan.files.forall(_.deletionVector == null))
-
-        // The scan lists all matching files instead of the LIMIT-pruned ones if its filters
-        // change after it was prepared, so it must still handle DVs, without listing the table.
-        val usageRecords = Log4jUsageLogger.track {
-          assert(ScanWithDeletionVectors.unapply(relation).isDefined)
+            // Files are listed once to prepare the scan. Checking for DVs and executing the scan
+            // must reuse the prepared files, though the DV filter was added to the scan's filters.
+            val skippingOps =
+              Seq("delta.skipping.none", "delta.skipping.partition", "delta.skipping.data")
+                .flatMap(filterUsageRecords(usageRecords, _))
+            assert(skippingOps.size == 1)
+            val reuseEvents =
+              filterUsageRecords(usageRecords, "delta.preparedDeltaFileIndex.reuseSkippingResult")
+            assert(reuseEvents.nonEmpty)
+            assert(reuseEvents.forall(_.blob.contains("\"reused\":true")))
+          }
         }
-        val skippingOps =
-          Seq("delta.skipping.none", "delta.skipping.partition", "delta.skipping.data")
-            .flatMap(filterUsageRecords(usageRecords, _))
-        assert(skippingOps.isEmpty)
-        assert(df.collect().length == 1)
       }
     }
-  }
+
+  for (useMetadataRowIndex <- BOOLEAN_DOMAIN)
+    test("scan with DVs - files pruned by LIMIT are not trusted for the DV check: " +
+      s"useMetadataRowIndex=$useMetadataRowIndex") {
+      withSQLConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key ->
+          useMetadataRowIndex.toString) {
+        withDeletionVectorsEnabled() {
+          withTempDir { dir =>
+            val tablePath = dir.getAbsolutePath
+            (0 until 10).map(i => (i, i % 2)).toDF("value", "part").coalesce(1)
+              .write.format("delta").partitionBy("part").save(tablePath)
+            // Only the file of partition 1 has a DV.
+            DeltaTable.forPath(tablePath).delete("value = 1")
+
+            val df = spark.read.format("delta").load(tablePath).where("part = 0").limit(1)
+            val (relation, index) = df.queryExecution.optimizedPlan.collectFirst {
+              case r @ LogicalRelationWithTable(
+                  HadoopFsRelation(i: PreparedDeltaFileIndex, _, _, _, _, _), _) => (r, i)
+            }.get
+            assert(index.preparedScan.dataSkippingType == DeltaDataSkippingType.filteredLimit)
+            assert(index.preparedScan.files.forall(_.deletionVector == null))
+
+            // The scan lists all matching files instead of the LIMIT-pruned ones if its filters
+            // change after it was prepared, so it must still handle DVs, without listing the table.
+            val usageRecords = Log4jUsageLogger.track {
+              assert(ScanWithDeletionVectors.unapply(relation).isDefined)
+            }
+            val skippingOps =
+              Seq("delta.skipping.none", "delta.skipping.partition", "delta.skipping.data")
+                .flatMap(filterUsageRecords(usageRecords, _))
+            assert(skippingOps.isEmpty)
+            assert(df.collect().length == 1)
+          }
+        }
+      }
+    }
+
+  for (useMetadataRowIndex <- BOOLEAN_DOMAIN)
+    test("scan with DVs - LIMIT on a table with a column named _metadata: " +
+      s"useMetadataRowIndex=$useMetadataRowIndex") {
+      withSQLConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key ->
+          useMetadataRowIndex.toString) {
+        withDeletionVectorsEnabled() {
+          withTempDir { dir =>
+            val tablePath = dir.getAbsolutePath
+            (0 until 10).map(i => (i, i)).toDF("value", FileFormat.METADATA_NAME)
+              .write.format("delta").save(tablePath)
+
+            // Handling DVs on such a table fails, so LIMIT scans without DVs must not do it.
+            val df = spark.read.format("delta").load(tablePath).limit(1)
+            assert(df.collect().length == 1)
+          }
+        }
+      }
+    }
 
   test("DV check on a batch file index doesn't run a query") {
     withDeletionVectorsEnabled() {
