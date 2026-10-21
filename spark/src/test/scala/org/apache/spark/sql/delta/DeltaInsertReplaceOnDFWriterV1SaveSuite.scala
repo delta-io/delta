@@ -51,6 +51,32 @@ class DeltaInsertReplaceOnDFWriterV1SaveSuite
     writer.save(target)
   }
 
+  for {
+    materializeSource <- Seq("auto", "all")
+    loseSource <- Seq(false, true)
+  } {
+    test("replaceOn matches current_timestamp source keys, " +
+        s"materializeSource=$materializeSource, loseSource=$loseSource",
+      ChecksDeltaInternals("uses transaction and source-materialization observers")) {
+      for {
+        pinStatementTime <- Seq(false, true)
+      } {
+        withClue(s"pinStatementTime=$pinStatementTime: ") {
+          checkCurrentTimestampMatchingKey(
+              pinStatementTime,
+              materializeSource, loseSource) { sourceQuery =>
+            val targetPath = sql("DESCRIBE DETAIL target").select("location").as[String].head()
+            writeReplaceOnDF(
+              sql(sourceQuery).as("s"),
+              targetPath,
+              "t.eventTime = s.eventTime AND t.id = s.id",
+              targetAlias = Some("t"))
+          }
+        }
+      }
+    }
+  }
+
   // Misaligned column blocking only applies for replaceUsing, not replaceOn.
   test("save - replaceOn with misaligned column positions between source and target") {
     withTempDir { dir =>
