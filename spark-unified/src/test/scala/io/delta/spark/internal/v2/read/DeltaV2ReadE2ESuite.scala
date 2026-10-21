@@ -17,8 +17,12 @@
 package io.delta.spark.internal.v2.read
 
 import java.io.File
+import java.sql.Timestamp
+
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.internal.SQLConf
 
 private[read] trait DeltaV2ReadE2ETests {
   self: DeltaV2ScanE2ETestUtils =>
@@ -44,6 +48,41 @@ private[read] trait DeltaV2ReadE2ETests {
         sql("SELECT id, part FROM v2_scan_e2e_partitioned WHERE part = 'x'")
       } { df =>
         checkAnswer(df, Seq(Row(1L, "x"), Row(3L, "x")))
+      }
+    }
+  }
+
+  test("batch reads honor session time zone") {
+    for (utcTimestampPartitionValues <- Seq(true, false)) {
+      withTempDir { dir =>
+        val sourcePath = new File(dir, "source").getCanonicalPath
+        withSQLConf(
+            DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES.key ->
+              utcTimestampPartitionValues.toString) {
+          withV1Mode {
+            withSQLConf(SQLConf.SESSION_LOCAL_TIMEZONE.key -> "UTC") {
+              sql("SELECT id, timestamp_micros(id * 1000000) AS part FROM range(1, 3)")
+                .write.format(writeFormat).partitionBy("part").save(sourcePath)
+            }
+          }
+          for ((timeZone, shiftSeconds) <- Seq(
+              "PST" -> 28800L, "+8:00" -> -28800L, "-08:3" -> 28980L, "UTC" -> 0L)) {
+            val expectedShiftSeconds = if (utcTimestampPartitionValues) 0L else shiftSeconds
+            val expectedRows = Seq(1L, 2L).map { id =>
+              Row(id, new Timestamp((id + expectedShiftSeconds) * 1000L))
+            }
+            withSQLConf(SQLConf.SESSION_LOCAL_TIMEZONE.key -> timeZone) {
+              withClue(s"UTC timestamp partitions=$utcTimestampPartitionValues, " +
+                  s"timeZone=$timeZone: ") {
+                checkRead("session time zone timestamp partition read") {
+                  sql(s"SELECT id, part FROM $tableProvider.`$sourcePath`")
+                } { batch =>
+                  checkAnswer(batch, expectedRows)
+                }
+              }
+            }
+          }
+        }
       }
     }
   }

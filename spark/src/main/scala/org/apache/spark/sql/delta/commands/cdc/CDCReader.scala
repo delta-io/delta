@@ -303,12 +303,9 @@ trait CDCReaderImpl extends CDCReaderBase {
 
         // Check all intermediary metadata schema changes, this guarantees that there will be no
         // read-incompatible schema changes across the querying range.
-        // Note that we don't have to check the schema change if it's at the start version, because:
-        // 1. If it's an initialization, e.g. CREATE AS SELECT, we don't have to consider this
-        //    as a schema change and report weird error messages.
-        // 2. If it's indeed a schema change, as we won't be reading any data prior to it that
-        //    falls back to the previous (possibly incorrect) schema, we will be safe. Also if there
-        //    are any data file residing in the same commit, it will follow the new schema as well.
+        // The starting commit's new schema is checked against startVersionMetadata below.
+        // Removed files in that commit can use the previous schema, so we check it separately
+        // when selecting those files for inferred CDC.
         actions.collect { case a: Metadata => a }.foreach { metadata =>
           partitionSchemaTracker.ifDefined(_.processMetadata(metadata))
           if (v > start) {
@@ -366,6 +363,11 @@ trait CDCReaderImpl extends CDCReaderBase {
             // infer CDC from them.
             val addActions = actions.collect { case a: AddFile if changesDataFunc(a) => a }
             val removeActions = actions.collect { case r: RemoveFile if changesDataFunc(r) => r }
+            if (v == start && removeActions.nonEmpty && actions.exists(_.isInstanceOf[Metadata])) {
+              checkStartVersionRemovedFilesSchema(
+                readSchemaSnapshot, start, end, checkSchemaToBlockRead, catalogTableOpt,
+                operation = commitInfo.map(_.operation))
+            }
             numAddFiles += addActions.size
             numRemoveFiles += removeActions.size
             totalBytes += addActions.map(_.size).sum

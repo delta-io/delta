@@ -57,6 +57,7 @@ import javax.annotation.Nullable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
+import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.*;
@@ -66,6 +67,7 @@ import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaStartingVersion;
 import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.SnapshotDescriptor;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.TypeWidening;
@@ -139,7 +141,7 @@ class DeltaV2MicroBatchStream
   private final boolean skipChangeCommits;
   private final SnapshotImpl snapshotAtSourceInit;
   private final String tableId;
-  private final SnapshotImpl readSnapshotAtSourceInit;
+  private final SnapshotDescriptor readSnapshotDescriptor;
   private final StructType readSchemaAtSourceInit;
   private final boolean shouldValidateOffsets;
   private final Optional<Regex> excludeRegex;
@@ -248,27 +250,25 @@ class DeltaV2MicroBatchStream
     this.snapshotAtSourceInit = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotAtSourceInit);
     this.tableId = this.snapshotAtSourceInit.getMetadata().getId();
 
-    // The effective snapshot for reading, mirroring v1's readSnapshotDescriptor. When schema
-    // tracking has a persisted entry, layer it onto the freshly loaded snapshotAtSourceInit so
+    // The effective descriptor for reading, mirroring v1's readSnapshotDescriptor. When schema
+    // tracking has a persisted entry, layer it onto the source-init descriptor so
     // the read schema/protocol/config reflect the evolved state. The merged entry has already
-    // been written to the durable schema log during analysis (by SparkTable's call to
+    // been written to the durable schema log during analysis (by DeltaV2Table's call to
     // getPersistedMetadataForMicroBatchStream with mergeConsecutiveSchemaChanges=true), so
     // reading it back from the log here yields the same value V1 obtains.
     Option<PersistedMetadata> persistedMetadataAtSourceInit =
         metadataTrackingLog.isDefined()
             ? metadataTrackingLog.get().getCurrentTrackedMetadata()
             : Option.empty();
-    this.readSnapshotAtSourceInit =
+    this.readSnapshotDescriptor =
         Objects.requireNonNull(
             persistedMetadataAtSourceInit.isDefined()
-                ? MetadataEvolutionHandler.buildReadSnapshotFromPersistedMetadata(
-                    this.snapshotAtSourceInit, engine, persistedMetadataAtSourceInit.get())
-                : this.snapshotAtSourceInit,
-            "readSnapshotAtSourceInit is null");
+                ? MetadataEvolutionHandler.buildReadSnapshotDescriptorFromPersistedMetadata(
+                    snapshotAtSourceInit, persistedMetadataAtSourceInit.get())
+                : snapshotAtSourceInit,
+            "readSnapshotDescriptor is null");
     this.readSchemaAtSourceInit =
-        Objects.requireNonNull(
-            SchemaUtils.convertKernelSchemaToSparkSchema(readSnapshotAtSourceInit.getSchema()),
-            "readSchemaAtSourceInit is null");
+        Objects.requireNonNull(readSnapshotDescriptor.schema(), "readSchemaAtSourceInit is null");
 
     this.shouldValidateOffsets =
         Objects.requireNonNull(
@@ -299,8 +299,8 @@ class DeltaV2MicroBatchStream
             options,
             schemaReadOptions,
             metadataTrackingLog,
-            readSnapshotAtSourceInit.getMetadata(),
-            readSnapshotAtSourceInit.getProtocol(),
+            readSnapshotDescriptor.metadata(),
+            readSnapshotDescriptor.protocol(),
             metadataPath);
     boolean shouldValidateSchemaOnRestart =
         (Boolean)
@@ -559,7 +559,7 @@ class DeltaV2MicroBatchStream
     List<PartitionedFile> partitionedFiles = new ArrayList<>();
     long totalBytesToRead = 0;
     boolean isCDC = options.readChangeFeed();
-    ZoneId zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
+    ZoneId zoneId = DateTimeUtils.getZoneId(sqlConf.sessionLocalTimeZone());
 
     try (CloseableIterator<IndexedFile> fileChanges =
         isCDC
@@ -599,10 +599,8 @@ class DeltaV2MicroBatchStream
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
-    // Use readSnapshotAtSourceInit (which has the evolved schema when schema tracking is active),
-    // mirroring v1's use of readSnapshotDescriptor in createDataFrame.
     return PartitionUtils.createDeltaParquetReaderFactory(
-        readSnapshotAtSourceInit,
+        readSnapshotDescriptor,
         dataSchema,
         partitionSchema,
         readDataSchema,
@@ -1212,7 +1210,13 @@ class DeltaV2MicroBatchStream
       // in filterAndGetIndexedFiles.
       CloseableIterator<IndexedFile> metadataBarrier =
           metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
-              validationResult.metadataAction, validationResult.protocolAction, version);
+              validationResult.metadataAction == null
+                  ? null
+                  : KernelActionUtils$.MODULE$.metadataFromKernel(validationResult.metadataAction),
+              validationResult.protocolAction == null
+                  ? null
+                  : KernelActionUtils$.MODULE$.protocolFromKernel(validationResult.protocolAction),
+              version);
 
       CloseableIterator<IndexedFile> inner =
           Utils.singletonCloseableIterator(
@@ -1480,7 +1484,7 @@ class DeltaV2MicroBatchStream
         || !schemaReadOptions
             .forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart()) {
 
-      StructType schemaChange = SchemaUtils.convertKernelSchemaToSparkSchema(metadata.getSchema());
+      StructType schemaChange = KernelActionUtils$.MODULE$.metadataFromKernel(metadata).schema();
 
       // There is a schema change. All files after this commit will use `schemaChange`. Hence, we
       // check whether we can use `schema` (the fixed source schema we use in the same run of the
@@ -1762,8 +1766,6 @@ class DeltaV2MicroBatchStream
       initialSnapshot = new DeltaSourceSnapshot(spark, snapshot, Seq$.MODULE$.empty());
       initialSnapshotVersion = version;
 
-      SnapshotImpl kernelSnapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshot);
-
       // This handles a special case for schema tracking log when it's initialized but the initial
       // snapshot's schema has changed, suppose:
       // 1. The stream starts and looks at the initial snapshot to compute the starting offset, say
@@ -1779,10 +1781,10 @@ class DeltaV2MicroBatchStream
       // The below logic allows us to detect any discrepancies when reading initial snapshot using
       // a tracked schema, and reinitialize the log if needed.
       if (metadataEvolutionHandler.shouldTrackMetadataChange()
-          && initialSnapshot.snapshot().version() >= readSnapshotAtSourceInit.getVersion()) {
+          && initialSnapshot.snapshot().version() >= readSnapshotDescriptor.version()) {
         metadataEvolutionHandler.updateMetadataTrackingLogAndFailTheStreamIfNeeded(
-            kernelSnapshot.getMetadata(),
-            kernelSnapshot.getProtocol(),
+            snapshot.metadata(),
+            snapshot.protocol(),
             initialSnapshot.snapshot().version(),
             // The new schema should replace the previous initialized schema for initial snapshot
             /* replace= */ true);
@@ -1950,7 +1952,13 @@ class DeltaV2MicroBatchStream
     // IndexedChangeFileSeq.filterFiles; V2 does both here.
     try (CloseableIterator<IndexedFile> barrierIter =
         metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
-            metadataAction, protocolAction, version)) {
+            metadataAction == null
+                ? null
+                : KernelActionUtils$.MODULE$.metadataFromKernel(metadataAction),
+            protocolAction == null
+                ? null
+                : KernelActionUtils$.MODULE$.protocolFromKernel(protocolAction),
+            version)) {
       if (barrierIter.hasNext()) {
         List<IndexedFile> result = new ArrayList<>();
         result.add(barrierIter.next());

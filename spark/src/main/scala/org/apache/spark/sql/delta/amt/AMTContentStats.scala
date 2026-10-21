@@ -182,12 +182,18 @@ private[amt] object AMTContentStats {
    * `scala-bazel` source tree and pulls in the shaded Iceberg library, neither of which this
    * package can depend on. Types outside this set are left out of `content_stats`, matching that
    * converter's behavior of ignoring unsupported stats.
+   *
+   * Timestamps are deliberately excluded, unlike in that converter. Delta serializes timestamp
+   * stats at millisecond precision, so its max can sit below the file's true max (Delta's data
+   * skipping compensates by widening the max by 1ms on read), and persisting it as-is would give
+   * Iceberg an `upper_bound` smaller than values in the file. Until the bound is converted
+   * soundly, a timestamp column carries only its null count.
    */
   private def isSupportedBoundType(dataType: DataType): Boolean =
     SkippingEligibleDataType(dataType) && (dataType match {
       case _: StringType | _: IntegerType | _: FloatType | _: DoubleType | _: DecimalType |
-          _: BooleanType | _: DateType | _: TimestampType | _: TimestampNTZType | _: LongType |
-          _: ByteType | _: ShortType => true
+          _: BooleanType | _: DateType | _: LongType | _: ByteType | _: ShortType => true
+      case _: TimestampType | _: TimestampNTZType => false
       case _ => false
     })
 

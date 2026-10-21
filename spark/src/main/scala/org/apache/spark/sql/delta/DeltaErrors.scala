@@ -3596,6 +3596,19 @@ trait DeltaErrorsBase
     )
   }
 
+  def blockBatchCdfReadWithIncompatibleStartingCommitSchema(
+      start: Long,
+      incompatVersion: Long,
+      operation: Option[String]): Throwable = {
+    val (subClass, operationParameters) = operation.flatMap(Option(_)).filter(_.nonEmpty) match {
+      case Some(operationName) => ("KNOWN_OPERATION", Array(operationName))
+      case None => ("UNKNOWN_OPERATION", Array.empty[String])
+    }
+    new DeltaUnsupportedOperationException(
+      s"DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_STARTING_COMMIT_SCHEMA.$subClass",
+      messageParameters = Array(start.toString, incompatVersion.toString) ++ operationParameters)
+  }
+
   def blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
       spark: SparkSession,
       readSchema: StructType,
