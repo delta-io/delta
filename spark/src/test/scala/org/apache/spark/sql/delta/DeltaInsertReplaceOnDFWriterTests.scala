@@ -96,7 +96,9 @@ trait DeltaInsertReplaceOnDFWriterTests
       ChecksDeltaInternals("uses a DELETE phase observer to separate the two clocks")) {
       val targetTime = Timestamp.valueOf("2020-01-01 00:00:00")
       val futureTime = Timestamp.valueOf("3999-01-01 00:00:00")
-      for (pinStatementTime <- Seq(false, true)) {
+      for {
+        pinStatementTime <- Seq(false, true)
+      } {
         withClue(s"pinStatementTime=$pinStatementTime: ") {
           withSQLConf(
               DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED.key ->
