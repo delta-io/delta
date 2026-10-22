@@ -171,14 +171,18 @@ public final class DeltaHistoryManager {
       boolean canReturnEarliestCommit,
       List<ParsedCatalogCommitData> catalogCommits)
       throws TableNotFoundException {
-    // For now, we only accept *staged* ratified  commits (not inline)
     LogDataUtils.validateLogDataContainsOnlyRatifiedCatalogCommits(catalogCommits);
 
     // Create a mapper for delta version -> file status that takes into account ratified commits
     Function<Long, FileStatus> versionToFileStatusFunction =
         getVersionToFileStatusFunction(catalogCommits, logPath);
+    // Published catalog commits may have been removed by metadata cleanup, so only staged commits
+    // bound the earliest available version.
     Optional<Long> earliestRatifiedCommitVersion =
-        catalogCommits.stream().map(ParsedLogData::getVersion).min(Long::compare);
+        catalogCommits.stream()
+            .filter(c -> !FileNames.isPublishedDeltaFile(c.getFileStatus().getPath()))
+            .map(ParsedLogData::getVersion)
+            .min(Long::compare);
 
     long earliestVersion =
         (mustBeRecreatable)
@@ -604,7 +608,7 @@ public final class DeltaHistoryManager {
   }
 
   /**
-   * Returns a function for resolving version-to-file-status given a list of ratified staged
+   * Returns a function for resolving version-to-file-status given a list of ratified catalog
    * commits. We prefer to read a ratified commit over the published file whenever it is present.
    *
    * <p>Note, this assumes that for any version provided to the function, it has already been

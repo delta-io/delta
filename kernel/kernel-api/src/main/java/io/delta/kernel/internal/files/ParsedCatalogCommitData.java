@@ -65,9 +65,6 @@ public final class ParsedCatalogCommitData extends ParsedDeltaData {
    *   <li>published: {@code <logPath>/<version>.json}
    * </ul>
    *
-   * <p>The Delta protocol allows a catalog to return commits that have already been published, so
-   * both forms are valid catalog input.
-   *
    * @param logPath the table's {@code _delta_log} directory
    * @param expectedVersion the commit version reported by the catalog
    * @param fileStatus the commit file
@@ -102,7 +99,7 @@ public final class ParsedCatalogCommitData extends ParsedDeltaData {
     final long version = FileNames.deltaVersion(filePath);
     checkArgument(
         version == expectedVersion,
-        "Catalog commit file %s has version %s but the catalog reported version %s",
+        "Catalog commit file %s has version %d but the catalog reported version %d",
         filePath,
         version,
         expectedVersion);
