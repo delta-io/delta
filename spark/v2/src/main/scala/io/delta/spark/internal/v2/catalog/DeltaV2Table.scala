@@ -64,7 +64,8 @@ import io.delta.spark.internal.v2.tablemanager.{
 }
 import io.delta.spark.internal.v2.utils.ScalaUtils.{
   toJavaOptional,
-  toScalaMap
+  toScalaMap,
+  toScalaOption
 }
 import io.delta.spark.internal.v2.utils.StatsUtils.toV2Statistics
 import io.delta.spark.internal.v2.write.{
@@ -444,16 +445,16 @@ class DeltaV2Table private (
           toV2Statistics(
             stats, schemaProvider.getDataSchema(), schemaProvider.getPartitionSchema()))
     DeltaV2ScanUtils.newScanBuilder(
-      name(),
-      initialSnapshotValue,
-      kernelEngine(),
-      catalogTableValue,
-      getSnapshotManager(),
-      schemaProvider.getDataSchema(),
-      schemaProvider.getPartitionSchema(),
-      schemaProvider.getRawSchema(),
-      catalogStats,
-      merged)
+      tableName = name(),
+      initialSnapshot = initialSnapshotValue,
+      kernelEngine = kernelEngine(),
+      catalogTable = toScalaOption(catalogTableValue),
+      snapshotManager = getSnapshotManager(),
+      dataSchema = schemaProvider.getDataSchema(),
+      partitionSchema = schemaProvider.getPartitionSchema(),
+      tableSchema = schemaProvider.getRawSchema(),
+      catalogStats = toScalaOption(catalogStats),
+      options = merged)
   }
 
   /**

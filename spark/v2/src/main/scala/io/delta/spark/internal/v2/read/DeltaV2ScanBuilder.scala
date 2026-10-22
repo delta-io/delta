@@ -16,7 +16,7 @@
 
 package io.delta.spark.internal.v2.read
 
-import java.util.{Locale, Objects, Optional, OptionalInt}
+import java.util.{Locale, Objects, OptionalInt}
 import java.util.function.Supplier
 
 import io.delta.kernel.engine.Engine
@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.stats.DeltaScan
 import io.delta.spark.internal.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import io.delta.spark.internal.v2.utils.ScalaUtils
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, ExprId}
@@ -65,12 +66,12 @@ private[read] class DeltaV2ScanBuilder(
     tableName: String,
     initialSnapshot: Snapshot,
     kernelEngine: Engine,
-    catalogTable: Optional[CatalogTable],
+    catalogTable: Option[CatalogTable],
     snapshotManager: DeltaV2SnapshotManager,
     dataSchema: StructType,
     partitionSchema: StructType,
     tableSchema: StructType,
-    catalogStats: Optional[Statistics],
+    catalogStats: Option[Statistics],
     options: CaseInsensitiveStringMap)
     extends ScanBuilder
     with SupportsPushDownRequiredColumns
@@ -218,7 +219,7 @@ private[read] class DeltaV2ScanBuilder(
         deltaScanSupplier,
         dataCatalystFilters,
         partitionCatalystFilters,
-        catalogStats,
+        ScalaUtils.toJavaOptional(catalogStats),
         options,
         effectiveLimit)
       scan
@@ -246,29 +247,28 @@ private[read] object DeltaV2ScanBuilder {
     case a: AttributeReference => a.withExprId(ExprId(0L)).withQualifier(Nil)
   }
 
-  /** Factory used by the Java DeltaV2ScanUtils. */
   def create(
       tableName: String,
       initialSnapshot: Snapshot,
       kernelEngine: Engine,
-      catalogTable: Optional[CatalogTable],
+      catalogTable: Option[CatalogTable],
       snapshotManager: DeltaV2SnapshotManager,
       dataSchema: StructType,
       partitionSchema: StructType,
       tableSchema: StructType,
-      catalogStats: Optional[Statistics],
+      catalogStats: Option[Statistics],
       options: CaseInsensitiveStringMap): DeltaV2ScanBuilder =
     new DeltaV2ScanBuilder(
-      tableName,
-      initialSnapshot,
-      kernelEngine,
-      catalogTable,
-      snapshotManager,
-      dataSchema,
-      partitionSchema,
-      tableSchema,
-      catalogStats,
-      options)
+      tableName = tableName,
+      initialSnapshot = initialSnapshot,
+      kernelEngine = kernelEngine,
+      catalogTable = catalogTable,
+      snapshotManager = snapshotManager,
+      dataSchema = dataSchema,
+      partitionSchema = partitionSchema,
+      tableSchema = tableSchema,
+      catalogStats = catalogStats,
+      options = options)
 
   /**
    * Adapter for callers that hold a Kernel snapshot but push no filters -- currently Delta Sharing
@@ -300,19 +300,19 @@ private[read] object DeltaV2ScanBuilder {
       partitionSchema: StructType,
       tableSchema: StructType,
       requiredSchema: StructType,
-      catalogStats: Optional[Statistics]): Scan = {
+      catalogStats: Option[Statistics]): Scan = {
     // No CatalogTable: a full-table, no-filter scan does not use catalogTable (it only feeds the
     val builder = new DeltaV2ScanBuilder(
-      tableName,
-      snapshot,
-      kernelEngine,
-      Optional.empty[CatalogTable](),
-      snapshotManager,
-      dataSchema,
-      partitionSchema,
-      tableSchema,
-      catalogStats,
-      CaseInsensitiveStringMap.empty())
+      tableName = tableName,
+      initialSnapshot = snapshot,
+      kernelEngine = kernelEngine,
+      catalogTable = None,
+      snapshotManager = snapshotManager,
+      dataSchema = dataSchema,
+      partitionSchema = partitionSchema,
+      tableSchema = tableSchema,
+      catalogStats = catalogStats,
+      options = CaseInsensitiveStringMap.empty())
     builder.pruneColumns(requiredSchema)
     builder.build()
   }
