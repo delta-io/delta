@@ -27,7 +27,6 @@ import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Arrays;
-import java.util.Optional;
 import java.util.OptionalInt;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.connector.read.Scan;
@@ -47,6 +46,7 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import scala.Option;
 
 /**
  * Tests for {@link DeltaV2ScanBuilder}'s construction surface: schema pruning, scan/micro-batch
@@ -546,12 +546,12 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
         tableName,
         snapshot,
         engine,
-        Optional.empty(),
+        Option.empty(),
         snapshotManager,
         dataSchema,
         partitionSchema,
         tableSchema,
-        Optional.empty(),
+        Option.empty(),
         CaseInsensitiveStringMap.empty());
   }
 

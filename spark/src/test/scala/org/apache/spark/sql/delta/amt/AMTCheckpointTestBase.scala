@@ -28,12 +28,13 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.{ArrayType, BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
 
@@ -124,6 +125,10 @@ trait AMTCheckpointTestBase
   /** The [[DeltaLog]] for a catalog-managed table accessed by name. */
   protected def deltaLogForName(tableName: String): DeltaLog =
     DeltaLog.forTable(spark, new TableIdentifier(tableName))
+
+  /** The catalog metadata for a table accessed by name. */
+  protected def catalogTableFor(tableName: String): CatalogTable =
+    spark.sessionState.catalog.getTableMetadata(new TableIdentifier(tableName))
 
   /** The physical data path of a catalog-managed table accessed by name. */
   protected def tablePath(tableName: String): String =
@@ -711,16 +716,8 @@ trait AMTCheckpointTestBase
     metadataFiles(path, isRootFileName)
 
   /** Returns the actions committed at exactly `version`. */
-  protected def actionsAt(deltaLog: DeltaLog, version: Long): Seq[Action] = {
-    // TODO: Restore this call once `CoordinatedCommitsUtils.commitFilesIterator` discovers
-    // unbackfilled manifest commits.
-    /*
+  protected def actionsAt(deltaLog: DeltaLog, version: Long): Seq[Action] =
     deltaLog.getChanges(version).find(_._1 == version).map(_._2).getOrElse(Seq.empty)
-    */
-    val snapshot = deltaLog.update()
-    val path = DeltaCommitFileProvider(snapshot).deltaFile(version)
-    deltaLog.store.read(path, deltaLog.newDeltaHadoopConf()).map(Action.fromJson)
-  }
 
   /**
    * The live `AddFile` set reconstructed from the commit-log deltas alone (not the AMT tree). An

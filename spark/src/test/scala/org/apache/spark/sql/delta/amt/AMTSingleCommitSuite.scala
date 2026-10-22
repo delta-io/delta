@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DeltaLog, DeltaOperations, SingleCommit}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
-import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 
 /**
  * Tests for SingleCommit related handling.
@@ -166,14 +165,7 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase {
   ) { context =>
     val deltaLog = deltaLogForName(context.tableName)
     val manifestVersion = context.manifestCommitVersion
-    // TODO: Restore this call once `CoordinatedCommitsUtils.commitFilesIterator` discovers
-    // unbackfilled manifest commits.
-    /*
-    val commit = commitAt(deltaLogForName(context.tableName), manifestVersion)
-    */
-    val path = DeltaCommitFileProvider(context.postCheckpointSnapshot).deltaFile(manifestVersion)
-    val status = path.getFileSystem(deltaLog.newDeltaHadoopConf()).getFileStatus(path)
-    val commit = SingleCommit(deltaLog, manifestVersion, status)
+    val commit = commitAt(deltaLog, manifestVersion)
     val e = intercept[IllegalStateException] {
       commit.getLogCommitActionsIteratorUnsafe().processAndClose(_.toList)
     }
@@ -190,23 +182,12 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase {
     val deltaLog = deltaLogForName(context.tableName)
     val firstLogCommit = context.postSetupSnapshot.version
     assert(checkpointAt(deltaLog, firstLogCommit).isEmpty, s"v$firstLogCommit must be a log commit")
-    // TODO: Restore this call once `CoordinatedCommitsUtils.commitFilesIterator` discovers
-    // unbackfilled manifest commits.
-    /*
     val commits = DeltaFileProviderUtils.getCommitsInVersionRange(
       spark,
       deltaLog,
       startVersion = firstLogCommit,
       endVersion = context.manifestCommitVersion,
       catalogTableOpt = None)
-    */
-    val fileProvider = DeltaCommitFileProvider(context.postCheckpointSnapshot)
-    val hadoopConf = deltaLog.newDeltaHadoopConf()
-    val commits = (firstLogCommit to context.manifestCommitVersion).map { version =>
-      val path = fileProvider.deltaFile(version)
-      val status = path.getFileSystem(hadoopConf).getFileStatus(path)
-      SingleCommit(deltaLog, version, status)
-    }
     val e = intercept[Exception] {
       DeltaFileProviderUtils.parallelReadAndParseLogCommitsAsSeqUnsafe(spark, commits)
     }
