@@ -1122,7 +1122,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
   }
 
   test("withLogData: published and staged catalog commits are both accepted") {
-    val logData = Seq(
+    val logData = Seq[ParsedLogData](
       ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 0, deltaFileStatus(0)),
       ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 1, deltaFileStatus(1)),
       ParsedCatalogCommitData.forFileStatus(stagedCommitFile(2)))

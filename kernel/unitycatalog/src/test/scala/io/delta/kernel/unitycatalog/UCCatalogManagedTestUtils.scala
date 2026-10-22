@@ -164,7 +164,7 @@ trait UCCatalogManagedTestUtils
    */
   def withUCClientAndTestTable(
       textFx: (InMemoryUCClientWithMetrics, String, Long) => Unit): Unit = {
-    withUCClientAndTestTable(includePublishedV0 = false)(textFx)
+    withUCClientAndTestTableWithOptions(includePublishedV0 = false)(textFx)
   }
 
   /**
@@ -172,7 +172,7 @@ trait UCCatalogManagedTestUtils
    *                           (`_delta_log/00000000000000000000.json`) as a catalog commit
    * @param textFx test function to run that takes input (ucClient, tablePath, maxRatifiedVersion)
    */
-  def withUCClientAndTestTable(includePublishedV0: Boolean)(
+  def withUCClientAndTestTableWithOptions(includePublishedV0: Boolean)(
       textFx: (InMemoryUCClientWithMetrics, String, Long) => Unit): Unit = {
     val maxRatifiedVersion = 2L
     val tablePath = getTestResourceFilePath("catalog-owned-preview")

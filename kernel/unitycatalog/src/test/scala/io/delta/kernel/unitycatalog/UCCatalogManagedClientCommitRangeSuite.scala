@@ -296,14 +296,15 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
   }
 
   test("loadCommitRange succeeds when UC returns an already-published commit") {
-    withUCClientAndTestTable(includePublishedV0 = true) { (ucClient, tablePath, maxVersion) =>
-      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-      val commitRange = loadCommitRange(
-        ucCatalogManagedClient,
-        tablePath = tablePath,
-        startVersionOpt = Optional.of(0L))
-      assert(commitRange.getStartVersion == 0)
-      assert(commitRange.getEndVersion == maxVersion)
+    withUCClientAndTestTableWithOptions(includePublishedV0 = true) {
+      (ucClient, tablePath, maxVersion) =>
+        val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+        val commitRange = loadCommitRange(
+          ucCatalogManagedClient,
+          tablePath = tablePath,
+          startVersionOpt = Optional.of(0L))
+        assert(commitRange.getStartVersion == 0)
+        assert(commitRange.getEndVersion == maxVersion)
     }
   }
 }

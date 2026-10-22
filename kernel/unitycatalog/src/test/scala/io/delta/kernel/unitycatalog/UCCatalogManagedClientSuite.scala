@@ -314,15 +314,16 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
   }
 
   test("loadSnapshot succeeds when UC returns an already-published commit") {
-    withUCClientAndTestTable(includePublishedV0 = true) { (ucClient, tablePath, maxVersion) =>
-      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-      Seq(Optional.of(java.lang.Long.valueOf(0L)), emptyLongOpt).foreach { versionToLoad =>
-        val snapshot = loadSnapshot(
-          ucCatalogManagedClient,
-          tablePath = tablePath,
-          versionToLoad = versionToLoad)
-        assert(snapshot.getVersion == versionToLoad.orElse(maxVersion))
-      }
+    withUCClientAndTestTableWithOptions(includePublishedV0 = true) {
+      (ucClient, tablePath, maxVersion) =>
+        val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+        Seq(Optional.of(java.lang.Long.valueOf(0L)), emptyLongOpt).foreach { versionToLoad =>
+          val snapshot = loadSnapshot(
+            ucCatalogManagedClient,
+            tablePath = tablePath,
+            versionToLoad = versionToLoad)
+          assert(snapshot.getVersion == versionToLoad.orElse(maxVersion))
+        }
     }
   }
 
