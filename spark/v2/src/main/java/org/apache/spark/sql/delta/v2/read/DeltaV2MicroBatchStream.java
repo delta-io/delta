@@ -40,14 +40,12 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.channels.ClosedByInterruptException;
-import java.sql.Timestamp;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
@@ -55,12 +53,8 @@ import org.apache.spark.sql.connector.read.streaming.*;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
-import org.apache.spark.sql.delta.DeltaStartingVersion;
-import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.SnapshotDescriptor;
-import org.apache.spark.sql.delta.StartingVersion;
-import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.TypeWidening;
 import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot;
@@ -716,60 +710,17 @@ class DeltaV2MicroBatchStream
    *
    * <p>Returns Optional.empty() if no starting version is provided.
    *
-   * <p>This is the DSv2 Kernel-based implementation of DeltaSource.getStartingVersion.
+   * <p>Delegates to the shared {@code DeltaSource.getStartingVersionFromOptions} and caches the
+   * result in {@code cachedStartingVersion}, so that "latest" resolves to one version.
    */
   synchronized Optional<Long> getStartingVersion() {
-    if (cachedStartingVersion != null) {
-      return cachedStartingVersion;
+    if (cachedStartingVersion == null) {
+      cachedStartingVersion =
+          ScalaUtils.toJavaOptional(
+                  DeltaSource.getStartingVersionFromOptions(
+                      spark, options, streamingBackend, deltaSnapshotAtSourceInit))
+              .map(version -> (Long) version);
     }
-    // Note: returning a version beyond latest snapshot version won't be a problem as callers
-    // of this function won't use the version to retrieve snapshot(refer to
-    // [[getStartingOffset]]).
-    boolean allowOutOfRange =
-        (Boolean) sqlConf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP());
-
-    if (options.startingVersion().isDefined()) {
-      DeltaStartingVersion startingVersion = options.startingVersion().get();
-      if (startingVersion instanceof StartingVersionLatest$) {
-        Snapshot latestSnapshot = streamingBackend.update();
-        // "latest": start reading from the next commit
-        cachedStartingVersion = Optional.of(latestSnapshot.version() + 1);
-        return cachedStartingVersion;
-      } else if (startingVersion instanceof StartingVersion) {
-        long version = ((StartingVersion) startingVersion).version();
-        if (!DeltaSource.validateProtocolAt(
-            spark, streamingBackend, deltaSnapshotAtSourceInit, version)) {
-          // When starting from a given version, we don't require that the snapshot of this
-          // version can be reconstructed, even though the input table is technically in an
-          // inconsistent state. If the snapshot cannot be reconstructed, then the protocol
-          // check is skipped, so this is technically not safe, but we keep it this way for
-          // historical reasons.
-          streamingBackend.checkVersionExists(
-              version, /* mustBeRecreatable= */ false, allowOutOfRange);
-        }
-        cachedStartingVersion = Optional.of(version);
-        return cachedStartingVersion;
-      }
-    } else if (options.startingTimestamp().isDefined()) {
-      // Set enforceRetention to true to align with V1 connector
-      Timestamp timestamp =
-          new DeltaTimeTravelSpec(
-                  /* timestamp= */ options.startingTimestamp().map(Literal$.MODULE$::apply),
-                  /* version= */ Option.empty(),
-                  /* creationSource= */ Some.apply("deltaV2MicroBatchStream"),
-                  /* enforceRetention= */ true)
-              .getTimestamp(spark.sessionState().conf());
-      long startingVersion =
-          DeltaSource.getStartingVersionFromTimestamp(
-              spark,
-              streamingBackend,
-              deltaSnapshotAtSourceInit,
-              timestamp,
-              /* canExceedLatest= */ allowOutOfRange);
-      cachedStartingVersion = Optional.of(startingVersion);
-      return cachedStartingVersion;
-    }
-    cachedStartingVersion = Optional.empty();
     return cachedStartingVersion;
   }
 
