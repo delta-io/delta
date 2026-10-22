@@ -8,7 +8,7 @@
 # Build configuration files and directories
 /build/                         @tdas @huan233usc
 /build.sbt                      @tdas @huan233usc
-/project/                       @tdas
+/project/                       @tdas @TimothyW553
 /project/scripts/               @tdas @openinx @yili-db
 /version.sbt                    @tdas
 
