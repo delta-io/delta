@@ -156,21 +156,19 @@ invisible schema MUST include the ancestor containers needed to describe their
 [field paths](#field-path). A field is visible if its path appears in the visible schema; otherwise
 it is invisible. Shared ancestors remain visible and provide structure for nested invisible fields.
 
-For any map in the visible schema, its key MUST NOT be wholly or partially invisible. Its complete
-key type, including all nested fields, MUST be present in the visible schema. This rule applies at
-every nesting level. Fields within map values and entire map columns MAY be invisible, except
-within the key of a visible map.
+For any map in the visible schema, its key and all nested fields within the key MUST be visible.
+Entire map columns and fields within map values MAY be invisible, except within the key of a
+visible map.
 
-Field-path matching during the merge MUST be case-insensitive. Shared fields MUST retain the name,
-including casing, from the visible schema; fields present in only one schema retain their names.
-Fields with names that differ only in casing across the two schemas are matched as one field, not
-retained as separate columns.
+Field paths shared by the two schemas MUST use identical names, including casing. If two field
+paths differ only in casing, the schemas are invalid; the merge MUST NOT normalize the names or
+retain them as separate columns.
 
 The merge combines struct fields at matching field paths, retaining fields present in only one
 schema. Shared structs are merged recursively; arrays and maps recursively merge their element,
 key, and value types, subject to the map-key restriction above. Shared definitions MUST agree except
-for field-name casing and the nested struct fields contributed by each schema. Their nullability
-and metadata, including column-mapping metadata, MUST match.
+for the nested struct fields contributed by each schema. Their nullability and metadata, including
+column-mapping metadata, MUST match.
 A shared ancestor represents one column in the complete data schema, not two distinct columns.
 Each input schema and the complete data schema MUST satisfy the case-insensitive column-name
 uniqueness requirements of the [Schema Serialization Format](#schema-serialization-format).
@@ -343,13 +341,12 @@ Merged:    profile { address { city, geo_id }, name, internal_id }, age, source_
 Invisible `profile.address.geo_id` precedes visible `profile.name` because the ordering rule applies
 within each struct, not to all leaf fields globally.
 
-These schemas merge case-insensitively, retaining the visible schema's spelling for the shared
-ancestor:
+These schemas are invalid because `profile` and `Profile` differ only in casing:
 
 ```text
 Visible:   profile { name }
 Invisible: Profile { internal_id }
-Merged:    profile { name, internal_id }
+Result:    Invalid (case-only difference)
 ```
 
 For a top-level map column with the following schematic type:
