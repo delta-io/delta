@@ -63,7 +63,7 @@ public class KernelStreamingBackendTest extends DeltaV2TestBase {
 
   @Test
   public void checkVersionExistsThrowsDeltaVersionNotFound(@TempDir File tempDir) {
-    String path = createTable(tempDir, /* commits= */ 1);
+    String path = createTable(tempDir, /* commits= */ 3);
     KernelStreamingBackend backend =
         new KernelStreamingBackend(new PathBasedSnapshotManager(path, defaultKernelContext));
 
@@ -76,6 +76,9 @@ public class KernelStreamingBackendTest extends DeltaV2TestBase {
                     /* mustBeRecreatable= */ false,
                     /* allowOutOfRange= */ false));
     assertEquals("DELTA_VERSION_NOT_FOUND", e.getErrorClass());
+    assertEquals(5L, e.userVersion());
+    assertEquals(0L, e.earliest());
+    assertEquals(2L, e.latest());
   }
 
   @Test

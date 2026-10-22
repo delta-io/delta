@@ -1451,7 +1451,7 @@ object DeltaSource extends DeltaLogging {
    *
    * @param spark - current spark session
    * @param streamingBackend - Delta log operations of the table for which we find the version.
-   * @param snapshot - a snapshot of the table, which tags the usage events.
+   * @param snapshot - a snapshot of the table, the provider of the usage-event tags.
    * @param timestamp - user specified timestamp
    * @param canExceedLatest - if true, version can be greater than the latest snapshot commit
    * @return - corresponding version number for timestamp

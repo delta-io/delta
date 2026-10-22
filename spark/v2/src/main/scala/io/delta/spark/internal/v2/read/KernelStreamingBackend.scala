@@ -28,8 +28,10 @@ import io.delta.kernel.exceptions.UnsupportedTableFeatureException
 
 
 /**
- * The [[DeltaStreamingBackend]] backend that reads the table through Kernel. It throws the same
- * Delta errors as [[org.apache.spark.sql.delta.sources.DeltaLogStreamingBackend]].
+ * The [[DeltaStreamingBackend]] backend that reads the table through Kernel. `checkVersionExists`
+ * and `getSnapshotToValidateProtocol` throw the same Delta errors as
+ * [[org.apache.spark.sql.delta.sources.DeltaLogStreamingBackend]]. The other methods can
+ * throw Kernel errors.
  */
 private[read] class KernelStreamingBackend(snapshotManager: DeltaV2SnapshotManager)
   extends DeltaStreamingBackend {
@@ -66,7 +68,8 @@ private[read] class KernelStreamingBackend(snapshotManager: DeltaV2SnapshotManag
       canReturnEarliestCommit: Boolean): DeltaHistoryManager.Commit = {
     val commit = snapshotManager.getActiveCommitAtTime(
       timestamp.getTime, canReturnLastCommit, mustBeRecreatable, canReturnEarliestCommit)
-    // Refresh after the lookup, so the latest snapshot is at least as new as the commit.
+    // Refresh after the lookup, so the latest snapshot is at least as new as the commit, unless
+    // `update` returns a cached snapshot.
     // TODO(#5999): optimize duplicate loadLatestSnapshot calls
     update()
     DeltaHistoryManager.Commit(commit.getVersion, commit.getTimestamp)
