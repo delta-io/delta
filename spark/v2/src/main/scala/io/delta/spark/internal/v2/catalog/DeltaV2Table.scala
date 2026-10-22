@@ -58,10 +58,14 @@ import org.apache.spark.sql.delta.v2.interop.{
 }
 import io.delta.spark.internal.v2.read.{DeltaV2ScanUtils, MetadataEvolutionHandler}
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
-import io.delta.spark.internal.v2.tablemanager.DeltaV2TableManagerCache
+import io.delta.spark.internal.v2.tablemanager.{
+  DeltaV2TableManager,
+  DeltaV2TableManagerCache
+}
 import io.delta.spark.internal.v2.utils.ScalaUtils.{
   toJavaOptional,
-  toScalaMap
+  toScalaMap,
+  toScalaOption
 }
 import io.delta.spark.internal.v2.utils.StatsUtils.toV2Statistics
 import io.delta.spark.internal.v2.write.{
@@ -140,7 +144,7 @@ class DeltaV2Table private (
   private val queryContext = DeltaV2QueryContext(catalogTableValue)
   // Merge options: file system options from catalog + user options (user takes precedence)
   // This follows the same pattern as DeltaTableV2 in delta-spark
-  private val (options, hadoopConf, kernelContext, snapshotManager) = {
+  private val (options, hadoopConf, kernelContext, tableManager) = {
     val catalogTableOpt = queryContext.catalogTableOpt
     val merged = new HashMap[String, String](
       mapAsJavaMap(
@@ -152,11 +156,7 @@ class DeltaV2Table private (
     val hadoopConf = activeSession.sessionState.newHadoopConfWithOptions(toScalaMap(options))
     val tableManager =
       DeltaV2TableManagerCache.forTable(activeSession, tablePath, options, catalogTableOpt)
-    (
-      options,
-      hadoopConf,
-      tableManager.kernelContext,
-      tableManager.snapshotManager(catalogTableOpt))
+    (options, hadoopConf, tableManager.kernelContext, tableManager)
   }
 
   /** Snapshot created during connector setup */
@@ -164,10 +164,10 @@ class DeltaV2Table private (
 
   private def loadInitialSnapshot(timeTravelVersion: Option[Long]): Snapshot = try {
     if (timeTravelVersion.isDefined) {
-      loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.get)
+      loadSnapshotAtCheckedVersion(tableManager, timeTravelVersion.get)
     } else {
       val loadLatestSnapshot: Supplier[Snapshot] =
-        () => snapshotManager.loadLatestSnapshot(queryContext)
+        () => tableManager.loadLatestSnapshot(queryContext)
       recordFrameProfileValue("snapshot.loadLatest", loadLatestSnapshot)
     }
   } catch {
@@ -190,7 +190,11 @@ class DeltaV2Table private (
   private val schemaProvider = {
     val persistedMetadata: Optional[PersistedMetadata] =
       MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-        SparkSession.active, initialSnapshotValue, options, snapshotManager, kernelEngine())
+        SparkSession.active,
+        initialSnapshotValue,
+        options,
+        tableManager.snapshotManager(queryContext.catalogTableOpt),
+        kernelEngine())
 
     val (rawSchema, partitionColumnNames) = if (persistedMetadata.isPresent) {
       val persisted = persistedMetadata.get()
@@ -304,12 +308,24 @@ class DeltaV2Table private (
    */
   def getOptions(): JMap[String, String] = options
 
+  /** Returns the immutable request context that resolved this table. */
+  def getQueryContext(): DeltaV2QueryContext = queryContext
+
   /**
-   * Returns the snapshot manager backing this table. Catalog-driven features such as read-time CDF
+   * Returns the table manager backing this table. Catalog-driven features such as read-time CDF
    * (TableCatalog.loadChangelog) use this to resolve versions, timestamps, and snapshots without
-   * having to build their own snapshot manager.
+   * having to build their own manager.
    */
-  def getSnapshotManager(): DeltaV2SnapshotManager = snapshotManager
+  def getTableManager(): DeltaV2TableManager = tableManager
+
+  /**
+   * Returns a snapshot manager derived from the table manager and the catalog table this table was
+   * resolved from. Transitional: callers that still need a snapshot manager use this until they
+   * move to the query-context APIs on [[getTableManager]].
+   */
+  @deprecated("Use the query-context APIs on getTableManager instead")
+  def getSnapshotManager(): DeltaV2SnapshotManager =
+    tableManager.snapshotManager(queryContext.catalogTableOpt)
 
   /** The table protocol from the initial snapshot. */
   protected def protocol(): AbstractProtocol = initialSnapshotValue.protocol
@@ -322,7 +338,7 @@ class DeltaV2Table private (
 
   protected def initialSnapshot(): Snapshot = initialSnapshotValue
 
-  protected def catalogTable(): Optional[CatalogTable] = catalogTableValue
+  protected def catalogTable(): Option[CatalogTable] = queryContext.catalogTableOpt
 
   /** Returns a copy of this table pinned to {@code version}. */
   def withVersion(version: Long): DeltaV2Table = {
@@ -335,7 +351,7 @@ class DeltaV2Table private (
 
   /** Returns a copy of this table pinned to the snapshot active at {@code timestampMicros}. */
   def withTimestamp(timestampMicros: Long): DeltaV2Table =
-    withVersion(resolveTimestampToVersion(snapshotManager, timestampMicros, queryContext))
+    withVersion(resolveTimestampToVersion(tableManager, timestampMicros, queryContext))
 
   /**
    * Returns the table name in a format compatible with DeltaTableV2.
@@ -429,23 +445,23 @@ class DeltaV2Table private (
           toV2Statistics(
             stats, schemaProvider.getDataSchema(), schemaProvider.getPartitionSchema()))
     DeltaV2ScanUtils.newScanBuilder(
-      name(),
-      initialSnapshotValue,
-      kernelEngine(),
-      catalogTableValue,
-      snapshotManager,
-      schemaProvider.getDataSchema(),
-      schemaProvider.getPartitionSchema(),
-      schemaProvider.getRawSchema(),
-      catalogStats,
-      merged)
+      tableName = name(),
+      initialSnapshot = initialSnapshotValue,
+      kernelEngine = kernelEngine(),
+      catalogTable = toScalaOption(catalogTableValue),
+      snapshotManager = getSnapshotManager(),
+      dataSchema = schemaProvider.getDataSchema(),
+      partitionSchema = schemaProvider.getPartitionSchema(),
+      tableSchema = schemaProvider.getRawSchema(),
+      catalogStats = toScalaOption(catalogStats),
+      options = merged)
   }
 
   /**
    * Validates that {@code version} exists in the Delta log, then loads the snapshot pinned to it.
    */
   private def loadSnapshotAtCheckedVersion(
-      manager: DeltaV2SnapshotManager,
+      manager: DeltaV2TableManager,
       version: Long): Snapshot = {
     val mustBeRecreatable = true
     val allowOutOfRange = false
@@ -463,7 +479,7 @@ class DeltaV2Table private (
       hadoopConf,
       initialSnapshotValue,
       catalogTableValue,
-      snapshotManager,
+      getSnapshotManager(),
       schemaProvider.getDataSchema(),
       schemaProvider.getPartitionSchema(),
       info)
@@ -530,7 +546,7 @@ private[catalog] object DeltaV2Table {
       TableCapability.MICRO_BATCH_READ,
       TableCapability.BATCH_WRITE,
       TableCapability.STREAMING_WRITE)
-    DeltaV2TableShims.schemaEvolutionCapability().ifPresent(capability => caps.add(capability))
+    DeltaV2TableShims.schemaEvolutionCapability().foreach(capability => caps.add(capability))
     Collections.unmodifiableSet[TableCapability](caps)
   }
 
@@ -564,7 +580,7 @@ private[catalog] object DeltaV2Table {
    * share a singular load once the snapshot manager exposes it TODO(#5999).
    */
   private def resolveTimestampToVersion(
-      manager: DeltaV2SnapshotManager,
+      manager: DeltaV2TableManager,
       timestampMicros: Long,
       queryContext: DeltaV2QueryContext): Long = {
     val timeMillis = timestampMicros / 1000

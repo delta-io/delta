@@ -35,6 +35,7 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.InterpretedPredicate;
+import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
@@ -141,7 +142,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     this.sqlConf = SQLConf.get();
     this.deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
     this.isCDCRead = deltaOptions.readChangeFeed();
-    this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
+    this.zoneId = DateTimeUtils.getZoneId(sqlConf.sessionLocalTimeZone());
     StructType ddlOrdered =
         SchemaUtils.ddlOrderedOutputSchema(tableSchema, readDataSchema, partitionSchema);
     this.ddlOrderedReadOutputSchema =

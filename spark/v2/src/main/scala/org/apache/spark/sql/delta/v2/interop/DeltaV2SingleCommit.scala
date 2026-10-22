@@ -26,12 +26,22 @@ import io.delta.kernel.{CommitActions => KernelCommitActions}
  *
  * @param singleKernelCommit the single Kernel commit.
  */
-private[interop] class DeltaV2SingleCommit(private val singleKernelCommit: KernelCommitActions)
-    extends DeltaSingleCommit {
+private[interop] class DeltaV2SingleCommit(
+    private val singleKernelCommit: KernelCommitActions
+) extends DeltaSingleCommit {
 
-  override def version: Long = singleKernelCommit.getVersion()
+  private val (commitVersion, commitTimestamp, actions): (Long, Long, Seq[Action]) = try {
+    val version = singleKernelCommit.getVersion()
+    val timestamp = singleKernelCommit.getTimestamp()
+    val actions = KernelActionUtils.readActions(singleKernelCommit).processAndClose(_.toVector)
+    (version, timestamp, actions)
+  } finally {
+    singleKernelCommit.close()
+  }
 
-  override def timestamp: Long = singleKernelCommit.getTimestamp()
+  override val version: Long = commitVersion
+
+  override val timestamp: Long = commitTimestamp
 
   override def getActionsIterator(
       maxInMemoryFileSizeBytes: Long): ClosableIterator[Action] with SupportsRewinding[Action] = {
@@ -40,19 +50,13 @@ private[interop] class DeltaV2SingleCommit(private val singleKernelCommit: Kerne
         "getActionsIterator only supports maxInMemoryFileSizeBytes = 0")
     }
     new ClosableIterator[Action] with SupportsRewinding[Action] {
-      private var delegatedIterator =
-        KernelActionUtils.readActions(singleKernelCommit)
+      private var delegatedIterator = actions.iterator
       override def hasNext: Boolean = delegatedIterator.hasNext
       override def next(): Action = delegatedIterator.next()
-      override def close(): Unit = delegatedIterator.close()
-      override def rewind(): Unit = {
-        close()
-        delegatedIterator = KernelActionUtils.readActions(singleKernelCommit)
-      }
+      override def close(): Unit = ()
+      override def rewind(): Unit = delegatedIterator = actions.iterator
     }
   }
-
-  override def close(): Unit = singleKernelCommit.close()
 }
 
 object DeltaV2SingleCommit {
