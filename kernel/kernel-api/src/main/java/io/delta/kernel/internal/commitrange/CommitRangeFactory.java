@@ -218,17 +218,32 @@ class CommitRangeFactory {
 
     // Get ratified deltas between startVersion and listingEndVersionOpt
     List<ParsedDeltaData> ratifiedDeltas =
-        ratifiedCommits.stream()
-            .filter(
-                x ->
-                    x.getVersion() >= startVersion
-                        && x.getVersion() <= listingEndVersionOpt.orElse(Long.MAX_VALUE))
-            .collect(Collectors.toList());
+        dropLeadingPublishedDeltas(
+            ratifiedCommits.stream()
+                .filter(
+                    x ->
+                        x.getVersion() >= startVersion
+                            && x.getVersion() <= listingEndVersionOpt.orElse(Long.MAX_VALUE))
+                .collect(Collectors.toList()));
 
     // Validate the catalog/published relationship and, in strict mode, completeness.
     validatePublishedPlusRatifiedDeltas(publishedDeltas, ratifiedDeltas);
     return LogDataUtils.combinePublishedAndRatifiedDeltasWithCatalogPriority(
         publishedDeltas, ratifiedDeltas);
+  }
+
+  /**
+   * Drops the leading catalog commits that are already published. Metadata cleanup may have removed
+   * those files, so the listing is authoritative for them. Published catalog commits after the
+   * first staged one are kept, since ordered backfill guarantees they still exist.
+   */
+  private static List<ParsedDeltaData> dropLeadingPublishedDeltas(List<ParsedDeltaData> deltas) {
+    int firstStaged = 0;
+    while (firstStaged < deltas.size()
+        && FileNames.isPublishedDeltaFile(deltas.get(firstStaged).getFileStatus().getPath())) {
+      firstStaged++;
+    }
+    return deltas.subList(firstStaged, deltas.size());
   }
 
   /**
