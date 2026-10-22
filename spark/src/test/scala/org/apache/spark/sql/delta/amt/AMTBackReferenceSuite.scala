@@ -907,17 +907,10 @@ class AMTBackReferenceSuite
         s"$restoredToSnapshotIds.")
     readded.foreach { add =>
       assert(add.modifiedSnapshotId.isEmpty)
+      assert(add.backReference.isEmpty,
+        s"re-added AddFile ${add.path} must carry no back reference (stale pointer), " +
+          s"but was ${add.backReference}.")
     }
-    /*
-    // RESTORE's needs to recompute the back references for the re-added files, so we cannot simply
-    // assert their emptiness directly.
-    // TODO: assert their emptiness accurately after RESTORE is supported.
-    readded.foreach { a =>
-      assert(a.backReference.isEmpty,
-        s"re-added AddFile ${a.path} must carry no back reference (stale pointer), " +
-          s"but was ${a.backReference}.")
-    }
-    */
   }
 
 

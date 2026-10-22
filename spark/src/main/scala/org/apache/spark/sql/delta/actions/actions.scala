@@ -1687,6 +1687,31 @@ object CommitInfo {
     case _ => false
   }
 
+  /**
+   * Returns the commit-level `dataChange` to write to [[CommitInfo]]. AMT tables always write the
+   * value. Non-AMT tables write it only while the kill switch is enabled.
+   */
+  private[delta] def dataChangeForCommitInfo(
+      dataChange: Boolean,
+      metadata: Metadata,
+      protocol: Protocol,
+      spark: SparkSession): Option[Boolean] = {
+    if (AMTUtils.amtEnabled(metadata, protocol) ||
+        spark.conf.get(DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_WRITE_FOR_NON_AMT_ENABLED)) {
+      Some(dataChange)
+    } else {
+      None
+    }
+  }
+
+  private[delta] def dataChangeForCommitInfo(
+      actions: Iterable[Action],
+      metadata: Metadata,
+      protocol: Protocol,
+      spark: SparkSession): Option[Boolean] = {
+    dataChangeForCommitInfo(dataChangeFromActions(actions), metadata, protocol, spark)
+  }
+
   def useCommitInfoForDataChangeEnabled: Boolean =
     SQLConf.get.getConf(DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED)
 

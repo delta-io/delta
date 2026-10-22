@@ -799,7 +799,7 @@ trait SnapshotManagement { self: DeltaLog =>
       // Start reading the latest commit's CommitInfo (the fallback source of the last manifest
       // commit reference, used when no CRC is available) in parallel with the CRC read below.
       val lastCommitInfoFutureOpt = maybeReadLastCommitInfoAsync(
-        segment, shouldReconcileAMTCheckpointProvider)
+        segment, checksumOpt, shouldReconcileAMTCheckpointProvider)
       val checksumOptAfterRead = checksumOpt.orElse(
         readChecksum(segment.version, lastSeenChecksumFileStatusOpt))
       val finalLogSegment = if (shouldReconcileAMTCheckpointProvider) {
@@ -2048,7 +2048,12 @@ case class LogSegment(
         }
       }
 
-  /** Returns the unbackfilled commits in the [[LogSegment]] */
+  /**
+   * Returns the unbackfilled commits in the [[LogSegment]]. Presumptions:
+   *  - All commits before the checkpoint version (exclusive) must already be backfilled.
+   *  - For non-AMT tables, the commit at the checkpoint version itself must also be backfilled.
+   *  - For AMT tables, the commit at the checkpoint version may still be unbackfilled.
+   */
   lazy val unbackfilledDeltas: Seq[(FileStatus, Long, String)] =
     // If `deltas` contains a compacted delta [X...Y], then every commit up to Y must be backfilled.
     // (guaranteed by minor-compaction hook), so collecting from `deltas` is sufficient.

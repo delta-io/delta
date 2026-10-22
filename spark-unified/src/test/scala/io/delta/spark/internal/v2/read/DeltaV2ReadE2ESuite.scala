@@ -17,8 +17,12 @@
 package io.delta.spark.internal.v2.read
 
 import java.io.File
+import java.sql.Timestamp
+
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.internal.SQLConf
 
 private[read] trait DeltaV2ReadE2ETests {
   self: DeltaV2ScanE2ETestUtils =>
@@ -44,6 +48,41 @@ private[read] trait DeltaV2ReadE2ETests {
         sql("SELECT id, part FROM v2_scan_e2e_partitioned WHERE part = 'x'")
       } { df =>
         checkAnswer(df, Seq(Row(1L, "x"), Row(3L, "x")))
+      }
+    }
+  }
+
+  test("batch reads honor session time zone") {
+    for (utcTimestampPartitionValues <- Seq(true, false)) {
+      withTempDir { dir =>
+        val sourcePath = new File(dir, "source").getCanonicalPath
+        withSQLConf(
+            DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES.key ->
+              utcTimestampPartitionValues.toString) {
+          withV1Mode {
+            withSQLConf(SQLConf.SESSION_LOCAL_TIMEZONE.key -> "UTC") {
+              sql("SELECT id, timestamp_micros(id * 1000000) AS part FROM range(1, 3)")
+                .write.format(writeFormat).partitionBy("part").save(sourcePath)
+            }
+          }
+          for ((timeZone, shiftSeconds) <- Seq(
+              "PST" -> 28800L, "+8:00" -> -28800L, "-08:3" -> 28980L, "UTC" -> 0L)) {
+            val expectedShiftSeconds = if (utcTimestampPartitionValues) 0L else shiftSeconds
+            val expectedRows = Seq(1L, 2L).map { id =>
+              Row(id, new Timestamp((id + expectedShiftSeconds) * 1000L))
+            }
+            withSQLConf(SQLConf.SESSION_LOCAL_TIMEZONE.key -> timeZone) {
+              withClue(s"UTC timestamp partitions=$utcTimestampPartitionValues, " +
+                  s"timeZone=$timeZone: ") {
+                checkRead("session time zone timestamp partition read") {
+                  sql(s"SELECT id, part FROM $tableProvider.`$sourcePath`")
+                } { batch =>
+                  checkAnswer(batch, expectedRows)
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -266,6 +305,28 @@ private[read] trait DeltaV2ReadE2ETests {
     }
   }
 
+  test("partition names with spaces and backticks under column mapping prune on V2") {
+    val table = "v2_scan_e2e_spaced_partitions"
+    withTable(table) {
+      withV1Mode {
+        sql(
+          s"CREATE TABLE $table (id LONG, `order date` STRING, `a``b` STRING) " +
+            s"USING $tableProvider PARTITIONED BY (`order date`, `a``b`) " +
+            "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        Seq("(1, 'd1', 'x')", "(2, 'd2', 'x')", "(3, 'd1', 'y')").foreach { values =>
+          sql(s"INSERT INTO $table VALUES $values")
+        }
+      }
+      // Spark 4.0 keeps the partition filter above the scan, so the scan reads all 3 files.
+      checkPartitionPrunedReadMatchesV1(
+        s"SELECT id, `order date`, `a``b` FROM $table " +
+          "WHERE `order date` = 'd1' AND `a``b` = 'y'",
+        expectedRows = Seq(Row(3L, "d1", "y")),
+        expectedSelectedFiles = if (spark.version.startsWith("4.0")) 3 else 1,
+        context = "space and backtick partition-column filter")
+    }
+  }
+
   test("deletion vectors with a middle partition column preserve rows and DDL order") {
     val table = "v2_scan_e2e_dv_partition_middle"
     withTable(table) {
@@ -420,6 +481,25 @@ private[read] trait DeltaV2ReadE2ETests {
       } { df =>
         checkAnswer(df, Seq(Row(2L, 200)))
       }
+    }
+  }
+
+  private def checkPartitionPrunedReadMatchesV1(
+      query: String,
+      expectedRows: Seq[Row],
+      expectedSelectedFiles: Int,
+      context: String): Unit = {
+    withV1Mode {
+      checkAnswer(sql(query), expectedRows)
+    }
+    checkRead(context)(sql(query)) { df =>
+      checkAnswer(df, expectedRows)
+    }
+    withDeltaV2ScanForSelectedFiles(sql(query), context) { scan =>
+      val numSelectedFiles = scan.preparedScan().files.size
+      assert(
+        numSelectedFiles == expectedSelectedFiles,
+        s"expected $expectedSelectedFiles selected files for $context, got $numSelectedFiles")
     }
   }
 }

@@ -22,7 +22,7 @@ import java.util.Locale
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.shims.UnsupportedTableOperationErrorShims
 
 import org.apache.spark.{SparkThrowable, SparkUnsupportedOperationException}
@@ -32,12 +32,11 @@ import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 trait UpdateBaseMixin
   extends QueryTest
-  with SharedSparkSession
+  with DeltaSQLCommandTest
   with DeltaDMLTestUtils
   with DeltaSQLTestUtils
   with DeltaTestUtilsForTempViews {
@@ -249,7 +248,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
   Seq(true, false).foreach { skippingEnabled =>
     Seq(true, false).foreach { isPartitioned =>
       test(s"data and partition predicates - Partition=$isPartitioned Skipping=$skippingEnabled") {
-        withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
+        withConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
           val partitions = if (isPartitioned) "key" :: Nil else Nil
           append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
 
@@ -407,7 +406,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
 
   test("basic case with NullType") {
     assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
-    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+    withConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
       append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
       checkUpdate(condition = None, setClauses = "value = 2",
         expectedResults = Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Nil)
@@ -416,7 +415,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
 
   test("basic case with condition on NullType") {
     assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
-    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+    withConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
       append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
       checkUpdate(condition = Some("key is null"), setClauses = "value = 2",
         expectedResults = Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Nil)
@@ -425,7 +424,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
 
   test("basic case with nested NullType") {
     assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
-    withSQLConf(
+    withConf(
       DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"
     ) {
       append(Seq(((null, 2), 1), ((null, 4), 1), (null, 1), ((null, 1), 1)).toDF("key", "value"))
@@ -441,7 +440,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
   test("upcast int source type into long target, storeAssignmentPolicy = " +
     s"$storeAssignmentPolicy") {
     append(Seq((99, 2L), (100, 4L), (101, 3L)).toDF("key", "value"))
-    withSQLConf(
+    withConf(
       SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
       DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
       checkUpdate(
@@ -458,7 +457,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
   test("invalid implicit cast string source type into boolean target, " +
     s"storeAssignmentPolicy = $storeAssignmentPolicy") {
     append(Seq((99, true), (100, false), (101, true)).toDF("key", "value"))
-    withSQLConf(
+    withConf(
       SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
       DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
       checkUpdate(
@@ -475,7 +474,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
   test("valid implicit cast string source type into int target, " +
      s"storeAssignmentPolicy = ${storeAssignmentPolicy}") {
     append(Seq((99, 2), (100, 4), (101, 3)).toDF("key", "value"))
-    withSQLConf(
+    withConf(
         SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
         DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
       checkUpdate(
@@ -564,7 +563,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
       assert(ae.getErrorClass == "UNRESOLVED_COLUMN.WITH_SUGGESTION"
         || ae.getErrorClass == "MISSING_COLUMN" )
 
-      withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
+      withConf(SQLConf.CASE_SENSITIVE.key -> "false") {
         executeUpdate(target = "table", set = "S = 1, T = 'b'", where = "T = 'a'")
         ae = intercept[AnalysisException] {
           executeUpdate(target = "table", set = "S = 1, s = 'b'", where = "s = 1")
@@ -572,7 +571,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
         assert(ae.message.contains("There is a conflict from these SET columns"))
       }
 
-      withSQLConf(SQLConf.CASE_SENSITIVE.key -> "true") {
+      withConf(SQLConf.CASE_SENSITIVE.key -> "true") {
         ae = intercept[AnalysisException] {
           executeUpdate(target = "table", set = "S = 1", where = "t = 'a'")
         }
@@ -791,7 +790,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
           {"a": {"c": {"d": 'randomNew', "e": 'str0'}, "g": 2}, "z": 20}""")
 
     // With the legacy conf, resolve by position.
-    withSQLConf((DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false")) {
+    withConf((DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false")) {
       checkUpdateJson(
         target = """
           {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}

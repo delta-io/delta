@@ -31,6 +31,10 @@ import org.apache.hadoop.fs.Path
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
 object AMTUtils extends DeltaLogging {
+  /** Whether AMT is **supported** as per the protocol. */
+  def amtSupported(protocol: Protocol): Boolean =
+    protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+
   /**
    * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
    * `metadata`.

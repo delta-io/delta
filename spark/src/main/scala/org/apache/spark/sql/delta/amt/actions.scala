@@ -763,6 +763,7 @@ case class DataManifestEntry(
     spec_id: Option[Int] = None,
     content_stats: Option[String] = None,
     key_metadata: Option[Array[Byte]] = None,
+    @JsonDeserialize(contentUsing = classOf[AMTSplitOffsetsDeserializer])
     split_offsets: Option[Seq[Long]] = None)
   extends AMTAction {
 
@@ -817,7 +818,8 @@ case class DataManifestEntry(
  * `tracking` struct in the V4 spec (field IDs in comments).
  *
  * @param status Entry status (0=existing, 1=added, 2=deleted, 3=replaced, 4=modified).
- * @param snapshot_id Snapshot the file was added/deleted/replaced in; inherited from root.
+ * @param snapshot_id Snapshot the file was added/deleted/replaced in; inherited from root when
+ *                    null on an ADDED entry.
  * @param modified_snapshot_id Snapshot where the file's modification metadata last changed.
  * @param sequence_number Data sequence number of the file.
  * @param file_sequence_number File sequence number (when the file was added).
@@ -827,10 +829,15 @@ case class DataManifestEntry(
  */
 case class Tracking(
     status: Int,                            // ID: 0, required.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     snapshot_id: Option[Long],              // ID: 1, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     modified_snapshot_id: Option[Long],     // ID: 5, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     sequence_number: Option[Long],          // ID: 3, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     file_sequence_number: Option[Long],     // ID: 4, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     first_row_id: Option[Long],             // ID: 142, optional.
     deleted_positions: Option[Array[Byte]], // ID: 6, optional (bitmap).
     replaced_positions: Option[Array[Byte]] // ID: 7, optional (bitmap).
@@ -849,6 +856,7 @@ case class Tracking(
  * Every `status` named below is the child [[DataEntry]]'s status, not the parent
  * `DATA_MANIFEST` entry's status. The inheritable fields are:
  *
+ *  - `snapshot_id` (1): inherited when null and the status is `ADDED`.
  *  - `sequence_number` (3): inherited when null and the status is `ADDED`.
  *  - `file_sequence_number` (4): inherited when null and the status is `ADDED`.
  *  - `first_row_id` (142): inherited when null and the status is `ADDED`, but not by simply
@@ -856,7 +864,8 @@ case class Tracking(
  *    `record_count` of the preceding `ADDED` entries in the same leaf that were themselves null.
  *
  * The `ADDED` restriction keeps the inherited fields correct. Leaf entries with any other status
- * must materialize all three values instead of inheriting them.
+ * must materialize all four values instead of inheriting them. `modified_snapshot_id` is never
+ * inherited.
  */
 object Tracking {
   /**
@@ -918,6 +927,12 @@ object Tracking {
       prefixSumRecordCountForNullFirstRowId: Long,
       childEntryLocationForLogging: String): Tracking =
     childTracking.copy(
+      snapshot_id = inheritTrackingValueOnAdded(
+        fieldName = "snapshot_id",
+        fieldValueInChild = childTracking.snapshot_id,
+        inheritedFieldValue = parentTracking.snapshot_id,
+        dataEntryStatus = childTracking.status,
+        childEntryLocationForLogging = childEntryLocationForLogging),
       sequence_number = inheritTrackingValueOnAdded(
         fieldName = "sequence_number",
         fieldValueInChild = childTracking.sequence_number,
@@ -969,11 +984,13 @@ object Tracking {
  * Projecting the parent down to these values keeps the per-leaf parent map small enough
  * to capture in a scan closure.
  *
+ * @param snapshot_id Parent's required snapshot ID.
  * @param sequence_number Parent's required data sequence number.
  * @param file_sequence_number Parent's required file sequence number.
  * @param first_row_id Required row id where the leaf's row-id assignment starts.
  */
 case class InheritableTracking(
+    snapshot_id: Long,
     sequence_number: Long,
     file_sequence_number: Long,
     first_row_id: Long)
@@ -981,6 +998,7 @@ case class InheritableTracking(
 object InheritableTracking {
   /** Projects the required inheritable fields of a root `DATA_MANIFEST` entry. */
   def apply(parent: DataManifestEntry): InheritableTracking = InheritableTracking(
+    snapshot_id = requiredParentValue(parent, "snapshot_id", parent.tracking.snapshot_id),
     sequence_number = requiredParentValue(parent, "sequence_number",
       parent.tracking.sequence_number),
     file_sequence_number = requiredParentValue(parent, "file_sequence_number",

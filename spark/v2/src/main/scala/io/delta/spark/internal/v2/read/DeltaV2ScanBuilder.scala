@@ -16,17 +16,19 @@
 
 package io.delta.spark.internal.v2.read
 
-import java.util.{Locale, Objects, Optional, OptionalInt}
+import java.util.{Locale, Objects, OptionalInt}
 import java.util.function.Supplier
 
 import io.delta.kernel.engine.Engine
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
 
 import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaScan
 import io.delta.spark.internal.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import io.delta.spark.internal.v2.utils.ScalaUtils
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, ExprId}
@@ -64,12 +66,12 @@ private[read] class DeltaV2ScanBuilder(
     tableName: String,
     initialSnapshot: Snapshot,
     kernelEngine: Engine,
-    catalogTable: Optional[CatalogTable],
+    catalogTable: Option[CatalogTable],
     snapshotManager: DeltaV2SnapshotManager,
     dataSchema: StructType,
     partitionSchema: StructType,
     tableSchema: StructType,
-    catalogStats: Optional[Statistics],
+    catalogStats: Option[Statistics],
     options: CaseInsensitiveStringMap)
     extends ScanBuilder
     with SupportsPushDownRequiredColumns
@@ -133,21 +135,27 @@ private[read] class DeltaV2ScanBuilder(
   /**
    * Accepts a LIMIT hint from Spark's optimizer.
    *
-   * Always returns `true`: the connector treats the limit as a best-effort hint. When the limit is
-   * kept (see [[build]]), file selection routes through V1's limit-aware `filesForScan`, which
-   * stops adding files once enough logical rows have accumulated. Because pruning happens at file
-   * granularity, the planned scan may still return more rows than requested (for example, a single
-   * file with 1,000 rows for LIMIT 5), so `isPartiallyPushed()` is left at its default of `true`
-   * and Spark keeps its limit operators as a backstop.
+   * The connector treats the limit as a best-effort hint. When the limit is kept (see [[build]]),
+   * file selection routes through V1's limit-aware `filesForScan`, which stops adding files once
+   * enough logical rows have accumulated. Because pruning happens at file granularity, the planned
+   * scan may still return more rows than requested (for example, a single file with 1,000 rows for
+   * LIMIT 5), so `isPartiallyPushed()` is left at its default of `true` and Spark keeps its limit
+   * operators as a backstop.
    *
    * @param limit the row limit requested by Spark which must be non-negative.
+   * @return `false`, keeping no limit, when `spark.databricks.delta.stats.limitPushdown.enabled`
+   *         is off; `true` otherwise.
    */
   override def pushLimit(limit: Int): Boolean = {
     if (limit < 0) {
       throw new IllegalArgumentException("Pushed limit must be non-negative, but got: " + limit)
     }
-    pushedLimit = OptionalInt.of(limit)
-    true
+    if (SQLConf.get.getConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED)) {
+      pushedLimit = OptionalInt.of(limit)
+      true
+    } else {
+      false
+    }
   }
 
   // isPartiallyPushed() intentionally uses the interface default (true). Because pruning happens at
@@ -211,7 +219,7 @@ private[read] class DeltaV2ScanBuilder(
         deltaScanSupplier,
         dataCatalystFilters,
         partitionCatalystFilters,
-        catalogStats,
+        ScalaUtils.toJavaOptional(catalogStats),
         options,
         effectiveLimit)
       scan
@@ -239,29 +247,28 @@ private[read] object DeltaV2ScanBuilder {
     case a: AttributeReference => a.withExprId(ExprId(0L)).withQualifier(Nil)
   }
 
-  /** Factory used by the Java DeltaV2ScanUtils. */
   def create(
       tableName: String,
       initialSnapshot: Snapshot,
       kernelEngine: Engine,
-      catalogTable: Optional[CatalogTable],
+      catalogTable: Option[CatalogTable],
       snapshotManager: DeltaV2SnapshotManager,
       dataSchema: StructType,
       partitionSchema: StructType,
       tableSchema: StructType,
-      catalogStats: Optional[Statistics],
+      catalogStats: Option[Statistics],
       options: CaseInsensitiveStringMap): DeltaV2ScanBuilder =
     new DeltaV2ScanBuilder(
-      tableName,
-      initialSnapshot,
-      kernelEngine,
-      catalogTable,
-      snapshotManager,
-      dataSchema,
-      partitionSchema,
-      tableSchema,
-      catalogStats,
-      options)
+      tableName = tableName,
+      initialSnapshot = initialSnapshot,
+      kernelEngine = kernelEngine,
+      catalogTable = catalogTable,
+      snapshotManager = snapshotManager,
+      dataSchema = dataSchema,
+      partitionSchema = partitionSchema,
+      tableSchema = tableSchema,
+      catalogStats = catalogStats,
+      options = options)
 
   /**
    * Adapter for callers that hold a Kernel snapshot but push no filters -- currently Delta Sharing
@@ -293,19 +300,19 @@ private[read] object DeltaV2ScanBuilder {
       partitionSchema: StructType,
       tableSchema: StructType,
       requiredSchema: StructType,
-      catalogStats: Optional[Statistics]): Scan = {
+      catalogStats: Option[Statistics]): Scan = {
     // No CatalogTable: a full-table, no-filter scan does not use catalogTable (it only feeds the
     val builder = new DeltaV2ScanBuilder(
-      tableName,
-      snapshot,
-      kernelEngine,
-      Optional.empty[CatalogTable](),
-      snapshotManager,
-      dataSchema,
-      partitionSchema,
-      tableSchema,
-      catalogStats,
-      CaseInsensitiveStringMap.empty())
+      tableName = tableName,
+      initialSnapshot = snapshot,
+      kernelEngine = kernelEngine,
+      catalogTable = None,
+      snapshotManager = snapshotManager,
+      dataSchema = dataSchema,
+      partitionSchema = partitionSchema,
+      tableSchema = tableSchema,
+      catalogStats = catalogStats,
+      options = CaseInsensitiveStringMap.empty())
     builder.pruneColumns(requiredSchema)
     builder.build()
   }
