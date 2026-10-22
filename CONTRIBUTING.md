@@ -7,6 +7,14 @@ Delta Lake is supported by a wide set of developers from over 50 organizations a
 
 For more information, please refer to the [founding technical charter](https://delta.io/pdfs/delta-charter.pdf).
 
+## Technical Steering Committee (TSC)
+
+Per the [Delta Lake charter](https://delta.io/pdfs/delta-charter.pdf), the TSC voting members are the Project's Maintainers. The current TSC members are:
+
+- Michael Armbrust
+- Reynold Xin
+- Matei Zaharia
+
 # Communication
 - Before starting work on a major feature, please reach out to us via [GitHub](https://github.com/delta-io/delta/issues), [Slack](https://go.delta.io/slack), [email](https://groups.google.com/g/delta-users), etc. We will make sure no one else is already working on it and ask you to open a GitHub issue.
 - A "major feature" is defined as any change that is > 100 LOC altered (not including tests), or changes any user-facing behavior.
