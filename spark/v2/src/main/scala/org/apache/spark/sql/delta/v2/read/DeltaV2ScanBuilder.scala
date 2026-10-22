@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.stats.DeltaScan
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
-import io.delta.spark.internal.v2.utils.ScalaUtils
+import org.apache.spark.sql.delta.v2.utils.ScalaUtils
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, ExprId}
