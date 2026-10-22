@@ -19,7 +19,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaSingleCommit
 import org.apache.spark.sql.delta.actions.Action
-import io.delta.spark.internal.v2.utils.KernelCommitActionsTestUtil._
+import org.apache.spark.sql.delta.v2.utils.KernelCommitActionsTestUtil._
 import io.delta.kernel.data.{ColumnarBatch => KernelColumnarBatch}
 import io.delta.kernel.defaults.internal.json.{JsonUtils => KernelJsonUtils}
 import io.delta.kernel.internal.actions.{SingleAction => KernelSingleAction}

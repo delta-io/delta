@@ -33,8 +33,8 @@ import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
-import io.delta.spark.internal.v2.kernel.KernelContext
-import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
+import org.apache.spark.sql.delta.v2.kernel.KernelContext
+import org.apache.spark.sql.delta.v2.snapshot.SnapshotManagerFactory
 import io.delta.storage.commit.Commit
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
