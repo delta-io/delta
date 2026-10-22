@@ -52,6 +52,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceMetadataEvolutionSupport$;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
+import org.apache.spark.sql.delta.sources.DeltaStreamingBackend;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
@@ -93,6 +94,7 @@ public class MetadataEvolutionHandler {
   private final String tableId;
   private final String tablePath;
   private final DeltaV2SnapshotManager snapshotManager;
+  private final DeltaStreamingBackend streamingBackend;
   private final Engine engine;
   private final DeltaOptions options;
   private final DeltaStreamUtils.SchemaReadOptions schemaReadOptions;
@@ -111,6 +113,7 @@ public class MetadataEvolutionHandler {
       String tableId,
       String tablePath,
       DeltaV2SnapshotManager snapshotManager,
+      DeltaStreamingBackend streamingBackend,
       Engine engine,
       DeltaOptions options,
       DeltaStreamUtils.SchemaReadOptions schemaReadOptions,
@@ -122,6 +125,7 @@ public class MetadataEvolutionHandler {
     this.tableId = Objects.requireNonNull(tableId);
     this.tablePath = Objects.requireNonNull(tablePath);
     this.snapshotManager = Objects.requireNonNull(snapshotManager);
+    this.streamingBackend = Objects.requireNonNull(streamingBackend);
     this.engine = Objects.requireNonNull(engine);
     this.options = Objects.requireNonNull(options);
     this.schemaReadOptions = Objects.requireNonNull(schemaReadOptions);
@@ -325,7 +329,7 @@ public class MetadataEvolutionHandler {
       metadata = validated.metadata;
       protocol = validated.protocol;
     } else {
-      Snapshot snapshot = snapshotManager.loadSnapshotAt(batchStartVersion);
+      Snapshot snapshot = streamingBackend.getSnapshotAt(batchStartVersion);
       version = snapshot.version();
       metadata = snapshot.metadata();
       protocol = snapshot.protocol();
@@ -415,7 +419,7 @@ public class MetadataEvolutionHandler {
       long startVersion, long endVersion) {
     List<Metadata> metadataChanges =
         new ArrayList<>(collectMetadataActions(startVersion, endVersion).values());
-    Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
+    Snapshot startSnapshot = streamingBackend.getSnapshotAt(startVersion);
     Metadata startMetadata = startSnapshot.metadata();
 
     // Try to find rename or drop columns in between, or nullability/datatype changes by using
