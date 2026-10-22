@@ -323,8 +323,26 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
             tablePath = tablePath,
             versionToLoad = versionToLoad)
           assert(snapshot.getVersion == versionToLoad.orElse(maxVersion))
+          val deltas = snapshot.getLogSegment.getDeltas.asScala.map(_.getPath)
+          assert(FileNames.isPublishedDeltaFile(deltas.head))
+          assert(FileNames.deltaVersion(deltas.head) == 0)
+          assert(deltas.tail.forall(FileNames.isStagedDeltaFile))
         }
     }
+  }
+
+  Seq((v0Ts, 0L), (v1Ts - 50L, 0L), (v1Ts, 1L), (v2Ts, 2L)).foreach {
+    case (timestamp, expectedVersion) =>
+      test(s"loadSnapshot by timestamp resolves v$expectedVersion when UC returns an " +
+        s"already-published commit -- timestamp=$timestamp") {
+        withUCClientAndTestTableWithOptions(includePublishedV0 = true) { (ucClient, tablePath, _) =>
+          val snapshot = loadSnapshot(
+            new UCCatalogManagedClient(ucClient),
+            tablePath = tablePath,
+            timestampToLoad = Optional.of(java.lang.Long.valueOf(timestamp)))
+          assert(snapshot.getVersion == expectedVersion)
+        }
+      }
   }
 
   test("sorts UC commits by version") {

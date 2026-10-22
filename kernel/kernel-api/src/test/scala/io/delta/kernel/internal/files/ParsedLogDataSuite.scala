@@ -194,6 +194,14 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     }
   }
 
+  test("ParsedCatalogCommitData.forCatalogFileStatus: rejects file from another bucket") {
+    val fs = FileStatus.of("s3://bucket-b/t/_delta_log/00000000000000000005.json", 5, 50)
+    val exMsg = intercept[IllegalArgumentException] {
+      ParsedCatalogCommitData.forCatalogFileStatus("s3://bucket-a/t/_delta_log", 5, fs)
+    }.getMessage
+    assert(exMsg.contains("to be located in"))
+  }
+
   test("ParsedCatalogCommitData.forCatalogFileStatus: rejects version mismatch") {
     Seq(deltaFileStatus(5), stagedCommitFile(5)).foreach { fs =>
       val exMsg = intercept[IllegalArgumentException] {

@@ -19,9 +19,7 @@ package io.delta.kernel.internal.commit
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.commit.PublishMetadata
-import io.delta.kernel.internal.files.ParsedCatalogCommitData
 import io.delta.kernel.test.TestFixtures
-import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -88,19 +86,6 @@ class PublishMetadataSuite extends AnyFunSuite with TestFixtures {
       new PublishMetadata(5, logPath, commits) // Snapshot is 5, but last commit is 3
     }
     assert(ex.getMessage.contains("Last catalog commit version 3 must equal snapshot version 5"))
-  }
-
-  test("constructor rejects catalog commits that are already published") {
-    val publishedCommit = ParsedCatalogCommitData.forCatalogFileStatus(
-      logPath,
-      2,
-      FileStatus.of(s"$logPath/00000000000000000002.json", 2, 20))
-    val commits = List(createStagedCatalogCommit(1), publishedCommit).asJava
-
-    val ex = intercept[IllegalArgumentException] {
-      new PublishMetadata(2, logPath, commits)
-    }
-    assert(ex.getMessage.contains("Catalog commit at version 2 is already published"))
   }
 
   ////////////////////
