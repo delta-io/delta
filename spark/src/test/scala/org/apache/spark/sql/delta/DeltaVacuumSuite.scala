@@ -245,7 +245,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
       case e: ExecuteVacuumInSQL =>
         Given(s"*** Executing SQL: ${e.sql}")
         val qualified = e.expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
-        val df = spark.sql(e.sql).as[String]
+        // In dryRun mode, result has (path, fileSize) columns; extract path for comparison.
+        val df = spark.sql(e.sql).select("path").as[String]
         checkDatasetUnorderly(df, qualified: _*)
       case CheckFiles(paths, exist) =>
         Given(s"*** Checking files exist=$exist")
@@ -259,13 +260,14 @@ trait DeltaVacuumSuiteBase extends QueryTest
         Given("*** Garbage collecting Reservoir")
         val result = VacuumCommand.gc(spark, table, dryRun, retention, clock = clock)
         val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
-        checkDatasetUnorderly(result.as[String], qualified: _*)
+        // In dryRun mode result has (path, fileSize); extract path for comparison.
+        checkDatasetUnorderly(result.select("path").as[String], qualified: _*)
       case GCByInventory(dryRun, expectedDf, retention, inventory) =>
         Given("*** Garbage collecting using inventory")
         val result =
           VacuumCommand.gc(spark, table, dryRun, retention, inventory, clock = clock)
         val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
-        checkDatasetUnorderly(result.as[String], qualified: _*)
+        checkDatasetUnorderly(result.select("path").as[String], qualified: _*)
       case ExecuteVacuumInScala(deltaTable, expectedDf, retention) =>
         Given("*** Garbage collecting Reservoir using Scala")
         val result = if (retention.isDefined) {
@@ -277,7 +279,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
           assert(result === spark.emptyDataFrame)
         } else {
           val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
-          checkDatasetUnorderly(result.as[String], qualified: _*)
+          checkDatasetUnorderly(result.select("path").as[String], qualified: _*)
         }
       case AdvanceClock(timeToAdd: Long) =>
         Given(s"*** Advancing clock by $timeToAdd millis")
@@ -913,6 +915,42 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
         AdvanceClock(defaultTombstoneInterval * 2),
         CheckFiles(Seq("file1.txt", externalFile))
       )
+    }
+  }
+
+  test("dry run returns fileSize column with correct sizes for all eligible files") {
+    withEnvironment { (tempDir, clock) =>
+      val table = DeltaTableV2(spark, tempDir, clock)
+      gcTest(table, clock)(
+        CreateFile("file1.txt", commitToActionLog = true),
+        CreateFile("file2.txt", commitToActionLog = true),
+        LogicallyDeleteFile("file1.txt"),
+        AdvanceClock(defaultTombstoneInterval + 1000)
+      )
+      val result = VacuumCommand.gc(spark, table, dryRun = true, None, clock = clock)
+      assert(result.columns.toSeq === Seq("path", "fileSize"),
+        "Dry run result must have (path, fileSize) schema")
+      val rows = result.collect()
+      assert(rows.nonEmpty, "Expected at least one file eligible for deletion")
+      rows.foreach { row =>
+        assert(!row.isNullAt(0), "path should not be null")
+        assert(!row.isNullAt(1), "fileSize should not be null")
+        assert(row.getLong(1) >= 0L, s"fileSize should be non-negative, got ${row.getLong(1)}")
+      }
+    }
+  }
+
+  test("dry run via SQL returns fileSize column") {
+    withEnvironment { (tempDir, clock) =>
+      val tableName = "vacuumFileSizeTest"
+      withTable(tableName) {
+        import testImplicits._
+        Seq(1, 2, 3).toDF("id")
+          .write.format("delta").saveAsTable(tableName)
+        val df = spark.sql(s"VACUUM $tableName DRY RUN")
+        assert(df.columns.contains("path"), "result must have path column")
+        assert(df.columns.contains("fileSize"), "result must have fileSize column")
+      }
     }
   }
 
