@@ -23,7 +23,6 @@ import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.internal.files.LogDataUtils;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.lang.ListUtils;
-import io.delta.kernel.internal.util.FileNames;
 import java.util.List;
 
 /** Metadata required for publishing catalog commits to the Delta log. */
@@ -51,7 +50,6 @@ public class PublishMetadata {
     validateCommitsNonEmpty();
     validateCommitsContiguous();
     validateLastCommitMatchesSnapshotVersion();
-    validateCommitsAreNotPublished();
   }
 
   /** @return the snapshot version up to which all catalog commits must be published */
@@ -88,20 +86,5 @@ public class PublishMetadata {
         "Last catalog commit version %d must equal snapshot version %d",
         lastCommitVersion,
         snapshotVersion);
-  }
-
-  /** Publishing a commit that is already at its published path would copy the file onto itself. */
-  private void validateCommitsAreNotPublished() {
-    for (ParsedCatalogCommitData commit : ascendingCatalogCommits) {
-      if (!commit.isFile()) {
-        continue;
-      }
-      final String path = commit.getFileStatus().getPath();
-      checkArgument(
-          !FileNames.isPublishedDeltaFile(path),
-          "Catalog commit at version %d is already published: %s",
-          commit.getVersion(),
-          path);
-    }
   }
 }
