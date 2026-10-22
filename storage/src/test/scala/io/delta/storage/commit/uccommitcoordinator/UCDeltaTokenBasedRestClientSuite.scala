@@ -873,6 +873,29 @@ class UCDeltaTokenBasedRestClientSuite
     }
   }
 
+  test("getCommits rejects a commit whose file name does not match its version") {
+    val commitsJson = Seq(
+      deltaCommitJson(1L, "00000000000000000001.json", 100L, 1000L, 1001L),
+      deltaCommitJson(2L, "00000000000000000003.uuid.json", 200L, 2000L, 2001L)
+    ).mkString("[", ",", "]")
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK,
+        loadTableJson(commitsJson = commitsJson, latestTableVersion = 2L))
+
+    withClient { c =>
+      intercept[IllegalArgumentException] {
+        c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.empty(), Optional.empty())
+      }
+
+      // Commits outside the requested range are filtered out before their paths are resolved.
+      val response = c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.of(java.lang.Long.valueOf(1L)), Optional.of(java.lang.Long.valueOf(1L)))
+      assert(response.getCommits.asScala.map(_.getFileStatus.getPath.toString).toSeq ===
+        Seq("s3://b/t/_delta_log/00000000000000000001.json"))
+    }
+  }
+
   test("getCommits filters loaded commits by requested version range") {
     val commitsJson = Seq(
       deltaCommitJson(1L, "1.uuid.json", 100L, 1000L, 1001L),

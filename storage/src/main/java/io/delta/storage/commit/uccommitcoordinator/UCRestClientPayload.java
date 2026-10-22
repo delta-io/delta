@@ -18,6 +18,7 @@ package io.delta.storage.commit.uccommitcoordinator;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.delta.storage.commit.Commit;
+import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
@@ -63,14 +64,15 @@ class UCRestClientPayload {
       return commitInfo;
     }
 
-    static Commit toCommit(CommitInfo commitInfo, Path basePath) {
+    static Commit toCommit(CommitInfo commitInfo, Path logPath) {
       FileStatus fileStatus = new FileStatus(
         commitInfo.fileSize,
         false /* isdir */,
         0 /* block_replication */,
         0 /* blocksize */,
         commitInfo.fileModificationTimestamp,
-        new Path(basePath, commitInfo.fileName));
+        CoordinatedCommitsUtils.catalogCommitPath(
+          logPath, commitInfo.version, commitInfo.fileName));
       return new Commit(commitInfo.version, fileStatus, commitInfo.timestamp);
     }
   }

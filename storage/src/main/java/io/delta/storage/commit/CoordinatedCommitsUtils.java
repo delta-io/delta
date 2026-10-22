@@ -87,7 +87,8 @@ public class CoordinatedCommitsUtils {
     }
 
     /**
-     * Returns the path of a commit file returned by a catalog, given only its file name.
+     * Returns the path of a commit file returned by a catalog, choosing the directory from its
+     * file name.
      *
      * <p>A catalog may return a commit after it has been published, so the file name decides
      * the directory: a published name ({@code 00000000000000000001.json}) resolves to
@@ -98,8 +99,8 @@ public class CoordinatedCommitsUtils {
      * @param logPath The root path of the delta log.
      * @param version The commit version reported by the catalog.
      * @param fileName The commit file name reported by the catalog.
-     * @throws IllegalArgumentException if fileName is not a commit file name, or its version
-     *     does not equal version
+     * @throws IllegalArgumentException if version is negative, fileName is null or not a
+     *     published or staged commit file name, or its version does not equal version
      */
     public static Path catalogCommitPath(Path logPath, long version, String fileName) {
         if (version < 0) {
