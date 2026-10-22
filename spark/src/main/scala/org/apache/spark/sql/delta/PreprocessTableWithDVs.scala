@@ -90,10 +90,11 @@ object ScanWithDeletionVectors {
       // Files pruned by LIMIT are only a subset of the matching files, and the scan lists all of
       // them if its filters change after the scan was prepared. Instead of listing the whole
       // table to check for DVs, always handle DVs: such a scan usually reads only a few files.
-      // Handling DVs can't tell a table column named `_metadata` apart from the file metadata
-      // column though, so check the whole table if there is such a column.
+      // Without `useMetadataRowIndex`, this also disables file splitting and Parquet filter
+      // pushdown for such a scan. Handling DVs can't tell the columns it adds apart from table
+      // columns with the same names though, so check the whole table if there are such columns.
       case p: PreparedDeltaFileIndex if isPrunedByLimit(p.preparedScan) =>
-        !hasColumnNamedMetadata(p) ||
+        !columnsAddedForDVs.exists(p.hasColumnNamed) ||
           p.preparedScan.scannedSnapshot.filesForScan(filters = Nil).files
             .exists(_.deletionVector != null)
       // Reuse the files of an already prepared scan instead of listing the table again.
@@ -130,8 +131,8 @@ object ScanWithDeletionVectors {
     Some(Project(planOutput, rowIndexFilter))
   }
 
-  private def hasColumnNamedMetadata(index: TahoeFileIndex): Boolean =
-    index.metadata.schema.fieldNames.exists(_.equalsIgnoreCase(METADATA_NAME))
+  /** Columns that handling DVs adds to the output of a scan. */
+  private val columnsAddedForDVs = Seq(METADATA_NAME, IS_ROW_DELETED_COLUMN_NAME)
 
   private def isPrunedByLimit(scan: DeltaScan): Boolean = {
     scan.dataSkippingType == DeltaDataSkippingType.limit ||

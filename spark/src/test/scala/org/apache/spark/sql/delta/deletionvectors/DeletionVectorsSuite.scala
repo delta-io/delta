@@ -490,25 +490,46 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
-  test("DELETE with DVs - partition column whose name contains the DV column name") {
-    withDeletionVectorsEnabled() {
-      withTempDir { dir =>
-        val tablePath = dir.getAbsolutePath
-        val partCol = "p" + DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME
-        (0 until 10).map(i => (i, i % 2)).toDF("value", partCol)
-          .write.format("delta").partitionBy(partCol).save(tablePath)
-        DeltaTable.forPath(tablePath).delete("value = 0")
-
-        // A partition-only condition takes the metadata-only DELETE path, which removes every
-        // file returned by file skipping without re-checking the condition.
-        sql(s"DELETE FROM delta.`$tablePath` WHERE $partCol = 1")
-
-        checkAnswer(
-          spark.read.format("delta").load(tablePath),
-          Seq(2, 4, 6, 8).map(i => Row(i, 0)))
-      }
+  /** Appends two files with `column` = 0 and 1 respectively and `value` from 0 to 4 each. */
+  private def writeTwoFiles(tablePath: String, column: String): Unit = {
+    for (i <- 0 until 2) {
+      (0 until 5).map(v => (v, i)).toDF("value", column).coalesce(1)
+        .write.format("delta").mode("append").save(tablePath)
     }
   }
+
+  for (useMetadataRowIndex <- BOOLEAN_DOMAIN)
+    test("scan with DVs - filters on a column whose name contains the DV column name skip " +
+      s"files: useMetadataRowIndex=$useMetadataRowIndex") {
+      withSQLConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key ->
+          useMetadataRowIndex.toString) {
+        withDeletionVectorsEnabled() {
+          withTempDir { dir =>
+            val tablePath = dir.getAbsolutePath
+            val column = "x" + DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME
+            writeTwoFiles(tablePath, column)
+            // Both files get a DV, so the scan handles DVs.
+            DeltaTable.forPath(tablePath).delete("value = 0")
+
+            val df = spark.read.format("delta").load(tablePath).where(s"$column = 1")
+            val usageRecords = Log4jUsageLogger.track { df.collect() }
+            checkAnswer(df, (1 until 5).map(v => Row(v, 1)))
+
+            // The filter on `column` skips one of the files when the scan is prepared, and the
+            // scan reuses the prepared file instead of listing the table without that filter.
+            val index = df.queryExecution.optimizedPlan.collectFirst {
+              case LogicalRelationWithTable(
+                  HadoopFsRelation(i: PreparedDeltaFileIndex, _, _, _, _, _), _) => i
+            }.get
+            assert(index.preparedScan.files.size == 1)
+            val reuseEvents =
+              filterUsageRecords(usageRecords, "delta.preparedDeltaFileIndex.reuseSkippingResult")
+            assert(reuseEvents.nonEmpty)
+            assert(reuseEvents.forall(_.blob.contains("\"reused\":true")))
+          }
+        }
+      }
+    }
 
   for (useMetadataRowIndex <- BOOLEAN_DOMAIN)
     test("scan with DVs - files are listed once: " +
@@ -577,24 +598,26 @@ class DeletionVectorsSuite extends QueryTest
       }
     }
 
-  for (useMetadataRowIndex <- BOOLEAN_DOMAIN)
-    test("scan with DVs - LIMIT on a table with a column named _metadata: " +
+  for {
+    column <- Seq(FileFormat.METADATA_NAME, DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME)
+    useMetadataRowIndex <- BOOLEAN_DOMAIN
+  } test(s"scan with DVs - LIMIT on a table with a column named $column: " +
       s"useMetadataRowIndex=$useMetadataRowIndex") {
-      withSQLConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key ->
-          useMetadataRowIndex.toString) {
-        withDeletionVectorsEnabled() {
-          withTempDir { dir =>
-            val tablePath = dir.getAbsolutePath
-            (0 until 10).map(i => (i, i)).toDF("value", FileFormat.METADATA_NAME)
-              .write.format("delta").save(tablePath)
+    withSQLConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key ->
+        useMetadataRowIndex.toString) {
+      withDeletionVectorsEnabled() {
+        withTempDir { dir =>
+          val tablePath = dir.getAbsolutePath
+          (0 until 10).map(i => (i, i)).toDF("value", column)
+            .write.format("delta").save(tablePath)
 
-            // Handling DVs on such a table fails, so LIMIT scans without DVs must not do it.
-            val df = spark.read.format("delta").load(tablePath).limit(1)
-            assert(df.collect().length == 1)
-          }
+          // Handling DVs on such a table fails, so LIMIT scans without DVs must not do it.
+          val df = spark.read.format("delta").load(tablePath).select("value").limit(1)
+          assert(df.collect().length == 1)
         }
       }
     }
+  }
 
   test("DV check on a batch file index doesn't run a query") {
     withDeletionVectorsEnabled() {
