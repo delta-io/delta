@@ -541,10 +541,12 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     boolean newRowCountKnown = preparedScan.scanned().rows().isDefined();
     long newTotalRows = 0L;
     long originalFileCount = 0L;
+    PartitionUtils.PartitionValueCaster caster =
+        new PartitionUtils.PartitionValueCaster(partitionSchema, zoneId);
     for (AddFile addFile : scala.jdk.javaapi.CollectionConverters.asJava(preparedScan.files())) {
       originalFileCount++;
       InternalRow partitionValues =
-          PartitionUtils.getPartitionRow(addFile.partitionValues(), partitionSchema, zoneId);
+          PartitionUtils.getPartitionRow(addFile.partitionValues(), caster);
       boolean allMatch =
           runtimePredicates.stream()
               .allMatch(predicate -> predicate.evaluator.eval(partitionValues));
