@@ -35,7 +35,7 @@ When this feature is supported and enabled, writers must:
 - Require that IcebergCompatV1 and IcebergCompatV2 are not active on the table
 - Require that partition column values be materialized when writing Parquet data files
 - Require that every `AddFile` that backs the Iceberg table has the `numRecords` statistic populated in its `stats` field, including files committed before this feature was enabled
-- Require that `timestamp` and `timestampNTZ` columns are written using the INT64 physical type with microsecond precision. The `timestamp` type must be marked as UTC-adjusted and the `timestampNTZ` type must be marked as non-UTC-adjusted
+- Require that `timestamp` and `timestampNTZ` columns in data files written while this feature is enabled use the INT64 physical type with microsecond precision. The `timestamp` type must be marked as UTC-adjusted and the `timestampNTZ` type must be marked as non-UTC-adjusted
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
@@ -51,6 +51,11 @@ When this feature is supported and enabled, writers must:
 
 ## Enablement of IcebergCompatV3
 
-When `icebergCompatV3` is enabled on a table that already contains data, writers must ensure that every data file backing the Iceberg table satisfies all of the Writer Requirements above, in particular the reserved field IDs on the materialized Row Tracking columns and the `numRecords` statistic. A writer that cannot bring pre-existing files into compliance without rewriting them must either rewrite those files or refuse to enable the feature in place.
+When `icebergCompatV3` is enabled on a table that already contains data, the Writer Requirements above apply to the existing data files as follows:
+- `AddFile` metadata requirements, such as the `numRecords` statistic, apply to every `AddFile` in the table. A writer can satisfy them without rewriting the data file by re-committing the `AddFile` for the same data file with the missing metadata populated and `dataChange` set to `false`.
+- Physical data file requirements, such as the reserved field IDs on the materialized Row Tracking columns and materialized partition values, apply to every data file in the table. If an existing data file doesn't satisfy them, the writer must either rewrite that file or refuse to enable the feature.
+- The INT64 timestamp requirement applies only to data files written while this feature is enabled. Existing data files may keep `timestamp` columns stored as INT96.
+
+> **NOTE:** The Iceberg specification only defines INT64 timestamps in Parquet, so Iceberg readers aren't required to read INT96 timestamps. The Apache Iceberg reference implementation reads them for backward compatibility. Writers that need such files to be readable by every Iceberg reader should rewrite them before or after enabling the feature.
 
 
