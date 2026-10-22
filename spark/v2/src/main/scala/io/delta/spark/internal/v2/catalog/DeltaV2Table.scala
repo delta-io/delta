@@ -194,7 +194,8 @@ class DeltaV2Table private (
         initialSnapshotValue,
         options,
         tableManager.snapshotManager(queryContext.catalogTableOpt),
-        kernelEngine())
+        kernelEngine(),
+        queryContext)
 
     val (rawSchema, partitionColumnNames) = if (persistedMetadata.isPresent) {
       val persisted = persistedMetadata.get()

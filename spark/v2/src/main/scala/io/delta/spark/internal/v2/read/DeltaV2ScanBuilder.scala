@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaScan
 import io.delta.spark.internal.v2.DeltaV2Logging
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
+import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2Snapshot}
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.spark.internal.v2.utils.ScalaUtils
 
@@ -184,6 +184,7 @@ private[read] class DeltaV2ScanBuilder(
       // invoke the ScanBuilder methods in a different order.
       val effectiveLimit = if (hasPostScanResidualFilters) OptionalInt.empty() else pushedLimit
 
+      val originalQueryContext = DeltaV2QueryContext(catalogTable)
       val deltaScanSupplier = new Supplier[DeltaScan] {
         override def get(): DeltaScan = {
           val snapshot = initialSnapshot.asInstanceOf[DeltaV2Snapshot]
@@ -221,7 +222,8 @@ private[read] class DeltaV2ScanBuilder(
         partitionCatalystFilters,
         ScalaUtils.toJavaOptional(catalogStats),
         options,
-        effectiveLimit)
+        effectiveLimit,
+        originalQueryContext)
       scan
     }
 
