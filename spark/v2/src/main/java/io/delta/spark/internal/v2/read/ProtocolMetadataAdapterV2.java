@@ -21,6 +21,8 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
+import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.utils.RowTrackingUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.io.Serializable;
@@ -30,6 +32,7 @@ import org.apache.spark.sql.delta.IdMapping$;
 import org.apache.spark.sql.delta.NameMapping$;
 import org.apache.spark.sql.delta.NoMapping$;
 import org.apache.spark.sql.delta.ProtocolMetadataAdapter;
+import org.apache.spark.sql.delta.TypeWidening;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import scala.jdk.javaapi.CollectionConverters;
@@ -119,7 +122,10 @@ public class ProtocolMetadataAdapterV2 implements ProtocolMetadataAdapter, Seria
 
   @Override
   public void assertTableReadable(SparkSession sparkSession) {
-    // TODO(delta-io/delta#5649): Add type widening validation.
+    TypeWidening.assertTableReadable(
+        sparkSession.sessionState().conf(),
+        new KernelProtocolAdapter(protocol),
+        new KernelMetadataAdapter(metadata));
   }
 
   @Override
