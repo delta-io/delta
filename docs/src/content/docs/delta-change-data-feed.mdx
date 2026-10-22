@@ -15,7 +15,7 @@ Change Data Feed is not enabled by default. The following use cases should drive
 
 - **Silver and Gold tables**: Improve Delta performance by processing only row-level changes following initial `MERGE`, `UPDATE`, or `DELETE` operations to accelerate and simplify ETL and ELT operations.
 - **Transmit changes**: Send a change data feed to downstream systems such as Kafka or RDBMS that can use it to incrementally process in later stages of data pipelines.
-- **Audit trail table**: Capture the change data feed as a Delta table provides perpetual storage and efficient query capability to see all changes over time, including when deletes occur and what updates were made.
+- **Audit trail table**: Capturing the change data feed as a Delta table provides perpetual storage and efficient query capability to see all changes over time, including when deletes occur and what updates were made.
 
 ## Enable change data feed
 
