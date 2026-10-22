@@ -27,6 +27,10 @@ object AMTUsageLogs {
   val LAST_MANIFEST_COMMIT_READ_FROM_COMMIT_INFO =
     s"$PREFIX.lastManifestCommit.readFromCommitInfo"
 
+  /** Usage log emitted after an async CommitInfo read is fired and completed. */
+  val SNAPSHOT_DISCOVERY_READ_LAST_COMMIT_INFO_ASYNC =
+    s"$PREFIX.snapshotDiscovery.readLastCommitInfoAsync"
+
   /** Usage log emitted when an AMT provider reads the root manifest for its leaf pointers. */
   val CHECKPOINT_PROVIDER_INITIALIZE_FROM_CHECKPOINT_ACTION =
     s"$PREFIX.checkpointProvider.initializeFromCheckpointAction"

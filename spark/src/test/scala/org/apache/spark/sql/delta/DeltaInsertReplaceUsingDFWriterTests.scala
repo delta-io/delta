@@ -42,6 +42,38 @@ trait DeltaInsertReplaceUsingDFWriterTests
       mergeSchema: Boolean = false,
       options: Map[String, String] = Map.empty): Unit
 
+  test("replaceUsing shares the current-time cutoff in its source DataFrame",
+    ChecksDeltaInternals("uses DELETE/INSERT phase observers")) {
+    for (pinStatementTime <- Seq(false, true)) {
+      withClue(s"pinStatementTime=$pinStatementTime: ") {
+        withSQLConf(
+            DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED.key ->
+              pinStatementTime.toString) {
+          withTable("target", "source") {
+            // Each id advances eventTime by one millisecond. The DELETE delay moves the
+            // source cutoff between phases unless both use the pinned statement time.
+            createTable("target", Seq("id bigint", "eventTime timestamp", "rowOrigin string"))
+            sql(
+              s"""
+                 |INSERT INTO target
+                 |SELECT id, current_timestamp() + make_dt_interval(0, 0, 0, id / 1000.0),
+                 |  'target'
+                 |FROM range(0, $currentTimeGridNumRows)
+                 |""".stripMargin)
+            createTable("source", Seq("id bigint", "eventTime timestamp", "rowOrigin string"))
+            sql("INSERT INTO source SELECT id, eventTime, 'source' FROM target")
+            val targetPath = sql("DESCRIBE DETAIL target").select("location").as[String].head()
+            val source = spark.table("source").where("eventTime <= current_timestamp()")
+            InsertAtomicReplaceExecutionObserver.withObserver(new DelayingDeleteObserver) {
+              writeReplaceUsingDF(source, targetPath, "id")
+            }
+            checkCurrentTimeResult(pinStatementTime)
+          }
+        }
+      }
+    }
+  }
+
   // Basic replaceUsing operations
 
   test("replaceUsing with single column") {
