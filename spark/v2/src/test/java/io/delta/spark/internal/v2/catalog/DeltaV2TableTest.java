@@ -386,6 +386,84 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   }
 
   /**
+   * Partition columns are top-level fields, so each identity transform must reference the exact
+   * column name as a single part, in partition-column order, even when the name would need quoting
+   * in SQL (dots, spaces, backticks, leading digits, mixed case).
+   */
+  @ParameterizedTest(name = "{0} - {4}")
+  @MethodSource("quotedPartitionNameTestCases")
+  public void testPartitioningKeepsNamesRequiringQuotingAsSinglePart(
+      String layout,
+      String columnsAndPartitioning,
+      String tableProperties,
+      String[] expectedPartitionColumns,
+      ConstructionMethod method,
+      @TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "quoted_partitions_" + layout + "_" + method.name().toLowerCase();
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s %s %s LOCATION '%s'",
+            tableName, columnsAndPartitioning, tableProperties, path));
+    Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
+    DeltaV2Table table;
+    switch (method) {
+      case FROM_PATH:
+        table = new DeltaV2Table(identifier, path);
+        break;
+      case FROM_CATALOG_TABLE:
+        table =
+            new DeltaV2Table(
+                identifier,
+                spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tableName)),
+                Collections.emptyMap());
+        break;
+      default:
+        throw new IllegalArgumentException("Unknown construction method: " + method);
+    }
+
+    Transform[] partitioning = table.partitioning();
+    assertEquals(expectedPartitionColumns.length, partitioning.length);
+    for (int i = 0; i < expectedPartitionColumns.length; i++) {
+      assertEquals("identity", partitioning[i].name());
+      assertEquals(1, partitioning[i].references().length);
+      assertArrayEquals(
+          new String[] {expectedPartitionColumns[i]},
+          partitioning[i].references()[0].fieldNames(),
+          "Partition column reference mismatch at position " + i);
+    }
+  }
+
+  static Stream<Arguments> quotedPartitionNameTestCases() {
+    // Without column mapping, names may still contain dots and start with digits. Spaces and
+    // backticks are only allowed under column mapping.
+    List<Arguments> layouts =
+        Arrays.asList(
+            Arguments.of(
+                "no_column_mapping",
+                "(id INT, `customer.id` STRING, `123_part` INT, Region STRING) USING delta "
+                    + "PARTITIONED BY (Region, `customer.id`, `123_part`)",
+                "",
+                new String[] {"Region", "customer.id", "123_part"}),
+            Arguments.of(
+                "name_column_mapping",
+                "(id INT, `order date` STRING, `a``b` STRING, `x.y z` STRING) USING delta "
+                    + "PARTITIONED BY (`order date`, `a``b`, `x.y z`)",
+                "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
+                new String[] {"order date", "a`b", "x.y z"}));
+    return layouts.stream()
+        .flatMap(
+            layout ->
+                Stream.of(ConstructionMethod.FROM_PATH, ConstructionMethod.FROM_CATALOG_TABLE)
+                    .map(
+                        method -> {
+                          Object[] args = layout.get();
+                          return Arguments.of(args[0], args[1], args[2], args[3], method);
+                        }));
+  }
+
+  /**
    * Test that getDecodedPath handles various URI schemes correctly, not just file:// URIs. This
    * verifies the fix for supporting cloud storage paths (s3, abfss, gs) and HDFS.
    */
@@ -610,10 +688,11 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
 
       assertTrue(tableA.getSnapshotManager() instanceof CachedSnapshotManager);
       assertTrue(tableB.getSnapshotManager() instanceof CachedSnapshotManager);
+      assertSame(managerA, tableA.getTableManager());
+      assertSame(managerB, tableB.getTableManager());
       assertSame(managerA, managerB);
       assertSame(managerA.kernelContext(), managerB.kernelContext());
-      assertSame(managerA.kernelContext().getDefaultEngine(), tableA.kernelEngine());
-      assertSame(tableA.kernelEngine(), tableB.kernelEngine());
+      assertSame(tableA.getSnapshotManager(), tableB.getSnapshotManager());
       assertEquals("0", tableA.version());
       assertEquals("0", tableB.version());
 
@@ -649,8 +728,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     TableIdentifier expectedIdentifier = catalogTable.identifier();
 
     Snapshot realSnapshot =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf())
-            .loadLatestSnapshot();
+        new PathBasedSnapshotManager(path, createKernelContext()).loadLatestSnapshot();
     AssertionError legacyApiError =
         new AssertionError("DeltaV2Table query used the legacy snapshot API");
     DeltaV2TableManagerCache$.MODULE$.clearCache();
@@ -716,7 +794,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   private static void assertLatestSnapshot(
       DeltaV2Table table, SparkSession activeSession, long expectedVersion, long expectedFiles) {
     DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.apply(table.getCatalogTable());
-    Snapshot snapshot = table.getSnapshotManager().loadLatestSnapshot(queryContext);
+    Snapshot snapshot = table.getTableManager().loadLatestSnapshot(queryContext);
     Dataset<?> allFiles = snapshot.allFiles();
     assertEquals(expectedVersion, snapshot.version());
     assertSame(activeSession, allFiles.sparkSession());
@@ -992,7 +1070,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
 
     // Capture v0 metadata BEFORE evolving the table.
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(tablePath, createKernelContext());
     SnapshotImpl snapshotV0 =
         DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
             snapshotManager.loadSnapshotAt(

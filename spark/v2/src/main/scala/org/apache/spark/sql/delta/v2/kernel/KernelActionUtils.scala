@@ -23,6 +23,7 @@ import scala.jdk.OptionConverters._
 
 import org.apache.spark.sql.delta.actions.{
   Action,
+  AddCDCFile,
   AddFile,
   CommitInfo,
   DeletionVectorDescriptor,
@@ -33,10 +34,12 @@ import org.apache.spark.sql.delta.actions.{
   RemoveFile,
   SetTransaction
 }
+import org.apache.spark.sql.delta.storage.ClosableIterator
 import io.delta.kernel.{CommitActions => KernelCommitActions}
 import io.delta.kernel.data.{ColumnarBatch => KernelColumnarBatch}
 import io.delta.kernel.data.{ColumnVector => KernelColumnVector}
 import io.delta.kernel.data.{MapValue => KernelMapValue}
+import io.delta.kernel.data.{Row => KernelRow}
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 import io.delta.kernel.internal.actions.{AddFile => KernelAddFile}
 import io.delta.kernel.internal.actions.{CommitInfo => KernelCommitInfo}
@@ -52,40 +55,71 @@ import io.delta.kernel.internal.data.{StructRow => KernelStructRow}
 import io.delta.kernel.internal.util.{VectorUtils => KernelVectorUtils}
 
 /**
- * Bridges Kernel's actions to V1 Delta actions.
+ * Bridges Kernel and V1 Delta actions.
  */
 private[v2] object KernelActionUtils {
 
-  /**
-   * Reads a Kernel commit actions into V1 [[Action]]s.
-   */
-  private[v2] def readActions(commitActions: KernelCommitActions): Seq[Action] = {
-    val kernelActionsBatchIter = commitActions.getActions()
-    try {
-      val actions = Seq.newBuilder[Action]
-      while (kernelActionsBatchIter.hasNext) {
-        actions ++= readActionBatch(kernelActionsBatchIter.next())
+  /** Reads a Kernel commit as a closable iterator of V1 actions. */
+  private[v2] def readActions(
+      kernelCommitActions: KernelCommitActions): ClosableIterator[Action] =
+    new ClosableIterator[Action] {
+      private val kernelActionsBatchIter = kernelCommitActions.getActions()
+      private val actions = kernelActionsBatchIter.asScala.flatMap(readActionBatch)
+
+      override def hasNext: Boolean = actions.hasNext
+
+      override def next(): Action = {
+        if (!hasNext) throw new NoSuchElementException("No more actions in the commit")
+        actions.next()
       }
-      actions.result()
-    } finally {
-      kernelActionsBatchIter.close()
+
+      override def close(): Unit = kernelActionsBatchIter.close()
+    }
+
+  /**
+   * Converts a Kernel action row into V1 [[Action]]s.
+   *
+   * @throws UnsupportedOperationException if the action is not supported.
+   */
+  def actionsFromKernelRow(kernelRow: KernelRow): Seq[Action] = {
+    val kernelSchema = kernelRow.getSchema
+    (0 until kernelSchema.length).filter(ordinal => !kernelRow.isNullAt(ordinal)).map { ordinal =>
+      val actionName = kernelSchema.at(ordinal).getName
+      val kernelActionRow = kernelRow.getStruct(ordinal)
+      KernelDeltaAction.values().find(_.colName == actionName) match {
+        case Some(KernelDeltaAction.ADD) =>
+          addFileFromKernel(new KernelAddFile(kernelActionRow))
+        case Some(KernelDeltaAction.REMOVE) =>
+          // scalastyle:off removeFile
+          removeFileFromKernel(new KernelRemoveFile(kernelActionRow))
+          // scalastyle:on removeFile
+        case Some(KernelDeltaAction.PROTOCOL) =>
+          protocolFromKernel(KernelProtocol.fromRow(kernelActionRow))
+        case Some(KernelDeltaAction.TXN) =>
+          setTransactionFromKernel(KernelSetTransaction.fromRow(kernelActionRow))
+        case _ =>
+          throw new UnsupportedOperationException(
+            s"Cannot construct action '$actionName' from a Kernel row")
+      }
     }
   }
 
   private def readActionBatch(
       kernelActionsBatch: KernelColumnarBatch
-  ): Seq[Action] = {
+  ): Iterator[Action] = {
     val schema = kernelActionsBatch.getSchema
     // (action type -> its column vector), for the action columns actually present in this batch.
     val actionToColumnVector = KernelDeltaAction.values().flatMap { action =>
       val ordinal = schema.indexOf(action.colName)
       if (ordinal >= 0) Some(action -> kernelActionsBatch.getColumnVector(ordinal)) else None
     }
-    // A Delta log row carries exactly one action, so at most one action column is non-null per row;
-    // `collectFirst` decodes that single column into an Action.
-    (0 until kernelActionsBatch.getSize).flatMap { rowId =>
-      actionToColumnVector.collectFirst {
-        case (action, columnVector) if !columnVector.isNullAt(rowId) =>
+    // Each Delta log row contains exactly one action. Find its non-null action column,
+    // then decode it when iterator.next() is called.
+    (0 until kernelActionsBatch.getSize).iterator.flatMap { rowId =>
+      actionToColumnVector.find {
+        case (_, columnVector) => !columnVector.isNullAt(rowId)
+      }.iterator.map {
+        case (action, columnVector) =>
           actionFromKernel(action, columnVector, rowId)
       }
     }
@@ -114,6 +148,8 @@ private[v2] object KernelActionUtils {
     case KernelDeltaAction.COMMITINFO =>
       commitInfoFromKernel(
         KernelCommitInfo.fromColumnVector(columnVector, rowId))
+    case KernelDeltaAction.CDC =>
+      addCDCFileFromKernel(KernelStructRow.fromStructVector(columnVector, rowId))
     case KernelDeltaAction.TXN =>
       setTransactionFromKernel(
         KernelSetTransaction.fromColumnVector(columnVector, rowId))
@@ -131,14 +167,46 @@ private[v2] object KernelActionUtils {
   def addFileFromKernel(addFile: KernelAddFile): AddFile = {
     AddFile(
       path = addFile.getPath,
-      partitionValues = partitionValuesFromKernel(addFile.getPartitionValues),
+      partitionValues = stringMapFromKernel(addFile.getPartitionValues),
       size = addFile.getSize,
       modificationTime = addFile.getModificationTime,
       dataChange = addFile.getDataChange,
+      stats = addFile.getStatsJson.toScala.orNull,
       tags = tagsFromKernel(addFile.getTags),
       deletionVector = deletionVectorFromKernel(addFile.getDeletionVector),
       baseRowId = addFile.getBaseRowId.toScala.map(_.longValue()),
       defaultRowCommitVersion = addFile.getDefaultRowCommitVersion.toScala.map(_.longValue()))
+  }
+
+  /**
+   * Converts the fields represented by Kernel's scan AddFile schema from a V1 [[AddFile]].
+   * Fields absent from Kernel's schema are intentionally dropped.
+   */
+  def toKernelScanAddFile(addFile: AddFile): KernelAddFile = {
+    val deletionVector = Option(addFile.deletionVector).map { dv =>
+      new KernelDeletionVectorDescriptor(
+        dv.storageType,
+        dv.pathOrInlineDv,
+        dv.offset.map(Int.box).toJava,
+        dv.sizeInBytes,
+        dv.cardinality)
+    }
+
+    val row = KernelAddFile.createAddFileRowWithStatsJson(
+      addFile.path,
+      KernelVectorUtils.stringStringMapValue(addFile.partitionValues.asJava),
+      addFile.size,
+      addFile.modificationTime,
+      addFile.dataChange,
+      deletionVector.toJava,
+      Option(addFile.tags)
+        .map(tags => KernelVectorUtils.stringStringMapValue(tags.asJava))
+        .toJava,
+      addFile.baseRowId.map(Long.box).toJava,
+      addFile.defaultRowCommitVersion.map(Long.box).toJava,
+      Option(addFile.stats).toJava)
+
+    new KernelAddFile(row)
   }
 
   /**
@@ -151,7 +219,7 @@ private[v2] object KernelActionUtils {
       deletionTimestamp = removeFile.getDeletionTimestamp.toScala.map(_.longValue()),
       dataChange = removeFile.getDataChange,
       extendedFileMetadata = removeFile.getExtendedFileMetadata.toScala.map(_.booleanValue()),
-      partitionValues = removeFile.getPartitionValues.toScala.map(partitionValuesFromKernel).orNull,
+      partitionValues = removeFile.getPartitionValues.toScala.map(stringMapFromKernel).orNull,
       size = removeFile.getSize.toScala.map(_.longValue()),
       tags = tagsFromKernel(removeFile.getTags),
       deletionVector = deletionVectorFromKernel(removeFile.getDeletionVector),
@@ -159,6 +227,23 @@ private[v2] object KernelActionUtils {
       defaultRowCommitVersion = removeFile.getDefaultRowCommitVersion.toScala.map(_.longValue()),
       stats = removeFile.getStatsJson.toScala.orNull)
     // scalastyle:on removeFile
+  }
+
+  /**
+   * Converts a Kernel CDC action row into a V1 [[AddCDCFile]].
+   */
+  private def addCDCFileFromKernel(kernelRow: KernelRow): AddCDCFile = {
+    // Kernel exposes the CDC schema without an action wrapper, so read its fields by name.
+    val kernelSchema = kernelRow.getSchema
+    val tagsOrdinal = kernelSchema.indexOf("tags")
+    AddCDCFile(
+      path = kernelRow.getString(kernelSchema.indexOf("path")),
+      partitionValues = stringMapFromKernel(
+        kernelRow.getMap(kernelSchema.indexOf("partitionValues"))),
+      size = kernelRow.getLong(kernelSchema.indexOf("size")),
+      tags =
+        if (kernelRow.isNullAt(tagsOrdinal)) null
+        else stringMapFromKernel(kernelRow.getMap(tagsOrdinal)))
   }
 
   /**
@@ -257,16 +342,16 @@ private[v2] object KernelActionUtils {
         cardinality = dv.getCardinality)
     }.orNull
 
-  private def partitionValuesFromKernel(partitionValues: KernelMapValue): Map[String, String] = {
-    if (partitionValues == null) return Map.empty
-    val keys = partitionValues.getKeys
-    val values = partitionValues.getValues
-    (0 until partitionValues.getSize).map { index =>
+  private def stringMapFromKernel(kernelMap: KernelMapValue): Map[String, String] = {
+    if (kernelMap == null) return Map.empty
+    val keys = kernelMap.getKeys
+    val values = kernelMap.getValues
+    (0 until kernelMap.getSize).map { index =>
       val value = if (values.isNullAt(index)) null else values.getString(index)
       keys.getString(index) -> value
     }.toMap
   }
 
   private def tagsFromKernel(tags: java.util.Optional[KernelMapValue]): Map[String, String] =
-    tags.toScala.map(partitionValuesFromKernel).orNull
+    tags.toScala.map(stringMapFromKernel).orNull
 }

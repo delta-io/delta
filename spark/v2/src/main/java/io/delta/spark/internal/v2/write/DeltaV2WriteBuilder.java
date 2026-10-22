@@ -19,7 +19,9 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.TableConfig;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.WriteBuilder;
@@ -46,6 +48,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   private final String tablePath;
   private final Configuration hadoopConf;
   private final Snapshot initialSnapshot;
+  private final Optional<CatalogTable> catalogTable;
   private final DeltaV2SnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -56,6 +59,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
    * @param tablePath filesystem path to the Delta table root
    * @param hadoopConf Hadoop configuration (with merged table options)
    * @param initialSnapshot snapshot loaded at table construction time
+   * @param catalogTable the catalog table containing table metadata
    * @param snapshotManager reloads the latest snapshot; used by the streaming write to build each
    *     epoch's commit against the current table state (see {@link DeltaV2StreamingWrite})
    * @param dataSchema the table's data (non-partition) schema, from DeltaV2Table's SchemaProvider
@@ -68,6 +72,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       String tablePath,
       Configuration hadoopConf,
       Snapshot initialSnapshot,
+      Optional<CatalogTable> catalogTable,
       DeltaV2SnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
@@ -76,6 +81,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
+    this.catalogTable = requireNonNull(catalogTable, "catalogTable is null");
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
@@ -119,6 +125,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         hadoopConf,
         tablePath,
         initialSnapshot,
+        catalogTable,
         snapshotManager,
         dataSchema,
         partitionSchema,

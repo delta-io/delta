@@ -16,7 +16,14 @@
 
 package org.apache.spark.sql.delta.deletionvectors
 
+import org.apache.spark.sql.delta.RowIndexFilter
+import org.apache.spark.sql.delta.deletionvectors.mumbling.MumblingBitmapWriter
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.execution.vectorized.OnHeapColumnVector
+import org.apache.spark.sql.types.{ByteType, LongType}
 
 class ManifestBitmapSuite extends SparkFunSuite {
 
@@ -26,8 +33,8 @@ class ManifestBitmapSuite extends SparkFunSuite {
 
     mutable.add(2)
 
-    assert(original.toArrayForTesting.sameElements(Array(1L, 3L)))
-    assert(mutable.toManifestBitmap.toArrayForTesting.sameElements(Array(1L, 2L, 3L)))
+    assertPositions(original, Seq(1, 3))
+    assertPositions(mutable.toManifestBitmap, Seq(1, 2, 3))
   }
 
   test("immutable snapshots do not change after further mutations") {
@@ -38,8 +45,8 @@ class ManifestBitmapSuite extends SparkFunSuite {
     mutable.add(3)
     val secondSnapshot = mutable.toManifestBitmap
 
-    assert(firstSnapshot.toArrayForTesting.sameElements(Array(1L, 2L)))
-    assert(secondSnapshot.toArrayForTesting.sameElements(Array(1L, 2L, 3L)))
+    assertPositions(firstSnapshot, Seq(1, 2))
+    assertPositions(secondSnapshot, Seq(1, 2, 3))
   }
 
   test("deserialized bitmaps own their input bytes") {
@@ -48,7 +55,7 @@ class ManifestBitmapSuite extends SparkFunSuite {
 
     java.util.Arrays.fill(bytes, 0.toByte)
 
-    assert(bitmap.toArrayForTesting.sameElements(Array(1L, 3L)))
+    assertPositions(bitmap, Seq(1, 3))
   }
 
   test("bitmaps created from positions own their input sequence") {
@@ -57,6 +64,80 @@ class ManifestBitmapSuite extends SparkFunSuite {
 
     positions += 2
 
-    assert(bitmap.toArrayForTesting.sameElements(Array(1L, 3L)))
+    assertPositions(bitmap, Seq(1, 3))
+  }
+
+  test("ManifestBitmap uses the Mumbling format") {
+    val positions = Seq(1, 2, 300)
+    val bitmap = ManifestBitmap.fromPositions(positions)
+    val bytes = bitmap.serializeAsByteArray()
+
+    assert(bitmap.isInstanceOf[MumblingManifestBitmap])
+    assert(bytes(0) == 1)
+    assertPositions(ManifestBitmap.fromSerializedByteArray(bytes), positions)
+  }
+
+  test("ManifestBitmap writes a mutated bitmap in the Mumbling format") {
+    val mutable = ManifestBitmap.fromPositions(Seq(1, 300)).toMutable
+    mutable.add(512)
+    val serialized = mutable.toManifestBitmap.serializeAsByteArray()
+
+    assert(serialized(0) == 1)
+    assertPositions(ManifestBitmap.fromSerializedByteArray(serialized), Seq(1, 300, 512))
+  }
+
+  private def assertPositions(bitmap: ManifestBitmap, expected: Seq[Int]): Unit = {
+    assert(bitmap.cardinality == expected.distinct.size)
+    expected.foreach(position => assert(bitmap.contains(position)))
+  }
+
+
+  test("MumblingRowIndexFilter materializes every row-index filter entry point") {
+    val provider = ManifestBitmap.fromPositions(Seq(1, 3, 257))
+      .toRowIndexFilterProvider(new Path("file:/tmp/table"))
+    val filter = provider.retrieve(new Configuration())
+
+    withByteVector(5) { batch =>
+      filter.materializeIntoVector(0, 5, batch)
+      assert(batch.getBytes(0, 5).toSeq === Seq(0, 1, 0, 1, 0))
+    }
+
+    withByteVector(6) { batch =>
+      val rowIndexes = new OnHeapColumnVector(6, LongType)
+      try {
+        Seq(-1L, 0L, 1L, 3L, 257L, 258L).zipWithIndex.foreach {
+          case (rowIndex, rowId) => rowIndexes.putLong(rowId, rowIndex)
+        }
+        filter.materializeIntoVectorWithRowIndex(6, rowIndexes, batch)
+        assert(batch.getBytes(0, 6).toSeq === Seq(0, 0, 1, 1, 1, 0))
+      } finally {
+        rowIndexes.close()
+      }
+    }
+
+    assert(singleRowValue(filter, rowIndex = 3L) == RowIndexFilter.DROP_ROW_VALUE)
+    assert(singleRowValue(filter, rowIndex = 4L) == RowIndexFilter.KEEP_ROW_VALUE)
+    intercept[IllegalArgumentException] {
+      singleRowValue(filter, rowIndex = MumblingBitmapWriter.MAX_POSITION_EXCLUSIVE.toLong)
+    }
+  }
+
+  private def withByteVector(size: Int)(f: OnHeapColumnVector => Unit): Unit = {
+    val vector = new OnHeapColumnVector(size, ByteType)
+    try {
+      f(vector)
+    } finally {
+      vector.close()
+    }
+  }
+
+  private def singleRowValue(filter: RowIndexFilter, rowIndex: Long): Byte = {
+    val vector = new OnHeapColumnVector(1, ByteType)
+    try {
+      filter.materializeSingleRowWithRowIndex(rowIndex, vector)
+      vector.getByte(0)
+    } finally {
+      vector.close()
+    }
   }
 }

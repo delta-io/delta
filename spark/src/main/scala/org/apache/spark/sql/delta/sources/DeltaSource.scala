@@ -125,7 +125,7 @@ trait DeltaSourceBase extends Source
         snapshotAtSourceInit.metadata.columnMappingMode != NoMapping,
       isTypeWideningSupportedInProtocol = TypeWidening.isSupported(snapshotAtSourceInit.protocol))
     if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges) recordDeltaEvent(
-      deltaLog,
+      snapshotAtSourceInit,
       "delta.unsafe.streaming.readOnColumnMappingSchemaChanges"
     )
     schemaReadOptions
@@ -149,37 +149,10 @@ trait DeltaSourceBase extends Source
    * Create a snapshot descriptor, customizing its metadata using metadata tracking if necessary
    */
   protected lazy val readSnapshotDescriptor: SnapshotDescriptor =
-    persistedMetadataAtSourceInit.map { customMetadata =>
-      // Construct a snapshot descriptor with custom schema inline
-      new SnapshotDescriptor {
-        val deltaLog: DeltaLog = snapshotAtSourceInit.deltaLog
-        override val dataPath: Path = snapshotAtSourceInit.dataPath
-        val logPath: Path = snapshotAtSourceInit.logPath
-        val metadata: Metadata =
-          snapshotAtSourceInit.metadata.copy(
-            schemaString = customMetadata.dataSchemaJson,
-            partitionColumns = customMetadata.partitionSchema.fieldNames,
-            // Copy the configurations so the correct file format can be constructed
-            configuration = customMetadata.tableConfigurations
-              // Fallback for backward compat only, this should technically not be triggered
-              .getOrElse {
-                val config = snapshotAtSourceInit.metadata.configuration
-                logWarning(log"Using snapshot's table configuration: " +
-                  log"${MDC(DeltaLogKeys.CONFIG, config)}")
-                config
-              }
-          )
-        val protocol: Protocol = customMetadata.protocol.getOrElse {
-          val protocol = snapshotAtSourceInit.protocol
-          logWarning(log"Using snapshot's protocol: ${MDC(DeltaLogKeys.PROTOCOL, protocol)}")
-          protocol
-        }
-        // The following are not important in stream reading
-        val version: Long = customMetadata.deltaCommitVersion
-        val numOfFilesIfKnown = snapshotAtSourceInit.numOfFilesIfKnown
-        val sizeInBytesIfKnown = snapshotAtSourceInit.sizeInBytesIfKnown
-      }
-    }.getOrElse(snapshotAtSourceInit)
+    persistedMetadataAtSourceInit
+      .map(DeltaSourceMetadataEvolutionSupport.buildReadSnapshotDescriptor(
+        snapshotAtSourceInit, _))
+      .getOrElse(snapshotAtSourceInit)
 
   /**
    * A global flag to mark whether we have done a per-stream start check for column mapping
@@ -331,7 +304,7 @@ trait DeltaSourceBase extends Source
             lastExpectedVersion, maxVersionSeen)
         }
         logInfo(log"Getting dataFrame for delta_log_path=" +
-          log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+          log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
           log"startVersion=${MDC(DeltaLogKeys.START_VERSION, startVersion)}, " +
           log"startIndex=${MDC(DeltaLogKeys.START_INDEX, startIndex)}, " +
           log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)}, " +
@@ -355,7 +328,7 @@ trait DeltaSourceBase extends Source
       maxVersionSeen: Long,
       isStreamingCDC: Boolean): Unit = {
     recordDeltaEvent(
-      deltaLog,
+      snapshotAtSourceInit,
       opType = "delta.exceptions.streamingTrailingCommitMissing",
       data = Map(
         "stackTrace" -> Thread.currentThread().getStackTrace.tail.mkString("\n\t"),
@@ -658,7 +631,7 @@ trait DeltaSourceBase extends Source
         val isRetryable =
           DeltaStreamUtils.SchemaCompatibilityResult.isRetryableIncompatible(checkResult)
         recordDeltaEvent(
-          deltaLog,
+          snapshotAtSourceInit,
           "delta.streaming.source.schemaChanged",
           data = Map(
             "currentVersion" -> snapshotAtSourceInit.version,
@@ -764,7 +737,7 @@ case class DeltaSource(
   private val ignoreFileDeletion = {
     if (options.ignoreFileDeletion) {
       logConsole(DeltaErrors.ignoreStreamingUpdatesAndDeletesWarning(spark))
-      recordDeltaEvent(deltaLog, "delta.deprecation.ignoreFileDeletion")
+      recordDeltaEvent(snapshotAtSourceInit, "delta.deprecation.ignoreFileDeletion")
     }
     options.ignoreFileDeletion
   }
@@ -867,7 +840,7 @@ case class DeltaSource(
       iter
     }
     logInfo(log"Getting file changes for delta_log_path=" +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
       log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, " +
       log"fromIndex=${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
       log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} " +
@@ -1105,13 +1078,13 @@ case class DeltaSource(
         throw DeltaErrors.deltaSourceIgnoreChangesError(
           version,
           if (operation.nonEmpty) operation.get else removeFileActionPath.get,
-          deltaLog.dataPath.toString
+          snapshotAtSourceInit.dataPath.toString
         )
       } else if (!seenFileAdd && !shouldAllowDeletes) {
         throw DeltaErrors.deltaSourceIgnoreDeleteError(
           version,
           removeFileActionPath.get,
-          deltaLog.dataPath.toString
+          snapshotAtSourceInit.dataPath.toString
         )
       }
     }
@@ -1257,7 +1230,7 @@ case class DeltaSource(
     updateMetadataTrackingLogAndFailTheStreamIfNeeded(end)
   }
 
-  override def toString(): String = s"DeltaSource[${deltaLog.dataPath}]"
+  override def toString(): String = s"DeltaSource[${snapshotAtSourceInit.dataPath}]"
 
   /**
    * Extracts whether users provided the option to time travel a relation. If a query restarts from
@@ -1578,4 +1551,3 @@ object DeltaSource extends DeltaLogging {
     offset
   }
 }
-

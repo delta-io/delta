@@ -15,12 +15,24 @@
  */
 package io.delta.spark.internal.v2.tablemanager
 
+import java.util.{EnumSet, Optional}
 import java.util.concurrent.atomic.AtomicReference
 
-import org.apache.spark.sql.delta.storage.LogStoreProvider
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import scala.jdk.OptionConverters._
+
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaSingleCommit, Snapshot}
+import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStoreProvider}
+import org.apache.spark.sql.delta.v2.interop.{
+  DeltaV2QueryContext,
+  DeltaV2SingleCommit,
+  DeltaV2SnapshotManager
+}
 import io.delta.spark.internal.v2.kernel.KernelContext
 import org.apache.hadoop.fs.Path
+import io.delta.kernel.{CommitRange => KernelCommitRange}
+import io.delta.kernel.engine.{Engine => KernelEngine}
+import io.delta.kernel.internal.{DeltaHistoryManager => KernelDeltaHistoryManager}
+import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
@@ -64,6 +76,65 @@ private[tablemanager] class DeltaV2TableManagerImpl(
     latestCatalogTable.set(catalogTableOpt.orNull)
     cachedSnapshotManager
   }
+
+  override private[v2] def getChangesIterator(
+      startVersion: Long,
+      endVersion: Option[Long],
+      catalogTableOpt: Option[CatalogTable],
+      failOnDataLoss: Boolean)
+      : ClosableIterator[DeltaSingleCommit] = {
+    if (failOnDataLoss) {
+      throw DeltaErrors.assertionFailedError(
+        "getChangesIterator does not support failOnDataLoss = true")
+    }
+    val kernelEngine = kernelContext.getDefaultEngine()
+    val commitRange = cachedSnapshotManager.getTableChanges(
+      kernelEngine,
+      startVersion,
+      endVersion.map(Long.box).toJava,
+      DeltaV2QueryContext(catalogTableOpt))
+    val kernelCommits = commitRange.getCommitActions(
+      kernelEngine, EnumSet.allOf(classOf[KernelDeltaAction]))
+    new ClosableIterator[DeltaSingleCommit] {
+      override def hasNext: Boolean = kernelCommits.hasNext
+      override def next(): DeltaSingleCommit = DeltaV2SingleCommit(kernelCommits.next())
+      override def close(): Unit = kernelCommits.close()
+    }
+  }
+
+  override def loadLatestSnapshot(queryContext: DeltaV2QueryContext): Snapshot =
+    cachedSnapshotManager.loadLatestSnapshot(queryContext)
+
+  override def loadSnapshotAt(version: Long, queryContext: DeltaV2QueryContext): Snapshot =
+    cachedSnapshotManager.loadSnapshotAt(version, queryContext)
+
+  override def getActiveCommitAtTime(
+      timestampMillis: Long,
+      canReturnLastCommit: Boolean,
+      mustBeRecreatable: Boolean,
+      canReturnEarliestCommit: Boolean,
+      queryContext: DeltaV2QueryContext): KernelDeltaHistoryManager.Commit =
+    cachedSnapshotManager.getActiveCommitAtTime(
+      timestampMillis,
+      canReturnLastCommit,
+      mustBeRecreatable,
+      canReturnEarliestCommit,
+      queryContext)
+
+  override def checkVersionExists(
+      version: Long,
+      mustBeRecreatable: Boolean,
+      allowOutOfRange: Boolean,
+      queryContext: DeltaV2QueryContext): Unit =
+    cachedSnapshotManager.checkVersionExists(
+      version, mustBeRecreatable, allowOutOfRange, queryContext)
+
+  override def getTableChanges(
+      kernelEngine: KernelEngine,
+      startVersion: Long,
+      endVersion: Optional[java.lang.Long],
+      queryContext: DeltaV2QueryContext): KernelCommitRange =
+    cachedSnapshotManager.getTableChanges(kernelEngine, startVersion, endVersion, queryContext)
 
   override def retire(): Unit = cachedSnapshotManager.retire()
 }

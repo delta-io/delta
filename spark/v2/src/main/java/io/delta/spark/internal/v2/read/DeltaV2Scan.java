@@ -35,6 +35,7 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.InterpretedPredicate;
+import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
@@ -141,7 +142,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     this.sqlConf = SQLConf.get();
     this.deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
     this.isCDCRead = deltaOptions.readChangeFeed();
-    this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
+    this.zoneId = DateTimeUtils.getZoneId(sqlConf.sessionLocalTimeZone());
     StructType ddlOrdered =
         SchemaUtils.ddlOrderedOutputSchema(tableSchema, readDataSchema, partitionSchema);
     this.ddlOrderedReadOutputSchema =
@@ -306,10 +307,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
   }
 
   /**
-   * Returns the catalog size when available, or the compression-adjusted post-pruning file size,
-   * without constructing row or column statistics.
-   *
-   * <p>Intentionally no {@code @Override}: Delta also compiles this source against supported Spark
+   * Intentionally no {@code @Override}: Delta also compiles this source against supported Spark
    * versions whose {@link SupportsReportStatistics} interface predates this optional method. The
    * method still overrides the interface default when Delta is built against a Spark version that
    * provides it.
@@ -318,7 +316,13 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     return estimateSizeInBytesInternal();
   }
 
-  /** Package-private entry point for Scala wrappers compiled together with this Java source. */
+  /**
+   * Package-private entry point for Scala wrappers compiled together with this Java source.
+   *
+   * <p>Returns the catalog size when available, otherwise a file-size estimate without constructing
+   * row or column statistics. Before planning the estimate uses snapshot metadata; afterwards it
+   * uses the selected files.
+   */
   OptionalLong estimateSizeInBytesInternal() {
     if (isZeroLimit()) {
       return OptionalLong.of(0L);
@@ -356,13 +360,22 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     return totalBytes;
   }
 
-  private OptionalLong estimateSelectedFileSizeInBytes() {
-    // Like PreparedDeltaFileIndex.sizeInBytes, this is the selected scan's size, not the
-    // full-snapshot checksum size. Reading it may trigger file selection, but not input-file
-    // construction.
+  private synchronized OptionalLong estimateSelectedFileSizeInBytes() {
+    // TODO: Revisit this shortcut after coordinated scan preparation lands.
+    // An early unfiltered optimizer request does not need file selection: the snapshot checksum is
+    // already the exact size of every selected file. Filtered, limit, and CDC scans still plan here
+    // so Spark receives their accurate post-pruning size. If checksum bytes are unavailable, fall
+    // through to planning rather than replacing an accurate statistic with an unknown value.
+    if (!planned && canUseSnapshotSizeForUnfilteredEstimate()) {
+      OptionalLong tableSizeInBytes = snapshotSizeInBytesIfKnown();
+      if (tableSizeInBytes.isPresent()) {
+        return tableSizeInBytes;
+      }
+    }
+
     final DeltaScan deltaScan = preparedScan();
     final long totalBytes =
-        toOptionalLong(deltaScan.scanned().bytesCompressed())
+        ScalaUtils.toJavaOptionalLong(deltaScan.scanned().bytesCompressed())
             .orElseGet(() -> selectedFileSizeInBytes(deltaScan));
     // Do not scale the selected-file bytes by readSchema. Delta returns false from
     // reflectsFullyPushedDownFilters(), so Spark re-adds fully pushed filters when adjusting
@@ -377,10 +390,15 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     return pushedLimit.isPresent() && pushedLimit.getAsInt() == 0;
   }
 
-  private static OptionalLong toOptionalLong(scala.Option<Object> value) {
-    return value.isDefined()
-        ? OptionalLong.of(((Number) value.get()).longValue())
-        : OptionalLong.empty();
+  private boolean canUseSnapshotSizeForUnfilteredEstimate() {
+    return !isCDCRead
+        && dataFilters.length == 0
+        && partitionFilters.length == 0
+        && !pushedLimit.isPresent();
+  }
+
+  private OptionalLong snapshotSizeInBytesIfKnown() {
+    return ScalaUtils.toJavaOptionalLong(initialSnapshot.sizeInBytesIfKnown());
   }
 
   private Statistics statistics(
