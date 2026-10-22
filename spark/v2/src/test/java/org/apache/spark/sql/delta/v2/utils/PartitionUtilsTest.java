@@ -83,6 +83,10 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     return CollectionConverters.asJava(pf.otherConstantMetadataColumnValues());
   }
 
+  private static PartitionUtils.PartitionValueCaster utcCaster(StructType partitionSchema) {
+    return new PartitionUtils.PartitionValueCaster(partitionSchema, ZoneId.of("UTC"));
+  }
+
   @Test
   public void testGetPartitionRow_FieldOrdering() {
     // Schema defines order: year, month, day
@@ -101,7 +105,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     partitionValues.put("month", "11");
 
     MapValue mapValue = stringStringMapValue(partitionValues);
-    InternalRow row = PartitionUtils.getPartitionRow(mapValue, partitionSchema, ZoneId.of("UTC"));
+    InternalRow row = PartitionUtils.getPartitionRow(mapValue, utcCaster(partitionSchema));
 
     // verify order is schema order: year, month, day
     assertEquals(2024, row.getInt(0));
@@ -133,7 +137,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     InternalRow row =
         PartitionUtils.getPartitionRow(
-            stringStringMapValue(partitionValues), partitionSchema, ZoneId.of("UTC"));
+            stringStringMapValue(partitionValues), utcCaster(partitionSchema));
 
     assertEquals(UTF8String.fromString("%20"), row.getUTF8String(0));
     assertEquals(UTF8String.fromString("%25"), row.getUTF8String(1));
@@ -159,7 +163,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     assertThrows(
         AssertionError.class,
-        () -> PartitionUtils.getPartitionRow(mapValue, partitionSchema, ZoneId.of("UTC")));
+        () -> PartitionUtils.getPartitionRow(mapValue, utcCaster(partitionSchema)));
   }
 
   @Test
@@ -180,7 +184,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     assertThrows(
         AssertionError.class,
-        () -> PartitionUtils.getPartitionRow(mapValue, partitionSchema, ZoneId.of("UTC")));
+        () -> PartitionUtils.getPartitionRow(mapValue, utcCaster(partitionSchema)));
   }
 
   /** Partition schema and serialized values whose V1 (non-ANSI cast) reads are pinned below. */
@@ -238,11 +242,10 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
         assertLenientPartitionRow(
             PartitionUtils.getPartitionRow(
                 stringStringMapValue(lenientPartitionValues()),
-                LENIENT_PARTITION_SCHEMA,
-                ZoneId.of("UTC")));
+                utcCaster(LENIENT_PARTITION_SCHEMA)));
         assertLenientPartitionRow(
             PartitionUtils.getPartitionRow(
-                lenientPartitionValues(), LENIENT_PARTITION_SCHEMA, ZoneId.of("UTC")));
+                lenientPartitionValues(), utcCaster(LENIENT_PARTITION_SCHEMA)));
         // The V1 AddFile overload takes a Scala map.
         scala.collection.immutable.Map<String, String> scalaPartitionValues = Map$.MODULE$.empty();
         for (Map.Entry<String, String> entry : lenientPartitionValues().entrySet()) {
@@ -250,7 +253,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
         }
         assertLenientPartitionRow(
             PartitionUtils.getPartitionRow(
-                scalaPartitionValues, LENIENT_PARTITION_SCHEMA, ZoneId.of("UTC")));
+                scalaPartitionValues, utcCaster(LENIENT_PARTITION_SCHEMA)));
       }
     } finally {
       if (original.isDefined()) {
@@ -283,7 +286,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     InternalRow row =
         PartitionUtils.getPartitionRow(
-            stringStringMapValue(partitionValues), partitionSchema, ZoneId.of("UTC"));
+            stringStringMapValue(partitionValues), utcCaster(partitionSchema));
 
     assertEquals((byte) -12, row.getByte(0));
     assertFalse(row.getBoolean(1));
@@ -291,6 +294,33 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     assertEquals(1704164645123456L, row.getLong(3));
     assertEquals(Decimal.apply(new java.math.BigDecimal("1.23"), 5, 2), row.getDecimal(4, 5, 2));
     assertArrayEquals("ab".getBytes(StandardCharsets.UTF_8), row.getBinary(5));
+  }
+
+  @Test
+  public void testGetPartitionRow_TimestampUsesCasterTimeZone() {
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("p_ts", DataTypes.TimestampType, true),
+              DataTypes.createStructField("p_ts_ntz", DataTypes.TimestampNTZType, true),
+              DataTypes.createStructField("p_date", DataTypes.DateType, true)
+            });
+    Map<String, String> partitionValues = new HashMap<>();
+    partitionValues.put("p_ts", "2024-01-02 03:04:05");
+    partitionValues.put("p_ts_ntz", "2024-01-02 03:04:05");
+    partitionValues.put("p_date", "2024-01-02");
+
+    InternalRow row =
+        PartitionUtils.getPartitionRow(
+            partitionValues,
+            new PartitionUtils.PartitionValueCaster(
+                partitionSchema, ZoneId.of("America/Los_Angeles")));
+
+    // TIMESTAMP is read in the caster's zone (UTC-8 in January): 2024-01-02T11:04:05Z.
+    assertEquals(1704193445000000L, row.getLong(0));
+    // TIMESTAMP_NTZ and DATE do not depend on the zone.
+    assertEquals(1704164645000000L, row.getLong(1));
+    assertEquals((int) LocalDate.of(2024, 1, 2).toEpochDay(), row.getInt(2));
   }
 
   @Test
@@ -332,8 +362,8 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     assertEquals(3, lastRow.getInt(0));
     assertEquals(UTF8String.fromString("c"), lastRow.getUTF8String(1));
     assertArrayEquals("z".getBytes(StandardCharsets.UTF_8), lastRow.getBinary(2));
-    // A reused caster gives the same row as the one-off overload.
-    assertEquals(PartitionUtils.getPartitionRow(last, partitionSchema, ZoneId.of("UTC")), lastRow);
+    // A reused caster gives the same row as a fresh one.
+    assertEquals(PartitionUtils.getPartitionRow(last, utcCaster(partitionSchema)), lastRow);
   }
 
   @Test
@@ -552,7 +582,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     String normalizedTablePath = tablePath.endsWith("/") ? tablePath : tablePath + "/";
     PartitionedFile partitionedFile =
         PartitionUtils.buildPartitionedFile(
-            addFile, partitionSchema, normalizedTablePath, ZoneId.of("UTC"));
+            addFile, utcCaster(partitionSchema), normalizedTablePath);
 
     assertNotNull(partitionedFile);
     assertEquals(addFile.getSize(), partitionedFile.fileSize());
@@ -744,11 +774,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     PartitionedFile pf =
         PartitionUtils.buildCDCPartitionedFile(
-            cdcFile,
-            /* commitVersion= */ 1L,
-            new StructType(),
-            "file:/tmp/table",
-            ZoneId.of("UTC"));
+            cdcFile, /* commitVersion= */ 1L, utcCaster(new StructType()), "file:/tmp/table");
 
     java.util.Map<String, Object> metadata = getFileMetadata(pf);
     assertEquals(
@@ -765,11 +791,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     PartitionedFile pf =
         PartitionUtils.buildCDCPartitionedFile(
-            cdcFile,
-            /* commitVersion= */ 2L,
-            new StructType(),
-            "file:/tmp/table",
-            ZoneId.of("UTC"));
+            cdcFile, /* commitVersion= */ 2L, utcCaster(new StructType()), "file:/tmp/table");
 
     java.util.Map<String, Object> metadata = getFileMetadata(pf);
     assertEquals(
@@ -787,11 +809,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     PartitionedFile pf =
         PartitionUtils.buildCDCPartitionedFile(
-            cdcFile,
-            /* commitVersion= */ 3L,
-            new StructType(),
-            "file:/tmp/table",
-            ZoneId.of("UTC"));
+            cdcFile, /* commitVersion= */ 3L, utcCaster(new StructType()), "file:/tmp/table");
 
     java.util.Map<String, Object> metadata = getFileMetadata(pf);
     assertFalse(

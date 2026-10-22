@@ -486,6 +486,8 @@ private[read] trait DeltaV2ReadE2ETests {
     }
   }
 
+  // Streaming and CDC reads build partition rows with the same PartitionValueCaster, so batch
+  // reads cover them here; PartitionUtilsTest pins the per-type values.
   test("malformed partition values in the log read as V1 does") {
     val table = "v2_scan_e2e_malformed_partition_values"
     withTable(table) {

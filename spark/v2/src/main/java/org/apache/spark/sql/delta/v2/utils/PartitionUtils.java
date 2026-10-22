@@ -27,7 +27,6 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.DataType;
-import java.io.Serializable;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -198,15 +197,6 @@ public class PartitionUtils {
    * enabled. This method uses DeltaColumnMapping.getPhysicalName to map from logical schema fields
    * to physical partition value keys.
    */
-  public static InternalRow getPartitionRow(
-      MapValue partitionValues, StructType partitionSchema, ZoneId zoneId) {
-    return getPartitionRow(partitionValues, new PartitionValueCaster(partitionSchema, zoneId));
-  }
-
-  /**
-   * Like {@link #getPartitionRow(MapValue, StructType, ZoneId)}, reusing {@code caster} for the
-   * partition schema and time zone.
-   */
   public static InternalRow getPartitionRow(MapValue partitionValues, PartitionValueCaster caster) {
     return getPartitionRow(buildPartitionValuesMap(partitionValues), caster);
   }
@@ -241,15 +231,6 @@ public class PartitionUtils {
    * row. This overload is for consumers that outlive the Kernel batch backing {@link MapValue}.
    */
   public static InternalRow getPartitionRow(
-      Map<String, String> partitionValues, StructType partitionSchema, ZoneId zoneId) {
-    return getPartitionRow(partitionValues, new PartitionValueCaster(partitionSchema, zoneId));
-  }
-
-  /**
-   * Like {@link #getPartitionRow(Map, StructType, ZoneId)}, reusing {@code caster} for the
-   * partition schema and time zone.
-   */
-  public static InternalRow getPartitionRow(
       Map<String, String> partitionValues, PartitionValueCaster caster) {
     final int numPartCols = caster.numFields();
     assert partitionValues.size() == numPartCols
@@ -272,14 +253,15 @@ public class PartitionUtils {
    * reads as null instead of failing the query, whatever the session ANSI setting.
    *
    * <p>Builds each column's cast once, so callers converting many files should create one caster
-   * and reuse it. Thread-safe: casting keeps no state between values.
+   * and reuse it. Not thread-safe: the cast input row is reused across values, so use one caster
+   * per thread.
    */
-  public static final class PartitionValueCaster implements Serializable {
-    private static final long serialVersionUID = 1L;
-
+  public static final class PartitionValueCaster {
     private final String[] physicalNames;
     /** The cast of each column's serialized value, or null for string columns. */
     private final Cast[] casts;
+    /** The one-column input row the casts read the serialized value from. */
+    private final GenericInternalRow input = new GenericInternalRow(1);
 
     public PartitionValueCaster(StructType partitionSchema, ZoneId zoneId) {
       final StructField[] fields = partitionSchema.fields();
@@ -318,7 +300,8 @@ public class PartitionUtils {
       if (casts[ordinal] == null) {
         return serialized;
       }
-      return casts[ordinal].eval(new GenericInternalRow(new Object[] {serialized}));
+      input.update(0, serialized);
+      return casts[ordinal].eval(input);
     }
   }
 
@@ -449,23 +432,12 @@ public class PartitionUtils {
   }
 
   /**
-   * Build a PartitionedFile from an AddFile with the given partition schema and table path.
+   * Build a PartitionedFile from an AddFile with the given partition value caster and table path.
    *
    * @param addFile The AddFile to convert
-   * @param partitionSchema The partition schema for parsing partition values
+   * @param caster The caster for the partition schema and session time zone
    * @param tablePath The table path
-   * @param zoneId The timezone for temporal partition values
    * @return A PartitionedFile ready for Spark execution
-   */
-  public static PartitionedFile buildPartitionedFile(
-      AddFile addFile, StructType partitionSchema, String tablePath, ZoneId zoneId) {
-    return buildPartitionedFile(
-        addFile, new PartitionValueCaster(partitionSchema, zoneId), tablePath);
-  }
-
-  /**
-   * Like {@link #buildPartitionedFile(AddFile, StructType, String, ZoneId)}, reusing {@code caster}
-   * for the partition schema and time zone.
    */
   public static PartitionedFile buildPartitionedFile(
       AddFile addFile, PartitionValueCaster caster, String tablePath) {
@@ -504,19 +476,6 @@ public class PartitionUtils {
    * overload field-for-field: same path resolution, same DV / row-tracking metadata keys, same
    * partition-row construction. Unlike the Kernel overload it does not assert the partition-value
    * count, because V1 AddFile may omit unset partition keys.
-   */
-  public static PartitionedFile buildPartitionedFile(
-      org.apache.spark.sql.delta.actions.AddFile v1AddFile,
-      StructType partitionSchema,
-      String tablePath,
-      ZoneId zoneId) {
-    return buildPartitionedFile(
-        v1AddFile, new PartitionValueCaster(partitionSchema, zoneId), tablePath);
-  }
-
-  /**
-   * Like the V1 AddFile {@code buildPartitionedFile(AddFile, StructType, String, ZoneId)}, reusing
-   * {@code caster} for the partition schema and time zone.
    */
   public static PartitionedFile buildPartitionedFile(
       org.apache.spark.sql.delta.actions.AddFile v1AddFile,
@@ -561,17 +520,6 @@ public class PartitionUtils {
    * asserting the value count, because V1 AddFile may omit unset partition keys.
    */
   public static InternalRow getPartitionRow(
-      scala.collection.immutable.Map<String, String> partitionValues,
-      StructType partitionSchema,
-      ZoneId zoneId) {
-    return getPartitionRow(partitionValues, new PartitionValueCaster(partitionSchema, zoneId));
-  }
-
-  /**
-   * Like the V1 AddFile {@code getPartitionRow(Map, StructType, ZoneId)}, reusing {@code caster}
-   * for the partition schema and time zone.
-   */
-  public static InternalRow getPartitionRow(
       scala.collection.immutable.Map<String, String> partitionValues, PartitionValueCaster caster) {
     final int numPartCols = caster.numFields();
     final Object[] values = new Object[numPartCols];
@@ -589,20 +537,6 @@ public class PartitionUtils {
    * <p>Row tracking metadata is intentionally NOT included: per Delta protocol "Reader Requirements
    * for Row Tracking", readers must not expose row IDs / row commit versions while reading change
    * data files from {@code cdc} actions.
-   */
-  public static PartitionedFile buildCDCPartitionedFile(
-      org.apache.spark.sql.delta.v2.read.CDCDataFile cdcFile,
-      long commitVersion,
-      StructType partitionSchema,
-      String tablePath,
-      ZoneId zoneId) {
-    return buildCDCPartitionedFile(
-        cdcFile, commitVersion, new PartitionValueCaster(partitionSchema, zoneId), tablePath);
-  }
-
-  /**
-   * Like {@code buildCDCPartitionedFile(CDCDataFile, long, StructType, String, ZoneId)}, reusing
-   * {@code caster} for the partition schema and time zone.
    */
   public static PartitionedFile buildCDCPartitionedFile(
       org.apache.spark.sql.delta.v2.read.CDCDataFile cdcFile,
