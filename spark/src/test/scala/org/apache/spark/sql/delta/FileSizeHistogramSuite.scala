@@ -569,4 +569,76 @@ class FileSizeHistogramSuite extends QueryTest
     val roundTripChecksum = JsonUtils.mapper.readValue[VersionChecksum](roundTripJson)
     assert(roundTripChecksum.fileSizeHistogram.get.equals(histogram))
   }
+  test("smallFileCount: empty histogram returns 0") {
+    val h = FileSizeHistogram(IndexedSeq(0L, 10L, 100L, 1000L))
+    assert(h.smallFileCount(0L) === 0L)
+    assert(h.smallFileCount(50L) === 0L)
+    assert(h.smallFileCount(Long.MaxValue) === 0L)
+  }
+
+  test("smallFileCount: threshold on bin boundary includes that bin fully") {
+    // Bins: [0,10), [10,100), [100,1000), [1000,MaxValue)
+    val h = FileSizeHistogram(IndexedSeq(0L, 10L, 100L, 1000L))
+    h.insert(5L)
+    h.insert(50L)
+    h.insert(500L)
+    h.insert(5000L)
+    // threshold == bin1 upper boundary (100): bin0 (upper=10) and bin1 (upper=100)
+    // both included; bin2 (upper=1000) excluded.
+    assert(h.smallFileCount(100L) === 2L)
+    // threshold == bin2 upper boundary (1000): bins 0,1,2 all included.
+    assert(h.smallFileCount(1000L) === 3L)
+  }
+
+  test("smallFileCount: mid-bin threshold conservatively excludes straddling bin") {
+    val h = FileSizeHistogram(IndexedSeq(0L, 10L, 100L, 1000L))
+    h.insert(5L)
+    h.insert(50L)
+    h.insert(500L)
+    // threshold 75 falls inside bin 1; bin 0's upper boundary (10) <= 75 so it
+    // counts; bin 1's upper (100) > 75 so it is excluded even though its lone file
+    // (size 50) is actually < 75. Conservative semantics by design.
+    assert(h.smallFileCount(75L) === 1L)
+  }
+
+  test("smallFileCount: threshold below smallest boundary excludes everything") {
+    val h = FileSizeHistogram(IndexedSeq(0L, 10L, 100L))
+    h.insert(5L)
+    h.insert(50L)
+    assert(h.smallFileCount(5L) === 0L)
+  }
+
+  test("smallFileCount: Long.MaxValue threshold counts every file") {
+    val h = FileSizeHistogram(IndexedSeq(0L, 10L, 100L))
+    h.insert(5L)
+    h.insert(50L)
+    h.insert(5000L)
+    assert(h.smallFileCount(Long.MaxValue) === 3L)
+  }
+
+  test("smallFileCount: default bins, 64 MB AutoCompact threshold") {
+    // Verifies the threshold the AutoCompact gate actually uses (maxFileSize / 2 with
+    // default maxFileSize=128MB) lands cleanly on a DEFAULT_BINS boundary, so the
+    // conservative-straddle rule excludes nothing in practice.
+    val MB = 1024L * 1024L
+    val h = org.apache.spark.sql.delta.stats.FileSizeHistogramUtils.emptyHistogram
+    h.insert(1L * MB)
+    h.insert(32L * MB)
+    h.insert(63L * MB)
+    h.insert(64L * MB)   // lower boundary of the [64,72) bin; upper (72) > 64 -> excluded
+    h.insert(100L * MB)
+    assert(h.smallFileCount(64L * MB) === 3L)
+  }
+
+  test("smallFileCount: remove decrements count") {
+    val h = FileSizeHistogram(IndexedSeq(0L, 10L, 100L, 1000L))
+    h.insert(5L)
+    h.insert(5L)
+    h.insert(50L)
+    assert(h.smallFileCount(100L) === 3L)
+    h.remove(5L)
+    assert(h.smallFileCount(100L) === 2L)
+    h.remove(50L)
+    assert(h.smallFileCount(100L) === 1L)
+  }
 }
