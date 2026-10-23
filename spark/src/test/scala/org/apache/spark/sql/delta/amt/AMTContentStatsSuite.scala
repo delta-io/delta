@@ -32,8 +32,8 @@ import org.apache.spark.sql.types.{BooleanType, ByteType, DataType, DateType, De
  * Tests for [[AMTContentStats]] -- the conversion between Delta's stats JSON string and the typed
  * Iceberg V4 `content_stats` struct. `forWrite` and `forRead` are exercised end to end against a
  * real all-types table (see [[withAllTypesTable]]); the edge cases -- unsupported bound types, a
- * table that collects no statistics, and the `tightBounds` reconstruction -- run on synthesized
- * `(Metadata, Protocol)` fixtures (see [[metadataWithColumnIds]]).
+ * table that collects no statistics, and the `tight_stats` / `tightBounds` mapping -- run on
+ * synthesized `(Metadata, Protocol)` fixtures (see [[metadataWithColumnIds]]).
  */
 class AMTContentStatsSuite extends AMTCheckpointTestBase {
 
@@ -94,30 +94,31 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
         "d_int", "d_long", "d_short", "d_byte", "d_str", "d_date", "d_ts", "d_ts_ntz", "d_dec",
         "d_bool", "d_float", "d_double", "d_binary", "d_arr", "d_nested_inner"))
 
-      def bounded(name: String, dataType: DataType, value: String, tight: Boolean): Unit =
+      def bounded(name: String, dataType: DataType, value: String): Unit =
         assertStatFields(persisted, name, Map(
           "lower_bound" -> (dataType, value),
           "upper_bound" -> (dataType, value),
-          "tight_bounds" -> (BooleanType, tight.toString),
           "null_value_count" -> (LongType, "0")))
       def boundless(name: String): Unit =
         assertStatFields(persisted, name, Map("null_value_count" -> (LongType, "0")))
 
-      bounded("d_int", IntegerType, "0", tight = true)
-      bounded("d_long", LongType, "0", tight = true)
-      bounded("d_short", ShortType, "0", tight = true)
-      bounded("d_byte", ByteType, "0", tight = true)
-      bounded("d_str", StringType, "row0", tight = false)
-      bounded("d_date", DateType, "2026-07-25", tight = true)
-      bounded("d_dec", DecimalType(9, 3), "0.000", tight = true)
-      bounded("d_float", FloatType, "0.0", tight = true)
-      bounded("d_double", DoubleType, "0.0", tight = true)
-      bounded("d_nested_inner", IntegerType, "0", tight = true)
+      bounded("d_int", IntegerType, "0")
+      bounded("d_long", LongType, "0")
+      bounded("d_short", ShortType, "0")
+      bounded("d_byte", ByteType, "0")
+      bounded("d_str", StringType, "row0")
+      bounded("d_date", DateType, "2026-07-25")
+      bounded("d_dec", DecimalType(9, 3), "0.000")
+      bounded("d_float", FloatType, "0.0")
+      bounded("d_double", DoubleType, "0.0")
+      bounded("d_nested_inner", IntegerType, "0")
       boundless("d_ts")
       boundless("d_ts_ntz")
       boundless("d_bool")
       boundless("d_binary")
       boundless("d_arr")
+      // Delta's tightBounds is not carried over to the entry's file-level tight_stats yet.
+      assert(persistedTightStats(persisted).contains(false))
     }
   }
 
@@ -139,15 +140,18 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
       // itself. Compare as parsed JSON trees so field order and formatting do not matter.
       val loggedSchema = StructType(Seq(StructField("add", StructType(Seq(
         StructField("stats", StringType))))))
-      // AMT persists no timestamp bounds (see `isSupportedBoundType`), so the reconstruction has no
-      // timestamp min/max; drop them from the logged stats before comparing.
+      // Two things do not survive AMT yet, so adjust the logged stats to what forRead reconstructs:
+      // AMT persists no timestamp bounds (see `isSupportedBoundType`), so the timestamp min/max are
+      // dropped; and Delta's tightBounds is written to `tight_stats` as false, so it reads back as
+      // false.
       val timestampColumns = metadata.dataSchema.filter(f =>
         f.dataType.isInstanceOf[TimestampType] || f.dataType.isInstanceOf[TimestampNTZType])
-      def withoutTimestampBounds(stats: JsonNode): JsonNode = {
+      def asReconstructed(stats: JsonNode): JsonNode = {
         Seq("minValues", "maxValues").foreach { stat =>
           val values = stats.get(stat).asInstanceOf[ObjectNode]
           timestampColumns.foreach(f => values.remove(DeltaColumnMapping.getPhysicalName(f)))
         }
+        stats.asInstanceOf[ObjectNode].put("tightBounds", false)
         stats
       }
       val logged = spark.read.schema(loggedSchema)
@@ -155,7 +159,7 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
         .where(col("add").isNotNull)
         .select(col("add.stats"))
         .as[String].collect()
-        .map(json => withoutTimestampBounds(JsonUtils.mapper.readTree(json))).toSet
+        .map(json => asReconstructed(JsonUtils.mapper.readTree(json))).toSet
       assert(logged.size == leafPackedFiles,
         s"Expected one logged stats per file, got ${logged.size}.")
 
@@ -291,7 +295,6 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
     assertStatFields(persisted, "id", Map(
       "lower_bound" -> (LongType, "1"),
       "upper_bound" -> (LongType, "9"),
-      "tight_bounds" -> (BooleanType, "true"),
       "null_value_count" -> (LongType, "0")))
     assertStatFields(persisted, "v", Map("null_value_count" -> (LongType, "0")))
   }
@@ -334,11 +337,20 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
         "content_stats"),
       "a table with no per-column statistics omits content_stats from the persisted schema")
 
-    val persisted = writeStats("""{"numRecords":7}""", metadata, protocol)
-    // record_count alone reconstructs the stats Delta had.
-    val restoredJson = readStats(persisted, metadata, protocol)
-    assert(JsonUtils.mapper.readTree(restoredJson) ==
-      JsonUtils.mapper.readTree("""{"numRecords":7}"""))
+    val persisted = writeStats("""{"numRecords":7,"tightBounds":true}""", metadata, protocol)
+    assert(persistedTightStats(persisted).contains(false),
+      "tight_stats is set even when content_stats is dropped")
+    // record_count and tight_stats alone reconstruct the stats. tightBounds must be spelled out
+    // here too: an absent one would read as tight.
+    Seq(Some(true) -> true, Some(false) -> false, None -> false).foreach {
+      case (tightStats, expected) =>
+        val flag = tightStats.map(lit).getOrElse(lit(null).cast(BooleanType))
+        val restoredJson =
+          readStats(persisted.withColumn("tight_stats", flag), metadata, protocol)
+        assert(JsonUtils.mapper.readTree(restoredJson) ==
+          JsonUtils.mapper.readTree(s"""{"numRecords":7,"tightBounds":$expected}"""),
+          s"tight_stats=$tightStats must reconstruct tightBounds=$expected")
+    }
   }
 
   test("content stats cover only the indexed columns, not every column") {
@@ -358,7 +370,6 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
     assertStatFields(persisted, "a", Map(
       "lower_bound" -> (LongType, "1"),
       "upper_bound" -> (LongType, "9"),
-      "tight_bounds" -> (BooleanType, "true"),
       "null_value_count" -> (LongType, "0")))
   }
 
@@ -407,12 +418,10 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
     assertStatFields(persisted, "b", Map(
       "lower_bound" -> (LongType, "1"),
       "upper_bound" -> (LongType, "9"),
-      "tight_bounds" -> (BooleanType, "true"),
       "null_value_count" -> (LongType, "0")))
     assertStatFields(persisted, "c", Map(
       "lower_bound" -> (LongType, "1"),
       "upper_bound" -> (LongType, "9"),
-      "tight_bounds" -> (BooleanType, "true"),
       "null_value_count" -> (LongType, "0")))
   }
 
@@ -506,92 +515,45 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
     }
   }
 
-  /** The persisted Iceberg `tight_bounds` of the sub-struct for logical column `column`. */
-  private def persistedTightBounds(persisted: DataFrame, column: String): Boolean = {
-    val sub = col("content_stats").getField(contentStatsField(persisted, column))
-    persisted.select(sub.getField("tight_bounds")).as[Boolean].head()
-  }
+  /** The persisted Iceberg `tight_stats` of the single entry in `persisted`, or None if absent. */
+  private def persistedTightStats(persisted: DataFrame): Option[Boolean] =
+    persisted.select(col("tight_stats")).as[Option[Boolean]].head()
 
   /** The file-level `tightBounds` recorded in a Delta stats JSON, or None if absent. */
   private def tightBoundsOf(statsJson: String): Option[Boolean] =
     Option(JsonUtils.mapper.readTree(statsJson).get("tightBounds")).map(_.asBoolean)
 
-  test("all columns have truncated type: Delta tightBounds is reconstructed conservatively false") {
-    // The only bounded column is a string, forced to tight_bounds=false on write (the timestamp
-    // column persists no bounds at all), and on read there is no untruncated column to recover the
-    // file flag from, so it falls back to false -- a safe precision loss even though the source
-    // file was tight.
+  test("an entry built from an AddFile has tight_stats = false, whatever Delta's tightBounds") {
+    // Iceberg tracks tightness with the file-level `tight_stats`, which vouches for more than
+    // Delta's tightBounds does (e.g. exact counts and untruncated timestamp bounds), so tightBounds
+    // is not carried over: every entry AMT builds is explicitly not tight.
     val metadata = metadataWithColumnIds(
-      new StructType().add("s", StringType).add("ts", TimestampType))
+      new StructType().add("id", LongType).add("s", StringType))
     Seq(true, false).foreach { tight =>
       val persisted =
         writeStats(getSampleStatsJson(metadata, tightBounds = tight), metadata, amtProtocol)
-      assert(!persistedTightBounds(persisted, "s"), "a string column is never tight")
+      assert(persistedTightStats(persisted).contains(false),
+        s"tightBounds=$tight must persist tight_stats=false")
       assert(tightBoundsOf(readStats(persisted, metadata, amtProtocol)).contains(false),
-        "with no untruncated column to vouch for it, the file flag reconstructs to false")
+        s"tightBounds=$tight must reconstruct tightBounds=false")
     }
   }
 
-  test("no truncated column types: the Delta tightBounds round-trips exactly") {
-    // Every column is untruncated, so each carries the file flag verbatim and the
-    // reconstructed flag matches -- tight and wide both round-trip unchanged.
+  test("forRead maps tight_stats to Delta's tightBounds as-is, and an absent flag to false") {
+    // forWrite always writes false, but an external Iceberg writer may set the flag or omit it.
+    // Iceberg treats an absent tight_stats as not tight, whereas Delta treats an absent tightBounds
+    // as tight, so the reconstruction must spell an absent flag out as false.
     val metadata = metadataWithColumnIds(
-      new StructType().add("id", LongType).add("n", IntegerType))
-    Seq(true, false).foreach { tight =>
-      val persisted =
-        writeStats(getSampleStatsJson(metadata, tightBounds = tight), metadata, amtProtocol)
-      assert(persistedTightBounds(persisted, "id") == tight)
-      assert(persistedTightBounds(persisted, "n") == tight)
-      assert(tightBoundsOf(readStats(persisted, metadata, amtProtocol)).contains(tight),
-        s"an all-untruncated table must round-trip tightBounds=$tight unchanged")
-    }
-  }
-
-  test("mixed column types: the Delta tightBounds round-trips via the untruncated column") {
-    // A mix of an untruncated (long) and a truncated (string) column. The untruncated column
-    // carries the file flag, the string is never tight, and the reconstructed flag comes back from
-    // the untruncated column -- so both tight and wide round-trip unchanged.
-    val metadata = metadataWithColumnIds(
-      new StructType().add("id", LongType).add("name", StringType))
-    Seq(true, false).foreach { tight =>
-      val persisted =
-        writeStats(getSampleStatsJson(metadata, tightBounds = tight), metadata, amtProtocol)
-      assert(persistedTightBounds(persisted, "id") == tight,
-        "the untruncated column carries the file flag")
-      assert(!persistedTightBounds(persisted, "name"), "a string column is never tight")
-      assert(tightBoundsOf(readStats(persisted, metadata, amtProtocol)).contains(tight),
-        s"a mixed table must round-trip tightBounds=$tight via the untruncated column")
-    }
-  }
-
-  test("reading back to Delta ignores a string column's Iceberg tight_bounds") {
-    val metadata = metadataWithColumnIds(new StructType().add("name", StringType))
-    // `forWrite` never marks a string tight, so this happens only when an external writer sets a
-    // string column with tight_bounds=true.
+      new StructType().add("id", LongType).add("s", StringType))
     val persisted =
       writeStats(getSampleStatsJson(metadata, tightBounds = true), metadata, amtProtocol)
-    val tampered = persisted.withColumn("content_stats",
-      col("content_stats").withField(s"${contentStatsField(persisted, "name")}.tight_bounds",
-        lit(true)))
-    assert(persistedTightBounds(tampered, "name"), "the tampered Iceberg flag reads back as true")
-    assert(tightBoundsOf(readStats(tampered, metadata, amtProtocol)).contains(false),
-      "Delta ignores a truncated column's tightness, so the reconstructed flag stays false")
-  }
-
-  test("reading back to Delta ANDs untruncated columns, so a mix reconstructs tightBounds false") {
-    // Two untruncated columns. A tight file makes both tight_bounds=true, but if a manifest carries
-    // a mix (one column not tight), `forRead` ANDs the untruncated columns, so the reconstructed
-    // Delta tightBounds is false even though the other column is still tight.
-    val metadata = metadataWithColumnIds(
-      new StructType().add("id", LongType).add("id2", LongType))
-    val persisted =
-      writeStats(getSampleStatsJson(metadata, tightBounds = true), metadata, amtProtocol)
-    val tampered = persisted.withColumn("content_stats",
-      col("content_stats").withField(s"${contentStatsField(persisted, "id2")}.tight_bounds",
-        lit(false)))
-    assert(persistedTightBounds(tampered, "id"), "the untouched column stays tight")
-    assert(!persistedTightBounds(tampered, "id2"), "the tampered column is not tight")
-    assert(tightBoundsOf(readStats(tampered, metadata, amtProtocol)).contains(false),
-      "a mix of tight and non-tight untruncated columns reconstructs to false")
+    Seq(Some(true) -> true, Some(false) -> false, None -> false).foreach {
+      case (tightStats, expected) =>
+        val flag = tightStats.map(lit).getOrElse(lit(null).cast(BooleanType))
+        val tampered = persisted.withColumn("tight_stats", flag)
+        assert(persistedTightStats(tampered) == tightStats)
+        assert(tightBoundsOf(readStats(tampered, metadata, amtProtocol)).contains(expected),
+          s"tight_stats=$tightStats must reconstruct tightBounds=$expected")
+    }
   }
 }

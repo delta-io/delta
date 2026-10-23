@@ -27,8 +27,11 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, AMTCheckpointAction,
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaStatistics
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
@@ -627,6 +630,19 @@ trait AMTCheckpointTestBase
    *    cardinality: a committed DV is stored `storageType="r"` (the relative path) while the AMT
    *    re-encodes the same vector as `"u"` (the base85 UUID), and both resolve to the same file.
    */
+  /**
+   * The parsed stats JSON with `tightBounds` dropped: AMT does not carry Delta's `tightBounds` into
+   * Iceberg's `tight_stats` yet (it writes `false`), so the flag does not survive a checkpoint.
+   */
+  private def withoutTightBounds(stats: String): JsonNode = {
+    val tree = JsonUtils.mapper.readTree(stats)
+    tree match {
+      case obj: ObjectNode => obj.remove(DeltaStatistics.TIGHT_BOUNDS)
+      case _ =>
+    }
+    tree
+  }
+
   private def canonicalAddFile(tableLocation: Path)(add: AddFile) =
     add.copy(
       modificationTime = 0L,
@@ -634,7 +650,7 @@ trait AMTCheckpointTestBase
       deletionVector = null,
       backReference = None,
       amtPassthrough = None) -> (
-        Option(add.stats).map(JsonUtils.mapper.readTree),
+        Option(add.stats).map(withoutTightBounds),
         Option(add.deletionVector).map { dv =>
           val physical =
             if (dv.storageType == "i") dv.uniqueFileId(tableLocation, useObjectIdentity = true)
