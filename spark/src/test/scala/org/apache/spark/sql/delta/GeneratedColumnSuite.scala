@@ -2270,6 +2270,23 @@ trait GeneratedColumnSuiteBase
       }
     }
   }
+
+  test("generated column with BETWEEN") {
+    Seq(false, true).foreach { alwaysInlineCommonExpr =>
+      withSQLConf(SQLConf.ALWAYS_INLINE_COMMON_EXPR.key -> alwaysInlineCommonExpr.toString) {
+        withTableName("between_generated_column") { table =>
+          createTable(table, None, "v INT, g BOOLEAN", Map("g" -> "v BETWEEN 0 AND 10"), Nil)
+          sql(s"INSERT INTO $table (v) VALUES (5), (11)")
+          checkAnswer(sql(s"SELECT v, g FROM $table"), Seq(Row(5, true), Row(11, false)))
+          quietly {
+            val e = intercept[InvariantViolationException](
+              sql(s"INSERT INTO $table VALUES (5, false)"))
+            errorContains(e.getMessage, "CHECK constraint Generated Column (g <=>")
+          }
+        }
+      }
+    }
+  }
 }
 
 class GeneratedColumnSuite extends GeneratedColumnSuiteBase
