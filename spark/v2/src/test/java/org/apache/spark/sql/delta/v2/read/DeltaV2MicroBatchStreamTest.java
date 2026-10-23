@@ -15,7 +15,6 @@
  */
 package org.apache.spark.sql.delta.v2.read;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.CommitActions;
@@ -3288,11 +3287,12 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             () -> deltaSource.latestOffset(startOffset, readLimit),
             String.format(
                 "DSv1 should throw error on stream start for scenario: %s", testDescription));
-    assertThat(dsv1Exception.getStackTrace())
-        .as("Error should be thrown by 'checkReadIncompatibleSchemaChangeOnStreamStartOnce'")
-        .anyMatch(
-            element ->
-                element.toString().contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"));
+    assertTrue(
+        Arrays.stream(dsv1Exception.getStackTrace())
+            .map(StackTraceElement::toString)
+            .anyMatch(
+                frame -> frame.contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce")),
+        "Error should be thrown by 'checkReadIncompatibleSchemaChangeOnStreamStartOnce'");
 
     // Test Delta V2 micro-batch stream
     Configuration hadoopConf = new Configuration();
@@ -3306,11 +3306,12 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             () -> stream.latestOffset(startOffset, readLimit),
             String.format(
                 "DSv2 should throw error on stream start for scenario: %s", testDescription));
-    assertThat(dsv2Exception.getStackTrace())
-        .as("Error should be thrown by 'checkReadIncompatibleSchemaChangeOnStreamStartOnce'")
-        .anyMatch(
-            element ->
-                element.toString().contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"));
+    assertTrue(
+        Arrays.stream(dsv2Exception.getStackTrace())
+            .map(StackTraceElement::toString)
+            .anyMatch(
+                frame -> frame.contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce")),
+        "Error should be thrown by 'checkReadIncompatibleSchemaChangeOnStreamStartOnce'");
 
     assertEquals(
         dsv1Exception.getErrorClass(),
@@ -3662,8 +3663,9 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             IllegalArgumentException.class,
             () -> stream.latestOffset(startOffset, ReadLimit.allAvailable()));
-    assertThat(ex.getMessage())
-        .contains("schema tracking log cannot tolerate missing commit files");
+    assertTrue(
+        ex.getMessage().contains("schema tracking log cannot tolerate missing commit files"),
+        "Unexpected message: " + ex.getMessage());
   }
 
   /** Provides test scenarios that generate additive schema changes actions. */
@@ -3814,7 +3816,10 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
                 sql(
                     "INSERT INTO %s VALUES (3, 'Carol', named_struct('col1', 50, 'col2', 'SF'))",
                     tableName),
-            schema -> assertThat(Arrays.asList(schema.fieldNames())).doesNotContain("value"),
+            schema -> {
+              List<String> names = Arrays.asList(schema.fieldNames());
+              assertFalse(names.contains("value"), "Unexpected 'value' in schema: " + names);
+            },
             // Post-change projection is (id, name, info) — 3 columns, info at ordinal 2.
             row -> {
               assertEquals(3, row.getInt(0));
@@ -3826,7 +3831,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             (tableName, tempDir) -> sql("ALTER TABLE %s DROP COLUMNS (id, value, info)", tableName),
             unsafeReadFalse,
             (tableName, tempDir) -> sql("INSERT INTO %s VALUES ('Carol')", tableName),
-            schema -> assertThat(Arrays.asList(schema.fieldNames())).containsExactly("name"),
+            schema -> assertEquals(List.of("name"), Arrays.asList(schema.fieldNames())),
             // Post-change projection is (name) — 1 column.
             row -> assertEquals("Carol", row.getUTF8String(0).toString()),
             "Drop nullable, non-nullable and struct columns"),
@@ -3838,10 +3843,11 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
                     "INSERT INTO %s VALUES (3, 'Carol', 50.0, "
                         + "named_struct('col1', 50, 'col2', 'SF'))",
                     tableName),
-            schema ->
-                assertThat(Arrays.asList(schema.fieldNames()))
-                    .contains("userId")
-                    .doesNotContain("id"),
+            schema -> {
+              List<String> names = Arrays.asList(schema.fieldNames());
+              assertTrue(names.contains("userId"), "Missing 'userId' in schema: " + names);
+              assertFalse(names.contains("id"), "Unexpected 'id' in schema: " + names);
+            },
             // Renamed column keeps physical column id; new logical name "userId" at ordinal 0.
             row -> {
               assertEquals(3, row.getInt(0));
@@ -3857,7 +3863,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
                     tableName),
             schema -> {
               StructType info = (StructType) schema.apply("info").dataType();
-              assertThat(Arrays.asList(info.fieldNames())).doesNotContain("col1");
+              List<String> names = Arrays.asList(info.fieldNames());
+              assertFalse(names.contains("col1"), "Unexpected 'col1' in info: " + names);
             },
             // info struct has only col2 after drop — 1 field.
             row -> {
@@ -3876,9 +3883,9 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
                     tableName),
             schema -> {
               StructType info = (StructType) schema.apply("info").dataType();
-              assertThat(Arrays.asList(info.fieldNames()))
-                  .contains("newCol1")
-                  .doesNotContain("col1");
+              List<String> names = Arrays.asList(info.fieldNames());
+              assertTrue(names.contains("newCol1"), "Missing 'newCol1' in info: " + names);
+              assertFalse(names.contains("col1"), "Unexpected 'col1' in info: " + names);
             },
             // info struct keeps two fields; newCol1 (renamed from col1) at struct ordinal 0.
             row -> assertEquals(50, row.getStruct(3, 2).getInt(0)),
@@ -4045,10 +4052,10 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             });
     assertEquals("DELTA_MISSING_FILES_UNEXPECTED_VERSION", dsv1Exception.getErrorClass());
     // Parameters: startVersion=0, earliestVersion=3, option=failOnDataLoss
-    assertThat(dsv1Exception.getMessageParameters())
-        .containsEntry("startVersion", "0")
-        .containsEntry("earliestVersion", "3")
-        .containsEntry("option", DeltaOptions.FAIL_ON_DATA_LOSS_OPTION());
+    Map<String, String> params = dsv1Exception.getMessageParameters();
+    assertEquals("0", params.get("startVersion"));
+    assertEquals("3", params.get("earliestVersion"));
+    assertEquals(DeltaOptions.FAIL_ON_DATA_LOSS_OPTION(), params.get("option"));
 
     // DSv2: failOnDataLoss=true throws StartVersionNotFoundException with structured fields
     Configuration hadoopConf = new Configuration();
@@ -4122,7 +4129,9 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
                 }
               }
             });
-    assertThat(midGapException.getMessage()).contains("versions are not contiguous");
+    assertTrue(
+        midGapException.getMessage().contains("versions are not contiguous"),
+        "Unexpected message: " + midGapException.getMessage());
   }
 
   // ================================================================================================
@@ -4611,23 +4620,22 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
   public void testFindClosedByInterruptCause() {
     // KernelEngineException wrapping ClosedByInterruptException -> present
     ClosedByInterruptException cbie = new ClosedByInterruptException();
-    assertThat(
-            DeltaV2MicroBatchStream.findClosedByInterruptCause(
-                new io.delta.kernel.exceptions.KernelEngineException("readJsonFile", cbie)))
-        .isPresent()
-        .contains(cbie);
+    assertEquals(
+        Optional.of(cbie),
+        DeltaV2MicroBatchStream.findClosedByInterruptCause(
+            new io.delta.kernel.exceptions.KernelEngineException("readJsonFile", cbie)));
 
     // Plain RuntimeException -> empty
-    assertThat(
-            DeltaV2MicroBatchStream.findClosedByInterruptCause(new RuntimeException("unrelated")))
-        .isEmpty();
+    assertEquals(
+        Optional.empty(),
+        DeltaV2MicroBatchStream.findClosedByInterruptCause(new RuntimeException("unrelated")));
 
     // KernelEngineException wrapping a different IOException -> empty
-    assertThat(
-            DeltaV2MicroBatchStream.findClosedByInterruptCause(
-                new io.delta.kernel.exceptions.KernelEngineException(
-                    "readJsonFile", new java.io.FileNotFoundException("missing"))))
-        .isEmpty();
+    assertEquals(
+        Optional.empty(),
+        DeltaV2MicroBatchStream.findClosedByInterruptCause(
+            new io.delta.kernel.exceptions.KernelEngineException(
+                "readJsonFile", new java.io.FileNotFoundException("missing"))));
   }
 
   /** Regression test: closing the wrapped iterator must also close CommitActions. */
