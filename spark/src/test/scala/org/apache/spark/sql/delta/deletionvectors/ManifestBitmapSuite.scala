@@ -92,6 +92,38 @@ class ManifestBitmapSuite extends SparkFunSuite {
   }
 
 
+  test("MumblingRowIndexFilterProvider probes overlapping bitmaps") {
+    val first = ManifestBitmap.fromPositions(Seq(1, 257))
+    val second = ManifestBitmap.fromPositions(Seq(1, 3, 258))
+    val provider = ManifestBitmap.toRowIndexFilterProvider(
+      Seq(first, second), new Path("file:/tmp/table"))
+
+    val filter = provider.retrieve(new Configuration())
+    withByteVector(6) { batch =>
+      filter.materializeIntoVector(0, 6, batch)
+      assert(batch.getBytes(0, 6).toSeq === Seq(0, 1, 0, 1, 0, 0))
+    }
+    assert(singleRowValue(filter, rowIndex = 257L) == RowIndexFilter.DROP_ROW_VALUE)
+    assert(singleRowValue(filter, rowIndex = 258L) == RowIndexFilter.DROP_ROW_VALUE)
+  }
+
+  test("inverse MumblingRowIndexFilter keeps positions set in any bitmap") {
+    val provider = ManifestBitmap.toRowIndexFilterProvider(
+      Seq(
+        ManifestBitmap.fromPositions(Seq(1, 257)),
+        ManifestBitmap.fromPositions(Seq(3, 258))),
+      new Path("file:/tmp/table"),
+      inverse = true)
+    val filter = provider.retrieve(new Configuration())
+
+    withByteVector(6) { batch =>
+      filter.materializeIntoVector(0, 6, batch)
+      assert(batch.getBytes(0, 6).toSeq === Seq(1, 0, 1, 0, 1, 1))
+    }
+    assert(singleRowValue(filter, rowIndex = 257L) == RowIndexFilter.KEEP_ROW_VALUE)
+    assert(singleRowValue(filter, rowIndex = 258L) == RowIndexFilter.KEEP_ROW_VALUE)
+  }
+
   test("MumblingRowIndexFilter materializes every row-index filter entry point") {
     val provider = ManifestBitmap.fromPositions(Seq(1, 3, 257))
       .toRowIndexFilterProvider(new Path("file:/tmp/table"))
