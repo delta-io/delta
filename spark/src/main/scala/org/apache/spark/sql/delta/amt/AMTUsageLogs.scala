@@ -35,6 +35,10 @@ object AMTUsageLogs {
   val CHECKPOINT_PROVIDER_INITIALIZE_FROM_CHECKPOINT_ACTION =
     s"$PREFIX.checkpointProvider.initializeFromCheckpointAction"
 
+  /** Usage log emitted after discovery reads and reconciles an AMT checkpoint provider. */
+  val SNAPSHOT_DISCOVERY_UPDATE_CHECKPOINT_PROVIDER =
+    s"$PREFIX.snapshotDiscovery.updateCheckpointProvider"
+
   /** Usage log emitted when a losing full AMT OPTIMIZE checkpoint is retried. */
   val CHECKPOINT_FULL_REGENERATE_RETRY = s"$PREFIX.checkpoint.fullRegenerateRetry"
 
