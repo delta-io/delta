@@ -97,7 +97,10 @@ object ScanWithDeletionVectors {
         !columnsAddedForDVs.exists(p.hasColumnNamed) ||
           p.preparedScan.scannedSnapshot.filesForScan(filters = Nil).files
             .exists(_.deletionVector != null)
-      // Reuse the files of an already prepared scan instead of listing the table again.
+      // Reuse the files of an already prepared scan instead of listing the table again. If the
+      // scan's filters change after it was prepared, it selects its files again, possibly more
+      // of them. Filters are only moved after the scan is prepared, never dropped, so the plan
+      // still filters out all rows of the files the prepared scan skipped, with or without DVs.
       case p: PreparedDeltaFileIndex => p.preparedScan.files.exists(_.deletionVector != null)
       // Check the files in memory instead of running a job to filter them.
       case b: TahoeBatchFileIndex => b.addFiles.exists(_.deletionVector != null)
