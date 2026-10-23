@@ -561,6 +561,24 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
     assert(exMsg.contains("Currently, only file-based deltas are supported"))
   }
 
+  test("hashCode remains stable when staged commit is published") {
+    val stagedCommit = FileStatus.of(FileNames.stagedCommitFile(logPath, 1), 1, 10)
+    val publishedCommit = FileStatus.of(FileNames.deltaFile(logPath, 1), 1, 100)
+
+    val segmentWithStagedCommit = createLogSegmentForTest(
+      version = 1,
+      deltas = Seq(deltaFileStatus(0), stagedCommit).asJava,
+      deltaAtEndVersion = Some(stagedCommit),
+      maxPublishedDeltaVersion = Optional.of(0L))
+    val segmentWithPublishedCommit = createLogSegmentForTest(
+      version = 1,
+      deltas = Seq(deltaFileStatus(0), publishedCommit).asJava,
+      deltaAtEndVersion = Some(publishedCommit),
+      maxPublishedDeltaVersion = Optional.of(1L))
+
+    assert(segmentWithStagedCommit.hashCode === segmentWithPublishedCommit.hashCode)
+  }
+
   ////////////////////////////////
   // newAsPublished tests       //
   ////////////////////////////////
