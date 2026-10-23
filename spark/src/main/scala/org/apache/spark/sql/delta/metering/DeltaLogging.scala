@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.metering
 
+import java.lang.{Boolean => JavaBoolean}
 import java.util.function.Supplier
 
 import scala.concurrent.duration._
@@ -34,15 +35,18 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.util.ScalaExtensions._
 
+import com.google.common.cache.{Cache, CacheBuilder}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkThrowable
 import org.apache.spark.internal.{Logging, MDC, MessageWithContext}
+import org.apache.spark.sql.internal.SQLConf
 
 /**
  * Convenience wrappers for logging that include delta specific options and
@@ -105,6 +109,43 @@ trait DeltaLogging
             Map("exception" -> e.getMessage,
               "opType" -> opType,
               "method" -> "recordDeltaEvent"))
+        )
+    }
+  }
+
+  /**
+   * Records a delta event once per table and `opType` in this JVM, for conditions that would
+   * otherwise be logged repeatedly. The table is identified by its id tag, or by its path tag if
+   * no id is known. Events without a table identity are dropped.
+   *
+   * `data` is evaluated only when the event is recorded. A bounded number of (table, opType)
+   * pairs is remembered, and a pair that was evicted is recorded again.
+   */
+  protected def recordDeltaEventOncePerTable(
+      provider: DeltaLoggingProvider,
+      opType: String,
+      data: => AnyRef = null): Unit = {
+    try {
+      if (provider != null) {
+        val tableTags = provider.getCommonTags
+        val tableIdentity = tableTags.get(TAG_TAHOE_ID).flatMap(Option(_))
+          .orElse(tableTags.get(TAG_TAHOE_PATH).flatMap(Option(_)))
+        tableIdentity match {
+          case Some(identity) =>
+            if (DeltaLogging.markLoggedOncePerTable(identity, opType)) {
+              recordDeltaEvent(provider, opType, data = data)
+            }
+          case None => ()
+        }
+      }
+    } catch {
+      case NonFatal(e) =>
+        recordEvent(
+          EVENT_LOGGING_FAILURE,
+          blob = JsonUtils.toJson(
+            Map("exception" -> e.getMessage,
+              "opType" -> opType,
+              "method" -> "recordDeltaEventOncePerTable"))
         )
     }
   }
@@ -295,6 +336,18 @@ object DeltaLogging {
 
   // The opType for delta commit stats.
   final val DELTA_COMMIT_STATS_OPTYPE = "delta.commit.stats"
+
+  // Guava caches only work with Java objects, so the value is a JavaBoolean. The size is read
+  // from the static conf when the cache is first used.
+  private lazy val eventsLoggedOncePerTable: Cache[(String, String), JavaBoolean] =
+    CacheBuilder.newBuilder()
+      .maximumSize(SQLConf.get.getConf(DeltaSQLConf.DELTA_EVENT_ONCE_PER_TABLE_CACHE_SIZE))
+      .build[(String, String), JavaBoolean]()
+
+  /** Remembers `tableIdentity` and `opType`, returning true if the pair was not remembered yet. */
+  private def markLoggedOncePerTable(tableIdentity: String, opType: String): Boolean = {
+    eventsLoggedOncePerTable.asMap().putIfAbsent((tableIdentity, opType), JavaBoolean.TRUE) == null
+  }
 }
 
 /**

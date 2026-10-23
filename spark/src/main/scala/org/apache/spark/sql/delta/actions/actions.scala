@@ -91,6 +91,13 @@ object Action extends DeltaLogging {
     super.recordDeltaEvent(provider, opType, tags, data, path)
   }
 
+  override def recordDeltaEventOncePerTable(
+      provider: DeltaLoggingProvider,
+      opType: String,
+      data: => AnyRef = null): Unit = {
+    super.recordDeltaEventOncePerTable(provider, opType, data)
+  }
+
   /**
    * The maximum protocol version we are currently allowed to use, with or without all recognized
    * features. Optionally, some features can be excluded using `featuresToExclude`.
@@ -769,7 +776,8 @@ sealed trait FileAction extends Action {
    * types for comparison purposes. When false, they are returned as string literals,
    * using verbatim value written in the action.
    *
-   * @param deltaLog The DeltaLog for logging events. May be null if unavailable.
+   * @param deltaLog Identifies the table for logging events, which are recorded once per table
+   *                 and opType. May be null if unavailable, in which case no events are recorded.
    * @param errorOpType Prefix for logging event opTypes.
    * @param errorData Extra fields to include in logging events.
    * @return Map of partition column names to literals.
@@ -780,7 +788,7 @@ sealed trait FileAction extends Action {
       parseToTypedLiterals: Boolean,
       deltaLog: DeltaLog,
       errorOpType: String,
-      errorData: Map[String, Any]): Map[String, Literal] = {
+      errorData: => Map[String, Any]): Map[String, Literal] = {
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
 
     try {
@@ -799,7 +807,7 @@ sealed trait FileAction extends Action {
             useUtcNormalizedTimestamp = true))
         }
         if (stringNormalizedPartitionValues != partitionValues) {
-          Action.recordDeltaEvent(
+          Action.recordDeltaEventOncePerTable(
             deltaLog,
             opType = errorOpType + ".unnormalizedValuesExist",
             data = errorData
@@ -810,7 +818,7 @@ sealed trait FileAction extends Action {
     } catch {
       case NonFatal(e) =>
         val opTypeSuffix = PartitionUtils.classifyPartitionValueParsingError(e)
-        Action.recordDeltaEvent(
+        Action.recordDeltaEventOncePerTable(
           deltaLog,
           opType = errorOpType + ".partitionValueParsingError" + opTypeSuffix,
           data = errorData ++ Map(

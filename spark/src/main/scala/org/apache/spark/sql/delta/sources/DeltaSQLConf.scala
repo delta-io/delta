@@ -3541,6 +3541,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .timeConf(TimeUnit.MINUTES)
     .createWithDefault(60)
 
+  val DELTA_EVENT_ONCE_PER_TABLE_CACHE_SIZE =
+    buildStaticConf("eventLogging.oncePerTable.cacheSize")
+      .internal()
+      .doc("The maximum number of (table, opType) pairs remembered by " +
+        "recordDeltaEventOncePerTable. A pair that was evicted is logged again.")
+      .longConf
+      .checkValue(_ > 0, "'eventLogging.oncePerTable.cacheSize' must be positive.")
+      .createWithDefault(5000)
+
   //////////////////
   // Delta Sharing
   //////////////////
