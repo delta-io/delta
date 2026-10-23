@@ -18,12 +18,12 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
-import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.{DeltaDataSkippingType, DeltaScan, PreparedDeltaFileIndex}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
-import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.FileFormat.METADATA_NAME
@@ -86,12 +86,32 @@ object ScanWithDeletionVectors {
     // 3. Unnecessary pinned snapshot requirements break legitimate use cases like transaction
     //    read tracking with TahoeLogFileIndex (e.g., OptimisticTransaction.withNewTransaction)
     // 4. Performance: Avoids forcing expensive pinned snapshots when not needed
-    val filesWithDVs = index
-      .matchingFiles(partitionFilters = Seq(TrueLiteral), dataFilters = Seq(TrueLiteral))
-      .filter(_.deletionVector != null)
-    if (filesWithDVs.isEmpty) return None
+    val hasDVs = index match {
+      // Files pruned by LIMIT are only a subset of the matching files, and the scan lists all of
+      // them if its filters change after the scan was prepared. Instead of listing the whole
+      // table to check for DVs, always handle DVs: such a scan usually reads only a few files.
+      // Without `useMetadataRowIndex`, this also disables file splitting and Parquet filter
+      // pushdown for such a scan. Handling DVs can't tell the columns it adds apart from table
+      // columns with the same names though, so check the whole table if there are such columns.
+      case p: PreparedDeltaFileIndex if isPrunedByLimit(p.preparedScan) =>
+        !columnsAddedForDVs.exists(p.hasColumnNamed) ||
+          p.preparedScan.scannedSnapshot.filesForScan(filters = Nil).files
+            .exists(_.deletionVector != null)
+      // Reuse the files of an already prepared scan instead of listing the table again. If the
+      // scan's filters change after it was prepared, it selects its files again, possibly more
+      // of them. Filters are only moved after the scan is prepared, never dropped, so the plan
+      // still filters out all rows of the files the prepared scan skipped, with or without DVs.
+      case p: PreparedDeltaFileIndex => p.preparedScan.files.exists(_.deletionVector != null)
+      // Check the files in memory instead of running a job to filter them.
+      case b: TahoeBatchFileIndex => b.addFiles.exists(_.deletionVector != null)
+      case _ =>
+        index
+          .matchingFiles(partitionFilters = Nil, dataFilters = Nil)
+          .exists(_.deletionVector != null)
+    }
+    if (!hasDVs) return None
 
-    // At this point, we know there are actual files with DVs, so we need a pinned snapshot.
+    // At this point, the scan may read files with DVs, so we need a pinned snapshot.
     // TahoeLogFileIndex (non-pinned) cannot be used with deletion vectors as it may not
     // have a consistent view of the table state required for correct DV filtering.
     require(!index.isInstanceOf[TahoeLogFileIndex],
@@ -112,6 +132,14 @@ object ScanWithDeletionVectors {
     // Now add a project on top of the row index filter node to
     // remove the skip row column
     Some(Project(planOutput, rowIndexFilter))
+  }
+
+  /** Columns that handling DVs adds to the output of a scan. */
+  private val columnsAddedForDVs = Seq(METADATA_NAME, IS_ROW_DELETED_COLUMN_NAME)
+
+  private def isPrunedByLimit(scan: DeltaScan): Boolean = {
+    scan.dataSkippingType == DeltaDataSkippingType.limit ||
+      scan.dataSkippingType == DeltaDataSkippingType.filteredLimit
   }
 
   /**
