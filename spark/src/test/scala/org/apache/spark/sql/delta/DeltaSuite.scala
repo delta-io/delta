@@ -607,6 +607,59 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("replaceWhere on partition column with BETWEEN, NOT BETWEEN and NULLIF") {
+    val allParts = 0L until 10L
+    def writeInitialData(path: String): Unit = {
+      allParts.map(p => (p, p)).toDF("id", "part")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .save(path)
+    }
+
+    Seq(
+      "part BETWEEN 2 AND 4" -> Seq(2L, 3L, 4L),
+      "part NOT BETWEEN 2 AND 7" -> Seq(0L, 1L, 8L, 9L),
+      "NULLIF(part, 3) IS NULL" -> Seq(3L)
+    ).foreach { case (replaceWhere, replacedParts) =>
+      withTempDir { dir =>
+        writeInitialData(dir.toString)
+        val replacement = replacedParts.map(p => (p + 100, p))
+        replacement.toDF("id", "part")
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .option(DeltaOptions.REPLACE_WHERE_OPTION, replaceWhere)
+          .save(dir.toString)
+
+        val untouched = allParts.filterNot(replacedParts.contains).map(p => (p, p))
+        checkAnswer(
+          spark.read.format("delta").load(dir.toString),
+          (untouched ++ replacement).toDF("id", "part"))
+      }
+    }
+
+    withTempDir { dir =>
+      writeInitialData(dir.toString)
+      val e = intercept[AnalysisException] {
+        Seq((105L, 5L)).toDF("id", "part")
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .option(DeltaOptions.REPLACE_WHERE_OPTION, "part BETWEEN 2 AND 4")
+          .save(dir.toString)
+      }
+      checkError(
+        exception = e,
+        condition = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
+        sqlState = Some("44000"),
+        parameters = Map(
+          "replaceWhere" -> "part BETWEEN 2 AND 4",
+          "invariantViolationMessage" -> "(?s).*"),
+        matchPVals = true)
+    }
+  }
+
   test("replaceWhere with constraint check disabled") {
     withSQLConf(DeltaSQLConf.REPLACEWHERE_CONSTRAINT_CHECK_ENABLED.key -> "false") {
       withTempDir { dir =>
