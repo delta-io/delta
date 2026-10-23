@@ -164,7 +164,7 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
     }
 
     // Validate logData input
-    LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
+    LogDataUtils.validateLogDataContainsOnlyRatifiedCatalogCommits(ctx.logDatas);
     LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
 
     // Validate that when endVersion and logData are both provided, the logData includes endVersion
