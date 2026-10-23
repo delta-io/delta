@@ -1353,6 +1353,97 @@ class AMTSnapshotDiscoverySuite
       }
     }
   }
+
+  val updateCheckpointProviderOpType = AMTUsageLogs.SNAPSHOT_DISCOVERY_UPDATE_CHECKPOINT_PROVIDER
+
+  test("happy-paths do not emit updateCheckpointProvider usage logs") {
+    val name = "amt_discovery_no_update_logs"
+    withTable(name) {
+      createAMTTable(name, checkpointInterval = Int.MaxValue)
+      sql(s"INSERT INTO $name VALUES (1)")
+      val staleDeltaLog = deltaLogForName(name)
+      commitCheckpoint(staleDeltaLog, incremental = false)
+      val initialSnapshot = staleDeltaLog.update()
+      val initialProvider = amtProvider(initialSnapshot).get
+
+      val coldInitLogs = collectUsageLogs(updateCheckpointProviderOpType) {
+        val (_, snapshot) = coldLoad(name)
+        assert(snapshot.version == initialSnapshot.version)
+        assert(amtProvider(snapshot).map(_.version).contains(initialProvider.version))
+      }
+      assert(coldInitLogs.isEmpty,
+        "Cold init with the current checkpoint must not emit an update log.")
+
+      // Advance through the fresh handle without creating another checkpoint.
+      sql(s"INSERT INTO $name VALUES (2)")
+      val catalogTable = catalogTableFor(name)
+      assert(staleDeltaLog.unsafeVolatileSnapshot.version == initialSnapshot.version)
+      val warmUpdateLogs = collectUsageLogs(updateCheckpointProviderOpType) {
+        val snapshot = staleDeltaLog.update(catalogTableOpt = Some(catalogTable))
+        assert(snapshot.version == initialSnapshot.version + 1)
+        assert(amtProvider(snapshot).map(_.version).contains(initialProvider.version))
+      }
+      assert(warmUpdateLogs.isEmpty,
+        "Warm update retaining the checkpoint must not emit an update log.")
+    }
+  }
+
+  test("reconciliation paths emit updateCheckpointProvider usage logs") {
+    val name = "amt_discovery_update_logs"
+    withTable(name) {
+      createAMTTable(name, checkpointInterval = Int.MaxValue)
+      sql(s"INSERT INTO $name VALUES (1)")
+      val staleDeltaLog = deltaLogForName(name)
+      commitCheckpoint(staleDeltaLog, incremental = false)
+      val initialSnapshot = staleDeltaLog.update()
+      val initialProvider = amtProvider(initialSnapshot).get
+      val staleHint = readLastCheckpointBytes(name)
+      DeltaLog.clearCache()
+
+      // Publish a newer checkpoint while retaining the old handle and hint for discovery.
+      sql(s"INSERT INTO $name VALUES (2)")
+      commitCheckpoint(deltaLogForName(name), incremental = false)
+      val latestSnapshot = deltaLogForName(name).update()
+      val latestProvider = amtProvider(latestSnapshot).get
+      assert(latestProvider.version > initialProvider.version)
+      val catalogTable = catalogTableFor(name)
+      overwriteLastCheckpoint(name, staleHint)
+
+      val coldInitLogs = collectUsageLogs(updateCheckpointProviderOpType) {
+        val (_, snapshot) = coldLoad(name)
+        assert(snapshot.version == latestSnapshot.version)
+        assert(amtProvider(snapshot).map(_.version).contains(latestProvider.version))
+      }
+
+      assert(staleDeltaLog.unsafeVolatileSnapshot.version == initialSnapshot.version)
+      val warmUpdateLogs = collectUsageLogs(updateCheckpointProviderOpType) {
+        val snapshot = staleDeltaLog.update(catalogTableOpt = Some(catalogTable))
+        assert(snapshot.version == latestSnapshot.version)
+        assert(amtProvider(snapshot).map(_.version).contains(latestProvider.version))
+      }
+
+      Seq(
+        "cold init" -> coldInitLogs,
+        "warm update" -> warmUpdateLogs
+      ).foreach { case (operation, logs) =>
+        withClue(s"$operation: ") {
+          assert(logs.size == 1, "Replacing a stale provider must emit exactly one update log.")
+          val data = JsonUtils.fromJson[Map[String, Any]](logs.head.blob)
+          assert(data.contains("totalDurationMs"))
+          assert(data.contains("manifestCommitReadDurationMs"))
+          assert(data.contains("checkpointProviderInitializationDurationMs"))
+          assert(data("initialCheckpointProviderVersion") == initialProvider.version)
+          assert(data("initialCheckpointProviderType") == initialProvider.getClass.getSimpleName)
+          assert(data("newCheckpointProviderVersion") == latestProvider.version)
+          assert(data("manifestCommitVersion") == latestProvider.manifestCommitVersion)
+          val contentRoot = latestProvider.checkpointAction.contentRoot
+          assert(data("contentRootVersion") == contentRoot.version)
+          assert(data("contentRootSizeInBytes") == contentRoot.sizeInBytes)
+          assert(data("numLeaves") == latestProvider.leaves.size.toLong)
+        }
+      }
+    }
+  }
 }
 
 /**
