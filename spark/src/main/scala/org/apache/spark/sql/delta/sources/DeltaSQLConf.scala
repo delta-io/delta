@@ -616,6 +616,31 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_ROW_LEVEL_CONCURRENCY_ENABLED =
+    buildConf("rowLevelConcurrency.enabled")
+      .internal()
+      .doc(
+        """When enabled, the conflict checker attempts to resolve conflicts between concurrent
+          |DML operations at the row level using deletion vectors, instead of failing the
+          |transaction. For every "same physical file" conflict, it decodes both transactions'
+          |deletion vectors, checks whether the newly-deleted rows are disjoint, and on disjoint
+          |sets merges the deletion vectors and rebases the losing transaction onto the winner's
+          |post-image. Only active when deletion vectors are writable.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_ROW_LEVEL_CONCURRENCY_MAX_RETAINED_DV_BYTES =
+    buildConf("rowLevelConcurrency.maxRetainedDeletionVectorBytes")
+      .internal()
+      .doc(
+        """Maximum total size of the deletion vectors that row-level concurrency keeps in driver
+          |memory between checking and merging the files it reconciles. The deletion vectors of
+          |the remaining files are read again, in bounded batches, when they are merged."""
+          .stripMargin)
+      .bytesConf(ByteUnit.BYTE)
+      .checkValue(_ >= 0, "rowLevelConcurrency.maxRetainedDeletionVectorBytes must be non-negative")
+      .createWithDefault(64L * 1024L * 1024L)
+
   val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
     buildConf("properties.defaults.minWriterVersion")
       .doc("The default writer protocol version to create new tables with, unless a feature " +
