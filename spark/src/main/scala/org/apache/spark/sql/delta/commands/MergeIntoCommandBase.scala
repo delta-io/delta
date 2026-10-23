@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{AnalysisException, DataFrame, Row, SparkSession}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -57,12 +58,107 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
   val notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause]
   val migratedSchema: Option[StructType]
   val schemaEvolutionEnabled: Boolean
+  def catalogTable: Option[CatalogTable]
 
   protected def shouldWritePersistentDeletionVectors(
       spark: SparkSession,
       txn: OptimisticTransaction): Boolean = {
     spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS) &&
       DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
+  }
+
+  // The concurrent identity column (CIC) reservation for this MERGE, set by
+  // [[reserveIdentityValuesIfNeeded]] before any executor consumes
+  // [[computeCicNotMatchedClausesForInsertExpressions]]. Driver-only; never captured in a closure.
+  protected[delta] var identityColumnReserver: Option[IdentityColumnReservation] = None
+
+  /**
+   * Update the expressions in [[notMatchedClauses]] to draw identity values from the reserved
+   * ranges when concurrent identity columns are enabled. Single source of truth for the generator
+   * bounds, shared with the INSERT path so the (safety-critical) gating cannot drift between MERGE
+   * and INSERT.
+   */
+  protected def computeCicNotMatchedClausesForInsertExpressions
+      : Seq[DeltaMergeIntoNotMatchedClause] = {
+    identityColumnReserver match {
+      case Some(reservation) =>
+        notMatchedClauses.map { clause =>
+          val actionsCopy = clause.resolvedActions.toBuffer
+          actionsCopy.zipWithIndex.foreach { case (action, idx) =>
+            action.expr match {
+              case GenerateIdentityValues(gen) =>
+                val colName = action.targetColNameParts.head
+                val reservedRange = reservation.reservedSlots(colName)
+                val (reservedEndOpt, cicReserveConfig) =
+                  reservation.generatorBounds(colName, reservedRange)
+                val expression = GenerateIdentityValues(PartitionIdentityValueGenerator(
+                  start = reservedRange.start,
+                  step = gen.step,
+                  highWaterMarkOpt = None,
+                  reservedEndOpt = reservedEndOpt,
+                  cicReserveConfig = cicReserveConfig))
+                actionsCopy(idx) = DeltaMergeAction(
+                  targetColNameParts = action.targetColNameParts,
+                  expr = expression,
+                  targetOnlyStructFieldBehavior = action.targetOnlyStructFieldBehavior,
+                  targetColNameResolved = action.targetColNameResolved)
+              case _ => ()
+            }
+          }
+          clause.makeCopy(Array(clause.condition, actionsCopy.toSeq))
+            .asInstanceOf[DeltaMergeIntoNotMatchedClause]
+      }
+      case None =>
+        // Backstop poison pill: every MERGE branch on a table with the CIC feature creates the
+        // reservation before consuming these clauses, so a stamped column reaching this branch
+        // means a new, unwired MERGE execution path is about to run the legacy high-water-mark
+        // generators (which would mint colliding values).
+        val schema = targetFileIndex.metadata.schema
+        val stampedGeneratedColumns = notMatchedClauses.flatMap { clause =>
+          clause.resolvedActions.collect {
+            case action if action.expr.isInstanceOf[GenerateIdentityValues] &&
+                schema.find(f => conf.resolver(f.name, action.targetColNameParts.head))
+                  .exists(ConcurrentIdentityColumnSchema.hasConcurrentSequenceMetadata) =>
+              action.targetColNameParts.head
+          }
+        }.distinct
+        if (stampedGeneratedColumns.nonEmpty) {
+          if (ConcurrentIdentityColumnSchema.isOrphaned(targetFileIndex.protocol, schema)) {
+            // The feature was removed but a per-column sequence pointer remains.
+            throw ConcurrentIdentityColumnErrors.orphanedSequencePointerRequiresSync(
+              targetFileIndex.metadata.id)
+          }
+          // Feature still supported but no reservation was created.
+          throw ConcurrentIdentityColumnErrors.usingWrongGenerator(
+            stampedGeneratedColumns, targetFileIndex.metadata.id)
+        }
+        notMatchedClauses
+    }
+  }
+
+  /**
+   * Create the identity reservation for the insert-only and full MERGE paths: seed the
+   * reservation before any write consumes [[computeCicNotMatchedClausesForInsertExpressions]].
+   *
+   * `sizeHint` follows the same precise -> estimate -> rate-based tiering the INSERT path uses:
+   *   - `Some(n)`: a row count passed on to the reservation as a sizing hint. The classic path
+   *     passes the exact `numSourceRows` metric (precise, already computed); the insert-only fast
+   *     path passes a planning-time stats estimate (no extra source scan).
+   *   - `None`: no count is available without a scan, so the executor reserves rate-based on
+   *     demand from a cold start.
+   * The count is only an upper bound on inserts; unused values become gaps. A MERGE without a
+   * NOT MATCHED clause inserts nothing, so it passes the exact `Some(0)` instead.
+   */
+  protected def reserveIdentityValuesIfNeeded(
+      spark: SparkSession,
+      deltaTxn: OptimisticTransaction,
+      sizeHint: => Option[Long]): Unit = {
+    if (deltaTxn.protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature) &&
+        ColumnWithDefaultExprUtils.hasIdentityColumn(deltaTxn.metadata.schema)) {
+      val reserver = new IdentityColumnReservation(targetDeltaLog, catalogTable, spark)
+      identityColumnReserver = Some(reserver)
+      reserver.reserveValuesForIdentityColumns(if (includesInserts) sizeHint else Some(0L))
+    }
   }
 
   override val (canMergeSchema, canOverwriteSchema) = {
