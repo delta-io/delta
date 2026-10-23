@@ -20,7 +20,7 @@ import java.io.{File, FileNotFoundException}
 import java.net.URISyntaxException
 import java.util.UUID
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaParquetFileFormat, DeltaTestUtilsForTempViews, ScanWithDeletionVectors}
+import org.apache.spark.sql.delta.{DataFrameUtils, DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaParquetFileFormat, DeltaTestUtilsForTempViews, ScanWithDeletionVectors}
 import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, filterUsageRecords, withAllPlansCaptured}
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor._
@@ -582,6 +582,18 @@ class DeletionVectorsSuite extends QueryTest
             }.get
             assert(index.preparedScan.dataSkippingType == DeltaDataSkippingType.filteredLimit)
             assert(index.preparedScan.files.forall(_.deletionVector == null))
+
+            // Scan the prepared relation without its filter. The scan's filters then don't match
+            // the prepared ones, so it selects the files again, now including the file with a DV,
+            // and must still skip the deleted row.
+            val reselectingDf = DataFrameUtils.ofRows(spark, relation).select("value")
+            val reselectRecords = Log4jUsageLogger.track {
+              checkAnswer(reselectingDf, Seq(0, 2, 3, 4, 5, 6, 7, 8, 9).map(Row(_)))
+            }
+            val reuseEvents = filterUsageRecords(
+              reselectRecords, "delta.preparedDeltaFileIndex.reuseSkippingResult")
+            assert(reuseEvents.nonEmpty)
+            assert(reuseEvents.forall(_.blob.contains("\"reused\":false")))
 
             // The scan lists all matching files instead of the LIMIT-pruned ones if its filters
             // change after it was prepared, so it must still handle DVs, without listing the table.
