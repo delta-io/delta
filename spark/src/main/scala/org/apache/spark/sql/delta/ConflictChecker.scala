@@ -276,6 +276,7 @@ private[delta] class ConflictChecker(
     isolationLevel: IsolationLevel)
   extends DeltaLogging with ConflictCheckerPredicateElimination {
 
+  protected val dataPath = initialCurrentTransactionInfo.readSnapshot.dataPath
   protected val winningCommitVersion = winningCommitSummary.commitVersion
   protected val startTimeMs = System.currentTimeMillis()
   protected val timingStats = mutable.HashMap[String, Long]()
@@ -314,7 +315,7 @@ private[delta] class ConflictChecker(
     val useDVObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
       updatedInfo.metadata, updatedInfo.protocol, spark)
     ConflictChecker.checkNoDuplicateActions(
-      spark, updatedInfo.actions.iterator, deltaLog.dataPath, useDVObjectIdentity)
+      spark, updatedInfo.actions.iterator, dataPath, useDVObjectIdentity)
       .foreach(_ => ())
   }
 
@@ -433,7 +434,7 @@ private[delta] class ConflictChecker(
           oldProtocol = readProtocol,
           table = DeltaTableV2(
             spark = spark,
-            path = deltaLog.dataPath,
+            path = dataPath,
             catalogTable = currentTransactionInfo.catalogTable),
           snapshot = winningSnapshot)
         if (!isDowngradeCommitValid) {

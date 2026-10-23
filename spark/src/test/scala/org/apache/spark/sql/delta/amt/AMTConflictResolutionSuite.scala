@@ -20,11 +20,11 @@ import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, ConcurrentWriteException, DeltaLog, FullAMTWriteFailedWithConflict}
+import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, ConcurrentWriteException, DeltaLog, DeltaMinorCompactionTestUtils, FullAMTWriteFailedWithConflict}
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.DeltaTestBarrier
-import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.Row
@@ -37,7 +37,8 @@ import org.apache.spark.util.ThreadUtils
 class AMTConflictResolutionSuite
   extends AMTCheckpointTestBase
   with PhaseLockingTestMixin
-  with TransactionExecutionTestMixin {
+  with TransactionExecutionTestMixin
+  with DeltaMinorCompactionTestUtils {
 
   import AMTConflictResolutionRoundMetrics._
   import BackRefRebaseMetrics._
@@ -114,9 +115,16 @@ class AMTConflictResolutionSuite
     Array.empty
   }
 
-  /** A transaction body that appends `id` as a plain (log-only, no tree) business commit. */
+  /** A transaction body that appends `id` using the current inline-manifest threshold. */
   private def appendTxn(tableName: String, id: Int): () => Array[Row] = () => {
     spark.sql(s"INSERT INTO $tableName VALUES ($id)").collect()
+  }
+
+  /** A transaction body that appends `id` without writing an inline AMT. */
+  private def logOnlyAppendTxn(tableName: String, id: Int): () => Array[Row] = () => {
+    withInlineThreshold(Int.MaxValue) {
+      appendTxn(tableName, id)()
+    }
   }
 
   /** A transaction body that deletes `id` -- a non-blind commit. */
@@ -845,6 +853,160 @@ class AMTConflictResolutionSuite
     "regenerates back references (inline-AMT loser)") {
     runTwoTreeRoundsReuseRegenerate(loserInlinesTree = true)
   }
+
+  /** Exercises a compacted span present on the first attempt or discovered during retry. */
+  private def runInlineRetryWithCompactedDelta(compactionBeforeLoserStarts: Boolean): Unit = {
+    val suffix = if (compactionBeforeLoserStarts) "before_loser_start" else "on_retry"
+    val name = s"amt_conflict_compacted_delta_$suffix"
+    withTable(name) {
+      val deltaLog = setupAMTTable(name)
+      val initialSnapshot = deltaLog.update()
+      val initialRootVersion = amtProvider(initialSnapshot)
+        .getOrElse(fail("expected an initial AMT checkpoint"))
+        .version
+      val inlineLoser = () => withInline { appendTxn(name, id = 100)() }
+      val transactions = Seq(optimizeCheckpointTxn(deltaLog), inlineLoser)
+
+      // Invariants:
+      // 1. compactionStartVersion <= winningRootVersion < compactedEndVersion.
+      //    Trailing appends and compaction must happen after the winner captures its snapshot.
+      // 2. Loser must discover the winning root upon conflict resolution. Winner commits after
+      //    the loser captures its snapshot, but before loser's first commit attempt.
+      //
+      // Difference:
+      //    Whether the compacted delta was already known by loser when it started, or only
+      //    discovered during conflict resolution's relisting.
+      //
+      // Time flows downward; loser actions are aligned.
+      //
+      // compactionBeforeLoserStarts = true      | compactionBeforeLoserStarts = false
+      // --------------------------------------- | ---------------------------------------
+      // **Stage 1: before loser starts.**       |
+      //                                         |
+      // Append commits                          |
+      // <Winner prepares checkpoint>            |
+      // Append more commits                     |
+      // Compact across winning root version     |
+      //                                         |
+      // **Stage 2: loser starts.**              |
+      //                                         |
+      // [LOSER STARTS]                          | [LOSER STARTS]
+      //  Reads old AMT + compacted delta        |  Reads old AMT + individual deltas
+      //  Prepares inline AMT; pauses pre-commit |  Prepares inline AMT; pauses pre-commit
+      //                                         |
+      //                                         | Append commits
+      //                                         | <Winner prepares checkpoint>
+      // <Winner commits prepared checkpoint>    | <Winner commits prepared checkpoint>
+      //                                         | Append more commits
+      //                                         | Compact across winning root version
+      //                                         |
+      // **Stage 3: loser commits and retries.** |
+      //                                         |
+      // [LOSER ATTEMPTS COMMIT -> CONFLICT]     | [LOSER ATTEMPTS COMMIT -> CONFLICT]
+      //                                         |
+      // [LOSER RETRIES]                         | [LOSER RETRIES]
+      //  Discovers winning root;                |  Discovers winning root;
+      //  compacted delta was already known;     |  also discovers newly created compacted delta;
+      //  rebuilds AMT from individual deltas    |  rebuilds AMT from individual deltas
+      //                                         |
+      // [LOSER COMMITS]                         | [LOSER COMMITS]
+
+      val futures = runFunctionsWithOrderingFromObserver(transactions) {
+        case checkpointWinnerObserver :: loserObserver :: Nil =>
+          val compactionStartVersion = initialSnapshot.version + 1
+          var compactedEndVersion = -1L
+          var winningRootVersion = -1L
+
+          def appendThenPrepareWinner(): Long = {
+            Seq(200, 300).foreach(id => logOnlyAppendTxn(name, id)())
+            val rootVersion = deltaLog.update().version
+            unblockUntilPreCommit(checkpointWinnerObserver)
+            waitForPrecommit(checkpointWinnerObserver)
+            rootVersion
+          }
+
+          def appendThenCompact(rootVersion: Long): Long = {
+            Seq(400, 500).foreach(id => logOnlyAppendTxn(name, id)())
+            val endVersion = deltaLog.update().version
+            assert(compactionStartVersion <= rootVersion && rootVersion < endVersion)
+            minorCompactDeltaLog(
+              tablePath = deltaLog.dataPath.toString,
+              startVersion = compactionStartVersion,
+              endVersion = endVersion)
+            endVersion
+          }
+
+          // Stage 1: before loser starts.
+          if (compactionBeforeLoserStarts) {
+            winningRootVersion = appendThenPrepareWinner()
+            compactedEndVersion = appendThenCompact(winningRootVersion)
+
+            // The loser must start from the old root plus the compacted span.
+            DeltaLog.clearCache()
+            val postCompactionSnapshot = deltaLogForName(name).update()
+            val postCompactionAmt = amtProvider(postCompactionSnapshot)
+            assert(postCompactionAmt.map(_.version).contains(initialRootVersion),
+              "AMT should not be updated after compaction.")
+            val compactedRange = (compactionStartVersion, compactedEndVersion)
+            assert(postCompactionSnapshot.logSegment.deltas
+              .filter(FileNames.isCompactedDeltaFile)
+              .exists(FileNames.compactedDeltaVersions(_) == compactedRange))
+          }
+
+          // Stage 2: loser starts.
+          unblockUntilPreCommit(loserObserver)
+          waitForPrecommit(loserObserver)
+
+          val loserDeltaLog = deltaLogForName(name)
+          val loserSnapshot = loserDeltaLog.update()
+          val loserSeesCompactedDelta = loserSnapshot.logSegment.deltas
+            .exists(FileNames.isCompactedDeltaFile)
+          assert(compactionBeforeLoserStarts == loserSeesCompactedDelta,
+            s"CompactionBeforeLoserStarts($compactionBeforeLoserStarts) != " +
+              s"LoserSeesCompactedDelta($loserSeesCompactedDelta).")
+
+          if (!compactionBeforeLoserStarts) {
+            winningRootVersion = appendThenPrepareWinner()
+          }
+
+          unblockCommit(checkpointWinnerObserver)
+          waitForCommit(checkpointWinnerObserver)
+
+          if (!compactionBeforeLoserStarts) {
+            compactedEndVersion = appendThenCompact(winningRootVersion)
+          }
+
+          val preRetrySnapshot = loserDeltaLog.update()
+          assert(amtProvider(preRetrySnapshot).map(_.version).contains(winningRootVersion),
+            "The winner's root must remain current until the loser retries.")
+
+          // Stage 3: loser commits and retries.
+          unblockCommit(loserObserver)
+          waitForCommit(loserObserver)
+      }
+      futures.foreach(future => ThreadUtils.awaitResult(future, Duration.Inf))
+
+      DeltaLog.clearCache()
+      val latestDeltaLog = deltaLogForName(name)
+      val latestSnapshot = latestDeltaLog.update()
+      // Table has advanced by 6 versions: 4 appends + 1 winner + 1 loser
+      assert(latestSnapshot.version == initialSnapshot.version + 6)
+      assert(checkpointAt(latestDeltaLog, latestSnapshot.version).isDefined,
+        "The loser's retry must commit an inline AMT checkpoint.")
+      assert(amtProvider(latestSnapshot).map(_.version).contains(latestSnapshot.version))
+      checkAnswer(
+        spark.sql(s"SELECT id FROM $name"),
+        Seq(1, 2, 3, 100, 200, 300, 400, 500).map(id => Row(id)))
+    }
+  }
+
+  Seq(true, false).foreach { compactionBeforeLoserStarts =>
+    test("inline AMT retry uses individual deltas when compaction spans the winning root " +
+        s"compactionBeforeLoserStarts=$compactionBeforeLoserStarts") {
+      runInlineRetryWithCompactedDelta(compactionBeforeLoserStarts)
+    }
+  }
+
   // A losing OPTIMIZE checkpoint -- full or incremental -- whose winner rewrote a pre-base file
   // (non-base-preserving) cannot reuse its base, so it rebuilds the tree rather than swallowing the
   // conflict or surfacing an error. A losing incremental checkpoint recreates itself in the same

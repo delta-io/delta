@@ -16,19 +16,17 @@
 package org.apache.spark.sql.delta.v2
 
 import java.util.{ArrayList => JArrayList, List => JList}
-
-import io.delta.kernel.internal.actions.{AddFile, RemoveFile}
-import io.delta.spark.internal.v2.read.CDCDataFile
+import javax.annotation.Nullable
 
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor => SparkDvDescriptor}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
-
-import javax.annotation.Nullable
+import org.apache.spark.sql.delta.v2.read.CDCDataFile
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import io.delta.kernel.internal.actions.{AddFile, RemoveFile}
 
 /**
  * Helper for DV-diff operations needed by DSv2 CDC streaming. Lives in the
@@ -86,8 +84,7 @@ object CDCDeletionVectorHelper {
       removeDvOpt: Option[String],
       hadoopConf: Configuration,
       tablePath: String): Array[(String, String)] = {
-    require(
-      addDvOpt.isDefined || removeDvOpt.isDefined,
+    require(addDvOpt.isDefined || removeDvOpt.isDefined,
       s"Same-path Add+Remove pair must have at least one DV, tablePath: $tablePath")
     val addDv = addDvOpt.map(SparkDvDescriptor.deserializeFromBase64)
     val removeDv = removeDvOpt.map(SparkDvDescriptor.deserializeFromBase64)
@@ -101,14 +98,14 @@ object CDCDeletionVectorHelper {
         // Remove without DV, Add with DV -> rows in addDv are deleted.
         // Skip disk read if the DV is already inline.
         val dvBase64 = if (aDv.isInline) addDvOpt.get
-        else readAndSerializeInline(dvStore, aDv, dataPath)
+                       else readAndSerializeInline(dvStore, aDv, dataPath)
         results += ((CDCReader.CDC_TYPE_DELETE_STRING, dvBase64))
 
       case (Some(rDv), None) =>
         // Remove with DV, Add without DV -> rows in removeDv are re-added.
         // Skip disk read if the DV is already inline.
         val dvBase64 = if (rDv.isInline) removeDvOpt.get
-        else readAndSerializeInline(dvStore, rDv, dataPath)
+                       else readAndSerializeInline(dvStore, rDv, dataPath)
         results += ((CDCReader.CDC_TYPE_INSERT, dvBase64))
 
       case (Some(rDv), Some(aDv)) =>
@@ -146,9 +143,7 @@ object CDCDeletionVectorHelper {
 
   private def serializeInline(bitmap: RoaringBitmapArray, dataPath: Path): String = {
     val bytes = DeletionVectorUtils.serialize(
-      bitmap,
-      RoaringBitmapArrayFormat.Portable,
-      Some(dataPath))
+      bitmap, RoaringBitmapArrayFormat.Portable, Some(dataPath))
     SparkDvDescriptor.inlineInLog(bytes, bitmap.cardinality).serializeToBase64
   }
 }

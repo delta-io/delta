@@ -213,29 +213,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def initialSnapshotTooLargeForStreaming(
-      snapshotVersion: Long,
-      numFiles: Long,
-      maxFiles: Int,
-      tablePath: String): Throwable = {
-    new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE",
-      messageParameters = Array(
-        tablePath,
-        snapshotVersion.toString,
-        numFiles.toString,
-        maxFiles.toString,
-        s"""To fix this issue, choose one of:
-           |
-           |  1. Increase spark.databricks.delta.streaming.initialSnapshotMaxFiles
-           |     (current: $maxFiles)
-           |
-           |  2. Use 'startingVersion' option to skip the initial snapshot and start
-           |     from a specific version""".stripMargin
-      )
-    )
-  }
-
   def deltaSourceIgnoreChangesError(
       version: Long,
       changeInfo: String,
@@ -715,7 +692,7 @@ trait DeltaErrorsBase
 
   /**
    * Read-time CDF batch read rejected because the table resolved by the catalog is not a V2
-   * [[io.delta.spark.internal.v2.catalog.DeltaV2Table]]. The V2 connector is the only path that
+   * [[org.apache.spark.sql.delta.v2.catalog.DeltaV2Table]]. The V2 connector is the only path that
    * implements the catalog-driven CHANGES surface. V1 Delta tables (`DeltaTableV2`) continue to
    * use the legacy CDF path that does not go through `TableCatalog.loadChangelog`. Use
    * `AUTO`/`STRICT` mode so the catalog re-resolves V1 tables to the V2 connector for CHANGES.
@@ -2315,6 +2292,18 @@ trait DeltaErrorsBase
       cause = originalException)
   }
 
+  def deltaV2TransactionCatalogMismatch(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTAV2_TRANSACTIONS_INCONSISTENT_CONFIG.CATALOG_MISMATCH",
+      messageParameters = Array.empty)
+  }
+
+  def deltaV2TransactionsRequireV2Connector(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTAV2_TRANSACTIONS_INCONSISTENT_CONFIG.REQUIRES_V2_CONNECTOR",
+      messageParameters = Array.empty)
+  }
+
   def duplicateColumnsOnUpdateTable(originalException: Throwable): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_DUPLICATE_COLUMNS_ON_UPDATE_TABLE",
@@ -3605,6 +3594,19 @@ trait DeltaErrorsBase
           }
         }
     )
+  }
+
+  def blockBatchCdfReadWithIncompatibleStartingCommitSchema(
+      start: Long,
+      incompatVersion: Long,
+      operation: Option[String]): Throwable = {
+    val (subClass, operationParameters) = operation.flatMap(Option(_)).filter(_.nonEmpty) match {
+      case Some(operationName) => ("KNOWN_OPERATION", Array(operationName))
+      case None => ("UNKNOWN_OPERATION", Array.empty[String])
+    }
+    new DeltaUnsupportedOperationException(
+      s"DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_STARTING_COMMIT_SCHEMA.$subClass",
+      messageParameters = Array(start.toString, incompatVersion.toString) ++ operationParameters)
   }
 
   def blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(

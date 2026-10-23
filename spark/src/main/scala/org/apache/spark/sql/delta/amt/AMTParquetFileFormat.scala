@@ -20,27 +20,35 @@ package org.apache.spark.sql.delta.amt
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.RowIndexFilterProvider
-import org.apache.spark.sql.delta.{DeltaLogFileIndex, RowIndexFilterMetadataColumnUtils}
+import org.apache.spark.sql.delta.{DeltaLogFileIndex, DeltaParquetWriteSupport, RowIndexFilterMetadataColumnUtils}
 import org.apache.spark.sql.delta.RowIndexFilterMetadataColumnUtils.ColumnMetadata
 import org.apache.spark.sql.delta.deletionvectors.KeepAllRowsFilter
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.hadoop.mapreduce.Job
+import org.apache.parquet.hadoop.ParquetOutputFormat
+import org.apache.parquet.hadoop.util.ContextUtil
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.datasources.PartitionedFile
+import org.apache.spark.sql.execution.datasources.{OutputWriterFactory, PartitionedFile}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.{ByteType, StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
 /**
- * Parquet reader for AMT leaves that exposes Manifest-DV membership without dropping rows.
+ * Parquet file format for AMT manifests (root and leaves).
  *
- * AMT must compute row-ID inheritance over every physical entry before applying the Manifest DV.
- * Consequently this format keeps files unsplit, disables pushed filters, and materializes a marker
- * that the AMT checkpoint provider filters only after computing the inheritance prefix.
+ * Write side: AMT manifests are Iceberg-V4 manifests, so [[prepareWrite]] always writes them with
+ * the Iceberg-compatible Parquet settings.
+ *
+ * Read side: exposes Manifest-DV membership without dropping rows. AMT must compute row-ID
+ * inheritance over every physical entry before applying the Manifest DV. Consequently this format
+ * keeps files unsplit, disables pushed filters, and materializes a marker that the AMT checkpoint
+ * provider filters only after computing the inheritance prefix.
  */
 private[delta] class AMTParquetFileFormat extends ParquetFileFormat {
   import AMTParquetFileFormat._
@@ -51,6 +59,23 @@ private[delta] class AMTParquetFileFormat extends ParquetFileFormat {
       sparkSession: SparkSession,
       options: Map[String, String],
       path: Path): Boolean = false
+
+  override def prepareWrite(
+      sparkSession: SparkSession,
+      job: Job,
+      options: Map[String, String],
+      dataSchema: StructType): OutputWriterFactory = {
+    val factory = super.prepareWrite(sparkSession, job, options, dataSchema)
+    // AMT manifests are Iceberg-V4 manifests. Iceberg requires timestamps as int64
+    // TIMESTAMP(MICROS); Spark's default is INT96.
+    ContextUtil.getConfiguration(job).set(
+      SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
+      SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
+    // Write list-element / map key-value field ids (carried on the schema via
+    // `parquet.field.nested.ids`), which the stock `ParquetWriteSupport` omits.
+    ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
+    factory
+  }
 
 
   override def buildReaderWithPartitionValues(

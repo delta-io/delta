@@ -17,7 +17,9 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.files.TahoeFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.{SparkThrowable, SparkUnsupportedOperationException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -28,7 +30,7 @@ import org.apache.spark.sql.types.StructType
 
 trait DeleteBaseMixin
   extends QueryTest
-  with SharedSparkSession
+  with DeltaSQLCommandTest
   with DeltaDMLTestUtils
   with DeltaTestUtilsForTempViews {
 
@@ -219,7 +221,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
   Seq(true, false).foreach { skippingEnabled =>
     Seq(true, false).foreach { isPartitioned =>
       test(s"data and partition columns - Partition=$isPartitioned Skipping=$skippingEnabled") {
-        withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
+        withConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
           val partitions = if (isPartitioned) "key" :: Nil else Nil
           val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
           append(input, partitions)
@@ -239,7 +241,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
 
   test("basic case with NullType") {
     assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
-    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+    withConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
       append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
       checkDelete(condition = None, Nil)
     }
@@ -247,7 +249,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
 
   test("basic case with condition on NullType") {
     assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
-    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+    withConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
       append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
       checkDelete(condition = Some("key is null"), Nil)
     }
@@ -255,7 +257,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
 
   test("basic case with nested NullType") {
     assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
-    withSQLConf(
+    withConf(
       DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"
     ) {
       append(Seq(Tuple1((null, 2)), Tuple1((null, 4)), Tuple1(null), Tuple1((null, 1))).toDF("s"))
@@ -430,7 +432,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     assert(e4.contains("Subqueries are not supported"))
 
     // EXISTS mixed with IN: the IN subquery should still be blocked
-    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
+    withConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
       checkError(
         intercept[DeltaAnalysisException] {
           executeDelete(
@@ -448,7 +450,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
     Seq((2, 2), (1, 4)).toDF("c", "d").createOrReplaceTempView("source")
 
-    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
+    withConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
       executeDelete(
         target = tableSQLIdentifier,
         where = "EXISTS (SELECT 1 FROM source WHERE key = c)")
@@ -462,7 +464,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
     Seq((2, 2), (1, 4)).toDF("c", "d").createOrReplaceTempView("source")
 
-    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
+    withConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
       executeDelete(
         target = tableSQLIdentifier,
         where = "NOT EXISTS (SELECT 1 FROM source WHERE key = c)")
@@ -477,7 +479,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     append(Seq((2, 2), (1, 4)).toDF("key", "value"))
     Seq((2, 2)).toDF("c", "d").createOrReplaceTempView("source")
 
-    withSQLConf(
+    withConf(
         DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "false") {
       checkError(
         intercept[DeltaAnalysisException] {
@@ -504,8 +506,9 @@ trait DeleteBaseTests extends DeleteBaseMixin {
         Row(1, 4) :: Row(1, 1) :: Row(0, 3) :: Nil)
     }
 
+    // Filter out Delta Metadata scans.
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanLike => f
+      case f: FileSourceScanLike if f.relation.location.isInstanceOf[TahoeFileIndex] => f
     })
 
     // The first scan is for finding files to delete. We only are matching against the key
@@ -528,8 +531,9 @@ trait DeleteBaseTests extends DeleteBaseMixin {
         Row(Row(1, 4)) :: Row(Row(1, 1)) :: Row(Row(0, 3)) :: Nil)
     }
 
+    // Filter out Delta Metadata scans.
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanLike => f
+      case f: FileSourceScanLike if f.relation.location.isInstanceOf[TahoeFileIndex] => f
     })
 
     assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
@@ -693,7 +697,7 @@ trait DeleteSubqueryBaseMixin extends DeleteBaseMixin {
           .toDF("c", "s2")
           .createOrReplaceTempView("source2")
       }
-      withSQLConf(
+      withConf(
         DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true"
       ) {
       executeDelete(target = "target t", where = deleteWhere)
@@ -841,7 +845,7 @@ trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
       .toDF("c", "s1")
       .createOrReplaceTempView("source")
 
-    withSQLConf(
+    withConf(
       DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true"
     ) {
     executeDelete(target = "target t",
@@ -866,7 +870,7 @@ trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
       .toDF("c", "s1")
       .createOrReplaceTempView("source")
 
-    withSQLConf(
+    withConf(
       DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true"
     ) {
     executeDelete(target = "target t",

@@ -127,6 +127,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_STATS_WIDEN_BOUNDS_PRESERVE_NUMERIC_PRECISION_ENABLED =
+    buildConf("stats.widenBounds.preserveNumericPrecision.enabled")
+      .internal()
+      .doc(
+        """When enabled, AddFile.withoutTightBoundStats preserves numeric precision when
+          |updating file statistics to set tightBounds to false. When disabled, the legacy
+          |JSON update can round decimal bounds through Double and cause incorrect data
+          |skipping.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")
       .doc("Arbitrary user-defined metadata to include in CommitInfo.")
@@ -259,6 +270,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("Whether to check whether the partition column names have valid names, just like " +
         "the data columns.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val CREATE_TABLE_VERIFY_COLUMN_ORDER_ENABLED =
+    buildConf("createTable.verifyColumnOrder.enabled")
+      .internal()
+      .doc("Whether CREATE TABLE with a column list over an existing Delta table fails when " +
+        "the columns, including nested struct fields, are listed in a different order than " +
+        "the existing schema.")
       .booleanConf
       .createWithDefault(true)
 
@@ -673,12 +693,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED =
     buildConf("amt.snapshotDiscovery.asyncCommitInfoRead.enabled")
       .internal()
-      .doc("When enabled, an async CommitInfo read will be kicked off during snapshot creation " +
-        "in parallel with the CRC read. Enabling it could cause slight performance overhead on " +
-        "non-AMT tables when CRC is absent, and extra checkpoint threadpool contention. " +
-        "Disabling it could result in missing file actions in snapshot discovery for AMT tables.")
+      .doc("When enabled, snapshot creation may read CommitInfo asynchronously in parallel with " +
+        "the CRC read to discover AMT checkpoints. The read is skipped when a CRC for the target " +
+        "version is already available or when hints identify the table as non-AMT. Tables with " +
+        "unknown AMT status may still incur extra I/O and checkpoint threadpool contention. " +
+        "Disabling this can cause missing file actions in snapshot discovery for AMT tables " +
+        "without a CRC.")
       .booleanConf
-      .createWithDefault(DeltaUtils.isTesting)
+      .createWithDefault(true)
 
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
@@ -850,6 +872,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("Enables parallelizing the deletion of files during a vacuum command. Enabling " +
         "may result hitting rate limits on some storage backends. When enabled, parallelization " +
         "is controlled 'spark.databricks.delta.vacuum.parallelDelete.parallelism'.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val VACUUM_PROTECTION_SET_TOMBSTONES_FROM_COMMITS_ENABLED =
+    buildConf("vacuum.protectionSet.tombstonesFromCommits.enabled")
+      .internal()
+      .doc("When enabled, Vacuum derives the 'files removed within the retention window' part " +
+        "of its protection set by commit traversal instead of reading tombstones inline from " +
+        "the reconstructed checkpoint state. This removes Vacuum's dependency on checkpoints " +
+        "carrying tombstones. Defaults to off.")
       .booleanConf
       .createWithDefault(false)
 
@@ -1245,6 +1277,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
 
     final val list = Set(NONE, ALL, AUTO)
   }
+
+  val INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED =
+    buildConf("insertReplaceOnOrUsing.pinStatementTime.enabled")
+      .internal()
+      .doc(
+        """
+          |If enabled, INSERT REPLACE ON/USING folds current date/time functions in its source
+          |query and REPLACE ON condition to one statement instant. DELETE, INSERT and source
+          |materialization retries then use the same time. When disabled, the phases fold time
+          |independently, which can lose or duplicate rows selected by a current-time filter.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val INSERT_REPLACE_ON_OR_USING_MATERIALIZE_SOURCE =
     buildConf("insertReplaceOnOrUsing.materializeSource")
@@ -1680,6 +1725,22 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_READ_SET_TRANSACTIONS_FROM_CRC =
+    buildConf("setTransactionsInCrc.useForReads")
+      .internal()
+      .doc("When enabled, Delta will use the setTransactions from CRC (if available) to speed up" +
+        " Snapshot.setTransactions API.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val FAST_QUERY_PATH_ENABLED =
+    buildConf("fastQueryPath.enabled")
+      .doc("If enabled, analysis and data skipping on Delta tables will go through a fast path " +
+        "that does minimal amount of work. " +
+        "Many snapshot fields are retrieved from the checksum if available.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_MAX_SET_TRANSACTIONS_IN_CRC =
     buildConf("setTransactionsInCrc.maxAllowed")
       .internal()
@@ -1748,17 +1809,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("If enabled, delta log snapshot will read the protocol, metadata, and ICT " +
         "(if applicable) from the checksum file and use those to avoid a spark job over the " +
         "checkpoint for the two rows of protocol and metadata")
-      .booleanConf
-      .createWithDefault(true)
-
-  val USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED =
-    buildConf("readSnapshotStateFromChecksum.enabled")
-      .internal()
-      .doc("If enabled, snapshot state fields (file/record counts, set transactions, domain " +
-        "metadata, and histograms) are read from the checksum file when it contains them, " +
-        "avoiding a spark job aggregating over the state reconstruction. Fields the checksum " +
-        "does not carry, and snapshots without a checksum file, fall back to state " +
-        "reconstruction.")
       .booleanConf
       .createWithDefault(true)
 
@@ -1984,6 +2034,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
              |does not support colons in file paths due to ambiguity, but some file systems like
              |S3 allow them.
              |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val REPLACEWHERE_LITERAL_STRING_PREDICATES_ENABLED =
+    buildConf("replaceWhere.literalStringPredicates.enabled")
+      .internal()
+      .doc("When enabled, Delta overwrite filters preserve literal string operands. " +
+        "When disabled, startsWith, endsWith, and contains use the legacy LIKE translation.")
       .booleanConf
       .createWithDefault(true)
 
@@ -2337,6 +2395,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_COMMIT_INFO_DATA_CHANGE_WRITE_FOR_NON_AMT_ENABLED =
+    buildConf("commitInfo.dataChange.writeForNonAMTTables.enabled")
+      .internal()
+      .doc("""
+             |When enabled, Delta records the commit-level dataChange in CommitInfo for non-AMT
+             |tables. AMT tables always record it. This is a kill switch for writing the field to
+             |non-AMT tables.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   object ValidateCheckConstraintsMode extends Enumeration {
     val OFF, LOG_ONLY, ASSERT = Value
 
@@ -2680,6 +2749,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .createWithDefault(false)
   }
 
+  val DELTA_CDF_SKIP_NONDETERMINISTIC_FILTER_PUSHDOWN =
+    buildConf("changeDataFeed.skipNondeterministicFilterPushdown.enabled")
+      .internal()
+      .doc("When true, V1 CDF scans leave nondeterministic predicates to Spark's outer filter. " +
+        "When false, they also evaluate these predicates internally, restoring the previous " +
+        "behavior.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES =
     buildConf("streaming.unsafeReadOnIncompatibleColumnMappingSchemaChanges.enabled")
       .doc(
@@ -2819,6 +2897,25 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           "schema confusion. However, existing users may use this flag to force unblock " +
           "if they'd like to take the risk.")
       .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES =
+    buildConf("changeDataFeed.blockReadsAcrossPartitionSchemaChanges.enabled")
+      .internal()
+      .doc(
+        "When enabled, batch CDF reads fail if their read range crosses a partition schema " +
+          "change. The read must be split at each partition schema change boundary. This also " +
+          "enables the read-time CDF start version schema compatibility check.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CDF_START_VERSION_SCHEMA_CHECK_ENABLED =
+    buildConf("changeDataFeed.startVersionSchemaCheck.enabled")
+      .internal()
+      .doc("When enabled, batch CDF reads fail if files removed in the starting commit use " +
+        "an incompatible prior schema. Incompatibilities are logged even when this flag " +
+        "is disabled.")
       .booleanConf
       .createWithDefault(false)
 
@@ -3554,6 +3651,26 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val CONCURRENT_IDENTITY_COLUMN_MAX_COLUMNS_PER_TABLE =
+    buildConf("identityColumn.concurrent.maxColumnsPerTable")
+      .internal()
+      .doc("Maximum number of concurrent (service-backed) identity columns allowed on a single " +
+        "table. Enforced when the table opts into the feature: CREATE/REPLACE with the CIC " +
+        "feature and the feature opt-in conversion reject a table whose identity-column count " +
+        "exceeds this, before any sequence is minted.")
+      .intConf
+      .checkValue(_ > 0, "maxColumnsPerTable must be positive")
+      .createWithDefault(50)
+
+  val CONCURRENT_IDENTITY_COLUMN_SERVICE_CLASS_NAME =
+    buildConf("identityColumn.concurrent.serviceClassName")
+      .internal()
+      .doc("Optional override naming an IdentitySequenceService implementation (with a no-arg " +
+        "constructor) that IdentitySequenceServices.resolve instantiates reflectively instead of " +
+        "the default backend. Unit suites point it at the LocalIdentitySequenceService fake.")
+      .stringConf
+      .createOptional
+
   //////////////////
   // GeoSpatial
   //////////////////
@@ -3716,6 +3833,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_DYNAMIC_PARTITION_OVERWRITE_TYPE_WIDENING_FIX_ENABLED =
+    buildConf("dynamicPartitionOverwrite.typeWideningFix.enabled")
+      .internal()
+      .doc(
+        """Only applies when dynamicPartitionOverwrite.parsePartitionValues is enabled.
+          |When enabled, dynamic partition overwrite normalizes both existing and incoming
+          |partition values using the updated partition schema before matching. When disabled,
+          |keeps the legacy typed comparison.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   //////////////////
   // CORRECTNESS
   //////////////////
@@ -3797,6 +3925,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(Set("AUTO", "NONE", "STRICT"))
       .createWithDefault("AUTO")
 
+  val V2_TRANSACTIONS_ENABLED =
+    buildConf("v2.transactions.enabled")
+      .internal()
+      .doc("When enabled, Delta utilises DSv2 Spark transactions in write operations. " +
+        "Disabled by default. This is a feature under development.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS =
     buildConf("dml.insert.dfByName.allowImplicitCasts")
       .internal()
@@ -3811,12 +3947,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
-    buildConf("streaming.initialSnapshotMaxFiles")
+  val DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED =
+    buildConf("dml.insert.implicitCastResolutionFixEnabled")
       .internal()
-      .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
-      .intConf
-      .createWithDefault(100000)
+      .doc(
+        """Whether INSERT implicit casting uses corrected nested-field resolution. When true,
+          |DeltaImplicitCast takes precedence over DeltaAnalysis for V2 write schema alignment:
+          |SQL BY NAME resolves nested fields by name, while positional writes resolve them by
+          |position. Column-list writes also resolve by position when Spark's corresponding fix
+          |is enabled."""
+          .stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT =
     buildConf("streaming.distributedInitialSnapshot")

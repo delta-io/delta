@@ -16,14 +16,14 @@
 
 package org.apache.spark.sql.delta.catalog
 
-import io.delta.spark.internal.v2.catalog.DeltaV2Table
-import io.delta.spark.internal.v2.read.changelog.DeltaV2Changelog
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaV2Mode}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table
+import org.apache.spark.sql.delta.v2.read.changelog.DeltaV2Changelog
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogContext, Identifier, TableCatalog}
 import org.apache.spark.sql.connector.catalog.ChangelogRange.{TimestampRange, UnboundedRange, VersionRange}
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaV2Mode}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -61,7 +61,7 @@ trait ChangelogSupport extends TableCatalog {
       throw new UnsupportedOperationException(
         s"${name()} does not support Change Data Capture (CDC)")
     }
-    val routeChangelogToV2 = new DeltaV2Mode(spark.sessionState.conf).shouldRouteChangelogToV2()
+    val routeChangelogToV2 = DeltaV2Mode(spark).shouldRouteChangelogToV2()
     val deltaV2Table = loadTable(ident) match {
       case st: DeltaV2Table => st
       // Read-time CDF is V2-only. Re-resolve to V2.

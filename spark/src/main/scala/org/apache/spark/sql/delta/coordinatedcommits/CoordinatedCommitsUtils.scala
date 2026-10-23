@@ -584,6 +584,10 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       catalogTableOpt: Option[CatalogTable],
       startVersion: Long): Iterator[(FileStatus, Long)] = {
 
+    /**
+     * Returns the backfilled deltas found by a filesystem listing between startVersion and
+     * endVersion (a flat `_delta_log` listing, so it never sees `_staged_commits` files).
+     */
     def listDeltas(startVersion: Long, endVersion: Option[Long]): Iterator[(FileStatus, Long)] = {
       deltaLog
         .listFrom(startVersion)
@@ -615,9 +619,11 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       if (maxVersionSeen >= endSnapshot.version) {
         return Iterator.empty
       }
-      val unbackfilledDeltas = endSnapshot.logSegment.deltas.collect {
-        case UnbackfilledDeltaFile(fileStatus, version, _) if version > maxVersionSeen =>
-          (fileStatus, version)
+      // Collect the unlisted unbackfilled deltas since the checkpoint version (inclusive).
+      //  - For non-AMT tables, `unbackfilledDeltas` must be strictly after checkpoint version.
+      //  - For AMT tables, `unbackfilledDeltas` may include the commit at checkpoint version.
+      val unbackfilledDeltas = endSnapshot.logSegment.unbackfilledDeltas.collect {
+        case (file, version, _) if version > maxVersionSeen => (file, version)
       }
       val backfillGapFixEnabled = SparkSession.active.sessionState.conf.getConf(
         DeltaSQLConf.COMMIT_FILES_ITERATOR_BACKFILL_GAP_FIX_ENABLED)
