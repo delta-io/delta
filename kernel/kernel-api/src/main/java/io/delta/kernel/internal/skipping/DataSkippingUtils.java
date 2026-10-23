@@ -28,6 +28,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.CollationIdentifier;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.util.*;
@@ -307,6 +308,82 @@ public class DataSkippingUtils {
                     "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS",
                     Arrays.asList(minCol, maxCol, queryMin, queryMax),
                     refCols));
+          }
+        }
+        break;
+
+      case "STARTS_WITH":
+        // For predicate: column STARTS_WITH 'prefix'
+        // Data skipping rule:
+        //   SUBSTRING(minValue, 1, prefixLen) <= prefix AND
+        //   SUBSTRING(maxValue, 1, prefixLen) >= prefix
+        //
+        // A file can be skipped if the prefix falls completely outside the min/max range
+        // of the column's string prefixes.
+        Expression startsWithLeft = getLeft(dataFilters);
+        Expression startsWithRight = getRight(dataFilters);
+        Optional<CollationIdentifier> startsWithCollation = dataFilters.getCollationIdentifier();
+
+        if (startsWithCollation
+            .filter(ci -> !ci.isSparkUTF8BinaryCollation() && ci.getVersion().isEmpty())
+            .isPresent()) {
+          // Collation must specify a version to be used for data skipping
+          return Optional.empty();
+        }
+
+        if (startsWithLeft instanceof Column && startsWithRight instanceof Literal) {
+          Column leftCol = (Column) startsWithLeft;
+          Literal prefixLit = (Literal) startsWithRight;
+
+          // STARTS_WITH only works with strings
+          if (!(prefixLit.getDataType() instanceof StringType)) {
+            return Optional.empty();
+          }
+
+          if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)) {
+            String prefix = (String) prefixLit.getValue();
+            int prefixLen = prefix.length();
+
+            // Get min and max columns
+            Column minCol = schemaHelper.getMinColumn(leftCol, startsWithCollation)._1;
+            Column maxCol = schemaHelper.getMaxColumn(leftCol, startsWithCollation)._1;
+
+            // Create SUBSTRING expressions: SUBSTRING(col, 1, prefixLen)
+            // Note: SUBSTRING uses 1-based indexing
+            ScalarExpression minSubstring =
+                new ScalarExpression(
+                    "SUBSTRING", Arrays.asList(minCol, Literal.ofInt(1), Literal.ofInt(prefixLen)));
+            ScalarExpression maxSubstring =
+                new ScalarExpression(
+                    "SUBSTRING", Arrays.asList(maxCol, Literal.ofInt(1), Literal.ofInt(prefixLen)));
+
+            // Build: SUBSTRING(min, 1, len) <= prefix AND SUBSTRING(max, 1, len) >= prefix
+            DataSkippingPredicate minPredicate;
+            DataSkippingPredicate maxPredicate;
+
+            if (startsWithCollation.isPresent()) {
+              minPredicate =
+                  new DataSkippingPredicate(
+                      "<=",
+                      Arrays.asList(minSubstring, prefixLit),
+                      startsWithCollation.get(),
+                      Collections.singleton(minCol));
+              maxPredicate =
+                  new DataSkippingPredicate(
+                      ">=",
+                      Arrays.asList(maxSubstring, prefixLit),
+                      startsWithCollation.get(),
+                      Collections.singleton(maxCol));
+            } else {
+              minPredicate =
+                  new DataSkippingPredicate(
+                      "<=", Arrays.asList(minSubstring, prefixLit), Collections.singleton(minCol));
+              maxPredicate =
+                  new DataSkippingPredicate(
+                      ">=", Arrays.asList(maxSubstring, prefixLit), Collections.singleton(maxCol));
+            }
+
+            return Optional.of(new DataSkippingPredicate("AND", minPredicate, maxPredicate));
           }
         }
         break;
