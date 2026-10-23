@@ -202,6 +202,8 @@ class DeltaAnalysis(protected val session: SparkSession)
       // Whether we are enabling Catalog-Owned via explicit property overrides.
       var isEnablingCatalogOwnedViaExplicitPropertyOverrides: Boolean = false
 
+      // Whether we are enabling Concurrent Identity Columns via explicit property overrides.
+      var isEnablingCicViaExplicitPropertyOverrides: Boolean = false
       val catalogTableTarget =
         // If source table is Delta format
         if (src.provider.exists(DeltaSourceUtils.isDeltaDataSourceName)) {
@@ -234,6 +236,15 @@ class DeltaAnalysis(protected val session: SparkSession)
                 configs = ctl.properties).contains(CatalogOwnedTableFeature)) {
             isEnablingCatalogOwnedViaExplicitPropertyOverrides = true
           }
+          // Like Catalog-Owned, the target is a Concurrent Identity Columns table only when the
+          // TBLPROPERTIES clause enables the feature; see the protocol filtering below.
+            if (
+              TableFeatureProtocolUtils
+                .getSupportedFeaturesFromTableConfigs(configs = ctl.properties)
+                .contains(ConcurrentIdentityColumnsTableFeature)
+            ) {
+            isEnablingCicViaExplicitPropertyOverrides = true
+          }
 
           val config =
             sourceMetadata.configuration.-("delta.columnMapping.maxColumnId")
@@ -249,7 +260,10 @@ class DeltaAnalysis(protected val session: SparkSession)
             identifier = targetTableIdentifier,
             tableType = tblType,
             storage = newStorage,
-            schema = sourceMetadata.schema,
+            // Drop copied concurrent-identity sequence IDs so the create path stamps fresh ones:
+            // the service keys a sequence by (metastore, sequenceId), so the source's ID is taken.
+            schema =
+              ConcurrentIdentityColumnSchema.stripConcurrentSequenceMetadata(sourceMetadata.schema),
             properties = config ++ ctl.properties,
             partitionColumnNames = sourceMetadata.partitionColumns,
             provider = Some("delta"),
@@ -299,6 +313,17 @@ class DeltaAnalysis(protected val session: SparkSession)
         case _ =>
           protocol
       }
+      // Concurrent Identity Columns: Do not copy over [[ConcurrentIdentityColumnsTableFeature]]
+      // from the source table unless the TBLPROPERTIES clause enables it. Stamping a fresh
+      // sequence ID is gated on the target's properties, so an inherited feature would leave the
+      // identity columns unstamped on a CIC table.
+      val protocolAfterFilteringCicFromSource =
+        protocolAfterFilteringCatalogOwnedFromSource match {
+          case Some(p) if !isEnablingCicViaExplicitPropertyOverrides =>
+            Some(p.removeFeature(targetFeature = ConcurrentIdentityColumnsTableFeature))
+          case p =>
+            p
+        }
       val newDeltaCatalog = new DeltaCatalogV1()
       val existingTableOpt = newDeltaCatalog.getExistingTableIfExists(
         catalogTableTarget.identifier,
@@ -315,7 +340,7 @@ class DeltaAnalysis(protected val session: SparkSession)
         mode = saveMode,
         query = None,
         output = ctl.output,
-        protocol = protocolAfterFilteringCatalogOwnedFromSource,
+        protocol = protocolAfterFilteringCicFromSource,
         tableByPath = isTableByPath)
 
     // Handling df.insertInto() with `replaceOn`/`replaceUsing`.
