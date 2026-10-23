@@ -660,6 +660,30 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
     }
   }
 
+  test("inventory schema validation ignores nullability, metadata, and field order") {
+    withTempDir { tempDir =>
+      val commentMetadata =
+        new MetadataBuilder().putString("comment", "inventory column").build()
+      val inventorySchema = StructType(Seq(
+        StructField(
+          "modificationTime", LongType, nullable = false, metadata = commentMetadata),
+        StructField("path", StringType, nullable = false, metadata = commentMetadata),
+        StructField("isDir", BooleanType, nullable = false, metadata = commentMetadata),
+        StructField("length", LongType, nullable = false, metadata = commentMetadata)
+      ))
+      val inventory = spark.createDataFrame(
+        spark.sparkContext.parallelize(Seq.empty[Row]), inventorySchema)
+
+      val files = VacuumCommand.getFilesFromInventory(
+        tempDir.toURI.toString,
+        partitionColumns = Seq.empty,
+        inventory = inventory,
+        shouldIcebergMetadataDirBeHidden = true)
+
+      assert(files.collect().isEmpty)
+    }
+  }
+
   test("run vacuum by using inventory dataframe") {
     withEnvironment { (tempDir, clock) =>
       val table = DeltaTableV2(spark, tempDir, clock)
