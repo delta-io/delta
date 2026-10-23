@@ -361,12 +361,16 @@ case class CreateDeltaTableCommand(
       )
       (taggedCommitData, op)
     }
-    // A V1 saveAsTable overwrite of an existing table only overwrites data. It skips
-    // replaceMetadataIfNecessary, so the table properties do not change and
-    // deltaWriter.configuration is not committed. When the table exists, the enforcement check
-    // below uses the snapshot config, which is the committed config. This config includes
-    // properties that are only in the Delta log (e.g. delta.enableIcebergCompatV3 set via
-    // ALTER TABLE). When the table does not exist, the check uses deltaWriter.configuration.
+    // A V1 saveAsTable overwrite only overwrites data: it skips replaceMetadataIfNecessary, so
+    // table properties are left untouched, the committed config stays the snapshot's, and
+    // deltaWriter.configuration (writer/catalog options only) never persists. If the table exists,
+    // we pass snapshot config to the enforcement check below so it sees that committed (snapshot)
+    // config -- which includes properties kept solely in the Delta log (e.g.
+    // delta.enableIcebergCompatV3 set via ALTER TABLE). Without it the check reads
+    // deltaWriter.configuration alone, misses the snapshot's flag, and wrongly fails the write with
+    // "IcebergCompat cannot be disabled". (V2 createOrReplace / SQL REPLACE do redefine properties,
+    // via replaceMetadataIfNecessary.) If the table does not exist, the check uses the writer
+    // config.
     val writerConfiguration =
       if (isV1WriterSaveAsTableOverwrite && txn.readVersion > -1L) {
         txn.snapshot.metadata.configuration
