@@ -18,6 +18,7 @@ package io.delta.kernel.defaults.engine;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
+import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -36,6 +37,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
 import java.io.*;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
@@ -44,7 +46,7 @@ public class DefaultJsonHandler implements JsonHandler {
   private static final ObjectMapper mapper = new ObjectMapper();
   // by default BigDecimals are truncated and read as floats
   private static final ObjectReader objectReaderReadBigDecimals =
-      new ObjectMapper().reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+      createObjectMapper().reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
 
   private final FileIO fileIO;
   private final int maxBatchSize;
@@ -169,6 +171,32 @@ public class DefaultJsonHandler implements JsonHandler {
   public void writeJsonFileAtomically(
       String filePath, CloseableIterator<Row> data, boolean overwrite) throws IOException {
     fileIO.newOutputFile(filePath).writeAtomically(data.map(JsonUtils::rowToJson), overwrite);
+  }
+
+  private static ObjectMapper createObjectMapper() {
+    ObjectMapper mapper = new ObjectMapper();
+    Method getConstraints;
+    try {
+      // Reflection preserves compatibility with Jackson versions before 2.15.
+      getConstraints = JsonFactory.class.getMethod("streamReadConstraints");
+    } catch (NoSuchMethodException e) {
+      return mapper;
+    }
+
+    try {
+      Class<?> constraintsClass = getConstraints.getReturnType();
+      Object constraints = getConstraints.invoke(mapper.getFactory());
+      Object builder = constraintsClass.getMethod("rebuild").invoke(constraints);
+      Class<?> builderClass = builder.getClass();
+      // Delta metadata and statistics can contain strings larger than Jackson's default limit.
+      builderClass.getMethod("maxStringLength", int.class).invoke(builder, Integer.MAX_VALUE);
+      JsonFactory.class
+          .getMethod("setStreamReadConstraints", constraintsClass)
+          .invoke(mapper.getFactory(), builderClass.getMethod("build").invoke(builder));
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException("Could not configure JSON string length limit", e);
+    }
+    return mapper;
   }
 
   private Row parseJson(String json, StructType readSchema) {
