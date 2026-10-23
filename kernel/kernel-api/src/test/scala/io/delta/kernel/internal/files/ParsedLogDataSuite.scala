@@ -141,6 +141,88 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(exMsg.contains("Expected a staged commit file but got"))
   }
 
+  test("ParsedCatalogCommitData.forCatalogFileStatus: accepts staged commit file") {
+    val fileStatus = stagedCommitFile(5)
+    val parsed = ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 5, fileStatus)
+    assert(parsed.getVersion == 5)
+    assert(parsed.getFileStatus == fileStatus)
+  }
+
+  test("ParsedCatalogCommitData.forCatalogFileStatus: accepts published delta file") {
+    val fileStatus = deltaFileStatus(5)
+    val parsed = ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 5, fileStatus)
+    assert(parsed.getVersion == 5)
+    assert(parsed.isFile)
+    assert(parsed.getFileStatus == fileStatus)
+  }
+
+  test("ParsedCatalogCommitData.forCatalogFileStatus: accepts qualified file path") {
+    val fileStatus = FileStatus.of("file:" + FileNames.deltaFile(logPath, 5), 5, 50)
+    val parsed = ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 5, fileStatus)
+    assert(parsed.getVersion == 5)
+  }
+
+  test("ParsedCatalogCommitData.forCatalogFileStatus: rejects published name under " +
+    "_staged_commits") {
+    val fileStatus = FileStatus.of(s"$logPath/_staged_commits/00000000000000000005.json", 5, 50)
+    val exMsg = intercept[IllegalArgumentException] {
+      ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 5, fileStatus)
+    }.getMessage
+    assert(exMsg.contains("published commit file name under _staged_commits"))
+  }
+
+  test("ParsedCatalogCommitData.forCatalogFileStatus: rejects staged name under _delta_log") {
+    val fileStatus = FileStatus.of(s"$logPath/00000000000000000005.uuid-1234.json", 5, 50)
+    val exMsg = intercept[IllegalArgumentException] {
+      ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 5, fileStatus)
+    }.getMessage
+    assert(exMsg.contains("to be located in"))
+  }
+
+  test("ParsedCatalogCommitData.forCatalogFileStatus: rejects file from another table") {
+    Seq(
+      FileStatus.of("/other/table/_delta_log/00000000000000000005.json", 5, 50),
+      FileStatus.of(
+        "/other/table/_delta_log/_staged_commits/00000000000000000005.uuid.json",
+        5,
+        50),
+      FileStatus.of("s3://bucket" + FileNames.deltaFile(logPath, 5), 5, 50)).foreach { fs =>
+      val exMsg = intercept[IllegalArgumentException] {
+        ParsedCatalogCommitData.forCatalogFileStatus("file:" + logPath, 5, fs)
+      }.getMessage
+      assert(exMsg.contains("to be located in"))
+    }
+  }
+
+  test("ParsedCatalogCommitData.forCatalogFileStatus: rejects file from another bucket") {
+    val fs = FileStatus.of("s3://bucket-b/t/_delta_log/00000000000000000005.json", 5, 50)
+    val exMsg = intercept[IllegalArgumentException] {
+      ParsedCatalogCommitData.forCatalogFileStatus("s3://bucket-a/t/_delta_log", 5, fs)
+    }.getMessage
+    assert(exMsg.contains("to be located in"))
+  }
+
+  test("ParsedCatalogCommitData.forCatalogFileStatus: rejects version mismatch") {
+    Seq(deltaFileStatus(5), stagedCommitFile(5)).foreach { fs =>
+      val exMsg = intercept[IllegalArgumentException] {
+        ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 6, fs)
+      }.getMessage
+      assert(exMsg.contains("but the catalog reported version 6"))
+    }
+  }
+
+  test("ParsedCatalogCommitData.forCatalogFileStatus: rejects non-commit files") {
+    Seq(
+      FileStatus.of(FileNames.checksumFile(logPath, 5).toString, 5, 50),
+      FileStatus.of(FileNames.checkpointFileSingular(logPath, 5).toString, 5, 50),
+      FileStatus.of(s"$logPath/foo.json", 5, 50)).foreach { fs =>
+      val exMsg = intercept[IllegalArgumentException] {
+        ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 5, fs)
+      }.getMessage
+      assert(exMsg.contains("Expected a catalog commit file but got"))
+    }
+  }
+
   test("ParsedCatalogCommitData: equality") {
     val fileStatus1 = stagedCommitFile(5)
     val fileStatus3 = stagedCommitFile(6)

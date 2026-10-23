@@ -27,12 +27,12 @@ public final class LogDataUtils {
 
   private LogDataUtils() {}
 
-  public static void validateLogDataContainsOnlyRatifiedStagedCommits(
+  public static void validateLogDataContainsOnlyRatifiedCatalogCommits(
       List<? extends ParsedLogData> logDatas) {
     for (ParsedLogData logData : logDatas) {
       checkArgument(
           logData instanceof ParsedCatalogCommitData && logData.isFile(),
-          "Only staged ratified commits are supported, but found: " + logData);
+          "Only file-based ratified catalog commits are supported, but found: " + logData);
     }
   }
 

@@ -164,14 +164,29 @@ trait UCCatalogManagedTestUtils
    */
   def withUCClientAndTestTable(
       textFx: (InMemoryUCClientWithMetrics, String, Long) => Unit): Unit = {
+    withUCClientAndTestTableWithOptions(includePublishedV0 = false)(textFx)
+  }
+
+  /**
+   * @param includePublishedV0 whether UC also returns the already-published v0 commit
+   *                           (`_delta_log/00000000000000000000.json`) as a catalog commit
+   * @param textFx test function to run that takes input (ucClient, tablePath, maxRatifiedVersion)
+   */
+  def withUCClientAndTestTableWithOptions(includePublishedV0: Boolean)(
+      textFx: (InMemoryUCClientWithMetrics, String, Long) => Unit): Unit = {
     val maxRatifiedVersion = 2L
     val tablePath = getTestResourceFilePath("catalog-owned-preview")
     val ucClient = new InMemoryUCClientWithMetrics("ucMetastoreId")
     val fs = FileSystem.get(new Configuration())
-    val catalogCommits = Seq(
+    val publishedCommits = if (includePublishedV0) {
+      Seq(getTestResourceFilePath("catalog-owned-preview/_delta_log/00000000000000000000.json"))
+    } else {
+      Seq.empty
+    }
+    val catalogCommits = (publishedCommits ++ Seq(
       // scalastyle:off line.size.limit
       getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000001.4cb9708e-b478-44de-b203-53f9ba9b2876.json"),
-      getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000002.5b9bba4a-0085-430d-a65e-b0d38c1afbe9.json"))
+      getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000002.5b9bba4a-0085-430d-a65e-b0d38c1afbe9.json")))
       // scalastyle:on line.size.limit
       .map { path => fs.getFileStatus(new Path(path)) }
       .map { fileStatus =>
