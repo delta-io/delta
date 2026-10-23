@@ -7,7 +7,7 @@ This protocol change documents support for interval types (as defined [here](htt
 
 Like [`void`](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#void-type), interval types are documented here post-facto: interval columns already exist in tables written by earlier clients before this behavior was specified. Because such columns predate any table feature, interval types are **not** gated by a table feature and apply to all tables.
 
-Adopting this behavior in Delta-Spark is expected to be straightforward, since the Parquet encoding, statistics handling, and partition-value serialization specified here already match what Spark produces for these types, leaving essentially only the schema-level type check to relax.
+The Parquet encoding, statistics handling, and partition-value serialization retain their existing representations. This proposal additionally requires writers to write values aligned to the declared interval type's end field. Existing writers may need changes to satisfy this requirement; readers continue to accept existing in-range values even when they are not aligned.
 
 --------
 
@@ -35,9 +35,19 @@ ANSI SQL also permits narrowed spellings that denote the same two families: for 
 
 Both the canonical names and all valid narrowed spellings listed above are permitted in `metaData.schemaString`. Readers must accept every permitted spelling, and writers must preserve the declared spelling (see [Writer Requirements](#writer-requirements)).
 
-Every year-month spelling belongs to the `interval year to month` logical type, and every day-second spelling to the `interval day to second` logical type; the spelling remains part of each field's declared type. Wherever this document states a rule for a canonical interval type name, the rule applies equally to every spelling of that family. The spelling affects only the partition value literal (see [Partition Value Serialization](#partition-value-serialization)) and that writers preserve it; it does not change the stored value.
+Every year-month spelling belongs to the `interval year to month` logical type, and every day-second spelling to the `interval day to second` logical type; the spelling remains part of each field's declared type. Wherever this document states a rule for a canonical interval type name, the rule applies equally to every spelling of that family. The spelling determines the required alignment of values written, as defined below, and the partition value literal (see [Partition Value Serialization](#partition-value-serialization)), and writers must preserve it.
 
-Regardless of which spelling is used, the stored value is the same: every year-month spelling stores a signed count of months, and every day-second spelling stores a signed count of microseconds.
+Regardless of which spelling is used, the physical encoding is the same: every year-month spelling stores a signed count of months, and every day-second spelling stores a signed count of microseconds.
+
+The end field of an interval type is the last unit named in its spelling: `month` for `interval year to month`, or `minute` for `interval hour to minute`. A single-field spelling such as `interval year` or `interval second` has that single field as its end field. For new writes, non-null values align to the end field as follows:
+
+For the year-month family:
+- end field `year`: a whole multiple of 12 months;
+- end field `month`: any whole number of months.
+
+For the day-second family:
+- end field `day`, `hour` or `minute`: a whole multiple of that unit in microseconds (86,400,000,000; 3,600,000,000; 60,000,000 respectively);
+- end field `second` (including `interval second`): any number of microseconds. Fractional seconds are kept, e.g. 0.123456 seconds is stored as 123456 microseconds.
 
 Interval types are permitted anywhere a primitive type is permitted: as a top-level column, as a nested struct field, as an array element type, and as a map key or value type.
 
@@ -72,7 +82,7 @@ To support interval types, readers must:
 To support interval types, writers must:
 
 - Serialize the type of every interval field in `metaData.schemaString` using the spelling of that field's declared interval type: the canonical name or one of the permitted narrowed spellings, such as `interval year`. Writers must not rewrite a spelling into a different one.
-- Write each value assigned to an interval field as its signed count of months (year-month) or microseconds (day-second), as received. Writers are not required to align a value to the declared spelling.
+- For every non-null interval value, write a value aligned to the end field of its declared interval type (see [Type Definitions](#type-definitions)). This applies to values stored in data files and to values serialized as partition values. All representations written for the same value must represent the same duration.
 - Write a NULL as NULL: in a data file it is a Parquet null; as a partition value it is serialized as a null partition value, as for every other type (see [Partition Value Serialization](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#partition-value-serialization)).
 - Reject any value whose count is outside the signed `int32` range (year-month) or signed `int64` range (day-second) (see [Error Conditions](#error-conditions)).
 
@@ -112,7 +122,7 @@ Because interval types are not gated by a table feature, clients that do not rec
 
 When the `adaptiveMetadata` table feature [3] is enabled, interval fields appear in the manifests of the metadata tree as follows:
 
-- **Partition values.** The field of an interval partition column in the `partition` struct (field ID 102) keeps the column's interval type, and is physically encoded in the manifest Parquet file as a raw `int32` count of months (year-month) or a raw `int64` count of microseconds (day-second), with no Parquet logical-type annotation, as in [Parquet Format](#parquet-format). Writers obtain it by parsing the file's partition value as described in [Partition Value Serialization](#partition-value-serialization), and write a null partition value as null. Writers must include this field for every interval partition column; a null field means a null partition value. When converting a manifest entry back into Delta actions, readers serialize a non-null field as the ANSI literal of the column's declared interval type.
+- **Partition values.** The field of an interval partition column in the `partition` struct (field ID 102) keeps the column's interval type, and is physically encoded in the manifest Parquet file as a raw `int32` count of months (year-month) or a raw `int64` count of microseconds (day-second), with no Parquet logical-type annotation, as in [Parquet Format](#parquet-format). Writers obtain it by parsing the file's partition value as described in [Partition Value Serialization](#partition-value-serialization), and write a null partition value as null. Non-null values written to this field must satisfy the alignment requirements in [Type Definitions](#type-definitions). Writers must include this field for every interval partition column; a null field means a null partition value. When converting a manifest entry back into Delta actions, readers serialize a non-null field as the ANSI literal of the column's declared interval type.
 - **Partition pruning.** Readers must not eliminate files or manifests based on an interval field of the `partition` struct.
 - **Content stats.** Writers must not record `lower_bound` or `upper_bound` for an interval field in `content_stats` (field ID 146), either on content entries or in the manifest-level stats of root `DATA_MANIFEST` entries, and readers must not perform data skipping over interval fields. Other statistics follow the existing conversion and aggregation rules unchanged: `numRecords` maps to `record_count` and `nullCount` to `null_value_count`, as for any other column.
 
