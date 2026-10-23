@@ -21,7 +21,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, DeletionVectorDescriptor, DomainMetadata, SetTransaction}
-import io.delta.spark.internal.v2.utils.KernelCommitActionsTestUtil.createCommitActions
+import org.apache.spark.sql.delta.v2.utils.KernelCommitActionsTestUtil.createCommitActions
 import io.delta.kernel.data.{Row => KernelRow}
 import io.delta.kernel.data.MapValue
 import io.delta.kernel.defaults.internal.json.{JsonUtils => KernelJsonUtils}

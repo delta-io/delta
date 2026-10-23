@@ -1,7 +1,7 @@
 name: "V2 Changelog Tests (Spark 4.2)"
 
 # Runs only the V2 changelog tests against the released Spark 4.2. Scope is
-# narrowly the tests under io.delta.spark.internal.v2.read.changelog.*
+# narrowly the tests under org.apache.spark.sql.delta.v2.read.changelog.*
 # in spark-unified/test, which is what PR #6830 (test classpath fix) and
 # PR #6832 (DV support) actually exercise. The full Delta test suite
 # against Spark 4.2 is run by spark_test.yaml as a matrix lane with
@@ -52,7 +52,7 @@ jobs:
         run: |
           ./build/sbt -DsparkVersion=4.2 \
             "set every scalastyleFailOnError := false" \
-            "spark/testOnly io.delta.spark.internal.v2.read.changelog.*"
+            "spark/testOnly org.apache.spark.sql.delta.v2.read.changelog.*"
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -16,14 +16,14 @@
 
 package org.apache.spark.sql.delta.catalog
 
-import io.delta.spark.internal.v2.catalog.DeltaV2Table
-import io.delta.spark.internal.v2.read.changelog.DeltaV2Changelog
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaV2Mode}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table
+import org.apache.spark.sql.delta.v2.read.changelog.DeltaV2Changelog
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogContext, Identifier, TableCatalog}
 import org.apache.spark.sql.connector.catalog.ChangelogRange.{TimestampRange, UnboundedRange, VersionRange}
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaV2Mode}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
