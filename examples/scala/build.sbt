@@ -35,6 +35,8 @@ val defaultDeltaVersion = {
   }
 }
 
+val defaultSparkVersion = IO.read(file("../../project/default-spark-version")).trim
+
 def getMajorMinor(version: String): (Int, Int) = {
   val majorMinor = Try {
     val splitVersion = version.split('.')
@@ -52,7 +54,7 @@ def getMajorMinor(version: String): (Int, Int) = {
 val lookupSparkVersion: PartialFunction[(Int, Int), String] = {
   // TODO: how to run integration tests for multiple Spark versions
   // `major` and `minor` refer to the Delta version, not the Spark version.
-  case (major, minor) if major >= 4 && minor >= 4 => "4.2.0"
+  case (major, minor) if major >= 4 && minor >= 4 => defaultSparkVersion
   case (major, minor) if major >= 4 && minor >= 1 => "4.1.0"
   // version 4.0.0
   case (major, minor) if major >= 4 => "4.0.0"
