@@ -1038,6 +1038,25 @@ trait DeltaDMLTestUtils
   }
 
   /**
+   * Finds the latest operation of the given type that ran on the given table and returns its
+   * commit version.
+   *
+   * @param operation Delta operation name, see [[DeltaOperations]].
+   * @param tableIdentifier SQL identifier of the table, defaults to the test table.
+   */
+  protected def getLatestOperationVersion(
+      operation: String,
+      tableIdentifier: String = tableSQLIdentifier): Long = {
+    val operationVersions = sql(s"DESCRIBE HISTORY $tableIdentifier")
+      .where($"operation" === operation)
+      .select($"version")
+      .as[Long]
+      .collect()
+    assert(operationVersions.nonEmpty, s"Couldn't find a ${operation} operation")
+    operationVersions.max
+  }
+
+  /**
    * Finds the latest operation of the given type that ran on the test table and returns the
    * dataframe with the changes of the corresponding table version.
    *
