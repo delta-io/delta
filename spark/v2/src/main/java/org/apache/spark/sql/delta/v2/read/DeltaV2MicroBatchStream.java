@@ -1462,10 +1462,8 @@ class DeltaV2MicroBatchStream
   // manages these changes through the barrier protocol instead.
   private void checkNonAdditiveSchemaChanges(
       Metadata oldMetadata, Metadata newMetadata, boolean validatedDuringStreamStart) {
-    StructType sparkNewSchema =
-        SchemaUtils.convertKernelSchemaToSparkSchema(newMetadata.getSchema());
-    StructType sparkOldSchema =
-        SchemaUtils.convertKernelSchemaToSparkSchema(oldMetadata.getSchema());
+    StructType sparkNewSchema = SchemaUtils.convertKernelMetadataToSparkSchema(newMetadata);
+    StructType sparkOldSchema = SchemaUtils.convertKernelMetadataToSparkSchema(oldMetadata);
 
     boolean shouldTrackSchema;
     if (schemaReadOptions.typeWideningEnabled()

@@ -9,6 +9,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
@@ -175,7 +176,8 @@ class DeltaV2ChangelogBatch implements Batch {
 
     // Pre-check catches schema drift between start and end. The per-commit loop below catches
     // in-range Metadata commits.
-    StructType startSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+    StructType startSchema =
+        SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata());
     requireReadCompatible(startSchema, ((CommitRangeImpl) commitRange).getStartVersion());
 
     // TODO: Remove StreamingHelper usage. The helper is generic, only the class name is
@@ -248,8 +250,7 @@ class DeltaV2ChangelogBatch implements Batch {
               Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
               if (metadataOpt.isPresent()) {
                 Metadata md = metadataOpt.get();
-                StructType commitSchema =
-                    SchemaUtils.convertKernelSchemaToSparkSchema(md.getSchema());
+                StructType commitSchema = SchemaUtils.convertKernelMetadataToSparkSchema(md);
                 requireReadCompatible(commitSchema, commit.getVersion());
                 // A new Metadata action fully replaces the prior configuration, so an absent
                 // row-tracking key means the table default (disabled), not an inherited value.
