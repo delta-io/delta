@@ -68,26 +68,25 @@ Whether a `uri` is absolute or relative is determined per [RFC 3986](https://dat
 
 ### Referenced-byte write location
 
-A writer that uses relative references should place the referenced bytes at the table's **write location**. By default this is the hidden subdirectory **`_files`** of the table root (a `uri` of the form `_files/...`). A hidden directory is one whose name begins with `_` or `.`.
+A writer that uses relative references should place the referenced bytes at the table's **write location**. By default this is the hidden subdirectory **`_files`** of the table root (a `uri` of the form `_files/...`).
 
 The write location can be set by a system-controlled domain, **`delta.fileType.writeLocation`**:
 
 - **System-controlled; no Delta setter.** Like other `delta.`-prefixed domains, it is **not** user-settable — it cannot be set through `SET TBLPROPERTIES` or any other user DDL, and this protocol defines no command to set it. It is written only by a layer that owns the table's write path, through a `domainMetadata` action in a commit, or left **absent**, in which case the default value **`_files`** applies. Writing the domain requires the table to support the [Domain Metadata](#domain-metadata) feature; a table that relies on the default placement needs nothing beyond `fileType`.
-- **Value.** Either a table-root-relative path or an absolute URI where writers place the bytes of **new** references. When the domain is absent the value is `_files`.
+- **Value.** Either a table-root-relative path to a hidden subdirectory of the table root, or an absolute URI outside the table root, where writers place the bytes of **new** references. It must not name a non-hidden location under the table root, where `VACUUM` may delete untracked files. When the domain is absent the value is `_files`.
 - **Write-time placement hint only.** It tells a writer where to place the bytes for **new** references. It is **never** consulted when resolving a `uri`. A `uri` records its own complete path: a relative location yields relative `uri` values that include the location prefix (for example `_files/abc.png`), and an absolute location yields absolute `uri` values.
 
 **Resolution never depends on this domain.** A relative `uri` is always the **full table-root-relative path**, resolved against the table root per [URI Resolution](#uri-resolution) — never against `delta.fileType.writeLocation`. Changing the domain therefore affects only where subsequent bytes are placed. `uri`s already written continue to resolve unchanged, because each records its own complete path, and a reader never needs the current, or any past, value of the domain. This is why a location change does not strand earlier references.
 
-**Protection from cleanup.** A layer that supplies a location that is neither a hidden subdirectory of the table root nor outside it (for example a non-hidden directory under the table root) is responsible for ensuring that the bytes there are not removed by `VACUUM` or any other cleanup. Delta does not track earlier values of the domain.
-
-Delta does not treat referenced bytes as table data, except when a table is copied:
+Delta does not treat referenced bytes as table data, except when a table reuses another table's data files:
 
 - **`VACUUM` does not delete them.** `VACUUM` ignores files under the default `_files` directory and any other hidden subdirectory of the table root.
-- **`CLONE` copies relative references.** A deep clone **must** copy the bytes each relative `uri` refers to, as of the cloned snapshot, preserving the relative path under the new table root. The copied data files are not rewritten.
+- **Copying another table's data files.** A writer that creates a table by copying another table's data files to the new table root **must** also copy the bytes each relative `uri` in them refers to, as of the source snapshot, to the same relative path under the new table root. The copied data files are not rewritten.
   - The bytes are found from the `uri` values in the data, not from the write location, which may have changed.
-  - Absolute `uri`s are not copied; the clone shares those bytes with the source.
+  - Absolute `uri`s are not copied; the new table shares those bytes with the source.
   - Missing source bytes are not an error.
-  - The clone does not inherit an absolute `delta.fileType.writeLocation`.
+  - The new table does not inherit an absolute `delta.fileType.writeLocation`.
+- **Referencing another table's data files in place.** A writer **must not** add another table's data file to a table without copying it if the data file contains relative `uri`s, because they would resolve against the new table's root rather than the root they were written for. A writer that cannot tell may refuse any such data file that has a `file` column.
 
 Delta does not otherwise manage the contents of the write location: creating, retaining, and reclaiming those bytes is the responsibility of the writer or an external system. (A higher layer may add managed semantics — for example lifecycle/garbage collection or access brokering — on top of this location, but that is out of scope for this protocol.)
 
@@ -125,7 +124,6 @@ Generated Columns | **Supported:** A `file` column is allowed to be used as a so
 Delta CHECK Constraints | A `file` column may be used in a CHECK constraint expression through its **addressable** leaf fields (`uri`, `offset`, `size`, `content_type`, `checksum`), addressed by logical name (for example, `f.size > 0`). The `inline` field is not addressable in expressions. Because a FILE leaf is not a struct field of the Delta schema, this is an explicit carve-out from the usual requirement that referenced columns exist in the schema — see the leaf-addressing rules in [Statistics for File Columns](#statistics-for-file-columns).
 Default Column Values | A `file` column must default to `NULL`. There is no Delta-defined way to construct a non-null `file` literal as a default expression, so `NULL` is the only permitted default (as with the Variant type).
 Change Data Feed | **Supported:** A table using the `file` data type is allowed to enable the Delta Change Data Feed. A `file` value flows through Change Data Feed and time travel like any other column value. See [Time Travel and Change Data Feed](#time-travel-and-change-data-feed) for the distinction between the reference and the referenced bytes.
-Deep Clone | **Supported:** a deep clone also copies the bytes referenced by relative `uri`s (see [Referenced-byte write location](#referenced-byte-write-location)).
 Iceberg Compatibility | **Not supported in currently-released Iceberg versions.** Iceberg has no equivalent type today, so a `file` column cannot be represented in an IcebergCompatV1 or IcebergCompatV2 table: under [IcebergCompatV2](#writer-requirements-for-icebergcompatv2) it is blocked by the type allow-list (which excludes `file`), and [IcebergCompatV1](#writer-requirements-for-icebergcompatv1) has no type allow-list (it only blocks `Map`/`Array`/`Void`), so a `file` column is additionally not permitted there. The same holds for IcebergCompatV3. **Support is targeted for Iceberg V4**, via IcebergNativeV4 and the [Iceberg `FILE` type](https://github.com/apache/iceberg/blob/main/format/spec.md#file-type). The FILE sub-fields carry reserved field IDs matching the Iceberg spec (see [Statistics for File Columns](#statistics-for-file-columns)). Writing these IDs into the Parquet files, as required of writers, is what allows a field-ID-based reader to resolve the sub-fields; the remaining conversion details are out of scope here and will follow that work.
 Type Widening | **Unsupported:** No type change to or from `file` is supported.
 Map Keys | **Unsupported:** A `file` value is not comparable, so `file` cannot be used as a map key type. `file` is allowed as an array element type — for example the `attachments` field in the schema example above — and as a map value type.
@@ -195,7 +193,7 @@ For **external** references (a `uri` is set), Delta makes **no guarantee about t
 
 ## Non-Goals
 
-A `file` value is a reference, and the referenced bytes are **external to the table and not under its management.** In particular, `VACUUM` does not treat referenced files as table data: it may delete untracked files that reside under the table's directory, except within hidden directories (names beginning with `_` or `.`, such as the default `_files` location), which it skips (see [Referenced-byte write location](#referenced-byte-write-location)). A deep copy of the table copies the bytes referenced by relative `uri`s but not those referenced by absolute `uri`s (see [Referenced-byte write location](#referenced-byte-write-location)).
+A `file` value is a reference, and the referenced bytes are **external to the table and not under its management.** In particular, `VACUUM` does not treat referenced files as table data: it may delete untracked files that reside under the table's directory, except within hidden directories (such as the default `_files` location), which it skips (see [Referenced-byte write location](#referenced-byte-write-location)). A table created by copying another table's data files also copies the bytes referenced by relative `uri`s, but not those referenced by absolute `uri`s (see [Referenced-byte write location](#referenced-byte-write-location)).
 
 The following are additionally out of scope:
 
