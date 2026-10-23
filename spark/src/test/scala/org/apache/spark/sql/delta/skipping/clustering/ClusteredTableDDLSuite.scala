@@ -34,6 +34,7 @@ import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.connector.expressions.FieldReference
 import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, StructField, StructType}
 import org.apache.spark.util.Utils
@@ -324,6 +325,49 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
           "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
           parameters = Map("numColumnsLimit" -> "4", "actualNumColumns" -> "5")
         )
+      }
+    }
+  }
+
+  test("clustering columns are resolved case insensitively") {
+    val sourceTable = this.sourceTable
+    val targetTable = this.targetTable
+    val schema = "a INT, b STRUCT<c INT, d STRING>"
+    withTable(sourceTable) {
+      sql(s"CREATE TABLE $sourceTable($schema) USING delta")
+      withTable(targetTable) {
+        supportedClauses.foreach { clause =>
+          createOrReplaceClusteredTable(clause, targetTable, schema, "A, B.C")
+          verifyClusteringColumns(TableIdentifier(targetTable), Seq("a", "b.c"))
+        }
+      }
+      withTable(targetTable) {
+        withTempDirIfNecessary { location =>
+          supportedClauses.foreach { clause =>
+            createOrReplaceAsSelectClusteredTable(
+              clause, targetTable, sourceTable, "A, B.C", location = location)
+            verifyClusteringColumns(targetTable, Seq("a", "b.c"), location)
+          }
+        }
+      }
+      withTable(targetTable) {
+        io.delta.tables.DeltaTable.create(spark)
+          .tableName(targetTable)
+          .addColumns(StructType.fromDDL(schema))
+          .clusterBy("A", "B.C")
+          .execute()
+        verifyClusteringColumns(TableIdentifier(targetTable), Seq("a", "b.c"))
+      }
+    }
+  }
+
+  test("clustering columns are case sensitive when spark.sql.caseSensitive is true") {
+    val testTable = this.testTable
+    withSQLConf(SQLConf.CASE_SENSITIVE.key -> "true") {
+      withTable(testTable) {
+        intercept[AnalysisException] {
+          createOrReplaceClusteredTable("CREATE", testTable, "a INT", "A")
+        }
       }
     }
   }
