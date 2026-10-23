@@ -20,6 +20,7 @@ import io.delta.flink.table.DeltaTable;
 import io.delta.kernel.data.*;
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
@@ -86,7 +87,13 @@ public class DeltaWriterTask {
     this.partitionValues = partitionValues;
     this.deltaTable = deltaTable;
     this.conf = conf;
-    this.writeSchema = conf.getSinkSchema();
+    StructType tableSchema = deltaTable.getSchema();
+    boolean columnMappingEnabled =
+        tableSchema.fields().stream()
+            .anyMatch(
+                field ->
+                    field.getMetadata().contains(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY));
+    this.writeSchema = columnMappingEnabled ? tableSchema : conf.getSinkSchema();
 
     this.fileRollingStrategy = conf.createFileRollingStrategy();
   }
