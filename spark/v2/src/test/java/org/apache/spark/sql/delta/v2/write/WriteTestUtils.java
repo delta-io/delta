@@ -15,8 +15,16 @@
  */
 package org.apache.spark.sql.delta.v2.write;
 
+import java.util.Collections;
+import java.util.Optional;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
+import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
+import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
@@ -46,6 +54,15 @@ final class WriteTestUtils {
         return options;
       }
     };
+  }
+
+  static DeltaV2TableManager tableManager(SparkSession spark, String path) {
+    return DeltaV2TableManagerCache$.MODULE$.forTable(
+        spark, path, Collections.emptyMap(), ScalaUtils.toScalaOption(Optional.empty()));
+  }
+
+  static Snapshot latestSnapshot(DeltaV2TableManager tableManager) {
+    return tableManager.loadLatestSnapshot(DeltaV2QueryContext$.MODULE$.empty());
   }
 
   static PhysicalWriteInfo physicalWriteInfo(int numPartitions) {
