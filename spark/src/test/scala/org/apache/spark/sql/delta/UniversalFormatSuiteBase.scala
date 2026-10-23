@@ -563,6 +563,19 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
     }
   }
 
+  test("V1 saveAsTable overwrite of a new table enables UniForm from the writer config") {
+    withTempTableAndDir { case (id, _) =>
+      spark.sql("SELECT 1 AS id, 'a' AS name").write
+        .format("delta").mode("overwrite")
+        .option("delta.enableIcebergCompatV2", "true")
+        .option("delta.universalFormat.enabledFormats", "iceberg")
+        .saveAsTable(id)
+      val properties = getProperties(id)
+      assert(properties.get("delta.enableIcebergCompatV2") === Some("true"))
+      assert(properties.get("delta.universalFormat.enabledFormats") === Some("iceberg"))
+    }
+  }
+
   test("UniForm config validation") {
     Seq("ICEBERG", "iceberg,iceberg", "iceber", "paimon").foreach { invalidConf =>
       withTempTableAndDir { case (id, loc) =>
