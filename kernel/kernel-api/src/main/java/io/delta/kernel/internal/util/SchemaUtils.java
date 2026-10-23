@@ -93,7 +93,7 @@ public class SchemaUtils {
       // when column mapping is enabled, just check the name contains no new line in it.
       flattenColNames.forEach(
           name -> {
-            if (name.contains("\\n")) {
+            if (name.contains("\n")) {
               throw invalidColumnName(name, "\\n");
             }
           });
