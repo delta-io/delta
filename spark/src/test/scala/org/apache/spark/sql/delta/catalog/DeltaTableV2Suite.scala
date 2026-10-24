@@ -27,18 +27,19 @@ import org.apache.spark.sql.delta.util.CatalogTableTestUtils
 /**
  * Tests for [[DeltaTableV2.toString]] credential filtering behavior.
  *
- * The toString override filters `fs.*` storage properties from the embedded CatalogTable to
- * prevent catalog-injected credentials from leaking into exception messages, EXPLAIN output,
- * and logs. It reuses [[DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES]], the same constant
- * that guards [[DeltaTableV2.properties()]].
+ * The toString override filters credential-bearing storage properties (the `fs.*` and `dfs.*`
+ * Hadoop prefixes) from the embedded CatalogTable to prevent catalog-injected credentials from
+ * leaking into exception messages, EXPLAIN output, and logs. It reuses
+ * [[DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES]], the same constant that guards
+ * [[DeltaTableV2.properties()]].
  */
 class DeltaTableV2Suite extends QueryTest with DeltaSQLCommandTest {
 
   // ---------------------------------------------------------------------------
-  // Negative tests: fs.* credential keys and values must NOT appear
+  // Negative tests: fs.*/dfs.* credential keys and values must NOT appear
   // ---------------------------------------------------------------------------
 
-  test("toString filters fs.* storage property keys and values") {
+  test("toString filters fs.*/dfs.* storage property keys and values") {
     withTempDir { dir =>
       val path = new Path(dir.toURI)
       val storageProps = new JHashMap[String, String]()
@@ -48,6 +49,7 @@ class DeltaTableV2Suite extends QueryTest with DeltaSQLCommandTest {
       storageProps.put("fs.unitycatalog.uri", "https://internal.endpoint/")
       storageProps.put("fs.unitycatalog.table.id", "table-uuid-123")
       storageProps.put("fs.s3a.init.credential.expired.time", "1774050215000")
+      storageProps.put("dfs.adls.oauth2.credential", "dfs-secret-must-not-appear")
       val catalogTable = CatalogTableTestUtils.createCatalogTable(
         tableName = "sensitive_tbl",
         storageProperties = storageProps,
@@ -71,14 +73,19 @@ class DeltaTableV2Suite extends QueryTest with DeltaSQLCommandTest {
         "fs.unitycatalog.* keys must not appear in toString")
       assert(!str.contains("fs.s3a"),
         "fs.s3a.* keys must not appear in toString")
+      assert(!str.contains("dfs-secret-must-not-appear"),
+        "dfs.* credential values must not appear in toString")
+      assert(!str.contains("dfs.adls"),
+        "dfs.* keys must not appear in toString")
     }
   }
 
-  test("toString filters fs.* but not non-fs storage properties") {
+  test("toString filters fs.*/dfs.* but not other storage properties") {
     withTempDir { dir =>
       val path = new Path(dir.toURI)
       val storageProps = new JHashMap[String, String]()
       storageProps.put("fs.s3a.access.key", "AKIA_SHOULD_BE_HIDDEN")
+      storageProps.put("dfs.adls.oauth2.credential", "DFS_SHOULD_BE_HIDDEN")
       storageProps.put("delta.minReaderVersion", "3")
       storageProps.put("io.unitycatalog.tableId", "safe-table-id")
       val catalogTable = CatalogTableTestUtils.createCatalogTable(
@@ -92,12 +99,16 @@ class DeltaTableV2Suite extends QueryTest with DeltaSQLCommandTest {
         "fs.* values must be filtered")
       assert(!str.contains("fs.s3a"),
         "fs.* keys must be filtered")
+      assert(!str.contains("DFS_SHOULD_BE_HIDDEN"),
+        "dfs.* values must be filtered")
+      assert(!str.contains("dfs.adls"),
+        "dfs.* keys must be filtered")
       assert(str.contains("delta.minReaderVersion"),
-        "non-fs storage properties must be preserved")
+        "other storage properties must be preserved")
       assert(str.contains("io.unitycatalog.tableId"),
-        "io.unitycatalog.* (not fs.*) storage properties must be preserved")
+        "io.unitycatalog.* (not fs.*/dfs.*) storage properties must be preserved")
       assert(str.contains("safe-table-id"),
-        "non-fs storage property values must be preserved")
+        "other storage property values must be preserved")
     }
   }
 
@@ -191,10 +202,10 @@ class DeltaTableV2Suite extends QueryTest with DeltaSQLCommandTest {
   }
 
   // ---------------------------------------------------------------------------
-  // Options filtering: fs.* in the options map must also be hidden
+  // Options filtering: fs.*/dfs.* in the options map must also be hidden
   // ---------------------------------------------------------------------------
 
-  test("toString filters fs.* keys from options map") {
+  test("toString filters fs.*/dfs.* keys from options map") {
     withTempDir { dir =>
       spark.range(1).write.format("delta").save(dir.getCanonicalPath)
       val path = new Path(dir.toURI)
@@ -205,6 +216,7 @@ class DeltaTableV2Suite extends QueryTest with DeltaSQLCommandTest {
         options = Map(
           "fs.s3a.access.key" -> "AKIA_OPTIONS_SECRET",
           "fs.unitycatalog.auth.token" -> "options-token-value",
+          "dfs.adls.oauth2.credential" -> "dfs-options-secret",
           "userOption" -> "safe-user-value"))
       val str = table.toString
 
@@ -216,6 +228,10 @@ class DeltaTableV2Suite extends QueryTest with DeltaSQLCommandTest {
         "fs.s3a.* keys in options must not appear in toString")
       assert(!str.contains("fs.unitycatalog.auth.token"),
         "fs.unitycatalog.* keys in options must not appear in toString")
+      assert(!str.contains("dfs-options-secret"),
+        "dfs.* values in options must not appear in toString")
+      assert(!str.contains("dfs.adls.oauth2.credential"),
+        "dfs.* keys in options must not appear in toString")
       assert(str.contains("userOption"),
         "non-fs options keys must be preserved")
       assert(str.contains("safe-user-value"),
@@ -223,11 +239,12 @@ class DeltaTableV2Suite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
-  test("toString filters fs.* from both CatalogTable storage and options simultaneously") {
+  test("toString filters fs.*/dfs.* from CatalogTable storage and options simultaneously") {
     withTempDir { dir =>
       val path = new Path(dir.toURI)
       val storageProps = new JHashMap[String, String]()
       storageProps.put("fs.s3a.secret.key", "storage-secret")
+      storageProps.put("dfs.adls.oauth2.credential", "dfs-storage-secret")
       storageProps.put("safe.storage.prop", "storage-visible")
       val catalogTable = CatalogTableTestUtils.createCatalogTable(
         tableName = "dual_filter_tbl",
@@ -239,6 +256,7 @@ class DeltaTableV2Suite extends QueryTest with DeltaSQLCommandTest {
         catalogTable = Some(catalogTable),
         options = Map(
           "fs.s3a.access.key" -> "options-secret",
+          "dfs.adls.oauth2.refresh.token" -> "dfs-options-secret",
           "safe.option" -> "options-visible"))
       val str = table.toString
 
@@ -246,6 +264,10 @@ class DeltaTableV2Suite extends QueryTest with DeltaSQLCommandTest {
         "fs.* values from storage properties must be filtered")
       assert(!str.contains("options-secret"),
         "fs.* values from options must be filtered")
+      assert(!str.contains("dfs-storage-secret"),
+        "dfs.* values from storage properties must be filtered")
+      assert(!str.contains("dfs-options-secret"),
+        "dfs.* values from options must be filtered")
       assert(str.contains("storage-visible"),
         "non-fs storage properties must be preserved")
       assert(str.contains("options-visible"),
