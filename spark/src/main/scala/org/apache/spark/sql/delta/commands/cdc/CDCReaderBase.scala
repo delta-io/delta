@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader.{cdcReadSchema, DeltaCD
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaLogStreamingBackend, DeltaSource, DeltaSQLConf}
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.rdd.RDD
@@ -169,7 +169,11 @@ trait CDCReaderBase extends DeltaLogging {
         // For the starting timestamp we need to find a version after the provided timestamp
         // we can use the same semantics as streaming.
         DeltaSource.getStartingVersionFromTimestamp(
-          spark, deltaLog, catalogTableOpt, timestamp, allowOutOfRange)
+          spark,
+          new DeltaLogStreamingBackend(deltaLog, () => catalogTableOpt),
+          deltaLog.unsafeVolatileSnapshot,
+          timestamp,
+          allowOutOfRange)
       } else {
         // For ending timestamp the version should be before the provided timestamp.
         DeltaTableUtils.resolveTimeTravelVersion(

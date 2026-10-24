@@ -62,7 +62,11 @@ trait DataSkippingAMTBase extends DataSkippingDeltaTestsBase
     // Row tracking is always enabled on AMT, but these tests disable it explicitly and hit
     // DELTA_ADAPTIVE_METADATA_REQUIRES_DEPENDENT_FEATURE_ENABLED at create.
     "base_row_id filter throws FIELD_NOT_FOUND when row tracking is disabled",
-    "default_row_commit_version filter throws FIELD_NOT_FOUND when row tracking is disabled"
+    "default_row_commit_version filter throws FIELD_NOT_FOUND when row tracking is disabled",
+    // AMT writes Iceberg's file-level `tight_stats` as false rather than carrying Delta's
+    // `tightBounds` over (see `AMTContentStats`), so a file served from an AMT checkpoint reads
+    // back with tightBounds=false, and this test's exact comparison of the stats JSON fails.
+    "data skipping get specific files with Stats API"
   )
 
   /**

@@ -479,7 +479,7 @@ class DeltaV2Table private (
       hadoopConf,
       initialSnapshotValue,
       catalogTableValue,
-      getSnapshotManager(),
+      tableManager,
       schemaProvider.getDataSchema(),
       schemaProvider.getPartitionSchema(),
       info)
