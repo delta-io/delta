@@ -29,8 +29,8 @@ import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Unit tests for {@link KernelStreamingBackend}. */
-public class KernelStreamingBackendTest extends DeltaV2TestBase {
+/** Unit tests for {@link DeltaV2StreamingBackend}. */
+public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
 
   private static String createTable(File dir, int commits) {
     String path = dir.getAbsolutePath();
@@ -43,8 +43,8 @@ public class KernelStreamingBackendTest extends DeltaV2TestBase {
   @Test
   public void unsafeVolatileSnapshotIsAtLeastAsNewAsActiveCommit(@TempDir File tempDir) {
     String path = createTable(tempDir, /* commits= */ 1);
-    KernelStreamingBackend backend =
-        new KernelStreamingBackend(new PathBasedSnapshotManager(path, defaultKernelContext));
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(new PathBasedSnapshotManager(path, defaultKernelContext));
     assertEquals(0L, backend.update().version());
 
     spark.range(1).write().format("delta").mode("append").save(path);
@@ -64,8 +64,8 @@ public class KernelStreamingBackendTest extends DeltaV2TestBase {
   @Test
   public void checkVersionExistsThrowsDeltaVersionNotFound(@TempDir File tempDir) {
     String path = createTable(tempDir, /* commits= */ 3);
-    KernelStreamingBackend backend =
-        new KernelStreamingBackend(new PathBasedSnapshotManager(path, defaultKernelContext));
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(new PathBasedSnapshotManager(path, defaultKernelContext));
 
     VersionNotFoundException e =
         assertThrows(
@@ -96,8 +96,8 @@ public class KernelStreamingBackendTest extends DeltaV2TestBase {
                 + "\"],\"writerFeatures\":[\""
                 + feature
                 + "\"]}}"));
-    KernelStreamingBackend backend =
-        new KernelStreamingBackend(new PathBasedSnapshotManager(path, defaultKernelContext));
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(new PathBasedSnapshotManager(path, defaultKernelContext));
 
     DeltaUnsupportedTableFeatureException e =
         assertThrows(

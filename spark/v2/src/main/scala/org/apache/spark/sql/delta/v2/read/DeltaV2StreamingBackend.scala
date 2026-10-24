@@ -33,7 +33,7 @@ import io.delta.kernel.exceptions.UnsupportedTableFeatureException
  * [[org.apache.spark.sql.delta.sources.DeltaLogStreamingBackend]]. The other methods can
  * throw Kernel errors.
  */
-private[read] class KernelStreamingBackend(snapshotManager: DeltaV2SnapshotManager)
+private[read] class DeltaV2StreamingBackend(snapshotManager: DeltaV2SnapshotManager)
   extends DeltaStreamingBackend {
 
   @volatile private var latestSnapshot: Snapshot = _
