@@ -62,7 +62,7 @@ For reference, the `FILE` group may contain the following optional fields: `uri`
 A `uri` set on a `file` value (an external reference, or a locator carried alongside an `inline` value) is one of:
 
 - **Absolute** — a fully-qualified URI ([RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986)), resolved as-is.
-- **Relative** — resolved against the **table root** (the table's base location) by joining the table root and the relative `uri` with a single `/` separator (`<table root> + "/" + <uri>`). To avoid a missing or duplicate separator, a relative `uri` must not begin with `/` and the table root must not end with `/`. Delta does **not** further normalize the result or otherwise validate it, so a relative `uri` that resolves to an invalid or non-existent location simply fails to resolve when the bytes are accessed (see [Reader Requirements](#reader-requirements-for-file-data-type)). Producing a relative `uri` that resolves to the intended, accessible bytes is the responsibility of the writer (or the system that owns the referenced bytes); Delta resolves and reads the reference but does not validate the `uri` or guarantee that the referenced bytes exist. This join rule matches how relative paths are resolved in the [Iceberg `FILE` type](https://github.com/apache/iceberg/blob/main/format/spec.md#file-type) and the [Iceberg V4 metadata](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md) storage layout; an Iceberg reader that applies that rule resolves the same relative `uri` to the same location.
+- **Relative** — resolved against the **table root** using the same rule as relative paths in [Iceberg V4 metadata](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md).
 
 Whether a `uri` is absolute or relative is determined per [RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986) (a relative reference has no scheme).
 
@@ -84,6 +84,7 @@ Delta does not treat referenced bytes as table data, except when a table reuses 
 - **Copying another table's data files.** A writer that creates a table by copying another table's data files to the new table root **must** also copy the bytes each relative `uri` in them refers to, as of the source snapshot, to the same relative path under the new table root. The copied data files are not rewritten.
   - The bytes are found from the `uri` values in the data, not from the write location, which may have changed.
   - Absolute `uri`s are not copied; the new table shares those bytes with the source.
+  - The bytes are copied unchanged, so checksums of the bytes stay valid; an `ETAG`, which identifies the source object, may not match the copy.
   - Missing source bytes are not an error.
   - The new table does not inherit an absolute `delta.fileType.writeLocation`.
 - **Referencing another table's data files in place.** A writer **must not** add another table's data file to a table without copying it if the data file contains relative `uri`s, because they would resolve against the new table's root rather than the root they were written for. A writer that cannot tell may refuse any such data file that has a `file` column.
