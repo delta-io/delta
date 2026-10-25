@@ -105,9 +105,9 @@ class AdaptiveMetadataTableFeatureSuite
   }
 
   test("creating the table does not add incompatible features to the protocol") {
-    withTable("amt_no_incompatible") {
-        createAdaptiveMetadataTable("amt_no_incompatible")
-        val protocol = protocolOf("amt_no_incompatible")
+    withTable("amt_without_incompatible_features") {
+        createAdaptiveMetadataTable("amt_without_incompatible_features")
+        val protocol = protocolOf("amt_without_incompatible_features")
         assert(!protocol.isFeatureSupported(V2CheckpointTableFeature),
           s"Protocol must not support v2Checkpoint. Got: $protocol")
     }
