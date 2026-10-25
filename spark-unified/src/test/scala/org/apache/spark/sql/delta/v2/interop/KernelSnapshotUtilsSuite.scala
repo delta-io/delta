@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import io.delta.spark.internal.v2.kernel.KernelContext
+import org.apache.spark.sql.delta.v2.kernel.KernelContext
 import io.delta.kernel.TableManager
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.SnapshotImpl

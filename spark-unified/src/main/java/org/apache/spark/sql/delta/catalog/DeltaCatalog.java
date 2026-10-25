@@ -16,11 +16,11 @@
 
 package org.apache.spark.sql.delta.catalog;
 
-import io.delta.spark.internal.v2.catalog.DeltaV2Table;
-import io.delta.spark.internal.v2.exception.TableNotFoundException;
-import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
-import io.delta.spark.internal.v2.exception.VersionNotFoundException;
-import io.delta.spark.internal.v2.utils.ScalaUtils;
+import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
+import org.apache.spark.sql.delta.v2.exception.TableNotFoundException;
+import org.apache.spark.sql.delta.v2.exception.TimestampOutOfRangeException;
+import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
+import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.DeltaTableUtils$;
 import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
 import org.apache.spark.sql.delta.DeltaV2Mode;

@@ -693,12 +693,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED =
     buildConf("amt.snapshotDiscovery.asyncCommitInfoRead.enabled")
       .internal()
-      .doc("When enabled, an async CommitInfo read will be kicked off during snapshot creation " +
-        "in parallel with the CRC read. Enabling it could cause slight performance overhead on " +
-        "non-AMT tables when CRC is absent, and extra checkpoint threadpool contention. " +
-        "Disabling it could result in missing file actions in snapshot discovery for AMT tables.")
+      .doc("When enabled, snapshot creation may read CommitInfo asynchronously in parallel with " +
+        "the CRC read to discover AMT checkpoints. The read is skipped when a CRC for the target " +
+        "version is already available or when hints identify the table as non-AMT. Tables with " +
+        "unknown AMT status may still incur extra I/O and checkpoint threadpool contention. " +
+        "Disabling this can cause missing file actions in snapshot discovery for AMT tables " +
+        "without a CRC.")
       .booleanConf
-      .createWithDefault(DeltaUtils.isTesting)
+      .createWithDefault(true)
 
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
@@ -1275,6 +1277,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
 
     final val list = Set(NONE, ALL, AUTO)
   }
+
+  val INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED =
+    buildConf("insertReplaceOnOrUsing.pinStatementTime.enabled")
+      .internal()
+      .doc(
+        """
+          |If enabled, INSERT REPLACE ON/USING folds current date/time functions in its source
+          |query and REPLACE ON condition to one statement instant. DELETE, INSERT and source
+          |materialization retries then use the same time. When disabled, the phases fold time
+          |independently, which can lose or duplicate rows selected by a current-time filter.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val INSERT_REPLACE_ON_OR_USING_MATERIALIZE_SOURCE =
     buildConf("insertReplaceOnOrUsing.materializeSource")
@@ -2894,6 +2909,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           "enables the read-time CDF start version schema compatibility check.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_CDF_START_VERSION_SCHEMA_CHECK_ENABLED =
+    buildConf("changeDataFeed.startVersionSchemaCheck.enabled")
+      .internal()
+      .doc("When enabled, batch CDF reads fail if files removed in the starting commit use " +
+        "an incompatible prior schema. Incompatibilities are logged even when this flag " +
+        "is disabled.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE =
     buildConf("changeDataFeed.defaultSchemaModeForColumnMappingTable")
