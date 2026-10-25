@@ -97,6 +97,14 @@ This design enables:
 
 <ins>When the `adaptiveMetadata` table feature is enabled, `remove` actions are not carried through reconciliation. A `remove` is applied during replay to cancel its matching `add` (or to mark the referenced tree entry deleted) and is then dropped. The reconstructed table state and any checkpoint produced from it contain only live entries; they do not retain removes. Scans never consumed tombstones, and tree-reachability cleanup replaces the VACUUM use of tombstones, so removes have no remaining role in reconciled state.</ins>
 
+### Log Compaction Files
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#log-compaction-files)***
+
+<ins>When the `adaptiveMetadata` table feature is enabled, log compaction MUST preserve the source actions' `backReference` values.</ins>
+
+<ins>A log compaction file whose version range includes the selected AMT content root's version must not be used for log replay from that content root.</ins>
+
 ### Deletion Vectors
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#deletion-vectors)***
