@@ -330,10 +330,11 @@ object DeltaSharingUtils extends Logging {
       dataFiltersString: String,
       jsonPredicateHints: String,
       limitHint: String,
-      version: Long): String = {
+      version: Long,
+      metadataId: String): String = {
     val fullQueryString = s"${options.versionAsOf}_${options.timestampAsOf}_" +
       s"${partitionFiltersString}_${dataFiltersString}_${jsonPredicateHints}_${limitHint}_" +
-      s"${version}"
+      s"${metadataId}_${version}"
     Hashing.sha256().hashString(fullQueryString, UTF_8).toString
   }
 
