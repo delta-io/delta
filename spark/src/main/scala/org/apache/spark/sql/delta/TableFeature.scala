@@ -971,6 +971,9 @@ object AdaptiveMetadataTableFeature
     DeletionVectorsTableFeature,
     ColumnMappingTableFeature)
 
+  // AMT stores its checkpoint in the checkpoint action, so none of these may be on the table.
+  def incompatibleFeatures: Set[TableFeature] = Set(V2CheckpointTableFeature)
+
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     AdaptiveMetadataPreDowngradeCommand(table)
 
