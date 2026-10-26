@@ -645,6 +645,46 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
+  for {
+    column <- Seq("other",
+      DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME,
+      DeltaParquetFileFormat.ROW_INDEX_COLUMN_NAME,
+      ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME)
+    useMetadataRowIndex <- BOOLEAN_DOMAIN
+  } test(s"scan with DVs - DV check on a table with DVs and a column named $column: " +
+      s"useMetadataRowIndex=$useMetadataRowIndex") {
+    withDeletionVectorsEnabled() {
+      withTempDir { dir =>
+        val tablePath = dir.getAbsolutePath
+        // Without `useMetadataRowIndex`, DELETE fails on a table with a column named
+        // `__delta_internal_row_index`.
+        withSQLConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key -> "true") {
+          (0 until 10).map(i => (i, i % 2, 1000L + i)).toDF("value", "part", column).coalesce(1)
+            .write.format("delta").partitionBy("part").save(tablePath)
+          // Only the file of partition 1 has a DV.
+          DeltaTable.forPath(tablePath).delete("value = 1")
+        }
+
+        withSQLConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key ->
+            useMetadataRowIndex.toString) {
+          // The scan of partition 0 has no files with DVs, so it doesn't need to handle DVs.
+          // But reading a column named like one that the Parquet reader treats specially behaves
+          // differently depending on whether the scan handles DVs, so such a table handles DVs
+          // as before. Handling DVs fails for a column named `__delta_internal_is_row_deleted`.
+          val (relation, index) =
+            preparedRelation(spark.read.format("delta").load(tablePath).where("part = 0"))
+          assert(index.preparedScan.files.forall(_.deletionVector == null))
+          val handlesDVs = try ScanWithDeletionVectors.unapply(relation).isDefined catch {
+            case e: IllegalArgumentException
+                if column == DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME &&
+                  e.getMessage.contains(s"Expected only one column with name=$column") => true
+          }
+          assert(handlesDVs == (column != "other"))
+        }
+      }
+    }
+  }
+
   test("DV check on a batch file index doesn't run a query") {
     withDeletionVectorsEnabled() {
       withTempDir { dir =>

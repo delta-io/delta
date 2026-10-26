@@ -88,9 +88,12 @@ object ScanWithDeletionVectors {
     // 4. Performance: Avoids forcing expensive pinned snapshots when not needed
     val hasDVs = index match {
       // Files pruned by LIMIT are only a subset of the matching files, and the scan lists all of
-      // them if its filters change after the scan was prepared. So unless the prepared files
-      // already have DVs, check the whole table.
-      case p: PreparedDeltaFileIndex if isPrunedByLimit(p.preparedScan) =>
+      // them if its filters change after the scan was prepared. And reading a table column
+      // named like a column that the Parquet reader treats specially, e.g.
+      // `__delta_internal_row_index`, behaves differently depending on whether the scan handles
+      // DVs. In both cases, unless the prepared files already have DVs, check the whole table.
+      case p: PreparedDeltaFileIndex
+          if isPrunedByLimit(p.preparedScan) || columnsReadSpecially.exists(p.hasColumnNamed) =>
         p.preparedScan.files.exists(_.deletionVector != null) ||
           p.preparedScan.scannedSnapshot.filesForScan(filters = Nil).files
             .exists(_.deletionVector != null)
@@ -130,6 +133,12 @@ object ScanWithDeletionVectors {
     // remove the skip row column
     Some(Project(planOutput, rowIndexFilter))
   }
+
+  /** Columns that the Parquet reader treats specially when reading a table with DVs. */
+  private val columnsReadSpecially = Seq(
+    IS_ROW_DELETED_COLUMN_NAME,
+    ROW_INDEX_COLUMN_NAME,
+    ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME)
 
   private def isPrunedByLimit(scan: DeltaScan): Boolean = {
     scan.dataSkippingType == DeltaDataSkippingType.limit ||
