@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.{
   CreateDeltaTableCommand,
   CreateDeltaTableLike,
+  CreateTableFuncParams,
   TableCreationModes
 }
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -382,9 +383,11 @@ class DeltaCreateTableLikeSuite extends QueryTest
             snapshot,
             query = None,
             didNotChangeMetadata = true,
-            createTableFunc = Some((_: CatalogTable, _: Snapshot) => {
-              createCallbackCalls += 1
-            }))
+            createTableFunc =
+              Some((_: CreateTableFuncParams) => {
+                createCallbackCalls += 1
+              })
+          )
         }
       }
 

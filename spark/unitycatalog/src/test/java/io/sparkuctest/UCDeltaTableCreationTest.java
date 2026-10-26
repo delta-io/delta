@@ -60,14 +60,11 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   private static final String UC_TABLE_ID_KEY = "io.unitycatalog.tableId";
   private static final String DELTA_CATALOG_MANAGED_KEY = "delta.feature.catalogManaged";
   private static final String SUPPORTED = "supported";
-  private static final String MANAGED_TBLPROPERTIES_CLAUSE =
-      String.format("TBLPROPERTIES ('%s'='%s', 'Foo'='Bar')", DELTA_CATALOG_MANAGED_KEY, SUPPORTED);
+  private static final String CUSTOM_TBLPROPERTIES_CLAUSE = "TBLPROPERTIES ('Foo'='Bar')";
   // In the table REPLACE test, a slightly different table property clause will be used to create
   // the first table. Then the REPLACE command would use TBLPROPERTIES_CLAUSE. This is to make sure
   // that the table properties are properly updated in the REPLACE command.
-  private static final String MANAGED_TBLPROPERTIES_CLAUSE_OTHER =
-      String.format(
-          "TBLPROPERTIES ('%s'='%s', 'Foo2'='Bar2')", DELTA_CATALOG_MANAGED_KEY, SUPPORTED);
+  private static final String CUSTOM_TBLPROPERTIES_CLAUSE_OTHER = "TBLPROPERTIES ('Foo2'='Bar2')";
 
   // Expected table features to be enabled for managed tables
   private static final List<String> EXPECTED_MANAGED_TABLE_FEATURES =
@@ -211,7 +208,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           columnsClause(),
           partitionClause(),
           clusterClause(),
-          MANAGED_TBLPROPERTIES_CLAUSE,
+          CUSTOM_TBLPROPERTIES_CLAUSE,
           commentClause(),
           asSelectClause());
     }
@@ -323,7 +320,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     // Matrix 3: MANAGED REPLACE — partition / cluster shape transitions on existing
     // tables. Only the transitions exercised through the standard runner live here:
     //   - partition->cluster, partition->none
-    // The other two (`cluster->none` pins a known UC-side stale-metadata issue; and
+    // The other two (`cluster->none` has its own UC clearing assertion; and
     // `cluster->partition` is unconditionally rejected by Delta) are in
     // UCDeltaManagedReplaceSemanticsTest because they don't use this runner.
     counter++;
@@ -409,10 +406,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       String seedClusterClause = withClusterBeforeReplace ? "CLUSTER BY (col1)" : "";
       sql(
           "CREATE TABLE %s (col1 STRING, col2 STRING) USING DELTA %s %s %s",
-          fullTableName,
-          MANAGED_TBLPROPERTIES_CLAUSE_OTHER,
-          seedPartitionClause,
-          seedClusterClause);
+          fullTableName, CUSTOM_TBLPROPERTIES_CLAUSE_OTHER, seedPartitionClause, seedClusterClause);
       sql("INSERT INTO %s VALUES ('seed_col1', 'seed_col2')", fullTableName);
       tablesToCleanUp.add(fullTableName);
     }
@@ -452,8 +446,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         options.getClusterColumn(),
         options.getPartitionColumn(),
         // For MANAGED+REPLACE: seed CREATE=v0, seed INSERT=v1, REPLACE=v2.
-        isManagedReplace ? "2" : "0",
-        !isManagedReplace);
+        isManagedReplace ? "2" : "0");
   }
 
   @Test
@@ -467,7 +460,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
             () ->
                 sql(
                     "CREATE TABLE %s(name STRING) USING parquet %s",
-                    fullTableName, MANAGED_TBLPROPERTIES_CLAUSE))
+                    fullTableName, CUSTOM_TBLPROPERTIES_CLAUSE))
         .hasMessageContaining("not support non-Delta managed table");
 
     // Test 2: Invalid property value 'disabled' for catalogManaged feature
@@ -489,24 +482,12 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         .hasMessageContaining(UC_TABLE_ID_KEY);
 
     // Test 4: Cannot set is_managed_location to false for managed tables.
-    // catalogManaged must be included so the statement passes managed-table validation (Test 5)
-    // and actually reaches the is_managed_location check.
     assertThatThrownBy(
             () ->
                 sql(
-                    "CREATE TABLE %s(name STRING) USING delta TBLPROPERTIES ('%s' = '%s', '%s' = 'false')",
-                    fullTableName,
-                    DELTA_CATALOG_MANAGED_KEY,
-                    SUPPORTED,
-                    TableCatalog.PROP_IS_MANAGED_LOCATION))
+                    "CREATE TABLE %s(name STRING) USING delta TBLPROPERTIES ('%s' = 'false')",
+                    fullTableName, TableCatalog.PROP_IS_MANAGED_LOCATION))
         .hasMessageContaining("is_managed_location");
-
-    // Test 5: Managed table creation requires catalogManaged property
-    assertThatThrownBy(() -> sql("CREATE TABLE %s(name STRING) USING delta", fullTableName))
-        .hasMessageContaining(
-            String.format(
-                "Managed table creation requires table property '%s'='%s' to be set",
-                DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
   }
 
   // EXTERNAL is intentionally excluded: CREATE OR REPLACE is not supported yet.
@@ -588,8 +569,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         withCluster,
         options.getClusterColumn(),
         options.getPartitionColumn(),
-        "0",
-        true);
+        "0");
 
     // Second CREATE OR REPLACE: identical metadata; goes through
     // `loadTableAndBuildReplaceProps`. Identity must survive and the post-create INSERT
@@ -606,8 +586,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     } else {
       check(fullTableName, List.of(List.of("3", "c")));
     }
-    // Identical metadata: UC's view of `lastUpdateVersion` and `clusteringColumns` is
-    // unchanged from the first COR.
+    // Identical clustered metadata still sends clustering domain metadata intent to UC, so UC's
+    // lastUpdateVersion advances to the replacement commit version.
     assertUCTableInfo(
         TableType.MANAGED,
         fullTableName,
@@ -618,8 +598,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         withCluster,
         options.getClusterColumn(),
         options.getPartitionColumn(),
-        "0",
-        true);
+        withCluster ? "2" : "0");
   }
 
   /**
@@ -798,8 +777,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         false,
         Optional.empty(),
         Optional.empty(),
-        "0",
-        true);
+        "0");
   }
 
   private void assertUCTableInfo(
@@ -812,8 +790,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       boolean withCluster,
       Optional<String> clusterColumn,
       Optional<String> partitionColumn,
-      String expectedLastUpdateVersion,
-      boolean expectClusteringColumnsProperty)
+      String expectedLastUpdateVersion)
       throws ApiException {
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
@@ -854,38 +831,48 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
       tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
 
-      // CLUSTER BY has two extra properties, except managed REPLACE does not send clustering
-      // domain metadata to UC yet.
+      // CLUSTER BY adds `delta.feature.clustering`. The accompanying `clusteringColumns` property
+      // holds the physical (column-mapped) column reference, whose value isn't predictable, so it
+      // is verified by existence only via `expectedPropertiesWithVariableValue` below.
       final Map<String, String> expectedClusteringProperties =
           withCluster
               ? ImmutableMap.<String, String>builder()
                   .put("delta.feature.clustering", SUPPORTED)
-                  .putAll(
-                      expectClusteringColumnsProperty
-                          ? Map.of("clusteringColumns", "[[\"" + clusterColumn.get() + "\"]]")
-                          : Map.of())
                   .build()
               : ImmutableMap.of();
       final Map<String, String> expectedOtherProperties =
           ImmutableMap.<String, String>builder()
               .put("delta.checkpointPolicy", "v2")
+              .put("delta.checkpoint.writeStatsAsJson", "true")
+              .put("delta.checkpoint.writeStatsAsStruct", "true")
+              .put("delta.columnMapping.mode", "name")
               .put("delta.enableDeletionVectors", "true")
               .put("delta.enableInCommitTimestamps", "true")
               .put("delta.enableRowTracking", "true")
               .put("delta.lastUpdateVersion", expectedLastUpdateVersion)
               .put("delta.minReaderVersion", "3")
               .put("delta.minWriterVersion", "7")
+              .put("delta.randomizeFilePrefixes", "true")
               .put(UC_TABLE_ID_KEY, tableInfo.getTableId())
               // User specified custom table property is also sent.
               .putAll(customizedProps)
               .putAll(expectedClusteringProperties)
               .build();
-      // The value of these properties aren't predictable. But at least we confirm their existence.
+      // The value of these properties aren't predictable, so they are listed here to keep the
+      // unexpected-property check below from flagging them; their values are asserted separately.
+      // Column-mapping rewrites the logical CLUSTER BY column to a physical `col-<UUID>` reference,
+      // so `clusteringColumns` can't be matched against the logical name -- its shape is validated
+      // explicitly below instead.
       final Set<String> expectedPropertiesWithVariableValue =
-          Set.of(
-              "delta.lastCommitTimestamp",
-              "delta.rowTracking.materializedRowCommitVersionColumnName",
-              "delta.rowTracking.materializedRowIdColumnName");
+          Stream.concat(
+                  Stream.of(
+                      "delta.lastCommitTimestamp",
+                      // Schema-dependent; value is the largest column id assigned by Delta.
+                      "delta.columnMapping.maxColumnId",
+                      "delta.rowTracking.materializedRowCommitVersionColumnName",
+                      "delta.rowTracking.materializedRowIdColumnName"),
+                  withCluster ? Stream.of("clusteringColumns") : Stream.empty())
+              .collect(Collectors.toUnmodifiableSet());
 
       // `delta.rowTracking.rowIdHighWaterMark` is emitted when using UC Delta API only.
       // Difference servers may or may not persist it as a table property.
@@ -904,6 +891,14 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           (key, value) -> assertThat(tablePropertiesFromServer).containsEntry(key, value));
       expectedPropertiesWithVariableValue.forEach(
           key -> assertThat(tablePropertiesFromServer).containsKey(key));
+
+      // CLUSTER BY (col) persists the column as a column-mapped physical `col-<UUID>` reference.
+      // The UUID is unpredictable, so validate the shape: exactly one column-mapped clustering
+      // column.
+      if (withCluster) {
+        assertThat(tablePropertiesFromServer.get("clusteringColumns"))
+            .matches("\\[\\[\"col-[0-9a-f-]+\"\\]\\]");
+      }
 
       // Server doesn't have any unexpected table properties. If anyone introduces a new table
       // property and this fails, update the list of expected properties.
@@ -932,7 +927,13 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
 
     // Verify basic table properties
-    assertThat(describeResult.get("Name")).isEqualTo(fullTableName);
+    // Spark 4.2 reports the table name as Catalog/Database/Table instead of one Name row.
+    if (!fullTableName.equals(describeResult.get("Name"))) {
+      assertThat(describeResult.get("Catalog")).isEqualTo(catalogName);
+      assertThat(describeResult.getOrDefault("Database", describeResult.get("Namespace")))
+          .isEqualTo(schemaName);
+      assertThat(describeResult.get("Table")).isEqualTo(parseTableName(fullTableName));
+    }
     assertThat(describeResult.get("Type")).isEqualTo(tableType.name());
     assertThat(describeResult.get("Provider")).isEqualToIgnoringCase("delta");
     assertThat(describeResult.get("Is_managed_location"))
@@ -945,6 +946,15 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       // Check for catalogManaged feature
       assertThat(tableProperties)
           .contains(String.format("%s=%s", DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
+      // Regression: the reserved `is_managed_location` catalog property must not leak into the
+      // committed Delta metadata configuration. `DESCRIBE DETAIL`'s `properties` column is the raw
+      // `snapshot.metadata.configuration` (the commit log), unlike DESC EXTENDED / SHOW
+      // TBLPROPERTIES which surface `is_managed_location` synthesized at load time. The `Type` /
+      // `Is_managed_location` rows asserted above still reflect that this is a managed table.
+      List<String> detailRow = sql("DESCRIBE DETAIL %s", fullTableName).get(0);
+      assertThat(String.join(",", detailRow))
+          .as("is_managed_location must not be persisted in the Delta commit log")
+          .doesNotContain(TableCatalog.PROP_IS_MANAGED_LOCATION);
     } else {
       // Check for UC table ID
       assertThat(tableProperties).doesNotContain(UC_TABLE_ID_KEY);

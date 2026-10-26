@@ -900,6 +900,39 @@ trait AbstractTestUtils
         crcInfo.getFileSizeHistogram))
   }
 
+  /**
+   * Rewrites the checksum file at `version` so it omits the deletion-vector metrics.
+   * Used to simulate a base CRC written before DV metrics were captured (or by an
+   * engine that never captured them) on a DV-enabled table.
+   */
+  def rewriteChecksumFileToExcludeDvMetrics(
+      engine: Engine,
+      tablePath: String,
+      version: Long): Unit = {
+    val logPath = new Path(s"$tablePath/_delta_log");
+    val crcInfo = ChecksumReader.tryReadChecksumFile(
+      engine,
+      FileStatus.of(checksumFile(
+        logPath,
+        version).toString)).get()
+    // Delete it in hdfs.
+    engine.getFileSystemClient.delete(FileNames.checksumFile(
+      new Path(s"$tablePath/_delta_log"),
+      version).toString)
+    val crcWriter = new ChecksumWriter(logPath)
+    crcWriter.writeCheckSum(
+      engine,
+      new CRCInfo(
+        crcInfo.getVersion,
+        crcInfo.getMetadata,
+        crcInfo.getProtocol,
+        crcInfo.getTableSizeBytes,
+        crcInfo.getNumFiles,
+        crcInfo.getTxnId,
+        crcInfo.getDomainMetadata,
+        crcInfo.getFileSizeHistogram))
+  }
+
   def executeCrcSimple(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
     val crcSimpleHook = result
       .getPostCommitHooks

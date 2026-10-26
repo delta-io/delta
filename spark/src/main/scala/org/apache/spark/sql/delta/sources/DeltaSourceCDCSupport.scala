@@ -145,7 +145,13 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           // This is to avoid returning `update_preimage` and `update_postimage` in separate
           // batches.
           if (admissionControl.admit(filteredFiles)) {
-            filteredFiles.toIterator
+            // Emit the BEGIN/END index markers with the CDC files (as the AddFile/RemoveFile
+            // branch does) so buildOffsetFromIndexedFile rolls the offset to (version + 1,
+            // BASE_INDEX); an AddCDCFile window-top would otherwise park and stall the stream.
+            fileActions
+              .filter(f => f.cdc != null || hasNoFileActionAndStartOrEndIndex(f))
+              .filter(isValidIndexedFile(_, fromVersion, fromIndex, endOffset))
+              .toIterator
           } else {
             Iterator()
           }
@@ -203,8 +209,23 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     val changes = getFileChangesForCDC(
       startVersion, startIndex, isInitialSnapshot, limits = None, Some(endOffset))
 
+    // Versions before startVersion have already been processed, so we treat
+    // startVersion - 1 as already "seen".
+    var maxVersionSeen = startVersion - 1
+    // The last commit version we expect the iterator to cover.
+    // If endOffset.index < 0, we don't need to read any file from
+    // endOffset.reservoirVersion, so the last version we must see is one before it.
+    // Similarly if start >= end (no data to read from that version), subtract 1.
+    val lastExpectedVersion = if (endOffset.index >= 0 &&
+      (startVersion < endOffset.reservoirVersion || startIndex < endOffset.index)) {
+      endOffset.reservoirVersion
+    } else {
+      endOffset.reservoirVersion - 1
+    }
+    // iterator will be materialized during CDCReader.changesToDF
     val groupedFileAndCommitInfoActions =
       changes.map { case (v, indexFiles, commitInfoOpt) =>
+        maxVersionSeen = v
         (v, indexFiles.filter(_.hasFileAction).map(_.getFileAction).toSeq ++ commitInfoOpt)
       }
 
@@ -228,8 +249,16 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           throw DeltaErrors.logFileNotFoundExceptionForStreamingSource(e)
       }
     }
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION) &&
+        maxVersionSeen < lastExpectedVersion) {
+      recordTrailingCommitMissingEvent(
+        startVersion, startIndex, isInitialSnapshot, endOffset,
+        lastExpectedVersion, maxVersionSeen, isStreamingCDC = true)
+      throw DeltaErrors.streamingTrailingCommitMissing(
+        lastExpectedVersion, maxVersionSeen)
+    }
     logInfo(log"Getting CDC dataFrame for delta_log_path=" +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
       log"startVersion=${MDC(DeltaLogKeys.START_VERSION, startVersion)}, " +
       log"startIndex=${MDC(DeltaLogKeys.START_INDEX, startIndex)}, " +
       log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)}, " +
@@ -350,7 +379,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     }
 
     logInfo(log"Getting CDC file changes for delta_log_path=" +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
       log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, fromIndex=" +
       log"${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
       log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} took timeMs=" +
@@ -408,11 +437,13 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         protocolAction,
         commitInfoAction)
     } else {
+      val changesDataFunc =
+        CommitInfo.fileActionChangesData(actions.collectFirst { case ci: CommitInfo => ci })
       (actions.filter {
         case a: AddFile =>
-          a.dataChange
+          changesDataFunc(a)
         case r: RemoveFile =>
-          r.dataChange
+          changesDataFunc(r)
         case m: Metadata =>
           checkAndCacheMetadata(m)
           false

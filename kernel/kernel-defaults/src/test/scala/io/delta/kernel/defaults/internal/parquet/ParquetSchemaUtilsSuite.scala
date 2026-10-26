@@ -458,7 +458,7 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
     assert(annotation.getCrs == "OGC:CRS84")
   }
 
-  test("toParquetSchema - GeometryType with custom SRID preserves crs") {
+  test("toParquetSchema - GeometryType with custom CRS preserves crs") {
     val deltaSchema = new StructType()
       .add("geom", new GeometryType("EPSG:4326"))
 

@@ -16,8 +16,8 @@
 
 package io.delta.flink.inttest;
 
-import static io.delta.flink.sink.ConversionsTest.f;
-import static io.delta.flink.sink.ConversionsTest.row;
+import static io.delta.flink.sink.ConversionsFlinkToDeltaTest.f;
+import static io.delta.flink.sink.ConversionsFlinkToDeltaTest.row;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.delta.flink.sink.DeltaSink;

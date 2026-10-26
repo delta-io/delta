@@ -16,10 +16,10 @@
 
 package io.delta.sql
 
-import io.delta.internal.{ApplyV2ReadOptions, ApplyV2Streaming}
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.delta.v2.{ApplyV2ReadOptions, ApplyV2Streaming, ResolveTableChangesV2}
 
 /**
  * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.
@@ -89,6 +89,11 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
     // ApplyV2Streaming so it sees both V1-converted and catalog-loaded relations.
     extensions.injectResolutionRule { _ =>
       new ApplyV2ReadOptions
+    }
+
+    // Resolve CDF batch reads against the V2 DeltaV2Table to Spark's DSv2 CDC implementation.
+    extensions.injectResolutionRule { session =>
+      new ResolveTableChangesV2(session)
     }
   }
 

@@ -32,7 +32,6 @@ import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Option;
@@ -54,14 +53,11 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
     public static final String BASE_DELTA_VERSION_PROPERTY = "base-delta-version";
     public static final String DELTA_HIGH_WATER_MARK_PROPERTY = "delta-high-water-mark";
 
-    public static final String DELTA_SQL_CONF_BYPASS_SEQUENCE_NUMBER_CHECK =
-            "spark.databricks.delta.uniform.bypassSnapshotSequenceNumberCheck";
-    public static final String DELTA_SQL_CONF_BYPASS_FORMAT_VERSION_DOWNGRAGDE_CHECK =
-            "spark.databricks.delta.uniform.bypassFormatVersionDowngradeCheck";
-
     private final FileIO fileIO;
     private final TableIdentifier tableIdentifier;
     private final Optional<String> baseMetadataLocation;
+
+
     private List<MetadataUpdate> metadataUpdates;
     private Optional<Tuple2<String, TableMetadata>> lastWrittenTableMetadataWithLocation;
 
@@ -151,6 +147,28 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
             return;
         }
 
+        if (metadata.formatVersion() >= 3) {
+            long lastSequenceNumber = metadata.lastSequenceNumber();
+            if (lastSequenceNumber != deltaVersion) {
+                throw new CommitFailedException("Metadata conversion failed: " +
+                        "lastSequenceNumber " + lastSequenceNumber +
+                        " mismatch Delta Version " + deltaVersion);
+            }
+            // if this txn result in a new iceberg snapshot, check the snapshot
+            // sequence number to match delta version
+
+            Boolean hasNewIcebergSnapshot = metadata.currentSnapshot() != null && base != null &&
+                    (base.currentSnapshot() == null || metadata.currentSnapshot().snapshotId() !=
+                    base.currentSnapshot().snapshotId());
+
+            Long deltaHighWaterMark = Long.parseLong(deltaHighWaterMarkStr);
+            long icebergNextRowId = metadata.nextRowId();
+            if (icebergNextRowId != deltaHighWaterMark + 1) {
+                throw new CommitFailedException("Metadata conversion failed: " +
+                        "nextRowId " + icebergNextRowId +
+                        " mismatch Delta highWaterMark " + deltaHighWaterMark + " + 1");
+            }
+        }
         final int newVersion = currentVersion() + 1;
         String newMetadataLocation = writeNewMetadata(metadata, newVersion);
         lastWrittenTableMetadataWithLocation = Optional.of(Tuple2.apply(newMetadataLocation, metadata));
@@ -199,5 +217,6 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
             "not exist or the corresponding Delta table has not been converted yet.",
             tableIdentifier.toString());
     }
+
 
 }

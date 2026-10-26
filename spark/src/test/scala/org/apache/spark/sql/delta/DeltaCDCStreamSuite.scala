@@ -34,13 +34,17 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.types.StructType
 
-trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
+trait DeltaCDCStreamSuiteBase
+  extends QueryTest
+  with DeltaSQLCommandTest
+  with DeltaColumnMappingTestUtils
   with DeltaSourceSuiteBase
-  with DeltaColumnMappingTestUtils {
+  with StreamTest {
 
   import testImplicits._
   import io.delta.implicits._
@@ -822,6 +826,55 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
     }
   }
 
+  test("CDF stream rolls the offset past a change-data commit (keeps END marker)") {
+    // Regression guard: a processed change-data (AddCDCFile) commit must roll the
+    // offset to (version + 1, BASE_INDEX), not park on its last real index. Plain (non-shared)
+    // Delta on purpose: the sharing mock can't reproduce it (offset comes from latestOffset).
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        withTempDir { outputDir =>
+          // v0: two AddFiles (one per partition).
+          spark.range(2)
+            .withColumn("part", 'id % 2)
+            .withColumn("col3", lit(0))
+            .repartition(1)
+            .write
+            .format("delta")
+            .partitionBy("part")
+            .option("enableChangeDataFeed", "true")
+            .save(inputDir.getAbsolutePath)
+          val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
+          // v1, v2: UPDATEs -> AddCDCFile commits; the last version processed is change data.
+          deltaTable.update(expr("col3 < 2"), Map("col3" -> lit("1")))
+          deltaTable.update(expr("col3 < 2"), Map("col3" -> lit("2")))
+
+          val query = loadStreamWithOptions(inputDir.getAbsolutePath, Map(
+              DeltaOptions.CDC_READ_OPTION -> "true",
+              "startingVersion" -> "0"))
+            .select("id")
+            .writeStream
+            .format("delta")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.getAbsolutePath)
+          try {
+            query.processAllAvailable()
+          } finally {
+            query.stop()
+            query.awaitTermination()
+          }
+
+          val endOffset =
+            JsonUtils.fromJson[DeltaSourceOffset](query.lastProgress.sources.head.endOffset)
+          assert(endOffset.index === DeltaSourceOffset.BASE_INDEX,
+            s"CDF offset parked on a real index instead of rolling past the change-data " +
+            s"commit: $endOffset")
+          assert(endOffset.reservoirVersion === 3L, s"endOffset = $endOffset")
+        }
+      }
+    }
+  }
+
   test("maxFilesPerTrigger - batch reject stops iteration to prevent data loss") {
     withTempDir { inputDir =>
       // v0: 2 AddFiles (one per partition)
@@ -907,7 +960,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       testStream(df)(
         StartStream(Trigger.AvailableNow),
         Execute { query =>
-          assert(query.awaitTermination(10000))
+          assert(query.awaitTermination(streamingTimeout.toMillis))
         },
         CheckProgress(rowsPerBatch),
         CheckAnswer(
@@ -1154,9 +1207,58 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         testStream(df)(ProcessAllAvailable())
       }
       assert(
-        ex.getMessage.toLowerCase(Locale.ROOT).contains("row_id") ||
-          ex.getMessage.toLowerCase(Locale.ROOT).contains("cannot be resolved"),
+        ex.getMessage.toLowerCase(Locale.ROOT).contains("row_id"),
         s"Expected error mentioning row_id under CDC, got: ${ex.getMessage}"
+      )
+    }
+  }
+
+  test("CDC stream on partitioned table strips partition and CDC columns correctly") {
+    // pruneColumns in CDC mode must strip both CDC tail columns (injected by CDCReadFunction)
+    // and the partition column (not in data files) while keeping data columns intact.
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      // DDL order: id, part (partition), name. Part sits in the middle.
+      Seq((1L, "a", "Alice"), (2L, "b", "Bob")).toDF("id", "part", "name")
+        .write.format("delta")
+        .option("delta.enableChangeDataFeed", "true")
+        .partitionBy("part")
+        .save(path)
+
+      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+        .select("id", "part", "name")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((1L, "a", "Alice"), (2L, "b", "Bob"))
+      )
+    }
+  }
+
+  test("CDC stream on column-mapped table passes through correctly") {
+    // pruneColumns in CDC mode must handle column-mapped fields (logical->physical name
+    // translation) while stripping CDC tail columns.
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      // Enabling CM via df.write triggers DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION when
+      // CDC is also set (CM setup is treated as a rename). Use DDL + INSERT instead.
+      // Use the suite's CM mode so id-mode and name-mode subclasses each test their own mode.
+      val cmMode = if (columnMappingMode == "none") "name" else columnMappingMode
+      sql(s"CREATE TABLE delta.`$path` (id LONG, user_name STRING) USING delta " +
+        s"TBLPROPERTIES ('delta.columnMapping.mode' = '$cmMode', " +
+        "'delta.enableChangeDataFeed' = 'true')")
+      // Use format("delta") (V1 write path) so Parquet files are written with physical column
+      // names. sql("INSERT INTO") under V2ForceTest STRICT mode uses the V2 kernel writer which
+      // omits the logical->physical name translation, causing CDC reads to return null values.
+      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "user_name")
+        .write.format("delta").mode("append").save(path)
+
+      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+        .select("id", "user_name")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((1L, "Alice"), (2L, "Bob"))
       )
     }
   }
@@ -1354,7 +1456,8 @@ abstract class DeltaCDCStreamColumnMappingSuiteBase extends DeltaCDCStreamSuite
     "column mapping + streaming - allowed workflows - column addition",
     "column mapping + streaming - allowed workflows - upgrade to name mode",
     "column mapping + streaming: blocking workflow - drop column",
-    "column mapping + streaming: blocking workflow - rename column"
+    "column mapping + streaming: blocking workflow - rename column",
+    "CDC stream on column-mapped table passes through correctly"
   )
 
 }

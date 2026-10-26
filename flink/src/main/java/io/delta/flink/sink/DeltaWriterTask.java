@@ -56,18 +56,18 @@ public class DeltaWriterTask {
   private final int attemptNumber;
   private final Map<String, Literal> partitionValues;
 
-  private final DeltaTable deltaTable;
+  protected final DeltaTable deltaTable;
   private final DeltaSinkConf conf;
 
   private final StructType writeSchema;
-  private final List<RowData> buffer;
+  protected final List<RowData> buffer;
 
   private final List<DeltaWriterResult> resultBuffer;
 
   private final DeltaSinkConf.FileRollingStrategy fileRollingStrategy;
 
-  private long lowWatermark = Long.MAX_VALUE;
-  private long highWatermark = -1;
+  protected long lowWatermark = Long.MAX_VALUE;
+  protected long highWatermark = -1;
 
   public DeltaWriterTask(
       String jobId,
@@ -91,10 +91,6 @@ public class DeltaWriterTask {
     this.fileRollingStrategy = conf.createFileRollingStrategy();
   }
 
-  protected List<DeltaWriterResult> getResultBuffer() {
-    return resultBuffer;
-  }
-
   /** Add a single row to write buffer, and optionally trigger the write to file. */
   public void write(RowData element, SinkWriter.Context context)
       throws IOException, InterruptedException {
@@ -111,7 +107,7 @@ public class DeltaWriterTask {
   /**
    * Write the current buffer content to file and store the generated writer results in resultBuffer
    */
-  private void dump() throws IOException {
+  protected void dump() throws IOException {
     LOG.debug(
         "Writing {} elements to Parquet, partition: {}, jobId: {}, subtaskId: {}, attemptNumber: {}",
         buffer.size(),

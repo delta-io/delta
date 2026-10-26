@@ -48,11 +48,14 @@ public class TestWriterInitContext implements WriterInitContext {
   private final SinkWriterMetricGroup metricGroup;
   private final JobInfo jobInfo;
   private final TaskInfo taskInfo;
+  private final TypeSerializer<?> inputSerializer;
 
-  public TestWriterInitContext(int subtaskId, int parallelism, int attempt) {
+  public TestWriterInitContext(
+      int subtaskId, int parallelism, int attempt, TypeSerializer<?> inputSerializer) {
     this.subtaskId = subtaskId;
     this.parallelism = parallelism;
     this.attempt = attempt;
+    this.inputSerializer = inputSerializer;
 
     this.mailboxExecutor =
         new MailboxExecutorImpl(
@@ -162,8 +165,9 @@ public class TestWriterInitContext implements WriterInitContext {
   }
 
   @Override
+  @SuppressWarnings("unchecked")
   public <IN> TypeSerializer<IN> createInputSerializer() {
-    return null;
+    return (TypeSerializer<IN>) inputSerializer;
   }
 
   @Override

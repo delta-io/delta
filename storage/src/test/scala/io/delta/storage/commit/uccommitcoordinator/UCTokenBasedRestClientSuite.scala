@@ -23,7 +23,7 @@ import java.util.{Collections, Optional}
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException}
-import io.delta.storage.commit.actions.AbstractMetadata
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import io.unitycatalog.client.auth.TokenProvider
 
@@ -45,6 +45,7 @@ class UCTokenBasedRestClientSuite
   private var serverUri: String = _
   private var metastoreHandler: HttpExchange => Unit = _
   private var commitsHandler: HttpExchange => Unit = _
+  private var tablesHandler: (HttpExchange, String) => Unit = _
   private val objectMapper = new ObjectMapper()
 
   override def beforeAll(): Unit = {
@@ -63,6 +64,12 @@ class UCTokenBasedRestClientSuite
       }
       exchange.close()
     })
+    server.createContext("/api/2.1/unity-catalog/tables", exchange => {
+      val body = readRequestBody(exchange)
+      if (tablesHandler != null) tablesHandler(exchange, body)
+      else sendJson(exchange, HttpStatus.SC_OK, "{}")
+      exchange.close()
+    })
     server.start()
     serverUri = s"http://localhost:${server.getAddress.getPort}"
   }
@@ -72,6 +79,7 @@ class UCTokenBasedRestClientSuite
   override def beforeEach(): Unit = {
     metastoreHandler = null
     commitsHandler = null
+    tablesHandler = null
   }
 
   private def readRequestBody(exchange: HttpExchange): String = {
@@ -106,6 +114,14 @@ class UCTokenBasedRestClientSuite
       new Path(s"/path/_delta_log/_staged_commits/$version.uuid.json"))
     new Commit(version, fs, System.currentTimeMillis())
   }
+
+  private def createProtocol(minReader: Int, minWriter: Int): AbstractProtocol =
+    new AbstractProtocol {
+      override def getMinReaderVersion: Int = minReader
+      override def getMinWriterVersion: Int = minWriter
+      override def getReaderFeatures: java.util.Set[String] = Collections.emptySet()
+      override def getWriterFeatures: java.util.Set[String] = Collections.emptySet()
+    }
 
   private def createMetadata(): AbstractMetadata = new AbstractMetadata {
     override def getId: String = "id"
@@ -155,7 +171,8 @@ class UCTokenBasedRestClientSuite
     withClient { client =>
       client.commit(testTableId, testTableUri, null,
         Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+        Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
     }
   }
 
@@ -171,6 +188,7 @@ class UCTokenBasedRestClientSuite
         Optional.of(createMetadata()),
         Optional.empty(),
         Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](),
         Optional.empty())
     }
   }
@@ -180,12 +198,12 @@ class UCTokenBasedRestClientSuite
       intercept[NullPointerException] {
         client.commit(null, testTableUri, null, Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty())
+          Optional.empty(), Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
       }
       intercept[NullPointerException] {
         client.commit(testTableId, null, null, Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty())
+          Optional.empty(), Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
       }
     }
   }
@@ -196,7 +214,8 @@ class UCTokenBasedRestClientSuite
       withClient { client =>
         client.commit(testTableId, testTableUri, null,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
       }
     }
 
@@ -301,6 +320,7 @@ class UCTokenBasedRestClientSuite
         client.commit(testTableId, testTableUri, null,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](),
           Optional.of(new UniformMetadata(icebergMeta)))
       }
 
@@ -334,7 +354,8 @@ class UCTokenBasedRestClientSuite
     withClient { client =>
       client.commit(testTableId, testTableUri, null,
         Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+        Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
     }
 
     val json = objectMapper.readTree(capturedBody)
@@ -352,10 +373,40 @@ class UCTokenBasedRestClientSuite
       client.commit(testTableId, testTableUri, null,
         Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
         Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](),
         Optional.of(new UniformMetadata(null)))
     }
 
     val json = objectMapper.readTree(capturedBody)
     assert(!json.has("uniform") || json.get("uniform").isNull)
+  }
+
+  test("finalizeCreate keeps protocol flattened in properties (no structured protocol field)") {
+    var capturedBody: String = null
+    tablesHandler = (exchange, body) => {
+      capturedBody = body
+      sendJson(exchange, HttpStatus.SC_OK, "{}")
+    }
+
+    // The Delta-Commits API has no structured protocol field, so the flattened protocol keys must
+    // be forwarded as table properties unchanged and the `protocol` argument must be ignored.
+    val props = new java.util.HashMap[String, String]()
+    props.put("delta.minReaderVersion", "3")
+    props.put("delta.feature.deletionVectors", "supported")
+    props.put("foo", "bar")
+
+    withClient { client =>
+      client.finalizeCreate("t", "cat", "sch", "s3://bucket/tbl",
+        Collections.emptyList(), createProtocol(3, 7), props,
+        0L, Collections.emptyList[AbstractDomainMetadata]())
+    }
+
+    val json = objectMapper.readTree(capturedBody)
+    val properties = json.get("properties")
+    assert(properties.get("delta.minReaderVersion").asText() === "3")
+    assert(properties.get("delta.feature.deletionVectors").asText() === "supported")
+    assert(properties.get("foo").asText() === "bar")
+    // No structured protocol field on the Delta-Commits create request.
+    assert(!json.has("protocol"))
   }
 }

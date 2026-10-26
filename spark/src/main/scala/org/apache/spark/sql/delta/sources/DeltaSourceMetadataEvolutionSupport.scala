@@ -22,12 +22,14 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, FileAction, Metadata, Protocol}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.v2.interop.{AbstractMetadata, AbstractProtocol}
+import org.apache.hadoop.fs.Path
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.streaming.Offset
@@ -154,12 +156,11 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
       startVersion: Long,
       endVersion: Long
   ): ClosableIterator[(Long, Action)] = {
-    deltaLog.getChangeLogFiles(startVersion, catalogTableOpt, options.failOnDataLoss).takeWhile {
-      case (version, _) => version <= endVersion
-    }.flatMapWithClose { case (version, fileStatus) =>
-      DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
-        .map((version, _))
-        .toClosable
+    deltaLog.getChangesIterator(startVersion, catalogTableOpt, options.failOnDataLoss).takeWhile {
+      commit => commit.version <= endVersion
+    }.flatMapWithClose { commit =>
+      DeltaSource.createRewindableActionIterator(spark, commit)
+        .withClose(_.map((commit.version, _)))
     }
   }
 
@@ -404,6 +405,46 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
 }
 
 object DeltaSourceMetadataEvolutionSupport extends Logging {
+  /**
+   * Returns the read-time snapshot descriptor obtained by overlaying persisted stream metadata on
+   * the source's initial snapshot descriptor.
+   */
+  def buildReadSnapshotDescriptor(
+      snapshotAtSourceInit: SnapshotDescriptor,
+      customMetadata: PersistedMetadata): SnapshotDescriptor = {
+    new SnapshotDescriptor {
+      val deltaLog: DeltaLog = snapshotAtSourceInit.deltaLog
+      override val dataPath: Path = snapshotAtSourceInit.dataPath
+      val logPath: Path = snapshotAtSourceInit.logPath
+      val metadata: Metadata =
+        snapshotAtSourceInit.metadata.copy(
+          schemaString = customMetadata.dataSchemaJson,
+          partitionColumns = customMetadata.partitionSchema.fieldNames,
+          // Copy the configurations so the correct file format can be constructed
+          configuration = customMetadata.tableConfigurations
+            // Fallback for backward compat only, this should technically not be triggered
+            .getOrElse {
+              val config = snapshotAtSourceInit.metadata.configuration
+              logWarning(log"Using snapshot's table configuration: " +
+                log"${MDC(DeltaLogKeys.CONFIG, config)}")
+              config
+            }
+        )
+      val protocol: Protocol = customMetadata.protocol.getOrElse {
+        val protocol = snapshotAtSourceInit.protocol
+        logWarning(log"Using snapshot's protocol: ${MDC(DeltaLogKeys.PROTOCOL, protocol)}")
+        protocol
+      }
+      // The following are not important in stream reading
+      val version: Long = customMetadata.deltaCommitVersion
+      val numOfFilesIfKnown = snapshotAtSourceInit.numOfFilesIfKnown
+      val sizeInBytesIfKnown = snapshotAtSourceInit.sizeInBytesIfKnown
+      // V2 has no DeltaLog; keep the inherited tag lookup for V1.
+      override def getCommonTags =
+        if (deltaLog == null) snapshotAtSourceInit.getCommonTags else super.getCommonTags
+    }
+  }
+
   /** SQL configs that allow unblocking each type of schema changes. */
   private val SQL_CONF_PREFIX = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming"
 
@@ -748,12 +789,12 @@ object DeltaSourceMetadataEvolutionSupport extends Logging {
     // We start from the currentSchemaVersion so that we can stop early in case the current
     // version still has file actions that potentially needs to be processed.
     val untilMetadataChange =
-      deltaLog.getChangeLogFiles(
-        currentMetadataVersion, catalogTableOpt).map { case (version, fileStatus) =>
+      deltaLog.getChangesIterator(
+        currentMetadataVersion, catalogTableOpt).map { commit =>
         var metadataAction: Option[Metadata] = None
         var protocolAction: Option[Protocol] = None
         var hasFileAction = false
-        DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
+        DeltaSource.createRewindableActionIterator(spark, commit)
           .processAndClose { actionsIter =>
             actionsIter.foreach {
               case m: Metadata => metadataAction = Some(m)
@@ -763,30 +804,46 @@ object DeltaSourceMetadataEvolutionSupport extends Logging {
             }
           }
         (!hasFileAction && (metadataAction.isDefined || protocolAction.isDefined),
-          version, metadataAction, protocolAction)
+          commit.version, metadataAction, protocolAction)
       }.takeWhile(_._1)
-    DeltaSource.iteratorLast(untilMetadataChange.toClosable)
-      .flatMap { case (_, version, metadataOpt, protocolOpt) =>
-        if (version == currentMetadataVersion) {
-          None
-        } else {
-          log.info(s"Looked ahead from version $currentMetadataVersion and " +
-            s"will use metadata at version $version to read Delta stream.")
-          Some(
-            currentMetadata.copy(
-              deltaCommitVersion = version,
-              dataSchemaJson =
-                metadataOpt.map(_.schema.json).getOrElse(currentMetadata.dataSchemaJson),
-              partitionSchemaJson =
-                metadataOpt.map(_.partitionSchema.json)
-                  .getOrElse(currentMetadata.partitionSchemaJson),
-              tableConfigurations = metadataOpt.map(_.configuration)
-                .orElse(currentMetadata.tableConfigurations),
-              protocolJson = protocolOpt.map(_.json).orElse(currentMetadata.protocolJson)
-            )
-          )
-        }
+    // Fold the chain so the merged entry tracks the latest Metadata and Protocol seen
+    // anywhere in the run, not just the last commit's actions -- otherwise a (Metadata,
+    // Protocol-only) tail would advance deltaCommitVersion while losing the schema change.
+    var lastVersion: Option[Long] = None
+    var latestMetadata: Option[Metadata] = None
+    var latestProtocol: Option[Protocol] = None
+    val chainIter = untilMetadataChange.toClosable
+    try {
+      while (chainIter.hasNext) {
+        val (_, version, metadataOpt, protocolOpt) = chainIter.next()
+        lastVersion = Some(version)
+        metadataOpt.foreach(m => latestMetadata = Some(m))
+        protocolOpt.foreach(p => latestProtocol = Some(p))
       }
+    } finally {
+      chainIter.close()
+    }
+    lastVersion.flatMap { version =>
+      if (version == currentMetadataVersion) {
+        None
+      } else {
+        log.info(s"Looked ahead from version $currentMetadataVersion and " +
+          s"will use metadata at version $version to read Delta stream.")
+        Some(
+          currentMetadata.copy(
+            deltaCommitVersion = version,
+            dataSchemaJson =
+              latestMetadata.map(_.schema.json).getOrElse(currentMetadata.dataSchemaJson),
+            partitionSchemaJson =
+              latestMetadata.map(_.partitionSchema.json)
+                .getOrElse(currentMetadata.partitionSchemaJson),
+            tableConfigurations = latestMetadata.map(_.configuration)
+              .orElse(currentMetadata.tableConfigurations),
+            protocolJson = latestProtocol.map(_.json).orElse(currentMetadata.protocolJson)
+          )
+        )
+      }
+    }
   }
 
   // scalastyle:off

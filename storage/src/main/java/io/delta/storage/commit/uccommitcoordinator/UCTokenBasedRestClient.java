@@ -21,6 +21,7 @@ import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.IcebergMetadata;
@@ -46,14 +47,12 @@ import io.unitycatalog.client.model.CreateTable;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
 import io.unitycatalog.client.model.TableType;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 
 import java.io.IOException;
 import java.net.URI;
 import java.util.*;
-import java.util.function.Supplier;
 
 /**
  * A REST client implementation of {@link UCClient} for interacting with Unity Catalog's commit
@@ -132,22 +131,6 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   /**
-   * 6-arg constructor for symmetry with {@link UCDeltaTokenBasedRestClient}. The
-   * {@code credentialRenewalEnabled}, {@code credentialScopedFsEnabled}, and
-   * {@code hadoopConfSupplier} parameters are not used by this client and are accepted only so
-   * that callers can construct either client uniformly by reflection.
-   */
-  public UCTokenBasedRestClient(
-      String baseUri,
-      TokenProvider tokenProvider,
-      Map<String, String> appVersions,
-      boolean credentialRenewalEnabled,
-      boolean credentialScopedFsEnabled,
-      Supplier<Configuration> hadoopConfSupplier) {
-    this(baseUri, tokenProvider, appVersions);
-  }
-
-  /**
    * Ensures the client has not been closed. Must be called before any API operation.
    */
   private void ensureOpen() {
@@ -179,6 +162,7 @@ public class UCTokenBasedRestClient implements UCClient {
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
+      List<AbstractDomainMetadata> transactionDomainMetadata,
       Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException {
     ensureOpen();
@@ -379,13 +363,17 @@ public class UCTokenBasedRestClient implements UCClient {
       String schemaName,
       String storageLocation,
       List<UCClient.ColumnDef> columns,
-      Map<String, String> properties) throws CommitFailedException {
+      AbstractProtocol protocol,
+      Map<String, String> properties,
+      long lastCommitTimestampMs,
+      List<AbstractDomainMetadata> domainMetadata) throws CommitFailedException {
     ensureOpen();
     Objects.requireNonNull(tableName, "tableName must not be null.");
     Objects.requireNonNull(catalogName, "catalogName must not be null.");
     Objects.requireNonNull(schemaName, "schemaName must not be null.");
     Objects.requireNonNull(storageLocation, "storageLocation must not be null.");
     Objects.requireNonNull(columns, "columns must not be null.");
+    Objects.requireNonNull(protocol, "protocol must not be null.");
     Objects.requireNonNull(properties, "properties must not be null.");
 
     List<ColumnInfo> ucColumns = columns.stream()

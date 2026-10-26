@@ -24,24 +24,25 @@ import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageReco
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.ScanReportHelper
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
+import org.scalactic.source.Position
+import org.scalatest.Tag
 
-import org.apache.spark.{QueryContext, SparkThrowable}
+import org.apache.spark.{QueryContext, SparkConf, SparkThrowable}
 import org.apache.spark.sql.{functions, AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
 import org.apache.spark.sql.catalyst.plans.logical.{SubqueryAlias, View}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
 import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 trait MergeIntoSuiteBaseMixin
     extends QueryTest
-    with SharedSparkSession
+    with DeltaSQLCommandTest
     with DeltaSQLTestUtils
     with ScanReportHelper
     with MergeIntoTestUtils
@@ -71,7 +72,7 @@ trait MergeIntoSuiteBaseMixin
       if (result != null) s"$namePrefix - $name" else s"$namePrefix - analysis error - $name"
 
     test(testName) {
-      withSQLConf(confs: _*) {
+      withConf(confs: _*) {
         withJsonData(source, target, targetSchema, sourceSchema) { case (sourceName, targetName) =>
           val fieldNames = spark.table(targetName).schema.fieldNames
           val fieldNamesStr = fieldNames.mkString("`", "`, `", "`")
@@ -201,7 +202,7 @@ trait MergeIntoSuiteBaseMixin
             .withColumn("part2", 'id % 3)
             .createOrReplaceTempView("source")
           // execute merge without repartition
-          withSQLConf(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE.key -> "false") {
+          withConf(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE.key -> "false") {
             executeMerge(
               tgt = s"delta.`$tgt1` as t",
               src = "source src",
@@ -431,7 +432,7 @@ trait MergeIntoSuiteBaseMixin
     Seq(true, false).foreach { isPartitioned =>
       test(s"$namePrefix - $name - isPartitioned: $isPartitioned ") {
         withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
-          withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
+          withConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
             executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
           }
           checkAnswer(
@@ -487,7 +488,7 @@ trait MergeIntoBasicTests extends MergeIntoSuiteBaseMixin {
      test("basic case - merge to Delta table, " +
          s"isPartitioned: $isPartitioned skippingEnabled: $skippingEnabled") {
         withTable("source") {
-          withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
+          withConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
             Seq((1, 1), (0, 3), (1, 6)).toDF("key1", "value").createOrReplaceTempView("source")
             val partitions = if (isPartitioned) "key2" :: Nil else Nil
             append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
@@ -910,7 +911,7 @@ trait MergeIntoBasicTests extends MergeIntoSuiteBaseMixin {
           val partitions = if (isPartitioned) "key" :: Nil else Nil
           append(target.toDF("key", "value"), partitions)
           source.toDF("key", "value").createOrReplaceTempView("sourceView")
-          withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
+          withConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
             if (insertCondition.isDefined) {
               executeMerge(
                 s"$tableSQLIdentifier as t",
@@ -978,7 +979,7 @@ trait MergeIntoTempViewsTests extends MergeIntoSuiteBaseMixin with DeltaTestUtil
         test("basic case - merge to view on a Delta table, " +
           s"partitioned: $partitioned skippingEnabled: $skippingEnabled useSqlView: $useSQLView") {
           withTable("delta_target", "source") {
-            withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
+            withConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
               Seq((1, 1), (0, 3), (1, 6)).toDF("key1", "value").createOrReplaceTempView("source")
               val partitions = if (partitioned) "key2" :: Nil else Nil
               append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
@@ -2018,7 +2019,7 @@ trait MergeIntoExtendedSyntaxTests extends MergeIntoSuiteBaseMixin {
       mergeOn: String,
       mergeClauses: MergeClause*): Unit = {
     test(s"extended syntax - $name", testTags: _*) {
-      withSQLConf(confs: _*) {
+      withConf(confs: _*) {
         withKeyValueData(source, target) { case (sourceName, targetName) =>
           val docURL = "/delta-update.html#upsert-into-a-table-using-merge"
 
@@ -2665,7 +2666,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
 
   test("Merge should use the same SparkSession consistently", NameBasedAccessIncompatible) {
     withTempDir { dir =>
-      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
+      withConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
         val r = dir.getCanonicalPath
         val sourcePath = s"$r/source"
         val targetPath = s"$r/target"
@@ -2927,7 +2928,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
          { "key": "c", "value" : 30, "value2" : 300 }""")
 
   test("insert only merge - turn off feature flag") {
-    withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false") {
+    withConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false") {
       withKeyValueData(
         source = (1, 10) :: (3, 30) :: Nil,
         target = (1, 1) :: Nil
@@ -2975,7 +2976,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
         val s = if (matchedOnlyEnabled) "enabled" else "disabled"
         test(s"matched only merge - $s - $name - isPartitioned: $isPartitioned ") {
           withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
-            withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> s"$matchedOnlyEnabled") {
+            withConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> s"$matchedOnlyEnabled") {
               executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
             }
             checkAnswer(
@@ -3026,8 +3027,8 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
       mergeOn: String,
       result: Seq[(JInt, JInt)]) = {
     Seq(true, false).foreach { isPartitioned =>
-      withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> "true") {
-        test(s"matched only merge - null handling - $name, isPartitioned: $isPartitioned") {
+      test(s"matched only merge - null handling - $name, isPartitioned: $isPartitioned") {
+        withConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> "true") {
           withView("sourceView") {
             val partitions = if (isPartitioned) "key" :: Nil else Nil
             append(target.toDF("key", "value"), partitions)
@@ -3104,7 +3105,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
           .write.format("delta").saveAsTable(source)
 
         val scans = getScanReport {
-          withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
+          withConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
             executeMerge(
               s"$tblName t",
               s"$source s",
@@ -3197,7 +3198,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
       sql(s"""CREATE TABLE $source (id string, new string, old string, date DATE) USING delta""")
       sql(s"""CREATE TABLE $target (id string, old string, date DATE) USING delta""")
 
-      withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
+      withConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
         executeMerge(
           tgt = s"$target t",
           src = s"$source s",
@@ -3349,7 +3350,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
       target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
       isKeyPartitioned = true) { case (sourceName, targetName) =>
 
-      withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
+      withConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
         events = Log4jUsageLogger.track {
           executeMerge(
             tgt = s"$targetName t",
@@ -3468,6 +3469,104 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
           Row(2, part2) ::
           Row(-1, part3) :: Row(-1, part3) :: Row(-1, part3) ::
           Row(0, part4) ::
+          Nil)
+    }
+  }
+}
+
+trait MergeIntoNullTypeTests extends MergeIntoSuiteBaseMixin { self: MergeIntoTestUtils =>
+  import testImplicits._
+
+  protected override def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key, "false")
+
+  override protected def test(testName: String, testTags: Tag*)(testFun: => Any)
+      (implicit pos: Position): Unit = {
+    super.test(testName, testTags: _*) {
+      assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+      testFun
+    }
+  }
+
+  test("NullType in source non-key column") {
+    withTable("source") {
+      Seq((0, null), (1, null)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+
+      executeMerge(
+        target = s"$tableSQLIdentifier tgt",
+        source = "source src",
+        condition = "src.key1 = key2",
+        update = "key2 = 20 + key1, value = 20",
+        insert = "(key2, value) VALUES (key1 - 10, src.value)")
+
+      checkAnswer(readDeltaTableByIdentifier(),
+        Row(2, 2) :: // No change
+          Row(21, 20) :: // Update
+          Row(-10, null) :: // Insert
+          Nil)
+    }
+  }
+
+  test("NullType in source key column") {
+    withTable("source") {
+      Seq((null, 1), (null, 3), (null, 6)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+
+      executeMerge(
+        target = s"$tableSQLIdentifier tgt",
+        source = "source src",
+        condition = "src.key1 = key2",
+        update = "key2 = 20 + key1, value = 20",
+        insert = "(key2, value) VALUES (key1, src.value + 10)")
+
+      checkAnswer(readDeltaTableByIdentifier(),
+        Row(2, 2) :: // No change
+          Row(1, 4) :: // No change
+          Row(null, 11) :: // Insert
+          Row(null, 13) :: // Insert
+          Row(null, 16) :: // Insert
+          Nil)
+    }
+  }
+
+  test("NullType in target key column, no schema changes") {
+    withTable("source") {
+      Seq((1, 1), (0, 3), (1, 6)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((null, 2), (null, 4)).toDF("key2", "value"))
+
+      executeMerge(
+        target = s"$tableSQLIdentifier tgt",
+        source = "source src",
+        condition = "src.key1 = key2",
+        update = "key2 = null, value = 20 + src.value",
+        insert = "(key2, value) VALUES (null, src.value + 10)")
+
+      checkAnswer(readDeltaTableByIdentifier(),
+        Row(null, 2) :: // No change
+          Row(null, 4) :: // No change
+          Row(null, 11) :: // Insert
+          Row(null, 13) :: // Insert
+          Row(null, 16) :: // Insert
+          Nil)
+    }
+  }
+
+  test("NullType in source key column with nulls in target key column") {
+    withTable("source") {
+      Seq((null, 1)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq.apply[(Integer, Integer)]((null, 2), (1, 4)).toDF("key2", "value"))
+
+      executeMerge(
+        target = s"$tableSQLIdentifier tgt",
+        source = "source src",
+        condition = "src.key1 <=> key2",
+        update = "key2 = 20 + key1, value = 20",
+        insert = "(key2, value) VALUES (key1, src.value + 10)")
+
+      checkAnswer(readDeltaTableByIdentifier(),
+        Row(1, 4) :: // No change
+          Row(null, 20) :: // Update
           Nil)
     }
   }

@@ -65,7 +65,7 @@ trait TransactionExecutionObserver
    * These are called from within the transaction object.
    */
 
-  /** Wraps `prepareCommit`. */
+  /** Wraps `prepareInitialActions`. */
   def preparingCommit[T](f: => T): T
 
   /*

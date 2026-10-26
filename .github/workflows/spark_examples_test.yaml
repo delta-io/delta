@@ -45,6 +45,10 @@ jobs:
         scala: [2.13.17]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
+      # The setup-unitycatalog action's script reads SPARK_VERSION (cut to major-minor) to
+      # decide which `unitycatalog-spark_<major.minor>_2.13` artifact to publish. Matches
+      # spark_test.yaml's convention.
+      SPARK_VERSION: ${{ matrix.spark_version }}
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: Get Spark version details

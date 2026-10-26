@@ -121,11 +121,14 @@ class DeltaDataSource
     // Check if we should bypass DeltaLog schema loading for UC-managed tables.
     // DeltaV2Mode checks the parameters map for UC markers and returns true for
     // AUTO/STRICT modes with UC tables.
-    val deltaV2Mode = new DeltaV2Mode(sqlContext.sparkSession.sessionState.conf)
     if (schema.isDefined &&
-        deltaV2Mode.shouldBypassSchemaValidationForStreaming(parameters.asJava)) {
-      require(!CDCReader.isCDCRead(options), "CDC read is not supported for schema bypass.")
-      return (shortName(), schema.get)
+        DeltaV2Mode(sqlContext.sparkSession)
+          .shouldBypassSchemaValidationForStreaming(parameters.asJava)) {
+      // For a CDF read, surface the change-data columns so this relation is a valid CDF
+      // source on its own, independent of the later ApplyV2Streaming rewrite to V2.
+      val schemaToUse =
+        if (CDCReader.isCDCRead(options)) CDCReader.cdcReadSchema(schema.get) else schema.get
+      return (shortName(), schemaToUse)
     }
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
@@ -534,8 +537,8 @@ object DeltaDataSource extends DatabricksLogging {
         DeltaSourceMetadataTrackingLog.create(
           spark,
           schemaTrackingLocation,
-          sourceSnapshot.deltaLog.unsafeVolatileTableId,
-          sourceSnapshot.deltaLog.dataPath.toString,
+          sourceSnapshot.metadata.id,
+          sourceSnapshot.dataPath.toString,
           parameters,
           sourceMetadataPathOpt,
           mergeConsecutiveSchemaChanges,

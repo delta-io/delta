@@ -21,11 +21,13 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.model.TableInfo;
+import java.nio.file.AccessDeniedException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.catalyst.analysis.CannotReplaceMissingTableException;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.junit.jupiter.api.Test;
 
 public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationBaseTest {
@@ -237,6 +239,75 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
     }
   }
 
+  // An existing managed table can carry `delta.*` properties this Delta build does not recognize
+  // (e.g. `delta.random`). Such keys can only be set with `allowArbitraryProperties` on, since
+  // normal validation rejects unknown `delta.*` keys.
+  // A later REPLACE that does NOT restate them -- with validation back on -- must carry them
+  // forward into the replaced table rather than dropping them or failing the REPLACE.
+  @Test
+  public void testCarryForwardOfArbitraryDeltaPropertyOnManagedReplace() throws Exception {
+    String tableName = "carry_fwd_arbitrary_" + UUID.randomUUID().toString().replace("-", "");
+    String fullTableName = fullTableName(tableName);
+    String arbitraryPropsConf = DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES().key();
+    try {
+      // Seed the table with unknown delta.* keys -- only possible with arbitrary props allowed.
+      spark().conf().set(arbitraryPropsConf, "true");
+      sql(
+          "CREATE TABLE %s (i INT, s STRING) USING DELTA TBLPROPERTIES ("
+              + "'delta.feature.catalogManaged'='supported', "
+              + "'delta.dummy_fake_key'='dummyValue', "
+              + "'delta.random'='carried')",
+          fullTableName);
+      sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+      long versionBefore = currentVersion(fullTableName);
+
+      // Validation back on: a bare REPLACE that doesn't restate the unknown keys must still carry
+      // them forward (they bypass validateConfigurations via the carry-forward tagging path).
+      spark().conf().set(arbitraryPropsConf, "false");
+      sql("REPLACE TABLE %s (i INT, s STRING) USING DELTA", fullTableName);
+
+      // The REPLACE actually committed and replaced the data (bare REPLACE leaves the table empty),
+      // so the property carry-forward below is asserted on the post-REPLACE table.
+      assertThat(currentVersion(fullTableName)).isEqualTo(versionBefore + 1);
+      assertThat(sql("SELECT COUNT(*) FROM %s", fullTableName)).containsExactly(row("0"));
+      // SHOW TBLPROPERTIES resolves from the Delta snapshot metadata, so this confirms the keys
+      // are persisted in the committed `Metadata.configuration`, not merely in the catalog.
+      assertThat(tableProperty(fullTableName, "delta.dummy_fake_key")).isEqualTo("dummyValue");
+      assertThat(tableProperty(fullTableName, "delta.random")).isEqualTo("carried");
+    } finally {
+      spark().conf().set(arbitraryPropsConf, "false");
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  // The flip side of carry-forward: a caller that explicitly puts an unknown `delta.*` key in the
+  // REPLACE TBLPROPERTIES (with validation on) must be rejected -- only the existing table's
+  // already-committed value is grandfathered, never fresh caller input. The existing table must
+  // survive the rejected REPLACE intact.
+  @Test
+  public void testCallerSpecifiedUnknownDeltaPropertyIsRejectedOnManagedReplace() throws Exception {
+    withNewTable(
+        "reject_caller_unknown_delta",
+        "i INT, s STRING",
+        TableType.MANAGED,
+        fullTableName -> {
+          sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+          long versionBefore = currentVersion(fullTableName);
+
+          assertThrowsWithCauseContaining(
+              "DELTA_UNKNOWN_CONFIGURATION",
+              () ->
+                  sql(
+                      "REPLACE TABLE %s (i INT, s STRING) USING DELTA TBLPROPERTIES ("
+                          + "'delta.feature.catalogManaged'='supported', 'delta.random'='x')",
+                      fullTableName));
+
+          // The rejected REPLACE must not have committed a new version.
+          assertThat(currentVersion(fullTableName)).isEqualTo(versionBefore);
+          assertThat(sql("SELECT * FROM %s", fullTableName)).containsExactly(row("1", "old"));
+        });
+  }
+
   // Schema change (adding a column) during REPLACE succeeds through UC updateTable.
   @Test
   public void testSchemaChangeIsAllowedForManagedReplaceOperations() throws Exception {
@@ -267,6 +338,32 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
             }
           });
     }
+  }
+
+  @Test
+  public void testReplaceTableWithColumnDefaultIsAllowedAndDefaultIsApplied() throws Exception {
+    String tableName = "replace_column_default_" + UUID.randomUUID().toString().replace("-", "");
+    withNewTable(
+        tableName,
+        "i INT, s STRING",
+        TableType.MANAGED,
+        fullTableName -> {
+          sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+
+          assertSuccessfulReplace(
+              ReplaceOperation.REPLACE,
+              fullTableName,
+              "REPLACE TABLE "
+                  + fullTableName
+                  + " (i INT, s STRING DEFAULT 'new-default') USING DELTA "
+                  + "TBLPROPERTIES ("
+                  + "'delta.feature.catalogManaged'='supported', "
+                  + "'delta.feature.allowColumnDefaults'='supported')");
+
+          sql("INSERT INTO %s (i) VALUES (2)", fullTableName);
+          assertThat(sql("SELECT i, s FROM %s", fullTableName))
+              .containsExactly(row("2", "new-default"));
+        });
   }
 
   // Most common user case: REPLACE without specifying any TBLPROPERTIES clause. Delta auto-restates
@@ -375,14 +472,10 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
   }
 
   // Replacing a clustered managed Delta table with a non-clustered, non-partitioned one
-  // succeeds at the data plane (the table is queryable with the new schema, INSERTs land
-  // correctly), but UC's metastore retains the seed's `clusteringColumns` and
-  // `delta.feature.clustering` properties. The REPLACE does not propagate the cluster
-  // removal to UC's domain metadata. Pinned so we notice if the behavior changes; when
-  // fixed, update the assertion to reflect the cleared state.
-  // TODO: fix this issue https://github.com/delta-io/delta/issues/6915
+  // succeeds at the data plane and forwards the clustering domain metadata intent to UC.
+  // UC clears the clustering columns while keeping the clustering table feature supported.
   @Test
-  public void testReplaceClusteredManagedTableWithNoneRetainsStaleUcClustering() throws Exception {
+  public void testReplaceClusteredManagedTableWithNoneClearsUcClusteringColumns() throws Exception {
     String tableName = "cluster_to_none_" + UUID.randomUUID().toString().replace("-", "");
     String fullTableName = fullTableName(tableName);
     try {
@@ -402,7 +495,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
       TablesApi tablesApi = new TablesApi(unityCatalogInfo().createApiClient());
       TableInfo info = tablesApi.getTable(fullTableName, false, false);
       assertThat(info.getProperties())
-          .containsEntry("clusteringColumns", "[[\"col1\"]]")
+          .containsEntry("clusteringColumns", "[]")
           .containsEntry("delta.feature.clustering", "supported");
     } finally {
       sql("DROP TABLE IF EXISTS %s", fullTableName);
@@ -435,11 +528,17 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
   }
 
   // Path-based identifiers (e.g. `delta.`/tmp/foo``) are not valid UC table references --
-  // UC has no entry for them. `shouldRouteReplaceThroughDeltaCatalogClient` skips routing on
-  // those, so the request falls through to the standard Spark V2 REPLACE flow, which surfaces
-  // `CannotReplaceMissingTableException` for the unresolved identifier. Pinned so that any
-  // future change to the routing gate's path-based predicate (or the fall-through behavior)
-  // is caught here instead of silently regressing.
+  // UC has no entry for them. Spark V2's `AtomicReplaceTableExec` calls
+  // `catalog.tableExists(ident)` before `stageReplace`, and `AbstractDeltaCatalog.tableExists`
+  // probes the filesystem (`fs.exists(path)`) for path-based identifiers. The end-user-visible
+  // exception therefore depends on whether the underlying filesystem is reachable:
+  //   - filesystem reachable, path missing -> `tableExists` returns false ->
+  //     Spark V2 throws `CannotReplaceMissingTableException` (errorClass TABLE_OR_VIEW_NOT_FOUND).
+  //   - filesystem unreachable (e.g. S3 403 when the UC server's federated credentials are
+  //     not loaded into the Spark session) -> `fs.exists` throws `AccessDeniedException`,
+  //     which bubbles up out of `AtomicReplaceTableExec.run`.
+  // Either outcome is an acceptable rejection of path-based REPLACE on a UC catalog; this
+  // test pins both as the only outcomes (no silent success, no surprise new exception class).
   @Test
   public void testReplaceOnPathBasedIdentifierIsRejected() throws Exception {
     withTempDir(
@@ -450,9 +549,13 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
                           "REPLACE TABLE delta.`%s` (i INT, s STRING) USING DELTA "
                               + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
                           location.toString()))
-              .isInstanceOf(CannotReplaceMissingTableException.class)
-              .hasMessageContaining("TABLE_OR_VIEW_NOT_FOUND")
-              .hasMessageContaining(location.toString());
+              .satisfiesAnyOf(
+                  t ->
+                      assertThat(t)
+                          .isInstanceOf(CannotReplaceMissingTableException.class)
+                          .hasMessageContaining("TABLE_OR_VIEW_NOT_FOUND")
+                          .hasMessageContaining(location.toString()),
+                  t -> assertThat(t).isInstanceOf(AccessDeniedException.class));
         });
   }
 
@@ -544,5 +647,47 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
         .map(r -> r.get(1).trim())
         .findFirst()
         .orElse(null);
+  }
+
+  @Test
+  public void testReplaceManagedTableResetsIdentityHighWaterMark() throws Exception {
+    // RTAS cannot declare identity columns because Spark disallows an explicit schema with
+    // AS SELECT. Exercise the two schema-bearing replacement operations.
+    for (ReplaceOperation operation :
+        List.of(ReplaceOperation.REPLACE, ReplaceOperation.CREATE_OR_REPLACE)) {
+      String tableName = uniqueTableName("identity_hwm_reset", operation);
+      String fullTableName = fullTableName(tableName);
+      try {
+        sql(
+            "CREATE TABLE %s ("
+                + "id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 100 INCREMENT BY 1),"
+                + "val STRING) USING delta"
+                + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+            fullTableName);
+        sql("INSERT INTO %s (val) VALUES ('a'), ('b'), ('c')", fullTableName);
+        assertThat(sql("SELECT id FROM %s ORDER BY id", fullTableName))
+            .containsExactly(row("100"), row("101"), row("102"));
+
+        String ucTableIdBefore = currentUcTableId(fullTableName);
+        sql(
+            "%s %s ("
+                + "id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 50000 INCREMENT BY 1),"
+                + "val STRING) USING delta"
+                + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+            operation.sqlPrefix, fullTableName);
+        assertThat(currentUcTableId(fullTableName))
+            .as("UC table id preserved across %s", operation)
+            .isEqualTo(ucTableIdBefore);
+
+        sql("INSERT INTO %s (val) VALUES ('after_replace')", fullTableName);
+        assertThat(sql("SELECT id FROM %s ORDER BY id", fullTableName))
+            .as(
+                "first identity value after %s must equal the new START WITH (HWM was reset)",
+                operation)
+            .containsExactly(row("50000"));
+      } finally {
+        sql("DROP TABLE IF EXISTS %s", fullTableName);
+      }
+    }
   }
 }

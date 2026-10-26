@@ -19,10 +19,10 @@ package org.apache.spark.sql.delta.cdc
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 
-import com.databricks.spark.util.Log4jUsageLogger
+import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Delete
-import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.DeltaTestUtils.{recordDataChangeInCommitInfo, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
@@ -30,6 +30,8 @@ import org.apache.spark.sql.delta.files.DelayedCommitProtocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
@@ -39,13 +41,16 @@ import org.apache.spark.sql.execution.{LogicalRDD, SQLExecution}
 import org.apache.spark.sql.execution.datasources.FileFormatWriter
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{IntegerType, Metadata, MetadataBuilder, StringType, StructType}
 
 class CDCReaderSuite
   extends QueryTest
   with CheckCDCAnswer
   with SharedSparkSession
   with DeltaSQLCommandTest
-  with DeltaColumnMappingTestUtils {
+  with CDFStartingCommitSchemaTests
+  with DeltaColumnMappingTestUtils
+  with CDCSchemaChangeTests {
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
@@ -102,8 +107,37 @@ class CDCReaderSuite
 
   def createCDFDF(start: Long, end: Long, commitVersion: Long, changeType: String): DataFrame = {
     spark.range(start, end)
+      .withColumn("v", lit(null))
       .withColumn(CDC_TYPE_COLUMN_NAME, lit(changeType))
       .withColumn(CDC_COMMIT_VERSION, lit(commitVersion))
+  }
+
+  test("a commit recording dataChange = false yields no CDC rows") {
+    // The CommitInfo and the file actions are made to disagree, which no write path produces. It
+    // is the only way to observe which of the two the reader consulted: from the commit's own
+    // summary it infers no change, from the file actions an insert per added file.
+    Seq(true, false).foreach { readFromCommitInfo =>
+      withSQLConf(
+          DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED.key ->
+            readFromCommitInfo.toString) {
+        withTempDir { dir =>
+          val path = dir.getAbsolutePath
+          val data = spark.range(10)
+          data.write.format("delta").save(path)
+          recordDataChangeInCommitInfo(
+            DeltaLog.forTable(spark, path), version = 0, dataChange = Some(false))
+
+          val log = DeltaLog.forTable(spark, path)
+          val inserted = if (readFromCommitInfo) spark.range(0) else data
+          checkCDCAnswer(
+            log,
+            CDCReader.changesToBatchDF(log, 0, 0, spark),
+            inserted
+              .withColumn(CDC_TYPE_COLUMN_NAME, lit("insert"))
+              .withColumn(CDC_COMMIT_VERSION, lit(0)))
+        }
+      }
+    }
   }
 
   test("simple CDC scan") {
@@ -420,12 +454,15 @@ class CDCReaderSuite
 
   for (cdfEnabled <- BOOLEAN_DOMAIN)
   test(s"Coarse-grained CDF, cdfEnabled=$cdfEnabled") {
+    // The test table has a NullType column (v) that is read back via CDF.
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> cdfEnabled.toString) {
       withTempDir { dir =>
         val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
 
         // commit 0: 2 inserts
         spark.range(start = 0, end = 2, step = 1, numPartitions = 1)
+          .withColumn("v", lit(null))
           .write.format("delta").save(dir.getAbsolutePath)
         var df = CDCReader.changesToBatchDF(
           log, 0, 1, spark, catalogTableOpt = None, useCoarseGrainedCDC = true)
@@ -471,6 +508,799 @@ class CDCReaderSuite
 
       assert(events.exists(event => event.metric == "tahoeEvent" &&
         event.tags.get("opType") == Option("delta.changeDataFeed.changesToDF")))
+    }
+  }
+
+  /** Collect and parse the `delta.changeDataFeed.changesToDF` usage logs among the events. */
+  private def findChangesToDFEvents(events: Seq[UsageRecord]): Seq[Map[String, Any]] = {
+    events.collect {
+      case event if event.metric == "tahoeEvent" &&
+        event.tags.get("opType").contains("delta.changeDataFeed.changesToDF") =>
+        JsonUtils.fromJson[Map[String, Any]](event.blob)
+    }
+  }
+
+  /** Parse the single `delta.changeDataFeed.changesToDF` usage log emitted by the events. */
+  private def getChangesToDFMetrics(events: Seq[UsageRecord]): Map[String, Any] = {
+    findChangesToDFEvents(events) match {
+      case Seq(metrics) => metrics
+      case other => fail("Expected exactly one delta.changeDataFeed.changesToDF usage event, " +
+        s"got ${other.size} with opTypes: " + events.flatMap(_.tags.get("opType")).mkString(", "))
+    }
+  }
+
+  /** Extract a non-negative numeric metric emitted in a parsed usage log. */
+  private def getMetric(metrics: Map[String, Any], key: String): Long = {
+    metrics.get(key)
+      .map(_.asInstanceOf[Number].longValue())
+      .getOrElse(fail(s"Metric '$key' not found in usage log: $metrics"))
+  }
+
+  test("changesToDF metrics count only AddCDCFiles when a commit has CDC actions") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      val log = DeltaLog.forTable(spark, path)
+
+      spark.range(10).write.format("delta").save(path)
+      sql(s"UPDATE delta.`$path` SET id = id + 100 WHERE id < 5")
+
+      val events = Log4jUsageLogger.track {
+        CDCReader.changesToBatchDF(log, 1, 1, spark)
+      }
+      val metrics = getChangesToDFMetrics(events)
+
+      assert(getMetric(metrics, "numAddCRCFiles") >= 1L,
+        s"Expected the AddCDCFile actions to be counted: $metrics")
+      assert(getMetric(metrics, "numAddFiles") == 0L,
+        s"AddFile actions ignored when serving CDC must not be counted: $metrics")
+      assert(getMetric(metrics, "numRemoveFiles") == 0L,
+        s"RemoveFile actions ignored when serving CDC must not be counted: $metrics")
+      assert(getMetric(metrics, "totalBytes") >= 1L,
+        s"Expected the AddCDCFile sizes to contribute to totalBytes: $metrics")
+    }
+  }
+
+  test("changesToDF metrics exclude dataChange = false file actions") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      val log = DeltaLog.forTable(spark, path)
+
+      spark.range(0, 50).write.format("delta").save(path)
+      spark.range(50, 100).write.format("delta").mode("append").save(path)
+      sql(s"OPTIMIZE delta.`$path`")
+
+      val optimizeVersion = log.update().version
+      assert(optimizeVersion == 2L,
+        s"Expected OPTIMIZE to commit version 2, but the latest version is $optimizeVersion")
+
+      val events = Log4jUsageLogger.track {
+        CDCReader.changesToBatchDF(log, optimizeVersion, optimizeVersion, spark)
+      }
+      val metrics = getChangesToDFMetrics(events)
+
+      assert(getMetric(metrics, "numAddFiles") == 0L,
+        s"dataChange = false AddFile actions must not be counted: $metrics")
+      assert(getMetric(metrics, "numRemoveFiles") == 0L,
+        s"dataChange = false RemoveFile actions must not be counted: $metrics")
+      assert(getMetric(metrics, "numAddCRCFiles") == 0L,
+        s"OPTIMIZE produces no CDC actions: $metrics")
+      assert(getMetric(metrics, "totalBytes") == 0L,
+        s"No files are read for this commit, so totalBytes must be 0: $metrics")
+    }
+  }
+
+  test("CDF reads explicit MERGE change files after type widening") {
+    // Change files contain both images in the new INT schema; removed files use SMALLINT.
+    withColumnMappingConf("none") {
+      withSQLConf(
+          DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "always",
+          DeltaSQLConf.DELTA_CDF_START_VERSION_SCHEMA_CHECK_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key -> "false") {
+        withTable("cdf_start_merge") {
+          sql("""CREATE TABLE cdf_start_merge(id SMALLINT) USING DELTA
+            |TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true',
+            |  'delta.enableTypeWidening' = 'true', 'delta.enableDeletionVectors' = 'false')
+            |""".stripMargin)
+          sql("INSERT INTO cdf_start_merge VALUES (1)")
+          sql("""MERGE WITH SCHEMA EVOLUTION INTO cdf_start_merge t
+            |USING (SELECT 2 AS id) s ON t.id + 1 = s.id
+            |WHEN MATCHED THEN UPDATE SET *
+            |""".stripMargin)
+          assert(spark.table("cdf_start_merge").schema("id").dataType == IntegerType)
+
+          checkAnswer(sql("SELECT id, _change_type, _commit_version " +
+            "FROM table_changes('cdf_start_merge', 2, 2)"),
+            Seq(Row(1, "update_preimage", 2L), Row(2, "update_postimage", 2L)))
+        }
+      }
+    }
+  }
+
+}
+
+trait CDFStartingCommitSchemaTests extends QueryTest with DeltaSQLCommandTest {
+
+  private def startingCommitProperties: Map[String, String] =
+    Map("delta.enableDeletionVectors" -> "false")
+
+  protected def startingCommitTableProperties(mode: String): String = {
+    val properties = startingCommitProperties + ("delta.columnMapping.mode" -> mode)
+    "TBLPROPERTIES (" + properties.toSeq.sorted.map { case (key, value) =>
+      s"'$key' = '$value'"
+    }.mkString(", ") + ")"
+  }
+
+  protected def withStartingCommitTables(
+      schemaCheckEnabled: Boolean = true)(f: (String, String) => Unit): Unit = {
+    withSQLConf(
+        DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key -> "false",
+        DeltaSQLConf.DELTA_CDF_START_VERSION_SCHEMA_CHECK_ENABLED.key ->
+          schemaCheckEnabled.toString,
+        DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key -> "endVersion") {
+      withTable("cdf_start_source", "cdf_start_target") {
+        f("cdf_start_source", "cdf_start_target")
+      }
+    }
+  }
+
+  protected def readStartingCommitCDF(tableName: String, start: Long, end: Long): DataFrame = {
+    sql(s"SELECT acct_id, balance, region, _change_type, _commit_version " +
+      s"FROM table_changes('$tableName', $start, $end)")
+  }
+
+  protected def startingCommitCDFReads(tableName: String, version: Long): Seq[DataFrame] = {
+    startingCommitCDFReads(tableName, version, version)
+  }
+
+  protected def startingCommitCDFReads(
+      tableName: String,
+      start: Long,
+      end: Long): Seq[DataFrame] = {
+    Seq(readStartingCommitCDF(tableName, start, end))
+  }
+
+  protected def assertBlockedStartingCommitCDF(
+      tableName: String,
+      version: Long,
+      operation: String): Unit = {
+    for (schemaMode <- Seq("legacy", "latest", "endVersion")) {
+      withSQLConf(
+          DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key -> schemaMode) {
+        startingCommitCDFReads(tableName, version).foreach { read =>
+          checkError(
+            intercept[DeltaUnsupportedOperationException] { read.collect() },
+            "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_STARTING_COMMIT_SCHEMA.KNOWN_OPERATION",
+            sqlState = "0AKDC",
+            parameters = Map(
+              "operation" -> operation,
+              "start" -> version.toString,
+              "priorVersion" -> (version - 1).toString))
+        }
+      }
+    }
+  }
+
+
+  private def createMappedTable(
+      tableName: String,
+      mode: String,
+      nested: Boolean,
+      swapped: Boolean): Unit = {
+    def mappingMetadata(id: Int, physicalName: String): Metadata = {
+      new MetadataBuilder()
+        .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, id)
+        .putString(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
+        .build()
+    }
+
+    val firstId = if (swapped) 3 else 2
+    val secondId = if (swapped) 2 else 3
+    val schema = if (nested) {
+      new StructType()
+        .add("acct_id", IntegerType, true, mappingMetadata(1, "physical_acct"))
+        .add("balance", new StructType()
+          .add("amount", IntegerType, true, mappingMetadata(firstId, "physical_amount"))
+          .add("other", IntegerType, true, mappingMetadata(secondId, "physical_other")),
+          true, mappingMetadata(4, "physical_balance"))
+    } else {
+      new StructType()
+        .add("acct_id", IntegerType, true, mappingMetadata(firstId, "physical_acct"))
+        .add("balance", IntegerType, true, mappingMetadata(secondId, "physical_balance"))
+    }
+    val builder = DeltaTable.createOrReplace(spark)
+      .tableName(tableName)
+      .addColumns(schema.add("region", StringType, true, mappingMetadata(5, "physical_region")))
+      .property("delta.columnMapping.mode", mode)
+    startingCommitProperties.foreach { case (key, value) => builder.property(key, value) }
+    builder.execute()
+  }
+
+  for {
+    mode <- Seq("name", "id")
+    nested <- Seq(false, true)
+    schemaCheckEnabled <- Seq(true, false)
+  } {
+    test(s"CDF starting commit changed IDs with stable physical names " +
+      s"- mapping=$mode, nested=$nested, schemaCheckEnabled=$schemaCheckEnabled") {
+      withStartingCommitTables(schemaCheckEnabled) { (_, target) =>
+        createMappedTable(target, mode, nested, swapped = false)
+        val balance = if (nested) "named_struct('amount', 100, 'other', 200)" else "100"
+        sql(s"INSERT INTO $target VALUES (1, $balance, 'east')")
+        createMappedTable(target, mode, nested, swapped = true)
+
+          if (mode == "id" && schemaCheckEnabled) {
+            assertBlockedStartingCommitCDF(target, version = 2,
+              operation = "CREATE OR REPLACE TABLE")
+          } else {
+            val expected = (mode, nested) match {
+              case ("id", true) => Row(1, Row(200, 100), "east", "delete", 2L)
+              case ("id", false) => Row(100, 1, "east", "delete", 2L)
+              case (_, true) => Row(1, Row(100, 200), "east", "delete", 2L)
+              case (_, false) => Row(1, 100, "east", "delete", 2L)
+            }
+            startingCommitCDFReads(target, version = 2).foreach { read =>
+              checkAnswer(read, expected)
+            }
+          }
+      }
+    }
+  }
+
+  for {
+    nested <- Seq(false, true)
+    schemaCheckEnabled <- Seq(true, false)
+  } {
+    test(s"CDF starting commit accepts new files after ID-changing empty REPLACE - " +
+      s"nested=$nested, schemaCheckEnabled=$schemaCheckEnabled") {
+      withStartingCommitTables(schemaCheckEnabled) { (_, target) =>
+        createMappedTable(target, "id", nested, swapped = false)
+        createMappedTable(target, "id", nested, swapped = true)
+        val balance = if (nested) "named_struct('amount', 100, 'other', 200)" else "100"
+        sql(s"INSERT INTO $target VALUES (1, $balance, 'east')")
+
+        val expectedBalance = if (nested) Row(100, 200) else 100
+        startingCommitCDFReads(target, 0, 2).foreach { read =>
+          checkAnswer(read, Row(1, expectedBalance, "east", "insert", 2L))
+        }
+      }
+    }
+  }
+
+  private def testTypeChangingReplace(mode: String): Unit = {
+    test(s"CDF starting commit rejects type-changing REPLACE - mapping=$mode") {
+      withStartingCommitTables() { (_, target) =>
+        sql(s"CREATE TABLE $target(acct_id INT, balance INT, region STRING) USING DELTA " +
+          startingCommitTableProperties(mode))
+        sql(s"INSERT INTO $target VALUES (1, 100, 'east')")
+        sql(s"CREATE OR REPLACE TABLE $target(acct_id BIGINT, balance INT, region STRING) " +
+          s"USING DELTA ${startingCommitTableProperties(mode)}")
+
+        assertBlockedStartingCommitCDF(target, version = 2,
+          operation = "CREATE OR REPLACE TABLE")
+      }
+    }
+  }
+
+  testTypeChangingReplace("none")
+
+  for {
+    mode <- Seq("none", "name", "id")
+    schemaCheckEnabled <- Seq(true, false)
+  } {
+    test(s"CDF starting commit accepts compatible deletes - " +
+      s"mapping=$mode, schemaCheckEnabled=$schemaCheckEnabled") {
+      withStartingCommitTables(schemaCheckEnabled) { (_, target) =>
+        // Matching the default avoids treating initial creation as a mapping upgrade in OSS.
+        withSQLConf(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> mode) {
+          sql(s"CREATE TABLE $target USING DELTA ${startingCommitTableProperties(mode)} " +
+            "AS SELECT 1 AS acct_id, 100 AS balance, 'east' AS region")
+        }
+        checkAnswer(readStartingCommitCDF(target, 0, 0), Row(1, 100, "east", "insert", 0L))
+
+        sql(s"ALTER TABLE $target ADD COLUMN extra INT")
+        sql(s"INSERT INTO $target(acct_id, balance, region) VALUES (2, 200, 'west')")
+        sql(s"RESTORE TABLE $target TO VERSION AS OF 1")
+          startingCommitCDFReads(target, version = 3).foreach { read =>
+            checkAnswer(read, Row(2, 200, "west", "delete", 3L))
+          }
+      }
+    }
+  }
+
+  private def restoreAfterReaddingBalance(tableName: String, mode: String): Unit = {
+    sql(s"CREATE TABLE $tableName(acct_id INT, balance INT, region STRING) USING DELTA " +
+      startingCommitTableProperties(mode))
+    sql(s"INSERT INTO $tableName VALUES (1, 100, 'east')")
+    sql(s"ALTER TABLE $tableName DROP COLUMN balance")
+    sql(s"ALTER TABLE $tableName ADD COLUMN balance INT")
+    sql(s"INSERT INTO $tableName(acct_id, balance, region) VALUES (2, 200, 'west')")
+    sql(s"RESTORE TABLE $tableName TO VERSION AS OF 1")
+  }
+
+  for {
+    mode <- Seq("name", "id")
+    schemaCheckEnabled <- Seq(true, false)
+  } {
+    test(s"CDF starting commit RESTORE across drop/re-add - " +
+      s"mapping=$mode, schemaCheckEnabled=$schemaCheckEnabled") {
+      withStartingCommitTables(schemaCheckEnabled) { (_, target) =>
+        restoreAfterReaddingBalance(target, mode)
+        checkAnswer(readStartingCommitCDF(target, 3, 3), Seq.empty)
+
+          if (schemaCheckEnabled) {
+            assertBlockedStartingCommitCDF(target, version = 5, operation = "RESTORE")
+          } else {
+            startingCommitCDFReads(target, version = 5).foreach { read =>
+              checkAnswer(read, Row(2, null, "west", "delete", 5L))
+            }
+          }
+
+        // Schema incompatibilities within the queried range remain blocked with either flag value.
+        val error = intercept[DeltaUnsupportedOperationException] {
+          readStartingCommitCDF(target, 1, 5).collect()
+        }
+        assert(error.getErrorClass.startsWith("DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_"))
+      }
+    }
+  }
+
+  for {
+    mode <- Seq("name", "id")
+    schemaCheckEnabled <- Seq(true, false)
+  } {
+    test(s"CDF starting commit with expired prior history - " +
+      s"mapping=$mode, schemaCheckEnabled=$schemaCheckEnabled") {
+      withStartingCommitTables(schemaCheckEnabled) { (_, target) =>
+        restoreAfterReaddingBalance(target, mode)
+        val tableLocation = sql(s"DESCRIBE DETAIL $target").select("location").head().getString(0)
+        val deltaLog = DeltaLog.forTable(spark, tableLocation)
+        deltaLog.checkpoint()
+        // Retain the starting commit and its checkpoint, as ordinary log cleanup can do.
+        (0L until 5L).foreach { version =>
+          assert(new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri).delete())
+        }
+        DeltaLog.invalidateCache(spark, deltaLog.dataPath)
+
+          startingCommitCDFReads(target, version = 5).foreach { read =>
+            checkAnswer(read, Row(2, null, "west", "delete", 5L))
+          }
+      }
+    }
+  }
+
+}
+
+trait CDCSchemaChangeTests {
+  self: QueryTest with DeltaSQLCommandTest =>
+
+  protected def columnMappingMode: String
+
+  test("CDF fails when a column is dropped after the start version") {
+    val tableName = "cdf_drop_column_after_start"
+    withTable(tableName) {
+      sql(
+        s"""
+           |CREATE TABLE $tableName (a INT, b INT) USING DELTA
+           |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+           |""".stripMargin)
+      sql(s"INSERT INTO $tableName VALUES (1, 10)")
+      sql(s"ALTER TABLE $tableName DROP COLUMN b")
+
+      withSQLConf(
+          DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+        checkError(
+          exception = intercept[DeltaUnsupportedOperationException] {
+            sql(s"SELECT * FROM table_changes('$tableName', 1, 2)").collect()
+          },
+          condition = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA",
+          sqlState = Some("0AKDC"),
+          matchPVals = true,
+          parameters = Map(
+            "start" -> "1",
+            "end" -> "2",
+            "readSchema" -> ".*",
+            "readVersion" -> "2",
+            "incompatibleVersion" -> "1",
+            "config" -> ".*defaultSchemaModeForColumnMappingTable"))
+      }
+    }
+  }
+
+  test("CDF fails when a column is renamed after the start version") {
+    val tableName = "cdf_rename_column_after_start"
+    withTable(tableName) {
+      sql(
+        s"""
+           |CREATE TABLE $tableName (a INT, b INT) USING DELTA
+           |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+           |""".stripMargin)
+      sql(s"INSERT INTO $tableName VALUES (1, 10)")
+      sql(s"ALTER TABLE $tableName RENAME COLUMN b TO c")
+
+      withSQLConf(
+          DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+        checkError(
+          exception = intercept[DeltaUnsupportedOperationException] {
+            sql(s"SELECT * FROM table_changes('$tableName', 1, 2)").collect()
+          },
+          condition = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA",
+          sqlState = Some("0AKDC"),
+          matchPVals = true,
+          parameters = Map(
+            "start" -> "1",
+            "end" -> "2",
+            "readSchema" -> ".*",
+            "readVersion" -> "2",
+            "incompatibleVersion" -> "1",
+            "config" -> ".*defaultSchemaModeForColumnMappingTable"))
+      }
+    }
+  }
+
+  test("CDF fails when a column type changes after the start version") {
+    val tableName = "cdf_change_column_type_after_start"
+    withTable(tableName) {
+      sql(
+        s"""
+           |CREATE TABLE $tableName (a INT) USING DELTA
+           |TBLPROPERTIES ('delta.enableTypeWidening' = 'true')
+           |""".stripMargin)
+      sql(s"INSERT INTO $tableName VALUES (1)")
+      sql(s"ALTER TABLE $tableName ALTER COLUMN a TYPE DOUBLE")
+
+      withSQLConf(
+          DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+        checkError(
+          exception = intercept[DeltaUnsupportedOperationException] {
+            sql(s"SELECT * FROM table_changes('$tableName', 1, 2)").collect()
+          },
+          condition = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA",
+          sqlState = Some("0AKDC"),
+          matchPVals = true,
+          parameters = Map(
+            "start" -> "1",
+            "end" -> "2",
+            "readSchema" -> ".*",
+            "readVersion" -> "2",
+            "incompatibleVersion" -> "1",
+            "config" -> ".*defaultSchemaModeForColumnMappingTable"))
+      }
+    }
+  }
+
+  // The tests below only really make sense when column mapping is disabled, otherwise every
+  // REPLACE TABLE creates a brand-new set of columns and reads are always rejected.
+  if (columnMappingMode == "none") {
+    test("partition schema change check can be rolled out") {
+      val tableName = "cdf_partition_schema_evolution"
+      withTable(tableName) {
+        sql(s"""
+          |CREATE TABLE $tableName (a INT, b INT) USING DELTA PARTITIONED BY (a)
+          |""".stripMargin)
+        sql(s"INSERT INTO $tableName VALUES (1, 10)")
+        sql(
+          s"""
+             |CREATE OR REPLACE TABLE $tableName (a INT, b INT) USING DELTA
+             |PARTITIONED BY (b)
+             |""".stripMargin)
+
+        val events = withSQLConf(
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "false") {
+          Log4jUsageLogger.track {
+            sql(s"SELECT * FROM table_changes('$tableName', 1, 2)").collect()
+          }
+        }
+        val event = events.find(event => event.metric == "tahoeEvent" &&
+          event.tags.get("opType").contains("delta.changeDataFeed.schemaIncompatibility"))
+        assert(event.isDefined)
+        val eventData = JsonUtils.fromJson[Map[String, Any]](event.get.blob)
+        assert(eventData("isSchemaCompatible") === true)
+        assert(eventData("hasPartitionSchemaChange") === true)
+        assert(eventData("partitionSchemaCheckEnabled") === false)
+
+        withSQLConf(
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+          checkError(
+            exception = intercept[DeltaUnsupportedOperationException] {
+              sql(s"SELECT * FROM table_changes('$tableName', 1, 2)").collect()
+            },
+            condition = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE",
+            sqlState = Some("0AKDC"),
+            matchPVals = true,
+            parameters = Map(
+              "start" -> "1",
+              "end" -> "2",
+              "readSchema" -> ".*",
+              "readVersion" -> "2",
+              "incompatibleVersion" -> "1"))
+        }
+      }
+    }
+
+    test("CDF allows column reordering when the partition schema is unchanged") {
+      val tableName = "cdf_reordered_columns_same_partition_schema"
+      withTable(tableName) {
+        sql(s"""
+          |CREATE TABLE $tableName (a INT, b INT) USING DELTA PARTITIONED BY (a)
+          |""".stripMargin)
+        sql(
+          s"""
+             |CREATE OR REPLACE TABLE $tableName (b INT, a INT) USING DELTA
+             |PARTITIONED BY (a)
+             |""".stripMargin)
+
+        withSQLConf(
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+          checkAnswer(
+            sql(s"SELECT a, b FROM table_changes('$tableName', 0, 1)"),
+            Nil)
+        }
+      }
+    }
+
+    test("CDF allows initial partition setup after an empty version 0") {
+      val tableName = "cdf_initial_partition_setup"
+      withTable(tableName) {
+        sql(s"""
+          |CREATE TABLE $tableName (a INT, b INT) USING DELTA
+          |""".stripMargin)
+        sql(
+          s"""
+             |CREATE OR REPLACE TABLE $tableName (a INT, b INT) USING DELTA
+             |PARTITIONED BY (b)
+             |""".stripMargin)
+        sql(s"INSERT INTO $tableName VALUES (1, 10)")
+
+        withSQLConf(
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+          val events = Log4jUsageLogger.track {
+            checkAnswer(
+              sql(s"SELECT a, b FROM table_changes('$tableName', 0, 2)"),
+              Row(1, 10))
+          }
+          val event = events.find(event => event.metric == "tahoeEvent" &&
+            event.tags.get("opType").contains("delta.changeDataFeed.schemaIncompatibility"))
+          assert(event.isDefined)
+          val eventData = JsonUtils.fromJson[Map[String, Any]](event.get.blob)
+          assert(eventData("isSchemaCompatible") === true)
+          assert(eventData("hasPartitionSchemaChange") === true)
+          assert(eventData("partitionSchemaBlockEnabled") === false)
+        }
+      }
+    }
+
+    test("CDF still rejects a partition change after data in an initially empty table") {
+      val tableName = "cdf_partition_change_after_initial_data"
+      withTable(tableName) {
+        sql(s"""
+          |CREATE TABLE $tableName (a INT, b INT) USING DELTA
+          |""".stripMargin)
+        sql(s"INSERT INTO $tableName VALUES (1, 10)")
+        sql(
+          s"""
+             |CREATE OR REPLACE TABLE $tableName (a INT, b INT) USING DELTA
+             |PARTITIONED BY (b)
+             |""".stripMargin)
+        sql(s"INSERT INTO $tableName VALUES (2, 20)")
+
+        withSQLConf(
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+          checkError(
+            exception = intercept[DeltaUnsupportedOperationException] {
+              sql(s"SELECT * FROM table_changes('$tableName', 0, 3)").collect()
+            },
+            condition = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE",
+            sqlState = Some("0AKDC"),
+            matchPVals = true,
+            parameters = Map(
+              "start" -> "0",
+              "end" -> "3",
+              "readSchema" -> ".*",
+              "readVersion" -> "3",
+              "incompatibleVersion" -> "0"))
+        }
+      }
+    }
+
+    test("CDF fails for an intermediate partition schema when endpoints agree") {
+      val tableName = "cdf_multiple_partition_changes"
+      withTable(tableName) {
+        sql(s"""
+          |CREATE TABLE $tableName (a INT, b INT) USING DELTA PARTITIONED BY (a)
+          |""".stripMargin)
+        sql(s"INSERT INTO $tableName VALUES (1, 10)")
+        sql(
+          s"""
+             |CREATE OR REPLACE TABLE $tableName (a INT, b INT) USING DELTA
+             |PARTITIONED BY (b)
+             |""".stripMargin)
+        sql(
+          s"""
+             |CREATE OR REPLACE TABLE $tableName (a INT, b INT) USING DELTA
+             |PARTITIONED BY (a)
+             |""".stripMargin)
+
+        withSQLConf(
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+          checkError(
+            exception = intercept[DeltaUnsupportedOperationException] {
+              sql(s"SELECT * FROM table_changes('$tableName', 1, 3)").collect()
+            },
+            condition = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE",
+            sqlState = Some("0AKDC"),
+            matchPVals = true,
+            parameters = Map(
+              "start" -> "1",
+              "end" -> "3",
+              "readSchema" -> ".*",
+              "readVersion" -> "3",
+              "incompatibleVersion" -> "2"))
+        }
+      }
+    }
+
+    test("CDF fails for multiple partition changes on an empty table") {
+      val tableName = "cdf_multiple_empty_partition_changes"
+      withTable(tableName) {
+        sql(s"""
+          |CREATE TABLE $tableName (a INT, b INT) USING DELTA PARTITIONED BY (a)
+          |""".stripMargin)
+        sql(
+          s"""
+             |CREATE OR REPLACE TABLE $tableName (a INT, b INT) USING DELTA
+             |PARTITIONED BY (b)
+             |""".stripMargin)
+        sql(
+          s"""
+             |CREATE OR REPLACE TABLE $tableName (a INT, b INT) USING DELTA
+             |PARTITIONED BY (a)
+             |""".stripMargin)
+
+        withSQLConf(
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+          checkError(
+            exception = intercept[DeltaUnsupportedOperationException] {
+              sql(s"SELECT * FROM table_changes('$tableName', 0, 2)").collect()
+            },
+            condition = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE",
+            sqlState = Some("0AKDC"),
+            matchPVals = true,
+            parameters = Map(
+              "start" -> "0",
+              "end" -> "2",
+              "readSchema" -> ".*",
+              "readVersion" -> "2",
+              "incompatibleVersion" -> "1"))
+        }
+      }
+    }
+  }
+
+  test("CDF fails for an intermediate dropped column when endpoints agree") {
+    val tableName = "cdf_drop_add_column"
+    withTable(tableName) {
+      sql(
+        s"""
+           |CREATE TABLE $tableName (a INT, b INT) USING DELTA
+           |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+           |""".stripMargin)
+      sql(s"INSERT INTO $tableName VALUES (1, 10)")
+      sql(s"ALTER TABLE $tableName DROP COLUMN b")
+      sql(s"ALTER TABLE $tableName ADD COLUMN b INT")
+
+      withSQLConf(
+          DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+        checkError(
+          exception = intercept[DeltaUnsupportedOperationException] {
+            sql(s"SELECT * FROM table_changes('$tableName', 1, 3)").collect()
+          },
+          condition = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA",
+          sqlState = Some("0AKDC"),
+          matchPVals = true,
+          parameters = Map(
+            "start" -> "1",
+            "end" -> "3",
+            "readSchema" -> ".*",
+            "readVersion" -> "3",
+            "incompatibleVersion" -> "1",
+            "config" -> ".*defaultSchemaModeForColumnMappingTable"))
+      }
+    }
+  }
+
+  test("CDF fails for an intermediate renamed column when endpoints agree") {
+    val tableName = "cdf_rename_column_back"
+    withTable(tableName) {
+      sql(
+        s"""
+           |CREATE TABLE $tableName (a INT, b INT) USING DELTA
+           |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+           |""".stripMargin)
+      sql(s"INSERT INTO $tableName VALUES (1, 10)")
+      sql(s"ALTER TABLE $tableName RENAME COLUMN b TO c")
+      sql(s"ALTER TABLE $tableName RENAME COLUMN c TO b")
+
+      checkError(
+        exception = intercept[DeltaUnsupportedOperationException] {
+          sql(s"SELECT * FROM table_changes('$tableName', 1, 3)").collect()
+        },
+        condition = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE",
+        sqlState = Some("0AKDC"),
+        matchPVals = true,
+        parameters = Map(
+          "start" -> "1",
+          "end" -> "3",
+          "readSchema" -> ".*",
+          "readVersion" -> "3",
+          "incompatibleVersion" -> "2"))
+    }
+  }
+
+  if (columnMappingMode == "none") {
+    test("CDF fails for a partition schema change followed by RESTORE") {
+      val tableName = "cdf_partition_change_restore"
+      withTable(tableName) {
+        sql(s"""
+          |CREATE TABLE $tableName (a INT, b INT) USING DELTA PARTITIONED BY (a)
+          |""".stripMargin)
+        sql(s"INSERT INTO $tableName VALUES (1, 10)")
+        sql(
+          s"""
+             |CREATE OR REPLACE TABLE $tableName (a INT, b INT) USING DELTA
+             |PARTITIONED BY (b)
+             |""".stripMargin)
+        sql(s"RESTORE TABLE $tableName TO VERSION AS OF 1")
+
+        withSQLConf(
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+          checkError(
+            exception = intercept[DeltaUnsupportedOperationException] {
+              sql(s"SELECT * FROM table_changes('$tableName', 1, 3)").collect()
+            },
+            condition = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE",
+            sqlState = Some("0AKDC"),
+            matchPVals = true,
+            parameters = Map(
+              "start" -> "1",
+              "end" -> "3",
+              "readSchema" -> ".*",
+              "readVersion" -> "3",
+              "incompatibleVersion" -> "2"))
+        }
+      }
+    }
+  }
+
+  if (columnMappingMode != "none") {
+    test(s"CDF fails for a partition schema change with " +
+        s"$columnMappingMode column mapping") {
+      val tableName = "cdf_partition_change_with_column_mapping"
+      withTable(tableName) {
+        sql(s"CREATE TABLE $tableName (a INT, b INT) USING DELTA PARTITIONED BY (a)")
+        sql(s"INSERT INTO $tableName VALUES (1, 10)")
+        sql(
+          s"""
+             |CREATE OR REPLACE TABLE $tableName (a INT, b INT) USING DELTA
+             |PARTITIONED BY (b)
+             |""".stripMargin)
+
+        withSQLConf(
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+          checkError(
+            exception = intercept[DeltaUnsupportedOperationException] {
+              sql(s"SELECT * FROM table_changes('$tableName', 1, 2)").collect()
+            },
+            condition = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE",
+            sqlState = Some("0AKDC"),
+            matchPVals = true,
+            parameters = Map(
+              "start" -> "1",
+              "end" -> "2",
+              "readSchema" -> ".*",
+              "readVersion" -> "2",
+              "incompatibleVersion" -> "1"))
+        }
+      }
     }
   }
 }

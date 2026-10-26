@@ -16,13 +16,16 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils
+import io.delta.storage.commit.uniform.UniformMetadata
+
 import java.util
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
-import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
-import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
+import org.apache.spark.sql.delta.actions.{Action, DomainMetadata, Metadata, Protocol}
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -36,7 +39,15 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * storage credentials on the returned [[Table]]. Keeping these behind a client interface
  * isolates that plumbing from `AbstractDeltaCatalog`.
  */
-private[catalog] trait AbstractDeltaCatalogClient {
+private[delta] trait AbstractDeltaCatalogClient {
+
+  /**
+   * Returns whether a table with `ident` exists in the catalog.
+   *
+   * @param ident identifier of the table to check.
+   * @return `true` if the table exists in the catalog; `false` otherwise.
+   */
+  def tableExists(ident: Identifier): Boolean
 
   /**
    * Loads the table identified by `ident` from the catalog.
@@ -104,6 +115,9 @@ private[catalog] trait AbstractDeltaCatalogClient {
    *                              `metadata` / `protocol`, used by the catalog as the
    *                              authoritative "last updated" timestamp on the registered
    *                              entry.
+   * @param uniformMetadata       UniForm Iceberg metadata generated atomically with the initial
+   *                              snapshot;
+   *                              [[None]] when the table was not created with UniForm enabled.
    */
   def createTable(
       ident: Identifier,
@@ -111,34 +125,71 @@ private[catalog] trait AbstractDeltaCatalogClient {
       metadata: Metadata,
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
-      lastCommitTimestampMs: Long): Unit
+      lastCommitTimestampMs: Long,
+      uniformMetadata: Option[UniformMetadata] = None): Unit
+
+  /**
+   * Reports post-commit telemetry for the table to the catalog. Implementations build
+   * whatever payload their catalog expects from the per-commit fields and the
+   * `CatalogTable`'s storage properties (e.g. the catalog-side table id), then ship it.
+   *
+   * Exceptions bubble out; implementations must not swallow failures internally.
+   *
+   * @param ct                catalog metadata for the committed table.
+   * @param committedActions  actions written in this commit (used to derive file/row counts).
+   * @param committedVersion  the commit version (used as the histogram's commit version).
+   * @param snapshotHistogram post-commit file-size distribution read from the CRC; `None`
+   *                          when the CRC is unavailable. Read from the CRC only to avoid
+   *                          triggering state reconstruction.
+   */
+  def reportMetrics(
+      ct: CatalogTable,
+      committedActions: Seq[Action],
+      committedVersion: Long,
+      snapshotHistogram: Option[FileSizeHistogram]): Unit
 }
 
 /** Builds a [[AbstractDeltaCatalogClient]] from catalog options. */
 private[catalog] trait AbstractDeltaCatalogClientFactory {
   def fromCatalogOptions(
       catalogName: String,
-      options: CaseInsensitiveStringMap,
+      options: util.Map[String, String],
       fallbackLoadTableFunc: Identifier => Table): AbstractDeltaCatalogClient
 }
 
-private[catalog] object AbstractDeltaCatalogClient extends Logging {
+/**
+ * Factory entry point for [[AbstractDeltaCatalogClient]] instances. Used both by
+ * `AbstractDeltaCatalog.initialize` (to wire the catalog's own client at construction
+ * time) and by the post-commit metrics hook (to build a fresh per-commit client without
+ * caching state across commits).
+ */
+private[delta] object AbstractDeltaCatalogClient extends Logging {
 
   private val UC_DELTA_CATALOG_CLIENT_IMPL_CLASS_NAME: String =
     "org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl"
 
   /**
-   * Returns a [[AbstractDeltaCatalogClient]] wrapped in [[Some]] when the catalog opted in via
-   * `deltaRestApi.enabled`, else [[None]]. The concrete impl is loaded reflectively so
-   * [[AbstractDeltaCatalog]] doesn't compile-depend on it. If opt-in is explicit but reflective
-   * loading fails, throws [[IllegalStateException]] rather than silently degrading.
+   * Marks a carried-forward `delta.*` property (from a catalog-managed REPLACE) that this Delta
+   * version doesn't recognize, so it can bypass validation and survive into the replaced table.
+   * Intentionally neither `delta.`- nor `option.`-prefixed so it rides untouched through the
+   * property plumbing until `AbstractDeltaCatalog.createDeltaTable` strips and re-injects it.
+   */
+  private[delta] val CARRY_FORWARD_PREFIX: String = "__replaceCarryForward."
+
+  /**
+   * Returns a [[AbstractDeltaCatalogClient]] wrapped in [[Some]] unless the catalog has
+   * opted out via `deltaRestApi.enabled=false`, in which case returns [[None]]. The flag
+   * defaults to `true` when absent, so any UC catalog goes through the UC Delta API path
+   * unless the operator explicitly disables it. The concrete impl is loaded reflectively so
+   * [[AbstractDeltaCatalog]] doesn't compile-depend on it; if loading fails, throws
+   * [[IllegalStateException]] rather than silently degrading.
    */
   def fromCatalogOptionsIfEnabled(
       catalogName: String,
       options: CaseInsensitiveStringMap,
       fallbackLoadTableFunc: Identifier => Table): Option[AbstractDeltaCatalogClient] = {
-    val key = UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY
-    if (!options.getBoolean(key, false)) {
+    val optionsMap = options.asCaseSensitiveMap()
+    if (!UCConfigUtils.isDeltaRestApiEnabled(optionsMap)) {
       return None
     }
     val factory = try {
@@ -148,11 +199,12 @@ private[catalog] object AbstractDeltaCatalogClient extends Logging {
       cls.getField("MODULE$").get(null).asInstanceOf[AbstractDeltaCatalogClientFactory]
     } catch {
       case e: Exception =>
+        val key = UCConfigUtils.DELTA_REST_API_ENABLED_KEY
         throw new IllegalStateException(
           s"Failed to load $UC_DELTA_CATALOG_CLIENT_IMPL_CLASS_NAME though '$key' is true. " +
             "Ensure the implementation JAR is on the classpath, or remove " +
             s"'$key' from the catalog options to fall back to the legacy delegate.", e)
     }
-    Some(factory.fromCatalogOptions(catalogName, options, fallbackLoadTableFunc))
+    Some(factory.fromCatalogOptions(catalogName, optionsMap, fallbackLoadTableFunc))
   }
 }

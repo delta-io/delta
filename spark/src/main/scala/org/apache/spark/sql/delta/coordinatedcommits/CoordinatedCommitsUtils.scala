@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Locale
 import java.util.Optional
 
 import scala.collection.JavaConverters._
@@ -27,7 +28,7 @@ import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
@@ -67,11 +68,11 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       txn.updateProtocol(protocol = p)
       // Force a metadata update to trigger ICT (In-Commit Timestamp) enablement.
       // CatalogOwnedTableFeature requires ICT to be enabled in the metadata, but
-      // updateMetadataAndProtocolWithRequiredFeatures in prepareCommit only runs
+      // updateMetadataAndProtocolWithRequiredFeatures in prepareInitialActions only runs
       // when there's an explicit metadata change (metadataChanges.headOption is non-empty).
       // Since we're only updating the protocol here without changing metadata content,
       // we need to explicitly call updateMetadata to ensure metadataChanges is non-empty
-      // during prepareCommit, which will then enable ICT in the metadata.
+      // during prepareInitialActions, which will then enable ICT in the metadata.
       // Without this, generateInCommitTimestampForFirstCommitAttempt would return None,
       // causing UCCommitCoordinatorClient to fail with DELTA_MISSING_COMMIT_TIMESTAMP.
       txn.updateMetadata(proposedNewMetadata = txn.metadata)
@@ -101,7 +102,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
         snapshot.metadata.configuration
       TableCommitCoordinatorClient(
         commitCoordinatorClient = cc,
-        logPath = snapshot.deltaLog.logPath,
+        logPath = snapshot.logPath,
         tableConf = tableConf,
         hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
         logStore = snapshot.deltaLog.store
@@ -120,7 +121,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
           .map { cc =>
             return Some(TableCommitCoordinatorClient(
               cc,
-              logPath = snapshot.deltaLog.logPath,
+              logPath = snapshot.logPath,
               tableConf = snapshot.metadata.configuration,
               hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
               logStore = snapshot.deltaLog.store
@@ -270,6 +271,19 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     }
   }
 
+  private[delta] def verifyCatalogManagedStatusIsSupported(
+      propertyOverrides: Map[String, String]): Unit = {
+    val catalogManagedKey =
+      TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature).toLowerCase(Locale.ROOT)
+    propertyOverrides.foreach { case (key, status) =>
+      if (key.toLowerCase(Locale.ROOT) == catalogManagedKey &&
+          status.toLowerCase(Locale.ROOT) != TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED) {
+        throw DeltaErrors.unsupportedTableFeatureStatusException(
+          feature = CatalogOwnedTableFeature.name, status = status)
+      }
+    }
+  }
+
   /**
    * Validates the Catalog-Owned configurations in explicit command overrides for
    * `AlterTableSetPropertiesDeltaCommand`.
@@ -329,6 +343,13 @@ object CatalogOwnedTableUtils extends DeltaLogging {
           cmd.tablePropertyOverrides)
       case _ => (if (tableExists) "REPLACE" else "CREATE", catalogTableProperties)
     }
+    // Session default table properties (`spark.databricks.delta.properties.defaults.*`) are not
+    // part of `propertyOverrides`; they are merged into the table configuration only later in
+    // [[OptimisticTransaction]]. Merge them in here so that a default requesting CatalogManaged via
+    // the `enabled` status is rejected at creation time instead of silently producing a
+    // table that has the feature in its protocol but is not registered as CatalogManaged in UC.
+    verifyCatalogManagedStatusIsSupported(
+      DeltaConfigs.mergeGlobalConfigs(spark.sessionState.conf, propertyOverrides))
     // We do not allow users to modify [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]] and
     // [[CatalogOwnedTableFeature.name]] in any explicit overrides for REPLACE command.
     if (tableExists) {
@@ -520,6 +541,38 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   }
 
   /**
+   * Ensures that commit files are backfilled up to the current version in the snapshot.
+   *
+   * This method checks if there are any un-backfilled versions up to the current version and
+   * triggers the backfilling process using the commit-coordinator. It verifies that the delta file
+   * for the current version exists after the backfilling process.
+   *
+   * @throws IllegalStateException
+   *   if the delta file for the current version is not found after backfilling.
+   */
+  def ensureCommitFilesBackfilled(
+      version: Long,
+      deltaLog: DeltaLog,
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient,
+      deltaCommitFileProvider: DeltaCommitFileProvider,
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    val minUnbackfilledVersion = deltaCommitFileProvider.minUnbackfilledVersion
+    if (minUnbackfilledVersion <= version) {
+      val hadoopConf = deltaLog.newDeltaHadoopConf()
+      tableCommitCoordinatorClient.backfillToVersion(
+        catalogTableOpt.map(_.identifier),
+        version,
+        lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
+      val fs = deltaLog.logPath.getFileSystem(hadoopConf)
+      val expectedBackfilledDeltaFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+      if (!fs.exists(expectedBackfilledDeltaFile)) {
+        throw new IllegalStateException("Backfilling of commit files failed. " +
+          s"Expected delta file $expectedBackfilledDeltaFile not found.")
+      }
+    }
+  }
+
+  /**
    * Returns an iterator of commit files starting from startVersion.
    * If the iterator is consumed beyond what the file system listing shows, this method do a
    * deltaLog.update() to find the latest version and returns listing results upto that version.
@@ -531,6 +584,10 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       catalogTableOpt: Option[CatalogTable],
       startVersion: Long): Iterator[(FileStatus, Long)] = {
 
+    /**
+     * Returns the backfilled deltas found by a filesystem listing between startVersion and
+     * endVersion (a flat `_delta_log` listing, so it never sees `_staged_commits` files).
+     */
     def listDeltas(startVersion: Long, endVersion: Option[Long]): Iterator[(FileStatus, Long)] = {
       deltaLog
         .listFrom(startVersion)
@@ -562,9 +619,11 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       if (maxVersionSeen >= endSnapshot.version) {
         return Iterator.empty
       }
-      val unbackfilledDeltas = endSnapshot.logSegment.deltas.collect {
-        case UnbackfilledDeltaFile(fileStatus, version, _) if version > maxVersionSeen =>
-          (fileStatus, version)
+      // Collect the unlisted unbackfilled deltas since the checkpoint version (inclusive).
+      //  - For non-AMT tables, `unbackfilledDeltas` must be strictly after checkpoint version.
+      //  - For AMT tables, `unbackfilledDeltas` may include the commit at checkpoint version.
+      val unbackfilledDeltas = endSnapshot.logSegment.unbackfilledDeltas.collect {
+        case (file, version, _) if version > maxVersionSeen => (file, version)
       }
       val backfillGapFixEnabled = SparkSession.active.sessionState.conf.getConf(
         DeltaSQLConf.COMMIT_FILES_ITERATOR_BACKFILL_GAP_FIX_ENABLED)
@@ -671,7 +730,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       commitCoordinator =>
         TableCommitCoordinatorClient(
           commitCoordinator,
-          snapshotDescriptor.deltaLog.logPath,
+          snapshotDescriptor.logPath,
           snapshotDescriptor.metadata.coordinatedCommitsTableConf,
           snapshotDescriptor.deltaLog.newDeltaHadoopConf(),
           snapshotDescriptor.deltaLog.store
@@ -717,10 +776,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    * Returns true if the snapshot is backed by unbackfilled commits.
    */
   def unbackfilledCommitsPresent(snapshot: Snapshot): Boolean = {
-    snapshot.logSegment.deltas.exists {
-      case FileNames.UnbackfilledDeltaFile(_, _, _) => true
-      case _ => false
-    } && !snapshot.allCommitsBackfilled
+    // The unbackfilled commits from the segment might be stale, so we consult the snapshot as well.
+    snapshot.logSegment.unbackfilledDeltas.nonEmpty && !snapshot.allCommitsBackfilled
   }
 
   /**
@@ -737,9 +794,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       // as backfills are managed by commit-coordinators.
       return
     }
-    val unbackfilledFilesAndVersions = snapshot.logSegment.deltas.collect {
-      case UnbackfilledDeltaFile(unbackfilledDeltaFile, version, _) =>
-        (unbackfilledDeltaFile, version)
+    val unbackfilledFilesAndVersions = snapshot.logSegment.unbackfilledDeltas.map {
+      case (file, version, _) => (file, version)
     }
     if (unbackfilledFilesAndVersions.isEmpty) return
     // Coordinated commits are disabled on the table but the table still has un-backfilled files.

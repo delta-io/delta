@@ -121,7 +121,10 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         // If we trigger limit push down, the filters must be partition filters. Since
         // there are no data filters, we don't need to apply Generated Columns
         // optimization. See `DeltaTableScan` for more details.
-        return scanGenerator.filesForScan(limitOpt.get, filters)
+        return recordFrameProfile(
+            "Delta", "PrepareDeltaScan.filesForScan.limitAndFilters") {
+          scanGenerator.filesForScan(limitOpt.get, filters)
+        }
       }
       val filtersForScan =
         if (!GeneratedColumn.partitionFilterOptimizationEnabled(spark)) {
@@ -131,7 +134,9 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
             spark, scanGenerator.snapshotToScan, filters, delta)
           filters ++ generatedPartitionFilters
         }
-      scanGenerator.filesForScan(filtersForScan)
+      return recordFrameProfile("Delta", "PrepareDeltaScan.filesForScan.filters") {
+        scanGenerator.filesForScan(filtersForScan)
+      }
     }
   }
 
@@ -293,8 +298,20 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         fileIndex: FileIndexType): Boolean = {
       val partitionColumns = getPartitionColumns(fileIndex)
       import DeltaTableUtils._
-      filters.forall(expr => !containsSubquery(expr) &&
-        isPredicatePartitionColumnsOnly(expr, partitionColumns, spark))
+      // Guards the LIMIT file-pruning path: when this returns true, the scan applies filters
+      // during file listing and caps the result at ~limit before the residual Filter runs at
+      // execution. This is only safe for deterministic partition filters -- a non-deterministic
+      // predicate like rand() > 0.5 references no columns, so isPredicatePartitionColumnsOnly is
+      // vacuously true for it, letting it slip onto this path and get evaluated twice (once per
+      // file, once per row), double-filtering the data. We exclude non-deterministic predicates
+      // here to avoid that.
+      val skipNonDeterministicFilters =
+        spark.conf.get(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_SKIP_NON_DETERMINISTIC_FILTERS)
+      filters.forall { expr =>
+        !containsSubquery(expr) &&
+          (!skipNonDeterministicFilters || expr.deterministic) &&
+          isPredicatePartitionColumnsOnly(expr, partitionColumns, spark)
+      }
     }
 
     protected def limitPushdownEnabled(plan: LogicalPlan): Boolean

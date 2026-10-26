@@ -159,9 +159,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val log = createTableWithProtocol(Protocol(1, 1), path)
       assert(log.snapshot.protocol === Protocol(1, 1))
       log.upgradeProtocol(Action.supportedProtocolVersion(
-        featuresToExclude = Seq(CatalogOwnedTableFeature)))
+        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)))
       assert(log.snapshot.protocol === Action.supportedProtocolVersion(
-        featuresToExclude = Seq(CatalogOwnedTableFeature)))
+        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)))
     }
   }
 

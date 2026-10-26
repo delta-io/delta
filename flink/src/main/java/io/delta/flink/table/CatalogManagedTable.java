@@ -16,9 +16,6 @@
 
 package io.delta.flink.table;
 
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
-import static io.delta.kernel.unitycatalog.UCCatalogManagedClient.UC_TABLE_ID_KEY;
-
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
@@ -27,15 +24,13 @@ import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
-import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
-import io.unitycatalog.client.auth.TokenProvider;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.apache.flink.util.Preconditions;
+import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,24 +39,18 @@ import org.slf4j.LoggerFactory;
  * catalog. It supports:
  *
  * <ul>
- *   <li>loading existing tables from a catalog via the UC Open API, and
+ *   <li>loading existing tables from a catalog via the UC Delta-Tables API, and
  *   <li>committing table changes back to the CCv2 catalog.
  * </ul>
+ *
+ * <p>Snapshot loading and commit coordination go through the UC Delta-Tables API (via {@link
+ * UCDeltaTokenBasedRestClient}). Table creation, lookup, and credential vending are still served by
+ * the {@link UnityCatalog} catalog over the classic UC table APIs, so the backing UC server must
+ * expose both surfaces.
  */
 public class CatalogManagedTable extends AbstractKernelTable {
 
   private static final Logger LOG = LoggerFactory.getLogger(CatalogManagedTable.class);
-  public static final Map<String, String> CATALOG_MANAGED_REQUIRED_FEATURES_CONF =
-      Stream.of(
-              CATALOG_MANAGED_RW_FEATURE,
-              DELETION_VECTORS_RW_FEATURE,
-              DOMAIN_METADATA_W_FEATURE,
-              IN_COMMIT_TIMESTAMP_W_FEATURE,
-              ROW_TRACKING_W_FEATURE,
-              CHECKPOINT_V2_RW_FEATURE,
-              VACUUM_PROTOCOL_CHECK_RW_FEATURE)
-          .map(feature -> String.format("delta.feature.%s", feature.featureName()))
-          .collect(Collectors.toMap(key -> key, key -> "supported"));
 
   private final URI endpoint;
   private final UnityCatalog.AuthMode authMode;
@@ -125,14 +114,11 @@ public class CatalogManagedTable extends AbstractKernelTable {
   @Override
   public void open() {
     if (ucClient == null) {
-      Map<String, String> tokenProviderConf =
-          UnityCatalog.buildTokenProviderConf(
-              authMode, token, oauthUri, oauthClientId, oauthClientSecret);
+      Map<String, String> ucConfig =
+          UnityCatalog.buildUcConfig(
+              endpoint, authMode, token, oauthUri, oauthClientId, oauthClientSecret);
       ucClient =
-          new UCTokenBasedRestClient(
-              endpoint.toString(),
-              TokenProvider.create(tokenProviderConf),
-              VersionHelper.appVersions());
+          new UCDeltaTokenBasedRestClient(ucConfig, /* hadoopConfSupplier = */ Configuration::new);
     }
     if (catalogManagedClient == null) {
       catalogManagedClient = new UCCatalogManagedClient(ucClient);
@@ -166,21 +152,11 @@ public class CatalogManagedTable extends AbstractKernelTable {
   }
 
   @Override
-  protected void createDeltaTable() {
-    conf.update(Map.of(UC_TABLE_ID_KEY, tableUUID));
-    super.createDeltaTable();
-  }
-
-  @Override
   protected CreateTableTransactionBuilder buildCreateTableTransaction() {
+    // Pass the table identifier so the UC committer finalizes (promotes) the staging table when
+    // the version 0 commit is written, rather than relying on a separate catalog registration.
     return catalogManagedClient.buildCreateTableTransaction(
-        tableUUID, tablePath.toString(), schema, ENGINE_INFO);
-  }
-
-  @Override
-  protected Map<String, String> extraConf() {
-    // Make sure the table supports table features needed by CatalogManaged.
-    return CATALOG_MANAGED_REQUIRED_FEATURES_CONF;
+        tableUUID, tablePath.toString(), schema, ENGINE_INFO, getUcTableIdentifier());
   }
 
   @Override

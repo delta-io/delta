@@ -18,29 +18,35 @@ package org.apache.spark.sql.delta.util
 
 import java.io.{FileNotFoundException, IOException}
 import java.net.URI
+import java.nio.ByteBuffer
 import java.util.Locale
+import java.util.concurrent.Semaphore
 
 import scala.util.Random
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.Relocated._
-import org.apache.spark.sql.delta.{DeltaErrors, SerializableFileStatus}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaRuntimeException, SerializableFileStatus}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.commons.io.IOUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileAlreadyExistsException, FileStatus, FileSystem, FSDataInputStream, Path}
 import org.apache.hadoop.io.IOUtils.copyBytes
+import org.apache.parquet.HadoopReadOptions
+import org.apache.parquet.bytes.ByteBufferAllocator
 import org.apache.parquet.format.converter.ParquetMetadataConverter.SKIP_ROW_GROUPS
 import org.apache.parquet.hadoop.{Footer, ParquetFileReader}
+import org.apache.parquet.hadoop.util.HadoopInputFile
 
 import org.apache.spark.{SparkEnv, SparkException, TaskContext}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
+import org.apache.spark.util.{SerializableConfiguration, SparkFatalException, ThreadUtils, Utils => SparkUtils}
 
 /**
  * Some utility methods on files, directories, and paths.
@@ -390,6 +396,224 @@ object DeltaFileOperations extends DeltaLogging {
     }
   }
 
+  private[delta] object ParquetFooterMemoryAdmission {
+    // Heap measurements of a representative wide Parquet schema graph retained about 150 KiB.
+    // Add 64 KiB for file-unique footer metadata, round the 214 KiB subtotal up to 256 KiB,
+    // then apply a 2x safety margin. AddFile.stats is excluded because REORG batching bounds it
+    // separately.
+    val DECODED_OBJECT_ALLOWANCE_BYTES: Int = 512 * 1024
+    val MEMORY_PERMIT_BYTES: Long = 1024L
+
+    private[delta] def executorMemoryLimit(
+        maxHeapBytes: Long,
+        executorMemoryFraction: Double): Long = {
+      require(maxHeapBytes > 0, "maxHeapBytes must be positive")
+      require(
+        executorMemoryFraction > 0.0 && executorMemoryFraction <= 1.0,
+        "executorMemoryFraction must be greater than 0 and at most 1")
+      val requestedBytes = math.max(
+        MEMORY_PERMIT_BYTES,
+        (maxHeapBytes.toDouble * executorMemoryFraction).toLong)
+      val memoryPermits = requestedBytes / MEMORY_PERMIT_BYTES
+      require(
+        memoryPermits <= Int.MaxValue,
+        s"Footer admission pool cannot exceed ${Int.MaxValue} KiB")
+      memoryPermits * MEMORY_PERMIT_BYTES
+    }
+
+    /** One admission pool per executor JVM, shared by all concurrent REORG tasks. */
+    lazy val global: ParquetFooterMemoryAdmission = {
+      val sparkConf = Option(SparkEnv.get).map(_.conf)
+      val executorMemoryFraction = sparkConf.map(_.get(
+        DeltaSQLConf.DELTA_REORG_FOOTER_MEMORY_ADMISSION_EXECUTOR_MEMORY_FRACTION)).getOrElse(
+        DeltaSQLConf.DELTA_REORG_FOOTER_MEMORY_ADMISSION_EXECUTOR_MEMORY_FRACTION.defaultValue.get)
+      val activeReaderLimit = sparkConf.map(_.get(
+        DeltaSQLConf.DELTA_REORG_FOOTER_MEMORY_ADMISSION_MAX_ACTIVE_READERS)).getOrElse(
+        DeltaSQLConf.DELTA_REORG_FOOTER_MEMORY_ADMISSION_MAX_ACTIVE_READERS.defaultValue.get)
+      new ParquetFooterMemoryAdmission(
+        executorMemoryLimit(Runtime.getRuntime.maxMemory(), executorMemoryFraction),
+        activeReaderLimit,
+        DECODED_OBJECT_ALLOWANCE_BYTES)
+    }
+  }
+
+  private[delta] class ParquetFooterMemoryAdmissionException(message: String)
+    extends DeltaRuntimeException(
+      errorClass = "INTERNAL_ERROR",
+      messageParameters = Array(message))
+
+  /**
+   * Executor-wide admission for REORG footer work.
+   *
+   * The memory semaphore accounts for the raw buffer requested by Parquet (footer length plus its
+   * 8-byte trailer) and estimates ordinary decoded Java objects with a fixed allowance, rounding
+   * each request up to a 1 KiB permit. A request larger than the pool acquires every memory permit,
+   * guaranteeing forward progress without overlapping another raw or decoded footer reservation.
+   * Other workers may still hold open streams while waiting for memory admission. The separate
+   * reader semaphore is acquired before opening the stream, bounding connector buffers that can be
+   * allocated before Parquet knows the footer size. Both semaphores are fair and their blocking
+   * acquire operations are interruptible.
+   */
+  private[delta] final class ParquetFooterMemoryAdmission(
+      val memoryLimitBytes: Long,
+      val activeReaderLimit: Int,
+      val decodedObjectAllowanceBytes: Int) {
+    require(
+      memoryLimitBytes >= ParquetFooterMemoryAdmission.MEMORY_PERMIT_BYTES &&
+        memoryLimitBytes % ParquetFooterMemoryAdmission.MEMORY_PERMIT_BYTES == 0,
+      "memoryLimitBytes must be a positive multiple of 1 KiB")
+    require(
+      memoryLimitBytes / ParquetFooterMemoryAdmission.MEMORY_PERMIT_BYTES <= Int.MaxValue,
+      s"Footer admission pool cannot exceed ${Int.MaxValue} KiB")
+    require(activeReaderLimit > 0, "activeReaderLimit must be positive")
+    require(decodedObjectAllowanceBytes >= 0, "decodedObjectAllowanceBytes must be non-negative")
+
+    private val memoryPermitBytes = ParquetFooterMemoryAdmission.MEMORY_PERMIT_BYTES
+    private val memoryLimitPermits = (memoryLimitBytes / memoryPermitBytes).toInt
+    private val memoryPermits = new Semaphore(memoryLimitPermits, true)
+    private val activeReaderPermits = new Semaphore(activeReaderLimit, true)
+
+    private[delta] def availableMemoryBytes: Long =
+      memoryPermits.availablePermits().toLong * memoryPermitBytes
+    private[delta] def availableReaderPermits: Int = activeReaderPermits.availablePermits()
+    private[delta] def numReaderWaiters: Int = activeReaderPermits.getQueueLength
+    private[delta] def numMemoryWaiters: Int = memoryPermits.getQueueLength
+
+    /** Hold both the active-reader slot and any byte reservation through predicate evaluation. */
+    private[delta] def withReader[T](filePath: => String)(
+        body: ByteBufferAllocator => T): T = {
+      activeReaderPermits.acquire()
+      var allocator: AdmissionByteBufferAllocator = null
+      try {
+        allocator = new AdmissionByteBufferAllocator(() => filePath)
+        body(allocator)
+      } finally {
+        if (allocator != null) allocator.releaseReservation()
+        activeReaderPermits.release()
+      }
+    }
+
+    private def acquireMemory(filePath: String, rawFooterBytes: Int): Int = {
+      val requiredBytes = rawFooterBytes.toLong + decodedObjectAllowanceBytes
+      val requiredPermits =
+        math.max(1L, (requiredBytes + memoryPermitBytes - 1L) / memoryPermitBytes).toInt
+      val admittedPermits = math.min(requiredPermits, memoryLimitPermits)
+      if (requiredBytes > memoryLimitBytes) {
+        logInfo(
+          log"Running an oversized Parquet footer with the full memory-admission budget: " +
+            log"path=${MDC(DeltaLogKeys.PATH, filePath)}, " +
+            log"requiredBytes=${MDC(DeltaLogKeys.NUM_BYTES, requiredBytes)}, " +
+            log"memoryLimitBytes=${MDC(DeltaLogKeys.MAX_SIZE, memoryLimitBytes)}")
+      }
+      memoryPermits.acquire(admittedPermits)
+      admittedPermits
+    }
+
+    private final class AdmissionByteBufferAllocator(filePath: () => String)
+      extends ByteBufferAllocator {
+      private var reservedPermits = 0
+
+      override def allocate(size: Int): ByteBuffer = {
+        require(size >= 0, s"Cannot allocate a negative-size Parquet footer buffer: $size")
+        if (reservedPermits != 0) {
+          throw new ParquetFooterMemoryAdmissionException(
+            "A Parquet footer reader requested multiple buffers")
+        }
+        reservedPermits = acquireMemory(filePath(), size)
+        try {
+          ByteBuffer.allocate(size)
+        } catch {
+          case t: Throwable =>
+            releaseReservation()
+            throw t
+        }
+      }
+
+      // Parquet releases the raw buffer before returning its decoded Footer. Keep the admission
+      // reservation until withReader completes so schema conversion and filtering stay covered.
+      override def release(buffer: ByteBuffer): Unit = {
+        assert(!isDirect && !buffer.isDirect,
+          "AdmissionByteBufferAllocator must only allocate heap buffers")
+      }
+
+      override def isDirect: Boolean = false
+
+      def releaseReservation(): Unit = {
+        if (reservedPermits != 0) {
+          memoryPermits.release(reservedPermits)
+          reservedPermits = 0
+        }
+      }
+    }
+  }
+
+  /** Historical default footer-read concurrency, kept as the default so non-REORG callers are
+   * unchanged. REORG / PURGE override it via DELTA_REORG_FOOTER_SCAN_PARALLELISM. */
+  val DEFAULT_PARQUET_FOOTER_READ_PARALLELISM = 8
+
+  /**
+   * Reads, decodes and filters each footer in its worker, returning only accepted values. A Footer
+   * never enters the completed-result collection, so its reservation can be released as soon as
+   * the predicate returns.
+   */
+  private[delta] def filterParquetFilesInParallel[T](
+      conf: Configuration,
+      partFiles: Seq[(T, FileStatus)],
+      ignoreCorruptFiles: Boolean,
+      parallelism: Int,
+      admission: ParquetFooterMemoryAdmission = ParquetFooterMemoryAdmission.global)(
+      predicate: (T, Footer) => Boolean): Seq[T] = {
+    if (partFiles.isEmpty) return Seq.empty
+
+    logInfo(log"Filtering ${MDC(DeltaLogKeys.NUM_FILES, partFiles.size.toLong)} Parquet footers " +
+      log"with parallelism ${MDC(DeltaLogKeys.NUM_THREADS, parallelism.toLong)}")
+    ThreadUtils.parmap(partFiles, "filteringParquetFooters", parallelism) {
+      case (value, currentFile) =>
+        try {
+          admission.withReader(currentFile.getPath.toString) { allocator =>
+            val footer = readParquetFooter(conf, currentFile, allocator, ignoreCorruptFiles)
+            footer.filter { footer =>
+              predicate(value, footer)
+            }.map(_ => value)
+          }
+        } catch {
+          // Scala Future does not complete its Promise for fatal throwables. Wrap them in a
+          // non-fatal exception so ThreadUtils.awaitResult can rethrow the original throwable.
+          case fatal: Throwable if !NonFatal(fatal) =>
+            throw new SparkFatalException(fatal)
+        }
+    }.flatten
+  }
+
+  private[delta] def readParquetFooter(
+      conf: Configuration,
+      currentFile: FileStatus,
+      allocator: ByteBufferAllocator,
+      ignoreCorruptFiles: Boolean): Option[Footer] = {
+    try {
+      val inputFile = HadoopInputFile.fromStatus(currentFile, conf)
+      val readOptions = HadoopReadOptions.builder(conf, currentFile.getPath)
+        .withMetadataFilter(SKIP_ROW_GROUPS)
+        .withAllocator(allocator)
+        .build()
+      val parquetMetadata = SparkUtils.tryWithResource(inputFile.newStream()) { stream =>
+        ParquetFileReader.readFooter(inputFile, readOptions, stream)
+      }
+      Some(new Footer(currentFile.getPath, parquetMetadata))
+    } catch {
+      // Resource admission failures are not corrupt-file failures and must never be skipped.
+      case e: ParquetFooterMemoryAdmissionException => throw e
+      case e: RuntimeException =>
+        if (ignoreCorruptFiles) {
+          logWarning(log"Skipped the footer in the corrupted file: " +
+            log"${MDC(DeltaLogKeys.FILE_STATUS, currentFile)}", e)
+          None
+        } else {
+          throw DeltaErrors.failedReadFileFooter(currentFile.toString, e)
+        }
+    }
+  }
+
   /**
    * Reads Parquet footers in multi-threaded manner.
    * If the config "spark.sql.files.ignoreCorruptFiles" is set to true, we will ignore the corrupted
@@ -399,7 +623,19 @@ object DeltaFileOperations extends DeltaLogging {
       conf: Configuration,
       partFiles: Seq[FileStatus],
       ignoreCorruptFiles: Boolean): Seq[Footer] = {
-    ThreadUtils.parmap(partFiles, "readingParquetFooters", 8) { currentFile =>
+    readParquetFootersInParallel(
+      conf, partFiles, ignoreCorruptFiles, DEFAULT_PARQUET_FOOTER_READ_PARALLELISM)
+  }
+
+  /** Reads Parquet footers with the requested concurrency. */
+  def readParquetFootersInParallel(
+      conf: Configuration,
+      partFiles: Seq[FileStatus],
+      ignoreCorruptFiles: Boolean,
+      parallelism: Int): Seq[Footer] = {
+    logInfo(log"Reading ${MDC(DeltaLogKeys.NUM_FILES, partFiles.size.toLong)} Parquet footers " +
+      log"with parallelism ${MDC(DeltaLogKeys.NUM_THREADS, parallelism.toLong)}")
+    ThreadUtils.parmap(partFiles, "readingParquetFooters", parallelism) { currentFile =>
       try {
         // Skips row group information since we only need the schema.
         // ParquetFileReader.readFooter throws RuntimeException, instead of IOException,
@@ -407,14 +643,19 @@ object DeltaFileOperations extends DeltaLogging {
         Some(new Footer(currentFile.getPath(),
           ParquetFileReader.readFooter(
             conf, currentFile, SKIP_ROW_GROUPS)))
-      } catch { case e: RuntimeException =>
-        if (ignoreCorruptFiles) {
-          logWarning(log"Skipped the footer in the corrupted file: " +
-            log"${MDC(DeltaLogKeys.FILE_STATUS, currentFile)}", e)
-          None
-        } else {
-          throw DeltaErrors.failedReadFileFooter(currentFile.toString, e)
-        }
+      } catch {
+        case e: RuntimeException =>
+          if (ignoreCorruptFiles) {
+            logWarning(log"Skipped the footer in the corrupted file: " +
+              log"${MDC(DeltaLogKeys.FILE_STATUS, currentFile)}", e)
+            None
+          } else {
+            throw DeltaErrors.failedReadFileFooter(currentFile.toString, e)
+          }
+        // Scala Future does not complete its Promise for fatal throwables. Wrap them in a
+        // non-fatal exception so ThreadUtils.awaitResult can rethrow the original throwable.
+        case fatal: Throwable if !NonFatal(fatal) =>
+          throw new SparkFatalException(fatal)
       }
     }.flatten
   }

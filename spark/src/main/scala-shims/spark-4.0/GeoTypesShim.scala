@@ -28,6 +28,12 @@ object GeoTypesShim {
   /** Returns true if `dt` is `GeometryType` or `GeographyType`. */
   def isGeoSpatialType(dt: DataType): Boolean = false
 
+  /** Returns true if `dt` is `GeometryType`. */
+  def isGeometryType(dt: DataType): Boolean = false
+
+  /** Returns true if `dt` is `GeographyType`. */
+  def isGeographyType(dt: DataType): Boolean = false
+
   /**
    * If `dt` is a geospatial type with an unsupported SRID, returns `Some(srid)`. Returns
    * `None` for non-geospatial types or geospatial types with supported SRIDs.
@@ -39,4 +45,18 @@ object GeoTypesShim {
    * (e.g. generated columns, check constraints).
    */
   val geoExpressions: Set[Class[_]] = Set.empty[Class[_]]
+
+  /** Geospatial Catalyst type classes; empty on Spark 4.0 where these types do not exist. */
+  val geoTypes: Seq[Class[_]] = Seq.empty[Class[_]]
+
+  /** Returns the CRS of a `GeometryType`. Only valid when `isGeometryType(dt)` is true. */
+  def geometryCrs(dt: DataType): String =
+    throw new IllegalArgumentException(s"Not a geometry type: $dt")
+
+  /**
+   * Returns the CRS and edge interpolation algorithm name (e.g. "SPHERICAL") of a
+   * `GeographyType`. Only valid when `isGeographyType(dt)` is true.
+   */
+  def geographyCrsAndAlgorithm(dt: DataType): (String, String) =
+    throw new IllegalArgumentException(s"Not a geography type: $dt")
 }

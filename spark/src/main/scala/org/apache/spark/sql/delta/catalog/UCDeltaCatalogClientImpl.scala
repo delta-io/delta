@@ -22,10 +22,12 @@ import java.util.concurrent.atomic.AtomicLong
 
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._
+import scala.util.control.NonFatal
 
 import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractProtocol}
-import io.delta.storage.commit.uccommitcoordinator.{UCDeltaClient, UCDeltaModels}
+import io.delta.storage.commit.uccommitcoordinator.{UCConfigUtils, UCDeltaClient, UCDeltaModels}
+import io.delta.storage.commit.uniform.{UniformMetadata => StorageUniformMetadata}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo
 import io.delta.storage.commit.uccommitcoordinator.exceptions.{
@@ -45,15 +47,16 @@ import org.apache.spark.sql.catalyst.catalog.{
   CatalogTableType
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaErrors, TableFeature}
-import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ClusteringTableFeature, DeltaConfigs, DeltaErrors, MaterializedRowCommitVersion, MaterializedRowId, TableFeature}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DomainMetadata, Metadata, Protocol, RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
+import org.apache.spark.sql.delta.CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.IcebergConstants
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.types.{DataType, StructType}
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * [[AbstractDeltaCatalogClient]] backed by a [[UCDeltaClient]]. Owns all of the catalog-specific
@@ -67,6 +70,22 @@ private[catalog] class UCDeltaCatalogClientImpl(
     fallbackLoadTableFunc: Identifier => Table
     = UCDeltaCatalogClientImpl.defaultFallbackLoadTableFunc)
   extends AbstractDeltaCatalogClient with Logging {
+
+  // -------------------------------------------------------------------------
+  // DeltaCatalogClient: tableExists
+  // -------------------------------------------------------------------------
+
+  override def tableExists(ident: Identifier): Boolean = {
+    try {
+      ucClient.loadTable(toStorageTableIdent(ident))
+      true
+    } catch {
+      case _: StorageNoSuchTableException => false
+      // UC acknowledged the table; we just couldn't process it further (non-Delta format or
+      // credential fetch failed). The table still exists in the catalog.
+      case _: UnsupportedTableFormatException | _: CredentialFetchFailedException => true
+    }
+  }
 
   // -------------------------------------------------------------------------
   // DeltaCatalogClient: loadTable
@@ -140,22 +159,130 @@ private[catalog] class UCDeltaCatalogClientImpl(
     if (suggested == null) return
     // `null` values are engine-generated-at-commit sentinels (e.g. row-tracking materialized
     // column names); Delta rejects them as unknown configs at stage time, so skip and let
-    // the engine substitute them on finalize.
-    suggested.asScala.foreach { case (k, v) => if (v != null) augmented.putIfAbsent(k, v) }
+    // the engine substitute them on finalize. Entries that wouldn't survive Delta config
+    // validation (unknown key, non-editable key, or value that doesn't parse) are also
+    // dropped to keep CREATE from failing later in the staging flow.
+    suggested.asScala.foreach { case (k, v) =>
+      if (v != null && passesDeltaConfigValidation(k, v)) augmented.putIfAbsent(k, v)
+    }
+  }
+
+  private def lower(key: String) = key.toLowerCase(java.util.Locale.ROOT)
+
+  /**
+   * Lower case keys of `delta.*` properties to skip instead of carrying forward on REPLACE. Delta
+   * manages each of these itself on the commit, so a carried value would be stale, conflicting, or
+   * simply ignored -- whether recomputed from other state, derived from the feature set, or
+   * re-applied from the existing snapshot's metadata (see the per-entry reason). Properties that
+   * *define* the table's shape (table features, feature-enablement configs) are deliberately NOT
+   * here -- those must carry forward.
+   */
+  private val propertiesToSkipCarryForwardOnReplace = Set(
+    // Clustering has DDL-only enablement (`CLUSTER BY`); carrying it as a property would
+    // both throw on REPLACE (`DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED`)
+    // and block legitimate transitions away from a clustered table.
+    lower(TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature)),
+    // delta.columnMapping.maxColumnId is derived from the table schema. Not worth carrying forward.
+    lower(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key),
+    // Protocol versions are derived from the feature set; Delta recomputes them from the carried
+    // features, so a carried value would wrongly pin the protocol.
+    lower(DeltaConfigs.MIN_READER_VERSION.key),
+    lower(DeltaConfigs.MIN_WRITER_VERSION.key),
+    // Row-tracking materialized column names are not derived, but Delta re-applies them from the
+    // existing snapshot's metadata on commit (MaterializedRow*.updateMaterializedColumnName,
+    // overwriting any carried value), so carrying them is redundant.
+    lower(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP),
+    lower(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP),
+    // `delta.rowTracking.rowIdHighWaterMark` is a UC-side projection of Delta's
+    // `RowTrackingMetadataDomain` action (Delta itself stores the high water mark as domain
+    // metadata, not as a `delta.*` property -- "not recognized by this version of Delta" if
+    // injected as a property). Carrying it forward as an unknown property turns a no-op REPLACE
+    // into a real metadata update on the UC side and bumps `lastUpdateVersion`. Re-derived
+    // server-side from the post-replace snapshot's domain metadata; do not carry.
+    "delta.rowtracking.rowidhighwatermark",
+    // Metastore-only bookkeeping keys -- not real table config; re-derived by the UpdateCatalog
+    // hook from the new snapshot.
+    lower(DeltaConfigs.METASTORE_LAST_UPDATE_VERSION),
+    lower(DeltaConfigs.METASTORE_LAST_COMMIT_TIMESTAMP))
+
+  /** Whether `key` from an existing table's config is eligible to carry forward on REPLACE. */
+  private def isSafeToCarryForwardOnReplace(key: String): Boolean = {
+    val lKey = lower(key)
+    // Only `delta.*` keys are carried; non-`delta.*` user properties (e.g. `Foo=Bar`) follow
+    // normal REPLACE semantics where the caller's new TBLPROPERTIES is authoritative.
+    if (!lKey.startsWith("delta.")) return false
+    if (propertiesToSkipCarryForwardOnReplace.contains(lKey)) return false
+    true
+  }
+
+  /** Carries one eligible existing-table `(key, value)` into the REPLACE-augmented `augmented`. */
+  private def carryForwardExistingProperty(
+      augmented: util.Map[String, String], key: String, value: String): Unit = {
+    if (!isSafeToCarryForwardOnReplace(key)) return
+    if (passesDeltaConfigValidation(key, value)) {
+      // Recognized with a valid value: carry as-is. Caller value (if any) wins via `putIfAbsent`,
+      // and it is re-validated downstream like any other property.
+      augmented.putIfAbsent(key, value)
+    } else if (passesDeltaConfigValidation(key, value, allowArbitraryProperties = true) &&
+        !augmented.containsKey(key)) {
+      // Unknown to this Delta version (e.g. `delta.dummy_fake_key`): tag it so the create path
+      // re-injects it after `validateConfigurations`, which would otherwise reject the unknown key.
+      // Unknown keys are inert (Delta never reads them), so preserving them is safe -- but only
+      // when the caller didn't supply the key, keeping the "caller wins" precedence.
+      augmented.put(AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX + key, value)
+    }
+    // Else: a recognized key whose value this version can't parse (an organic config Delta
+    // generates/derives, e.g. `delta.columnMapping.mode` from a newer engine). Drop it and let
+    // Delta produce the value rather than injecting one it rejects. The allowArbitraryProperties
+    // check above separates this from an unknown key: it accepts unknown keys but still parses
+    // values of recognized ones.
+  }
+
+  /**
+   * True iff [[DeltaConfigs.validateConfiguration]] accepts `(key, value)` as a Delta table
+   * property, converting its throw-on-bad behavior into a boolean.
+   */
+  private def passesDeltaConfigValidation(
+      key: String, value: String, allowArbitraryProperties: Boolean = false): Boolean = {
+    try {
+      DeltaConfigs.validateConfiguration(
+        key, value, allowArbitraryProperties, allConfigurations = Map.empty)
+      true
+    } catch {
+      // `validateConfiguration` signals "not an acceptable Delta property" by throwing: an unknown
+      // key (DELTA_UNKNOWN_CONFIGURATION), a non-editable key, or any value-parser failure
+      // (IllegalArgumentException from `require(...)`, ColumnMappingUnsupportedException for an
+      // unknown column-mapping mode, etc.). Treat any non-fatal throw as "does not pass" rather
+      // than enumerating the parser's exception types, which has proven incomplete.
+      case NonFatal(_) =>
+        logDebug(log"Skipping invalid Delta config " +
+          log"'${MDC(DeltaLogKeys.CONFIG_KEY, key)}'='${MDC(DeltaLogKeys.CONFIG, value)}'.")
+        false
+    }
   }
 
   /**
    * Applies UC's required properties to `augmented`. Caller-supplied values that conflict
    * with a required key throw.
+   *
+   * Exception: if the table is being created with IcebergCompatV2 enabled, the DV property
+   * is silently skipped even if the catalog marks it required as IcebergCompatV2 is
+   * incompatible with DV
    */
   private def applyRequiredProperties(
       augmented: util.Map[String, String],
       required: util.Map[String, String],
       ident: Identifier): Unit = {
     if (required == null) return
+    val isIcebergCompatV2Enabled =
+      "true".equalsIgnoreCase(augmented.get(DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.key))
     // `null` values are engine-generated-at-commit sentinels (see [[applySuggestedProperties]]).
     required.asScala.foreach { case (k, v) =>
-      if (v != null) putRequiredOrThrow(augmented, k, v, ident)
+      if (v != null) {
+        val isDvProperty = k == DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key
+        // For IcebergCompatV2 enabled tables, skip DV requirement
+        if (!(isIcebergCompatV2Enabled && isDvProperty)) putRequiredOrThrow(augmented, k, v, ident)
+      }
     }
   }
 
@@ -261,13 +388,24 @@ private[catalog] class UCDeltaCatalogClientImpl(
     requireCatalogManagedDeltaTable(info, qualifiedName)
     val existingProvider =
       Option(info.getMetadata.getProvider)
-        .map(_.toLowerCase(java.util.Locale.ROOT))
+        .map(lower)
         .get
     // REPLACE cannot change the table's storage format.
     Option(properties.get(TableCatalog.PROP_PROVIDER))
       .filterNot(_.equalsIgnoreCase(existingProvider))
       .foreach(_ => throw DeltaErrors.cannotChangeProvider())
     val augmented = new util.HashMap[String, String](properties)
+    // Carry forward the existing table's `delta.*` properties (feature flags, checkpoint
+    // policy, column-mapping mode, row-tracking state, etc.) so REPLACE doesn't silently
+    // strip critical configs that downstream (Table Service / commit validation) would
+    // reject as unsupported changes. See [[carryForwardExistingProperty]] for how each entry
+    // is carried (recognized vs unrecognized) and the caller-wins precedence.
+    Option(info.getMetadata.getConfiguration).foreach { existingConfig =>
+      existingConfig.asScala.foreach { case (k, v) =>
+        // `null` values are engine-generated-at-commit sentinels (see applySuggestedProperties).
+        if (v != null) carryForwardExistingProperty(augmented, k, v)
+      }
+    }
     // Re-emit the existing provider so downstream sees USING <provider> even if the caller
     // omitted it. Mark the location as system-managed; `PROP_LOCATION` is intentionally not
     // set so downstream Delta resolves the location from the existing table snapshot.
@@ -317,7 +455,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
         s"REPLACE TABLE is only supported for catalog-managed UC Delta tables; " +
           s"$qualified is ${info.getTableType}.")
     }
-    val provider = Option(info.getMetadata.getProvider).map(_.toLowerCase(java.util.Locale.ROOT))
+    val provider = Option(info.getMetadata.getProvider).map(lower)
     if (!provider.contains("delta")) {
       throw DeltaErrors.notADeltaTableException("REPLACE TABLE", qualified)
     }
@@ -342,7 +480,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
       metadata: Metadata,
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
-      lastCommitTimestampMs: Long): Unit = {
+      lastCommitTimestampMs: Long,
+      uniformMetadata: Option[StorageUniformMetadata] = None): Unit = {
     if (table.tableType != CatalogTableType.MANAGED) {
       throw new IllegalArgumentException(
         s"UCDeltaClient createTable only supports MANAGED tables; " +
@@ -366,8 +505,28 @@ private[catalog] class UCDeltaCatalogClientImpl(
         configuration = cleanedConfiguration),
       protocol,
       domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
-      lastCommitTimestampMs)
+      lastCommitTimestampMs,
+      uniformMetadata.toJava)
   }
+
+  // -------------------------------------------------------------------------
+  // DeltaCatalogClient: reportMetrics
+  // -------------------------------------------------------------------------
+
+  override def reportMetrics(
+      ct: CatalogTable,
+      committedActions: Seq[Action],
+      committedVersion: Long,
+      snapshotHistogram: Option[FileSizeHistogram]): Unit = {
+    val tableId = ct.storage.properties(UC_TABLE_ID_KEY)
+    val ident = identifierFromCatalogTable(ct)
+    val report = UCDeltaCatalogClientImpl.buildCommitReport(
+      committedActions, committedVersion, snapshotHistogram)
+    ucClient.reportMetrics(tableId, toStorageTableIdent(ident), report)
+  }
+
+  private def identifierFromCatalogTable(ct: CatalogTable): Identifier =
+    Identifier.of(ct.identifier.database.toArray, ct.identifier.table)
 
   // -------------------------------------------------------------------------
   // Internal helpers
@@ -459,18 +618,28 @@ private[catalog] class UCDeltaCatalogClientImpl(
             iceberg.getConvertedDeltaTimestamp
         )
       }.getOrElse(Map.empty[String, String])
+    val clientMaintenanceOperations = info.getClientMaintenanceOperations.asScala
+    val mergedStorageProperties = {
+      val merged = tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps
+      // Only the catalog's list grants permission. A user-defined table property must not.
+      if (clientMaintenanceOperations.isEmpty) {
+        merged - ALLOWED_OPERATIONS_PROPERTY
+      } else {
+        merged + (ALLOWED_OPERATIONS_PROPERTY -> clientMaintenanceOperations.mkString(","))
+      }
+    }
     // Match UCSingleCatalog's V1Table shape: pack tableConfig + credentials + UniForm into
     // `storage.properties`, leave `catalogTable.properties` empty. Required for
     // downstream streaming/routing compatibility.
     val storage = CatalogStorageFormat.empty.copy(
       locationUri = Some(new URI(info.getLocation)),
-      properties = tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps)
+      properties = mergedStorageProperties)
     val catalogTable = CatalogTable(
       identifier = TableIdentifier(ident.name(), ident.namespace().headOption, Some(catalogName)),
       tableType = fromUcTableType(info.getTableType),
       storage = storage,
       schema = schema,
-      provider = Option(m.getProvider).map(_.toLowerCase(java.util.Locale.ROOT)),
+      provider = Option(m.getProvider).map(lower),
       partitionColumnNames = partitionColumns,
       comment = Option(m.getDescription),
       createTime = if (m.getCreatedTime != null) m.getCreatedTime else 0L,
@@ -537,38 +706,25 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
    * Builds a [[UCDeltaCatalogClientImpl]] from catalog options. The `deltaRestApi.enabled` gate
    * is the caller's responsibility ([[AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled]]).
    * `fallbackLoadTableFunc` is invoked when UC reports `UnsupportedTableFormatException`. UC client
-   * construction is delegated to [[UCTokenBasedRestClientFactory]] with `renewCredential.enabled`
-   * defaulted to `true` and `credScopedFs.enabled` defaulted to `false` when not set.
+   * construction is delegated to [[UCTokenBasedRestClientFactory]]; credential-related defaults
+   * (`renewCredential.enabled`, `credScopedFs.enabled`) are applied by the client itself.
    */
   override def fromCatalogOptions(
       catalogName: String,
-      options: CaseInsensitiveStringMap,
+      options: util.Map[String, String],
       fallbackLoadTableFunc: Identifier => Table): UCDeltaCatalogClientImpl = {
-    // Pre-flight: keep our user-facing errors instead of the factory's less specific ones.
-    if (options.get(UriKey) == null) {
-      throw new IllegalArgumentException(s"'$UriKey' is required (catalog '$catalogName')")
+    if (options.get(UCConfigUtils.URI_KEY) == null) {
+      throw new IllegalArgumentException(
+        s"'${UCConfigUtils.URI_KEY}' is required (catalog '$catalogName')")
     }
     validateAuthConfigured(options, catalogName)
 
-    // `asCaseSensitiveMap()` preserves the user's original key case; `containsKey` is
-    // case-insensitive so defaults don't create duplicate keys.
-    val merged = new java.util.HashMap[String, String](options.asCaseSensitiveMap())
-    Seq(
-      UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY -> "true",
-      UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY -> "true",
-      UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY -> "false"
-    ).foreach { case (k, v) => if (!options.containsKey(k)) merged.put(k, v) }
     val ucClient = UCTokenBasedRestClientFactory
-      .createUCClient(new CaseInsensitiveStringMap(merged))
+      .createUCClient(options)
       .asInstanceOf[UCDeltaClient]
-
-    val sspEnabled = options.getBoolean(ServerSidePlanningEnabledKey, false)
+    val sspEnabled = UCConfigUtils.parseBoolean(options, ServerSidePlanningEnabledKey, false)
     new UCDeltaCatalogClientImpl(catalogName, ucClient, sspEnabled, fallbackLoadTableFunc)
   }
-
-  private val UriKey: String = "uri"
-  private val AuthPrefix: String = "auth."
-  private val LegacyTokenKey: String = "token"
 
   /**
    * Pre-flight: ensure at least one of `auth.*` or legacy `token` is present, so the user
@@ -576,15 +732,94 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
    * `TokenProvider.create` is handed an empty config.
    */
   private[catalog] def validateAuthConfigured(
-      options: CaseInsensitiveStringMap,
+      options: util.Map[String, String],
       catalogName: String): Unit = {
-    val hasAuthPrefix = options.entrySet().asScala.exists(_.getKey.startsWith(AuthPrefix))
-    val hasLegacyToken = options.get(LegacyTokenKey) != null
-    if (!hasAuthPrefix && !hasLegacyToken) {
+    if (!UCConfigUtils.hasAuthConfig(options)) {
+      val authPrefix = UCConfigUtils.AUTH_PREFIX
+      val legacyTokenKey = UCConfigUtils.LEGACY_TOKEN_KEY
       throw new IllegalArgumentException(
-        s"auth configuration is required when 'deltaRestApi.enabled' is true " +
-          s"(catalog '$catalogName'). Set either '${AuthPrefix}type' (with the corresponding " +
-          s"$AuthPrefix* keys) or the legacy '$LegacyTokenKey' option.")
+        s"auth configuration is required (catalog '$catalogName'). " +
+          s"Set either '${authPrefix}type' (with the corresponding " +
+          s"$authPrefix* keys) or the legacy '$legacyTokenKey' option.")
     }
   }
+
+  // -------------------------------------------------------------------------
+  // reportMetrics helpers (UC payload shaping)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Builds the UC Delta API commit-report payload. Visible for targeted unit testing;
+   * production callers should go through the instance `reportMetrics` method.
+   */
+  private[catalog] def buildCommitReport(
+      committedActions: Seq[Action],
+      committedVersion: Long,
+      snapshotHistogram: Option[FileSizeHistogram]
+      ): UCDeltaModels.CommitReport = {
+    val commitInfo =
+      committedActions.collectFirst { case ci: CommitInfo => ci }
+    val opMetrics =
+      commitInfo.flatMap(_.operationMetrics).getOrElse(Map.empty)
+    val addFiles = committedActions.collect { case a: AddFile => a }
+    val removeFiles = committedActions.collect { case r: RemoveFile => r }
+
+    val histogramPayload = snapshotHistogram.map { h =>
+      new UCDeltaModels.FileSizeHistogram(
+        h.sortedBinBoundaries.map(Long.box).asJava,
+        h.fileCounts.toSeq.map(Long.box).asJava,
+        h.totalBytes.toSeq.map(Long.box).asJava,
+        committedVersion)
+    }.toJava
+
+    new UCDeltaModels.CommitReport(
+      addFiles.size.toLong,
+      removeFiles.size.toLong,
+      addFiles.map(_.size).sum,
+      removeFiles.flatMap(_.size).sum,
+      extractRowsInserted(opMetrics, addFiles).map(Long.box).toJava,
+      extractRowsRemoved(opMetrics, removeFiles).map(Long.box).toJava,
+      extractRowsUpdated(opMetrics).map(Long.box).toJava,
+      histogramPayload)
+  }
+
+  // operationMetrics keys vary by operation: MERGE writes numTargetRowsInserted, WRITE
+  // writes numOutputRows. Falls back to per-file numLogicalRecords stats when no
+  // operationMetrics are present.
+  private def extractRowsInserted(
+      opMetrics: Map[String, String],
+      addFiles: Seq[AddFile]): Option[Long] = {
+    opMetrics.get("numTargetRowsInserted")
+      .orElse(opMetrics.get("numOutputRows"))
+      .flatMap(toLong)
+      .orElse {
+        val fromStats = addFiles.flatMap(_.numLogicalRecords)
+        if (fromStats.nonEmpty) Some(fromStats.sum) else None
+      }
+  }
+
+  // MERGE writes numTargetRowsDeleted, DELETE writes numDeletedRows.
+  private def extractRowsRemoved(
+      opMetrics: Map[String, String],
+      removeFiles: Seq[RemoveFile]): Option[Long] = {
+    opMetrics.get("numTargetRowsDeleted")
+      .orElse(opMetrics.get("numDeletedRows"))
+      .flatMap(toLong)
+      .orElse {
+        val fromStats = removeFiles.flatMap(_.numLogicalRecords)
+        if (fromStats.nonEmpty) Some(fromStats.sum) else None
+      }
+  }
+
+  // MERGE writes numTargetRowsUpdated, UPDATE writes numUpdatedRows. No file-stats
+  // fallback: per-file stats can't distinguish updated rows from inserted/removed rows.
+  private def extractRowsUpdated(opMetrics: Map[String, String]): Option[Long] = {
+    opMetrics.get("numTargetRowsUpdated")
+      .orElse(opMetrics.get("numUpdatedRows"))
+      .flatMap(toLong)
+  }
+
+  private def toLong(s: String): Option[Long] =
+    try Some(s.toLong)
+    catch { case _: NumberFormatException => None }
 }

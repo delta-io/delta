@@ -22,7 +22,7 @@ import io.delta.kernel.{SnapshotBuilder, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs, WriteUtilsWithV2Builders}
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{KernelException, MaxCatalogVersionException}
 import io.delta.kernel.internal.DeltaHistoryManager
 import io.delta.kernel.internal.commitrange.CommitRangeImpl
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
@@ -314,19 +314,21 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
   test("reading a catalogManaged table without providing maxCatalogVersion fails") {
     withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
       // With logData
-      intercept[IllegalArgumentException] {
+      val latestError = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .withLogData(parsedLogData.asJava)
           .build(defaultEngine)
       }
+      assert(latestError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
       // Without logData (and with time-travel-version)
-      intercept[IllegalArgumentException] {
+      val versionError = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .atVersion(0)
           .build(defaultEngine)
       }
+      assert(versionError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
     }
   }
 
@@ -335,12 +337,14 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
       // Create a basic file-system managed table
       createEmptyTable(tablePath = tablePath, schema = testSchema)
       // Try to read it and provide the maxCatalogVersion
-      intercept[IllegalArgumentException] {
+      val error = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .withMaxCatalogVersion(0)
           .build(engine)
       }
+      assert(error.getMessage ===
+        "Should not provide maxCatalogVersion for file-system managed tables")
     }
   }
 

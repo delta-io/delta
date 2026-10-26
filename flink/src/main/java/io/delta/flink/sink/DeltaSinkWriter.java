@@ -16,24 +16,19 @@
 
 package io.delta.flink.sink;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
-import com.github.benmanes.caffeine.cache.RemovalCause;
-import com.github.benmanes.caffeine.cache.RemovalListener;
-import io.delta.flink.Conf;
+import io.delta.flink.sink.mergestrategy.Upsert;
 import io.delta.flink.table.DeltaTable;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.types.StructType;
 import java.io.IOException;
 import java.util.*;
-import java.util.stream.Collectors;
 import org.apache.flink.api.common.eventtime.Watermark;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.connector.sink2.CommittingSinkWriter;
-import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.groups.SinkWriterMetricGroup;
 import org.apache.flink.streaming.api.connector.sink2.SupportsPreWriteTopology;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.binary.BinaryRowData;
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,9 +57,7 @@ import org.slf4j.LoggerFactory;
  * durable data files and describing their effects via {@code DeltaWriterResult}, allowing commit
  * coordination and deduplication to be handled centrally.
  */
-public class DeltaSinkWriter
-    implements CommittingSinkWriter<RowData, DeltaWriterResult>,
-        RemovalListener<Map<String, String>, DeltaWriterTask> {
+public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWriterResult> {
   private static final Logger LOG = LoggerFactory.getLogger(DeltaSinkWriter.class);
 
   private final String jobId;
@@ -73,14 +66,16 @@ public class DeltaSinkWriter
 
   private final DeltaTable deltaTable;
   private final DeltaSinkConf conf;
-
-  private final Cache<Map<String, String>, DeltaWriterTask> writerTasksByPartition;
-
-  private final List<DeltaWriterResult> completedWrites;
+  private final TypeSerializer<RowData> inputSerializer;
 
   private final SinkWriterMetricGroup metricGroup;
-  private final Counter numFilesWrittenCounter;
   private volatile long lastSendTimeMs;
+
+  /**
+   * Strategy that owns per-checkpoint upsert/delete bookkeeping and turns it into Delta actions.
+   * Selected once at construction from {@link DeltaSinkConf#getWriteMode()}.
+   */
+  private final MergeStrategy mergeStrategy;
 
   private DeltaSinkWriter(
       String jobId,
@@ -88,6 +83,7 @@ public class DeltaSinkWriter
       int attemptNumber,
       DeltaTable deltaTable,
       DeltaSinkConf conf,
+      TypeSerializer<RowData> inputSerializer,
       SinkWriterMetricGroup metricGroup) {
     this.jobId = jobId;
     this.subtaskId = subtaskId;
@@ -95,25 +91,17 @@ public class DeltaSinkWriter
 
     this.deltaTable = deltaTable;
     this.conf = conf;
-    this.writerTasksByPartition =
-        Caffeine.newBuilder()
-            .executor(Runnable::run)
-            .maximumSize(Conf.getInstance().getSinkWriterNumConcurrentFiles())
-            .removalListener(this)
-            .build();
-    this.completedWrites = new ArrayList<>();
+    this.inputSerializer = inputSerializer;
 
     this.metricGroup = metricGroup;
-    this.numFilesWrittenCounter = metricGroup.counter("numFilesWritten");
     metricGroup.setCurrentSendTimeGauge(() -> lastSendTimeMs);
-    metricGroup.gauge("activePartitions", () -> (long) this.writerTasksByPartition.asMap().size());
-    metricGroup.gauge(
-        "resultBufferSize",
-        () ->
-            this.writerTasksByPartition.asMap().values().stream()
-                .map(DeltaWriterTask::getResultBuffer)
-                .mapToLong(List::size)
-                .sum());
+
+    this.mergeStrategy = conf.createMergeStrategy();
+    this.mergeStrategy.init(this);
+    LOG.debug(
+        "DeltaSinkWriter created in {} mode (primary-key ordinals = {})",
+        conf.getWriteMode(),
+        Arrays.toString(conf.getPrimaryKeyOrdinals()));
   }
 
   /**
@@ -126,25 +114,43 @@ public class DeltaSinkWriter
    */
   @Override
   public void write(RowData element, Context context) throws IOException, InterruptedException {
-    try {
-      final Map<String, Literal> partitionValues =
-          Conversions.FlinkToDelta.partitionValues(
-              deltaTable.getSchema(), deltaTable.getPartitionColumns(), element);
-
-      Map<String, String> writerKey =
-          partitionValues.entrySet().stream()
-              .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().toString()));
-
-      writerTasksByPartition
-          .get(
-              writerKey,
-              (key) ->
-                  new DeltaWriterTask(
-                      jobId, subtaskId, attemptNumber, deltaTable, conf, partitionValues))
-          .write(element, context);
-    } catch (IOException | InterruptedException e) {
-      metricGroup.getNumRecordsSendErrorsCounter().inc();
-      throw e;
+    final Map<String, Literal> partitionValues =
+        Conversions.FlinkToDelta.partitionValues(
+            deltaTable.getSchema(), deltaTable.getPartitionColumns(), element);
+    // "Trust the provided RowKind" upsert policy:
+    //   - INSERT is taken at face value: the source claims this PK is new, so we just append.
+    //     This keeps the hot path cheap for INSERT-heavy workloads (e.g. CDC bootstrap).
+    //     Trade-off: if the source can redeliver an INSERT for a PK already in the table
+    //     across a checkpoint boundary (operator-induced source replay, CDC re-snapshot,
+    //     at-least-once source), the sink will produce duplicate rows for that PK. Flink's
+    //     own failover within a checkpoint is still safe via the transactional committer.
+    //   - UPDATE_AFTER carries a new image for an existing key. We record the PK so the
+    //     merge step removes the pre-image, then fall through to the INSERT case to append
+    //     the new image as a regular AddFile.
+    //   - UPDATE_BEFORE conveys no information the matching UPDATE_AFTER doesn't already
+    //     carry, so we drop it. Flink elides it for PK sinks anyway.
+    //   - DELETE records the PK; the merge step emits the corresponding RemoveFile/DV
+    //     without appending a row.
+    switch (element.getRowKind()) {
+      case INSERT:
+        // Writer tasks buffer rows, so take ownership before Flink can reuse the input object.
+        mergeStrategy.insert(
+            extractPrimaryKey(element), partitionValues, inputSerializer.copy(element), context);
+        break;
+      case UPDATE_AFTER:
+        mergeStrategy.upsert(
+            extractPrimaryKey(element), partitionValues, inputSerializer.copy(element), context);
+        break;
+      case UPDATE_BEFORE:
+        // Dropped — see policy comment above.
+        break;
+      case DELETE:
+        mergeStrategy.delete(extractPrimaryKey(element), partitionValues);
+        break;
+      default:
+        // Defensive: if Flink ever introduces a new RowKind, we'd rather fail loudly than
+        // silently treat the row as a no-op while still incrementing the metric counters.
+        throw new IllegalStateException("Unexpected RowKind: " + element.getRowKind());
     }
 
     // Recording Metrics
@@ -154,15 +160,66 @@ public class DeltaSinkWriter
     this.metricGroup.getNumRecordsSendCounter().inc();
   }
 
+  public DeltaTable getTable() {
+    return deltaTable;
+  }
+
+  public DeltaSinkConf getConf() {
+    return conf;
+  }
+
+  /**
+   * Factory for the writer task that backs a single partition in the current checkpoint. Upsert
+   * mode needs the dedup-aware {@link DeltaUpsertWriterTask}; append mode uses the plain {@link
+   * DeltaWriterTask}.
+   */
+  public DeltaWriterTask newWriterTask(Map<String, Literal> partitionValues) {
+    if (mergeStrategy instanceof Upsert) {
+      return new DeltaUpsertWriterTask(
+          jobId,
+          subtaskId,
+          attemptNumber,
+          deltaTable,
+          conf,
+          partitionValues,
+          (Upsert) mergeStrategy);
+    }
+    return new DeltaWriterTask(jobId, subtaskId, attemptNumber, deltaTable, conf, partitionValues);
+  }
+
+  /**
+   * Extracts the primary-key values of {@code row} as a {@code List<Object>} in PK column order.
+   *
+   * <p>Uses {@link RowData#isNullAt} + {@link RowData}'s typed accessors so primitive types are
+   * boxed without going through the more expensive generic field access path.
+   */
+  private List<Literal> extractPrimaryKey(RowData row) {
+    StructType schema = conf.getSinkSchema();
+    int[] ordinals = conf.getPrimaryKeyOrdinals();
+    List<Literal> key = new ArrayList<>(ordinals.length);
+    for (int ord : ordinals) {
+      key.add(Conversions.FlinkToDelta.data(schema, row, ord));
+    }
+    return key;
+  }
+
+  /**
+   * Delegates to {@link MergeStrategy#merge()} to flush all pending writer tasks and materialize
+   * any upsert/delete bookkeeping into Delta actions for the current checkpoint. Bumps the {@code
+   * numFilesWritten} counter by the number of resulting writes — accounting at this layer keeps the
+   * metric a writer concern instead of threading the metric group through every {@link
+   * MergeStrategy}.
+   */
   @Override
   public Collection<DeltaWriterResult> prepareCommit() {
     LOG.debug("Preparing commits");
-
-    writerTasksByPartition.invalidateAll();
-
-    List<DeltaWriterResult> results = List.copyOf(completedWrites);
-    completedWrites.clear();
-    return results;
+    try {
+      Collection<DeltaWriterResult> results = mergeStrategy.merge();
+      metricGroup.counter("numFilesWritten").inc(results.size());
+      return results;
+    } catch (IOException e) {
+      throw new RuntimeException("merge failed for checkpoint", e);
+    }
   }
 
   @Override
@@ -180,24 +237,6 @@ public class DeltaSinkWriter
     this.deltaTable.close();
   }
 
-  @Override
-  public void onRemoval(
-      @Nullable Map<String, String> key, @Nullable DeltaWriterTask value, RemovalCause cause) {
-    // Close the evicted task and collect its result
-    try {
-      if (value != null) {
-        long startMs = System.currentTimeMillis();
-        List<DeltaWriterResult> results = value.complete();
-        lastSendTimeMs = System.currentTimeMillis() - startMs;
-
-        numFilesWrittenCounter.inc(results.size());
-        completedWrites.addAll(results);
-      }
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
-  }
-
   public static class Builder {
 
     private String jobId;
@@ -206,6 +245,7 @@ public class DeltaSinkWriter
 
     private DeltaTable deltaTable;
     private DeltaSinkConf conf;
+    private TypeSerializer<RowData> inputSerializer;
 
     private SinkWriterMetricGroup metricGroup;
 
@@ -236,6 +276,11 @@ public class DeltaSinkWriter
       return this;
     }
 
+    public Builder withInputSerializer(TypeSerializer<RowData> inputSerializer) {
+      this.inputSerializer = inputSerializer;
+      return this;
+    }
+
     public Builder withMetricGroup(SinkWriterMetricGroup metricGroup) {
       this.metricGroup = metricGroup;
       return this;
@@ -247,8 +292,10 @@ public class DeltaSinkWriter
       Objects.requireNonNull(deltaTable, "deltaTable must not be null");
       Objects.requireNonNull(metricGroup, "metricGroup must not be null");
       Objects.requireNonNull(conf, "conf must not be null");
+      Objects.requireNonNull(inputSerializer, "inputSerializer must not be null");
 
-      return new DeltaSinkWriter(jobId, subtaskId, attemptNumber, deltaTable, conf, metricGroup);
+      return new DeltaSinkWriter(
+          jobId, subtaskId, attemptNumber, deltaTable, conf, inputSerializer, metricGroup);
     }
   }
 }
