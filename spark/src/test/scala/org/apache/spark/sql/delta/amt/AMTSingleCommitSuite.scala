@@ -163,8 +163,9 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase {
     setup = insertTwoRows,
     inlineCheckpointTriggerActionsOrSQL = insertThirdRow
   ) { context =>
+    val deltaLog = deltaLogForName(context.tableName)
     val manifestVersion = context.manifestCommitVersion
-    val commit = commitAt(deltaLogForName(context.tableName), manifestVersion)
+    val commit = commitAt(deltaLog, manifestVersion)
     val e = intercept[IllegalStateException] {
       commit.getLogCommitActionsIteratorUnsafe().processAndClose(_.toList)
     }

@@ -107,7 +107,7 @@ trait DeleteSQLWithDeletionVectorsMixin extends DeleteSQLMixin
   with DeltaExcludedTestMixin
   with DeletionVectorsTestUtils
   with DeltaDMLTestUtilsPathBased {
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, delete = true)
   }

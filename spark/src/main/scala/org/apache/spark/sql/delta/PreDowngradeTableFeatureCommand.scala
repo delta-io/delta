@@ -275,7 +275,7 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
         // The commit is only DV tombstones: RemoveFiles whose path is a deletion vector file
         // rather than a data file, written so that VACUUM can delete those DVs. They drop no
         // rows so dataChange is false.
-        dataChange = Some(false))
+        dataChange = false)
     } else {
       table.startTransaction(Some(snapshotToUse))
         .commit(actionsToCommit.toList, DeltaOperations.AddDeletionVectorsTombstones)
@@ -622,6 +622,19 @@ case class GeospatialPreDowngradeCommand(table: DeltaTableV2)
     // can be dropped.
     throw DeltaErrors.cannotDropGeospatialFeature(geospatialCols)
   }
+}
+
+case class FileTypePreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * There is no `file` type in the schema yet, so a table can never contain `file` columns and
+   * there are never any traces of the feature to remove. Once `file` column support lands, this
+   * must remove or reject remaining `file` usages before the feature can be dropped (mirroring
+   * [[GeospatialPreDowngradeCommand]]).
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus =
+    PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
 }
 
 case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)

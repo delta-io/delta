@@ -46,6 +46,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.{IntegerType, LongType, NullType, StringType, StructField, StructType}
@@ -246,6 +247,38 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer("keep1", "keep2", "keep5", "keep6", "keep7", "keep9")
       )
+    }
+  }
+
+  test("session time zone reads timestamp partitions") {
+    for (utcTimestampPartitionValues <- Seq(true, false)) {
+      withTempDir { dir =>
+        val sourcePath = new File(dir, "source").getCanonicalPath
+        withSQLConf(
+            DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES.key ->
+              utcTimestampPartitionValues.toString) {
+          withSQLConf(SQLConf.SESSION_LOCAL_TIMEZONE.key -> "UTC") {
+            sql("SELECT id, timestamp_micros(id * 1000000) AS part FROM range(1, 3)")
+              .write.format("delta").partitionBy("part").save(sourcePath)
+          }
+          for ((timeZone, shiftSeconds) <- Seq(
+              "PST" -> 28800L, "+8:00" -> -28800L, "-08:3" -> 28980L, "UTC" -> 0L)) {
+            val expectedShiftSeconds = if (utcTimestampPartitionValues) 0L else shiftSeconds
+            val expectedRows = Seq(1L, 2L).map { id =>
+              Row(id, new Timestamp((id + expectedShiftSeconds) * 1000L))
+            }
+            withSQLConf(SQLConf.SESSION_LOCAL_TIMEZONE.key -> timeZone) {
+              withClue(s"UTC timestamp partitions=$utcTimestampPartitionValues, " +
+                  s"timeZone=$timeZone: ") {
+                val stream = loadStreamWithOptions(sourcePath, Map.empty)
+                testStream(stream)(
+                  ProcessAllAvailable(),
+                  CheckAnswer(expectedRows: _*))
+              }
+            }
+          }
+        }
+      }
     }
   }
 
@@ -455,10 +488,17 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             .start()
             .processAllAvailable()
         }
-        assert(e.getCause.isInstanceOf[IllegalArgumentException])
-        for (msg <- Seq("Invalid", DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "positive")) {
-          assert(e.getCause.getMessage.contains(msg))
+        val cause = e.getCause.asInstanceOf[DeltaIllegalArgumentException]
+        val condition = invalidMaxFilesPerTrigger match {
+          case _: Int => "DELTA_ILLEGAL_OPTION.MUST_BE_POSITIVE_NUMBER"
+          case _ => "DELTA_ILLEGAL_OPTION.MUST_BE_INTEGER"
         }
+        checkError(
+          cause,
+          condition,
+          parameters = Map(
+            "input" -> invalidMaxFilesPerTrigger.toString,
+            "name" -> DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION))
       }
     }
   }

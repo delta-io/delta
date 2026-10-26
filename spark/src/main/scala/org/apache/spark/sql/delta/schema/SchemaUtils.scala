@@ -48,6 +48,22 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
+/**
+ * One schema-comparison walk. `nonOrder` is names, types, nullability, and metadata.
+ * `fieldOrder` is permutations of names present on both sides. `fieldOrderMismatches`
+ * is the same permutations without field names, for usage telemetry.
+ */
+private[delta] case class FieldOrderMismatch(
+    commonFieldCount: Int,
+    firstDivergingIndex: Int)
+
+private[delta] case class SchemaDifferenceReport(
+    nonOrder: Seq[String],
+    fieldOrder: Seq[String],
+    fieldOrderMismatches: Seq[FieldOrderMismatch]) {
+  def all: Seq[String] = nonOrder ++ fieldOrder
+}
+
 object SchemaUtils extends DeltaLogging {
   // We use case insensitive resolution while writing into Delta
   val DELTA_COL_RESOLVER: (String, String) => Boolean =
@@ -611,8 +627,25 @@ def normalizeColumnNamesInDataType(
    * return a message describing the first difference found, if any:
    *   - different field name or datatype
    *   - different metadata
+   *   - different order of fields, when `checkFieldOrder` is true
    */
-  def reportDifferences(existingSchema: StructType, specifiedSchema: StructType): Seq[String] = {
+  def reportDifferences(
+      existingSchema: StructType,
+      specifiedSchema: StructType,
+      checkFieldOrder: Boolean = false): Seq[String] = {
+    val report = reportDifferencesByCategory(
+      existingSchema, specifiedSchema, collectFieldOrder = checkFieldOrder)
+    if (checkFieldOrder) report.all else report.nonOrder
+  }
+
+  /**
+   * Compare two schemas in a single walk, keeping field-order diffs separate.
+   * `collectFieldOrder` is the extra work on CREATE; other callers leave it off.
+   */
+  private[delta] def reportDifferencesByCategory(
+      existingSchema: StructType,
+      specifiedSchema: StructType,
+      collectFieldOrder: Boolean = true): SchemaDifferenceReport = {
 
     def canOrNot(can: Boolean) = if (can) "can" else "can not"
     def isOrNon(b: Boolean) = if (b) "" else "non-"
@@ -663,12 +696,22 @@ def normalizeColumnNamesInDataType(
       }
       metadataDiffMessage
     }
+    def fieldOrderMessage(prefix: String, specified: Seq[String], existing: Seq[String])
+      : String = {
+      val fields = if (prefix.isEmpty) "top-level fields" else s"fields of ${prefix.dropRight(1)}"
+      s"""Specified order of $fields is different from existing schema:
+         |Specified: ${specified.mkString(", ")}
+         |Existing:  ${existing.mkString(", ")}""".stripMargin
+    }
     def typeDifferenceMessage(field: String, specified: DataType, existing: DataType)
       : String = {
       s"""Specified type for $field is different from existing schema:
          |Specified: ${specified.typeName}
          |Existing:  ${existing.typeName}""".stripMargin
     }
+
+    val fieldOrderDiffs = mutable.ArrayBuffer.empty[String]
+    val fieldOrderMismatches = mutable.ArrayBuffer.empty[FieldOrderMismatch]
 
     // prefix represents the nested field(s) containing this schema
     def structDifference(existing: StructType, specified: StructType, prefix: String)
@@ -694,6 +737,21 @@ def normalizeColumnNamesInDataType(
       val fieldsDiffs = (existingFieldNames intersect specifiedFieldNames).flatMap(
         (name: String) => fieldDifference(existingFields(name), specifiedFields(name), prefix))
 
+      // Order of names present on both sides only; extra/missing names are reported above.
+      if (collectFieldOrder) {
+        val existingOrder = existing.fieldNames.filter(specifiedFieldNames.contains).toSeq
+        val specifiedOrder = specified.fieldNames.filter(existingFieldNames.contains).toSeq
+        if (existingOrder != specifiedOrder) {
+          val firstDivergingIndex = existingOrder.indices.find { i =>
+            existingOrder(i) != specifiedOrder(i)
+          }.get
+          fieldOrderDiffs += fieldOrderMessage(
+            prefix, specified = specifiedOrder, existing = existingOrder)
+          fieldOrderMismatches += FieldOrderMismatch(
+            commonFieldCount = existingOrder.size,
+            firstDivergingIndex = firstDivergingIndex)
+        }
+      }
       missingFieldsDiffs ++ extraFieldsDiffs ++ fieldsDiffs
     }
 
@@ -750,11 +808,13 @@ def normalizeColumnNamesInDataType(
       keyDiffs ++ valueDiffs ++ nullabilityDiffs
     }
 
-    structDifference(
+    val nonOrder = structDifference(
       existingSchema,
       CharVarcharUtils.replaceCharVarcharWithStringInSchema(specifiedSchema),
       ""
     )
+    SchemaDifferenceReport(
+      nonOrder, fieldOrderDiffs.toSeq, fieldOrderMismatches.toSeq)
   }
 
   /**

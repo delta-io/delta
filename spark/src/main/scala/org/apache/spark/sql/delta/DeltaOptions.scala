@@ -39,7 +39,7 @@ trait DeltaOptionParser {
 
   def toBoolean(input: String, name: String): Boolean = {
     Try(input.toBoolean).toOption.getOrElse {
-      throw DeltaErrors.illegalDeltaOptionException(name, input, "must be 'true' or 'false'")
+      throw DeltaErrors.illegalDeltaOptionMustBeBoolean(name, input)
     }
   }
 }
@@ -68,10 +68,9 @@ trait DeltaWriteOptions
         cols.split(/* separator = */ ",", /* limit = */ -1).map(_.trim).toSeq.distinct
       // scalastyle:on
       if (parsed.exists(_.isEmpty)) {
-        throw DeltaErrors.illegalDeltaOptionException(
+        throw DeltaErrors.illegalDeltaOptionNoEmptyColumnNames(
           name = REPLACE_USING_OPTION,
-          input = cols,
-          explain = "must not contain empty column names")
+          input = cols)
       }
       parsed
     }
@@ -141,10 +140,13 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   }
 
   val txnVersion = options.get(TXN_VERSION).map { str =>
-    Try(str.toLong).toOption.filter(_ >= 0).getOrElse {
-      throw DeltaErrors.illegalDeltaOptionException(
-        TXN_VERSION, str, "must be a non-negative integer")
+    val version = Try(str.toLong).toOption.getOrElse {
+      throw DeltaErrors.illegalDeltaOptionMustBeInteger(TXN_VERSION, str)
     }
+    if (version < 0) {
+      throw DeltaErrors.illegalDeltaOptionMustBeNonNegativeNumber(TXN_VERSION, str)
+    }
+    version
   }
 
   val txnAppId = options.get(TXN_APP_ID)
@@ -180,11 +182,9 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
     } else {
       if (mode == null ||
         !DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.exists(mode.equalsIgnoreCase(_))) {
-        val acceptableStr =
-          DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.map("'" + _ + "'").mkString(" or ")
-        throw DeltaErrors.illegalDeltaOptionException(
-          PARTITION_OVERWRITE_MODE_OPTION, mode, s"must be ${acceptableStr}"
-        )
+        throw DeltaErrors.illegalDeltaOptionMustBeOneOf(
+          PARTITION_OVERWRITE_MODE_OPTION, mode,
+          DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.map("'" + _ + "'").toSeq)
       }
       modeIsDynamic
     }
@@ -195,16 +195,19 @@ trait DeltaReadOptions extends DeltaOptionParser {
   import DeltaOptions._
 
   val maxFilesPerTrigger = options.get(MAX_FILES_PER_TRIGGER_OPTION).map { str =>
-    Try(str.toInt).toOption.filter(_ > 0).getOrElse {
-      throw DeltaErrors.illegalDeltaOptionException(
-        MAX_FILES_PER_TRIGGER_OPTION, str, "must be a positive integer")
+    val maxFiles = Try(str.toInt).toOption.getOrElse {
+      throw DeltaErrors.illegalDeltaOptionMustBeInteger(MAX_FILES_PER_TRIGGER_OPTION, str)
     }
+    if (maxFiles <= 0) {
+      throw DeltaErrors.illegalDeltaOptionMustBePositiveNumber(MAX_FILES_PER_TRIGGER_OPTION, str)
+    }
+    maxFiles
   }
 
   val maxBytesPerTrigger = options.get(MAX_BYTES_PER_TRIGGER_OPTION).map { str =>
     Try(JavaUtils.byteStringAs(str, ByteUnit.BYTE)).toOption.filter(_ > 0).getOrElse {
-      throw DeltaErrors.illegalDeltaOptionException(
-        MAX_BYTES_PER_TRIGGER_OPTION, str, "must be a size configuration such as '10g'")
+      throw DeltaErrors.illegalDeltaOptionMustBeSizeConfiguration(
+        MAX_BYTES_PER_TRIGGER_OPTION, str)
     }
   }
 
@@ -233,10 +236,13 @@ trait DeltaReadOptions extends DeltaOptionParser {
   val startingVersion: Option[DeltaStartingVersion] = options.get(STARTING_VERSION_OPTION).map {
     case "latest" => StartingVersionLatest
     case str =>
-      Try(str.toLong).toOption.filter(_ >= 0).map(StartingVersion).getOrElse{
-        throw DeltaErrors.illegalDeltaOptionException(
-          STARTING_VERSION_OPTION, str, "must be greater than or equal to zero")
+      val version = Try(str.toLong).toOption.getOrElse {
+        throw DeltaErrors.illegalDeltaOptionMustBeInteger(STARTING_VERSION_OPTION, str)
       }
+      if (version < 0) {
+        throw DeltaErrors.illegalDeltaOptionMustBeNonNegativeNumber(STARTING_VERSION_OPTION, str)
+      }
+      StartingVersion(version)
   }
 
   val startingTimestamp = options.get(STARTING_TIMESTAMP_OPTION)

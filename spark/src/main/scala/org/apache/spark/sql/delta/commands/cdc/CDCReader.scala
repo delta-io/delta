@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
-import org.apache.spark.sql.delta.sources.DeltaDataSource
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.util.ScalaExtensions.OptionExt
 
@@ -254,9 +254,10 @@ trait CDCReaderImpl extends CDCReaderBase {
     val addFiles = ListBuffer[CDCDataSpec[AddFile]]()
     val removeFiles = ListBuffer[CDCDataSpec[RemoveFile]]()
 
-    val startVersionMetadata = startVersionSnapshot.map(_.metadata).getOrElse {
-      deltaLog.getSnapshotAt(start, catalogTableOpt = catalogTableOpt).metadata
-    }
+    lazy val loadedStartVersionSnapshot =
+      deltaLog.getSnapshotAt(start, catalogTableOpt = catalogTableOpt)
+    val startVersionMetadata = startVersionSnapshot.map(_.metadata)
+      .getOrElse(loadedStartVersionSnapshot.metadata)
     if (!useCoarseGrainedCDC && !isCDCEnabledOnTable(startVersionMetadata, spark)) {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
     }
@@ -266,6 +267,22 @@ trait CDCReaderImpl extends CDCReaderBase {
       deltaLog,
       isStreaming
     )
+    val blockReadsAcrossPartitionSchemaChanges = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES)
+
+    // Track whether a partition schema change happens on a non-empty table. We could blindly
+    // reject all partition changes, but setting up an empty table and changing partitioning in a
+    // later commit is a valid pattern that we can support.
+    val partitionSchemaTracker = if (
+        checkSchemaToBlockRead && blockReadsAcrossPartitionSchemaChanges) {
+      val startSnapshot = startVersionSnapshot.collect { case snapshot: Snapshot => snapshot }
+        .getOrElse(loadedStartVersionSnapshot)
+      Some(new CdfPartitionSchemaTracker(
+        startVersionMetadata.partitionColumns,
+        startSnapshotHasData = startSnapshot.numOfFiles > 0))
+    } else {
+      None
+    }
 
     var totalBytes = 0L
     var numAddFiles, numRemoveFiles, numAddCDCFiles = 0L
@@ -286,14 +303,12 @@ trait CDCReaderImpl extends CDCReaderBase {
 
         // Check all intermediary metadata schema changes, this guarantees that there will be no
         // read-incompatible schema changes across the querying range.
-        // Note that we don't have to check the schema change if it's at the start version, because:
-        // 1. If it's an initialization, e.g. CREATE AS SELECT, we don't have to consider this
-        //    as a schema change and report weird error messages.
-        // 2. If it's indeed a schema change, as we won't be reading any data prior to it that
-        //    falls back to the previous (possibly incorrect) schema, we will be safe. Also if there
-        //    are any data file residing in the same commit, it will follow the new schema as well.
-        if (v > start) {
-          actions.collect { case a: Metadata => a }.foreach { metadata =>
+        // The starting commit's new schema is checked against startVersionMetadata below.
+        // Removed files in that commit can use the previous schema, so we check it separately
+        // when selecting those files for inferred CDC.
+        actions.collect { case a: Metadata => a }.foreach { metadata =>
+          partitionSchemaTracker.ifDefined(_.processMetadata(metadata))
+          if (v > start) {
             // Verify with start snapshot to check for any read-incompatible changes
             // This also detects the corner case in that there's only one schema change between
             // start and end, which looks exactly like the end schema.
@@ -302,6 +317,7 @@ trait CDCReaderImpl extends CDCReaderBase {
               metadata, v, isSchemaChange = true)
           }
         }
+        partitionSchemaTracker.ifDefined(_.processActions(actions))
 
         // Set up buffers for all action types to avoid multiple passes.
         val cdcActions = ListBuffer[AddCDCFile]()
@@ -347,6 +363,11 @@ trait CDCReaderImpl extends CDCReaderBase {
             // infer CDC from them.
             val addActions = actions.collect { case a: AddFile if changesDataFunc(a) => a }
             val removeActions = actions.collect { case r: RemoveFile if changesDataFunc(r) => r }
+            if (v == start && removeActions.nonEmpty && actions.exists(_.isInstanceOf[Metadata])) {
+              checkStartVersionRemovedFilesSchema(
+                readSchemaSnapshot, start, end, checkSchemaToBlockRead, catalogTableOpt,
+                operation = commitInfo.map(_.operation))
+            }
             numAddFiles += addActions.size
             numRemoveFiles += removeActions.size
             totalBytes += addActions.map(_.size).sum
@@ -377,9 +398,16 @@ trait CDCReaderImpl extends CDCReaderBase {
     //    the range, BUT time-travel is used so the read schema could also be arbitrary.
     // It is sufficient to just verify with the start version schema because we have already
     // verified that all data being queried is read-compatible with start schema.
+    val blockOnIncompatiblePartitionSchema = partitionSchemaTracker match {
+      case Some(tracker) => tracker.blockStartVersionPartitionSchemaCheck
+      case None => true
+    }
     checkBatchCdfReadSchemaIncompatibility(
       readSchemaSnapshot, start, end, checkSchemaToBlockRead,
-      startVersionMetadata, start, isSchemaChange = false)
+      startVersionMetadata,
+      start,
+      isSchemaChange = false,
+      blockOnIncompatiblePartitionSchema = blockOnIncompatiblePartitionSchema)
 
     val dfs = ListBuffer[DataFrame]()
     if (changeFiles.nonEmpty) {
@@ -643,8 +671,6 @@ trait CDCReaderImpl extends CDCReaderBase {
   /**
    * Build a dataframe from the specified file index. We can't use a DataFrame scan directly on the
    * file names because that scan wouldn't include partition columns.
-   *
-   * It can optionally take a customReadSchema for the dataframe generated.
    */
   protected def scanIndex(
       spark: SparkSession,
@@ -670,7 +696,7 @@ trait CDCReaderImpl extends CDCReaderBase {
     // but CDCReader use CaseInsensitiveStringMap vs. CaseInsensitiveMap used by DataFrameReader.
     def toBoolean(input: String, name: String): Boolean = {
       Try(input.toBoolean).toOption.getOrElse {
-        throw DeltaErrors.illegalDeltaOptionException(name, input, "must be 'true' or 'false'")
+        throw DeltaErrors.illegalDeltaOptionMustBeBoolean(name, input)
       }
     }
 

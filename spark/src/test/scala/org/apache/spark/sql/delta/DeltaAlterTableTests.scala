@@ -146,8 +146,12 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
             |  'key' = 'value'
             |)""".stripMargin)
       }
-      assert(e.getMessage.contains("expects a table. Please use ALTER VIEW instead.") ||
-        e.getMessage.contains("EXPECT_TABLE_NOT_VIEW.USE_ALTER_VIEW"))
+      checkError(
+        e,
+        "EXPECT_TABLE_NOT_VIEW.USE_ALTER_VIEW",
+        parameters = Map(
+          "operation" -> "ALTER TABLE ... SET TBLPROPERTIES", "viewName" -> "`v`"),
+        queryContext = Array(ExpectedContext(fragment = "v", start = 13, stop = 13)))
     }
   }
 

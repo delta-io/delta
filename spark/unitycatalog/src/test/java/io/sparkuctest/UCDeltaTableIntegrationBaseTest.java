@@ -70,8 +70,9 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   }
 
   protected static void assumeUcSparkMasterCompatible(String suiteName) {
+    // The pinned Spark 4.3 source build has a matching Unity Catalog connector.
     Assumptions.assumeFalse(
-        isSparkMasterSnapshot(),
+        isSparkMasterSnapshot() && !sparkVersion().startsWith("4.3."),
         suiteName
             + " are temporarily skipped on Spark master because the current Unity Catalog "
             + "Spark connector does not yet support the current Spark master "

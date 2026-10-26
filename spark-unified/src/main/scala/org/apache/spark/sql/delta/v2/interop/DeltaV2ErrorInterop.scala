@@ -20,7 +20,7 @@ import java.sql.Timestamp
 
 import org.apache.spark.sql.delta.{DeltaErrors, VersionNotFoundException => V1VersionNotFoundException}
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
-import io.delta.spark.internal.v2.exception.{NoRecreatableHistoryException, TableNotFoundException, TimestampOutOfRangeException, VersionNotFoundException}
+import org.apache.spark.sql.delta.v2.exception.{NoRecreatableHistoryException, TableNotFoundException, TimestampOutOfRangeException, VersionNotFoundException}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.internal.SQLConf

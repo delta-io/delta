@@ -258,7 +258,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     }
   }
 
-  private def transformTimestamps(plan: LogicalPlan, instant: Instant): LogicalPlan = {
+  private[delta] def transformTimestamps(plan: LogicalPlan, instant: Instant): LogicalPlan = {
     import org.apache.spark.sql.delta.implicits._
 
     val currentTimestampMicros = instantToMicros(instant)
