@@ -37,7 +37,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
 import java.io.*;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
@@ -175,27 +174,10 @@ public class DefaultJsonHandler implements JsonHandler {
 
   private static ObjectMapper createObjectMapper() {
     ObjectMapper mapper = new ObjectMapper();
-    Method getConstraints;
-    try {
-      // Reflection preserves compatibility with Jackson versions before 2.15.
-      getConstraints = JsonFactory.class.getMethod("streamReadConstraints");
-    } catch (NoSuchMethodException e) {
-      return mapper;
-    }
-
-    try {
-      Class<?> constraintsClass = getConstraints.getReturnType();
-      Object constraints = getConstraints.invoke(mapper.getFactory());
-      Object builder = constraintsClass.getMethod("rebuild").invoke(constraints);
-      Class<?> builderClass = builder.getClass();
-      // Delta metadata and statistics can contain strings larger than Jackson's default limit.
-      builderClass.getMethod("maxStringLength", int.class).invoke(builder, Integer.MAX_VALUE);
-      JsonFactory.class
-          .getMethod("setStreamReadConstraints", constraintsClass)
-          .invoke(mapper.getFactory(), builderClass.getMethod("build").invoke(builder));
-    } catch (ReflectiveOperationException e) {
-      throw new IllegalStateException("Could not configure JSON string length limit", e);
-    }
+    JsonFactory factory = mapper.getFactory();
+    // Delta metadata and statistics can contain strings larger than Jackson's default limit.
+    factory.setStreamReadConstraints(
+        factory.streamReadConstraints().rebuild().maxStringLength(Integer.MAX_VALUE).build());
     return mapper;
   }
 
