@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.files
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaTableUtils, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLogUtils, DeltaTableUtils, Snapshot}
 import org.apache.spark.sql.delta.actions.SingleAction
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.IndexedFile
@@ -77,7 +77,7 @@ class DeltaSourceSnapshot(
         .withColumn("isLast", lit(false))
         .withColumn("shouldSkip", lit(false))
 
-    DeltaLog.filterFileList(
+    DeltaLogUtils.filterFileList(
       snapshot.metadata.partitionSchema,
       initialFiles,
       partitionFilters,

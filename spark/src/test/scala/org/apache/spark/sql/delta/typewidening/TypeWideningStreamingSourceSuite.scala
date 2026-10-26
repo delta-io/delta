@@ -114,12 +114,6 @@ trait TypeWideningStreamingSourceTestMixin
     }
   }
 
-  /**
-   * Executes a DDL/DML SQL statement. Overridable so that V2 suites can route it through the V1
-   * connector, since DeltaV2Table (V2) is read-only and does not support writes/DDL.
-   */
-  protected def executeDml(sqlText: String): Unit = sql(sqlText)
-
   /** Test action checking that the stream fails due to a metadata change - typ. a schema change. */
   object ExpectMetadataEvolutionException {
     def apply(): StreamAction = if (schemaTrackingEnabled) {

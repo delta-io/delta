@@ -29,6 +29,9 @@ import org.apache.spark.sql.test.SharedSparkSession
  */
 trait DeltaSQLCommandTest extends SharedSparkSession {
 
+  /** Executes DDL and DML; connector-specific suites can override the execution mode. */
+  protected def executeDml(sqlText: String): Unit = sql(sqlText)
+
   override protected def sparkConf: SparkConf = {
     super.sparkConf
       .set(StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,

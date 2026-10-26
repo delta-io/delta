@@ -45,6 +45,52 @@ class TypeWideningInsertSchemaEvolutionBasicSuite
     super.sparkConf
       .set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
   }
+
+  for ((fromType, toType, untouchedValue, overwrittenValue) <- Seq(
+      ("INT", "BIGINT", "1", "2"),
+      ("FLOAT", "DOUBLE", "0.1", "0.2"),
+      ("DATE", "TIMESTAMP_NTZ", "DATE '2024-01-01'", "DATE '2024-01-02'"))) {
+    test(s"dynamic partition overwrite matches widened $fromType -> $toType partitions") {
+      withConf(
+        DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_TYPE_WIDENING_FIX_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_PARSE_PARTITION_VALUES.key -> "true") {
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath
+          sql(s"""
+            |SELECT * FROM VALUES
+            |  (10, CAST($untouchedValue AS $fromType)),
+            |  (20, CAST($overwrittenValue AS $fromType)),
+            |  (40, CAST(NULL AS $fromType))
+            |AS initial(id, part)
+            |""".stripMargin)
+            .write.format("delta").mode("append").partitionBy("part").save(path)
+
+          sql(s"""
+            |SELECT * FROM VALUES
+            |  (30, CAST($overwrittenValue AS $toType)),
+            |  (50, CAST(NULL AS $toType))
+            |AS incoming(id, part)
+            |""".stripMargin)
+            .write.format("delta")
+            .mode("overwrite")
+            .option("mergeSchema", "true")
+            .option("partitionOverwriteMode", "dynamic")
+            .save(path)
+
+          val result = spark.read.format("delta").load(path)
+          val expected = sql(s"""
+            |SELECT * FROM VALUES
+            |  (10, CAST($untouchedValue AS $toType)),
+            |  (30, CAST($overwrittenValue AS $toType)),
+            |  (50, CAST(NULL AS $toType))
+            |AS expected(id, part)
+            |""".stripMargin)
+          assert(result.schema("part").dataType == expected.schema("part").dataType)
+          checkAnswer(result, expected)
+        }
+      }
+    }
+  }
 }
 
 /** Runs the type widening INSERT schema evolution tests against DSv2. */

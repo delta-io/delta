@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.regex.Pattern
+
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.functions.{array, col, map, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -24,6 +26,24 @@ import org.apache.spark.sql.types.{ArrayType, MapType, StructType}
 trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
 
   import testImplicits._
+
+  protected def assertUnsupportedAlterTableReplaceColOp(
+      command: String,
+      subClass: String,
+      parameters: Map[String, String]): Unit = {
+    val e = intercept[DeltaAnalysisException] {
+      sql(command)
+    }
+    // The oldSchema and newSchema parameters are large and incidental to what the tests verify,
+    // so we match them with a wildcard and focus on the other parameters. Because matchPVals
+    // treats every expected value as a regex, the checked parameters are quoted to match literally.
+    checkError(
+      e,
+      s"DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP.$subClass",
+      parameters = parameters.map { case (k, v) => k -> Pattern.quote(v) } ++
+        Map("oldSchema" -> "(?s).*", "newSchema" -> "(?s).*"),
+      matchPVals = true)
+  }
 
   ddlTest("REPLACE COLUMNS - add a comment") {
     val df = Seq((1, "a"), (2, "b")).toDF("v1", "v2")
@@ -212,17 +232,18 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
   ddlTest("REPLACE COLUMNS - drop column") {
     // Column Mapping allows columns to be dropped
     def checkReplace(
-        text: String,
+        command: String,
         tableName: String,
         columnDropped: Seq[String],
-        messages: String*): Unit = {
+        columnNames: String): Unit = {
       if (columnMappingEnabled) {
-        spark.sql(text)
+        spark.sql(command)
         val (deltaLog, snapshot) = getDeltaLogWithSnapshot(tableName)
         val field = snapshot.schema.findNestedField(columnDropped, includeCollections = true)
         assert(field.isEmpty, "Column was not deleted")
       } else {
-        assertNotSupported(text, messages: _*)
+        assertUnsupportedAlterTableReplaceColOp(
+          command, "DROP_COLUMNS", Map("columnNames" -> columnNames))
       }
     }
 
@@ -235,17 +256,17 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
       // trying to drop v1 of each struct, but it should fail because dropping column is
       // not supported unless column mapping is enabled
       checkReplace(
-        s"""
+        command = s"""
            |ALTER TABLE $tableName REPLACE COLUMNS (
            |  v2 string,
            |  s STRUCT<v1:int, v2:string>,
            |  a ARRAY<STRUCT<v1:int, v2:string>>,
            |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
            |)""".stripMargin,
-        tableName, Seq("v1"), "dropping column(s)", "v1")
+        tableName = tableName, columnDropped = Seq("v1"), columnNames = "v1")
       // s.v1
       checkReplace(
-        s"""
+        command = s"""
            |ALTER TABLE $tableName REPLACE COLUMNS (
            |  v1 int,
            |  v2 string,
@@ -253,10 +274,10 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
            |  a ARRAY<STRUCT<v1:int, v2:string>>,
            |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
            |)""".stripMargin,
-        tableName, Seq("s", "v1"), "dropping column(s)", "v1", "from s")
+        tableName = tableName, columnDropped = Seq("s", "v1"), columnNames = "s.v1")
       // a.v1
       checkReplace(
-        s"""
+        command = s"""
            |ALTER TABLE $tableName REPLACE COLUMNS (
            |  v1 int,
            |  v2 string,
@@ -264,10 +285,11 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
            |  a ARRAY<STRUCT<v2:string>>,
            |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
            |)""".stripMargin,
-        tableName, Seq("a", "element", "v1"), "dropping column(s)", "v1", "from a")
+        tableName = tableName, columnDropped = Seq("a", "element", "v1"),
+        columnNames = "a.element.v1")
       // m.key.v1
       checkReplace(
-        s"""
+        command = s"""
            |ALTER TABLE $tableName REPLACE COLUMNS (
            |  v1 int,
            |  v2 string,
@@ -275,10 +297,10 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
            |  a ARRAY<STRUCT<v1:int, v2:string>>,
            |  m MAP<STRUCT<v2:string>, STRUCT<v1:int, v2:string>>
            |)""".stripMargin,
-        tableName, Seq("m", "key", "v1"), "dropping column(s)", "v1", "from m.key")
+        tableName = tableName, columnDropped = Seq("m", "key", "v1"), columnNames = "m.key.v1")
       // m.value.v1
       checkReplace(
-        s"""
+        command = s"""
            |ALTER TABLE $tableName REPLACE COLUMNS (
            |  v1 int,
            |  v2 string,
@@ -286,7 +308,7 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
            |  a ARRAY<STRUCT<v1:int, v2:string>>,
            |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v2:string>>
            |)""".stripMargin,
-        tableName, Seq("m", "value", "v1"), "dropping column(s)", "v1", "from m.value")
+        tableName = tableName, columnDropped = Seq("m", "value", "v1"), columnNames = "m.value.v1")
     }
   }
 
@@ -299,7 +321,7 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
 
       // trying to change the data type of v1 of each struct to long, but it should fail because
       // changing data type is not supported.
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
                             |ALTER TABLE $tableName REPLACE COLUMNS (
                             |  v1 long,
                             |  v2 string,
@@ -307,9 +329,10 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
                             |  a ARRAY<STRUCT<v1:int, v2:string>>,
                             |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
                             |)""".stripMargin,
-        "changing data type", "v1", "from IntegerType to LongType")
+        "CHANGE_DATA_TYPE",
+        Map("columnName" -> "v1", "fromType" -> "INT", "toType" -> "BIGINT"))
       // s.v1
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
                             |ALTER TABLE $tableName REPLACE COLUMNS (
                             |  v1 int,
                             |  v2 string,
@@ -317,9 +340,10 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
                             |  a ARRAY<STRUCT<v1:int, v2:string>>,
                             |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
                             |)""".stripMargin,
-        "changing data type", "s.v1", "from IntegerType to LongType")
+        "CHANGE_DATA_TYPE",
+        Map("columnName" -> "s.v1", "fromType" -> "INT", "toType" -> "BIGINT"))
       // a.element.v1
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
                             |ALTER TABLE $tableName REPLACE COLUMNS (
                             |  v1 int,
                             |  v2 string,
@@ -327,9 +351,10 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
                             |  a ARRAY<STRUCT<v1:long, v2:string>>,
                             |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
                             |)""".stripMargin,
-        "changing data type", "a.element.v1", "from IntegerType to LongType")
+        "CHANGE_DATA_TYPE",
+        Map("columnName" -> "a.element.v1", "fromType" -> "INT", "toType" -> "BIGINT"))
       // m.key.v1
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
                             |ALTER TABLE $tableName REPLACE COLUMNS (
                             |  v1 int,
                             |  v2 string,
@@ -337,9 +362,10 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
                             |  a ARRAY<STRUCT<v1:int, v2:string>>,
                             |  m MAP<STRUCT<v1:long, v2:string>, STRUCT<v1:int, v2:string>>
                             |)""".stripMargin,
-        "changing data type", "m.key.v1", "from IntegerType to LongType")
+        "CHANGE_DATA_TYPE",
+        Map("columnName" -> "m.key.v1", "fromType" -> "INT", "toType" -> "BIGINT"))
       // m.value.v1
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
                             |ALTER TABLE $tableName REPLACE COLUMNS (
                             |  v1 int,
                             |  v2 string,
@@ -347,7 +373,8 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
                             |  a ARRAY<STRUCT<v1:int, v2:string>>,
                             |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:long, v2:string>>
                             |)""".stripMargin,
-        "changing data type", "m.value.v1", "from IntegerType to LongType")
+        "CHANGE_DATA_TYPE",
+        Map("columnName" -> "m.value.v1", "fromType" -> "INT", "toType" -> "BIGINT"))
     }
   }
 
@@ -639,7 +666,7 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
         |)""".stripMargin,
         "NOT NULL is not supported in Hive-style REPLACE COLUMNS")
       // s.v3
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
         |ALTER TABLE $tableName REPLACE COLUMNS (
         |  v1 int,
         |  v2 string,
@@ -647,9 +674,9 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
         |  a ARRAY<STRUCT<v1:int, v2:string>>,
         |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
         |)""".stripMargin,
-        "adding non-nullable column", "s.v3")
+        "ADD_NON_NULLABLE_COLUMN", Map("columnName" -> "s.v3"))
       // a.element.v3
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
         |ALTER TABLE $tableName REPLACE COLUMNS (
         |  v1 int,
         |  v2 string,
@@ -657,9 +684,9 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
         |  a ARRAY<STRUCT<v1:int, v2:string, v3:long NOT NULL>>,
         |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
         |)""".stripMargin,
-        "adding non-nullable column", "a.element.v3")
+        "ADD_NON_NULLABLE_COLUMN", Map("columnName" -> "a.element.v3"))
       // m.key.v3
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
         |ALTER TABLE $tableName REPLACE COLUMNS (
         |  v1 int,
         |  v2 string,
@@ -667,9 +694,9 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
         |  a ARRAY<STRUCT<v1:int, v2:string>>,
         |  m MAP<STRUCT<v1:int, v2:string, v3:long NOT NULL>, STRUCT<v1:int, v2:string>>
         |)""".stripMargin,
-        "adding non-nullable column", "m.key.v3")
+        "ADD_NON_NULLABLE_COLUMN", Map("columnName" -> "m.key.v3"))
       // m.value.v3
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
         |ALTER TABLE $tableName REPLACE COLUMNS (
         |  v1 int,
         |  v2 string,
@@ -677,7 +704,7 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
         |  a ARRAY<STRUCT<v1:int, v2:string>>,
         |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string, v3:long NOT NULL>>
         |)""".stripMargin,
-        "adding non-nullable column", "m.value.v3")
+        "ADD_NON_NULLABLE_COLUMN", Map("columnName" -> "m.value.v3"))
     }
   }
 
@@ -700,7 +727,7 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
         |)""".stripMargin,
         "NOT NULL is not supported in Hive-style REPLACE COLUMNS")
       // s.v1
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
         |ALTER TABLE $tableName REPLACE COLUMNS (
         |  v1 int,
         |  v2 string,
@@ -708,9 +735,9 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
         |  a ARRAY<STRUCT<v1:int, v2:string>>,
         |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
         |)""".stripMargin,
-        "tightening nullability", "s.v1")
+        "TIGHTEN_NULLABILITY", Map("columnName" -> "s.v1"))
       // a.element.v1
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
         |ALTER TABLE $tableName REPLACE COLUMNS (
         |  v1 int,
         |  v2 string,
@@ -718,9 +745,9 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
         |  a ARRAY<STRUCT<v1:int NOT NULL, v2:string>>,
         |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
         |)""".stripMargin,
-        "tightening nullability", "a.element.v1")
+        "TIGHTEN_NULLABILITY", Map("columnName" -> "a.element.v1"))
       // m.key.v1
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
         |ALTER TABLE $tableName REPLACE COLUMNS (
         |  v1 int,
         |  v2 string,
@@ -728,9 +755,9 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
         |  a ARRAY<STRUCT<v1:int, v2:string>>,
         |  m MAP<STRUCT<v1:int NOT NULL, v2:string>, STRUCT<v1:int, v2:string>>
         |)""".stripMargin,
-        "tightening nullability", "m.key.v1")
+        "TIGHTEN_NULLABILITY", Map("columnName" -> "m.key.v1"))
       // m.value.v1
-      assertNotSupported(s"""
+      assertUnsupportedAlterTableReplaceColOp(s"""
         |ALTER TABLE $tableName REPLACE COLUMNS (
         |  v1 int,
         |  v2 string,
@@ -738,7 +765,7 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
         |  a ARRAY<STRUCT<v1:int, v2:string>>,
         |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int NOT NULL, v2:string>>
         |)""".stripMargin,
-        "tightening nullability", "m.value.v1")
+        "TIGHTEN_NULLABILITY", Map("columnName" -> "m.value.v1"))
     }
   }
 }

@@ -417,50 +417,38 @@ class ChecksumSuite
         .write.format("delta").partitionBy("id").saveAsTable(tableName)
       sql(s"INSERT INTO $tableName SELECT *, 1 FROM range(10, 20)")
 
-      // Baseline: the values state reconstruction produces, with the fast path disabled.
-      val (expectedSize, expectedNumFiles, expectedNumMetadata, expectedNumProtocol,
-          expectedSetTransactions, expectedDomainMetadata) = withSQLConf(
-        DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "false") {
-        val s = freshSnapshot(tableName)
-        assert(s.checksumOpt.isDefined, "test setup should have produced a CRC file")
-        val values = (s.sizeInBytes, s.numOfFiles, s.numOfMetadata, s.numOfProtocol,
-          s.setTransactions, s.domainMetadata)
-        assert(s.stateReconstructionTriggered,
-          "with the fast path disabled the accessors must use state reconstruction")
-        values
-      }
+      val s = freshSnapshot(tableName)
+      val crc = s.checksumOpt.getOrElse(fail("test setup should have produced a CRC file"))
 
-      withSQLConf(DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true") {
-        val s = freshSnapshot(tableName)
-        assert(s.checksumOpt.isDefined)
+      // Fields the CRC carries are served from it, so no state reconstruction is triggered.
+      assert(s.sizeInBytes == crc.tableSizeBytes)
+      assert(s.numOfFiles == crc.numFiles)
+      assert(s.numOfMetadata == crc.numMetadata)
+      assert(s.numOfProtocol == crc.numProtocol)
+      assert(s.setTransactions.toSet == crc.setTransactions.getOrElse(Nil).toSet)
+      assert(s.numOfSetTransactions == crc.setTransactions.getOrElse(Nil).length)
+      assert(s.domainMetadata.toSet == crc.domainMetadata.getOrElse(Nil).toSet)
+      assert(!s.stateReconstructionTriggered,
+        "fields available in the CRC must not trigger state reconstruction")
 
-        assert(s.sizeInBytes == expectedSize)
-        assert(s.numOfFiles == expectedNumFiles)
-        assert(s.numOfMetadata == expectedNumMetadata)
-        assert(s.numOfProtocol == expectedNumProtocol)
-        assert(s.setTransactions.toSet == expectedSetTransactions.toSet)
-        assert(s.numOfSetTransactions == expectedSetTransactions.length)
-        assert(s.domainMetadata.toSet == expectedDomainMetadata.toSet)
-        assert(!s.stateReconstructionTriggered,
-          "fields available in the CRC must not trigger state reconstruction")
-
-        // numOfRemoves is not tracked by the CRC and still needs the state reconstruction.
-        assert(s.numOfRemoves == 0L)
-        assert(s.stateReconstructionTriggered,
-          "numOfRemoves should fall back to state reconstruction")
-      }
+      // numOfRemoves is not tracked by the CRC and still needs the state reconstruction.
+      assert(s.numOfRemoves == 0L)
+      assert(s.stateReconstructionTriggered,
+        "numOfRemoves should fall back to state reconstruction")
     }
   }
 
-  test("Snapshot state fields fall back to state reconstruction when the fast path is disabled") {
-    withCrcTable { tableName =>
-      spark.range(5).write.format("delta").saveAsTable(tableName)
-      withSQLConf(DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "false") {
+  test("disabling fastQueryPath.enabled bypasses the CRC-backed snapshot state") {
+    withSQLConf(DeltaSQLConf.FAST_QUERY_PATH_ENABLED.key -> "false") {
+      withCrcTable { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
         val s = freshSnapshot(tableName)
-        assert(s.checksumOpt.isDefined)
-        assert(s.numOfFiles == s.checksumOpt.get.numFiles)
+        assert(s.checksumOpt.isDefined, "test setup should have produced a CRC file")
+        // With the fast query path off, checksumOptForState is empty, so a CRC-backed field
+        // falls back to a full state reconstruction instead of being served from the checksum.
+        assert(s.sizeInBytes == s.checksumOpt.get.tableSizeBytes)
         assert(s.stateReconstructionTriggered,
-          "the CRC must not be used when the fast path is disabled")
+          "disabling fastQueryPath.enabled must bypass the CRC and reconstruct state")
       }
     }
   }
@@ -470,8 +458,7 @@ class ChecksumSuite
       DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
       DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
       // Produce a CRC that does not carry setTransactions.
-      DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "false",
-      DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true"
+      DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "false"
     ) {
       withTempTable(createTable = false) { tableName =>
         spark.range(5).write.format("delta").saveAsTable(tableName)
@@ -500,29 +487,27 @@ class ChecksumSuite
       sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
         s"('delta.setTransactionRetentionDuration' = '30 days')")
 
-      withSQLConf(DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true") {
-        val s = freshSnapshot(tableName)
-        assert(s.minSetTransactionRetentionTimestamp.isDefined)
+      val s = freshSnapshot(tableName)
+      assert(s.minSetTransactionRetentionTimestamp.isDefined)
 
-        // The write path stops recording setTransactions in the CRC as soon as a retention
-        // period is configured, so a CRC can never hand out entries that state reconstruction
-        // would have filtered out and no extra guard is needed when reading.
-        assert(s.checksumOpt.get.setTransactions.isEmpty,
-          "the CRC must not carry setTransactions once a retention period is configured")
+      // The write path stops recording setTransactions in the CRC as soon as a retention
+      // period is configured, so a CRC can never hand out entries that state reconstruction
+      // would have filtered out and no extra guard is needed when reading.
+      assert(s.checksumOpt.get.setTransactions.isEmpty,
+        "the CRC must not carry setTransactions once a retention period is configured")
 
-        // Other fields are still served from the CRC.
-        assert(s.numOfFiles == s.checksumOpt.get.numFiles)
-        assert(!s.stateReconstructionTriggered)
+      // Other fields are still served from the CRC.
+      assert(s.numOfFiles == s.checksumOpt.get.numFiles)
+      assert(!s.stateReconstructionTriggered)
 
-        // setTransactions therefore falls back to state reconstruction.
-        assert(s.setTransactions.isEmpty)
-        assert(s.stateReconstructionTriggered,
-          "setTransactions should fall back when the CRC does not carry them")
-      }
+      // setTransactions therefore falls back to state reconstruction.
+      assert(s.setTransactions.isEmpty)
+      assert(s.stateReconstructionTriggered,
+        "setTransactions should fall back when the CRC does not carry them")
     }
   }
 
-  test("DV metrics are only served from the CRC when the aggregation would have computed them") {
+  test("DV metrics are served from the CRC when deletion vectors are readable") {
     withCrcTable { tableName =>
       // Table with deletion vectors enabled, so the CRC carries the DV metrics.
       sql(s"CREATE TABLE $tableName (id LONG) USING delta " +
@@ -530,40 +515,13 @@ class ChecksumSuite
       sql(s"INSERT INTO $tableName SELECT * FROM range(10)")
       sql(s"DELETE FROM $tableName WHERE id = 1")
 
-      withSQLConf(DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true") {
-        val s = freshSnapshot(tableName)
-        assert(s.checksumOpt.flatMap(_.numDeletedRecordsOpt).contains(1L),
-          "test setup should produce a CRC carrying the DV metrics")
-        assert(s.numDeletedRecordsOpt.contains(1L))
-        assert(s.numDeletionVectorsOpt.contains(1L))
-        assert(!s.stateReconstructionTriggered,
-          "DV metrics present in the CRC must not trigger state reconstruction")
-      }
-
-      // Disabling DV creation makes the aggregation stop computing the DV metrics (it gates on
-      // deletionVectorsWritable). The accessors must follow the aggregation rather than the
-      // still-populated CRC, otherwise the fast path would change the returned value.
-      sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.enableDeletionVectors' = 'false')")
-      withSQLConf(DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true") {
-        val s = freshSnapshot(tableName)
-        val fromCrc = withSQLConf(
-          DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "false") {
-          val baseline = freshSnapshot(tableName)
-          (baseline.numDeletedRecordsOpt, baseline.numDeletionVectorsOpt)
-        }
-        assert(s.numDeletedRecordsOpt == fromCrc._1)
-        assert(s.numDeletionVectorsOpt == fromCrc._2)
-
-        // Canary. Today these accessors reach the value through state reconstruction, because
-        // the aggregation does not compute the DV metrics while DV creation is disabled. If the
-        // readable/writable divergence is ever reconciled
-        // (https://github.com/delta-io/delta/issues/7507), the CRC becomes able to serve them
-        // and this assertion starts failing. When that happens, update `checksumDVMetricsComputed`
-        // along with the aggregation so these fields are served from the CRC again instead of
-        // silently falling back to state reconstruction forever.
-        assert(s.stateReconstructionTriggered,
-          "DV metrics currently fall back to state reconstruction when DV creation is disabled")
-      }
+      val s = freshSnapshot(tableName)
+      assert(s.checksumOpt.flatMap(_.numDeletedRecordsOpt).contains(1L),
+        "test setup should produce a CRC carrying the DV metrics")
+      assert(s.numDeletedRecordsOpt.contains(1L))
+      assert(s.numDeletionVectorsOpt.contains(1L))
+      assert(!s.stateReconstructionTriggered,
+        "DV metrics present in the CRC must not trigger state reconstruction")
     }
   }
 
@@ -571,7 +529,6 @@ class ChecksumSuite
     withSQLConf(
       DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
       DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
-      DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true",
       DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL.key -> "false"
     ) {
       withTempTable(createTable = false) { tableName =>

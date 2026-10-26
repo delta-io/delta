@@ -325,7 +325,7 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     TableIdentifier tableIdent = extractTableIdentifier(request.path());
     LOG.debug("Table identifier: {}", tableIdent);
 
-    // Parse request (min-rows-requested is natively supported in Iceberg 1.11.0)
+    // Parse request (min-rows-requested is natively supported since Iceberg 1.11.0)
     PlanTableScanRequest planRequest = parsePlanRequest(request);
     Long minRowsRequested = planRequest.minRowsRequested();
     LOG.debug("Plan request parsed: snapshotId={}, minRowsRequested={}",
@@ -405,10 +405,9 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     LOG.debug("Table has {} partition specs", specsById.size());
 
     // Build response (Pattern 1: COMPLETED with direct tasks)
-    return PlanTableScanResponse.builder()
+    return PlanTableScanResponse.builder(specsById)
         .withPlanStatus(PlanStatus.COMPLETED)
         .withFileScanTasks(tasksToReturn)
-        .withSpecsById(specsById)
         .build();
   }
 }
