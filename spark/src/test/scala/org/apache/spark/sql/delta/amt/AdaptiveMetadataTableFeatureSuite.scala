@@ -31,7 +31,8 @@ import org.apache.spark.sql.delta.{
   FeatureAutomaticallyEnabledByMetadata,
   RemovableFeature,
   RowTrackingFeature,
-  TableFeature
+  TableFeature,
+  V2CheckpointTableFeature
 }
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
@@ -100,6 +101,15 @@ class AdaptiveMetadataTableFeatureSuite
         assert(protocol.readerAndWriterFeatureNames.contains(f.name),
           s"Protocol must contain required feature ${f.name}. Got: $protocol")
       }
+    }
+  }
+
+  test("creating the table does not add incompatible features to the protocol") {
+    withTable("amt_without_incompatible_features") {
+        createAdaptiveMetadataTable("amt_without_incompatible_features")
+        val protocol = protocolOf("amt_without_incompatible_features")
+        assert(!protocol.isFeatureSupported(V2CheckpointTableFeature),
+          s"Protocol must not support v2Checkpoint. Got: $protocol")
     }
   }
 
