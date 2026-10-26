@@ -625,8 +625,17 @@ class DeltaAnalysis(protected val session: SparkSession)
     case d @ DeleteFromTable(table, condition) if d.childrenResolved =>
       // rewrites Delta from V2 to V1
       val newTarget = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
-      val indices = newTarget.collect {
+      val collectedIndices = newTarget.collect {
         case DeltaFullTable(_, index) => index
+      }
+      // A Project (e.g. CHAR padding) and its scan can both match DeltaFullTable.
+      // Deduplicate their shared file index only for a single-leaf target, preserving
+      // rejection of self-joins and unions with multiple scans.
+      val indices = if (conf.getConf(DeltaSQLConf.DELTA_DELETE_FILE_INDEX_DEDUPLICATION_ENABLED) &&
+          newTarget.collectLeaves().size == 1) {
+        collectedIndices.distinct
+      } else {
+        collectedIndices
       }
       if (indices.isEmpty) {
         // Not a Delta table at all, do not transform

@@ -3257,6 +3257,20 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_DELETE_FILE_INDEX_DEDUPLICATION_ENABLED =
+    buildConf("delete.fileIndexDeduplication.enabled")
+      .internal()
+      .doc(
+        """When true, DELETE analysis deduplicates collected file indices for targets with
+          |exactly one leaf node. This prevents deterministic projections and their underlying
+          |scan from being counted as separate sources, for example when read-side CHAR padding
+          |adds a projection above a table scan. Targets with multiple leaf nodes are not
+          |deduplicated, preserving rejection of self-joins and unions. When false, every
+          |collected file index is counted separately.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELETE_USE_PERSISTENT_DELETION_VECTORS =
     buildConf("delete.deletionVectors.persistent")
       .internal()
