@@ -88,13 +88,10 @@ object ScanWithDeletionVectors {
     // 4. Performance: Avoids forcing expensive pinned snapshots when not needed
     val hasDVs = index match {
       // Files pruned by LIMIT are only a subset of the matching files, and the scan lists all of
-      // them if its filters change after the scan was prepared. Instead of listing the whole
-      // table to check for DVs, always handle DVs: such a scan usually reads only a few files.
-      // Without `useMetadataRowIndex`, this also disables file splitting and Parquet filter
-      // pushdown for such a scan. Handling DVs can't tell the columns it adds apart from table
-      // columns with the same names though, so check the whole table if there are such columns.
+      // them if its filters change after the scan was prepared. So unless the prepared files
+      // already have DVs, check the whole table.
       case p: PreparedDeltaFileIndex if isPrunedByLimit(p.preparedScan) =>
-        !columnsAddedForDVs.exists(p.hasColumnNamed) ||
+        p.preparedScan.files.exists(_.deletionVector != null) ||
           p.preparedScan.scannedSnapshot.filesForScan(filters = Nil).files
             .exists(_.deletionVector != null)
       // Reuse the files of an already prepared scan instead of listing the table again. If the
@@ -133,9 +130,6 @@ object ScanWithDeletionVectors {
     // remove the skip row column
     Some(Project(planOutput, rowIndexFilter))
   }
-
-  /** Columns that handling DVs adds to the output of a scan. */
-  private val columnsAddedForDVs = Seq(METADATA_NAME, IS_ROW_DELETED_COLUMN_NAME)
 
   private def isPrunedByLimit(scan: DeltaScan): Boolean = {
     scan.dataSkippingType == DeltaDataSkippingType.limit ||

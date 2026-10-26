@@ -132,7 +132,7 @@ abstract class TahoeFileIndex(
   }
 
   /** Whether the table has a top-level column with the given name, ignoring case. */
-  private[delta] def hasColumnNamed(name: String): Boolean =
+  private def hasColumnNamed(name: String): Boolean =
     metadata.schema.fieldNames.exists(_.equalsIgnoreCase(name))
 
   /**
