@@ -42,6 +42,11 @@ public final class UCConfigUtils {
   public static final String AUTH_TYPE_KEY = "type";
   /** Static token provider type value for legacy {@code token} configs. */
   public static final String STATIC_AUTH_TYPE = "static";
+  /**
+   * Auth config key carrying the catalog URI, for token providers that call the UC server
+   * themselves (e.g. the OAuth token exchange).
+   */
+  public static final String AUTH_CATALOG_URI_KEY = "catalogUri";
 
   private UCConfigUtils() {}
 
@@ -63,6 +68,10 @@ public final class UCConfigUtils {
    * stripped while the suffix (e.g. {@code oauth.clientId}) is preserved so downstream lookups
    * match exactly. Prefers {@code auth.*} keys; falls back to the legacy {@code token} key.
    *
+   * <p>With {@code auth.*} keys, the catalog {@code uri} is also passed as {@code catalogUri}, which
+   * token providers that call the UC server themselves read. It replaces any {@code
+   * auth.catalogUri}, so the token can only be sent to the server this catalog talks to.
+   *
    * @param ucConfig the flat configuration map.
    * @return a map suitable for {@code TokenProvider.create}, with the {@code auth.} prefix stripped.
    */
@@ -75,6 +84,10 @@ public final class UCConfigUtils {
       }
     }
     if (!authConfig.isEmpty()) {
+      String uri = ucConfig.get(URI_KEY);
+      if (uri != null) {
+        authConfig.put(AUTH_CATALOG_URI_KEY, uri);
+      }
       return authConfig;
     }
     String token = ucConfig.get(LEGACY_TOKEN_KEY);
