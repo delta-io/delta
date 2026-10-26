@@ -35,6 +35,14 @@ object InCommitTimestampUtils {
   final val TABLE_PROPERTY_KEYS: Seq[String] = TABLE_PROPERTY_CONFS.map(_.key)
 
   /**
+   * ICT enablement provenance properties. They describe the log they were written to, so they
+   * must never be set by users or copied to another table.
+   */
+  final val ENABLEMENT_INFO_PROPERTY_KEYS: Seq[String] = Seq(
+    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key,
+    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key)
+
+  /**
    * Returns true if ICT was newly enabled by the commit at [[currentMetadataWithVersion.version]],
    * i.e. it is enabled there but was not enabled in the immediately preceding version.
    *

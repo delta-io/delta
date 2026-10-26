@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.commands
 
+import java.time.Instant
+
 import scala.collection.mutable.ArrayBuffer
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -26,6 +28,7 @@ import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.DeltaTableUtils
 import org.apache.spark.sql.delta.InsertAtomicReplaceExecutionObserver
 import org.apache.spark.sql.delta.OptimisticTransaction
+import org.apache.spark.sql.delta.PreprocessTableMerge
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.AddCDCFile
@@ -89,6 +92,20 @@ trait WriteIntoDeltaLike extends DeltaCommand with AnalysisHelper {
   protected[delta] val insertAtomicReplaceExecutionObserver:
       InsertAtomicReplaceExecutionObserver =
     InsertAtomicReplaceExecutionObserver.getObserver
+
+  /** Matches the DELETE condition to the source's statement time. */
+  private[commands] def pinReplaceOnOrUsingCurrentTime[T <: LogicalPlan](
+      deleteCommand: T,
+      insertReplaceOnOrUsingCurrentTimeOpt: Option[Instant]): T =
+    insertReplaceOnOrUsingCurrentTimeOpt match {
+      case Some(instant) =>
+        val pinnedCommand = {
+          PreprocessTableMerge(SQLConf.get)
+            .transformTimestamps(deleteCommand, instant)
+        }
+        pinnedCommand.asInstanceOf[T]
+      case None => deleteCommand
+    }
 
   // Helper for creating a SQLMetric and setting its value, since it isn't valid to create a
   // SQLMetric with a positive `initValue`.

@@ -19,12 +19,11 @@ package org.apache.spark.sql.delta.rowtracking
 import org.apache.spark.sql.delta.{DeltaConfigs, RowTrackingFeature}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
-import org.apache.spark.sql.test.SharedSparkSession
 
 trait RowTrackingDisabled extends RowTrackingTestUtils {
   override protected def sparkConf: SparkConf = super.sparkConf
@@ -39,7 +38,7 @@ trait RowTrackingEnabled extends RowTrackingTestUtils {
 
 trait RowTrackingTestUtils
   extends QueryTest
-  with SharedSparkSession
+  with DeltaSQLCommandTest
   with DeltaSQLTestUtils
   with ParquetTest {
   lazy val rowTrackingFeatureName: String =
@@ -48,6 +47,6 @@ trait RowTrackingTestUtils
     TableFeatureProtocolUtils.defaultPropertyKey(RowTrackingFeature)
 
   def withRowTrackingEnabled(enabled: Boolean)(f: => Unit): Unit = {
-    withSQLConf(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> enabled.toString)(f)
+    withConf(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> enabled.toString)(f)
   }
 }

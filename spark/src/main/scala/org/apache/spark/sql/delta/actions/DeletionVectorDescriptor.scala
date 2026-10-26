@@ -96,14 +96,17 @@ case class DeletionVectorDescriptor(
   @transient
   lazy val legacyUniqueId: String = {
     offset match {
-      case Some(offset) => s"$uniqueFileId@$offset"
-      case None => uniqueFileId
+      case Some(offset) => s"$legacyUniqueFileId@$offset"
+      case None => legacyUniqueFileId
     }
   }
 
+  /**
+   * The legacy unique id of the file storing the DV.
+   */
   @JsonIgnore
   @transient
-  lazy val uniqueFileId: String = s"$storageType$pathOrInlineDv"
+  private lazy val legacyUniqueFileId: String = s"$storageType$pathOrInlineDv"
 
   /**
    * Unique identifier for this DV.
@@ -118,6 +121,20 @@ case class DeletionVectorDescriptor(
    */
   def uniqueId(tableRoot: Path, useObjectIdentity: Boolean): String = {
     if (useObjectIdentity) normalizedTableRelativeObjectId(tableRoot) else legacyUniqueId
+  }
+
+  /**
+   * Unique identifier for the file storing this DV, i.e. [[uniqueId]] without the offset. Use this
+   * when grouping by DV file rather than by individual DV, since several DVs can be stored in one
+   * file at different offsets. See [[uniqueId]] for the `useObjectIdentity` semantics.
+   */
+  def uniqueFileId(tableRoot: Path, useObjectIdentity: Boolean): String = {
+    if (useObjectIdentity) {
+      val (normalizedStorageType, normalizedPath) = normalizedTableRelativeObjectFile(tableRoot)
+      formatIdentity(normalizedStorageType, normalizedPath, offset = None)
+    } else {
+      legacyUniqueFileId
+    }
   }
 
   @JsonIgnore
@@ -200,8 +217,7 @@ case class DeletionVectorDescriptor(
 
   /**
    * Like [[normalizedTableRelativeObjectId]] but identifies the physical DV file rather than the
-   * individual DV within it and returns the normalized (storageType, path) with no offset. Today
-   * this is only used for table clone.
+   * individual DV within it and returns the normalized (storageType, path) with no offset.
    */
   private[delta] def normalizedTableRelativeObjectFile(tableRoot: Path): (String, String) = {
     storageType match {
@@ -438,6 +454,13 @@ object DeletionVectorDescriptor {
   /**
    * Utility method to create a [[DeletionVectorDescriptor]] for an unencoded path relative to the
    * table root. Callers are responsible for relativizing the path before invoking this method.
+   *
+   * @param relativePath Relative path to the table root. Must be unencoded.
+   * @param sizeInBytes Size of the serialized DV in bytes (raw data size, before encoding).
+   * @param cardinality Number of rows the DV logically removes from the file.
+   * @param offset Start of the data for this DV.
+   * @param maxRowIndex Transient property that is used to validate DV correctness. It is not
+   *                    stored in the log.
    */
   def createRelativePathDVDescriptor(
       relativePath: String,

@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTUtils, AMTWriteResult, AMTWriterManager}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUtils, AMTWriteResult, AMTWriterManager}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -112,6 +112,9 @@ case class CommitPrepMetrics(
  *        state never leaks into a later conflict check.
  * @param actionsToWriteInLogFile the final actions to persist, incl. the inline AMT checkpoint
  * @param amtWriteResultForLastCheckpointOpt the AMT write result, for the _last_checkpoint write
+ * @param amtCheckpointProviderForPostCommitSnapshot the latest AMT provider through this commit,
+ *        either written by this attempt or discovered before it, including during conflict
+ *        resolution
  * @param prepMetrics metrics gathered during preparation
  */
 case class PrepareCommitResult(
@@ -120,6 +123,7 @@ case class PrepareCommitResult(
     currentTransactionInfoBeforePreparedResult: CurrentTransactionInfo,
     actionsToWriteInLogFile: Seq[Action],
     amtWriteResultForLastCheckpointOpt: Option[AMTWriteResult],
+    amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider],
     prepMetrics: CommitPrepMetrics)
 
 /** Record metrics about a successful commit. */
@@ -435,6 +439,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /** The transaction start time. */
   private val txnStartNano = System.nanoTime()
+
+  /** The snapshot ID assigned to AMT changes made by this transaction. */
+  private val amtSnapshotId: Long = AMTSnapshotId.generate()
 
   override val snapshotToScan: Snapshot = snapshot
 
@@ -1315,28 +1322,40 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val df = snapshot.allFiles.toDF()
     val parseToTypedLiterals =
       spark.conf.get(DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_PARSE_PARTITION_VALUES)
+    val typeWideningFixEnabled =
+      spark.conf.get(DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_TYPE_WIDENING_FIX_ENABLED)
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
-
+    val existingFilesPartitionSchema = snapshot.metadata.physicalPartitionSchema
+    val currentPartitionSchema = metadata.physicalPartitionSchema
     val (filteredFiles, filterPredicate) = try {
       // Always fail on error. We log and throw it again or fall back depending on the config.
-      val newFilesNormalizedPartitionValues = newFiles.map(f =>
+      def normalizePartitionValues(
+          partitionValues: Map[String, String]): Map[String, Literal] =
         Action.normalizePartitionValues(
-          f.partitionValues,
-          metadata.physicalPartitionSchema,
+          partitionValues,
+          currentPartitionSchema,
           timeZone,
           parseToTypedLiterals,
           failOnParsingError = true)
-      ).toSet
 
-      val existingFilesPartitionSchema = snapshot.metadata.physicalPartitionSchema
-      val pred = DeltaUDF.booleanFromMap { filePartValues =>
-        newFilesNormalizedPartitionValues.contains(Action.normalizePartitionValues(
-          filePartValues,
-          existingFilesPartitionSchema,
-          timeZone,
-          parseToTypedLiterals,
-          failOnParsingError = true))
-      }(col("partitionValues"))
+      val newFilesNormalizedPartitionValues =
+        newFiles.map(f => normalizePartitionValues(f.partitionValues)).toSet
+      // Fall back to legacy matching if the physical partition keys differ.
+      val matchesPartition: Map[String, String] => Boolean = if (typeWideningFixEnabled &&
+          existingFilesPartitionSchema.names.toSet == currentPartitionSchema.names.toSet) {
+        // Use the same schema as readers to determine the partition value after type widening.
+        filePartValues =>
+          newFilesNormalizedPartitionValues.contains(normalizePartitionValues(filePartValues))
+      } else {
+        filePartValues =>
+          newFilesNormalizedPartitionValues.contains(Action.normalizePartitionValues(
+            filePartValues,
+            existingFilesPartitionSchema,
+            timeZone,
+            parseToTypedLiterals,
+            failOnParsingError = true))
+      }
+      val pred = DeltaUDF.booleanFromMap(matchesPartition)(col("partitionValues"))
       val files = df.filter(pred)
           .withColumn("stats", DataSkippingReader.nullStringLiteral)
           .as[AddFile]
@@ -1371,6 +1390,31 @@ trait OptimisticTransactionImpl extends TransactionHelper
             .as[AddFile]
             .collect()
         (files, pred)
+    }
+
+    try {
+      val changes = currentPartitionSchema.fields.sortBy(_.name).flatMap { field =>
+        existingFilesPartitionSchema.find(_.name == field.name)
+          .filter(_.dataType != field.dataType)
+          .map { oldField =>
+            Map("fromType" -> oldField.dataType.sql, "toType" -> field.dataType.sql)
+          }
+      }.toSeq
+      if (changes.nonEmpty) {
+        // Tracks partition type changes, fix/parsing settings, and files selected for removal.
+        // Cannot identify missed files or prove matching correctness.
+        recordDeltaEvent(
+          this,
+          opType = "delta.dynamicPartitionOverwrite.partitionTypeWidening",
+          data = Map(
+            "partitionTypeWideningFixEnabled" -> typeWideningFixEnabled,
+            "parsePartitionValues" -> parseToTypedLiterals,
+            "hasFilesToRemove" -> filteredFiles.nonEmpty,
+            "numIncomingFiles" -> newFiles.size,
+            "changes" -> changes))
+      }
+    } catch {
+      case NonFatal(_) => ()
     }
 
     trackReadPredicates(
@@ -1905,9 +1949,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
       validateActionsAddFileInvariants(preparedActions, metadata)
 
       checkNoDuplicateActions(preparedActions)
-      ConflictChecker.trackConsistentDataChange(
-        spark, preparedActions.iterator, deltaLog, op, callerContext = "commit")
-        .foreach(_ => ())
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -1944,7 +1985,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         readVersion = Some(readVersion).filter(_ >= 0),
         isolationLevel = Option(isolationLevelToUse.toString),
         isBlindAppend = Some(isBlindAppend),
-        dataChange = Some(CommitInfo.dataChangeFromActions(preparedActions)),
+        dataChange = CommitInfo.dataChangeForCommitInfo(
+          preparedActions, metadata, protocol, spark),
         operationMetrics = getOperationMetrics(op),
         userMetadata = getUserMetadata(op),
         tags = if (allTags.nonEmpty) Some(allTags) else None,
@@ -2120,7 +2162,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       op: DeltaOperations.Operation,
       context: Map[String, String],
       metrics: Map[String, String],
-      dataChange: Option[Boolean]
+      dataChange: Boolean
   ): (Long, Snapshot) = recordDeltaOperation(deltaLog, "delta.commit.large") {
     assert(committed.isEmpty, "Transaction already committed.")
     commitStartNano = System.nanoTime()
@@ -2165,7 +2207,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         readVersion = Some(readVersion),
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
-        dataChange = dataChange,
+        dataChange = CommitInfo.dataChangeForCommitInfo(dataChange, metadata, protocol, spark),
         operationMetrics = Some(metrics),
         userMetadata = getUserMetadata(op),
         tags = if (tags.nonEmpty) Some(tags) else None,
@@ -2202,8 +2244,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
         }
         action
       }
-      allActions = ConflictChecker.trackConsistentDataChange(
-        spark, allActions, deltaLog, op, callerContext = "commitLarge")
       val (allActions2, acStatsCollector) = collectAutoOptimizeStats(allActions)
       allActions = allActions2
 
@@ -2215,6 +2255,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions, op)
       allActions = DefaultRowCommitVersion.assignIfMissing(
         spark, protocol, snapshot, allActions, getFirstAttemptVersion)
+      allActions = AMTSnapshotId.assignIfMissing(
+        metadata, protocol, allActions, amtSnapshotId)
       val (allActions3, icebergTrackedInfo) = generateIcebergMetadataForCommitLarge(
         allActions, catalogTable, attemptVersion, commitInfo)
       // Capture the committed DomainMetadata (e.g. clustering columns) for ALL tables so a
@@ -2234,6 +2276,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       val commitStatsComputer = new CommitStatsComputer()
       allActions = commitStatsComputer.addToCommitStats(allActions)
+      allActions = ConflictChecker.trackDataChange(
+        spark, allActions, deltaLog, op, callerContext = "commitLarge")
       executionObserver.beginDoCommit()
       if (readVersion < 0) {
         deltaLog.createLogDirectoriesIfNotExists()
@@ -2491,7 +2535,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
       Some(commit),
       newChecksumOpt = None,
       preCommitLogSegment = preCommitLogSegment,
-      catalogTable)
+      catalogTable,
+      // Since commitLarge neither retries nor writes an inline AMT, the read snapshot's provider
+      // remains authoritative through the successfully committed version.
+      amtCheckpointProviderForPostCommitSnapshot = amtCheckpointProviderOpt)
     if (currentSnapshot.version != attemptVersion) {
       throw DeltaErrors.invalidCommittedVersion(attemptVersion, currentSnapshot.version)
     }
@@ -2726,7 +2773,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     if (!DeltaUtils.isTesting) return
     amtProviderOpt match {
       case Some(amt) =>
-        amt.verifyCommitBackReferences(spark, deltaLog, finalActions)
+        amt.verifyCommitBackReferences(spark, deltaLog, catalogTable, finalActions)
       case None =>
         // Not an AMT-backed table: no file action may carry a back reference.
         finalActions.foreach {
@@ -2810,8 +2857,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // edits. This is the logical set of actions we want to commit, and it is what gets fed to
       // the ConflictChecker in case of a conflict.
       var updatedUnpreparedCurrentTransactionInfo = currentTransactionInfo
-      val amtWriterManager =
-        new AMTWriterManager(currentTransactionInfo.txnId, snapshot, currentTransactionInfo.op)
+      val amtWriterManager = new AMTWriterManager(
+        currentTransactionInfo.txnId,
+        amtSnapshotId,
+        snapshot,
+        currentTransactionInfo.op)
       val isFsToCcCommit =
         snapshot.metadata.coordinatedCommitsCoordinatorName.isEmpty &&
           metadata.coordinatedCommitsCoordinatorName.nonEmpty
@@ -2840,6 +2890,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
               prepareCommitResult.currentTransactionInfo,
               prepareCommitResult.actionsToWriteInLogFile,
               prepareCommitResult.amtWriteResultForLastCheckpointOpt,
+              prepareCommitResult.amtCheckpointProviderForPostCommitSnapshot,
               prepareCommitResult.prepMetrics,
               attemptNumber,
               isolationLevel)
@@ -2879,6 +2930,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
                   prepMetrics = rebaseResult.prepMetrics,
                   newChecksumOpt = None,
                   amtWriteResultOpt = rebaseResult.amtWriteResultForLastCheckpointOpt,
+                  amtCheckpointProviderForPostCommitSnapshot =
+                    rebaseResult.amtCheckpointProviderForPostCommitSnapshot,
                   commitOpt = None,
                   isIdempotentRetry = true
                 )
@@ -2900,6 +2953,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
               rebaseResult.currentTransactionInfo,
               rebaseResult.actionsToWriteInLogFile,
               rebaseResult.amtWriteResultForLastCheckpointOpt,
+              rebaseResult.amtCheckpointProviderForPostCommitSnapshot,
               rebaseResult.prepMetrics,
               attemptNumber,
               isolationLevel)
@@ -2979,8 +3033,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /**
    * Prepares one commit attempt:
-   *   - generates Uniform/Iceberg metadata
    *   - handles writing Adaptive metadata tree
+   *   - generates Uniform/Iceberg metadata
    * Invoked directly on the first attempt;
    * On a conflict retry, [[rebaseCurrentTransactionInfo]] invokes it after conflict resolution.
    *
@@ -2991,12 +3045,39 @@ trait OptimisticTransactionImpl extends TransactionHelper
       amtWriterManager: AMTWriterManager,
       winningCommitMetrics: Seq[WinningCommitMetrics] = Seq.empty): PrepareCommitResult = {
     val targetCatalogTable = catalogTable
+    // Validate resolved file actions before writing AMT. Iceberg conversion does not change them.
+    ConflictChecker.trackDataChange(
+      spark,
+      currentTransactionInfo.finalActionsToCommit.iterator,
+      deltaLog,
+      currentTransactionInfo.op,
+      callerContext = "doCommit").foreach(_ => ())
+    // DefaultRowCommitVersion is assigned while building CurrentTransactionInfo and updated by
+    // ConflictChecker when a winning commit advances the target version.
+    // AMT snapshot IDs are assigned here and preserved across retries.
+    val transactionInfoWithSnapshotIds: CurrentTransactionInfo = {
+        val actionsWithSnapshotIds = AMTSnapshotId.assignIfMissing(
+          currentTransactionInfo.metadata,
+          currentTransactionInfo.protocol,
+          currentTransactionInfo.actions.iterator,
+          amtSnapshotId).toSeq
+        if (actionsWithSnapshotIds == currentTransactionInfo.actions) {
+          currentTransactionInfo
+        } else {
+          currentTransactionInfo.copy(actions = actionsWithSnapshotIds)
+        }
+    }
+    val amtWriteResultOpt = amtWriterManager.writeAMT(
+      nextAttemptVersion = attemptVersion,
+      currentTransactionInfo = transactionInfoWithSnapshotIds,
+      preCommitLogSegment = preCommitLogSegment,
+      winningCommitMetricsForConflictedRange = winningCommitMetrics)
+
     // If the table requires atomic Iceberg metadata generation
     // , generate iceberg metadata and update the transaction info.
     var icebergMetadataGenerationDurationMsOpt: Option[Long] = None
     var updatedCurrentTransactionInfo =
-      targetCatalogTable
-      .map { table =>
+      targetCatalogTable.map { table =>
         val startNanos = System.nanoTime()
         // Following call generates Iceberg metadata and updates CurrentTransactionInfo
         val (updatedInfo, isConversionPerformed) =
@@ -3004,7 +3085,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
             spark,
             this,
             attemptVersion,
-            currentTransactionInfo
+            transactionInfoWithSnapshotIds
             , table
           )
         if (isConversionPerformed) {
@@ -3012,13 +3093,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
             NANOSECONDS.toMillis(System.nanoTime() - startNanos))
         }
         updatedInfo
-      }.getOrElse(currentTransactionInfo)
+      }.getOrElse(transactionInfoWithSnapshotIds)
+
     val baseActions = updatedCurrentTransactionInfo.finalActionsToCommit
-    val amtWriteResultOpt = amtWriterManager.writeAMT(
-      nextAttemptVersion = attemptVersion,
-      currentTransactionInfo = updatedCurrentTransactionInfo,
-      preCommitLogSegment = preCommitLogSegment,
-      winningCommitMetricsForConflictedRange = winningCommitMetrics)
     val actions = amtWriteResultOpt match {
       case Some(result) if !result.includeActionsInCommitJson =>
         throw new UnsupportedOperationException(
@@ -3032,6 +3109,24 @@ trait OptimisticTransactionImpl extends TransactionHelper
             version = attemptVersion,
             contentRootVersion = result.contentRootVersion)
         )
+        // CatalogOwned tables assume that before a checkpoint is written, all the commits till the
+        // checkpoint version (inclusive) have been backfilled (in [[Checkpoints.writeCheckpoint]]).
+        // For AMT though, since the checkpoint itself is a (manifest) commit, we lose the inclusive
+        // guarantee: the manifest commit itself cannot be backfilled as it hasn't been written yet.
+        // We still backfill up to the previous version (attemptVersion - 1), and we store the
+        // unbackfilled manifest commit file status in an extra field in LogSegment.
+        // We assume the readSnapshot's commit-coordinator is unchanged, otherwise the conflict
+        // checker would have detected a conflict earlier.
+        CatalogOwnedTableUtils
+          .populateTableCommitCoordinatorFromCatalog(spark, targetCatalogTable, snapshot)
+          .foreach { readSnapshotTableCommitCoordinatorClient =>
+            CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
+              version = attemptVersion - 1,
+              deltaLog = deltaLog,
+              tableCommitCoordinatorClient = readSnapshotTableCommitCoordinatorClient,
+              deltaCommitFileProvider = DeltaCommitFileProvider(logPath, preCommitLogSegment),
+              catalogTableOpt = targetCatalogTable)
+          }
         // Recompute the actions from the patched txn info so the committed CommitInfo carries the
         // reference, then append the inline checkpoint action.
         updatedCurrentTransactionInfo.finalActionsToCommit :+ result.checkpoint
@@ -3046,12 +3141,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
           currentCommitAttemptAMTCheckpointOpt = Some(amtCheckpoint))
       case None => updatedCurrentTransactionInfo
     }
+    // If this commit writes an AMT, it becomes the latest AMT for the table.
+    // Otherwise, use the latest AMT identified before commit, including conflict checking.
+    val amtCheckpointProviderForPostCommitSnapshot = amtWriteResultOpt
+      .map(AMTCheckpointProvider.fromWriteResult(deltaLog, _, attemptVersion))
+      .orElse(amtWriterManager.preCommitLatestAMTCheckpointProviderOpt)
     PrepareCommitResult(
       commitVersion = attemptVersion,
       currentTransactionInfo = txnInfoForCommit,
       currentTransactionInfoBeforePreparedResult = currentTransactionInfo,
       actionsToWriteInLogFile = actions,
       amtWriteResultForLastCheckpointOpt = amtWriteResultOpt,
+      amtCheckpointProviderForPostCommitSnapshot = amtCheckpointProviderForPostCommitSnapshot,
       prepMetrics = CommitPrepMetrics(
         icebergMetadataGenerationDurationMsOpt = icebergMetadataGenerationDurationMsOpt))
   }
@@ -3121,6 +3222,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       txnInfoForCommit: CurrentTransactionInfo,
       actions: Seq[Action],
       amtWriteResultForLastCheckpointOpt: Option[AMTWriteResult],
+      amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider],
       prepMetrics: CommitPrepMetrics,
       attemptNumber: Int,
       isolationLevel: IsolationLevel): (Snapshot, CurrentTransactionInfo) = {
@@ -3159,6 +3261,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       prepMetrics,
       newChecksumOpt,
       amtWriteResultForLastCheckpointOpt,
+      amtCheckpointProviderForPostCommitSnapshot,
       commitOpt = Some(commit)
     )
   }
@@ -3174,6 +3277,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       prepMetrics: CommitPrepMetrics,
       newChecksumOpt: Option[VersionChecksum],
       amtWriteResultOpt: Option[AMTWriteResult],
+      amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider],
       commitOpt: Option[Commit],
       isIdempotentRetry: Boolean = false): (Snapshot, CurrentTransactionInfo) = {
     spark.sessionState.conf.setConf(
@@ -3189,7 +3293,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       commitOpt,
       newChecksumOpt,
       catalogTableForPostCommitSnapshot,
-      amtCheckpointWrittenInCommitOpt = amtWriteResultOpt.map(_.checkpoint),
+      amtCheckpointProviderForPostCommitSnapshot = amtCheckpointProviderForPostCommitSnapshot,
       isIdempotentRetry = isIdempotentRetry)
     val postCommitReconstructionTime = System.nanoTime()
     maintenanceOperation = if (
@@ -3629,11 +3733,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       commitOpt: Option[Commit],
       newChecksumOpt: Option[VersionChecksum],
       catalogTableOpt: Option[CatalogTable],
-      amtCheckpointWrittenInCommitOpt: Option[Checkpoint] = None,
+      amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider],
       isIdempotentRetry: Boolean = false): Snapshot =
     deltaLog.updateAfterCommit(
       committedVersion, commitOpt, newChecksumOpt, preCommitLogSegment, catalogTableOpt,
-      amtCheckpointWrittenInCommitOpt = amtCheckpointWrittenInCommitOpt,
+      amtCheckpointProviderForPostCommitSnapshot = amtCheckpointProviderForPostCommitSnapshot,
       isIdempotentRetry = isIdempotentRetry)
 
   /**

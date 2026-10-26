@@ -18,15 +18,16 @@ package org.apache.spark.sql.delta.deletionvectors.mumbling;
 
 import java.nio.ByteBuffer;
 
+import org.apache.spark.sql.delta.deletionvectors.MutableMumblingBitmap;
 import com.google.common.base.Preconditions;
 
 /**
- * Read-only view of a Mumbling compressed bitmap stored in a {@link ByteBuffer}.
+ * Immutable Mumbling compressed bitmap read from a {@link ByteBuffer}.
  *
- * <p>The bitmap is lazy: no decoding is done at construction time. On the first call to {@link
- * #isSet}, the PFOR-encoded descriptor array is decoded and used to build an offsets array that
- * maps each container index to its absolute byte position in the buffer. This offsets array is the
- * only derived state kept by this class.
+ * <p>The supplied bytes are copied, but descriptor decoding remains lazy. On the first call to
+ * {@link #isSet}, the PFOR-encoded descriptor array is decoded and used to build an offsets array
+ * that maps each container index to its absolute byte position in the buffer. This offsets array is
+ * the only derived state kept by this class.
  *
  * <p>Format (all integers unsigned, little-endian):
  *
@@ -36,12 +37,7 @@ import com.google.common.base.Preconditions;
  *   <li>Containers: concatenated sparse (0-31 bytes) or dense (32 bytes) containers
  * </ul>
  */
-public class MumblingBitmap {
-  private static final int VERSION = 1;
-  private static final int HEADER_SIZE = 6;
-  private static final int DENSE_CONTAINER_BIT = 0b0010_0000;
-  private static final int DENSE_CONTAINER_SIZE = 32;
-
+public final class MumblingBitmap {
   private final ByteBuffer data;
   private final int cardinality;
   private final int containerCount;
@@ -49,27 +45,43 @@ public class MumblingBitmap {
   private volatile int[] offsets = null;
 
   public MumblingBitmap(ByteBuffer data) {
-    int version = data.get(data.position()) & 0xFF;
-    if (version != VERSION) {
+    this(copyByteBuffer(data));
+  }
+
+  MumblingBitmap(byte[] data) {
+    this.data = ByteBuffer.wrap(data).asReadOnlyBuffer();
+
+    int version = this.data.get(0) & 0xFF;
+    if (version != MumblingFormat.VERSION) {
       throw new UnsupportedOperationException("Unsupported Mumbling bitmap version: " + version);
     }
 
-    this.data = data;
     this.cardinality =
-        (data.get(data.position() + 1) & 0xFF)
-            | ((data.get(data.position() + 2) & 0xFF) << 8)
-            | ((data.get(data.position() + 3) & 0xFF) << 16);
+        (this.data.get(1) & 0xFF)
+            | ((this.data.get(2) & 0xFF) << 8)
+            | ((this.data.get(3) & 0xFF) << 16);
     this.containerCount =
-        (data.get(data.position() + 4) & 0xFF) | ((data.get(data.position() + 5) & 0xFF) << 8);
+        (this.data.get(4) & 0xFF) | ((this.data.get(5) & 0xFF) << 8);
 
     Preconditions.checkState(
-        containerCount <= 8192, "Invalid container count: %s > 8,192 (max)", containerCount);
+        containerCount <= MumblingFormat.MAX_CONTAINERS,
+        "Invalid container count: %s > %s (max)",
+        containerCount,
+        MumblingFormat.MAX_CONTAINERS);
     Preconditions.checkState(
-        cardinality <= 2_097_152, "Invalid cardinality: %s > 2,097,152 (max)", cardinality);
+        cardinality <= MumblingFormat.MAX_POSITION_EXCLUSIVE,
+        "Invalid cardinality: %s > %s (max)",
+        cardinality,
+        MumblingFormat.MAX_POSITION_EXCLUSIVE);
   }
 
   public ByteBuffer buffer() {
-    return data;
+    return data.asReadOnlyBuffer();
+  }
+
+  /** Returns an independent mutable copy of this bitmap. */
+  public MutableMumblingBitmap toMutable() {
+    return new MutableMumblingBitmap(this);
   }
 
   /** Returns the number of bits set in the bitmap. */
@@ -94,7 +106,7 @@ public class MumblingBitmap {
     int containerStart = offset(containerIndex);
     int descriptor = descriptor(containerIndex);
 
-    if (isDense(descriptor)) {
+    if (MumblingFormat.isDense(descriptor)) {
       // Dense: 32-byte bitset, MSB of byte 0 is position 0
       int byteIndex = posInContainer >>> 3;
       int bitShift = 7 - (posInContainer & 0b111);
@@ -138,10 +150,12 @@ public class MumblingBitmap {
    */
   private void decodeDescriptors() {
     int[] descriptorArray = new int[containerCount];
-    int bytesRead = PFOREncoding.decode(data, HEADER_SIZE, descriptorArray, 0, containerCount);
+    int bytesRead =
+        PFOREncoding.decode(
+            data, MumblingFormat.HEADER_SIZE, descriptorArray, 0, containerCount);
 
     int[] offsetArray = new int[containerCount + 1];
-    int firstContainerOffset = data.position() + HEADER_SIZE + bytesRead;
+    int firstContainerOffset = data.position() + MumblingFormat.HEADER_SIZE + bytesRead;
     descriptorsToOffsets(firstContainerOffset, descriptorArray, offsetArray);
 
     // update the references last so that only valid values are available
@@ -149,12 +163,11 @@ public class MumblingBitmap {
     this.offsets = offsetArray;
   }
 
-  private static boolean isDense(int descriptor) {
-    return (descriptor & 0xFF) == DENSE_CONTAINER_BIT;
-  }
-
-  private static boolean isSparse(int descriptor) {
-    return descriptor < DENSE_CONTAINER_SIZE;
+  private static byte[] copyByteBuffer(ByteBuffer data) {
+    ByteBuffer source = data.slice();
+    byte[] bytes = new byte[source.remaining()];
+    source.get(bytes);
+    return bytes;
   }
 
   /**
@@ -175,9 +188,9 @@ public class MumblingBitmap {
 
     offsets[0] = baseOffset;
     for (int i = 0; i < descriptors.length; i += 1) {
-      if (isDense(descriptors[i])) {
-        offsets[i + 1] = offsets[i] + DENSE_CONTAINER_SIZE;
-      } else if (isSparse(descriptors[i])) {
+      if (MumblingFormat.isDense(descriptors[i])) {
+        offsets[i + 1] = offsets[i] + MumblingFormat.DENSE_CONTAINER_SIZE;
+      } else if (MumblingFormat.isSparse(descriptors[i])) {
         offsets[i + 1] = offsets[i] + descriptors[i];
       } else {
         throw new IllegalStateException(

@@ -262,10 +262,25 @@ public class TestMumblingBitmap {
 
   @Test
   public void testInvalidDescriptorsAreRejected() {
-    byte[] bytes = {1, 0, 0, 0, 1, 0, 0, 0, 33};
+    byte[] bytes = {1, 0, 0, 0, 1, 0, 0, 0, 64};
     MumblingBitmap bitmap = new MumblingBitmap(ByteBuffer.wrap(bytes));
     IllegalStateException error = assertThrows(IllegalStateException.class, () -> bitmap.isSet(0));
     assertTrue(error.getMessage().contains("Invalid descriptor"));
+  }
+
+  @Test
+  public void testDenseDescriptorLowBitsAreIgnored() {
+    byte[] bytes = new byte[6 + 3 + 32];
+    bytes[0] = 1;
+    bytes[1] = 1;
+    bytes[4] = 1;
+    bytes[8] = 33;
+    bytes[9] = (byte) 0x80;
+
+    MumblingBitmap bitmap = new MumblingBitmap(ByteBuffer.wrap(bytes));
+    assertEquals(1, bitmap.cardinality());
+    assertTrue(bitmap.isSet(0));
+    assertFalse(bitmap.isSet(1));
   }
 
   private static Container sparse(int... positions) {

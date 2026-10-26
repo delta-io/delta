@@ -21,11 +21,13 @@ import java.util.concurrent.TimeUnit
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, FullAMTWriteFailedWithConflict, LogSegment, MaintenanceOperation, Snapshot, WinningCommitMetrics}
-import org.apache.spark.sql.delta.actions.{Action, Checkpoint, FileAction}
+import org.apache.spark.sql.delta.actions.{Action, Checkpoint, ContentRoot, FileAction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.DeltaTestBarrier
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
@@ -106,8 +108,9 @@ object AMTConflictResolutionRoundMetrics {
   /** For field [[AMTConflictResolutionRoundMetrics.treeOutcome]]. */
   val NO_TREE_REBASE = "NO_TREE_REBASE"
   val REBUILT_INLINE_TREE = "REBUILT_INLINE_TREE"
+  val REBUILT_OPTIMIZE_CHECKPOINT_INCREMENTAL_TREE = "REBUILT_OPTIMIZE_CHECKPOINT_INCREMENTAL_TREE"
   val REUSED_LOSING_TREE = "REUSED_LOSING_TREE"
-  val REGENERATE_VIA_TXN_RETRY = "REGENERATE_VIA_TXN_RETRY"
+  val RETRY_VIA_NEW_TXN = "RETRY_VIA_NEW_TXN"
   val SKIP_WINNER_SATISFIES_REQUIREMENT = "SKIP_WINNER_SATISFIES_REQUIREMENT"
 }
 
@@ -175,11 +178,69 @@ object BackRefRebaseMetrics {
 
 /** Metrics for a single AMT write attempt (one per commit attempt that materializes a tree). */
 case class SingleAMTWriteMetrics(
+    // The maintenance trigger that scheduled this write (an [[AMTTriggerMode]] name).
     trigger: String,
-    incremental: String,
+    // Whether the tree was built incrementally (true) or fully re-materialized (false).
+    incremental: Boolean,
+    // Wall-clock time to materialize the manifest tree, in milliseconds.
     materializeDurationMs: Long,
+    // Size of the root manifest file, in bytes.
+    contentRootSizeInBytes: Long,
+    // Effective checkpoint size: the root manifest plus the live leaf manifest files, in bytes.
+    checkpointSizeInBytes: Long,
+    // Number of live (non-tombstoned) leaf-pointer manifests in the tree.
+    numLeaves: Long,
+    // Live data files in the tree (root-resident plus leaf-summarized), minus any masked by a
+    // leaf's deletion vector; equals the table's live file count.
+    numLiveDataEntries: Long,
+    // Tombstoned data files: DELETED/REPLACED entries plus deletion-vector-masked ones.
+    numTombstoneDataEntries: Long,
+    // Number of SetTransaction entries carried in the tree.
+    numSetTransactions: Long,
+    // Number of DomainMetadata entries carried in the tree.
+    numDomainMetadata: Long,
+    // Effective size of the previous AMT tree this write built on; -1 if none (the first
+    // checkpoint).
+    previousCheckpointSizeInBytes: Long = -1L,
+    // Table versions elapsed since the previous AMT tree's content version; -1 if none.
+    numVersionsSinceLastCheckpoint: Long = -1L,
+    // Number of json delta files in the pre-commit log segment folded into this checkpoint.
+    numJsonsInSnapshotSinceLastCheckpoint: Long = -1L,
     // Detailed shape breakdown of an incremental write; None for a full rewrite.
     incrementalWriteMetrics: Option[IncrementalAMTWriteMetrics] = None)
+
+object SingleAMTWriteMetrics {
+  def apply(
+      trigger: String,
+      incremental: Boolean,
+      materializeDurationMs: Long,
+      contentRoot: ContentRoot,
+      numRootLiveDataEntries: Long,
+      numRootTombstoneDataEntries: Long,
+      leaves: Seq[DataManifestEntry],
+      numSetTransactions: Long,
+      numDomainMetadata: Long,
+      incrementalWriteMetrics: Option[IncrementalAMTWriteMetrics]): SingleAMTWriteMetrics = {
+    val liveLeaves =
+      leaves.filter(leaf => Tracking.Status.liveEntryStatuses.contains(leaf.tracking.status))
+    def maskedEntries(leaf: DataManifestEntry): Long =
+      leaf.manifest_info.dvCardinality
+    SingleAMTWriteMetrics(
+      trigger = trigger,
+      incremental = incremental,
+      materializeDurationMs = materializeDurationMs,
+      contentRootSizeInBytes = contentRoot.sizeInBytes,
+      checkpointSizeInBytes = contentRoot.sizeInBytes + liveLeaves.map(_.file_size_in_bytes).sum,
+      numLeaves = liveLeaves.size.toLong,
+      numLiveDataEntries = numRootLiveDataEntries +
+        liveLeaves.map(l => l.manifest_info.liveFilesCount - maskedEntries(l)).sum,
+      numTombstoneDataEntries = numRootTombstoneDataEntries +
+        liveLeaves.map(l => l.manifest_info.tombstoneFilesCount + maskedEntries(l)).sum,
+      numSetTransactions = numSetTransactions,
+      numDomainMetadata = numDomainMetadata,
+      incrementalWriteMetrics = incrementalWriteMetrics)
+  }
+}
 
 case class IncrementalAMTWriteMetrics(
     numIntermediateCommits: Int,
@@ -254,11 +315,14 @@ class LazyAMTCheckpointProvider(
  */
 class AMTWriterManager(
     private val txnId: String,
+    private val snapshotId: Long,
     readSnapshot: Snapshot,
     initialOperation: DeltaOperations.Operation) extends DeltaLogging {
 
   import AMTConflictResolutionRoundMetrics._
   import BackRefRebaseMetrics._
+
+  require(snapshotId >= 0L, s"AMT snapshot ID must be non-negative: $snapshotId.")
 
   private def spark: SparkSession = SparkSession.active
   private def deltaLog: DeltaLog = readSnapshot.deltaLog
@@ -356,14 +420,14 @@ class AMTWriterManager(
       //   | Incremental       | Reuse base if  | Skip: winner   | Skip: winner   | Skip: winner   |
       //   | checkpoint        | valid [2];     | installed an   | installed an   | installed a    |
       //   |                   | otherwise      | incremental    | incremental    | full tree      |
-      //   |                   | regenerate via | tree           | tree           |                |
-      //   |                   | txn retry      |                |                |                |
+      //   |                   | recreate it    | tree           | tree           |                |
+      //   |                   | in-txn         |                |                |                |
       //   |-------------------|----------------|----------------|----------------|----------------|
       //   | Full              | Reuse base if  | Regenerate:    | Regenerate:    | Skip: winner   |
       //   | checkpoint        | valid [2];     | winner made    | winner made    | installed a    |
       //   |                   | otherwise      | incr. tree;    | incr. tree;    | full tree      |
       //   |                   | regenerate via | we want full   | we want full   |                |
-      //   |                   | txn retry      | chkpt          | chkpt          |                |
+      //   |                   | new txn retry  | chkpt          | chkpt          |                |
       //   |-------------------|----------------|----------------|----------------|----------------|
       //
       // [1] back references are selectively re-derived against an
@@ -387,13 +451,15 @@ class AMTWriterManager(
     }
 
     def writeTree(): Option[AMTWriteResult] = initialOperation match {
-      case _: DeltaOperations.OptimizeCheckpoint if rebasing =>
+      case optimize: DeltaOperations.OptimizeCheckpoint if rebasing =>
         // A concurrent commit won our target version: reuse the already-written base tree as-is
         // or signal a full-AMT regenerate.
         handleLosingOptimizeCheckpoint(
+          nextAttemptVersion,
           preCommitLogSegment,
           currentTransactionInfo,
           winningCommitMetricsForConflictedRange,
+          optimize.triggerName,
           metrics)
       case optimize: DeltaOperations.OptimizeCheckpoint =>
         assert(actionsToCommit.isEmpty,
@@ -465,16 +531,21 @@ class AMTWriterManager(
    * lost only to log-only winners, and every winner touched only files created strictly after that
    * tree's content-root version (min defaultRowCommitVersion > the base version), the tree is still
    * exact -- recommit it as-is (this holds whether the base was a full or an incremental rewrite).
-   * Otherwise a winner changed content the base tree describes, so the tree must be rebuilt: signal
-   * [[FullAMTWriteFailedWithConflict]] for the caller (CheckpointHook) to refresh and redo the
-   * rewrite from scratch. A winner that installed its own tree makes a redundant checkpoint skip as
-   * a clean no-op ([[ConcurrentAMTCheckpointLandedException]]); a losing full checkpoint whose
-   * winner wrote only an incremental tree signals [[FullAMTWriteFailedWithConflict]] to regenerate.
+   * Otherwise a winner changed content the base tree describes, so the tree must be rebuilt: a
+   * losing incremental checkpoint recreates itself from scratch against the new pre-commit log
+   * segment inside this transaction (its base is unchanged and its fold window is small); a losing
+   * full checkpoint signals [[FullAMTWriteFailedWithConflict]] for the caller (CheckpointHook) to
+   * refresh and redo the rewrite from scratch. A winner that installed its own tree makes a
+   * redundant checkpoint skip as a clean no-op ([[ConcurrentAMTCheckpointLandedException]]); a
+   * losing full checkpoint whose winner wrote only an incremental tree signals
+   * [[FullAMTWriteFailedWithConflict]] to regenerate.
    */
   private def handleLosingOptimizeCheckpoint(
+      nextAttemptVersion: Long,
       preCommitLogSegment: LogSegment,
       currentTransactionInfo: CurrentTransactionInfo,
       winningCommitMetricsForConflictedRange: Seq[WinningCommitMetrics],
+      triggerName: String,
       metrics: AMTMetrics): Option[AMTWriteResult] = {
     def updateExceptionOutcome(
         treeOutcome: String,
@@ -525,7 +596,7 @@ class AMTWriterManager(
       val exception = DeltaErrors.fullAMTWriteFailedWithConflict(
         conflictingCommitVersion = winnerManifestCommitVersion)
       updateExceptionOutcome(
-        treeOutcome = REGENERATE_VIA_TXN_RETRY,
+        treeOutcome = RETRY_VIA_NEW_TXN,
         winnerTreeSatisfiesRequirement = Some(false),
         exception = exception)
       throw exception
@@ -555,15 +626,29 @@ class AMTWriterManager(
       }
       metrics.conflictResolutionMetrics.foreach(_.updateOutcome(REUSED_LOSING_TREE))
       Some(baseResult)
+    } else if (baseResult.checkpoint.contentRoot.isIncremental.contains(true)) {
+      // A winner changed content the losing INCREMENTAL checkpoint's base describes, so it cannot
+      // be reused as-is. Its base tree (the prior checkpoint it extends) is unchanged -- the
+      // winners were log-only -- and its fold window is small, so recreate the incremental
+      // checkpoint from scratch against the new pre-commit log segment (folding the winners in)
+      // inside this transaction, rather than raising [[FullAMTWriteFailedWithConflict]] and
+      // regenerating it from scratch via an external retry.
+      metrics.conflictResolutionMetrics.foreach(
+        _.updateOutcome(REBUILT_OPTIMIZE_CHECKPOINT_INCREMENTAL_TREE))
+      val result = materialize(
+        nextAttemptVersion, currentTransactionInfo, preCommitLogSegment,
+        incremental = true, trigger = triggerName)
+      metrics.singleAMTWriteMetrics = Some(result.amtWriteMetrics)
+      Some(result)
     } else {
-      // A winner changed content the base tree describes, so it cannot be reused as-is.
+      // A winner changed content the full base tree describes, so it cannot be reused as-is.
       // The caller should do a retry in this case.
       val winnerWroteTree =
         winningCommitMetricsForConflictedRange.exists(_.checkpointAction.isDefined)
       val exception = DeltaErrors.fullAMTWriteFailedWithConflict(
         conflictingCommitVersion = preCommitLogSegment.version)
       updateExceptionOutcome(
-        treeOutcome = REGENERATE_VIA_TXN_RETRY,
+        treeOutcome = RETRY_VIA_NEW_TXN,
         winnerTreeSatisfiesRequirement = if (winnerWroteTree) Some(false) else None,
         exception = exception)
       throw exception
@@ -614,7 +699,7 @@ class AMTWriterManager(
       s"Cached AMT provider ${amtProviderOpt.map(_.checkpointAction.version)} is out of sync " +
         "with preCommitLatestAMTCheckpointOpt " +
         s"${currentTransactionInfo.preCommitLatestAMTCheckpointOpt.map(_.version)}.")
-    if (incremental) {
+    val result = if (incremental) {
       // A retry may have advanced to a winning AMT. Prefer that tree over snapshot bootstrap.
       val (baseActionsProvider, oldAMTVersion): (BaseAMTActionsProvider, Long) =
         amtProviderOpt match {
@@ -625,13 +710,13 @@ class AMTWriterManager(
             (new BaseSnapshotActionsProvider(readSnapshot), readSnapshot.version)
         }
       // The commits written after the old AMT, up to the last committed version.
-      val intermediateLogCommits = preCommitLogSegment.deltas
-        .filter(f => FileNames.getFileVersion(f) > oldAMTVersion)
+      val intermediateLogCommits = selectIntermediateLogCommits(preCommitLogSegment, oldAMTVersion)
       new IncrementalAMTWriter(spark, deltaLog).writeIncremental(
         oldAMTActionsProvider = baseActionsProvider,
         intermediateLogCommits = intermediateLogCommits,
         attemptVersion = commitVersion,
         actionsToCommit = currentTransactionInfo.actions,
+        snapshotId = snapshotId,
         trigger = trigger)
     } else {
       assert(currentTransactionInfo.actions.isEmpty,
@@ -643,8 +728,42 @@ class AMTWriterManager(
         commitVersion = commitVersion,
         postCommitProtocol = currentTransactionInfo.protocol,
         postCommitMetadata = currentTransactionInfo.metadata,
+        snapshotId = snapshotId,
         trigger = trigger)
     }
+    // Enrich the writer's metrics with log-segment context.
+    result.copy(amtWriteMetrics = result.amtWriteMetrics.copy(
+      previousCheckpointSizeInBytes =
+        amtProviderOpt.map(_.effectiveCheckpointSizeInBytes()).getOrElse(-1L),
+      numVersionsSinceLastCheckpoint = amtProviderOpt
+        .map(result.contentRootVersion - _.checkpointAction.contentRoot.version).getOrElse(-1L),
+      numJsonsInSnapshotSinceLastCheckpoint = preCommitLogSegment.deltas.size.toLong))
+  }
+
+  /**
+   * Selects the intermediate log commits after the old AMT version from the pre-commit log segment.
+   * Preserves compacted deltas when possible, falling back to individual commits when the AMT sits
+   * in the middle of a compacted delta range.
+   */
+  private[amt] def selectIntermediateLogCommits(
+      preCommitLogSegment: LogSegment,
+      oldAMTVersion: Long): Seq[FileStatus] = {
+    val nonCompactedDeltas = preCommitLogSegment.nonCompactedDeltasOpt.getOrElse {
+      AMTUtils.logAndThrowMissingNonCompactedDeltasInLogSegment(
+        deltaLog = deltaLog,
+        logSegment = preCommitLogSegment,
+        eventData = Map("oldAMTVersion" -> oldAMTVersion))
+      throw new IllegalStateException("should not reach here")
+    }
+    val deltasAndCompactedDeltas =
+      (preCommitLogSegment.deltas ++ nonCompactedDeltas).distinct.sortBy(_.getPath.getName)
+    val deltasAfterOldAMT =
+      nonCompactedDeltas.filter(FileNames.getFileVersion(_) > oldAMTVersion).toArray
+    deltaLog.useCompactedDeltasForLogSegment(
+      deltasAndCompactedDeltas = deltasAndCompactedDeltas,
+      deltasAfterCheckpoint = deltasAfterOldAMT,
+      latestCommitVersion = preCommitLogSegment.version,
+      checkpointVersionToUse = oldAMTVersion).toSeq
   }
 
   private def largeCommitActionsCountThresholdForInlineManifestCommit: Long =
@@ -737,9 +856,9 @@ class AMTWriterManager(
         actions
     }
     lastRebasedAMTVersion = foldedAMTVersion
+    DeltaTestBarrier.waitIfEnabled(AMTWriterManager.REBASE_BACK_REFERENCES_TEST_BARRIER)
     currentTransactionInfo.copy(actions = restampedActions)
   }
-
   // **************** AMT Metric related helpers ****************
 
   private def initializeAMTMetricsDuringRebase(
@@ -824,6 +943,22 @@ class AMTWriterManager(
 
 }
 object AMTWriterManager extends DeltaLogging {
+  /**
+   * Test barrier label. When a suite arms this barrier, [[AMTWriterManager.rebaseBackReferences]]
+   * pauses right after a rebase that installed a new tree, letting the suite commit another
+   * concurrent winner and drive a second conflict round.
+   */
+  private[delta] val REBASE_BACK_REFERENCES_TEST_BARRIER =
+    "AMTWriterManager.rebaseBackReferences"
+
+  /**
+   * Test barrier label. When a suite arms this barrier, [[emitAMTCheckpoint]] pauses on each
+   * full-AMT regenerate retry (after refreshing its snapshot), letting the suite land another
+   * conflicting winner and drive the retry loop to its configured bound.
+   */
+  private[delta] val FULL_AMT_REGENERATE_RETRY_TEST_BARRIER =
+    "AMTWriterManager.fullAMTRegenerateRetry"
+
 
   /**
    * Emits the AMT for `snapshot` by committing a follow-up OPTIMIZE CHECKPOINT that
@@ -880,6 +1015,8 @@ object AMTWriterManager extends DeltaLogging {
             log"version ${MDC(DeltaLogKeys.VERSION, e.conflictingCommitVersion)}; regenerating " +
             log"against the refreshed snapshot.")
           readSnapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
+          // Lets a test land another conflicting winner between retries to exercise the bound.
+          DeltaTestBarrier.waitIfEnabled(FULL_AMT_REGENERATE_RETRY_TEST_BARRIER)
       }
     }
   }

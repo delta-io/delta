@@ -307,6 +307,8 @@ You can list the partitions of a partitioned Delta table using `SHOW PARTITIONS`
 
 Unlike Spark's native `SHOW PARTITIONS`, Delta returns one typed column for each partition key instead of a single `key=value/...` string. You can also provide an optional `PARTITION (...)` clause to filter the returned partitions.
 
+This works for both managed and path-based Delta tables, including managed tables registered through a catalog such as Unity Catalog.
+
 See [Configure SparkSession](/delta-batch/#configure-sparksession) for steps to enable support for SQL commands in Apache Spark.
 
 <Tabs syncKey="code-examples">
@@ -339,6 +341,21 @@ See [Configure SparkSession](/delta-batch/#configure-sparksession) for steps to 
   
     ```sql
     SHOW PARTITIONS delta.`/data/events/`;
+    ```
+
+    ```text
+    +----------+-------+
+    | date     | region|
+    +----------+-------+
+    |2024-01-01|us     |
+    |2024-01-02|eu     |
+    +----------+-------+
+    ```
+
+    ```sql
+    -- Also works for a managed table registered through a catalog, using a
+    -- fully qualified table name.
+    SHOW PARTITIONS my_catalog.my_schema.eventsTable;
     ```
 
     ```text

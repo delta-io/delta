@@ -22,7 +22,8 @@ import io.delta.kernel.CommitRange
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.DeltaHistoryManager
 import io.delta.kernel.internal.SnapshotImpl
-import io.delta.spark.internal.v2.exception.VersionNotFoundException
+import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
+import org.apache.spark.sql.delta.v2.kernel.KernelContext
 
 import org.apache.spark.sql.delta.Snapshot
 
@@ -43,8 +44,8 @@ trait DeltaV2SnapshotManager {
   def loadLatestSnapshot(): Snapshot
 
   /** Loads the latest snapshot using inputs scoped to the current query. */
-  def loadLatestSnapshot(queryContextOpt: Option[DeltaV2QueryContext]): Snapshot = {
-    Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
+  def loadLatestSnapshot(queryContext: DeltaV2QueryContext): Snapshot = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     loadLatestSnapshot()
   }
 
@@ -59,8 +60,8 @@ trait DeltaV2SnapshotManager {
   /** Loads a versioned snapshot using inputs scoped to the current query. */
   def loadSnapshotAt(
       version: Long,
-      queryContextOpt: Option[DeltaV2QueryContext]): Snapshot = {
-    Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
+      queryContext: DeltaV2QueryContext): Snapshot = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     loadSnapshotAt(version)
   }
 
@@ -88,8 +89,8 @@ trait DeltaV2SnapshotManager {
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
       canReturnEarliestCommit: Boolean,
-      queryContextOpt: Option[DeltaV2QueryContext]): DeltaHistoryManager.Commit = {
-    Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
+      queryContext: DeltaV2QueryContext): DeltaHistoryManager.Commit = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     getActiveCommitAtTime(
       timestampMillis,
       canReturnLastCommit,
@@ -120,8 +121,8 @@ trait DeltaV2SnapshotManager {
       version: Long,
       mustBeRecreatable: Boolean,
       allowOutOfRange: Boolean,
-      queryContextOpt: Option[DeltaV2QueryContext]): Unit = {
-    Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
+      queryContext: DeltaV2QueryContext): Unit = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     checkVersionExists(version, mustBeRecreatable, allowOutOfRange)
   }
 
@@ -143,8 +144,8 @@ trait DeltaV2SnapshotManager {
       kernelEngine: Engine,
       startVersion: Long,
       endVersion: Optional[java.lang.Long],
-      queryContextOpt: Option[DeltaV2QueryContext]): CommitRange = {
-    Objects.requireNonNull(queryContextOpt, "queryContextOpt is null")
+      queryContext: DeltaV2QueryContext): CommitRange = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
     getTableChanges(kernelEngine, startVersion, endVersion)
   }
 }
@@ -155,12 +156,17 @@ object DeltaV2SnapshotManager {
    * Wraps a Kernel snapshot in the V1 [[Snapshot]] facade returned by manager load APIs.
    *
    * @param kernelSnapshot the Kernel snapshot to wrap
+   * @param kernelContext the context used to load and access the snapshot
    * @param tablePath table path used in construction-error messages
    * @return the V1 snapshot facade
    */
-  def wrapKernelSnapshot(kernelSnapshot: SnapshotImpl, tablePath: String): Snapshot = {
+  def wrapKernelSnapshot(
+      kernelSnapshot: SnapshotImpl,
+      kernelContext: KernelContext,
+      tablePath: String): Snapshot = {
     Objects.requireNonNull(kernelSnapshot, "kernelSnapshot is null")
+    Objects.requireNonNull(kernelContext, "kernelContext is null")
     Objects.requireNonNull(tablePath, "tablePath is null")
-    new DeltaV2Snapshot(kernelSnapshot)
+    new DeltaV2Snapshot(kernelSnapshot, kernelContext)
   }
 }

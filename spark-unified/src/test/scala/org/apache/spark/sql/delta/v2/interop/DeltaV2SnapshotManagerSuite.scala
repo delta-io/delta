@@ -80,32 +80,32 @@ class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
       }
     }
 
-    val queryContextOpt = Option.empty[DeltaV2QueryContext]
+    val queryContext = DeltaV2QueryContext.empty
 
-    assert(manager.loadLatestSnapshot(queryContextOpt) == null)
-    assert(manager.loadSnapshotAt(17, queryContextOpt) == null)
+    assert(manager.loadLatestSnapshot(queryContext) == null)
+    assert(manager.loadSnapshotAt(17, queryContext) == null)
     assert(
       manager.getActiveCommitAtTime(
         23,
         canReturnLastCommit = true,
         mustBeRecreatable = true,
         canReturnEarliestCommit = false,
-        queryContextOpt = queryContextOpt) == null)
+        queryContext = queryContext) == null)
     manager.checkVersionExists(
       29,
       mustBeRecreatable = true,
       allowOutOfRange = false,
-      queryContextOpt = queryContextOpt)
+      queryContext = queryContext)
     assert(
       manager.getTableChanges(
         null,
         31,
         Optional.of[JLong](37L),
-        queryContextOpt) == null)
+        queryContext) == null)
 
     def assertNullQueryContext(body: => Any): Unit = {
       val error = intercept[NullPointerException](body)
-      assert(error.getMessage == "queryContextOpt is null")
+      assert(error.getMessage == "queryContext is null")
     }
 
     assertNullQueryContext(manager.loadLatestSnapshot(null))

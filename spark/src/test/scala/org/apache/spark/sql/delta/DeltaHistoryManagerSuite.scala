@@ -738,8 +738,10 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests {
         deltaLog.history.getCommitFromNonICTRange(0, 1, start)
       }
 
-      assert(e.getMessage.contains("DELTA_NO_COMMITS_FOUND"))
-      assert(e.getMessage.contains(deltaLog.logPath.toString))
+      checkError(
+        e,
+        "DELTA_NO_COMMITS_FOUND",
+        parameters = Map("logPath" -> deltaLog.logPath.toString))
     }
   }
 

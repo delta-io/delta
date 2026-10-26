@@ -963,6 +963,7 @@ class SnapshotManagementParallelListingSuite extends QueryTest
       deltas = (0L until 20L).map(deltaStatus),
       nonCompactedDeltasOpt = None,
       checkpointProviderOpt = None,
+      deltaAtCheckpointVersionOpt = None,
       lastCommitTimestamp = 0L)
 
     // Each rendered delta path ends in ".json"; the truncation marker does not.

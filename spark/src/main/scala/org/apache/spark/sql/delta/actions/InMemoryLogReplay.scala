@@ -36,12 +36,17 @@ import org.apache.hadoop.fs.Path
  *    (either [[AddFile]] or [[RemoveFile]])
  *
  * This class is not thread safe.
+ *
+ * @param retainFirstBackreference Whether to retain the first non-empty back reference for each
+ *                                 UniqueFileActionTuple or let the last action win.
+ *
  */
 class InMemoryLogReplay(
     minFileRetentionTimestamp: Option[Long],
     minSetTransactionRetentionTimestamp: Option[Long],
     tableRoot: Path,
-    useDeletionVectorObjectIdentity: Boolean) extends LogReplay {
+    useDeletionVectorObjectIdentity: Boolean,
+    retainFirstBackreference: Boolean = false) extends LogReplay {
 
   private var currentProtocolVersion: Protocol = null
   private var currentVersion: Long = -1
@@ -55,11 +60,24 @@ class InMemoryLogReplay(
   // RemoveFiles that had NOT cancelled any AddFile during replay
   private val activeRemoveFiles =
     new scala.collection.mutable.HashMap[UniqueFileActionTuple, RemoveFile]()
+  // The first seen non-empty AMT BackReference for each unique file action.
+  private lazy val firstBackReferences =
+    new scala.collection.mutable.HashMap[UniqueFileActionTuple, BackReference]()
 
-  override def append(version: Long, actions: Iterator[Action]): Unit = {
-    assert(currentVersion == -1 || version == currentVersion + 1,
-      s"Attempted to replay version $version, but state is at $currentVersion")
-    currentVersion = version
+  override def append(version: Long, actions: Iterator[Action]): Unit =
+    append(version, version, actions)
+
+  /**
+   * Appends actions representing the inclusive commit range `[startVersion, endVersion]`.
+   * This provides clear semantics when replaying compacted deltas.
+   */
+  def append(startVersion: Long, endVersion: Long, actions: Iterator[Action]): Unit = {
+    val rangeStr = s"[$startVersion, $endVersion]"
+    require(startVersion <= endVersion, s"Attempted to replay invalid version range $rangeStr")
+    assert(currentVersion == -1 || startVersion == currentVersion + 1,
+      s"Attempted to replay version range $rangeStr, but state is at $currentVersion")
+    currentVersion = endVersion
+
     actions.foreach {
       case a: SetTransaction =>
         transactions(a.appId) = a
@@ -79,12 +97,18 @@ class InMemoryLogReplay(
         cancelledRemoveFiles.remove(uniquePath)
         // Remove from activeRemoveFiles to handle commits that add a previously-removed file
         activeRemoveFiles.remove(uniquePath)
+        if (retainFirstBackreference) {
+          add.backReference.foreach(br => firstBackReferences.getOrElseUpdate(uniquePath, br))
+        }
       case remove: RemoveFile =>
         val uniquePath =
           remove.toUniqueFileActionTuple(tableRoot, useDeletionVectorObjectIdentity)
         activeFiles.remove(uniquePath) match {
           case Some(_) => cancelledRemoveFiles(uniquePath) = remove
           case None => activeRemoveFiles(uniquePath) = remove
+        }
+        if (retainFirstBackreference) {
+          remove.backReference.foreach(br => firstBackReferences.getOrElseUpdate(uniquePath, br))
         }
       case _: CommitInfo => // do nothing
       case _: AddCDCFile => // do nothing
@@ -93,13 +117,31 @@ class InMemoryLogReplay(
     }
   }
 
+  private def getLiveFiles: Iterable[AddFile] = {
+    if (retainFirstBackreference) {
+      activeFiles.map { case (uniquePath, add) =>
+        firstBackReferences.get(uniquePath)
+          .map(preservedBackReference => add.copy(backReference = Some(preservedBackReference)))
+          .getOrElse(add)
+      }
+    } else {
+      activeFiles.values
+    }
+  }
+
   private def getTombstones: Iterable[FileAction] = {
-    val allRemovedFiles = cancelledRemoveFiles.values ++ activeRemoveFiles.values
+    val allRemovedFiles = cancelledRemoveFiles.toSeq ++ activeRemoveFiles.toSeq
     val filteredRemovedFiles = minFileRetentionTimestamp match {
       case None => allRemovedFiles
-      case Some(timestamp) => allRemovedFiles.filter(_.delTimestamp > timestamp)
+      case Some(timestamp) => allRemovedFiles.filter(_._2.delTimestamp > timestamp)
     }
-    filteredRemovedFiles.map(_.copy(dataChange = false))
+    filteredRemovedFiles.map { case (uniquePath, remove) =>
+      if (retainFirstBackreference) {
+        remove.copy(dataChange = false, backReference = firstBackReferences.get(uniquePath))
+      } else {
+        remove.copy(dataChange = false)
+      }
+    }
   }
 
   private[delta] def getTransactions: Iterable[SetTransaction] = {
@@ -125,7 +167,7 @@ class InMemoryLogReplay(
 
   /** Returns the current state of the Table as an iterator of actions. */
   override def checkpoint: Iterator[Action] = {
-    val fileActions = (activeFiles.values ++ getTombstones).toSeq.sortBy(_.path)
+    val fileActions = (getLiveFiles ++ getTombstones).toSeq.sortBy(_.path)
 
     Option(currentProtocolVersion).toIterator ++
     Option(currentMetaData).toIterator ++
