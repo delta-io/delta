@@ -27,7 +27,6 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -63,6 +62,7 @@ import org.apache.spark.sql.delta.SnapshotDescriptor;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.TypeWidening;
+import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot;
 import org.apache.spark.sql.delta.sources.AdmittableFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
@@ -631,7 +631,7 @@ class DeltaV2MicroBatchStream
       IndexedFile indexedFile, boolean isCDC, ZoneId zoneId) {
     if (indexedFile.getAddFile() != null) {
       AddFile addFile = indexedFile.getAddFile();
-      if (isExcludedPath(addFile.getPath())) return null;
+      if (isExcludedPath(addFile.path())) return null;
       return PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
     }
     if (isCDC && indexedFile.getCDCDataFile() != null) {
@@ -1671,8 +1671,7 @@ class DeltaV2MicroBatchStream
       // data without changing the logical content.
       Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
       if (addOpt.isPresent()) {
-        AddFile addFile = addOpt.get();
-        output.add(IndexedFile.addFile(version, index++, addFile));
+        output.add(IndexedFile.addFile(version, index++, addOpt.get()));
       }
     }
 
@@ -1734,15 +1733,10 @@ class DeltaV2MicroBatchStream
     }
 
     // TODO: Add range-aware iteration to DeltaSourceSnapshot so V1 and V2 can filter the
-    // already-processed prefix before decoding files, and V2 avoids converting skipped AddFiles.
+    // already-processed prefix before decoding files.
     CloseableIterator<IndexedFile> snapshotFiles =
         Utils.toCloseableIterator(CollectionConverters.asJava(initialSnapshot.iterator()))
-            .map(
-                file ->
-                    IndexedFile.addFile(
-                        file.version(),
-                        file.index(),
-                        KernelActionUtils$.MODULE$.toKernelScanAddFile(file.add())));
+            .map(file -> IndexedFile.addFile(file.version(), file.index(), file.add()));
     return addBeginAndEndIndexOffsetsForVersion(version, snapshotFiles);
   }
 
@@ -1929,11 +1923,12 @@ class DeltaV2MicroBatchStream
       // Bucket AddFile and RemoveFile by path to detect same-path pairs.
       // DV-based deletes reuse the same parquet file (marking rows in the DV instead of rewriting),
       // so both the Remove and Add reference the same path.
-      Map<String, AddFile> addByPath = new HashMap<>();
+      Map<String, io.delta.kernel.internal.actions.AddFile> addByPath = new HashMap<>();
       Map<String, RemoveFile> removeByPath = new HashMap<>();
       for (CDCDataFile cdc : inferredCdcFiles) {
         if (cdc.getAddFile() != null) {
-          AddFile prev = addByPath.put(cdc.getAddFile().getPath(), cdc.getAddFile());
+          io.delta.kernel.internal.actions.AddFile prev =
+              addByPath.put(cdc.getAddFile().getPath(), cdc.getAddFile());
           Preconditions.checkArgument(
               prev == null,
               "Unexpected duplicate AddFile at path %s in a single commit",
@@ -1961,7 +1956,7 @@ class DeltaV2MicroBatchStream
           result.add(IndexedFile.cdc(version, fileIndex++, cdc));
         } else if (emittedPairs.add(path)) {
           // First occurrence of a same-path pair: emit the consolidated pair entries.
-          AddFile add = addByPath.get(path);
+          io.delta.kernel.internal.actions.AddFile add = addByPath.get(path);
           RemoveFile remove = removeByPath.get(path);
           if (add.getDeletionVector().isPresent() || remove.getDeletionVector().isPresent()) {
             // DV-based delete/restore: compute the bitmap diff and emit one CDC file per diff

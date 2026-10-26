@@ -25,7 +25,6 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
-import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -37,7 +36,9 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.*;
 import org.apache.spark.annotation.Experimental;
+import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.read.CDCDataFile;
 
 /**
@@ -112,12 +113,14 @@ public class StreamingHelper {
         addFileRow != null,
         String.format("Failed to extract AddFile struct from columnar batch at rowId=%d.", rowId));
 
-    return Optional.of(new AddFile(addFileRow));
+    return Optional.of(
+        KernelActionUtils$.MODULE$.addFileFromKernel(
+            new io.delta.kernel.internal.actions.AddFile(addFileRow)));
   }
 
   /** Get AddFile action from a batch at the specified row, if present and has dataChange=true. */
   public static Optional<AddFile> getAddFileWithDataChange(ColumnarBatch columnarBatch, int rowId) {
-    return getAddFile(columnarBatch, rowId).filter(AddFile::getDataChange);
+    return getAddFile(columnarBatch, rowId).filter(AddFile::dataChange);
   }
 
   /**
