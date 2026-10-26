@@ -22,6 +22,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.hooks.InflightDMLRegistry
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FINDING_TOUCHED_FILES_MSG}
@@ -127,6 +128,10 @@ case class DeleteCommand(
   override lazy val metrics = createMetrics
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
+    // Async Auto Compaction DML yield: register this DELETE so concurrent async AC yields.
+    val deleteTableId = deltaLog.unsafeVolatileTableId
+    InflightDMLRegistry.acquire(deleteTableId)
+    try {
     recordDeltaOperation(deltaLog, "delta.dml.delete") {
       deltaLog.withNewTransaction(catalogTable) { txn =>
         DeltaLog.assertRemovable(txn.snapshot)
@@ -161,6 +166,9 @@ case class DeleteCommand(
       Seq(Row(-1L))
     } else {
       Seq(Row(metrics("numDeletedRows").value))
+    }
+    } finally {
+      InflightDMLRegistry.release(deleteTableId)
     }
   }
 
