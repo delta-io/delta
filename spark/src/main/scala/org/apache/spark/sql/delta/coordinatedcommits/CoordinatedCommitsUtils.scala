@@ -228,13 +228,6 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       spark.sessionState.conf.contains(config.defaultTablePropertyKey)
   }
 
-  private def isIncompatibleWithAMT(
-      feature: TableFeature,
-      configuration: Map[String, String]): Boolean = {
-    AMTUtils.amtRequested(configuration) &&
-      AdaptiveMetadataTableFeature.incompatibleFeatures.contains(feature)
-  }
-
   /**
    * Updates table metadata with appropriate QoL features for CatalogManaged tables.
    *
@@ -251,7 +244,8 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     val qoLConfigsToAdd = QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
       case (feature, config, targetValue) if
           !isAlreadyConfigured(config, metadata.configuration, spark) &&
-          !isIncompatibleWithAMT(feature, metadata.configuration) =>
+          !(AMTUtils.amtRequested(metadata.configuration) &&
+            AdaptiveMetadataTableFeature.incompatibleFeatures.contains(feature)) =>
         config.key -> targetValue
     }.toMap
     metadata.copy(configuration = metadata.configuration ++ qoLConfigsToAdd)
