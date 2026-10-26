@@ -19,15 +19,25 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static io.delta.kernel.internal.actions.AddFile.SCHEMA_WITHOUT_STATS;
 
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.io.File;
 import java.sql.Timestamp;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -35,6 +45,7 @@ import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
@@ -48,6 +59,72 @@ import scala.Option;
 public class StreamingHelperTest extends DeltaV2TestBase {
 
   private PathBasedSnapshotManager snapshotManager;
+
+  @Test
+  public void testGetAddFileRespectsSelectionAndDataChange() {
+    Row addRow = createAddFileRow(true);
+    ColumnVector adds =
+        VectorUtils.buildColumnVector(
+            Arrays.asList(addRow, addRow, addRow, createAddFileRow(false)),
+            SCHEMA_WITHOUT_STATS);
+    ColumnarBatch batch = createAddFileBatch(adds);
+    ColumnVector selection =
+        VectorUtils.buildColumnVector(
+            Arrays.asList(true, false, null, true), BooleanType.BOOLEAN);
+    FilteredColumnarBatch selected = new FilteredColumnarBatch(batch, Optional.of(selection));
+
+    Optional<AddFile> addFile = StreamingHelper.getAddFile(selected, 0);
+    assertTrue(addFile.isPresent());
+    assertEquals("file.parquet", addFile.get().path());
+    assertTrue(addFile.get().dataChange());
+    assertFalse(StreamingHelper.getAddFile(selected, 1).isPresent());
+    assertFalse(StreamingHelper.getAddFile(selected, 2).isPresent());
+    assertFalse(StreamingHelper.getAddFile(selected, 3).get().dataChange());
+
+    FilteredColumnarBatch unfiltered = new FilteredColumnarBatch(batch, Optional.empty());
+    assertTrue(StreamingHelper.getAddFile(unfiltered, 1).isPresent());
+    assertTrue(StreamingHelper.getAddFileWithDataChange(batch, 0).isPresent());
+    assertFalse(StreamingHelper.getAddFileWithDataChange(batch, 3).isPresent());
+
+    ColumnVector absentAdd =
+        VectorUtils.buildColumnVector(Collections.singletonList(null), SCHEMA_WITHOUT_STATS);
+    ColumnarBatch absentBatch = createAddFileBatch(absentAdd);
+    assertFalse(
+        StreamingHelper.getAddFile(new FilteredColumnarBatch(absentBatch, Optional.empty()), 0)
+            .isPresent());
+    assertFalse(StreamingHelper.getAddFileWithDataChange(absentBatch, 0).isPresent());
+  }
+
+  private static ColumnarBatch createAddFileBatch(ColumnVector adds) {
+    return new ColumnarBatch() {
+      @Override
+      public StructType getSchema() {
+        return new StructType().add("add", SCHEMA_WITHOUT_STATS);
+      }
+
+      @Override
+      public ColumnVector getColumnVector(int ordinal) {
+        return adds;
+      }
+
+      @Override
+      public int getSize() {
+        return adds.getSize();
+      }
+    };
+  }
+
+  private static Row createAddFileRow(boolean dataChange) {
+    return new GenericRow(
+        SCHEMA_WITHOUT_STATS,
+        Map.of(
+            SCHEMA_WITHOUT_STATS.indexOf("path"), "file.parquet",
+            SCHEMA_WITHOUT_STATS.indexOf("partitionValues"),
+                VectorUtils.stringStringMapValue(Map.of()),
+            SCHEMA_WITHOUT_STATS.indexOf("size"), 1L,
+            SCHEMA_WITHOUT_STATS.indexOf("modificationTime"), 1L,
+            SCHEMA_WITHOUT_STATS.indexOf("dataChange"), dataChange));
+  }
 
   @Test
   public void testUnsafeVolatileSnapshot(@TempDir File tempDir) {

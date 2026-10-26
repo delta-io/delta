@@ -16,6 +16,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.utils.CloseableIterator;
+import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.utils.PartitionUtils;
 import org.apache.spark.sql.delta.v2.utils.SchemaUtils;
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
@@ -198,7 +199,9 @@ class DeltaV2ChangelogBatch implements Batch {
           while (actionsIter.hasNext()) {
             ColumnarBatch batch = actionsIter.next();
             for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-              Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
+              // TODO: Use V1 AddFile in changelog planning to remove this conversion.
+              Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId)
+                  .map(KernelActionUtils$.MODULE$::toKernelScanAddFile);
               if (addOpt.isPresent()) {
                 AddFile add = addOpt.get();
                 String deletionVectorBase64 =
