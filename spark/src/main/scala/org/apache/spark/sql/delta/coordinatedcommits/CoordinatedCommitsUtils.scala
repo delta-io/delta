@@ -22,8 +22,9 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, CoordinatedCommitsTableFeature, DeletionVectorsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, NameMapping, OptimisticTransaction, RowTrackingFeature, Snapshot, SnapshotDescriptor, TableFeature, V2CheckpointTableFeature}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CatalogOwnedTableFeature, CheckpointPolicy, CoordinatedCommitsTableFeature, DeletionVectorsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, NameMapping, OptimisticTransaction, RowTrackingFeature, Snapshot, SnapshotDescriptor, TableFeature, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -227,6 +228,13 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       spark.sessionState.conf.contains(config.defaultTablePropertyKey)
   }
 
+  private def isIncompatibleWithAMT(
+      feature: TableFeature,
+      configuration: Map[String, String]): Boolean = {
+    AMTUtils.amtRequested(configuration) &&
+      AdaptiveMetadataTableFeature.incompatibleFeatures.contains(feature)
+  }
+
   /**
    * Updates table metadata with appropriate QoL features for CatalogManaged tables.
    *
@@ -242,7 +250,8 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       metadata: Metadata): Metadata = {
     val qoLConfigsToAdd = QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
       case (feature, config, targetValue) if
-          !isAlreadyConfigured(config, metadata.configuration, spark) =>
+          !isAlreadyConfigured(config, metadata.configuration, spark) &&
+          !isIncompatibleWithAMT(feature, metadata.configuration) =>
         config.key -> targetValue
     }.toMap
     metadata.copy(configuration = metadata.configuration ++ qoLConfigsToAdd)
