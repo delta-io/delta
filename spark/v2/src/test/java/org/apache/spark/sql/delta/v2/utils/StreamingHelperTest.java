@@ -15,11 +15,11 @@
  */
 package org.apache.spark.sql.delta.v2.utils;
 
+import static io.delta.kernel.internal.actions.AddFile.SCHEMA_WITHOUT_STATS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static io.delta.kernel.internal.actions.AddFile.SCHEMA_WITHOUT_STATS;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -65,12 +65,10 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     Row addRow = createAddFileRow(true);
     ColumnVector adds =
         VectorUtils.buildColumnVector(
-            Arrays.asList(addRow, addRow, addRow, createAddFileRow(false)),
-            SCHEMA_WITHOUT_STATS);
+            Arrays.asList(addRow, addRow, addRow, createAddFileRow(false)), SCHEMA_WITHOUT_STATS);
     ColumnarBatch batch = createAddFileBatch(adds);
     ColumnVector selection =
-        VectorUtils.buildColumnVector(
-            Arrays.asList(true, false, null, true), BooleanType.BOOLEAN);
+        VectorUtils.buildColumnVector(Arrays.asList(true, false, null, true), BooleanType.BOOLEAN);
     FilteredColumnarBatch selected = new FilteredColumnarBatch(batch, Optional.of(selection));
 
     Optional<AddFile> addFile = StreamingHelper.getAddFile(selected, 0);
@@ -118,12 +116,16 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     return new GenericRow(
         SCHEMA_WITHOUT_STATS,
         Map.of(
-            SCHEMA_WITHOUT_STATS.indexOf("path"), "file.parquet",
+            SCHEMA_WITHOUT_STATS.indexOf("path"),
+            "file.parquet",
             SCHEMA_WITHOUT_STATS.indexOf("partitionValues"),
-                VectorUtils.stringStringMapValue(Map.of()),
-            SCHEMA_WITHOUT_STATS.indexOf("size"), 1L,
-            SCHEMA_WITHOUT_STATS.indexOf("modificationTime"), 1L,
-            SCHEMA_WITHOUT_STATS.indexOf("dataChange"), dataChange));
+            VectorUtils.stringStringMapValue(Map.of()),
+            SCHEMA_WITHOUT_STATS.indexOf("size"),
+            1L,
+            SCHEMA_WITHOUT_STATS.indexOf("modificationTime"),
+            1L,
+            SCHEMA_WITHOUT_STATS.indexOf("dataChange"),
+            dataChange));
   }
 
   @Test

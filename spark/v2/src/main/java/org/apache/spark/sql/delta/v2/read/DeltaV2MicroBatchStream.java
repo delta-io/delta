@@ -1736,9 +1736,7 @@ class DeltaV2MicroBatchStream
     // already-processed prefix before decoding files.
     CloseableIterator<IndexedFile> snapshotFiles =
         Utils.toCloseableIterator(CollectionConverters.asJava(initialSnapshot.iterator()))
-            .map(
-                file ->
-                    IndexedFile.addFile(file.version(), file.index(), file.add()));
+            .map(file -> IndexedFile.addFile(file.version(), file.index(), file.add()));
     return addBeginAndEndIndexOffsetsForVersion(version, snapshotFiles);
   }
 
@@ -1925,8 +1923,7 @@ class DeltaV2MicroBatchStream
       // Bucket AddFile and RemoveFile by path to detect same-path pairs.
       // DV-based deletes reuse the same parquet file (marking rows in the DV instead of rewriting),
       // so both the Remove and Add reference the same path.
-      Map<String, io.delta.kernel.internal.actions.AddFile> addByPath =
-          new HashMap<>();
+      Map<String, io.delta.kernel.internal.actions.AddFile> addByPath = new HashMap<>();
       Map<String, RemoveFile> removeByPath = new HashMap<>();
       for (CDCDataFile cdc : inferredCdcFiles) {
         if (cdc.getAddFile() != null) {

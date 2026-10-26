@@ -31,12 +31,12 @@ import org.apache.spark.SparkContext;
 import org.apache.spark.TaskContext;
 import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.utils.KernelRowToSparkRow;
 import org.apache.spark.sql.delta.v2.utils.SchemaUtils;
 import org.apache.spark.sql.delta.v2.utils.SerializableReadOnlySnapshot;
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
-import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -157,8 +157,9 @@ public class ScanFileRDD extends RDD<Row> {
         while (currentRowId < currentBatchSize) {
           int rowId = currentRowId++;
           // TODO: Use V1 AddFile in ScanFileRDD to remove this conversion.
-          Optional<AddFile> addOpt = StreamingHelper.getAddFile(currentBatch, rowId)
-              .map(KernelActionUtils$.MODULE$::toKernelScanAddFile);
+          Optional<AddFile> addOpt =
+              StreamingHelper.getAddFile(currentBatch, rowId)
+                  .map(KernelActionUtils$.MODULE$::toKernelScanAddFile);
           if (addOpt.isPresent()) {
             Row row = new KernelRowToSparkRow(addOpt.get().toRow(), SPARK_SCHEMA);
             // The conversion adds stats; retain the existing schema without that field.

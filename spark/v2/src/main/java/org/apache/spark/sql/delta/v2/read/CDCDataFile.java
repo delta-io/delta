@@ -71,8 +71,7 @@ public class CDCDataFile {
   public static CDCDataFile fromAddFile(
       org.apache.spark.sql.delta.actions.AddFile addFile, long commitTimestamp) {
     // TODO: Store V1 AddFiles in CDCDataFile to remove this V1-to-Kernel conversion.
-    return fromAddFile(
-        KernelActionUtils$.MODULE$.toKernelScanAddFile(addFile), commitTimestamp);
+    return fromAddFile(KernelActionUtils$.MODULE$.toKernelScanAddFile(addFile), commitTimestamp);
   }
 
   /** Create a CDCDataFile inferred from an AddFile action (always "insert"). */
