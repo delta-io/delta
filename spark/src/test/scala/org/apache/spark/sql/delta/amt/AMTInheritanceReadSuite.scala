@@ -19,11 +19,15 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{Checkpoint, ContentRoot}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
-import org.apache.spark.sql.delta.implicits.amtSingleActionEncoder
 import org.apache.spark.sql.delta.util.FileNames
+
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
+import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.internal.SQLConf
 
 /**
  * The AMT writer materializes every leaf value today, so no tree it produces exercises
@@ -85,11 +89,8 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       WrittenLeaf(location, sizeInBytes, entries)
     }
 
-    /**
-     * Writes `rootEntries` as the root manifest and returns the files a reader reconstructs from
-     * the resulting tree.
-     */
-    def reconstruct(rootEntries: Seq[AMTSingleAction]): Map[String, ReconstructedFile] = {
+    /** Writes `rootEntries` as the root manifest and returns the reconstruction DataFrame. */
+    def reconstructionActions(rootEntries: Seq[AMTSingleAction]): DataFrame = {
       val metadataDir = FileNames.amtMetadataDirPath(deltaLog.dataPath)
       val (location, sizeInBytes) =
         writeManifest(FileNames.newAMTRootManifestFile(metadataDir), rootEntries)
@@ -101,6 +102,11 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
         deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
       provider.loadActionsForStateReconstruction(spark, deltaLog)
         .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+    }
+
+    /** Returns the files reconstructed from `rootEntries`. */
+    def reconstruct(rootEntries: Seq[AMTSingleAction]): Map[String, ReconstructedFile] = {
+      reconstructionActions(rootEntries)
         .where("add is not null")
         .select(
           col("add.path"),
@@ -181,6 +187,10 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       tracking: Tracking = pointerTracking(),
       mdvPositions: Seq[Long] = Seq.empty): DataManifestEntry = {
     val mdv = Some(mdvPositions).filter(_.nonEmpty)
+    def fileCount(status: Int): Int =
+      leaf.entries.count(_.tracking.status == status)
+    def rowCount(status: Int): Long =
+      leaf.entries.filter(_.tracking.status == status).map(_.record_count).sum
     DataManifestEntry(
       location = leaf.location,
       file_format = AMTSingleAction.FileFormatParquet,
@@ -189,16 +199,16 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       file_size_in_bytes = leaf.sizeInBytes,
       manifest_info = ManifestInfo(
         format_version = AMTSingleAction.FormatVersionV4,
-        added_files_count = leaf.entries.size,
-        existing_files_count = 0,
-        deleted_files_count = 0,
-        replaced_files_count = 0,
-        modified_files_count = 0,
-        added_rows_count = leaf.entries.map(_.record_count).sum,
-        existing_rows_count = 0L,
-        deleted_rows_count = 0L,
-        replaced_rows_count = 0L,
-        modified_rows_count = 0L,
+        added_files_count = fileCount(Tracking.Status.Added),
+        existing_files_count = fileCount(Tracking.Status.Existing),
+        deleted_files_count = fileCount(Tracking.Status.Deleted),
+        replaced_files_count = fileCount(Tracking.Status.Replaced),
+        modified_files_count = fileCount(Tracking.Status.Modified),
+        added_rows_count = rowCount(Tracking.Status.Added),
+        existing_rows_count = rowCount(Tracking.Status.Existing),
+        deleted_rows_count = rowCount(Tracking.Status.Deleted),
+        replaced_rows_count = rowCount(Tracking.Status.Replaced),
+        modified_rows_count = rowCount(Tracking.Status.Modified),
         min_sequence_number = 0L,
         dv = mdv.map(positions =>
           AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions.map(_.toInt))))))
@@ -229,6 +239,37 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       assert(files("data/a.parquet").baseRowId.contains(1000L))
       assert(files("data/b.parquet").baseRowId.contains(1010L))
       assert(files("data/c.parquet").baseRowId.contains(1030L))
+    }
+  }
+
+  test("leaf row-ID inheritance does not shuffle manifest entries") {
+    withSyntheticTree("amt_inherit_without_shuffle") { tree =>
+      val first = tree.writeLeaf(Seq(
+        dataEntry("data/a.parquet", recordCount = 10L),
+        dataEntry("data/b.parquet", recordCount = 20L)))
+      val second = tree.writeLeaf(Seq(
+        dataEntry("data/c.parquet", recordCount = 5L),
+        dataEntry("data/d.parquet", recordCount = 7L)))
+      withSQLConf(
+          SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
+        val actions = tree.reconstructionActions(Seq(
+          leafPointer(first, pointerTracking(firstRowId = Some(1000L))).wrap,
+          leafPointer(second, pointerTracking(firstRowId = Some(9000L))).wrap))
+        val addFiles = actions.where("add is not null")
+        val plan = addFiles.queryExecution.executedPlan
+
+        assert(plan.collect { case _: WindowExec => () }.isEmpty, plan)
+        assert(plan.collect { case _: ShuffleExchangeExec => () }.isEmpty, plan)
+        val pathToRowId = addFiles.select(col("add.path"), col("add.baseRowId"))
+          .as[(String, Option[Long])]
+          .collect()
+          .toMap
+        assert(pathToRowId == Map(
+          "data/a.parquet" -> Some(1000L),
+          "data/b.parquet" -> Some(1010L),
+          "data/c.parquet" -> Some(9000L),
+          "data/d.parquet" -> Some(9005L)))
+      }
     }
   }
 

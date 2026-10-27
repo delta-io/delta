@@ -26,7 +26,7 @@ import scala.util.Try
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs, AMTUtils}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCheckpointProviderBase, AMTUsageLogs, AMTUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
@@ -487,7 +487,7 @@ class Snapshot(
       s"LastManifestCommit[version=${lastManifestCommit.version}, " +
         s"contentRootVersion=${lastManifestCommit.contentRootVersion}]"
     }
-    def toStrCP(amtCheckpointProvider: AMTCheckpointProvider): String = {
+    def toStrCP(amtCheckpointProvider: AMTCheckpointProviderBase): String = {
       s"AMTCheckpointProvider[version=${amtCheckpointProvider.version}]"
     }
 
@@ -496,7 +496,7 @@ class Snapshot(
     }
 
     val amtCheckpointProviderOpt = logSegment.checkpointProvider match {
-      case amtCheckpointProvider: AMTCheckpointProvider =>
+      case amtCheckpointProvider: AMTCheckpointProviderBase =>
         if (amtCheckpointProvider.version > version) {
           throw new IllegalStateException(
             s"${toStrCP(amtCheckpointProvider)} exceeds snapshot version $version.")

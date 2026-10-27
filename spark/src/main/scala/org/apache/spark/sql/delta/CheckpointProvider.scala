@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
 import org.apache.spark.sql.delta.SnapshotManagement.checkpointThreadPool
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.{LazyCompleteAMTCheckpointProvider, UninitializedAMTCheckpointProvider}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -75,6 +76,16 @@ trait CheckpointProvider extends UninitializedCheckpointProvider {
 
   /** Effective size of checkpoint across all files */
   def effectiveCheckpointSizeInBytes(): Long
+
+  /**
+   * Estimated checkpoint contribution used to size snapshot state-reconstruction partitions.
+   *
+   * This defaults to the physical checkpoint size. Providers whose compact physical encoding
+   * significantly understates the work needed to reconstruct Delta actions may override it. This
+   * estimate must not be used for checkpoint-size telemetry.
+   */
+  private[delta] def estimatedStateReconstructionSizeInBytes(): Long =
+    effectiveCheckpointSizeInBytes()
 
   /**
    * The type of checkpoint (V2 vs Classic). This will be None when no checkpoint is available.
@@ -229,6 +240,8 @@ object CheckpointProvider extends DeltaLogging {
       : CheckpointProvider = uninitializedCheckpointProvider match {
     // Note: snapshotDescriptor.protocol should be accessed as late as possible inside the futures
     // as it might need I/O.
+    case provider: UninitializedAMTCheckpointProvider =>
+      new LazyCompleteAMTCheckpointProvider(provider)
     case provider: UninitializedV2CheckpointProvider =>
       lazyV2CheckpointProvider(
         provider, snapshotDescriptor, provider.nonFateSharingCheckpointReadFuture)
