@@ -88,17 +88,17 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
     }
   }
 
-  test("getActionsIterator rejects nonzero memory thresholds") {
-    val commit: DeltaSingleCommit = DeltaV2SingleCommit(kernelCommitActions)
-    Seq(-1L, 1L, Long.MaxValue).foreach { threshold =>
-      val error = intercept[AssertionError] {
-        commit.getActionsIterator(maxInMemoryFileSizeBytes = threshold)
+  Seq(-1L, 0L, 1L, Long.MaxValue).foreach { threshold =>
+    test(s"getActionsIterator supports rewinds regardless of the memory threshold ($threshold)") {
+      val commit: DeltaSingleCommit = DeltaV2SingleCommit(kernelCommitActions)
+      val actions = commit.getActionsIterator(maxInMemoryFileSizeBytes = threshold)
+      try {
+        assert(actions.toList === expectedActions)
+        actions.rewind()
+        assert(actions.toList === expectedActions)
+      } finally {
+        actions.close()
       }
-      assert(error.getMessage ===
-        "getActionsIterator only supports maxInMemoryFileSizeBytes = 0")
-    }
-    commit.getActionsIterator().processAndClose { actions =>
-      assert(actions.toList === expectedActions)
     }
   }
 

@@ -1491,7 +1491,7 @@ object DeltaSource extends DeltaLogging {
    */
   def createRewindableActionIterator(
       spark: SparkSession,
-      commit: SingleCommit): ClosableIterator[Action] with SupportsRewinding[Action] = {
+      commit: DeltaSingleCommit): ClosableIterator[Action] with SupportsRewinding[Action] = {
     val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD)
     commit.getActionsIterator(threshold)
   }

@@ -50,14 +50,14 @@ object DeltaFileProviderUtils extends DeltaLogging {
 
   /**
    * List the commits in the version range [startVersion, endVersion] (both inclusive) as
-   * [[SingleCommit]]. Returns in sorted order, and throws if any in the range are missing.
+   * [[DeltaSingleCommit]]. Returns in sorted order, and throws if any in the range are missing.
    */
   def getCommitsInVersionRange(
       spark: SparkSession,
       deltaLog: DeltaLog,
       startVersion: Long,
       endVersion: Long,
-      catalogTableOpt: Option[CatalogTable]): Seq[SingleCommit] = {
+      catalogTableOpt: Option[CatalogTable]): Seq[DeltaSingleCommit] = {
     // Pass `failOnDataLoss = false` as we do an explicit contiguity validation on the result below
     // to identify that there are no gaps.
     val commits = deltaLog
@@ -102,7 +102,7 @@ object DeltaFileProviderUtils extends DeltaLogging {
    */
   def parallelReadAndParseDeltaFilesAsIterator(
       spark: SparkSession,
-      commits: Seq[SingleCommit]): Seq[ClosableIterator[Action]] =
+      commits: Seq[DeltaSingleCommit]): Seq[ClosableIterator[Action]] =
     parallelReadDeltaFiles(spark, commits)(_.getActionsIterator())
 
   /**
@@ -111,7 +111,7 @@ object DeltaFileProviderUtils extends DeltaLogging {
    */
   def parallelReadAndParseDeltaFilesAsSeq(
       spark: SparkSession,
-      commits: Seq[SingleCommit]): Seq[Seq[Action]] =
+      commits: Seq[DeltaSingleCommit]): Seq[Seq[Action]] =
     parallelReadDeltaFiles(spark, commits) { commit =>
       commit.getActionsIterator().processAndClose(_.toSeq)
     }
@@ -121,9 +121,9 @@ object DeltaFileProviderUtils extends DeltaLogging {
    */
   private[delta] def parallelReadAndParseLogCommitsAsSeqUnsafe(
       spark: SparkSession,
-      commits: Seq[SingleCommit]): Seq[Seq[Action]] =
+      commits: Seq[DeltaSingleCommit]): Seq[Seq[Action]] =
     parallelReadDeltaFiles(spark, commits) { commit =>
-      commit.getLogCommitActionsIteratorUnsafe().processAndClose(_.toSeq)
+      commit.asInstanceOf[SingleCommit].getLogCommitActionsIteratorUnsafe().processAndClose(_.toSeq)
     }
 
   /**
@@ -133,6 +133,6 @@ object DeltaFileProviderUtils extends DeltaLogging {
    */
   protected def parallelReadDeltaFiles[A](
       spark: SparkSession,
-      commits: Seq[SingleCommit])(f: SingleCommit => A): Seq[A] =
+      commits: Seq[DeltaSingleCommit])(f: DeltaSingleCommit => A): Seq[A] =
     readThreadPool.parallelMap(spark, commits)(f).toSeq
 }

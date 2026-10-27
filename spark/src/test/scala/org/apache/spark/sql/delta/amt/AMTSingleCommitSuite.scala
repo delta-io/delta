@@ -16,14 +16,19 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DeltaLog, DeltaOperations, SingleCommit}
+import java.sql.Timestamp
+
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaFileProviderUtils, DeltaLog, DeltaOperations, DeltaSingleCommit, SingleCommit}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
+import org.apache.spark.sql.delta.test.shims.GridTestShim
+import org.apache.spark.sql.delta.util.FileNames
+import org.apache.hadoop.fs.Path
 
 /**
- * Tests for SingleCommit related handling.
+ * Tests for DeltaSingleCommit handling with log and manifest commits.
  */
-class AMTSingleCommitSuite extends AMTCheckpointTestBase {
+class AMTSingleCommitSuite extends AMTCheckpointTestBase with GridTestShim {
 
   /**
    * Create an AMT-featured table with `numVersions` plain INSERT commits that all stay classic log
@@ -36,11 +41,33 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase {
     deltaLogForName(name)
   }
 
-  /** A [[SingleCommit]] handle for exactly `version`. */
-  private def commitAt(deltaLog: DeltaLog, version: Long): SingleCommit =
+  /** A [[DeltaSingleCommit]] handle for exactly `version`. */
+  private def commitAt(deltaLog: DeltaLog, version: Long): DeltaSingleCommit =
     deltaLog.getChangesIterator(startVersion = version)
       .find(_.version == version)
       .getOrElse(fail(s"no commit at version $version"))
+
+  gridTest("timestamp uses ICT or falls back to file modification time")(
+    Seq[(Option[CommitInfo], Long)](
+      (Some(CommitInfo.empty().copy(
+        timestamp = new Timestamp(1000L), inCommitTimestamp = Some(2000L))), 2000L),
+      (Some(CommitInfo.empty().copy(timestamp = new Timestamp(1000L))), 3000L),
+      (None, 3000L))) { case (commitInfoOpt, expectedTimestamp) =>
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath))
+      val hadoopConf = deltaLog.newDeltaHadoopConf()
+      val commitPath = FileNames.unsafeDeltaFile(deltaLog.logPath, 0L)
+      val fs = commitPath.getFileSystem(hadoopConf)
+      fs.mkdirs(deltaLog.logPath)
+      val actions: Seq[Action] = commitInfoOpt.toSeq :+ createTestAddFile(encodedPath = "a")
+      deltaLog.store.write(commitPath, actions.iterator.map(_.json), overwrite = false, hadoopConf)
+      fs.setTimes(commitPath, 3000L, -1L)
+      val status = fs.getFileStatus(commitPath)
+      val commit: DeltaSingleCommit = SingleCommit(deltaLog, 0L, status)
+      assert(commit.timestamp === expectedTimestamp)
+      assert(commit.getActionsIterator().processAndClose(_.toList) === actions.toList)
+    }
+  }
 
   test("getActionsIterator returns the commit's actions and matches getChanges") {
     withTable("amt_getactions") {
@@ -88,7 +115,7 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase {
       deltaLog.startTransaction()
         .commit(dataActions, DeltaOperations.ManualUpdate)
 
-      // Read commit 2 (the multi-action one) back through the SingleCommit API.
+      // Read commit 2 (the multi-action one) back through the DeltaSingleCommit API.
       val commit = commitAt(deltaLog, 2L)
       val actions = commit.getActionsIterator().processAndClose(_.toList)
 
@@ -107,18 +134,26 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase {
     }
   }
 
-  test("getChangesIterator yields one SingleCommit per commit with the right version") {
-    withTable("amt_versions") {
-      val deltaLog = createLogCommitTable("amt_versions", numVersions = 3)
-      // CREATE is version 0, the three INSERTs are versions 1..3.
-      val commits = deltaLog.getChangesIterator(startVersion = 0).toList
-      assert(commits.map(_.version) === (0L to 3L).toList)
+  test("getChangesIterator yields one DeltaSingleCommit per commit with the right version") {
+    withSQLConf(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "true") {
+      withTable("amt_versions") {
+        val deltaLog = createLogCommitTable("amt_versions", numVersions = 3)
+        // CREATE is version 0, the three INSERTs are versions 1..3.
+        val commits = deltaLog.getChangesIterator(startVersion = 0).toList
+        assert(commits.map(_.version) === (0L to 3L).toList)
 
-      // The handle exposes the commit file's modification time (not the in-commit timestamp), so it
-      // matches what getChangeLogFiles reports for the same commit.
-      val fileModTimes =
-        deltaLog.getChangeLogFiles(startVersion = 0).map(_._2.getModificationTime).toList
-      assert(commits.map(_.fileModificationTimestamp) === fileModTimes)
+        val inCommitTimestamps = deltaLog.getChanges(startVersion = 0).map {
+          case (version, actions) =>
+            actions.collectFirst { case info: CommitInfo => info }.flatMap(_.inCommitTimestamp)
+              .getOrElse(fail(s"missing ICT for version $version"))
+        }.toList
+        assert(commits.map(_.timestamp) === inCommitTimestamps)
+
+        // The implementation-specific modification time matches getChangeLogFiles even with ICT.
+        val fileModTimes =
+          deltaLog.getChangeLogFiles(startVersion = 0).map(_._2.getModificationTime).toList
+        assert(commits.map(_.asInstanceOf[SingleCommit].fileModificationTimestamp) === fileModTimes)
+      }
     }
   }
 
@@ -151,7 +186,8 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase {
     assert(logCommits.nonEmpty, "expected at least one log commit before the manifest commit")
     logCommits.foreach { v =>
       val commit = commitAt(deltaLog, v)
-      val viaUnsafe = commit.getLogCommitActionsIteratorUnsafe().processAndClose(_.toList)
+      val viaUnsafe = commit.asInstanceOf[SingleCommit]
+        .getLogCommitActionsIteratorUnsafe().processAndClose(_.toList)
       val viaPlain = commit.getActionsIterator().processAndClose(_.toList)
       assert(viaUnsafe === viaPlain, s"v$v disagreed between the unsafe and plain readers")
     }
@@ -167,7 +203,8 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase {
     val manifestVersion = context.manifestCommitVersion
     val commit = commitAt(deltaLog, manifestVersion)
     val e = intercept[IllegalStateException] {
-      commit.getLogCommitActionsIteratorUnsafe().processAndClose(_.toList)
+      commit.asInstanceOf[SingleCommit]
+        .getLogCommitActionsIteratorUnsafe().processAndClose(_.toList)
     }
     assert(e.getMessage.contains(s"commit $manifestVersion"))
     assert(e.getMessage.contains("cannot be read as a log commit"))

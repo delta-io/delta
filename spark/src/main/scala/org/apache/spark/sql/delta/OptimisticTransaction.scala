@@ -126,6 +126,36 @@ case class PrepareCommitResult(
     amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider],
     prepMetrics: CommitPrepMetrics)
 
+/**
+ * A semantic classification of a commit derived only from its [[AddFile]] and [[RemoveFile]]
+ * actions. This is intentionally separate from [[CommitInfo.operation]], which records the command
+ * that produced the commit.
+ */
+private[delta] object FileActionOperationClass extends Enumeration {
+  val COMPUTE_STATS, REORGANIZATION, LOGICAL_DATA_REPLACEMENT, INSERT, DELETE,
+    INVALID_REMOVE_ONLY, INVALID, NO_FILE_ACTIONS = Value
+
+  def classify(
+      numAdd: Int,
+      numRemove: Int,
+      dataChange: Boolean): Value = {
+    if (numAdd < 0 || numRemove < 0) {
+      INVALID
+    } else {
+      (dataChange, numAdd > 0, numRemove > 0) match {
+        case (false, false, false) => NO_FILE_ACTIONS
+        case (false, true, false) => COMPUTE_STATS
+        case (false, true, true) => REORGANIZATION
+        case (false, false, true) => INVALID_REMOVE_ONLY
+        case (true, true, false) => INSERT
+        case (true, true, true) => LOGICAL_DATA_REPLACEMENT
+        case (true, false, true) => DELETE
+        case _ => INVALID
+      }
+    }
+  }
+}
+
 /** Record metrics about a successful commit. */
 case class CommitStats(
   /** The version read by the txn when it starts. */
@@ -174,7 +204,9 @@ case class CommitStats(
   numOfDomainMetadatas: Long = 0,
   txnId: Option[String] = None,
   /** Metrics for the AMT (Adaptive Metadata Tree) write used by this commit, if any. */
-  amtCommitStats: Option[AMTCommitStats] = None
+  amtCommitStats: Option[AMTCommitStats] = None,
+  /** The operation class derived from this commit's AddFile and RemoveFile actions. */
+  fileActionOperationClass: Option[String] = None
 )
 
 /**
