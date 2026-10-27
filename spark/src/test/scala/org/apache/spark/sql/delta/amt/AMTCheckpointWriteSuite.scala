@@ -662,6 +662,33 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     }
   }
 
+  testAcrossAMTCheckpointScenarios(
+      "writeCheckpointFiles rejects an AMT table",
+      "amt_write_checkpoint_files_rejected")(
+      setup = name => (1 to 3).foreach(i => sql(s"INSERT INTO $name VALUES ($i)")),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (4)"))) { context =>
+    val name = context.tableName
+    val deltaLog = deltaLogForName(name)
+    val snapshot = deltaLog.update()
+
+    // Callers that reach the writer directly bypass the AMT branch of checkpointAndCleanUpDeltaLog,
+    // so the writer itself must refuse to write a classic checkpoint.
+    val directError = intercept[IllegalStateException] {
+      deltaLog.writeCheckpointFiles(snapshot, Some(catalogTableFor(name)))
+    }
+    assert(directError.getMessage.contains("Cannot write a non-AMT checkpoint"), directError)
+    val atVersionError = intercept[IllegalStateException] {
+      deltaLog.createCheckpointAtVersion(snapshot.version)
+    }
+    assert(atVersionError.getMessage.contains("Cannot write a non-AMT checkpoint"), atVersionError)
+
+    assert(classicCheckpointFiles(name).isEmpty,
+      "A rejected write must not leave a classic checkpoint file behind.")
+    DeltaLog.clearCache()
+    checkAnswer(spark.read.table(name), (1 to 4).map(Row(_)))
+  }
+
   test("no emission on a non-interval commit") {
     withTable("amt_non_interval") {
       val name = "amt_non_interval"
