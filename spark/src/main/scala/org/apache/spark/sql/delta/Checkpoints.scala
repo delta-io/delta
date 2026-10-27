@@ -524,7 +524,7 @@ trait Checkpoints extends DeltaLogging {
         // _last_checkpoint has already been updated with this AMT at version R, the initial log
         // segment creation will still adopt this hint as the listing floor. We will end up with an
         // initial AMT describing version R, whose publishing manifest commit is not reflected in
-        // the initial snapshot’s lastManifestCommit.
+        // the initial snapshot's lastManifestCommit.
         //
         // AMT guarantees that content root versions are non-decreasing across manifest commits.
         // Since manifest commit M describes version R, no earlier manifest commit can describe a
