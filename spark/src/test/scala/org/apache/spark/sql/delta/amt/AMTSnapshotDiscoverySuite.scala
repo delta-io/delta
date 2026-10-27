@@ -26,11 +26,14 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.execution.metric.SQLMetrics
 
 class AMTSnapshotDiscoverySuite
   extends AMTCheckpointTestBase
   with DeltaMinorCompactionTestUtils {
+
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED.key, "true")
 
   /** Whether this suite runs with `.crc` files enabled, read from the effective conf. */
   protected def writeChecksumEnabled: Boolean =
@@ -371,10 +374,6 @@ class AMTSnapshotDiscoverySuite
   ///////////////////////////
   // deltaLog.update()
   ///////////////////////////
-
-  /** The catalog table for a catalog-managed AMT table accessed by name. */
-  private def catalogTableFor(tableName: String): CatalogTable =
-    spark.sessionState.catalog.getTableMetadata(new TableIdentifier(tableName))
 
   /** The delta versions of the deltas kept in the snapshot's log segment. */
   private def segmentDeltaVersions(snapshot: Snapshot): Seq[Long] =
@@ -964,6 +963,122 @@ class AMTSnapshotDiscoverySuite
       s"Log segment must trim deltas up to the checkpoint version; got $segmentDeltaVersions.")
   }
 
+  test("[post-commit] commitLarge retains the read snapshot's AMT provider") {
+    withSQLConf(
+        // Disable async read so any reconciliation would fail, as commitLarge doesn't write CRC.
+        DeltaSQLConf.AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED.key -> "false") {
+      val name = "amt_post_commit_large_reuses_provider"
+      withTable(name) {
+        createAMTTable(name, checkpointInterval = Int.MaxValue)
+        sql(s"INSERT INTO $name VALUES (1)")
+        val deltaLog = deltaLogForName(name)
+        commitCheckpoint(deltaLog, incremental = false)
+        val txn = deltaLog.startTransaction(Some(catalogTableFor(name)))
+        val readAMTProvider = amtProvider(txn.snapshot).get
+        val addFile = liveAddFiles(txn.snapshot).head
+
+        val (committedVersion, postCommitSnapshot) = txn.commitLarge(
+          spark,
+          Iterator(addFile.removeWithTimestamp()),
+          newProtocolOpt = None,
+          op = DeltaOperations.Delete(Seq.empty),
+          context = Map.empty,
+          metrics = Map.empty,
+          dataChange = true)
+
+        assert(committedVersion == txn.readVersion + 1)
+        assert(postCommitSnapshot.version == committedVersion)
+        // The post-commit snapshot for commitLarge does not include the synchronous AMT checkpoint,
+        // so it should have the same last manifest commit as the read snapshot.
+        assert(postCommitSnapshot.lastManifestCommitOpt == txn.snapshot.lastManifestCommitOpt)
+        // The post-commit snapshot should have the same AMT provider as the read snapshot.
+        val postCommitAMTProvider = amtProvider(postCommitSnapshot).get
+        assert(postCommitAMTProvider eq readAMTProvider)
+        assert(postCommitAMTProvider.version == readAMTProvider.version)
+
+        // The synchronous checkpoint lands in the next commit and covers the large commit's state.
+        val latestSnapshot = deltaLog.update()
+        assert(latestSnapshot.version == committedVersion + 1)
+        val latestAMTProvider = amtProvider(latestSnapshot).get
+        assert(latestAMTProvider ne readAMTProvider)
+        assert(latestAMTProvider.version == committedVersion)
+        assert(latestAMTProvider.manifestCommitVersion == committedVersion + 1)
+        assert(latestAMTProvider.checkpointAction.contentRoot.version == committedVersion)
+        val expectedLastManifestCommit = LastManifestCommit(
+          version = committedVersion + 1,
+          contentRootVersion = committedVersion)
+        assert(latestSnapshot.lastManifestCommitOpt == Some(expectedLastManifestCommit))
+      }
+    }
+  }
+
+  test("[post-commit] conflict retry reuses the AMT discovered on a separate DeltaLog") {
+    // Time  Transaction A                             Transaction B
+    // ----  ----------------------------------------  -------------------------------------
+    // T0    Initial: table v2; AMT covers v1
+    // T1    Reads v2; starts at readVersion = 2
+    // T2                                              Separate DeltaLog commits AMT at v3
+    //                                                 AMT covers v2; manifest commit is v3
+    // T3    Still holds v2; attempts commit
+    // T4    Detects v3 conflict; loads v2 AMT provider once
+    // T5    Rebases and commits at v4
+    // T6    Builds v4; reuses provider; deltas v3-v4
+    withSQLConf(leafPackingConfs: _*) {
+      val name = "amt_post_commit_conflict_reuses_provider"
+      withTable(name) {
+        createAMTTable(name, checkpointInterval = Int.MaxValue)
+        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles)
+        val oldDeltaLog = deltaLogForName(name)
+        commitCheckpoint(oldDeltaLog, incremental = false)
+        val readSnapshot = oldDeltaLog.unsafeVolatileSnapshot
+        assert(readSnapshot.version == 2)
+        val readProvider = amtProvider(readSnapshot).get
+        assert(readProvider.version == 1)
+        val txn = oldDeltaLog.startTransaction(Some(catalogTableFor(name)))
+        assert(txn.readVersion == 2)
+
+        DeltaLog.clearCache()
+        val concurrentDeltaLog = deltaLogForName(name)
+        assert(concurrentDeltaLog ne oldDeltaLog)
+        commitCheckpoint(concurrentDeltaLog, incremental = false)
+        val winningSnapshot = concurrentDeltaLog.unsafeVolatileSnapshot
+        assert(winningSnapshot.version == 3)
+        val winningProvider = amtProvider(winningSnapshot).get
+        val winningCheckpoint = winningProvider.checkpointAction
+        assert(winningProvider.version == 2)
+        assertLeafCount(winningProvider.leaves)
+        assert(oldDeltaLog.unsafeVolatileSnapshot eq readSnapshot)
+
+        // This synthetic MERGE bypasses the command that normally registers its SQL metrics.
+        txn.registerSQLMetrics(spark, Map(
+          "operationNumSourceRows" -> SQLMetrics.createMetric(spark.sparkContext, "source rows")))
+        val initializationEvents = collectUsageLogs(
+            AMTUsageLogs.CHECKPOINT_PROVIDER_INITIALIZE_FROM_CHECKPOINT_ACTION) {
+          assert(txn.commit(Seq.empty, DeltaOperations.Merge(None, Nil, Nil, Nil)) == 4)
+        }
+        // The retry must load the winning AMT once; post-commit must reuse that provider.
+        assert(initializationEvents.size == 1)
+        val metrics = JsonUtils.fromJson[Map[String, Long]](initializationEvents.head.blob)
+        assert(metrics("durationMs") >= 0)
+        assert(metrics("numLeaves") == winningProvider.leaves.size.toLong)
+        assert(metrics("contentRootSizeInBytes") == winningCheckpoint.contentRoot.sizeInBytes)
+        assert(metrics("manifestCommitVersion") == 3)
+        assert(metrics("contentRootVersion") == 2)
+        assert(metrics("checkpointVersion") == 2)
+
+        val postCommitSnapshot = oldDeltaLog.unsafeVolatileSnapshot
+        assert(postCommitSnapshot.version == 4)
+        assert(postCommitSnapshot eq txn.getCommitted.get.postCommitSnapshot)
+        val provider = amtProvider(postCommitSnapshot).get
+        assert(provider.version == 2)
+        assert(provider.manifestCommitVersion == 3)
+        assert(provider.checkpointAction == winningCheckpoint)
+        assert(provider.leaves == winningProvider.leaves)
+        assert(postCommitSnapshot.logSegment.deltas.map(FileNames.deltaVersion) == Seq(3L, 4L))
+      }
+    }
+  }
+
   //////////////////////////////////
   // Minor compaction compatibility
   //////////////////////////////////
@@ -1124,6 +1239,118 @@ class AMTSnapshotDiscoverySuite
         expectedCompactedDeltas = Seq.empty,
         expectedNonCompactedDeltas = Seq(9L),
         expectedData = Set(1, 2, 3, 4, 5))
+    }
+  }
+
+  ///////////////////////////
+  // Usage log emission
+  ///////////////////////////
+
+  private val asyncCommitInfoLog = AMTUsageLogs.SNAPSHOT_DISCOVERY_READ_LAST_COMMIT_INFO_ASYNC
+
+  test("AMT table's cold/warm reads both emit the async CommitInfo read usage log") {
+    val name = "amt_async_commit_info_cold_and_warm"
+    withTable(name) {
+      createAMTTable(name, checkpointInterval = Int.MaxValue)
+      sql(s"INSERT INTO $name VALUES (1)")
+
+      val coldInitLogs = collectUsageLogs(asyncCommitInfoLog) {
+        val (_, snapshot) = coldLoad(name)
+        assert(snapshot.version == 1)
+      }
+      assert(coldInitLogs.nonEmpty)
+
+      val staleDeltaLog = deltaLogForName(name)
+      assert(staleDeltaLog.unsafeVolatileSnapshot.version == 1)
+      DeltaLog.clearCache()
+      sql(s"INSERT INTO $name VALUES (2)")
+      assert(staleDeltaLog.unsafeVolatileSnapshot.version == 1)
+
+      val warmUpdateLogs = collectUsageLogs(asyncCommitInfoLog) {
+        val updatedSnapshot = staleDeltaLog.update(catalogTableOpt = Some(catalogTableFor(name)))
+        assert(updatedSnapshot.version == 2)
+      }
+      assert(warmUpdateLogs.size == 1)
+    }
+  }
+
+  test("AMT table's post-commit snapshot skips the async CommitInfo read due to incremental CRC") {
+    assume(writeChecksumEnabled, "This test requires CRCs to be enabled")
+    val name = "amt_async_commit_info_post_commit"
+    withTable(name) {
+      createAMTTable(name, checkpointInterval = Int.MaxValue)
+      sql(s"INSERT INTO $name VALUES (1)")
+      val deltaLog = deltaLogForName(name)
+      val snapshot = deltaLog.unsafeVolatileSnapshot
+      assert(AMTUtils.amtEnabled(snapshot))
+      assert(snapshot.version == 1)
+      assert(snapshot.checksumOpt.isDefined)
+      assert(snapshot.lastManifestCommitOpt.isEmpty)
+      assert(amtProvider(snapshot).isEmpty)
+
+      // Keep the table checkpoint-free so the reconciliation stays enabled.
+      val logs = collectUsageLogs(AMTUsageLogs.SNAPSHOT_DISCOVERY_READ_LAST_COMMIT_INFO_ASYNC) {
+        sql(s"INSERT INTO $name VALUES (2)")
+        val postCommitSnapshot = deltaLog.unsafeVolatileSnapshot
+        assert(postCommitSnapshot.version == 2)
+        assert(postCommitSnapshot.checksumOpt.isDefined)
+        assert(postCommitSnapshot.lastManifestCommitOpt.isEmpty)
+        assert(amtProvider(postCommitSnapshot).isEmpty)
+      }
+      assert(logs.isEmpty)
+    }
+  }
+
+  test("happy-paths should reuses AMT leaves without initializing from a checkpoint action") {
+    def assertNoCheckpointInitialization(stage: String)(operation: => Unit): Unit = {
+      val initializationEvents = collectUsageLogs(
+        AMTUsageLogs.CHECKPOINT_PROVIDER_INITIALIZE_FROM_CHECKPOINT_ACTION)(operation)
+      assert(initializationEvents.isEmpty, s"$stage re-read the AMT root: $initializationEvents")
+    }
+
+    withSQLConf(leafPackingConfs: _*) {
+      val name = "amt_happy_paths_reuse_leaves"
+      withTable(name) {
+        createAMTTable(name, checkpointInterval = Int.MaxValue)
+        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles)
+        val deltaLog = deltaLogForName(name)
+        assert(deltaLog.unsafeVolatileSnapshot.version == 1)
+        assert(amtProvider(deltaLog.unsafeVolatileSnapshot).isEmpty)
+
+        assertNoCheckpointInitialization("First AMT") {
+          commitCheckpoint(deltaLog, incremental = false)
+        }
+        val firstAMTPostCommitSnapshot = deltaLog.unsafeVolatileSnapshot
+        assert(firstAMTPostCommitSnapshot.version == 2)
+        val firstAMTCpProvider = amtProvider(firstAMTPostCommitSnapshot).get
+        assert(firstAMTCpProvider.manifestCommitVersion == 2)
+        assert(firstAMTCpProvider.version == 1)
+        assertLeafCount(firstAMTCpProvider.leaves)
+
+        assertNoCheckpointInitialization("Log commit") {
+          sql(s"INSERT INTO $name VALUES (1)")
+        }
+        val logPostCommitSnapshot = deltaLog.unsafeVolatileSnapshot
+        assert(logPostCommitSnapshot.version == 3)
+        // The log commit must reuse the same AMT checkpoint provider as the first AMT commit.
+        val logCpProvider = amtProvider(logPostCommitSnapshot).get
+        assert(logCpProvider eq firstAMTCpProvider)
+        assert(logCpProvider.manifestCommitVersion == 2)
+        assert(logCpProvider.version == 1)
+
+        assertNoCheckpointInitialization("Second AMT") {
+          withInline {
+            sql(s"INSERT INTO $name VALUES (2)")
+          }
+        }
+        val secondAMTPostCommitSnapshot = deltaLog.unsafeVolatileSnapshot
+        assert(secondAMTPostCommitSnapshot.version == 4)
+        val secondAMTCpProvider = amtProvider(secondAMTPostCommitSnapshot).get
+        assert(secondAMTCpProvider.manifestCommitVersion == 4)
+        assert(secondAMTCpProvider.version == 4)
+        assertLeafCount(secondAMTCpProvider.leaves)
+
+      }
     }
   }
 }

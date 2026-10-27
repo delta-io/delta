@@ -358,15 +358,27 @@ object IcebergTransactionUtils
      */
     def setIcebergTxnLastSequenceNumber(txn: IcebergTransaction, sequenceNumber: Long): Unit = {
       Option(txn.asInstanceOf[BaseTransaction].currentMetadata())
-        .foreach { metadata =>
-          val mirror = universe.runtimeMirror(getClass.getClassLoader)
-          val instanceMirror = mirror.reflect(metadata)
-          val field = universe
-            .typeOf[TableMetadata]
-            .decl(universe.TermName("lastSequenceNumber"))
-            .asTerm
-          instanceMirror.reflectField(field).set(sequenceNumber)
-        }
+        .foreach(setIcebergMetadataLastSequenceNumber(_, sequenceNumber))
+    }
+
+    /**
+     * Sets `TableMetadata.lastSequenceNumber` without adding an Iceberg snapshot. This is used when
+     * a metadata-only Delta commit must advance the corresponding Iceberg sequence boundary.
+     * Iceberg does not expose a public mutator, so the field is updated reflectively.
+     *
+     * @param metadata metadata instance to update
+     * @param sequenceNumber new last sequence number
+     */
+    def setIcebergMetadataLastSequenceNumber(
+        metadata: TableMetadata,
+        sequenceNumber: Long): Unit = {
+      val mirror = universe.runtimeMirror(getClass.getClassLoader)
+      val instanceMirror = mirror.reflect(metadata)
+      val field = universe
+        .typeOf[TableMetadata]
+        .decl(universe.TermName("lastSequenceNumber"))
+        .asTerm
+      instanceMirror.reflectField(field).set(sequenceNumber)
     }
 
     /**

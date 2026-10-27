@@ -148,6 +148,9 @@ object SuiteGeneratorConfig {
     val UPDATE_ROW_TRACKING_DV = DimensionMixin("RowTrackingUpdateDV")
     val UPDATE_AMT = DimensionMixin("UpdateAMT", alias = Some("AMT"))
     val ROW_TRACKING_UPDATE_AMT = DimensionMixin("RowTrackingUpdateAMT", alias = Some("AMT"))
+    val DELETE_AMT = DimensionMixin("DeleteAMT", alias = Some("AMT"))
+    val ROW_TRACKING_DELETE_AMT = DimensionMixin("RowTrackingDeleteAMT", alias = Some("AMT"))
+    val INSERT_AMT = DimensionMixin("InsertAMT", alias = Some("AMT"))
     val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
     val DELETE_SQL = DimensionMixin("DeleteSQL", alias = Some("SQL"))
     val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors", alias = Some("DV"))
@@ -454,6 +457,26 @@ object SuiteGeneratorConfig {
       )
     ),
     TestGroup(
+      packageName = "deleteamt",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.amt._",
+        importer"org.apache.spark.sql.delta.rowid._"
+      ),
+      testConfigs = List(
+        TestConfig(
+          List("DeleteBaseTests"),
+          List(List(Dims.DELETE_SQL, Dims.NAME_BASED, Dims.DELETE_AMT))
+        ),
+        // Not RowTrackingDeleteDvBase: its only test disables deletion vectors on new tables, which
+        // AMT tables require.
+        TestConfig(
+          List("RowTrackingDeleteSuiteBase"),
+          List(List(Dims.PERSISTENT_DV, Dims.ROW_TRACKING_DELETE_AMT))
+        )
+      )
+    ),
+    TestGroup(
       packageName = "insert",
       imports = List(
         importer"org.apache.spark.sql.delta._"
@@ -464,6 +487,19 @@ object SuiteGeneratorConfig {
           List(
             List()
           )
+        )
+      )
+    ),
+    TestGroup(
+      packageName = "insertamt",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.amt._"
+      ),
+      testConfigs = List(
+        TestConfig(
+          List("DeltaInsertIntoSQLSuite"),
+          List(List(Dims.INSERT_AMT))
         )
       )
     ),

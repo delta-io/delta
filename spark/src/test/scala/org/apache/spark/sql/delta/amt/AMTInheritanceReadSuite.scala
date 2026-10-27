@@ -36,12 +36,15 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
 
   /** File sequence number assigned on the root pointer in inheritance scenarios. */
   private val inheritedFileSequenceNumber = 42L
+  private val inheritedSnapshotId = 41L
 
   /** The row-tracking view of one file the reader reconstructed from a manifest tree. */
   private case class ReconstructedFile(
       path: String,
       baseRowId: Option[Long],
-      defaultRowCommitVersion: Option[Long])
+      defaultRowCommitVersion: Option[Long],
+      snapshotId: Option[Long],
+      modifiedSnapshotId: Option[Long])
 
   /** A leaf manifest written to disk, with the entries it was written from. */
   private case class WrittenLeaf(location: String, sizeInBytes: Long, entries: Seq[DataEntry])
@@ -90,19 +93,26 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       val metadataDir = FileNames.amtMetadataDirPath(deltaLog.dataPath)
       val (location, sizeInBytes) =
         writeManifest(FileNames.newAMTRootManifestFile(metadataDir), rootEntries)
-      val checkpoint =
-        base.copy(contentRoot =
-          ContentRoot(path = location, sizeInBytes = sizeInBytes, version = base.version))
+      val checkpoint = updateCheckpointActions(base) {
+        case _: ContentRoot =>
+          ContentRoot(path = location, sizeInBytes = sizeInBytes, version = base.version)
+      }
       val provider = AMTCheckpointProvider.fromCheckpoint(
         deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
       provider.loadActionsForStateReconstruction(spark, deltaLog)
         .getOrElse(fail("AMT provider must contribute reconstructed actions."))
         .where("add is not null")
-        .select(col("add.path"), col("add.baseRowId"), col("add.defaultRowCommitVersion"))
-        .as[(String, Option[Long], Option[Long])]
+        .select(
+          col("add.path"),
+          col("add.baseRowId"),
+          col("add.defaultRowCommitVersion"),
+          col("add.snapshotId"),
+          col("add.modifiedSnapshotId"))
+        .as[(String, Option[Long], Option[Long], Option[Long], Option[Long])]
         .collect()
-        .map { case (path, baseRowId, commitVersion) =>
-          path -> ReconstructedFile(path, baseRowId, commitVersion)
+        .map { case (path, baseRowId, commitVersion, snapshotId, modifiedSnapshotId) =>
+          path -> ReconstructedFile(
+            path, baseRowId, commitVersion, snapshotId, modifiedSnapshotId)
         }
         .toMap
     }
@@ -130,7 +140,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
   private def unassignedTracking(status: Int = Tracking.Status.Added): Tracking = Tracking(
     status = status,
     snapshot_id = None,
-    dv_snapshot_id = None,
+    modified_snapshot_id = None,
     sequence_number = None,
     file_sequence_number = None,
     first_row_id = None,
@@ -142,10 +152,14 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
    * the explicit values its leaf's entries inherit.
    */
   private def pointerTracking(
+      snapshotId: Option[Long] = Some(inheritedSnapshotId),
+      modifiedSnapshotId: Option[Long] = None,
       sequenceNumber: Option[Long] = Some(inheritedFileSequenceNumber),
       fileSequenceNumber: Option[Long] = Some(inheritedFileSequenceNumber),
       firstRowId: Option[Long] = Some(1000L)): Tracking =
     unassignedTracking().copy(
+      snapshot_id = snapshotId,
+      modified_snapshot_id = modifiedSnapshotId,
       sequence_number = sequenceNumber,
       file_sequence_number = fileSequenceNumber,
       first_row_id = firstRowId)
@@ -174,6 +188,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       record_count = leaf.entries.size.toLong,
       file_size_in_bytes = leaf.sizeInBytes,
       manifest_info = ManifestInfo(
+        format_version = AMTSingleAction.FormatVersionV4,
         added_files_count = leaf.entries.size,
         existing_files_count = 0,
         deleted_files_count = 0,
@@ -186,8 +201,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
         modified_rows_count = 0L,
         min_sequence_number = 0L,
         dv = mdv.map(positions =>
-          AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions.map(_.toInt)))),
-        dv_cardinality = mdv.map(_.size.toLong)))
+          AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions.map(_.toInt))))))
   }
 
   /** The messages of `error` and of every exception it wraps. */
@@ -207,6 +221,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       val files = tree.reconstruct(Seq(leafPointer(leaf).wrap))
 
       assert(files.keySet == Set("data/a.parquet", "data/b.parquet", "data/c.parquet"))
+      assert(files.values.forall(_.snapshotId.contains(inheritedSnapshotId)))
       assert(files.values.forall(_.defaultRowCommitVersion.contains(inheritedFileSequenceNumber)),
         s"every entry must inherit the pointer's file sequence number; got ${files.values}")
       // Row ids run from the pointer's first_row_id in the leaf's physical order, each file
@@ -214,6 +229,17 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       assert(files("data/a.parquet").baseRowId.contains(1000L))
       assert(files("data/b.parquet").baseRowId.contains(1010L))
       assert(files("data/c.parquet").baseRowId.contains(1030L))
+    }
+  }
+
+  test("leaf entries do not inherit modified_snapshot_id from their root pointer") {
+    withSyntheticTree("amt_no_dv_snapshot_inheritance") { tree =>
+      val leaf = tree.writeLeaf(Seq(dataEntry("data/a.parquet", recordCount = 10L)))
+      val files = tree.reconstruct(Seq(
+        leafPointer(leaf, pointerTracking(modifiedSnapshotId = Some(99L))).wrap))
+
+      assert(files("data/a.parquet").snapshotId.contains(inheritedSnapshotId))
+      assert(files("data/a.parquet").modifiedSnapshotId.isEmpty)
     }
   }
 
@@ -253,6 +279,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
   test("a non-live entry with a materialized row id does not consume the inherited range") {
     withSyntheticTree("amt_inherit_dead_entry") { tree =>
       val deletedTracking = unassignedTracking(Tracking.Status.Deleted).copy(
+        snapshot_id = Some(1L),
         sequence_number = Some(9L),
         file_sequence_number = Some(9L),
         first_row_id = Some(5000L))
@@ -326,7 +353,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
     }
   }
 
-  test("a root pointer that declares no inheritable tracking is rejected") {
+  test("a root pointer without snapshot_id is rejected") {
     withSyntheticTree("amt_inherit_nothing") { tree =>
       val leaf = tree.writeLeaf(Seq(
         dataEntry("data/a.parquet", recordCount = 10L),
@@ -334,7 +361,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       val error = intercept[Exception] {
         tree.reconstruct(Seq(leafPointer(leaf, unassignedTracking()).wrap))
       }
-      assert(causeMessages(error).contains("tracking.sequence_number must not be null"))
+      assert(causeMessages(error).contains("tracking.snapshot_id must not be null"))
     }
   }
 
@@ -362,6 +389,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       val leaf = tree.writeLeaf(Seq(
         dataEntry("data/a.parquet", recordCount = 10L,
           tracking = unassignedTracking(Tracking.Status.Existing).copy(
+            snapshot_id = Some(1L),
             sequence_number = Some(7L),
             first_row_id = Some(9L)))))
       val error = intercept[Exception] {
@@ -379,6 +407,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
         dataEntry("data/a.parquet", recordCount = 10L,
           tracking = unassignedTracking(Tracking.Status.Existing)
             .copy(
+              snapshot_id = Some(1L),
               sequence_number = Some(7L),
               file_sequence_number = Some(8L)))))
       val error = intercept[Exception] {
@@ -398,9 +427,12 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
           if (status == Tracking.Status.Added) None else Some(1000L)
         val materializedSequenceNumber =
           if (status == Tracking.Status.Added) None else Some(76L)
+        val materializedSnapshotId =
+          if (status == Tracking.Status.Added) None else Some(75L)
         val leaf = tree.writeLeaf(Seq(
           dataEntry("data/a.parquet", recordCount = 10L,
             tracking = unassignedTracking(status).copy(
+              snapshot_id = materializedSnapshotId,
               sequence_number = materializedSequenceNumber,
               file_sequence_number = Some(materialized),
               first_row_id = materializedFirstRowId))))

@@ -27,6 +27,14 @@ object AMTUsageLogs {
   val LAST_MANIFEST_COMMIT_READ_FROM_COMMIT_INFO =
     s"$PREFIX.lastManifestCommit.readFromCommitInfo"
 
+  /** Usage log emitted after an async CommitInfo read is fired and completed. */
+  val SNAPSHOT_DISCOVERY_READ_LAST_COMMIT_INFO_ASYNC =
+    s"$PREFIX.snapshotDiscovery.readLastCommitInfoAsync"
+
+  /** Usage log emitted when an AMT provider reads the root manifest for its leaf pointers. */
+  val CHECKPOINT_PROVIDER_INITIALIZE_FROM_CHECKPOINT_ACTION =
+    s"$PREFIX.checkpointProvider.initializeFromCheckpointAction"
+
   /** Usage log emitted when a losing full AMT OPTIMIZE checkpoint is retried. */
   val CHECKPOINT_FULL_REGENERATE_RETRY = s"$PREFIX.checkpoint.fullRegenerateRetry"
 
@@ -72,9 +80,6 @@ object AMTUsageLogs {
   // A leaf entry has an unknown tracking status.
   val ALERT_UNEXPECTED_LEAF_TRACKING_STATUS =
     "amt.unexpectedLeafTrackingStatus"
-
-  // A manifest deletion vector has inconsistent bytes and cardinality.
-  val ALERT_MALFORMED_MANIFEST_DV = "amt.malformedManifestDV"
 
   // Alert raised when a base-preserving winning commit's Add/Remove file carries a new commit
   // sequence number (defaultRowCommitVersion newer than the losing full checkpoint's version)

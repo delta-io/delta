@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, CurrentTransactionInfo, DeltaIllegalStateException, DeltaOperations, FullAMTWriteFailedWithConflict, LogSegment, Snapshot, SnapshotManagement, WinningCommitMetrics, WinningCommitSummary}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, CheckpointMetadata, ContentRoot, RemoveFile}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -27,6 +27,8 @@ import org.apache.hadoop.fs.{FileStatus, Path}
  * triggers), the unsupported OPTIMIZE-checkpoint branch, and the conflict-rebase hard-fail.
  */
 class AMTWriterManagerSuite extends AMTCheckpointTestBase {
+
+  private val managerSnapshotId = 37L
 
   // Models conflict resolution advancing the read snapshot's segment by one log-only commit.
   private def advanceSegmentByOneCommit(segment: LogSegment): LogSegment = {
@@ -42,7 +44,7 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       operation: DeltaOperations.Operation = DeltaOperations.ManualUpdate):
       (AMTWriterManager, Snapshot) = {
     val snapshot = deltaLogForName(tableName).update()
-    (new AMTWriterManager("txn", snapshot, operation), snapshot)
+    (new AMTWriterManager("txn", managerSnapshotId, snapshot, operation), snapshot)
   }
 
   // A minimal transaction info over `snapshot` carrying `actions`, for direct writeAMT calls.
@@ -157,6 +159,7 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
           winningCommitMetricsForConflictedRange = Seq.empty).getOrElse(
             fail("OPTIMIZE checkpoint must materialize an AMT."))
         assertLeafCount(result.leaves)
+        assert(result.leaves.forall(_.tracking.snapshot_id.contains(managerSnapshotId)))
         // The commit carries no user actions, so the tree describes state as of the read version.
         assert(result.contentRootVersion == snapshot.version)
       }
@@ -202,7 +205,9 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       // longer hard-fails on this -- it writes no tree; re-deriving the file actions' back
       // references against the winner tree happens in doCommit's rebaseBackReferences, exercised
       // end-to-end in AMTConflictResolutionSuite.
-      val winnerTree = baseTree.copy(version = baseTree.version + 1)
+      val winnerTree = updateCheckpointActions(baseTree) {
+        case metadata: CheckpointMetadata => metadata.copy(version = baseTree.version + 1)
+      }
       val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
       val result = manager.writeAMT(
         nextAttemptVersion = snapshot.version + 2,
@@ -238,7 +243,9 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
         // A concurrent winner installed its own full-rewrite tree at the target version. That tree
         // already provides an up-to-date AMT, so this losing full checkpoint is redundant and
         // skips.
-        val fullWinner = fullResult.checkpoint.copy(version = snapshot.version + 1)
+        val fullWinner = updateCheckpointActions(fullResult.checkpoint) {
+          case metadata: CheckpointMetadata => metadata.copy(version = snapshot.version + 1)
+        }
         val fullWinnerMetric = anyWinner.copy(checkpointAction = Some(fullWinner))
         val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
         val ex = intercept[ConcurrentAMTCheckpointLandedException] {
@@ -266,8 +273,12 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
 
         val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint(
           incremental = true, triggerName = AMTTriggerMode.CheckpointIntervalIncremental.name))
-        val baseTree = amtProvider(snapshot).map(_.checkpointAction).getOrElse(
+        val baseProvider = amtProvider(snapshot).getOrElse(
           fail("the table must be AMT-backed for this case."))
+        val baseTree = baseProvider.checkpointAction
+        val baseSnapshotIds = baseProvider.leaves.map { leaf =>
+          leaf.location -> (leaf.tracking.snapshot_id, leaf.tracking.modified_snapshot_id)
+        }.toMap
         // First attempt: the incremental checkpoint extends the base tree, caching an incremental
         // last-write result on the manager.
         val incrementalResult = manager.writeAMT(
@@ -280,10 +291,15 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
               "attempt."))
         assert(incrementalResult.checkpoint.contentRoot.isIncremental.contains(true),
           "precondition: the first attempt must write an incremental tree.")
+        assert(incrementalResult.leaves.map { leaf =>
+          leaf.location -> (leaf.tracking.snapshot_id, leaf.tracking.modified_snapshot_id)
+        }.toMap == baseSnapshotIds)
 
         // A concurrent winner installed a newer tree. Any winner tree supersedes a losing
         // incremental checkpoint, so it is redundant and skips.
-        val winnerTree = baseTree.copy(version = baseTree.version + 1)
+        val winnerTree = updateCheckpointActions(baseTree) {
+          case metadata: CheckpointMetadata => metadata.copy(version = baseTree.version + 1)
+        }
         val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
         intercept[ConcurrentAMTCheckpointLandedException] {
           manager.writeAMT(
@@ -324,8 +340,10 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
           isIncremental = true,
           lastManifestCommitWithFullRewrite = 0L,
           numLeaves = fullResult.checkpoint.contentRoot.numLeaves.getOrElse(0L))
-        val incrementalWinner =
-          fullResult.checkpoint.copy(version = snapshot.version + 1, contentRoot = incrementalRoot)
+        val incrementalWinner = updateCheckpointActions(fullResult.checkpoint) {
+          case metadata: CheckpointMetadata => metadata.copy(version = snapshot.version + 1)
+          case _: ContentRoot => incrementalRoot
+        }
         val retrySegment = advanceSegmentByOneCommit(snapshot.logSegment)
         val ex = intercept[FullAMTWriteFailedWithConflict] {
           manager.writeAMT(
