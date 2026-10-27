@@ -476,11 +476,11 @@ Each per-column stats struct contains:
 | +3 | `value_count` | Long | all | Number of values (including nulls and NaN) |
 | +4 | `null_value_count` | Long | optional fields | Number of null values |
 | +5 | `nan_value_count` | Long | float, double | Number of NaN values |
-| +6 | `total_bytes` | Long | string, binary, variant | Estimated uncompressed in-memory bytes of non-null values |
+| +6 | `total_bytes` | Long | string, binary, variant, geometry, geography | Estimated uncompressed in-memory bytes of non-null values |
 
 Implementations are not required to write a stats struct for every table field. If any field is missing from the struct, readers must assume it is unknown.
 
-**Stats tightness.** Tightness is tracked per entry by `tight_stats` (field 151), not per column, following [Stats Tightness](https://iceberg.apache.org/spec/#stats-tightness) in the Iceberg V4 specification. An entry's stats are tight when, over its live rows, `lower_bound` and `upper_bound` equal the minimum and maximum values, and `value_count`, `null_value_count`, and `nan_value_count` equal the counts. Bounds of `string` and `binary` columns are never tight, whatever the value of `tight_stats`, because they may be truncated. No other stats field is covered by tightness. When `tight_stats` is `false` or absent, `lower_bound` must be less than or equal to every live value and `upper_bound` must be greater than or equal to every live value.
+**Stats tightness.** Tightness is tracked per entry by `tight_stats`, not per column, following [Stats Tightness](https://iceberg.apache.org/spec/#stats-tightness) in the Iceberg V4 specification. An entry's stats are tight when, over its live rows, `lower_bound` and `upper_bound` of fixed-length types equal the minimum and maximum values, and `value_count`, `null_value_count`, and `nan_value_count` equal the counts. Whatever the value of `tight_stats`, bounds of `string` and `binary` columns are never tight because they may be truncated, and bounds of `geometry` and `geography` columns are never tight because they are bounding boxes. For `variant` columns, a bound present for a normalized JSON path is tight under the same rules as the path's value type. No other stats field is covered by tightness. When `tight_stats` is `false` or absent, `lower_bound` must be less than or equal to every live value and `upper_bound` must be greater than or equal to every live value.
 
 **Aggregation rules** (for manifest-level stats in root manifest `DATA_MANIFEST` entries, computed over constituent leaf entries):
 
