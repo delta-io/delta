@@ -47,7 +47,6 @@ import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
-import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.delta.RowId$;
@@ -67,7 +66,6 @@ import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
-import org.apache.spark.sql.execution.datasources.PartitioningUtils;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -87,7 +85,6 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.types.TimestampNTZType;
 import org.apache.spark.sql.types.TimestampType;
-import org.apache.spark.unsafe.types.UTF8String;
 import scala.Function1;
 import scala.Option;
 import scala.Some;
@@ -159,8 +156,9 @@ public class PartitionUtils {
         CollectionConverters.asJava(deltaScan.files());
     List<PartitionedFile> partitionedFiles = new ArrayList<>(selectedFiles.size());
     long totalBytes = 0L;
+    PartitionValueCaster caster = new PartitionValueCaster(partitionSchema, zoneId);
     for (org.apache.spark.sql.delta.actions.AddFile addFile : selectedFiles) {
-      partitionedFiles.add(buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId));
+      partitionedFiles.add(buildPartitionedFile(addFile, caster, tablePath));
       totalBytes += addFile.size();
     }
     return planInputPartitions(sparkSession, partitionedFiles, totalBytes, hadoopConf, sqlConf);
@@ -186,16 +184,14 @@ public class PartitionUtils {
   }
 
   /**
-   * Build the partition {@link InternalRow} from kernel partition values by casting them to the
-   * desired Spark types using the session time zone for temporal types.
+   * Build the partition {@link InternalRow} from kernel partition values by casting them with
+   * {@code caster} to the desired Spark types.
    *
    * <p>Note: Partition values in AddFile use physical column names as keys when column mapping is
-   * enabled. This method uses DeltaColumnMapping.getPhysicalName to map from logical schema fields
-   * to physical partition value keys.
+   * enabled. {@code caster} maps logical schema fields to those physical partition value keys.
    */
-  public static InternalRow getPartitionRow(
-      MapValue partitionValues, StructType partitionSchema, ZoneId zoneId) {
-    return getPartitionRow(buildPartitionValuesMap(partitionValues), partitionSchema, zoneId);
+  public static InternalRow getPartitionRow(MapValue partitionValues, PartitionValueCaster caster) {
+    return getPartitionRow(buildPartitionValuesMap(partitionValues), caster);
   }
 
   /**
@@ -228,8 +224,8 @@ public class PartitionUtils {
    * row. This overload is for consumers that outlive the Kernel batch backing {@link MapValue}.
    */
   public static InternalRow getPartitionRow(
-      Map<String, String> partitionValues, StructType partitionSchema, ZoneId zoneId) {
-    final int numPartCols = partitionSchema.fields().length;
+      Map<String, String> partitionValues, PartitionValueCaster caster) {
+    final int numPartCols = caster.numFields();
     assert partitionValues.size() == numPartCols
         : String.format(
             java.util.Locale.ROOT,
@@ -239,17 +235,7 @@ public class PartitionUtils {
 
     final Object[] values = new Object[numPartCols];
     for (int index = 0; index < numPartCols; index++) {
-      final StructField field = partitionSchema.fields()[index];
-      final String physicalName = DeltaColumnMapping.getPhysicalName(field);
-      final String strVal = partitionValues.get(physicalName);
-      if (strVal == null) {
-        values[index] = null;
-      } else if (field.dataType() instanceof StringType) {
-        values[index] = UTF8String.fromString(strVal);
-      } else {
-        values[index] =
-            PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
-      }
+      values[index] = caster.cast(index, partitionValues.get(caster.physicalName(index)));
     }
     return new GenericInternalRow(values);
   }
@@ -381,16 +367,15 @@ public class PartitionUtils {
   }
 
   /**
-   * Build a PartitionedFile from an AddFile with the given partition schema and table path.
+   * Build a PartitionedFile from an AddFile with the given partition value caster and table path.
    *
    * @param addFile The AddFile to convert
-   * @param partitionSchema The partition schema for parsing partition values
+   * @param caster Parses partition values for the partition schema and time zone
    * @param tablePath The table path
-   * @param zoneId The timezone for temporal partition values
    * @return A PartitionedFile ready for Spark execution
    */
   public static PartitionedFile buildPartitionedFile(
-      AddFile addFile, StructType partitionSchema, String tablePath, ZoneId zoneId) {
+      AddFile addFile, PartitionValueCaster caster, String tablePath) {
     return buildPartitionedFile(
         addFile.getPath(),
         addFile.getSize(),
@@ -398,7 +383,7 @@ public class PartitionUtils {
         addFile.getDeletionVector(),
         addFile.getBaseRowId(),
         addFile.getDefaultRowCommitVersion(),
-        getPartitionRow(addFile.getPartitionValues(), partitionSchema, zoneId),
+        getPartitionRow(addFile.getPartitionValues(), caster),
         tablePath);
   }
 
@@ -429,9 +414,8 @@ public class PartitionUtils {
    */
   public static PartitionedFile buildPartitionedFile(
       org.apache.spark.sql.delta.actions.AddFile v1AddFile,
-      StructType partitionSchema,
-      String tablePath,
-      ZoneId zoneId) {
+      PartitionValueCaster caster,
+      String tablePath) {
     final org.apache.spark.sql.delta.actions.DeletionVectorDescriptor dv =
         v1AddFile.deletionVector();
     final scala.collection.immutable.Map<String, Object> dvMetadata =
@@ -448,7 +432,7 @@ public class PartitionUtils {
         new Path(tablePath, v1AddFile.path()).toString(),
         v1AddFile.size(),
         v1AddFile.modificationTime(),
-        getPartitionRow(v1AddFile.partitionValues(), partitionSchema, zoneId),
+        getPartitionRow(v1AddFile.partitionValues(), caster),
         metadata);
   }
 
@@ -471,23 +455,12 @@ public class PartitionUtils {
    * asserting the value count, because V1 AddFile may omit unset partition keys.
    */
   public static InternalRow getPartitionRow(
-      scala.collection.immutable.Map<String, String> partitionValues,
-      StructType partitionSchema,
-      ZoneId zoneId) {
-    final int numPartCols = partitionSchema.fields().length;
+      scala.collection.immutable.Map<String, String> partitionValues, PartitionValueCaster caster) {
+    final int numPartCols = caster.numFields();
     final Object[] values = new Object[numPartCols];
     final Map<String, String> javaPartitionValues = CollectionConverters.asJava(partitionValues);
     for (int i = 0; i < numPartCols; i++) {
-      final StructField field = partitionSchema.fields()[i];
-      final String physicalName = DeltaColumnMapping.getPhysicalName(field);
-      final String strVal = javaPartitionValues.get(physicalName);
-      if (strVal == null) {
-        values[i] = null;
-      } else if (field.dataType() instanceof StringType) {
-        values[i] = UTF8String.fromString(strVal);
-      } else {
-        values[i] = PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
-      }
+      values[i] = caster.cast(i, javaPartitionValues.get(caster.physicalName(i)));
     }
     return new GenericInternalRow(values);
   }
@@ -503,9 +476,8 @@ public class PartitionUtils {
   public static PartitionedFile buildCDCPartitionedFile(
       org.apache.spark.sql.delta.v2.read.CDCDataFile cdcFile,
       long commitVersion,
-      StructType partitionSchema,
-      String tablePath,
-      ZoneId zoneId) {
+      PartitionValueCaster caster,
+      String tablePath) {
     Map<String, Object> cdcConstants = new HashMap<>();
     cdcConstants.put(CDCSchemaContext.CDC_COMMIT_VERSION, commitVersion);
     cdcConstants.put(
@@ -529,9 +501,7 @@ public class PartitionUtils {
       throw (RuntimeException) DeltaErrors.removeFileCDCMissingExtendedMetadata(cdcFile.getPath());
     }
     InternalRow partitionRow =
-        partitionSchema.fields().length > 0
-            ? getPartitionRow(partitionValues, partitionSchema, zoneId)
-            : emptyPartitionRow(0);
+        caster.numFields() > 0 ? getPartitionRow(partitionValues, caster) : emptyPartitionRow(0);
     long modificationTime =
         cdcFile.getAddFile() != null
             ? cdcFile.getAddFile().getModificationTime()

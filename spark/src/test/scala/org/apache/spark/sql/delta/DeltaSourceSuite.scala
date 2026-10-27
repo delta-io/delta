@@ -282,6 +282,39 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("malformed partition values in commits read as null") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      Seq((1, 1, 1.toByte, true), (2, 2, 2.toByte, false))
+        .toDF("id", "p_int", "p_byte", "p_bool")
+        .write.format("delta").partitionBy("p_int", "p_byte", "p_bool").save(path)
+      // Re-add one file with partition values that do not parse as the column types, as a log
+      // written by another writer may contain.
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val file = deltaLog.update().allFiles.collect().find(_.partitionValues("p_int") == "1").get
+      deltaLog.startTransaction().commit(
+        Seq(file.copy(
+          partitionValues = Map("p_int" -> "abc", "p_byte" -> "300", "p_bool" -> "yes"),
+          dataChange = true)),
+        DeltaOperations.ManualUpdate)
+
+      for (ansiEnabled <- Seq("true", "false")) {
+        withSQLConf(SQLConf.ANSI_ENABLED.key -> ansiEnabled) {
+          withClue(s"ansi=$ansiEnabled: ") {
+            // Starting at version 0 reads every file from the commits instead of a snapshot.
+            val stream = loadStreamWithOptions(path, Map("startingVersion" -> "0"))
+            testStream(stream)(
+              ProcessAllAvailable(),
+              CheckAnswer(
+                Row(1, 1, 1.toByte, true),
+                Row(2, 2, 2.toByte, false),
+                Row(1, null, null, true)))
+          }
+        }
+      }
+    }
+  }
+
   test("initial snapshot ends at base index of next version") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))

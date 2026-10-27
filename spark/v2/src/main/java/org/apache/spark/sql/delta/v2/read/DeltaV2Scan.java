@@ -47,6 +47,7 @@ import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory;
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext;
 import org.apache.spark.sql.delta.v2.read.deletionvector.DeletionVectorSchemaContext;
 import org.apache.spark.sql.delta.v2.utils.PartitionUtils;
+import org.apache.spark.sql.delta.v2.utils.PartitionValueCaster;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.v2.utils.SchemaUtils;
 import org.apache.spark.sql.execution.datasources.*;
@@ -541,10 +542,11 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     boolean newRowCountKnown = preparedScan.scanned().rows().isDefined();
     long newTotalRows = 0L;
     long originalFileCount = 0L;
+    PartitionValueCaster caster = new PartitionValueCaster(partitionSchema, zoneId);
     for (AddFile addFile : scala.jdk.javaapi.CollectionConverters.asJava(preparedScan.files())) {
       originalFileCount++;
       InternalRow partitionValues =
-          PartitionUtils.getPartitionRow(addFile.partitionValues(), partitionSchema, zoneId);
+          PartitionUtils.getPartitionRow(addFile.partitionValues(), caster);
       boolean allMatch =
           runtimePredicates.stream()
               .allMatch(predicate -> predicate.evaluator.eval(partitionValues));

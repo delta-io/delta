@@ -64,6 +64,7 @@ object DeltaV2SourceSuite {
     // ========== Core streaming tests ==========
     "basic",
     "session time zone reads timestamp partitions",
+    "malformed partition values in commits read as null",
     "new commits arrive after stream initialization - with explicit startingVersion",
     "initial snapshot ends at base index of next version",
     "can consume new data without update",
