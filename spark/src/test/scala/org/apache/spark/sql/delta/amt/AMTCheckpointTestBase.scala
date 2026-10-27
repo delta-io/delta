@@ -96,7 +96,7 @@ trait AMTCheckpointTestBase
     new AMTCheckpointProvider(
       manifestCommitVersion = cpVersion,
       checkpointAction = checkpoint,
-      leaves = Nil,
+      loadLeaves = () => Nil,
       tableRoot = new Path("file:/fake-table-root"))
   }
 

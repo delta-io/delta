@@ -92,7 +92,7 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
         checkpointAction = updateCheckpointActions(provider.checkpointAction) {
           case _: Metadata => metadata
         },
-        leaves = provider.leaves,
+        loadLeaves = () => provider.leaves,
         tableRoot = provider.tableRoot)
       .loadActionsForStateReconstruction(spark, deltaLog)
       .getOrElse(fail("expected reconstructed actions"))
