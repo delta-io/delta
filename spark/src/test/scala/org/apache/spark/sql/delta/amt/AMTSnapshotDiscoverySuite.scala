@@ -83,20 +83,24 @@ class AMTSnapshotDiscoverySuite
       val initializationEvents = collectUsageLogs(
           AMTUsageLogs.CHECKPOINT_PROVIDER_INITIALIZE_FROM_CHECKPOINT_ACTION) {
         val (_, snapshot) = coldLoad(name)
-        val uninitialized = snapshot.logSegment.checkpointProvider match {
-          case provider: UninitializedAMTCheckpointProvider => provider
-          case other =>
-            fail(s"Expected an uninitialized AMT checkpoint provider, got ${other.getClass}.")
-        }
         val lazyProvider = snapshot.checkpointProvider match {
           case provider: LazyCompleteAMTCheckpointProvider => provider
           case other => fail(s"Expected a lazy AMT checkpoint provider, got ${other.getClass}.")
         }
 
         // CheckpointProvider.apply must wrap the result that started loading during log-segment
-        // construction rather than reading the root again.
-        assert(uninitialized.completeCheckpointProvider() eq
-          lazyProvider.underlyingCheckpointProvider)
+        // construction rather than reading the root again. Snapshot initialization may already
+        // have completed that wrapping, for example while reconciling unbackfilled commits.
+        snapshot.logSegment.checkpointProvider match {
+          case uninitialized: UninitializedAMTCheckpointProvider =>
+            assert(uninitialized.completeCheckpointProvider() eq
+              lazyProvider.underlyingCheckpointProvider)
+          case completed: LazyCompleteAMTCheckpointProvider =>
+            assert(completed eq lazyProvider)
+          case other =>
+            fail(s"Expected an uninitialized or lazy AMT checkpoint provider, got " +
+              s"${other.getClass}.")
+        }
       }
 
       assert(initializationEvents.size == 1,
