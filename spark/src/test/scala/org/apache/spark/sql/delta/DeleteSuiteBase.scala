@@ -536,7 +536,8 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       case f: FileSourceScanLike if f.relation.location.isInstanceOf[TahoeFileIndex] => f
     })
 
-    assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
+    assert(DeltaTestUtils.dataSchemaOf(scans.head) ==
+      StructType.fromDDL("nested STRUCT<key: int>"))
   }
 
   /**
