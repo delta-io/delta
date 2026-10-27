@@ -50,7 +50,7 @@ trait RowTrackingUpdateSuiteBase extends RowIdTestUtils with RowTrackingEnabled 
       isPartitioned: Boolean,
       lastModifiedVersion: Long = 0L): Unit = {
     // Disable optimized writes to write out the specified number of files.
-    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false") {
+    withConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false") {
       val voidCol =
         if (DeltaTestUtilsBase.nullTypeColumnsSupported) lit(null) else lit(null).cast("int")
       val df = spark.range(
@@ -144,7 +144,7 @@ trait RowTrackingUpdateCommonTests extends RowTrackingUpdateSuiteBase {
   test(s"Preserves row IDs on unpartitioned table with optimized writes") {
     withRowIdTestTable(isPartitioned = false) {
       val whereClause = Some(s"id = 0 OR id = $numRowsTarget - 1")
-      withSQLConf(
+      withConf(
         DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "true") {
         checkAndExecuteUpdate(targetTableName, condition = whereClause)
       }
@@ -187,7 +187,7 @@ trait RowTrackingUpdateCommonTests extends RowTrackingUpdateSuiteBase {
   } {
     test("UPDATE preserves Row Tracking on tables enabled using backfill, "
         + s"isPartitioned=$isPartitioned") {
-      withSQLConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "true") {
+      withConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "true") {
         // This is the expected delta log history by the end of the test.
         // version 0: Table Creation
         // version 1: Protocol upgrade
