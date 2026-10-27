@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.types
 
-import java.util.Optional
+import java.util.{Arrays, HashSet, Optional}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -50,6 +50,19 @@ class CollationIdentifierSuite extends AnyFunSuite {
           val collationIdentifier = CollationIdentifier.fromString(stringIdentifier)
         }
         assert(e.getMessage == String.format("Invalid collation identifier: %s", stringIdentifier))
+    }
+  }
+
+  test("check hashCode is consistent with equals") {
+    Seq(
+      s"$PROVIDER_SPARK.$DEFAULT_COLLATION_NAME",
+      s"$PROVIDER_ICU.sr_Cyrl_SRB",
+      s"$PROVIDER_ICU.sr_Cyrl_SRB.75.1").foreach { stringIdentifier =>
+      val first = CollationIdentifier.fromString(stringIdentifier)
+      val second = CollationIdentifier.fromString(stringIdentifier.toLowerCase)
+      assert(first == second)
+      assert(first.hashCode == second.hashCode)
+      assert(new HashSet(Arrays.asList(first, second)).size == 1)
     }
   }
 
