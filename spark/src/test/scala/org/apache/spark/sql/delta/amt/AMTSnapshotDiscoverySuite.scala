@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CheckpointInstance, DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, DeltaTestUtils, Snapshot}
+import org.apache.spark.sql.delta.{CheckpointInstance, DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, ContentRoot, LastManifestCommit}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
@@ -138,57 +138,6 @@ class AMTSnapshotDiscoverySuite
     }
   }
 
-  test("[cold init] driver-local AMT root read launches no Spark job") {
-    val testConfs =
-        leafPackingConfs
-    withSQLConf(testConfs: _*) {
-      val name = "amt_driver_local_root_read"
-      withTable(name) {
-        createAMTTable(name, checkpointInterval = Int.MaxValue)
-        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles)
-        val deltaLog = deltaLogForName(name)
-        commitCheckpoint(deltaLog, incremental = false)
-        val expected = amtProvider(deltaLog.update()).getOrElse(
-          fail("expected AMTCheckpointProvider after the full checkpoint"))
-
-        var actual: AMTCheckpointProvider = null
-        val jobs = DeltaTestUtils.countSparkJobs(spark.sparkContext, {
-          actual = AMTCheckpointProvider.fromCheckpoint(
-            deltaLog, expected.checkpointAction, expected.manifestCommitVersion)
-        })
-        assert(jobs == 0, s"driver-local full-root read launched $jobs Spark job(s)")
-        assertLeavesEqual(actual.leaves, expected.leaves)
-      }
-    }
-  }
-
-  test("[cold init] driver-local AMT root read falls back for incremental DATA rows") {
-    val testConfs =
-        leafPackingConfs
-    withSQLConf(testConfs: _*) {
-      val name = "amt_driver_local_incremental_root_fallback"
-      withTable(name) {
-        createAMTTable(name, checkpointInterval = Int.MaxValue)
-        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles)
-        val deltaLog = deltaLogForName(name)
-        commitCheckpoint(deltaLog, incremental = false)
-
-        appendRowsAsSeparateFiles(name, numFiles = 1)
-        commitCheckpoint(deltaLog, incremental = true)
-        val expected = amtProvider(deltaLog.update()).getOrElse(
-          fail("expected AMTCheckpointProvider after the incremental checkpoint"))
-        assert(expected.checkpointAction.contentRoot.isIncremental.contains(true))
-
-        var actual: AMTCheckpointProvider = null
-        val jobs = DeltaTestUtils.countSparkJobs(spark.sparkContext, {
-          actual = AMTCheckpointProvider.fromCheckpoint(
-            deltaLog, expected.checkpointAction, expected.manifestCommitVersion)
-        })
-        assert(jobs > 0, "an incremental root with DATA rows must use the distributed fallback")
-        assertLeavesEqual(actual.leaves, expected.leaves)
-      }
-    }
-  }
 
   /** Asserts that the cold snapshot is installed with the expected state. */
   private def assertColdSnapshotStates(

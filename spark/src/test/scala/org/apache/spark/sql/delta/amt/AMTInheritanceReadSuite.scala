@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{Checkpoint, ContentRoot}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.util.FileNames
+
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.DataFrame
@@ -186,6 +187,10 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       tracking: Tracking = pointerTracking(),
       mdvPositions: Seq[Long] = Seq.empty): DataManifestEntry = {
     val mdv = Some(mdvPositions).filter(_.nonEmpty)
+    def fileCount(status: Int): Int =
+      leaf.entries.count(_.tracking.status == status)
+    def rowCount(status: Int): Long =
+      leaf.entries.filter(_.tracking.status == status).map(_.record_count).sum
     DataManifestEntry(
       location = leaf.location,
       file_format = AMTSingleAction.FileFormatParquet,
@@ -194,16 +199,16 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       file_size_in_bytes = leaf.sizeInBytes,
       manifest_info = ManifestInfo(
         format_version = AMTSingleAction.FormatVersionV4,
-        added_files_count = leaf.entries.size,
-        existing_files_count = 0,
-        deleted_files_count = 0,
-        replaced_files_count = 0,
-        modified_files_count = 0,
-        added_rows_count = leaf.entries.map(_.record_count).sum,
-        existing_rows_count = 0L,
-        deleted_rows_count = 0L,
-        replaced_rows_count = 0L,
-        modified_rows_count = 0L,
+        added_files_count = fileCount(Tracking.Status.Added),
+        existing_files_count = fileCount(Tracking.Status.Existing),
+        deleted_files_count = fileCount(Tracking.Status.Deleted),
+        replaced_files_count = fileCount(Tracking.Status.Replaced),
+        modified_files_count = fileCount(Tracking.Status.Modified),
+        added_rows_count = rowCount(Tracking.Status.Added),
+        existing_rows_count = rowCount(Tracking.Status.Existing),
+        deleted_rows_count = rowCount(Tracking.Status.Deleted),
+        replaced_rows_count = rowCount(Tracking.Status.Replaced),
+        modified_rows_count = rowCount(Tracking.Status.Modified),
         min_sequence_number = 0L,
         dv = mdv.map(positions =>
           AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions.map(_.toInt))))))

@@ -271,17 +271,26 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
         .where(col("entry.tracking.status").isin(Tracking.Status.liveEntryStatuses.toSeq: _*))
         .withColumn(ROW_INDEX_FILTER_KEEP_COLUMN, lit(true)))
 
+
   /** Builds a leaf index with bitmap-format-independent manifest filter providers. */
   protected def leafFileIndexWithManifestFilters(
       files: Array[FileStatus],
       dvLeaves: Seq[DataManifestEntry]): DeltaLogFileIndex = {
-    val perFileRowIndexFilters: Map[String, RowIndexFilterProvider] = dvLeaves.flatMap { leaf =>
+    DeltaLogFileIndex(
+      new AMTParquetFileFormat,
+      files,
+      manifestRowIndexFilters(dvLeaves))
+  }
+
+  /** Builds the per-leaf Manifest-DV filters shared by relational and inheritance reads. */
+  private def manifestRowIndexFilters(
+      dvLeaves: Seq[DataManifestEntry]): Map[String, RowIndexFilterProvider] = {
+    dvLeaves.flatMap { leaf =>
       leaf.manifestDV.map { case (dvBytes, _) =>
         leaf.getAbsolutePath(tableRoot).toString ->
           AMTUtils.deserializeMdv(dvBytes).toRowIndexFilterProvider(tableRoot)
       }
     }.toMap
-    DeltaLogFileIndex(new AMTParquetFileFormat, files, perFileRowIndexFilters)
   }
 
   /** Extends the Parquet read schema with the keep/drop marker. */
@@ -583,6 +592,7 @@ object AMTCheckpointProvider extends DeltaLogging {
    */
   private[amt] val MIN_RECONSTRUCTION_BYTES_PER_LIVE_FILE: Long = 16L
 
+
   /**
    * @param actions                       the actions with re-derived back references where needed.
    * @param numActionsReusingBackref      file actions whose existing back reference stayed valid.
@@ -662,11 +672,6 @@ object AMTCheckpointProvider extends DeltaLogging {
     provider
   }
 
-  /**
-   * Reads a pointer-only AMT root directly on the driver. This avoids launching a Spark job just
-   * to enumerate a few leaf pointers. Roots containing DATA rows and pointer fields that need the
-   * table-dependent partition/stats decoders retain the distributed fallback in [[fromCheckpoint]].
-   */
 
   /**
    * Builds a provider from an [[AMTWriteResult]] without reading the root manifest from storage.
